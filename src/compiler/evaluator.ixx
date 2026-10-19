@@ -1843,6 +1843,22 @@ export struct WorkspaceTree {
                        std::uint32_t to_layer) const noexcept;
 };
 
+// Issue #4598 phase 3: per-define change stamps for ast:snapshot /
+// ast:restore. Namespace-level (exported) so the ast-primitive TU can name
+// them from namespace-scope helpers. Built at snapshot from the LIVE flat
+// (the live subtree_gen_ cells are the authoritative pre-capture values;
+// the wholesale copy does not mirror subtree_gen_), reused across every
+// restore of the snapshot id.
+export struct DefineStamp {
+    aura::ast::NodeId root = aura::ast::NULL_NODE;
+    std::uint16_t gen16 = 0; // subtree_gen_ cell of the define at capture
+    std::string source;      // unparsed define source (lazy, built once)
+    bool has_source = false;
+};
+export struct FlatSnapshotDefineStamps {
+    std::unordered_map<std::string, DefineStamp> by_name;
+};
+
 // Issue #4575: result of Evaluator::enter_soft_session. The launcher
 // prints the banner from this; the library does not write stderr.
 export struct SoftSessionStatus {
@@ -6453,16 +6469,35 @@ private:
     // stored (snapshot_sources_) for ast:diff and as a fallback
     // when a direct snapshot is missing (e.g. older snapshots
     // taken before part 6).
+    // Issue #4598 phase 3: flat/pool are shared_ptr so a snapshot whose
+    // content is provably identical to the live flat (same flat object +
+    // same generation + same pool mint count) SHARES the captured copy
+    // instead of deep-copying O(workspace) columns again. Shared copies
+    // are frozen: every consumer only reads them (restore assigns FROM
+    // them; the #4271 cap drops the shared_ptr).
     struct FlatSnapshot {
-        std::unique_ptr<aura::ast::FlatAST> flat;
-        std::unique_ptr<aura::ast::StringPool> pool;
+        std::shared_ptr<aura::ast::FlatAST> flat;
+        std::shared_ptr<aura::ast::StringPool> pool;
         bool has_flat = false; // true if both flat + pool are valid
         // Issue #263: metadata captured at snapshot time for restore checks.
         std::uint16_t flat_generation = 0;
         std::size_t flat_size = 0;
         std::uint64_t cow_epoch = 0;
+        // Issue #4598 phase 3: share + stamp bookkeeping. pool_size pins
+        // the workspace pool's mint count (append-only ⇒ size equality +
+        // object identity ⇒ unmutated). stamps build lazily at first
+        // restore so snapshots that never restore pay nothing.
+        std::size_t pool_size = 0;
+        std::shared_ptr<FlatSnapshotDefineStamps> stamps;
     };
     std::vector<FlatSnapshot> snapshot_flats_;
+    // Issue #4598 phase 3: snapshot share + restore stamp counters (Agent
+    // observability via query:workspace-snapshot-stats; C++ tests read the
+    // public accessors).
+    std::uint64_t ast_snapshot_share_hits_total_{0};
+    std::uint64_t ast_snapshot_share_misses_total_{0};
+    std::uint64_t ast_restore_stamp_republish_total_{0};
+    std::uint64_t ast_restore_stamp_unparse_total_{0};
     // Issue #4271: drop counter for deep FlatAST snapshot eviction (see
     // public kMaxAstSnapshotDeepFlats).
     std::uint64_t ast_snapshot_deep_flat_drops_total_{0};
@@ -8635,6 +8670,19 @@ public:
     }
     [[nodiscard]] std::uint64_t ast_snapshot_deep_flat_drops_total() const noexcept {
         return ast_snapshot_deep_flat_drops_total_;
+    }
+    // Issue #4598 phase 3: snapshot share + restore stamp observability.
+    [[nodiscard]] std::uint64_t ast_snapshot_share_hits_total() const noexcept {
+        return ast_snapshot_share_hits_total_;
+    }
+    [[nodiscard]] std::uint64_t ast_snapshot_share_misses_total() const noexcept {
+        return ast_snapshot_share_misses_total_;
+    }
+    [[nodiscard]] std::uint64_t ast_restore_stamp_republish_total() const noexcept {
+        return ast_restore_stamp_republish_total_;
+    }
+    [[nodiscard]] std::uint64_t ast_restore_stamp_unparse_total() const noexcept {
+        return ast_restore_stamp_unparse_total_;
     }
     // Issue #548: panic-checkpoint lifecycle counters
     // + bump helpers. Public so the

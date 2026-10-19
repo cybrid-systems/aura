@@ -62,6 +62,77 @@ collect_reachable_define_sources(aura::ast::FlatAST& flat, aura::ast::StringPool
     return out;
 }
 
+
+// Issue #4598 phase 3: define change stamps — (name -> root NodeId,
+// subtree_gen_ cell) for every reachable Define. No unparse: the cheap
+// half of collect_reachable_define_sources, an O(nodes) walk. Built from
+// the LIVE flat at snapshot capture (the wholesale copy does not mirror
+// subtree_gen_, and the restore diff needs the pre-capture cell values;
+// mark_dirty_upward's note_subtree_content_write keeps the cells
+// sound for every guard-window content change).
+[[nodiscard]] std::shared_ptr<FlatSnapshotDefineStamps>
+collect_define_stamps(aura::ast::FlatAST& flat, aura::ast::StringPool& pool) {
+    auto stamps = std::make_shared<FlatSnapshotDefineStamps>();
+    const auto root = flat.root;
+    if (root == aura::ast::NULL_NODE || root >= flat.size() || flat.is_free_slot(root))
+        return stamps;
+    std::vector<unsigned char> seen(static_cast<std::size_t>(flat.size()), 0);
+    std::vector<aura::ast::NodeId> pending;
+    pending.push_back(root);
+    while (!pending.empty()) {
+        const auto cur = pending.back();
+        pending.pop_back();
+        if (cur == aura::ast::NULL_NODE || cur >= flat.size() ||
+            seen[static_cast<std::size_t>(cur)] || flat.is_free_slot(cur))
+            continue;
+        seen[static_cast<std::size_t>(cur)] = 1;
+        const auto v = flat.get(cur);
+        if (v.tag == aura::ast::NodeTag::Define && v.sym_id != aura::ast::INVALID_SYM) {
+            auto nm = std::string(pool.resolve(v.sym_id));
+            if (!nm.empty()) {
+                auto& st = stamps->by_name[nm];
+                st.root = cur;
+                st.gen16 = flat.load_subtree_gen(cur);
+                st.has_source = false;
+            }
+        }
+        for (auto child : v.children)
+            pending.push_back(child);
+    }
+    return stamps;
+}
+
+// Issue #4598 phase 3: live-side stamp walk for the restore diff — same
+// walk, no unparse, no capture. Compared against the snapshot's stamps so
+// an unchanged define costs one integer compare instead of a full unparse.
+[[nodiscard]] std::unordered_map<std::string, std::pair<aura::ast::NodeId, std::uint16_t>>
+collect_define_change_stamps(aura::ast::FlatAST& flat, aura::ast::StringPool& pool) {
+    std::unordered_map<std::string, std::pair<aura::ast::NodeId, std::uint16_t>> out;
+    const auto root = flat.root;
+    if (root == aura::ast::NULL_NODE || root >= flat.size() || flat.is_free_slot(root))
+        return out;
+    std::vector<unsigned char> seen(static_cast<std::size_t>(flat.size()), 0);
+    std::vector<aura::ast::NodeId> pending;
+    pending.push_back(root);
+    while (!pending.empty()) {
+        const auto cur = pending.back();
+        pending.pop_back();
+        if (cur == aura::ast::NULL_NODE || cur >= flat.size() ||
+            seen[static_cast<std::size_t>(cur)] || flat.is_free_slot(cur))
+            continue;
+        seen[static_cast<std::size_t>(cur)] = 1;
+        const auto v = flat.get(cur);
+        if (v.tag == aura::ast::NodeTag::Define && v.sym_id != aura::ast::INVALID_SYM) {
+            auto nm = std::string(pool.resolve(v.sym_id));
+            if (!nm.empty())
+                out.insert_or_assign(std::move(nm),
+                                     std::make_pair(cur, flat.load_subtree_gen(cur)));
+        }
+        for (auto child : v.children)
+            pending.push_back(child);
+    }
+    return out;
+}
 // Issue #918 Phase 1: explicit using-declarations (no `using namespace`).
 using types::as_bool;
 using types::as_cell_id;
@@ -311,31 +382,79 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             // (whose pmr vectors use the arena allocator) — the arena
             // ends up with the restored data, and the snapshot retains
             // its own heap copy for subsequent restores.
-            // Issue #261: reclaim unreachable NodeId slots before the
-            // deep copy so long-running sessions don't amplify dead
-            // slots into every snapshot.
-            ev.workspace_flat_->recycle_dead_nodes();
-
             Evaluator::FlatSnapshot fs;
-            try {
-                fs.flat = std::make_unique<aura::ast::FlatAST>();
-                fs.pool = std::make_unique<aura::ast::StringPool>();
-                *fs.flat = *ev.workspace_flat_;
-                *fs.pool = *ev.workspace_pool_;
-                fs.has_flat = true;
-                fs.flat_generation = ev.workspace_flat_->generation();
-                fs.flat_size = ev.workspace_flat_->size();
-                if (ev.workspace_tree_) {
-                    auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
-                    if (auto* node = wt->active())
-                        fs.cow_epoch = node->cow_epoch;
+            // Issue #4598 phase 3: content-addressed share between snapshot
+            // entries. A prior snapshot whose captured copy matches the live
+            // flat's object-independent state (same generation, size, pool
+            // mint watermark — the pool is append-only) is provably
+            // bit-identical to the live workspace: share that FROZEN copy
+            // instead of deep-copying O(workspace) columns again. The live
+            // object itself is never shared — it keeps mutating in place,
+            // and a snapshot aliasing it would observe later writes.
+            const Evaluator::FlatSnapshot* share_src = nullptr;
+            if (ev.workspace_flat_ && ev.workspace_pool_) {
+                for (auto it = ev.snapshot_flats_.rbegin(); it != ev.snapshot_flats_.rend(); ++it) {
+                    if (it->has_flat && it->flat && it->pool &&
+                        it->flat.get() != ev.workspace_flat_ &&
+                        it->flat_generation == ev.workspace_flat_->generation() &&
+                        it->flat_size == ev.workspace_flat_->size() &&
+                        // The pool is append-only: the captured watermark
+                        // must be a PREFIX of the live pool (C1's SymIds
+                        // stay valid under any later mint — observed in the
+                        // #4598 loop: the restore tail re-mints a few body
+                        // syms, so equality never holds post-restore).
+                        it->pool_size <= ev.workspace_pool_->data_size()) {
+                        share_src = &*it;
+                        break;
+                    }
                 }
-            } catch (...) {
-                // [SILENCE-PRIM-#615] OOM during deep copy — store the
-                // source anyway so the snapshot at least exists for
-                // diff / fallback restore.
-                fs.has_flat = false;
             }
+            if (share_src) {
+                fs.flat = share_src->flat;
+                fs.pool = share_src->pool;
+                fs.has_flat = true;
+                fs.flat_generation = share_src->flat_generation;
+                fs.flat_size = share_src->flat_size;
+                fs.cow_epoch = share_src->cow_epoch;
+                fs.pool_size = share_src->pool_size;
+                fs.stamps = share_src->stamps;
+                ++ev.ast_snapshot_share_hits_total_;
+            } else {
+                ++ev.ast_snapshot_share_misses_total_;
+                // Issue #261: reclaim unreachable NodeId slots before the
+                // deep copy so long-running sessions don't amplify dead
+                // slots into every snapshot.
+                ev.workspace_flat_->recycle_dead_nodes();
+
+                try {
+                    fs.flat = std::make_shared<aura::ast::FlatAST>();
+                    fs.pool = std::make_shared<aura::ast::StringPool>();
+                    *fs.flat = *ev.workspace_flat_;
+                    *fs.pool = *ev.workspace_pool_;
+                    fs.has_flat = true;
+                    fs.flat_generation = ev.workspace_flat_->generation();
+                    fs.flat_size = ev.workspace_flat_->size();
+                    // Issue #4598 phase 3: capture the per-define change
+                    // stamps from the LIVE flat before anything else can
+                    // bump the cells (the wholesale copy does not mirror
+                    // subtree_gen_, and the restore diff needs the
+                    // pre-capture values to be sound).
+                    fs.stamps = collect_define_stamps(*ev.workspace_flat_, *ev.workspace_pool_);
+                    if (ev.workspace_tree_) {
+                        auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
+                        if (auto* node = wt->active())
+                            fs.cow_epoch = node->cow_epoch;
+                    }
+                } catch (...) {
+                    // [SILENCE-PRIM-#615] OOM during deep copy — store the
+                    // source anyway so the snapshot at least exists for
+                    // diff / fallback restore.
+                    fs.has_flat = false;
+                    fs.stamps.reset();
+                }
+            }
+            if (ev.workspace_pool_)
+                fs.pool_size = ev.workspace_pool_->data_size();
 
             auto id = ev.snapshot_sources_.size();
             ev.snapshot_sources_.push_back(source);
@@ -659,12 +778,30 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                     // owners of those names plus called_by (#4349 / #4360).
                     // Production and a large replace keep mark-all + pre-cache
                     // so #4577 bundle-erase and the IR warm still run.
+                    // Issue #4598 phase 3: stamp-based diff. The live
+                    // side is captured pre-assign as (name → root, gen16)
+                    // with NO unparse; the snapshot side comes from the
+                    // stamps captured at ast:snapshot. A define whose
+                    // subtree_gen_ cell still equals its stamp is unchanged
+                    // — one integer compare instead of a full unparse.
+                    // mark_dirty_upward's note_subtree_content_write keeps
+                    // the cells sound for every guard-window content change.
+                    const auto& snap_entry = ev.snapshot_flats_[id];
+                    const std::shared_ptr<FlatSnapshotDefineStamps> stamps = snap_entry.stamps;
+                    const bool have_stamps = stamps && !stamps->by_name.empty();
+                    std::unordered_map<std::string, std::pair<aura::ast::NodeId, std::uint16_t>>
+                        live_stamp_defs;
                     std::unordered_map<std::string, std::string> live_defs;
-                    if (ev.workspace_flat_ && ev.workspace_pool_)
-                        live_defs = collect_reachable_define_sources(*ev.workspace_flat_,
-                                                                     *ev.workspace_pool_);
-                    *ev.workspace_flat_ = *ev.snapshot_flats_[id].flat;
-                    *ev.workspace_pool_ = *ev.snapshot_flats_[id].pool;
+                    if (ev.workspace_flat_ && ev.workspace_pool_) {
+                        if (have_stamps)
+                            live_stamp_defs = collect_define_change_stamps(*ev.workspace_flat_,
+                                                                           *ev.workspace_pool_);
+                        else
+                            live_defs = collect_reachable_define_sources(*ev.workspace_flat_,
+                                                                         *ev.workspace_pool_);
+                    }
+                    *ev.workspace_flat_ = *snap_entry.flat;
+                    *ev.workspace_pool_ = *snap_entry.pool;
                     // Issue #261: recycle any slots that became
                     // unreachable across restore iterations.
                     ev.workspace_flat_->recycle_dead_nodes();
@@ -679,20 +816,61 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                     std::vector<std::string> changed;
                     std::vector<std::string> added;
                     std::vector<std::string> removed;
-                    const auto snap_defs =
-                        collect_reachable_define_sources(*ev.workspace_flat_, *ev.workspace_pool_);
+                    std::unordered_map<std::string, std::string> snap_defs;
+                    if (!have_stamps)
+                        snap_defs =
+                            collect_reachable_define_sources(*snap_entry.flat, *snap_entry.pool);
                     changed.reserve(4);
-                    for (const auto& [nm, src] : snap_defs) {
-                        auto it = live_defs.find(nm);
-                        if (it == live_defs.end())
-                            added.push_back(nm);
-                        else if (it->second != src)
-                            changed.push_back(nm);
+                    if (have_stamps) {
+                        for (const auto& [nm, st] : stamps->by_name) {
+                            auto it = live_stamp_defs.find(nm);
+                            if (it == live_stamp_defs.end())
+                                added.push_back(nm);
+                            else if (it->second.second != st.gen16)
+                                changed.push_back(nm);
+                        }
+                        for (const auto& [nm, _] : live_stamp_defs) {
+                            if (!stamps->by_name.contains(nm))
+                                removed.push_back(nm);
+                        }
+                    } else {
+                        for (const auto& [nm, src] : snap_defs) {
+                            auto it = live_defs.find(nm);
+                            if (it == live_defs.end())
+                                added.push_back(nm);
+                            else if (it->second != src)
+                                changed.push_back(nm);
+                        }
+                        for (const auto& [nm, _] : live_defs) {
+                            if (!snap_defs.contains(nm))
+                                removed.push_back(nm);
+                        }
                     }
-                    for (const auto& [nm, _] : live_defs) {
-                        if (!snap_defs.contains(nm))
-                            removed.push_back(nm);
-                    }
+                    // Issue #4598 phase 3: stamp-mode source lookup — lazily
+                    // unparse a define ONCE from the frozen capture (node ids
+                    // align with the stamp roots), memoized on the shared
+                    // stamps so repeated restores of the same id pay once.
+                    auto snap_source_of = [&](const std::string& nm) -> const std::string* {
+                        if (!have_stamps) {
+                            auto it = snap_defs.find(nm);
+                            return it == snap_defs.end() ? nullptr : &it->second;
+                        }
+                        auto it = stamps->by_name.find(nm);
+                        if (it == stamps->by_name.end())
+                            return nullptr;
+                        auto& st = it->second;
+                        if (!st.has_source) {
+                            if (st.root != aura::ast::NULL_NODE &&
+                                st.root < snap_entry.flat->size() &&
+                                !snap_entry.flat->is_free_slot(st.root)) {
+                                st.source = aura::ast::unparse_to_string(*snap_entry.flat,
+                                                                         *snap_entry.pool, st.root);
+                                ++ev.ast_restore_stamp_unparse_total_;
+                            }
+                            st.has_source = true;
+                        }
+                        return &st.source;
+                    };
                     constexpr std::size_t kRestoreDiffCap = 48;
                     const std::size_t diff_n = changed.size() + added.size() + removed.size();
                     const bool small_diff =
@@ -701,9 +879,11 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                     if (ev.update_function_source_fn_) {
                         if (small_diff) {
                             auto publish = [&](const std::string& nm) {
-                                auto it = snap_defs.find(nm);
-                                if (it != snap_defs.end() && !it->second.empty())
-                                    ev.update_function_source_fn_(nm, it->second);
+                                const std::string* src = snap_source_of(nm);
+                                if (src && !src->empty()) {
+                                    ev.update_function_source_fn_(nm, *src);
+                                    ++ev.ast_restore_stamp_republish_total_;
+                                }
                             };
                             for (const auto& nm : changed)
                                 publish(nm);
@@ -713,9 +893,19 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                             for (const auto& nm : removed)
                                 ev.update_function_source_fn_(nm, "");
                         } else {
-                            for (const auto& [nm, src] : snap_defs) {
-                                if (!src.empty())
-                                    ev.update_function_source_fn_(nm, src);
+                            if (have_stamps) {
+                                for (const auto& [nm, _] : stamps->by_name) {
+                                    const std::string* src = snap_source_of(nm);
+                                    if (src && !src->empty()) {
+                                        ev.update_function_source_fn_(nm, *src);
+                                        ++ev.ast_restore_stamp_republish_total_;
+                                    }
+                                }
+                            } else {
+                                for (const auto& [nm, src] : snap_defs) {
+                                    if (!src.empty())
+                                        ev.update_function_source_fn_(nm, src);
+                                }
                             }
                         }
                     }
@@ -775,6 +965,32 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             }
         }
         if (did_direct) {
+            // Issue #4598 phase 3: re-stamp the identity of every snapshot
+            // entry sharing THIS frozen copy. The restore assign mirrors the
+            // capture generation, but boundary-exit machinery may advance
+            // the live generation afterwards (e.g. the entry stamped gen 0
+            // on a never-bumped fresh flat); the live content is
+            // bit-identical to the copy the moment the direct assign lands,
+            // so tracking the post-restore generation keeps the share probe
+            // exact for the rebind → restore → snapshot loop. Object identity
+            // scopes the restamp — only entries sharing this copy (identical
+            // content by construction); any later mutation bumps the live
+            // generation and breaks the match (miss → fresh capture).
+            if (ev.workspace_flat_ && id < ev.snapshot_flats_.size() &&
+                ev.snapshot_flats_[id].flat) {
+                const auto* restored = ev.snapshot_flats_[id].flat.get();
+                const auto post_gen = ev.workspace_flat_->generation();
+                const auto post_size = ev.workspace_flat_->size();
+                const auto post_pool =
+                    ev.workspace_pool_ ? ev.workspace_pool_->data_size() : std::size_t{0};
+                for (auto& s : ev.snapshot_flats_) {
+                    if (s.has_flat && s.flat.get() == restored) {
+                        s.flat_generation = post_gen;
+                        s.flat_size = post_size;
+                        s.pool_size = post_pool;
+                    }
+                }
+            }
             // Issue #2920: restamp text cache *after* Guard exit (exit may
             // invalidate on log growth). Snapshot source is workspace unparse
             // at snapshot time (#2918).

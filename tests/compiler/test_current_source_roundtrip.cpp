@@ -109,6 +109,15 @@ static std::string aura_escape(std::string_view src) {
     return out;
 }
 
+// Issue #4598 phase 3: read a key from query:workspace-snapshot-stats.
+static std::int64_t snap_stat(CompilerService& cs, std::string_view key) {
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:workspace-snapshot-stats\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
 static bool set_code(CompilerService& cs, std::string_view src) {
     // Escape for embedding in Aura string literal.
     std::string escaped;
@@ -838,6 +847,81 @@ static void ac4598_transitive_rebind_and_restore() {
     CHECK(leaf2 && is_int(*leaf2) && as_int(*leaf2) == 1, "4598: leaf restored");
     auto filler3 = cs.eval("(g4598 1)");
     CHECK(filler3 && is_int(*filler3) && as_int(*filler3) == 3, "4598: filler after restore");
+}
+
+// Issue #4598 phase 3: ast:snapshot shares the prior frozen copy when the
+// live workspace is provably bit-identical (same generation / size / pool
+// mint watermark — the rebind→restore loop lands exactly there), and
+// ast:restore diffs per-define subtree_gen stamps so a one-define restore
+// republishes only the dirty cone instead of unparsing every define.
+// 40 fillers make O(workspace) visible: the stamp path must stay far
+// below it (a full diff would unparse ~42 defines).
+static void ac4598_phase3_snapshot_share_and_stamp_restore() {
+    std::println("\n--- #4598 phase 3: snapshot share + stamp restore ---");
+    CompilerService cs;
+    std::string src = "(define (b4598) 1)\n(define (u4598) (+ (b4598) 1))\n";
+    for (int i = 0; i < 40; ++i)
+        src += std::format("(define (w4598f{} x) (+ x {}))\n", i, i);
+    CHECK(set_code(cs, src), "4598p3: set-code workspace");
+    CHECK(cs.eval("(eval-current)").has_value(), "4598p3: eval-current binds");
+    auto sid1 = cs.eval("(ast:snapshot \"4598p3-a\")");
+    CHECK(sid1 && is_int(*sid1) && as_int(*sid1) >= 0, "4598p3: snapshot id");
+    CHECK(snap_stat(cs, "ast-snapshot-share-misses") >= 1,
+          "4598p3: first snapshot takes the deep path");
+    CHECK(cs.eval("(mutate:rebind \"b4598\" \"(lambda () 41)\" \"4598p3\")").has_value(),
+          "4598p3: rebind");
+    CHECK(cs.eval("(eval-current)").has_value(), "4598p3: eval-current after rebind");
+    auto st1 = cs.eval(std::format("(ast:restore {})", as_int(*sid1)));
+    CHECK(st1 && is_bool(*st1) && as_bool(*st1), "4598p3: restore");
+    std::println("4598p3 diag: gen-after-restore={} hits={}", snap_stat(cs, "gen-age"),
+                 snap_stat(cs, "ast-snapshot-share-hits"));
+    // Live content is back at the snapshot → the next snapshot SHARES the
+    // frozen copy (O(1)) instead of deep-copying ~42 defines again.
+    const auto hits_before = snap_stat(cs, "ast-snapshot-share-hits");
+    auto sid2 = cs.eval("(ast:snapshot \"4598p3-b\")");
+    CHECK(sid2 && is_int(*sid2) && as_int(*sid2) >= 0, "4598p3: second snapshot id");
+    std::println("4598p3 diag: gen-after-snap2={} hits={} misses={}", snap_stat(cs, "gen-age"),
+                 snap_stat(cs, "ast-snapshot-share-hits"),
+                 snap_stat(cs, "ast-snapshot-share-misses"));
+    CHECK(snap_stat(cs, "ast-snapshot-share-hits") == hits_before + 1,
+          "4598p3 AC11: post-restore snapshot shares the frozen copy");
+    // One-define restore: the stamp diff republishes the dirty cone only.
+    CHECK(cs.eval("(mutate:rebind \"b4598\" \"(lambda () 7)\" \"4598p3\")").has_value(),
+          "4598p3: second rebind");
+    CHECK(cs.eval("(eval-current)").has_value(), "4598p3: eval-current after second rebind");
+    const auto unp_before = snap_stat(cs, "ast-restore-stamp-unparse");
+    const auto rep_before = snap_stat(cs, "ast-restore-stamp-republish");
+    CHECK(cs.eval(std::format("(ast:restore {})", as_int(*sid2))).has_value(),
+          "4598p3 AC12: restore");
+    const auto unp_after = snap_stat(cs, "ast-restore-stamp-unparse");
+    const auto rep_after = snap_stat(cs, "ast-restore-stamp-republish");
+    CHECK(unp_after - unp_before <= 5,
+          "4598p3 AC12: one-define restore unparses O(dirty cone), not O(workspace)");
+    CHECK(rep_after - rep_before >= 1, "4598p3 AC12: changed define republished from stamp");
+    CHECK(cs.eval("(eval-current)").has_value(), "4598p3: eval-current after AC12 restore");
+    auto healed = cs.eval("(b4598)");
+    CHECK(healed && is_int(*healed) && as_int(*healed) == 1, "4598p3 AC12: define restored");
+    auto dep = cs.eval("(u4598)");
+    CHECK(dep && is_int(*dep) && as_int(*dep) == 2, "4598p3 AC12: caller restored");
+    auto filler = cs.eval("(w4598f7 1)");
+    CHECK(filler && is_int(*filler) && as_int(*filler) == 8, "4598p3 AC12: filler untouched");
+    // Share exactness: a snapshot over a CHANGED workspace must not share a
+    // stale copy — the miss path captures fresh, and restoring it keeps the
+    // changed content (a stale share would resurrect the old value).
+    CHECK(cs.eval("(mutate:rebind \"b4598\" \"(lambda () 99)\" \"4598p3\")").has_value(),
+          "4598p3: third rebind");
+    CHECK(cs.eval("(eval-current)").has_value(), "4598p3: eval-current after third rebind");
+    const auto hits_mid = snap_stat(cs, "ast-snapshot-share-hits");
+    auto sid3 = cs.eval("(ast:snapshot \"4598p3-c\")");
+    CHECK(sid3 && is_int(*sid3) && as_int(*sid3) >= 0, "4598p3: third snapshot id");
+    CHECK(snap_stat(cs, "ast-snapshot-share-hits") == hits_mid,
+          "4598p3 AC13: changed-workspace snapshot does not share a stale copy");
+    CHECK(cs.eval(std::format("(ast:restore {})", as_int(*sid3))).has_value(),
+          "4598p3 AC13: restore of fresh capture");
+    CHECK(cs.eval("(eval-current)").has_value(), "4598p3: eval-current after AC13 restore");
+    auto kept = cs.eval("(b4598)");
+    CHECK(kept && is_int(*kept) && as_int(*kept) == 99,
+          "4598p3 AC13: restored value is the captured change (no stale share)");
 }
 
 // Issue #4357: set-code pre-cache unparses defines into function_sources_
@@ -1702,6 +1786,7 @@ int run_test_current_source_roundtrip() {
     ac4349_restore_over_rebind();
     ac4349_snapshot_keeps_caller();
     ac4598_transitive_rebind_and_restore();
+    ac4598_phase3_snapshot_share_and_stamp_restore();
     ac4357_workspace_bools();
     ac4475_workspace_floats();
     run_4450_runtime_mint_ids();

@@ -1309,9 +1309,9 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             if (!ev)
                 return make_void();
             auto* ws = ev->workspace_flat();
-            // Issue #2966: capacity 32 so schema-2966 + fail-reason keys fit
+            // Issue #2966: capacity 36 so schema-2966 + fail-reason + #4598 share/stamp keys fit
             // with existing workspace-snapshot counters (was 16 → silent drop).
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(26));
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(30));
             if (!ht)
                 return make_void();
             bool overflowed = false;
@@ -1379,6 +1379,15 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("ast-snapshot-ok-total",
                       static_cast<std::int64_t>(ev->ast_snapshot_ok_total()));
             insert_kv("ast-snapshot-fail-wired", 1);
+            // Issue #4598 phase 3: snapshot share + restore stamp counters.
+            insert_kv("ast-snapshot-share-hits",
+                      static_cast<std::int64_t>(ev->ast_snapshot_share_hits_total()));
+            insert_kv("ast-snapshot-share-misses",
+                      static_cast<std::int64_t>(ev->ast_snapshot_share_misses_total()));
+            insert_kv("ast-restore-stamp-republish",
+                      static_cast<std::int64_t>(ev->ast_restore_stamp_republish_total()));
+            insert_kv("ast-restore-stamp-unparse",
+                      static_cast<std::int64_t>(ev->ast_restore_stamp_unparse_total()));
             insert_kv("schema-2966", 2966);
             insert_kv("issue-2966", 2966);
             return query_hash_finish(ht, string_heap, overflowed);

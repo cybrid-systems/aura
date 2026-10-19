@@ -264,6 +264,32 @@ int run_test_summary_recompute_sym() {
         CHECK(flat.summary_has(SummaryFlag::HasMacroDef), "AC10: MacroDef birth sets bit");
     }
 
+    {
+        // ── Issue #4598 phase 3: per-define content-write attribution ──
+        std::println("\n--- #4598 AC11: note_subtree_content_write bumps owning define cell ---");
+        StringPool pool;
+        FlatAST flat;
+        const auto fb = flat.add_variable(pool.intern("1"));
+        const auto def_f = flat.add_define(pool.intern("f4598"), fb);
+        const auto gb = flat.add_variable(pool.intern("2"));
+        const auto def_g = flat.add_define(pool.intern("g4598"), gb);
+        (void)def_g;
+        (void)gb;
+        const auto g0 = flat.load_subtree_gen(def_f);
+        const auto gg = flat.load_subtree_gen(def_g);
+        // A dirty mark inside f's subtree attributes to f's define cell only
+        // — the soundness anchor for the ast:restore stamp diff.
+        flat.mark_dirty_upward(fb, FlatAST::kGeneralDirty);
+        CHECK(flat.load_subtree_gen(def_f) == static_cast<std::uint16_t>(g0 + 1),
+              "AC11: dirty mark bumps owning define cell");
+        CHECK(flat.load_subtree_gen(def_g) == gg, "AC11: sibling define cell untouched");
+        // A node with no enclosing Define is a no-op (parse/wholesale face).
+        const auto loose = flat.add_variable(pool.intern("3"));
+        flat.mark_dirty_upward(loose, FlatAST::kGeneralDirty);
+        CHECK(flat.load_subtree_gen(def_f) == static_cast<std::uint16_t>(g0 + 1),
+              "AC11: unparented node bumps no define cell");
+    }
+
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

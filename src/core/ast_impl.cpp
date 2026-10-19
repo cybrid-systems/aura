@@ -1195,6 +1195,36 @@ void FlatAST::restamp_node_generation(NodeId id) noexcept {
     node_gen_[id] = generation_;
 }
 
+// --- FlatAST::note_subtree_content_write ---
+// Issue #4598 phase 3: light per-define change attribution. Mirrors the
+// cell-advance half of bump_generation_subtree without its global
+// generation_ bump or subtree node_gen_ restamp (both O(subtree) — too
+// hot per dirty mark). The restore stamp diff reads these cells.
+void FlatAST::note_subtree_content_write(NodeId node) noexcept {
+    if (node == NULL_NODE || node >= size())
+        return;
+    const auto top = top_define_of(node);
+    if (top == NULL_NODE)
+        return; // no enclosing Define — parse/wholesale surface, stamps rebuild
+    // Issue #2422: exclusive for resize + atomic store of the gen cell
+    // (same discipline as bump_generation_subtree — a lock-free store
+    // racing a vector resize could write through a stale buffer and LOSE
+    // a bump, which for stamps is a correctness hazard, not a perf one).
+    {
+        std::unique_lock<std::shared_mutex> wlock(subtree_gen_mtx_.mutable_get());
+        if (subtree_gen_.size() < size())
+            subtree_gen_.resize(size(), 0);
+        auto word =
+            std::atomic_ref<std::uint32_t>(subtree_gen_[top]).load(std::memory_order_relaxed);
+        auto sg = static_cast<std::uint16_t>(word & 0xFFFFu);
+        ++sg;
+        if (sg == 0)
+            sg = 1;
+        std::atomic_ref<std::uint32_t>(subtree_gen_[top])
+            .store(static_cast<std::uint32_t>(sg), std::memory_order_release);
+    }
+}
+
 // --- FlatAST::bump_generation ---
 void FlatAST::bump_generation() noexcept {
     if (bump_generation_suppressed_) {
@@ -1310,6 +1340,12 @@ void FlatAST::mark_dirty_upward(const NodeId id, std::uint8_t reasons, std::uint
     // the key metric for whether the std::meta refactor is
     // worth it.
     mark_dirty_upward_call_count_.fetch_add(1, std::memory_order_relaxed);
+    // Issue #4598 phase 3: attribute the write to its enclosing top-level
+    // Define so ast:snapshot define stamps (subtree_gen_ cells) detect
+    // define-scoped change. Light cell bump — no global generation_ bump,
+    // no restamp. Every guard-window content change marks dirty, so this
+    // is the soundness anchor for the restore stamp diff.
+    note_subtree_content_write(id);
 
     // Issue #2904 AC1: default = columnar fixed-point cascade.
     // Full tree BFS only behind AURA_DIRTY_LEGACY_TREE_WALK=1.
