@@ -3214,7 +3214,10 @@ int main(int argc, char* argv[]) {
                 // stderr into the compared output — the banner on cerr fails
                 // every text comparison in tests/run-tests.sh (281 cases).
                 // Interactive faces keep the note; pipes stay clean.
-                ::isatty(::fileno(stderr)))
+                // AURA_FORCE_HATCH=1 opts a piped harness back in (the plain-off
+                // "warning once" AC pins the once-semantics; default under
+                // pipes stays silent for the text-compare contracts).
+                (::isatty(::fileno(stderr)) || std::getenv("AURA_FORCE_HATCH") != nullptr))
                 std::println(std::cerr, "aura: sandbox=off (dev escape hatch)");
         }
     }
