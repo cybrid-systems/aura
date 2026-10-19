@@ -2101,6 +2101,16 @@ public:
         // mishandling the tree_walker_only set exists for (verified
         // 2026-10-06: exempting membership broke module_query ×3 and
         // occurrence_coercion ×2).
+        // Forbidden is the fail-closed production face: it vetoes even the
+        // #2213 registered-prim-root walker take — test_tree_walker_fallback_strict
+        // AC1 pins Forbidden + set-code → HardError. The consult-layer restore
+        // (9198f5070) ordered this branch before the policy switch, so under
+        // Forbidden a registered-prim root silently walked. Check the face first.
+        if (production_pipeline_strict()) {
+            metrics_.tree_walker_fallback_total.fetch_add(1, std::memory_order_relaxed);
+            metrics_.tree_walker_fallback_forbidden_total.fetch_add(1, std::memory_order_relaxed);
+            return TreeWalkerFallbackDisposition::HardError;
+        }
         if (root != aura::ast::NULL_NODE && root < flat.size()) {
             const auto rv = flat.get(root);
             if (rv.tag == aura::ast::NodeTag::Call && !rv.children.empty()) {
