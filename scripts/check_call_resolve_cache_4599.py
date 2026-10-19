@@ -196,7 +196,15 @@ def main() -> int:
     )
     must(
         "if (const auto tv = top_.local_symid_last(sym))" in store
-        and "!bound || is_primitive(*tv) || !(*tv == *bound)" in store,
+        and (
+            "!bound || is_primitive(*tv) || !(*tv == *bound)" in store
+            # Issue #4599 phase 3: deref-aware agreement — the SymId side may
+            # hold the raw closure while the string probe answers the cell.
+            or (
+                "bool agrees = bound.has_value() && !is_primitive(*tv) && *tv == *bound;" in store
+                and "cells_[ci] == *tv" in store
+            )
+        ),
         "AC5: top SymId hits must agree with the string probe's value",
     )
     must("if (e.kind == NameResEntry::Kind::PrimCall)" in store, "AC5: PrimCall entries keep winning")
@@ -245,6 +253,46 @@ def main() -> int:
         not (ROOT / "tests" / "core" / "test_issue_4599.cpp").exists()
         and not (ROOT / "docs" / "design" / "4599-perf-call-resolve.md").exists(),
         "AC7: no test_issue_4599.cpp, no docs/design/4599-* (per #1655)",
+    )
+
+    # ── AC9: phase 3 — same-pool SymId chain read (Variable fast path) ──
+    must(
+        "auto chain_read_var = [&](const Env& start," in efl,
+        "AC9: member chain-read lambda exists (raw parent_ + SoA hops)",
+    )
+    must(
+        "env_frame_shard_mu(env_frame_shard_index(cur))" in efl and "pfr.bindings_symid_.rbegin()" in efl,
+        "AC9: SoA hops take the per-frame shard lock and reverse-scan the SymId array",
+    )
+    must(
+        "pfr.pool_ == p" in efl and "pfr.bindings_.size() != pfr.bindings_symid_.size()" in efl,
+        "AC9: SoA hops are same-pool + mirror-length guarded (decline on divergence)",
+    )
+    must("if (cur == static_cast<EnvId>(0))" in efl, "AC9: root frame declines — live top_ stays on the string walk")
+    varfast = _between(efl, "host-thread same-pool fast read", "std::string_view name = p->resolve(v.sym_id);")
+    must(
+        bool(varfast)
+        and "g_current_fiber == nullptr" in varfast
+        and "eval_env.pool() == p" in varfast
+        and "binding_mirrors_aligned()" in varfast,
+        "AC9: fast read is host-only, same-pool, mirror-aligned",
+    )
+    must("is_void(cells_[ci])" in varfast, "AC9: live cells deref through the walk; void cells fall to the named path")
+
+    # ── AC10: phase 3 — deref-aware store agreement (define-bound callees) ──
+    rrv = _between(efl, "void Evaluator::remember_resolved_var", "void Evaluator::remember_prim_call")
+    must(
+        "cells_[ci] == *topv" in rrv and "(void)note_cell(bound);" in rrv,
+        "AC10: Cell store compares the re-def cell's content (closure-on-SymId-side face)",
+    )
+    cnp = _between(efl, "void Evaluator::remember_call_no_prim", "void Evaluator::remember_short_circuit")
+    must(
+        "cells_[ci] == *tv" in cnp and "!is_primitive(*tv)" in cnp,
+        "AC10: CallNoPrim store deref-aware; prims still refused",
+    )
+    must(
+        "stringpool_intern_concurrent_readers_total" in tst and "4599 AC6:" in tst,
+        "AC10: runtime ACs cover the walk (free var, set!-cell, re-define, keyword, unbound, shadow)",
     )
 
     # ── AC8: wiring ─────────────────────────────────────────────────

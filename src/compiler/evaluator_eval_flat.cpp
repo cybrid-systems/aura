@@ -5428,8 +5428,19 @@ void Evaluator::remember_resolved_var(aura::ast::NodeId id, aura::ast::SymId sym
         }
     }
     if (const auto topv = top_.local_symid_last(sym)) {
-        if (*topv == bound) {
-            (void)note_cell(*topv);
+        // Issue #4599 phase 3: define-bound functions store the raw closure
+        // on top_'s SymId side while the string side (and Env::lookup's
+        // answer) holds the re-def cell. Compare the cell's content before
+        // refusing, so the per-node Cell cache forms for top-defined
+        // callees too; the cell indirection keeps re-defines visible.
+        bool agrees = *topv == bound;
+        if (!agrees && is_cell(bound)) {
+            const auto ci = as_cell_id(bound);
+            if (ci < cells_.size() && cells_[ci] == *topv)
+                agrees = true;
+        }
+        if (agrees) {
+            (void)note_cell(bound);
             return;
         }
     }
@@ -5502,7 +5513,16 @@ void Evaluator::remember_call_no_prim(aura::ast::NodeId id, aura::ast::SymId sym
     // binding. A prim-valued hit means the prelude took the prim branch
     // — never reaches the store anyway.
     if (const auto tv = top_.local_symid_last(sym)) {
-        if (!bound || is_primitive(*tv) || !(*tv == *bound))
+        // Issue #4599 phase 3: deref-aware agreement (see
+        // remember_resolved_var) — a define-bound function's SymId side
+        // holds the raw closure while the string probe answers the cell.
+        bool agrees = bound.has_value() && !is_primitive(*tv) && *tv == *bound;
+        if (!agrees && bound && is_cell(*bound)) {
+            const auto ci = as_cell_id(*bound);
+            if (ci < cells_.size() && cells_[ci] == *tv)
+                agrees = true;
+        }
+        if (!agrees)
             return;
     }
     const auto uid = static_cast<std::uint32_t>(id);
@@ -5871,6 +5891,68 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
             TwFrameReg(const TwFrameReg&) = delete;
         } tw_frame_reg(&current_env, &tail_env, &tco_pinned);
 
+        // Issue #4599 phase 3: same-pool SymId chain read for a Variable
+        // visit — integer compares instead of the pool resolve, per-frame
+        // interns, and string-keyed index probes of Env::lookup. Raw
+        // parent_ hops first, then the SoA parent_id_ walk (per-hop shard
+        // lock, same-pool frames only, reverse scan — shadowing parity).
+        // Every hop re-checks pool identity + mirror alignment and the walk
+        // DECLINES (nullopt) at a root frame: live top_ bindings are
+        // cross-pool by contract, so those answers stay on the string walk.
+        // A decline is "not answered", never "unbound" — the caller falls
+        // back to the exact resolve + Env::lookup path. set!s and new
+        // shadowing binds are honored live (per-visit walk).
+        auto chain_read_var = [&](const Env& start,
+                                  aura::ast::SymId sym) -> std::optional<types::EvalValue> {
+            constexpr std::size_t kMaxChainHops = 1024; // Env::lookup MAX_ENV_DEPTH parity
+            const Env* e = &start;
+            for (std::size_t hops = 0; e != nullptr && hops < kMaxChainHops; ++hops) {
+                if (e->pool() != p || !e->binding_mirrors_aligned())
+                    return std::nullopt;
+                if (auto loc = e->local_symid_last(sym))
+                    return loc;
+                if (const Env* nxt = e->parent()) {
+                    e = nxt;
+                    continue;
+                }
+                break;
+            }
+            // SoA parent_id_ walk (Env::lookup 2b's SymId arm). Same pool
+            // per frame; a frame whose string/symid array lengths diverge
+            // is declined (the string side could hold shadowing names this
+            // walk cannot see). Root frame 0 consults live top_ by NAME —
+            // decline there (cross-pool SymIds).
+            if (start.parent_id() == NULL_ENV_ID)
+                return std::nullopt;
+            EnvId cur = start.parent_id();
+            for (std::size_t hops = 0; cur != NULL_ENV_ID && hops < kMaxChainHops; ++hops) {
+                std::shared_lock<std::shared_mutex> hop_rlock(
+                    env_frame_shard_mu(env_frame_shard_index(cur)));
+                if (static_cast<std::size_t>(cur) >= env_frames_size())
+                    return std::nullopt;
+                const EnvFrame& pfr = env_frame(cur);
+                if (!pfr.bindings_.empty() && pfr.bindings_.size() != pfr.bindings_symid_.size())
+                    return std::nullopt;
+                if (pfr.pool_ == p && !pfr.bindings_symid_.empty()) {
+                    for (auto it = pfr.bindings_symid_.rbegin(); it != pfr.bindings_symid_.rend();
+                         ++it) {
+                        if (it->first == sym) {
+                            if (is_cell(it->second)) {
+                                const auto ci = as_cell_id(it->second);
+                                if (ci < cells_.size())
+                                    return cells_[ci];
+                            }
+                            return it->second;
+                        }
+                    }
+                }
+                if (cur == static_cast<EnvId>(0))
+                    return std::nullopt;
+                cur = pfr.parent_id;
+            }
+            return std::nullopt;
+        };
+
         while (true) {
             EVAL_FLAT_HOLD_BUDGET_POLL();
             // Issue #4459: between opcodes, after the poll. Nested bodies
@@ -5988,6 +6070,34 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     return val;
                 }
                 case aura::ast::NodeTag::Variable: {
+                    // Issue #4599 phase 3: host-thread same-pool fast read.
+                    // A chain hit answers without the pool resolve, the
+                    // per-frame interns, and the string-keyed index probes
+                    // of Env::lookup. A hit through a live (non-void) cell
+                    // is exact (same value the string walk reads); a void
+                    // cell needs the name for the prim-reexport face, so it
+                    // falls through. Keyword faces are unreachable here:
+                    // the walk consults only frame bindings, and the keyword
+                    // intern path below still owns every ':'-leading name
+                    // the chain missed.
+                    if (aura::serve::g_current_fiber == nullptr &&
+                        v.sym_id != aura::ast::INVALID_SYM && eval_env.pool() == p &&
+                        eval_env.binding_mirrors_aligned()) {
+                        auto cval = chain_read_var(eval_env, v.sym_id);
+                        if (cval) {
+                            if (!is_cell(*cval)) {
+                                remember_resolved_var(current_id, v.sym_id, eval_env, *cval);
+                                return EvalResult(*cval);
+                            }
+                            const auto ci = as_cell_id(*cval);
+                            if (ci < cells_.size() && !is_void(cells_[ci])) {
+                                remember_resolved_var(current_id, v.sym_id, eval_env, *cval);
+                                return EvalResult(cells_[ci]);
+                            }
+                            // void cell / OOB: the prim-reexport decision
+                            // needs the name — take the full slow path.
+                        }
+                    }
                     // Issue #3401: keyword O(1) intern. std::string
                     // construction + keyword_table_.push_back happen only
                     // on the first encounter of a unique :foo literal.

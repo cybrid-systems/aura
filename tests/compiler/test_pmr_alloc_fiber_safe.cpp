@@ -1045,6 +1045,59 @@ static void ac4599_call_resolve_cache() {
                                            std::to_string(big) + " ms vs " + std::to_string(small) +
                                            " ms)");
     }
+
+    // AC6: the same-pool SymId chain read (phase 3) must keep the string
+    // walk's exact answers. Every shape here rides the walk on its hot
+    // visits (host, same-pool frames, aligned mirrors) and must still
+    // resolve through cells, re-defined globals, keyword literals, and
+    // unbound-name errors exactly like Env::lookup's string walk.
+    {
+        CompilerService cs;
+        // Free var through the parent frame — the iters shape the walk
+        // serves (integer compares, no pool resolve).
+        auto r1 = cs.eval("(begin (define (f4599w n) (let loop ((i 0))"
+                          "   (if (< i n) (loop (+ i 1)) i)))"
+                          " (f4599w 7) (f4599w 7))");
+        CHECK(r1 && is_int(*r1) && as_int(*r1) == 7,
+              "4599 AC6: free var through the parent frame via the chain walk (7, got " +
+                  (r1 ? std::to_string(as_int(*r1))
+                      : std::string("nullopt: ") + std::string(r1.error().message)) +
+                  ")");
+        // set!-through-cell: the walk reads the cell, the deref stays exact.
+        auto r2 = cs.eval("(begin (define (gs4599b) (let ((r 1))"
+                          "   (let ((bump (lambda () (set! r 2)))) (begin (bump) r))))"
+                          " (gs4599b) (gs4599b))");
+        CHECK(r2 && is_int(*r2) && as_int(*r2) == 2,
+              "4599 AC6: set!-through-cell stays exact through the walk (2, got " +
+                  (r2 ? std::to_string(as_int(*r2)) : std::string("nullopt")) + ")");
+        // A re-defined global stays visible (walk miss → string walk face).
+        auto r3 = cs.eval("(begin (define x4599s 5) (define (sh4599) x4599s))");
+        CHECK(r3.has_value(), "4599 AC6: global read lands");
+        auto r4 = cs.eval("(sh4599)");
+        CHECK(r4 && is_int(*r4) && as_int(*r4) == 5, "4599 AC6: global read via walk/fallback (5)");
+        auto r5 = cs.eval("(define x4599s 9)");
+        CHECK(r5.has_value(), "4599 AC6: re-define lands");
+        auto r6 = cs.eval("(sh4599)");
+        CHECK(r6 && is_int(*r6) && as_int(*r6) == 9,
+              "4599 AC6: re-defined global visible through the chain (9)");
+        // Keyword-named variables still take the keyword intern face.
+        auto r7 = cs.eval("(begin (define (kw4599) :foo4599)"
+                          "   (if (eq? (kw4599) :foo4599) 1 0))");
+        CHECK(r7.has_value() && is_int(*r7) && as_int(*r7) == 1,
+              "4599 AC6: keyword variable keeps the keyword intern identity");
+        // Unbound names still produce the unbound Diagnostic.
+        auto r8 = cs.eval("(begin (define (u4599z) no-such-4599z) (u4599z))");
+        CHECK(!r8.has_value() || is_error(*r8),
+              "4599 AC6: unbound name still errors through the walk");
+        // Deep chain + let shadows between frames: nearest binding wins.
+        auto r9 = cs.eval("(begin (define y4599 1)"
+                          "   (define (d4599) (let ((y4599 2)) (let loop ((i 0))"
+                          "      (if (< i 3) (loop (+ i 1)) y4599))))"
+                          " (d4599) (d4599))");
+        CHECK(r9 && is_int(*r9) && as_int(*r9) == 2,
+              "4599 AC6: let shadow between chain frames wins (2, got " +
+                  (r9 ? std::to_string(as_int(*r9)) : std::string("nullopt")) + ")");
+    }
 }
 
 int run_test_pmr_alloc_fiber_safe() {
