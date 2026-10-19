@@ -130,6 +130,22 @@ export struct LoweringState {
     const std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
                              std::equal_to<>>* value_cells = nullptr;
 
+    // Issue #4607: sink for the unbound-global substitutions the lowering
+    // makes. The Variable case substitutes a name it cannot resolve
+    // (not a local, not a captured free var, not a top-level define
+    // cell, not a cached define, not a primitive, not the self name)
+    // with the constant 0 - the historical "unknown reference"
+    // encoding. The interpreter raises "unbound variable: <name>" for
+    // that reference; the JIT had no such check and dispatched the
+    // fixnum 0 as closure id 0 (wrong closure -> infinite recursion ->
+    // stack overflow -> SIGSEGV, or a silent 0 when no closure was
+    // registered yet). The --jit entry installs this sink so it can
+    // refuse to compile such a program and take the tree walker (the
+    // eval face) instead of compiling a call to a missing closure.
+    // Each entry is (name, source node id); the node id carries the
+    // line/column the interpreter reports.
+    std::vector<std::pair<std::string, ast::NodeId>>* unbound_globals = nullptr;
+
     // Self-reference support: function name and its pre-allocated func_id
     // Used by cached define functions to emit correct MakeClosure for self-recursion.
     // Issue #2292: self_func_id may legitimately be 0 (first function in the
@@ -466,10 +482,12 @@ export struct LoweringState {
 // Calls lower_flat_expr() which walks FlatAST directly.
 // primitives: optional — if provided, variable references to known primitives
 //             resolve to Primitive opcodes instead of ConstI64 0.
-export aura::ir::IRModule lower_to_ir(ast::FlatAST& flat, ast::StringPool& pool,
-                                      ast::ASTArena& arena, const Primitives* primitives = nullptr,
-                                      const aura::core::TypeRegistry* type_reg = nullptr,
-                                      std::uint32_t narrowing_evidence = 0);
+export aura::ir::IRModule
+lower_to_ir(ast::FlatAST& flat, ast::StringPool& pool, ast::ASTArena& arena,
+            const Primitives* primitives = nullptr,
+            const aura::core::TypeRegistry* type_reg = nullptr,
+            std::uint32_t narrowing_evidence = 0,
+            std::vector<std::pair<std::string, ast::NodeId>>* unbound_globals = nullptr);
 
 // Lower with cached define support.
 // When cache is non-null, Call nodes whose callee is a VariableNode
@@ -518,7 +536,8 @@ export aura::diag::LowerResult<aura::ir::IRModule>
 lower_to_ir_result(ast::FlatAST& flat, ast::StringPool& pool, ast::ASTArena& arena,
                    const Primitives* primitives = nullptr,
                    const aura::core::TypeRegistry* type_reg = nullptr,
-                   std::uint32_t narrowing_evidence = 0);
+                   std::uint32_t narrowing_evidence = 0,
+                   std::vector<std::pair<std::string, ast::NodeId>>* unbound_globals = nullptr);
 
 export aura::diag::LowerResult<aura::ir::IRModule> lower_to_ir_with_cache_result(
     ast::FlatAST& flat, ast::StringPool& pool, ast::ASTArena& arena,

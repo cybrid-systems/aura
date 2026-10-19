@@ -1981,6 +1981,84 @@ def test_cfunc_budget_4555():
     print(f"  ✅ test_cfunc_budget_4555 (prim {prim} ms, c-func {cf} ms, str16 {s16} ms, str1m {s1m} ms)")
 
 
+def test_jit_unbound_callee_4607():
+    """Issue #4607: --jit must report an unbound variable exactly like eval.
+
+    An unbound callee used to be compiled as the constant 0 (the
+    lowering's historical "unknown reference" encoding) and the native
+    dispatch then treated 0 as closure id 0: a silent 0 when no closure
+    was registered yet, a wrong live closure (infinite recursion -> stack
+    overflow -> SIGSEGV) or a skipped form. The JIT path now refuses to
+    compile a program with an unresolved name and takes the tree walker
+    (the eval face), so the diagnostic, the source location and the exit
+    status are eval's.
+
+    Rows: an unbound callee in TAIL position (the call is the body of a
+    compiled function), in NON-TAIL position (the call is an argument of
+    another call) and in HIGHER-ORDER position (the unbound name is
+    passed as a value and called through a parameter), plus the issue's
+    two top-level rows. The last row pins the other half of the
+    contract: a reference that is never reached is NOT an error -- eval
+    prints 2 and exits 0, so --jit must not invent one.
+    """
+
+    def run(code, mode, timeout=30):
+        env = os.environ.copy()
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "0"
+        env.pop("AURA_SOFT", None)
+        env.pop("AURA_FORCE_IR", None)
+        cmd = [AURA]
+        if mode == "ir":
+            env["AURA_FORCE_IR"] = "1"
+        elif mode == "jit":
+            cmd.append("--jit")
+        return subprocess.run(cmd, input=code, capture_output=True, text=True, timeout=timeout, env=env)
+
+    rows = [
+        # (label, program, unbound name, stdout must match eval)
+        ("unbound-callee-top-4607", "(display (nope 1))", "nope", True),
+        ("unbound-callee-tail-4607", "(define (f x) (nope x)) (display (f 1))", "nope", True),
+        ("unbound-callee-non-tail-4607", "(define (f x) (+ 1 (nope x))) (display (f 1))", "nope", True),
+        ("unbound-callee-higher-order-4607", "(define (apply1 g x) (g x)) (display (apply1 nope 1))", "nope", True),
+        # The issue's third row: an unknown FORM (define-syntax) is not a
+        # known special form, so the reference is unbound. The failing
+        # form comes first here, and the eval oneshot resumes after a
+        # failing form (main.cpp's file-mode resume machinery) while the
+        # --jit oneshot stops at it -- a pre-existing difference between
+        # the two runners, not an unbound-variable one. The error, its
+        # location and the exit status must still match.
+        ("unbound-form-4607", "(define-syntax m 1) (display 2)", "define-syntax", False),
+        ("unbound-form-single-4607", "(define-syntax m 1)", "define-syntax", True),
+    ]
+    for label, code, name, same_stdout in rows:
+        seen = {}
+        for mode in ("eval", "ir", "jit"):
+            r = run(code, mode)
+            err = r.stderr or ""
+            assert r.returncode != 0, f"{label} {mode}: rc=0, no unbound-variable error (out={r.stdout!r})"
+            assert f"unbound variable: {name}" in err, f"{label} {mode}: err={err[-300:]!r}"
+            m = re.search(r"error: (\d+:\d+): unbound variable: " + re.escape(name), err)
+            assert m, f"{label} {mode}: no 'error: L:C: unbound variable: {name}' in {err[-300:]!r}"
+            seen[mode] = m.group(1)
+        # The same diagnostic as eval -- same message, same source location.
+        assert seen["eval"] == seen["ir"] == seen["jit"], f"{label}: locations {seen}"
+        if same_stdout:
+            # ... and the same stdout (the tree walker is the eval face:
+            # the same forms run, so the same output is produced).
+            ev = run(code, "eval")
+            jit = run(code, "jit")
+            assert jit.stdout == ev.stdout, f"{label}: eval stdout {ev.stdout!r} != jit stdout {jit.stdout!r}"
+    # A reference that is never reached is not an error: eval prints 2 and
+    # exits 0 -- --jit must not invent an error there either.
+    code = "(define (f x) (nope x)) (display 2)"
+    for mode in ("eval", "ir", "jit"):
+        r = run(code, mode)
+        assert r.returncode == 0, f"never-reached {mode}: rc={r.returncode} err={(r.stderr or '')[-300:]!r}"
+        assert (r.stdout or "").strip() == "2", f"never-reached {mode}: out={r.stdout!r}"
+    print(f"  ✅ test_jit_unbound_callee_4607 ({len(rows)} unbound rows x eval/ir/jit + never-reached parity)")
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -1994,6 +2072,7 @@ for tf in [
     test_jit_call_path_4572,
     test_jit_scalar_pairs_4573,
     test_jit_tier_differential_4574,
+    test_jit_unbound_callee_4607,
     test_cfunc_budget_4555,
     test_jit,
     test_mutation_sequences,

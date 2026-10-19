@@ -569,6 +569,22 @@ static std::uint32_t lower_flat_expr(
                 return slot;
             }
             // (value_cells check was moved earlier — see Issue #63723.)
+            // Issue #4607: this name resolved to NOTHING — the scope chain
+            // (local / captured / top-level define cell), the free-var map,
+            // the value cells, the define cache, the primitive table and the
+            // self name were all consulted above. The interpreter raises
+            // "unbound variable: <name>" for such a reference
+            // (evaluator_eval_flat.cpp, Variable case). The JIT had no such
+            // check: it compiled the reference as the constant 0 and then
+            // dispatched 0 as a closure id — closure id 0 was either a live
+            // closure (wrong callee -> infinite recursion -> stack overflow
+            // -> SIGSEGV) or out of range (the bounds-fail echo returned the
+            // 0 silently). Report the substitution so the --jit entry can
+            // refuse to compile the program and take the tree walker
+            // (the eval face) instead of compiling a call to a missing
+            // closure.
+            if (state.unbound_globals)
+                state.unbound_globals->emplace_back(std::string(name), v.id);
             auto slot = state.alloc_local();
             state.emit(IROpcode::ConstI64, slot, 0, 0);
             return slot;
@@ -2164,7 +2180,9 @@ static IRModule lower_to_ir_impl(
     const std::string* self_name = nullptr,
     const std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
                              std::equal_to<>>* value_cells = nullptr,
-    std::uint32_t narrowing_evidence = 0) { // Issue #280
+    std::uint32_t narrowing_evidence = 0,
+    std::vector<std::pair<std::string, aura::ast::NodeId>>* unbound_globals =
+        nullptr) { // Issue #280
     LoweringState state(arena);
     // Issue #684 dual-emit scaffold + #1318 bridge counter.
     // Issue #1377: default OFF — dual-emit paid ~50% memory / 10-30% lower
@@ -2197,6 +2215,12 @@ static IRModule lower_to_ir_impl(
     state.instruction_reserve_hint = flat.size();
     state.value_cells = value_cells;
     state.current_narrowing_evidence = narrowing_evidence;
+    // Issue #4607: the --jit entry installs this sink so it can refuse to
+    // compile a program that references an unbound global (the
+    // interpreter raises "unbound variable: <name>"; the JIT would have
+    // compiled the reference as the constant 0 and dispatched 0 as
+    // closure id 0).
+    state.unbound_globals = unbound_globals;
 
     // Issue #150 Phase 2: automatic region inference pass.
     // Walk the FlatAST before main lowering. For each Define
@@ -2346,16 +2370,19 @@ static IRModule lower_to_ir_impl(
 }
 
 // ── lower_to_ir (FlatAST path) — native, no full-tree reconstruct ──
-IRModule lower_to_ir(FlatAST& flat, StringPool& pool, ASTArena& arena, const Primitives* primitives,
-                     const aura::core::TypeRegistry* type_reg,
-                     std::uint32_t narrowing_evidence) { // Issue #280
+IRModule
+lower_to_ir(FlatAST& flat, StringPool& pool, ASTArena& arena, const Primitives* primitives,
+            const aura::core::TypeRegistry* type_reg, std::uint32_t narrowing_evidence,
+            std::vector<std::pair<std::string, aura::ast::NodeId>>* unbound_globals) { // Issue #280
     // Issue #127: delegate to the Result-returning version.
     // Lowering never reports an error today (it's all
     // fall-through: silently emits a ConstI64 0 for unknown
     // refs), so unwrap() is safe. When the lowering path
     // starts producing diagnostics (e.g., for type-registry
     // lookups), the unwrap becomes a real error channel.
-    return lower_to_ir_result(flat, pool, arena, primitives, type_reg, narrowing_evidence).value();
+    return lower_to_ir_result(flat, pool, arena, primitives, type_reg, narrowing_evidence,
+                              unbound_globals)
+        .value();
 }
 
 // ── lower_to_ir_with_cache ─────────────────────────────────────
@@ -2389,12 +2416,12 @@ IRModule lower_to_ir_with_cache(
 // (e.g., for unknown primitives, type-registry lookups, or
 // invalid IR shapes), this is the channel through which
 // those errors flow to the caller.
-aura::diag::LowerResult<IRModule> lower_to_ir_result(FlatAST& flat, StringPool& pool,
-                                                     ASTArena& arena, const Primitives* primitives,
-                                                     const aura::core::TypeRegistry* type_reg,
-                                                     std::uint32_t narrowing_evidence) { // #280
+aura::diag::LowerResult<IRModule> lower_to_ir_result(
+    FlatAST& flat, StringPool& pool, ASTArena& arena, const Primitives* primitives,
+    const aura::core::TypeRegistry* type_reg, std::uint32_t narrowing_evidence,
+    std::vector<std::pair<std::string, aura::ast::NodeId>>* unbound_globals) { // #280
     return lower_to_ir_impl(flat, pool, arena, nullptr, nullptr, primitives, type_reg, nullptr,
-                            nullptr, nullptr, nullptr, narrowing_evidence);
+                            nullptr, nullptr, nullptr, narrowing_evidence, unbound_globals);
 }
 
 aura::diag::LowerResult<IRModule> lower_to_ir_with_cache_result(
