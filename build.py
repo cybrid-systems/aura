@@ -9936,6 +9936,31 @@ def cmd_lint():
             "run python3 scripts/check_vector_hash_cow_4614.py"
         )
         return r
+    # Issue #4602: under --jit a set-car! on a pair the frame allocated
+    # left the pair at its OLD car, so the next car answered 1 instead
+    # of 9 (--ir / eval answered 9). set-car! is not a JIT opcode and
+    # not a prim_call_map entry -- it reaches the evaluator through the
+    # general call, and the blessed dispatch entry used to echo the raw
+    # RefPrimitive callee word back, so the evaluator primitive never
+    # ran and the write never landed. #4606 refuses that callee word
+    # (leave-native + the #4084 sentinel) and exec_jit re-runs the
+    # restored IR in the interpreter, so the write lands and every mode
+    # agrees. The linter pins that mechanism, the #4057 / #4298 tenant
+    # stamp checks on the write, and the regression guard: the #4602
+    # corpus rows, the re-enabled set-car-escape row of the
+    # scalar-pairs corpus and the pair-mutate template of the
+    # tier-differential corpus.
+    gate4602_script = ROOT / "scripts" / "check_jit_pair_mutation_4602.py"
+    if not gate4602_script.exists():
+        fail(f"missing {gate4602_script}")
+        return 1
+    r = run([sys.executable, str(gate4602_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4602 --jit pair-mutation visibility linter failed — "
+            "run python3 scripts/check_jit_pair_mutation_4602.py"
+        )
+        return r
     # Issue #4474 (third reopen): the fixed kReclaimTriggerCeiling=32768
     # froze the live/32 reclaim window above ~1M live objects, so each
     # O(live) full-heap mark amortized over at most 32768 allocations and
