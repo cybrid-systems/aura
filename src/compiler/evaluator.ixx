@@ -4906,8 +4906,34 @@ public:
     // drift apart; the post-conditions pin every reader/writer to the
     // window.
     static constexpr std::uint32_t kReclaimTriggerFloor = 128;
+    // Issue #4474 (third reopen): a fixed 32768 cap froze the window
+    // above ~1.04M live objects (where live/32 + 128 reaches 32768),
+    // so every O(live) full-heap mark amortized over at most 32768
+    // allocations and the per-allocation cost went back to growing
+    // linearly with the live heap (aura-memory: ~3x alloc overhead at
+    // 3M live cells vs 300k; gdb 25/30 samples in
+    // maybe_reclaim_tw_unreachable). The cap is now heap-proportional
+    // — max(32768, live/4) — which the live/32 scaling itself never
+    // reaches (live/4 >= live/32 + 128 for live > ~585): it only
+    // bounds the #4525 burst-doubling escalation. Garbage between
+    // reclaims now grows with the heap instead of the amortization
+    // breaking — the usual proportional-trigger trade-off.
     static constexpr std::uint32_t kReclaimTriggerCeiling = 32768;
     static constexpr std::uint32_t kReclaimTriggerDivisor = 32;
+    static constexpr std::uint32_t kReclaimTriggerLargeHeapDivisor = 4;
+    // The effective window ceiling for a heap with `live_objects`
+    // live objects: the fixed small-heap cap until live/4 overtakes
+    // it, saturated at uint32 so the trigger fields can always hold
+    // the result. Shared by the scaling site and the post-condition
+    // so the window contract cannot drift from the implementation.
+    [[nodiscard]] static std::uint64_t
+    reclaim_trigger_ceiling_for(std::size_t live_objects) noexcept {
+        const auto proportional =
+            static_cast<std::uint64_t>(live_objects) / kReclaimTriggerLargeHeapDivisor;
+        return std::min<std::uint64_t>(
+            std::max<std::uint64_t>(kReclaimTriggerCeiling, proportional),
+            std::numeric_limits<std::uint32_t>::max());
+    }
     // Scale the next reclaim triggers from the live set the mark just
     // walked (live/32, clamped to the window) so a large live heap
     // amortizes the full-heap mark instead of paying it every 128
@@ -4915,23 +4941,25 @@ public:
     // Issue #4525: when the mark fired on the file-heap window and most
     // of that window's mints died young (allocation-burst shape), the
     // next window doubles — mark frequency decouples from the mint rate
-    // while the [floor, ceiling] clamp still bounds garbage between
+    // while the heap-scaled clamp still bounds garbage between
     // reclaims. Boxed-scalar allocation (floats, post-#4502) is not
     // counted by the window at all, so numeric loops never drive marks.
-    void note_live_set_for_reclaim_trigger(std::size_t live_objects,
-                                           std::uint64_t mints_since_mark) noexcept
+    void note_live_set_for_reclaim_trigger(const std::size_t live_objects,
+                                           const std::uint64_t mints_since_mark) noexcept
         post(tw_closure_allocs_trigger_ >= kReclaimTriggerFloor &&
-             tw_closure_allocs_trigger_ <= kReclaimTriggerCeiling &&
+             tw_closure_allocs_trigger_ <= reclaim_trigger_ceiling_for(live_objects) &&
              file_heap_allocs_trigger_ >= kReclaimTriggerFloor &&
-             file_heap_allocs_trigger_ <= kReclaimTriggerCeiling);
+             file_heap_allocs_trigger_ <= reclaim_trigger_ceiling_for(live_objects));
     // The dynamic trigger (live/32 from the last mark) — read by the IR
-    // dispatch reclaim checks.
+    // dispatch reclaim checks. Upper bound is heap-scaled at the writer
+    // (note_live_set pins it against the live set it just walked), so
+    // the reader-side post pins the floor only.
     [[nodiscard]] std::uint32_t file_heap_allocs_trigger() const noexcept
-        post(r : r >= kReclaimTriggerFloor && r <= kReclaimTriggerCeiling) {
+        post(r : r >= kReclaimTriggerFloor) {
         return file_heap_allocs_trigger_;
     }
     [[nodiscard]] std::uint32_t file_heap_allocs_trigger_for_test() const noexcept
-        post(r : r >= kReclaimTriggerFloor && r <= kReclaimTriggerCeiling) {
+        post(r : r >= kReclaimTriggerFloor) {
         return file_heap_allocs_trigger_;
     }
     void note_tw_closure_alloc() noexcept { ++tw_closure_allocs_; }
@@ -7518,8 +7546,9 @@ private:
     std::uint32_t tw_closure_allocs_ = 0;
     // Issue #4474: dynamic reclaim triggers — after a mark, the next
     // reclaim fires after allocations proportional to the live set the
-    // mark found (live/32, clamped to [128, 32768], see
-    // note_live_set_for_reclaim_trigger), so a large live heap amortizes
+    // mark found (live/32, floored at 128, capped by the heap-scaled
+    // ceiling max(32768, live/4) — see note_live_set_for_reclaim_trigger
+    // and reclaim_trigger_ceiling_for), so a large live heap amortizes
     // the full-heap mark instead of paying it every 128 allocations.
     // Skipped reclaims reset both to the 128 floor.
     std::uint32_t tw_closure_allocs_trigger_ = kReclaimTriggerFloor;

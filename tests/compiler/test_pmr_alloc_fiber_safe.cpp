@@ -436,14 +436,120 @@ static void ac4474_dynamic_reclaim_trigger() {
                                  std::to_string(grown) + ")");
     }
 
-    // AC4: cap — an absurd live-set report clamps the trigger at 32768.
+    // AC4: cap — a huge live-set report scales the window past the old
+    // 32768 ceiling (live/32 + 128, which max(32768, live/4) never
+    // reaches), and the #4525 burst-doubling escalation is bounded by
+    // the heap-proportional ceiling (live/4 here) instead of the old
+    // fixed cap. Third reopen: the fixed cap froze the window above
+    // ~1M live objects and per-alloc cost regrew linearly with the heap.
     {
         CompilerService cs;
         auto& ev = cs.evaluator();
         ev.note_live_set_for_reclaim_trigger(100000000, /*mints_since_mark=*/0);
-        CHECK(ev.file_heap_allocs_trigger_for_test() == 32768,
-              "4474 AC4: trigger clamps at the 32768 ceiling");
+        CHECK(ev.file_heap_allocs_trigger_for_test() == 100000000 / 32 + 128,
+              "4474 AC4: huge live set scales past the old 32768 ceiling (got " +
+                  std::to_string(ev.file_heap_allocs_trigger_for_test()) + ", want " +
+                  std::to_string(100000000 / 32 + 128) + ")");
     }
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        // Burst shape: 1M live, 4B mints — live*2 < mints doubles the
+        // window every call until the live/4 proportional ceiling holds it.
+        for (int i = 0; i < 24; ++i)
+            ev.note_live_set_for_reclaim_trigger(1000000, 4000000000ULL);
+        CHECK(ev.file_heap_allocs_trigger_for_test() == 250000,
+              "4474 AC4: burst escalation clamps at the live/4 proportional ceiling (got " +
+                  std::to_string(ev.file_heap_allocs_trigger_for_test()) + ", want 250000)");
+    }
+}
+
+// ── Issue #4474 (third reopen): the window must keep scaling on ──
+// ── multi-million-object live heaps ──
+// kReclaimTriggerCeiling=32768 pinned the window above ~1M live
+// objects, so each O(live) full-heap mark amortized over at most 32768
+// allocations — the per-allocation cost grew linearly with the live
+// heap again (reopen: ~3x alloc overhead at 3M live cells vs 300k;
+// gdb 25/30 samples in maybe_reclaim_tw_unreachable; aura-memory
+// write p50 0.82→1.57ms at a 20k-item store). The ceiling is now
+// heap-proportional (max(32768, live/4)): live/32 scaling never hits
+// it, and it only bounds the #4525 burst-doubling escalation.
+static void ac4474r3_large_heap_window() {
+    std::println("\n--- #4474 r3: window scales on multi-million live heaps ---");
+    using clock = std::chrono::steady_clock;
+
+    // Reopen repro shape: hold N live pairs in a global, force one mark
+    // so the window reflects the live set, then time reps calls of a
+    // 100-cons loop against an empty loop. The alloc-minus-empty
+    // difference is the per-allocation reclaim amortization; both loops
+    // run back to back in this process, so machine load cancels in the
+    // big-vs-small ratio.
+    struct Sample {
+        std::uint32_t trigger;
+        double alloc_us;
+        double empty_us;
+    };
+    constexpr int kReps = 4000;
+    const auto measure = [&](int n) -> Sample {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        const std::string prog = "(begin (define big (let loop ((i 0) (acc (list)))"
+                                 "(if (< i " +
+                                 std::to_string(n) + ") (loop (+ i 1) (cons i acc)) acc)))" +
+                                 "(define (alloc) (let loop ((i 0) (acc (list)))"
+                                 "(if (< i 100) (loop (+ i 1) (cons i acc)) acc)))" +
+                                 "(define (empty) (let loop ((i 0) (acc (list)))"
+                                 "(if (< i 100) (loop (+ i 1) acc) acc)))" +
+                                 "(define (drive f n) (let loop ((i 0))"
+                                 "(if (< i n) (begin (f) (loop (+ i 1))) #f)))" +
+                                 "(length big))";
+        auto built = cs.eval(prog);
+        CHECK(built && is_int(*built) && as_int(*built) == n,
+              "4474 r3: live list builds (n=" + std::to_string(n) + ")");
+        (void)ev.reclaim_tw_unreachable({}, {});
+        const auto trigger = ev.file_heap_allocs_trigger_for_test();
+        const auto t0 = clock::now();
+        auto re = cs.eval("(drive empty " + std::to_string(kReps) + ")");
+        const auto t1 = clock::now();
+        auto ra = cs.eval("(drive alloc " + std::to_string(kReps) + ")");
+        const auto t2 = clock::now();
+        CHECK(static_cast<bool>(re) && static_cast<bool>(ra),
+              "4474 r3: drive loops eval (n=" + std::to_string(n) + ")");
+        const auto ms = [](clock::duration d) {
+            return std::chrono::duration<double, std::milli>(d).count();
+        };
+        return Sample{trigger, ms(t2 - t1) * 1000.0 / kReps, ms(t1 - t0) * 1000.0 / kReps};
+    };
+
+    const Sample mid = measure(300000);
+    const Sample big = measure(3000000);
+
+    // AC1: the window itself — ~300k live (flat region before and after
+    // the fix) and ~3M live both sit at live/32 + 128; the 3M window
+    // grows past the old 32768 ceiling instead of freezing there.
+    CHECK(mid.trigger >= 300000 / 32 + 128 && mid.trigger <= 9600,
+          "4474 r3 AC1: ~300k live keeps the live/32 window (got " + std::to_string(mid.trigger) +
+              ", want >= " + std::to_string(300000 / 32 + 128) + ")");
+    CHECK(big.trigger >= 93000 && big.trigger <= 95500,
+          "4474 r3 AC1: 3M live grows the window past the old 32768 ceiling (got " +
+              std::to_string(big.trigger) + ")");
+
+    // AC2: allocation amortization — the reopen measured alloc overhead
+    // (alloc minus empty) roughly tripling at 3M live vs the 300k flat
+    // region; with the proportional window the amortized mark cost per
+    // allocation is the same constant (live/window ≈ 32) at both sizes.
+    // Generous 2x + 3µs bound — pre-fix ratio is ~2.9x here.
+    const double ovh_mid = mid.alloc_us - mid.empty_us;
+    const double ovh_big = big.alloc_us - big.empty_us;
+    CHECK(ovh_mid > 0.0 && ovh_big > 0.0, "4474 r3 AC2: overheads measurable (mid " +
+                                              std::to_string(ovh_mid) + "µs, big " +
+                                              std::to_string(ovh_big) + "µs per 100 conses)");
+    CHECK(ovh_big <= 2.0 * ovh_mid + 3.0,
+          "4474 r3 AC2: 3M-live alloc amortization within 2x of 300k (" + std::to_string(ovh_big) +
+              "µs vs " + std::to_string(ovh_mid) + "µs per 100 conses)");
+    std::println(
+        "    4474 r3: window mid={} big={}  alloc/empty µs mid={:.1f}/{:.1f} big={:.1f}/{:.1f}",
+        mid.trigger, big.trigger, mid.alloc_us, mid.empty_us, big.alloc_us, big.empty_us);
 }
 
 // ── Issue #4480: map's accumulator must survive reclaims triggered by the
@@ -549,7 +655,9 @@ static void ac4492_nested_map_filter_pinned() {
 // garbage re-firing the mark at the 128 floor cadence (M5: 200k-iter
 // let-cell loop → 1562 marks ≈ +15% wall). Landed shape: the issue's
 // minimum — a burst-escalating #4474 window (double when <half the
-// window's mints survived), same [128, 32768] clamp and live/32 scaling.
+// window's mints survived), the 128 floor, live/32 scaling, and a
+// ceiling that is heap-proportional since the #4474 third reopen
+// (max(32768, live/4)) — small-heap bursts still clamp at 32768.
 static void ac4525_burst_rebalance() {
     std::println("\n--- #4525: burst-escalating reclaim window ---");
     using clock = std::chrono::steady_clock;
@@ -811,6 +919,7 @@ int run_test_pmr_alloc_fiber_safe() {
     ac4453_list_growth_linear();
     ac4473_list_mint_reuse();
     ac4474_dynamic_reclaim_trigger();
+    ac4474r3_large_heap_window();
     ac4480_map_accumulator_pinned();
     ac4492_nested_map_filter_pinned();
     ac4525_burst_rebalance();
