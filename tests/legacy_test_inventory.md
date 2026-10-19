@@ -1921,7 +1921,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_fiber_macro_hygiene_refresh.cpp` (—) [domain_suite, theme_compiler] — Issue #1490/#1592/#1608/#1612 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_fine_dirty_relower.cpp` (—) [domain_suite, theme_compiler] — test_fine_dirty_relower.cpp — Issue #1657 (standalone; bump metrics ACs drift)
 - `tests/compiler/test_frame_budget_cascade_isolation.cpp` (—) [domain_suite, theme_compiler] — AC1: under FrameBudget / render hotpath, non-render cascade deferred
-- `tests/compiler/test_hash_table_grow.cpp` (—) [domain_suite, theme_compiler] — AC1: (hash) with 16 k/v pairs retains all keys
+- `tests/compiler/test_hash_table_grow.cpp` (—) [large, domain_suite, theme_compiler] — AC1: (hash) with 16 k/v pairs retains all keys
 - `tests/compiler/test_inline_typecheck_exception.cpp` (—) [domain_suite, theme_compiler] — Issue #1769 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_instance_constraint_depth_cap.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2643 — Agent-visible depth-cap repair surface
 - `tests/compiler/test_instr_impact_minimal_dirty.cpp` (—) [minimal, domain_suite, theme_compiler] — AC1: nested lambda free-var body-only → no mark_all_blocks_dirty;

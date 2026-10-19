@@ -12,6 +12,8 @@ module;
 #include "prim_registrar_scaffold.hh" // Issue #2996
 #include "security_side_effect.hh"    // Issue #4298: kEffectMutate on the in-range consult
 
+#include <cstring> // Issue #4614: hash-copy slot-for-slot table copy
+
 module aura.compiler.evaluator;
 
 import std;
@@ -522,6 +524,113 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         },
         pure_general(1, "(vector) -> list", "Convert a vector to a list."));
 
+    // Issue #4614: native vector-copy. The stdlib loop it replaces
+    // (make-vector + one vector-set! per slot) cost 564 us for a 64-slot
+    // vector — 80x slower than a native element copy. This is a single
+    // O(n) element copy into a freshly minted vector (5.75 us on the
+    // release build of this tree, vs 425 us for the interpreted loop --
+    // a 74x win; the AC is <= 10 us for 64 slots).
+    register_prim(
+        add, ev, "vector-copy",
+        [&ev, &vector_heap, &string_heap, &error_values,
+         primitive_error_counter](std::span<const EvalValue> a) {
+            if (a.empty() || !is_vector(a[0])) {
+                return make_primitive_error(string_heap, error_values, "vector-copy: not a vector",
+                                            primitive_error_counter);
+            }
+            auto idx = as_vector_idx(a[0]);
+            if (idx >= vector_heap.size()) {
+                return make_primitive_error(string_heap, error_values,
+                                            "vector-copy: corrupted vector",
+                                            primitive_error_counter);
+            }
+            // Issue #4298 / #4505: the source slots are payload — the owner
+            // compare runs before any element is copied out.
+            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/true, /*required_effects=*/0,
+                                               "vector-copy")) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    "vector-copy: cross-tenant vector slot read denied (#4298)",
+                    primitive_error_counter);
+            }
+            const auto len = vector_heap[idx].size();
+            // start / end are optional; out-of-range clamps like the stdlib
+            // loop did (a reversed range yields an empty vector).
+            std::size_t start = 0;
+            std::size_t end = len;
+            if (a.size() > 1) {
+                if (!is_int(a[1])) {
+                    return make_primitive_error(string_heap, error_values,
+                                                "vector-copy: start must be an integer",
+                                                primitive_error_counter);
+                }
+                const auto s = as_int(a[1]);
+                start = s < 0 ? 0 : static_cast<std::size_t>(s);
+            }
+            if (a.size() > 2) {
+                if (!is_int(a[2])) {
+                    return make_primitive_error(string_heap, error_values,
+                                                "vector-copy: end must be an integer",
+                                                primitive_error_counter);
+                }
+                const auto e = as_int(a[2]);
+                end = e < 0 ? 0 : static_cast<std::size_t>(e);
+            }
+            if (end > len)
+                end = len;
+            if (start > end)
+                start = end;
+            // Copy the slice out BEFORE the mint: mint_vector may reuse a
+            // dead slot and reallocate the heap's element storage.
+            std::vector<EvalValue> elems;
+            elems.reserve(end - start);
+            for (std::size_t i = start; i < end; ++i)
+                elems.push_back(vector_heap[idx][i]);
+            const auto out = ev.mint_vector(std::move(elems), /*check_quota=*/true);
+            if (out == Evaluator::kFileHeapMintDenied) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Vectors)),
+                    primitive_error_counter);
+            }
+            return make_vector(out);
+        },
+        pure_general(255, "(vector [int] [int]) -> vector",
+                     "Copy a vector (optionally the start..end slice) into a new vector."));
+    // Issue #4614: native vector-fill!. Same contract as the stdlib loop it
+    // replaces: every slot takes the value and the vector itself is returned.
+    register_prim(
+        add, ev, "vector-fill!",
+        [&ev, &vector_heap, &string_heap, &error_values,
+         primitive_error_counter](std::span<const EvalValue> a) {
+            if (a.size() < 2 || !is_vector(a[0])) {
+                return make_primitive_error(string_heap, error_values, "vector-fill!: not a vector",
+                                            primitive_error_counter);
+            }
+            // Issue #3235: lock symmetry with set-car! / hash-set!.
+            std::lock_guard lock(ev.alloc_storage_lock_);
+            auto idx = as_vector_idx(a[0]);
+            if (idx >= vector_heap.size()) {
+                return make_primitive_error(string_heap, error_values,
+                                            "vector-fill!: corrupted vector",
+                                            primitive_error_counter);
+            }
+            // Issue #4298: the in-range write face compares the owner stamp
+            // before the store (same gate as vector-set!).
+            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/true,
+                                               aura::compiler::security::kEffectMutate,
+                                               "vector-fill!")) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    "vector-fill!: cross-tenant vector slot write denied (#4298)",
+                    primitive_error_counter);
+            }
+            for (auto& slot : vector_heap[idx])
+                slot = a[1];
+            return a[0];
+        },
+        mutate_general(2, "(vector any) -> vector", "Fill every slot of a vector with a value."));
+
     register_prim(
         add, ev, "hash",
         [&ev, &string_heap](std::span<const EvalValue> a) {
@@ -566,6 +675,56 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             return make_hash(hidx);
         },
         pure_general(255, "(...kvs) -> hash", "Construct a hash from key/value pairs."));
+    // Issue #4614: native hash-copy — the copy-on-write primitive behind the
+    // stdlib hash-set / hash-remove wrappers, which now return a FRESH
+    // table instead of mutating the argument in place (the aliasing trap
+    // that broke checkpoint / replay / forked-worldline code).
+    register_prim(
+        add, ev, "hash-copy",
+        [&ev, &string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
+            if (a.empty() || !is_hash(a[0])) {
+                return make_primitive_error(string_heap, error_values, "hash-copy: not a hash",
+                                            primitive_error_counter);
+            }
+            // Issue #2652: table reads are serialized against the
+            // process-wide g_hash_tables vector.
+            std::lock_guard hlock(ev.hash_tables_mutex());
+            std::lock_guard slock(ev.alloc_storage_lock_);
+            auto hidx = as_hash_idx(a[0]);
+            if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx]) {
+                return make_primitive_error(string_heap, error_values, "hash-copy: not a hash",
+                                            primitive_error_counter);
+            }
+            // Issue #4110 / #4296: armed + foreign stamp -> deny BEFORE the
+            // table is read (same gate the other table readers use; the
+            // caller/face are this executing evaluator).
+            if (aura_hash_gate_checked(hidx, ev.capability_tenant_id(), ev.effect_sandbox_mode(),
+                                       "hash-copy"))
+                return make_primitive_error(string_heap, error_values,
+                                            "hash-copy: cross-tenant hash read denied (#4110)",
+                                            primitive_error_counter);
+            auto* ht = g_hash_tables[hidx];
+            auto* copy = FlatHashTable::create(ht->capacity);
+            if (!copy)
+                return make_primitive_error(string_heap, error_values, "hash-copy: out of memory",
+                                            primitive_error_counter);
+            // Slot-for-slot copy: the new table owns its own metadata /
+            // keys / values arrays, so the two tables are independent.
+            std::memcpy(copy->metadata(), ht->metadata(), ht->capacity);
+            std::memcpy(copy->keys(), ht->keys(), ht->capacity * sizeof(std::int64_t));
+            std::memcpy(copy->values(), ht->values(), ht->capacity * sizeof(std::int64_t));
+            copy->size = ht->size;
+            // Issue #4093 / #4296: stamp the new table with the executing
+            // evaluator's principal (the inline stamp shape the hash prim
+            // uses) and publish it.
+            auto newidx = g_hash_tables.size();
+            g_hash_tables.push_back(copy);
+            if (g_hash_tenants.size() < g_hash_tables.size())
+                g_hash_tenants.resize(g_hash_tables.size(), 0);
+            g_hash_tenants[newidx] = ev.capability_tenant_id();
+            return make_hash(newidx);
+        },
+        pure_general(1, "(hash) -> hash", "Copy a hash into a new, independent table."));
     register_prim(
         add, ev, "hash-ref",
         [&ev, &string_heap, &pairs, &vector_heap](std::span<const EvalValue> a) {

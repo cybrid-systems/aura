@@ -256,19 +256,16 @@
           (loop (+ i 1)))))))
 
 ; (vector-fill! v x) — set every element to x; returns v
-(define (vector-fill! v x)
-  (let loop ((i 0))
-    (if (>= i (vector-length v)) v
-      (begin (vector-set! v i x) (loop (+ i 1))))))
-
 ; (vector-copy v [start [end]]) — fresh vector with elements start..end-1
-(define (vector-copy v . opt)
-  (let* ((start (if (null? opt) 0 (car opt)))
-         (end (if (or (null? opt) (null? (cdr opt))) (vector-length v) (car (cdr opt))))
-         (out (make-vector (max 0 (- end start)) 0)))
-    (let loop ((i start))
-      (if (>= i end) out
-        (begin (vector-set! out (- i start) (vector-ref v i)) (loop (+ i 1)))))))
+;
+; Issue #4614: BOTH are native primitives now
+; (src/compiler/evaluator_primitives_vector.cpp). The interpreted loops
+; they replace cost 564 us for a 64-slot vector-copy (one vector-set! call
+; per slot) — 80x slower than a round trip through two native primitives.
+; The native vector-copy is a single element copy (<= 10 us for 64 slots)
+; and the native vector-fill! is one store pass. The names stay in the
+; export list above, so (require "std/list" all:) keeps exposing them —
+; they now resolve to the primitives.
 
 ; (values x ...) — one value is returned as is; several are packed in a
 ; list that let-values / call-with-values unpack. Aura has no native

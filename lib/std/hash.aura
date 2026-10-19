@@ -1,6 +1,6 @@
-; hash.aura -- Hash table operations
+; hash.aura -- Hash table operations. hash-set / hash-remove are COPY-ON-WRITE (#4614): they return a NEW hash and leave the argument unchanged.
 (export
-  hash-set hash-ref hash-get hash-remove
+  hash-set hash-ref hash-get hash-remove hash-copy
   hash-keys hash-values hash-length hash->list
   hash-for-each hash-fold
   hash-merge hash-empty? alist->hash frequencies
@@ -17,7 +17,20 @@
   (if (null? lst) #t
     (begin (f (car lst)) (for-each f (cdr lst)))))
 
-(define (hash-set h k v) (hash-set! h k v) h)
+; (hash-set h k v) -- COPY-ON-WRITE: returns a NEW hash with k -> v and
+; leaves h UNCHANGED. Issue #4614: the old wrapper was
+; (define (hash-set h k v) (hash-set! h k v) h), i.e. it aliased the
+; argument and silently mutated the caller's table -- a correctness trap
+; for exactly the code that relies on values being immutable (checkpoints,
+; replay, forked worldlines). Use hash-set! for the in-place form.
+;
+; (hash-copy h) is the native primitive that backs the copy (it is not
+; defined here on purpose: a module-level define would shadow the
+; primitive, the same trap the hash-ref note below describes).
+(define (hash-set h k v)
+  (let ((out (hash-copy h)))
+    (hash-set! out k v)
+    out))
 
 ; Note: hash-ref is the C++ primitive; do NOT redefine it here.
 ; The previous (define (hash-ref h k) (hash-ref h k)) was a self-recursive
@@ -28,7 +41,14 @@
 (define (hash-get h k)
   (hash-ref h k))
 
-(define (hash-remove h k) (hash-remove! h k) h)
+; (hash-remove h k) -- COPY-ON-WRITE: returns a NEW hash without k and
+; leaves h UNCHANGED (Issue #4614 -- the old wrapper mutated h in place
+; and returned it, so a "checkpoint" table saw the removal). Use
+; hash-remove! for the in-place form.
+(define (hash-remove h k)
+  (let ((out (hash-copy h)))
+    (hash-remove! out k)
+    out))
 
 ;; (#108 part 1) hash-for-each: apply fn(key, value) to every entry
 ;; in the hash. Iteration order matches hash-keys (currently
@@ -53,18 +73,20 @@
 (define (hash->list h)
   (map (lambda (k) (list k (hash-ref h k))) (hash-keys h)))
 
+; Issue #4614: hash-set is copy-on-write, so the in-place builders
+; below use hash-set! (the mutating primitive) explicitly.
 (define (alist->hash alist)
   (if (null? alist)
       (hash)
       (let ((h (hash)))
         (for-each (lambda (kv)
-          (hash-set h (car kv) (car (cdr kv)))) alist)
+          (hash-set! h (car kv) (car (cdr kv)))) alist)
         h)))
 
 (define (hash-merge a b)
   (let ((result (hash)))
-    (for-each (lambda (k) (hash-set result k (hash-ref a k))) (hash-keys a))
-    (for-each (lambda (k) (hash-set result k (hash-ref b k))) (hash-keys b))
+    (for-each (lambda (k) (hash-set! result k (hash-ref a k))) (hash-keys a))
+    (for-each (lambda (k) (hash-set! result k (hash-ref b k))) (hash-keys b))
     result))
 
 (define (frequencies lst)
@@ -72,6 +94,6 @@
     (for-each (lambda (x)
       (let ((v (hash-ref h x)))
         (if v
-          (hash-set h x (+ v 1))
-          (hash-set h x 1)))) lst)
+          (hash-set! h x (+ v 1))
+          (hash-set! h x 1)))) lst)
     h))

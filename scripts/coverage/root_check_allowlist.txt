@@ -270,3 +270,4 @@ check_prim_call_arg_rooting_4611.py
 check_snapshot_share_stamps_4598.py
 check_string_heap_reclaim_4608.py
 check_jit_prim_callee_refuse_4606.py
+check_vector_hash_cow_4614.py

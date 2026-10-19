@@ -17,6 +17,7 @@
 #include "compiler/typed_mutation_audit.h"
 #include "core/capability_model.hh"
 #include "core/workspace_epoch.hh"
+#include "compiler/hash_meta.h" // Issue #4614: FNV-1a 64 string hash contract
 
 #include <cstdlib>
 #include <fstream>
@@ -32,9 +33,14 @@ namespace {
 
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
+using aura::compiler::types::as_bool;
+using aura::compiler::types::as_float;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_bool;
 using aura::compiler::types::is_error;
+using aura::compiler::types::is_float;
 using aura::compiler::types::is_int;
+using aura::compiler::types::is_void;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -255,6 +261,194 @@ static void ac4456_vector_ref_index() {
           "4456: integer-index error string");
 }
 
+// -- Issue #4614: native vector-copy / vector-fill!, native string-hash,
+// and the copy-on-write hash-set / hash-remove -------------------------
+//
+// AC1 vector-copy is native: full copy, start-only slice, start+end slice,
+//     out-of-range clamp, and the copy is independent of its source.
+// AC2 vector-fill! is native: every slot takes the value and the vector
+//     itself is returned (the contract the interpreted stdlib loop had).
+// AC3 string-hash is native and pins the contract: FNV-1a 64 over the
+//     string's UTF-8 bytes (the same hash the hash table uses for string
+//     keys). Equal strings hash equal, different strings differ.
+// AC4 hash-set / hash-remove are copy-on-write: they return a NEW hash and
+//     leave the argument untouched. hash-copy clones a table natively.
+// AC5 the 64-slot vector-copy timing: at least 20x faster than the
+//     interpreted stdlib loop it replaces and no more expensive than a bare
+//     (make-vector 64) allocation. On an optimized build the absolute issue
+//     AC (<= 10 us per 64-slot copy) is asserted as well; the relative
+//     contract is asserted on every build configuration.
+#if defined(__OPTIMIZE__)
+#define AURA_4614_OPTIMIZED_BUILD 1
+#else
+#define AURA_4614_OPTIMIZED_BUILD 0
+#endif
+
+// The interpreted stdlib vector-copy that #4614 replaced (kept inline so
+// the timing AC can measure the old cost in the same process/build).
+static const char* k4614OldCopyExpr = R"AURA(
+(begin
+  (define v (make-vector 64 7))
+  (define (old-copy v . opt)
+    (let* ((start (if (null? opt) 0 (car opt)))
+           (end (if (or (null? opt) (null? (cdr opt))) (vector-length v) (car (cdr opt))))
+           (out (make-vector (max 0 (- end start)) 0)))
+      (let loop ((i start))
+        (if (>= i end) out
+          (begin (vector-set! out (- i start) (vector-ref v i)) (loop (+ i 1)))))))
+  (define n 200)
+  (define t0 (monotonic-ms))
+  (let loop ((i 0)) (if (>= i n) #t (begin (old-copy v) (loop (+ i 1)))))
+  (define t1 (monotonic-ms))
+  (/ (* 1000.0 (- t1 t0)) n))AURA";
+
+// The native vector-copy, same shape / same harness.
+static const char* k4614NativeCopyExpr = R"AURA(
+(begin
+  (define v (make-vector 64 7))
+  (define n 20000)
+  (define t0 (monotonic-ms))
+  (let loop ((i 0)) (if (>= i n) #t (begin (vector-copy v) (loop (+ i 1)))))
+  (define t1 (monotonic-ms))
+  (/ (* 1000.0 (- t1 t0)) n))AURA";
+
+// Calibration: a bare 64-slot allocation (the issue's reference number).
+static const char* k4614MakeVectorExpr = R"AURA(
+(begin
+  (define n 20000)
+  (define t0 (monotonic-ms))
+  (let loop ((i 0)) (if (>= i n) #t (begin (make-vector 64 #f) (loop (+ i 1)))))
+  (define t1 (monotonic-ms))
+  (/ (* 1000.0 (- t1 t0)) n))AURA";
+static void ac4614_vector_copy() {
+    std::println("");
+    std::println("--- #4614 AC1: native vector-copy ---");
+    CompilerService cs;
+    auto len = cs.eval("(vector-length (vector-copy (vector 1 2 3)))");
+    CHECK(len && is_int(*len) && as_int(*len) == 3, "4614 AC1: full copy length 3");
+    auto last = cs.eval("(vector-ref (vector-copy (vector 1 2 3)) 2)");
+    CHECK(last && is_int(*last) && as_int(*last) == 3, "4614 AC1: full copy element 2");
+    auto slen = cs.eval("(vector-length (vector-copy (vector 1 2 3 4) 1 3))");
+    CHECK(slen && is_int(*slen) && as_int(*slen) == 2, "4614 AC1: start+end slice length 2");
+    auto self = cs.eval("(vector-ref (vector-copy (vector 1 2 3 4) 1 3) 0)");
+    CHECK(self && is_int(*self) && as_int(*self) == 2, "4614 AC1: slice element 0 == 2");
+    auto olen = cs.eval("(vector-length (vector-copy (vector 1 2 3 4) 2))");
+    CHECK(olen && is_int(*olen) && as_int(*olen) == 2, "4614 AC1: start-only slice length 2");
+    auto clamp = cs.eval("(vector-length (vector-copy (vector 1 2 3) 0 99))");
+    CHECK(clamp && is_int(*clamp) && as_int(*clamp) == 3, "4614 AC1: end clamps to the length");
+    // The copy is independent: mutating the source leaves the copy alone.
+    auto indep = cs.eval("(begin (define v (vector 1 2 3)) (define c (vector-copy v)) "
+                         "(vector-set! v 0 99) (vector-ref c 0))");
+    CHECK(indep && is_int(*indep) && as_int(*indep) == 1, "4614 AC1: copy is independent");
+}
+
+static void ac4614_vector_fill() {
+    std::println("");
+    std::println("--- #4614 AC2: native vector-fill! ---");
+    CompilerService cs;
+    auto slot = cs.eval("(begin (define v (vector 1 2 3)) (vector-fill! v 7) (vector-ref v 1))");
+    CHECK(slot && is_int(*slot) && as_int(*slot) == 7, "4614 AC2: slot filled");
+    auto tail = cs.eval("(begin (define v (vector 1 2 3)) (vector-fill! v 0) (vector-ref v 2))");
+    CHECK(tail && is_int(*tail) && as_int(*tail) == 0, "4614 AC2: last slot filled");
+    // The stdlib contract: vector-fill! returns the vector itself.
+    auto ret = cs.eval("(vector-length (vector-fill! (vector 1 2) 0))");
+    CHECK(ret && is_int(*ret) && as_int(*ret) == 2, "4614 AC2: returns the vector");
+}
+static void ac4614_string_hash() {
+    std::println("");
+    std::println("--- #4614 AC3: native string-hash (FNV-1a 64) ---");
+    CompilerService cs;
+    auto same = cs.eval("(= (string-hash \"abc\") (string-hash \"abc\"))");
+    CHECK(same && is_bool(*same) && as_bool(*same), "4614 AC3: equal strings hash equal");
+    auto diff = cs.eval("(= (string-hash \"abc\") (string-hash \"abd\"))");
+    CHECK(diff && is_bool(*diff) && !as_bool(*diff), "4614 AC3: different strings differ");
+    auto prefix = cs.eval("(= (string-hash \"abc\") (string-hash \"ab\"))");
+    CHECK(prefix && is_bool(*prefix) && !as_bool(*prefix), "4614 AC3: a prefix differs");
+    auto empty = cs.eval("(= (string-hash \"\") (string-hash \"abc\"))");
+    CHECK(empty && is_bool(*empty) && !as_bool(*empty), "4614 AC3: the empty string differs");
+    // The contract: FNV-1a 64 over the UTF-8 bytes -- the same hash the hash
+    // table uses for string keys (hash_meta.h fnv1a_bytes).
+    auto v = cs.eval("(string-hash \"abc\")");
+    const auto expected = static_cast<std::int64_t>(::aura::compiler::hash::fnv1a_bytes("abc"));
+    CHECK(v && is_int(*v) && as_int(*v) == expected, "4614 AC3: FNV-1a 64 contract");
+    // A hash key is stable across calls (the memoisation use case).
+    auto again = cs.eval("(string-hash \"abc\")");
+    CHECK(again && is_int(*again) && as_int(*again) == expected, "4614 AC3: stable across calls");
+}
+
+static void ac4614_hash_cow() {
+    std::println("");
+    std::println("--- #4614 AC4: hash-set / hash-remove are copy-on-write ---");
+    CompilerService cs;
+    CHECK(cs.eval("(require \"std/hash\" all:)").has_value(), "4614 AC4: require std/hash");
+    // hash-set returns a NEW hash; the argument is untouched.
+    auto orig = cs.eval("(begin (define h (hash \"a\" 1)) (define h2 (hash-set h \"b\" 2)) "
+                        "(hash-length h))");
+    CHECK(orig && is_int(*orig) && as_int(*orig) == 1, "4614 AC4: the source table is unchanged");
+    auto fresh = cs.eval("(begin (define h (hash \"a\" 1)) (define h2 (hash-set h \"b\" 2)) "
+                         "(hash-length h2))");
+    CHECK(fresh && is_int(*fresh) && as_int(*fresh) == 2, "4614 AC4: the new table has the entry");
+    auto absent = cs.eval("(begin (define h (hash \"a\" 1)) (define h2 (hash-set h \"b\" 2)) "
+                          "(hash-ref h \"b\"))");
+    CHECK(absent && is_void(*absent), "4614 AC4: the source does not see the update");
+    // hash-remove returns a NEW hash; the argument keeps the key.
+    auto kept =
+        cs.eval("(begin (define h (hash \"a\" 1 \"b\" 2)) (define h2 (hash-remove h \"a\")) "
+                "(hash-length h))");
+    CHECK(kept && is_int(*kept) && as_int(*kept) == 2, "4614 AC4: the source keeps the key");
+    auto dropped = cs.eval("(begin (define h (hash \"a\" 1 \"b\" 2)) "
+                           "(define h2 (hash-remove h \"a\")) (hash-length h2))");
+    CHECK(dropped && is_int(*dropped) && as_int(*dropped) == 1, "4614 AC4: the new table drops it");
+    // hash-copy clones a table: the clone is independent of the source.
+    auto clone_src = cs.eval("(begin (define h (hash \"a\" 1)) (define c (hash-copy h)) "
+                             "(hash-set! c \"b\" 2) (hash-length h))");
+    CHECK(clone_src && is_int(*clone_src) && as_int(*clone_src) == 1,
+          "4614 AC4: clone is independent");
+    auto clone_len = cs.eval("(begin (define h (hash \"a\" 1)) (define c (hash-copy h)) "
+                             "(hash-set! c \"b\" 2) (hash-length c))");
+    CHECK(clone_len && is_int(*clone_len) && as_int(*clone_len) == 2,
+          "4614 AC4: the clone took the entry");
+}
+// The best of three runs: the minimum is the least noise-contaminated
+// estimate when the machine is busy (the relative contract does not care,
+// but the absolute <= 10 us AC does).
+static double ac4614_min_us(CompilerService& cs, const char* expr) {
+    double best = -1.0;
+    for (int i = 0; i < 3; ++i) {
+        auto r = cs.eval(expr);
+        if (!r || !is_float(*r))
+            continue;
+        const double v = as_float(*r);
+        if (best < 0.0 || v < best)
+            best = v;
+    }
+    return best;
+}
+
+static void ac4614_vector_copy_timing() {
+    std::println("");
+    std::println("--- #4614 AC5: 64-slot vector-copy timing ---");
+    CompilerService cs;
+    const double n_us = ac4614_min_us(cs, k4614NativeCopyExpr);
+    const double o_us = ac4614_min_us(cs, k4614OldCopyExpr);
+    const double m_us = ac4614_min_us(cs, k4614MakeVectorExpr);
+    CHECK(n_us > 0.0, "4614 AC5: native timing measured");
+    CHECK(o_us > 0.0, "4614 AC5: interpreted timing measured");
+    CHECK(m_us > 0.0, "4614 AC5: make-vector timing measured");
+    if (n_us <= 0.0 || o_us <= 0.0 || m_us <= 0.0)
+        return;
+    std::println("  64-slot vector-copy: native {:.2f} us/call, interpreted {:.2f} us/call, "
+                 "(make-vector 64) {:.2f} us/call, optimized build: {}",
+                 n_us, o_us, m_us, AURA_4614_OPTIMIZED_BUILD ? "yes" : "no");
+    CHECK(n_us * 20.0 <= o_us,
+          "4614 AC5: the native vector-copy is at least 20x faster than the interpreted loop");
+    CHECK(n_us <= 2.0 * m_us,
+          "4614 AC5: the native vector-copy costs at most 2x a bare 64-slot make-vector");
+#if AURA_4614_OPTIMIZED_BUILD
+    CHECK(n_us <= 10.0, "4614 AC5: a 64-slot vector-copy takes <= 10 us");
+#endif
+}
+
 } // namespace
 
 static void ac3916_display_occupancy() {
@@ -281,6 +475,12 @@ int run_test_hash_table_grow() {
     ac1_hash_literal_16();
     ac2_hash_set_sequential();
     ac3_update_after_growth();
+    std::println("\n=== Issue #4614: native vector ops + string hash + copy-on-write hash ===");
+    ac4614_vector_copy();
+    ac4614_vector_fill();
+    ac4614_string_hash();
+    ac4614_hash_cow();
+    ac4614_vector_copy_timing();
     ac4_source();
     ac5_gate();
     ac3916_display_occupancy();

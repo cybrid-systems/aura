@@ -16,6 +16,7 @@ module;
 
 #include "prim_registrar_scaffold.hh" // Issue #2996
 #include "security_side_effect.hh"    // Issue #4057: kEffectMutate on the isolation consult
+#include "compiler/hash_meta.h"       // Issue #4614: FNV-1a 64 string hash (fnv1a_bytes)
 #include "core/sandbox.hh"            // Issue #4057: is_strict() production-face arm
 #include "core/provenance_tracker.hh" // Issue #4057: multi_tenant_env_active() face arm
 
@@ -1180,6 +1181,42 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
         },
         pure_general(1, "(string) -> int",
                      "Number of Unicode code points. An ill-formed byte counts as one."));
+    // Issue #4614: native string-hash. Hashing a key in Aura used to cost
+    // ~50 us for 8 characters (a string->list fold). The hash table already
+    // hashes string keys with FNV-1a 64 over the UTF-8 bytes
+    // (eval_hash_key_hash), so this exposes exactly that hash code to Aura
+    // code: equal strings always produce equal codes, the value is stable
+    // across calls, and distinct strings are distinct with overwhelming
+    // probability. The 64-bit code is returned as its two's-complement
+    // 64-bit value, so it may be negative.
+    register_prim(
+        add, ev, "string-hash",
+        [&ev, &string_heap, &error_values](std::span<const EvalValue> a) {
+            if (a.empty() || !is_string(a[0])) {
+                return make_primitive_error(string_heap, error_values, "string-hash: not a string",
+                                            ev.primitive_error_counter_ptr());
+            }
+            auto idx = as_string_idx(a[0]);
+            // Issue #4505: the bytes are payload — the in-range stamp
+            // compare runs before the slot is read.
+            if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "string-hash")) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    "string-hash: cross-tenant string slot read denied (#4505)",
+                    ev.primitive_error_counter_ptr());
+            }
+            // Issue #2651 / #2652: the heap read runs under the alloc lock
+            // (the string heap shares it as its own mutex).
+            std::lock_guard lock(ev.alloc_storage_lock_);
+            if (idx >= string_heap.size())
+                return make_primitive_error(string_heap, error_values, "string-hash: corrupt slot",
+                                            ev.primitive_error_counter_ptr());
+            const std::string& s = string_heap[idx];
+            const auto h = ::aura::compiler::hash::fnv1a_bytes(std::string_view(s));
+            return make_int(static_cast<std::int64_t>(h));
+        },
+        pure_general(1, "(string) -> int",
+                     "FNV-1a 64-bit hash of the string's UTF-8 bytes (stable; may be negative)."));
     register_prim(
         add, ev, "string-ref",
         [&ev, &error_values](std::span<const EvalValue> a) {

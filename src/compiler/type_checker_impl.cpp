@@ -4306,6 +4306,8 @@ void InferenceEngine::init_primitive_env_part0(TypeId Int, TypeId Bool, TypeId F
     // a fixed pair. Dotted rest: one String required, further args allowed.
     register_primitive("string-append", {String, String}, String, true);
     register_primitive("string-length", {String}, Int);
+    // Issue #4614: native FNV-1a 64 string hash code.
+    register_primitive("string-hash", {String}, Int);
     register_primitive("string-ref", {String, Int}, Int);
     register_primitive("substring", {String, Int, Int}, String);
     register_primitive("string=?", {String, String}, Bool);
@@ -4432,6 +4434,11 @@ void InferenceEngine::init_primitive_env_part1(TypeId Int, TypeId Bool, TypeId F
     register_primitive("vector-length", {Vector}, Int);
     register_primitive("vector?", {Dyn}, Bool); // already Bool
     register_primitive("make-vector", {Int, Dyn}, Vector);
+    // Issue #4614: native vector-copy (optional start/end) + vector-fill!.
+    // Variadic so (vector-copy v), (vector-copy v start) and
+    // (vector-copy v start end) all typecheck.
+    register_primitive("vector-copy", {Vector}, Vector, true);
+    register_primitive("vector-fill!", {Vector, Dyn}, Vector);
     // List<->Vector conversion
 
     // Hash primitives
@@ -4446,6 +4453,9 @@ void InferenceEngine::init_primitive_env_part1(TypeId Int, TypeId Bool, TypeId F
     register_primitive("hash?", {Dyn}, Bool);
     register_primitive("hash-remove!", {Hash, Dyn}, Bool);
     register_primitive("hash-has-key?", {Hash, Dyn}, Bool);
+    // Issue #4614: copy-on-write table copy (behind std/hash hash-set /
+    // hash-remove, which now return a fresh table).
+    register_primitive("hash-copy", {Hash}, Hash);
 
     // Numeric extension primitives
     register_primitive("modulo", {Int, Int}, Int);
