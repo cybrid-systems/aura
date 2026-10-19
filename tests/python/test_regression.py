@@ -959,6 +959,175 @@ def test_jit_prologue_word_and_storm_4600():
     print("  ✅ test_jit_prologue_word_and_storm_4600")
 
 
+def test_jit_osr_tail_4600():
+    """Issue #4600 §3: named-let OSR at interpreted tail self-call chains.
+
+    A forced-deopt resume runs the named-let loop interpreted (#4459 tail
+    frame replacement per iteration); past AURA_JIT_OSR_N the drain hands
+    the chain to the module's registered native code (guards intact — a
+    failing guard deopts through the §1/§2 stub and resumes interpreted).
+    Output stays byte-identical with the escape on, off, at a low
+    threshold, and under forced-deopt-at-every-entry; ;;stats carries
+    osr_tail_fires (fires under a forced-deopt resume, stays 0 when the
+    loop never leaves native code).
+    """
+    prog = (
+        "(define (sum-to n) (let loop ((i 0) (acc 0)) "
+        "(if (< i n) (loop (+ i 1) (+ acc i)) acc))) "
+        "(display (sum-to 2000))"
+    )
+    expect = str(2000 * 1999 // 2)
+    # Cell-free self-recursion: the fn is frame-deopt armed (no hidden
+    # pcell/spair state), so under forced entry-deopt the OSR'd native
+    # call's own deopt is stub-resumed and the escape completes.
+    prog_g = "(define (g4600 a b) (if (< a 1) b (g4600 (- a 1) (+ b 1)))) (display (g4600 2000 0))"
+    expect_g = "2000"
+
+    def jit_out(extra_env, timeout=120, program=None):
+        env = os.environ.copy()
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "0"
+        env.update(extra_env)
+        r = subprocess.run(
+            [AURA, "--jit"], input=program or prog, capture_output=True, text=True, timeout=timeout, env=env
+        )
+        if r.returncode != 0:
+            raise Exception(f"osr {extra_env}: rc={r.returncode} err={r.stderr[-400:]!r}")
+        return (r.stdout or "").strip()
+
+    for name, extra in [
+        ("default", {}),
+        ("off", {"AURA_JIT_OSR": "0"}),
+        ("n4", {"AURA_JIT_OSR_N": "4"}),
+        ("forced2", {"AURA_JIT_FORCE_GUARD_DEOPT": "2"}),
+        ("n4-forced2", {"AURA_JIT_OSR_N": "4", "AURA_JIT_FORCE_GUARD_DEOPT": "2"}),
+    ]:
+        v = jit_out(extra)
+        if v != expect:
+            raise Exception(f"osr {name}: expected {expect!r} got {v!r}")
+    # The named-let fn's self-reference cell keeps it frame-deopt armed
+    # OFF, so under forced entry-deopt the OSR'd call sentinel-deopts and
+    # the host declines — the loop stays interpreted and the value is
+    # still byte-identical (the §3 escape never publishes the #4084 0).
+    for name, extra in [
+        ("g-default", {}),
+        ("g-forced2", {"AURA_JIT_FORCE_GUARD_DEOPT": "2"}),
+        ("g-n4-forced2", {"AURA_JIT_OSR_N": "4", "AURA_JIT_FORCE_GUARD_DEOPT": "2"}),
+    ]:
+        v = jit_out(extra, program=prog_g)
+        if v != expect_g:
+            raise Exception(f"osr {name}: expected {expect_g!r} got {v!r}")
+
+    # ir-only control (no JIT): the interpreted value every escape must match.
+    env = os.environ.copy()
+    env["AURA_SANDBOX"] = "off"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env["AURA_FORCE_IR"] = "1"
+    r = subprocess.run([AURA], input=prog, capture_output=True, text=True, timeout=120, env=env)
+    if r.returncode != 0 or (r.stdout or "").strip() != expect:
+        raise Exception(f"osr ir-control: rc={r.returncode} out={(r.stdout or '').strip()!r}")
+
+    # Session: an interpreted chain (forced entry-deopt) escapes in the
+    # cell-free shape (fires >= 1); the named-let shape declines on the
+    # sentinel (fires == 0) and a no-deopt run never fires.
+    def session_fires(extra_env, program):
+        senv = os.environ.copy()
+        senv["AURA_SANDBOX"] = "off"
+        senv["AURA_PIPELINE_STRICT"] = "0"
+        senv.update(extra_env)
+        sr = subprocess.run(
+            [AURA, "--jit-session"],
+            input=f"{program}\n;;stats\n",
+            capture_output=True,
+            text=True,
+            timeout=300,
+            env=senv,
+        )
+        assert sr.returncode == 0, sr.stderr[-400:]
+        for line in sr.stdout.splitlines():
+            if "osr_tail_fires=" in line:
+                return int(line.split("osr_tail_fires=")[1].split()[0])
+        raise Exception("osr_tail_fires missing from ;;stats")
+
+    fired = session_fires({"AURA_JIT_FORCE_GUARD_DEOPT": "2"}, prog_g)
+    assert fired >= 1, f"forced-deopt resume did not OSR (fires={fired})"
+    declined = session_fires({"AURA_JIT_FORCE_GUARD_DEOPT": "2", "AURA_JIT_OSR_N": "4"}, prog)
+    assert declined == 0, f"sentinel-declined escape bumped fires (fires={declined})"
+    quiet = session_fires({"AURA_JIT_FORCE_GUARD_DEOPT": "0"}, prog_g)
+    assert quiet == 0, f"no-deopt run OSRed unexpectedly (fires={quiet})"
+    print("  ✅ jit-osr-tail-4600 (named-let OSR byte-identical; fires on cell-free, declines on the #4084 sentinel)")
+
+
+def test_jit_invalidation_walltime_4600():
+    """Issue #4600 §8: invalidation wall-clock bench with realistic bodies.
+
+    The #4569 session bench (200 one-line defines) showed compiles drop
+    4221→221 under assumption invalidation while wall time stayed flat —
+    LLVM compile of a one-line body is small next to parse/typecheck/
+    lowering. This bench re-runs that shape with non-trivial bodies (a
+    named-let accumulation loop per define), 20 rounds of an unrelated
+    invalidate + rerun, in ONE --jit-session per mode. Asserts the
+    per-mode contracts (assumption: rounds stay at the first-run compile
+    level; global-epoch: every round recompiles the module; identical
+    values throughout) and prints both wall clocks for the §8 evidence
+    line — the wall-time-ratio assert stays out of CI (load-robust).
+    """
+    import time as _time
+
+    n = 200
+    rounds = 20
+
+    def prog():
+        defs = " ".join(
+            f"(define (g8f{i} n) (let loop ((k 0) (acc 0)) (if (< k n) (loop (+ k 1) (+ acc k)) acc)))"
+            for i in range(n)
+        )
+        return f"{defs} (+ (g8f0 50) (g8f{n - 1} 50))"
+
+    p = prog()
+    lines = [p]
+    for _ in range(rounds):
+        lines += [";;invalidate unrelated_4600_s8", p, ";;stats"]
+
+    def session(extra_env):
+        env = os.environ.copy()
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "0"
+        env.update(extra_env)
+        t0 = _time.monotonic()
+        r = subprocess.run(
+            [AURA, "--jit-session"], input="\n".join(lines) + "\n", capture_output=True, text=True, timeout=600, env=env
+        )
+        wall = _time.monotonic() - t0
+        assert r.returncode == 0, r.stderr[-500:]
+        out = r.stdout.splitlines()
+        comp = [int(m.group(1)) for m in (re.match(r"compiles=(\d+)", x) for x in out) if m]
+        vals = [x for x in out if re.fullmatch(r"-?\d+", x)]
+        return wall, comp, vals
+
+    expected = str(2 * (50 * (50 - 1) // 2))  # k < 50 sums k=0..49, twice
+    wall_a, comp_a, vals_a = session({"AURA_JIT_GLOBAL_EPOCH_INVALIDATE": "0"})
+    assert len(comp_a) == rounds, f"assumption: {len(comp_a)} stats rows"
+    assert vals_a == [expected] * (rounds + 1), f"assumption values drift: {vals_a[:3]}"
+    first = comp_a[0]
+    per_round = [comp_a[i + 1] - comp_a[i] for i in range(rounds)]
+    assert first >= n, f"first run compiled {first} < {n}"
+    assert max(per_round) <= 1, f"unrelated invalidate recompiled {max(per_round)} (>1)"
+
+    wall_g, comp_g, vals_g = session({"AURA_JIT_GLOBAL_EPOCH_INVALIDATE": "1"})
+    assert vals_g == [expected] * (rounds + 1), f"global values drift: {vals_g[:3]}"
+    g_per_round = [comp_g[i + 1] - comp_g[i] for i in range(rounds)]
+    assert min(g_per_round) >= n, f"global-epoch round recompiled only {min(g_per_round)}"
+
+    print(f"    assumption: first={first} compiles, wall={wall_a:.2f}s, rounds recompile 0..{max(per_round)}")
+    print(f"    global-epoch: ~{min(g_per_round)} compiles/round, wall={wall_g:.2f}s")
+    print(
+        f"    wall ratio assumption/global = {wall_a / max(wall_g, 1e-9):.2f}x "
+        f"(evidence only — not asserted, load-robust)"
+    )
+    print("  ✅ jit-invalidation-walltime-4600 (§8 bench: contracts + wall clocks)")
+
+
 def test_jit_l1_4570():
     """Issue #4570: L1 lowering (cell scalar replacement, both-fixnum fast
     path, compare+branch fusion, static float slots) keeps --jit output
@@ -1716,6 +1885,8 @@ for tf in [
     test_type_feedback_4568,
     test_jit_assumption_invalidation_4569,
     test_jit_prologue_word_and_storm_4600,
+    test_jit_osr_tail_4600,
+    test_jit_invalidation_walltime_4600,
     test_jit_l1_4570,
     test_jit_mixed_compare_4570,
     test_jit_l2_4571,

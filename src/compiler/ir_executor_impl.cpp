@@ -400,6 +400,15 @@ static bool ir_call_is_tail(const IRFunction& func, std::uint32_t block_idx, std
 }
 
 EvalResult IRInterpreter::drain_call_stack(std::size_t base) {
+    // Issue #4600 §3 (phase 3): consecutive same-function tail-call
+    // replacements = the named-let back-edge as the interpreter sees it
+    // (the loop closure calls itself; #4459 replaces the frame per
+    // iteration). Past the threshold the chain escapes to the module's
+    // registered native code via the OSR bridge. A different function
+    // in the chain resets the count; a decline (no host / busy) is
+    // sticky for the chain — the chain keeps interpreting.
+    std::uint64_t osr_tail_self = 0;
+    bool osr_declined = false;
     while (call_stack_.size() > base) {
         // Issue #2292: snapshot frame fields before run_function / pop —
         // a reference into call_stack_ dangles after pop_back().
@@ -420,6 +429,54 @@ EvalResult IRInterpreter::drain_call_stack(std::size_t base) {
             // Issue #4459: replace the caller. run_function has returned, so
             // its locals& is dead — pop here, not inside the opcode.
             if (pc.tail && call_stack_.size() > base) {
+                // Issue #4600 §3 (phase 3): OSR at the named-let
+                // back-edge. The pending frame carries exactly the next
+                // iteration's env+args, which are the native entry's
+                // OpArg inputs — calling the registered ScalarFn with
+                // them runs the remaining loop natively (guards intact:
+                // a failed guard deopts through the §1/§2 stub and
+                // resumes interpreted, same as any native entry). The
+                // value completes the replaced frame: top frames return
+                // it, callers see it in their result slot — the same
+                // protocol drain already applies to a completed callee.
+                if (pc.func == call_stack_.back().func) {
+                    ++osr_tail_self;
+                    static const std::uint64_t osr_threshold = [] {
+                        const char* e = std::getenv("AURA_JIT_OSR_N");
+                        const long v = e && *e ? std::strtol(e, nullptr, 10) : 64;
+                        return v > 0 ? static_cast<std::uint64_t>(v) : std::uint64_t{64};
+                    }();
+                    // One attempt per chain: a decline (no host, busy) is
+                    // sticky — the busy guard outlives the chain it
+                    // protects, so re-marshal + re-attempt per iteration
+                    // would only burn allocations.
+                    if (osr_tail_self == osr_threshold && !osr_declined && !pc.func->name.empty()) {
+                        std::vector<std::int64_t> osr_slots(
+                            static_cast<std::size_t>(pc.func->local_count), 0);
+                        if (osr_slots.size() < pc.args.size())
+                            osr_slots.resize(pc.args.size(), 0);
+                        for (std::size_t i = 0; i < pc.args.size(); ++i)
+                            osr_slots[i] = pc.args[i].val;
+                        std::int64_t osr_bits = 0;
+                        if (aura_jit_osr_enter(pc.func->name.c_str(), osr_slots.data(),
+                                               static_cast<std::uint32_t>(osr_slots.size()),
+                                               static_cast<std::uint32_t>(pc.args.size()),
+                                               &osr_bits) != 0) {
+                            const types::EvalValue osr_val(osr_bits);
+                            const bool osr_top = call_stack_.back().is_top_level;
+                            const std::uint32_t osr_slot = call_stack_.back().result_slot;
+                            call_stack_.pop_back();
+                            if (osr_top || call_stack_.size() <= base)
+                                return osr_val;
+                            if (osr_slot < call_stack_.back().locals.size())
+                                call_stack_.back().locals[osr_slot] = osr_val;
+                            continue;
+                        }
+                        osr_declined = true;
+                    }
+                } else {
+                    osr_tail_self = 0;
+                }
                 const bool tail_top = call_stack_.back().is_top_level;
                 const std::uint32_t tail_slot = call_stack_.back().result_slot;
                 const std::size_t tail_ex = call_stack_.back().ex_depth_at_entry;

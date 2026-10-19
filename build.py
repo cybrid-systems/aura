@@ -9825,6 +9825,14 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4600 frame-deopt guard-exit linter failed — run python3 scripts/check_jit_frame_deopt_4600.py")
 
+    gate4600c_script = ROOT / "scripts" / "check_jit_osr_4600.py"
+    if not gate4600c_script.exists():
+        fail(f"missing {gate4600c_script}")
+        return 1
+    r = run([sys.executable, str(gate4600c_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4600 named-let OSR linter failed — run python3 scripts/check_jit_osr_4600.py")
+        return r
     # Issue #4599 (interpreter baseline follow-up, phase 2): the tree
     # walker's call path performs no StringPool resolve and no string-keyed
     # env / prim-table probes on hot iterations — a body-pool frame binding

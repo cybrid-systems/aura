@@ -477,6 +477,9 @@ namespace {
         const aura::core::TypeRegistry* types = nullptr;
         CompilerMetrics* metrics = nullptr;
         Evaluator* evaluator = nullptr;
+        // Issue #4600 §3 (phase 3): registered-native table for the
+        // named-let OSR escape (drain tail chains → ScalarFn).
+        aura::jit::AuraJIT* jit = nullptr;
     };
     thread_local JitDeoptHostState t_jit_deopt_host;
 
@@ -522,6 +525,45 @@ namespace {
         return static_cast<std::int64_t>(*res);
     }
 
+    // Issue #4600 §3 (phase 3): named-let OSR host. Calls the fn's
+    // REGISTERED native ScalarFn with the pended frame's env+args — no
+    // compile (the code already exists; exec_jit registered every module
+    // fn before its own entry call). The busy guard breaks the
+    // OSR→deopt→resume nesting under forced-deopt mode: the resumed
+    // interpreter's own hot tail chain stays interpreted for this chain.
+    thread_local int t_jit_osr_busy = 0;
+    int jit_osr_enter_host_impl(const char* fn_name, const std::int64_t* slots,
+                                std::uint32_t nslots, std::uint32_t argc, std::int64_t* out_value) {
+        const JitDeoptHostState st = t_jit_deopt_host;
+        if (!st.jit || !fn_name || !fn_name[0] || !slots || nslots == 0 || !out_value)
+            return 0;
+        if (t_jit_osr_busy)
+            return 0;
+        auto* fnp = st.jit->get_function_ptr(fn_name);
+        if (!fnp)
+            return 0;
+        std::vector<std::int64_t> osr_slots(slots, slots + nslots);
+        struct OsrBusyGuard {
+            int& flag;
+            ~OsrBusyGuard() { flag = 0; }
+        } osr_busy_guard{t_jit_osr_busy};
+        t_jit_osr_busy = 1;
+        const std::int64_t v = reinterpret_cast<aura::jit::ScalarFn>(fnp)(
+            osr_slots.data(), static_cast<std::int32_t>(argc));
+        // An old-path prologue deopt inside the OSR'd call (fns with
+        // hidden pcell/spair state — e.g. the named-let self-reference
+        // cell — are not frame-deopt armed) returns the #4084 fixnum-0
+        // SENTINEL, not a value. The interpreted chain must keep that
+        // iteration instead: decline the escape and swallow the sentinel
+        // so the exec_jit top-level check does not fire (the frame-deopt
+        // stub path sets no sentinel on a hosted resume — its value
+        // passes through untouched).
+        if (aura_jit_take_prologue_deopt_sentinel() != 0)
+            return 0;
+        *out_value = v;
+        return 1;
+    }
+
     // RAII arm: install the host for the duration of one exec_jit native
     // call (the IRModule is a local there). Restores the previous host on
     // unwind so nested/re-entrant exec_jit stays correct.
@@ -531,11 +573,17 @@ namespace {
             prev = t_jit_deopt_host;
             t_jit_deopt_host = next;
             aura_jit_set_deopt_frame_host(&jit_deopt_frame_host_impl);
+            // Issue #4600 §3: the OSR escape shares the arm window — no
+            // OSR without this frame-deopt host (unhosted resumes would
+            // turn the escape into a sentinel protocol violation).
+            aura_jit_set_osr_host(&jit_osr_enter_host_impl);
         }
         ~JitDeoptHostArm() {
             t_jit_deopt_host = prev;
-            if (!prev.mod)
+            if (!prev.mod) {
                 aura_jit_set_deopt_frame_host(nullptr);
+                aura_jit_set_osr_host(nullptr);
+            }
         }
     };
 
@@ -4644,7 +4692,7 @@ public:
         // entry shape guard, car/cdr, GuardShape) resumes the IR
         // interpreter here instead of surfacing an error/sentinel.
         const aura::compiler::JitDeoptHostState deopt_state_4600{
-            &ir_mod, &evaluator_.primitives(), &type_registry_, &metrics_, &evaluator_};
+            &ir_mod, &evaluator_.primitives(), &type_registry_, &metrics_, &evaluator_, &jit_};
         aura::compiler::JitDeoptHostArm deopt_host_4600{deopt_state_4600};
         auto raw_result =
             reinterpret_cast<aura::jit::ScalarFn>(fn_ptr)(locals.data(), entry.arg_count);

@@ -1035,6 +1035,22 @@ int aura_jit_peek_prologue_deopt_sentinel(void) noexcept;
 // arm-once (service.ixx keeps its local extern too).
 int aura_jit_take_prologue_deopt_sentinel(void) noexcept;
 
+// Issue #4600 §3 (phase 3): named-let OSR. The IR interpreter's drain
+// loop counts consecutive same-function tail-call frame replacements
+// (the named-let back-edge); past AURA_JIT_OSR_N it hands the loop to
+// the armed host, which calls the already-registered native ScalarFn
+// with the frame's env+args and returns its tagged result as the
+// frame's completed value. Slots are EvalValue bits (env first, then
+// user args); argc is the buffer length (generated code reads args via
+// OpArg gep indices, never the count). Returns 1 and writes *out_value
+// when the host ran the call; 0 = decline (no host, AURA_JIT_OSR=0,
+// unknown fn, busy) and the interpreter keeps interpreting.
+using aura_jit_osr_fn = int (*)(const char* fn_name, const std::int64_t* slots,
+                                std::uint32_t nslots, std::uint32_t argc, std::int64_t* out_value);
+int aura_jit_osr_enter(const char* fn_name, const std::int64_t* slots, std::uint32_t nslots,
+                       std::uint32_t argc, std::int64_t* out_value);
+void aura_jit_set_osr_host(aura_jit_osr_fn fn) noexcept;
+
 // Issue #1534: GuardShape dual-epoch fence — runtime helper called from
 // JIT-compiled OpGuardShape before narrow_evidence / shape fast-path.
 // Returns 1 if the named fn is stale vs aura_aot_func_table_epoch()
