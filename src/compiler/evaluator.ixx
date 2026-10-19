@@ -8567,11 +8567,20 @@ public:
                                                 const std::vector<FlatHashTable*>& at_mark) {
         std::lock_guard hlock(hash_tables_mtx_);
         std::lock_guard lock(alloc_storage_lock_);
-        std::size_t live = 0;
+        // The live hash tables count toward the reclaim trigger in WINDOW
+        // UNITS, not in tables: a 32-slot table is 560 bytes = 35 units
+        // of 16 bytes, so counting a table as one object would let the
+        // window hold 35x more bytes than the trigger intends. The live
+        // set therefore carries the tables' real footprint.
+        std::uint64_t live_units = 0;
         const auto n = std::min(std::min(seen_hash.size(), at_mark.size()), g_hash_tables.size());
         for (std::size_t i = 0; i < n; ++i) {
             if (seen_hash[i]) {
-                ++live;
+                if (g_hash_tables[i] != nullptr) {
+                    live_units += (FlatHashTable::total_bytes(g_hash_tables[i]->capacity) +
+                                   kReclaimWindowUnitBytes - 1) /
+                                  kReclaimWindowUnitBytes;
+                }
                 continue;
             }
             if (i >= hash_owned_.size() || !hash_owned_[i])
@@ -8600,7 +8609,7 @@ public:
             hash_reuse_freelist_.push_back(i);
             ++hash_tables_released_;
         }
-        return live;
+        return live_units;
     }
     // Issue #4613: the hash free list (the runtime door).
     [[nodiscard]] std::size_t hash_table_free_slots() const {

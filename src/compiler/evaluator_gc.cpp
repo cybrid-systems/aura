@@ -1657,7 +1657,7 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
     // list, so the next (hash) mint reuses the slot instead of leaking
     // the block (a 32-slot table is ~560 bytes). A table this
     // evaluator did not mint is left alone.
-    const auto live_hashes = release_unreachable_hash_tables(seen_hash, hash_at_mark);
+    const auto live_hash_units = release_unreachable_hash_tables(seen_hash, hash_at_mark);
 
 
     {
@@ -1712,7 +1712,7 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         // heap is part of the walked heap now.
         // Issue #4613: the live hash tables count too - the hash table
         // walk is part of the mark.
-        note_live_set_for_reclaim_trigger(live_pairs + live_vecs + live_strings + live_hashes,
+        note_live_set_for_reclaim_trigger(live_pairs + live_vecs + live_strings + live_hash_units,
                                           mints_at_mark);
     }
     // Issue #4597: finalize unreachable handles once, after every lock is
@@ -2084,7 +2084,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     // list, so the next (hash) mint reuses the slot instead of leaking
     // the block (a 32-slot table is ~560 bytes). A table this
     // evaluator did not mint is left alone.
-    const auto live_hashes = release_unreachable_hash_tables(seen_hash, hash_at_mark);
+    const auto live_hash_units = release_unreachable_hash_tables(seen_hash, hash_at_mark);
 
     {
         std::lock_guard lock(alloc_storage_lock_);
@@ -2155,7 +2155,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         // Issue #4613: the live hash tables count too - the hash table
         // walk is part of the mark.
         note_live_set_for_reclaim_trigger(
-            live_pairs + live_vecs + live_cells + live_strings + live_hashes, mints_at_mark);
+            live_pairs + live_vecs + live_cells + live_strings + live_hash_units, mints_at_mark);
     }
     tw_closure_allocs_ = 0;
     // Issue #4525: benchmark observability — a full whole-heap mark ran.
