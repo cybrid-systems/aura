@@ -391,6 +391,25 @@ aura_jit_is_fn_epoch_stale(const char* /*name*/, std::uint64_t /*current_bridge_
 extern "C" __attribute__((weak)) std::int64_t aura_jit_deopt_to_interpreter(const char* /*name*/) {
     return 0;
 }
+// Issue #4600 §1/§2 (phase 2): light links resolve the frame-deopt stub
+// to an unhosted degrade (fixnum 0, no sentinel — the full bridge sets
+// the sentinel; hosts are only armed by exec_jit which is LLVM-only).
+extern "C" __attribute__((weak)) std::int64_t
+aura_jit_deopt_frame(const char* /*fn_name*/, std::uint32_t /*block*/, std::uint32_t /*instr*/,
+                     const std::int64_t* /*slots*/, std::uint32_t /*nslots*/,
+                     std::uint32_t /*argc*/) {
+    return 0;
+}
+extern "C" __attribute__((weak)) void
+aura_jit_set_deopt_frame_host(aura_jit_deopt_frame_fn /*fn*/) noexcept {}
+extern "C" __attribute__((weak)) std::uint32_t
+aura_jit_deopt_frame_env_count(const char* /*fn_name*/) noexcept {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint32_t
+aura_jit_deopt_frame_arg_count(const char* /*fn_name*/) noexcept {
+    return 0;
+}
 extern "C" __attribute__((weak)) int aura_jit_take_prologue_deopt_sentinel(void) noexcept {
     return 0;
 }

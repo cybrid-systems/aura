@@ -9773,6 +9773,20 @@ def cmd_lint():
             "Issue #4600 JIT prologue word gate + storm policy linter failed — run python3 scripts/check_jit_assumption_gate_4600.py"
         )
         return r
+    # Issue #4600 (speculative JIT follow-up, phase 2 — §1/§2): guard
+    # exits share one frame-state deopt stub; a failed guard spills the
+    # live IR locals plus the resume (block, instr) and resumes the IR
+    # interpreter there (resume_deopt_frame) instead of an inline generic
+    # fallback / prologue-only sentinel. Forced-deopt-at-every-guard mode
+    # over the #4567 corpus is the §2 acceptance (python door).
+    gate4600b_script = ROOT / "scripts" / "check_jit_frame_deopt_4600.py"
+    if not gate4600b_script.exists():
+        fail(f"missing {gate4600b_script}")
+        return 1
+    r = run([sys.executable, str(gate4600b_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4600 frame-deopt guard-exit linter failed — run python3 scripts/check_jit_frame_deopt_4600.py")
+        return r
     # Issue #4474 (third reopen): the fixed kReclaimTriggerCeiling=32768
     # froze the live/32 reclaim window above ~1M live objects, so each
     # O(live) full-heap mark amortized over at most 32768 allocations and

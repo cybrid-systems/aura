@@ -18,7 +18,10 @@
 
 #include "compiler/mutate_type_gate.hh"
 #include "compiler/jit_assumptions.hh"
-#include "compiler/shape_profiler.h" // Issue #4600: mark_megamorphic storm mark
+#include "compiler/shape_profiler.h"  // Issue #4600: mark_megamorphic storm mark
+#include "compiler/aura_jit_bridge.h" // Issue #4600 §1/§2: frame-deopt stub ABI
+
+#include <dlfcn.h> // Issue #4600: strong-bridge handle dlsym (light SO prepend)
 
 #include <atomic>
 #include <cstdint>
@@ -175,6 +178,134 @@ static void jit_word_and_storm_4600() {
     }
 
     storms.clear_for_test();
+}
+
+static void jit_frame_deopt_4600() {
+    namespace ja = aura::compiler::jit_assume;
+
+    // §1/§2 unit face of the shared frame-deopt stub. The full
+    // forced-deopt-at-every-guard acceptance over the #4567 corpus lives
+    // in tests/python/test_regression.py (exec_jit is LLVM-only).
+    //
+    // Link-profile note: this batch's light JIT SO is PREPENDED by
+    // aura_issue_test_link_light (see cmake/AuraTest.cmake — so its weak
+    // stubs win ELF search over libaura_test_objects' strong defs), so
+    // calling the ABI by name here binds the weak no-op. Resolve the
+    // STRONG bridge by handle instead — dlopen(RTLD_NOLOAD) on the
+    // batch's own strong-bridge SO + handle dlsym (#2012 precedent) —
+    // and route every assertion through the resolved pointers so none
+    // can pass vacuously on the weak face.
+    struct StrongBridge4600 {
+        aura_jit_deopt_frame_fn deopt_frame = nullptr;
+        void (*set_host)(aura_jit_deopt_frame_fn) noexcept = nullptr;
+        void (*note_sentinel)(void) noexcept = nullptr;
+        int (*take_sentinel)(void) noexcept = nullptr;
+        std::uint32_t (*env_count)(const char*) noexcept = nullptr;
+        std::uint32_t (*arg_count)(const char*) noexcept = nullptr;
+    } strong;
+    void* strong_so = ::dlopen("libaura_test_objects.so", RTLD_LAZY | RTLD_NOLOAD);
+    CHECK(strong_so != nullptr, "4600: strong bridge SO loaded in this batch");
+    if (strong_so) {
+        strong.deopt_frame =
+            reinterpret_cast<aura_jit_deopt_frame_fn>(::dlsym(strong_so, "aura_jit_deopt_frame"));
+        strong.set_host = reinterpret_cast<decltype(strong.set_host)>(
+            ::dlsym(strong_so, "aura_jit_set_deopt_frame_host"));
+        strong.note_sentinel = reinterpret_cast<decltype(strong.note_sentinel)>(
+            ::dlsym(strong_so, "aura_jit_note_prologue_deopt_sentinel"));
+        strong.take_sentinel = reinterpret_cast<decltype(strong.take_sentinel)>(
+            ::dlsym(strong_so, "aura_jit_take_prologue_deopt_sentinel"));
+        strong.env_count = reinterpret_cast<decltype(strong.env_count)>(
+            ::dlsym(strong_so, "aura_jit_deopt_frame_env_count"));
+        strong.arg_count = reinterpret_cast<decltype(strong.arg_count)>(
+            ::dlsym(strong_so, "aura_jit_deopt_frame_arg_count"));
+    }
+    CHECK(strong.deopt_frame && strong.set_host && strong.take_sentinel && strong.note_sentinel &&
+              strong.env_count && strong.arg_count,
+          "4600: strong frame-deopt ABI symbols resolvable");
+
+    auto& storms = ja::DeoptStorms::instance();
+    storms.clear_for_test();
+    const auto unhosted0 = ja::stats().frame_deopt_unhosted.load(std::memory_order_relaxed);
+    const auto exits0 = ja::stats().frame_deopt_exits.load(std::memory_order_relaxed);
+
+    // AC1: stats line carries the frame-deopt counters.
+    CHECK(ja::format_stats().find("frame_deopt_armed=") != std::string::npos,
+          "4600: stats line carries frame_deopt fields");
+    CHECK(ja::format_stats().find("frame_deopt_resumes=") != std::string::npos,
+          "4600: stats line carries resume counter");
+
+    if (!strong.deopt_frame || !strong.set_host || !strong.take_sentinel || !strong.note_sentinel ||
+        !strong.env_count || !strong.arg_count) {
+        std::println("--- #4600 frame-deopt stub: skipped (strong ABI unresolvable) ---");
+        return;
+    }
+
+    // AC2: unhosted degrade — no host armed returns fixnum 0, bumps the
+    // unhosted counter, and does NOT count as a host resume. (The
+    // degrade's internal PLT call to aura_jit_note_prologue_deopt_sentinel
+    // also binds the light SO's weak no-op in this process — the #4084
+    // sentinel arm is source-cited by AC6 of the 4600 linter and holds on
+    // the production binary, where the strong bridge is the only def;
+    // the strong note/take pair round-trip below pins the protocol live.)
+    const auto resumes_pre = ja::stats().frame_deopt_resumes.load(std::memory_order_relaxed);
+    strong.set_host(nullptr);
+    (void)strong.take_sentinel();
+    std::int64_t slots[2] = {7, 9};
+    CHECK(strong.deopt_frame("fn4600f", 1, 2, slots, 2, 0) == 0,
+          "4600: unhosted stub returns fixnum 0");
+    CHECK(ja::stats().frame_deopt_unhosted.load(std::memory_order_relaxed) == unhosted0 + 1,
+          "4600: unhosted counter bumped");
+    CHECK(ja::stats().frame_deopt_exits.load(std::memory_order_relaxed) == exits0 + 1,
+          "4600: exit counter bumped");
+    CHECK(ja::stats().frame_deopt_resumes.load(std::memory_order_relaxed) == resumes_pre,
+          "4600: unhosted degrade is not a host resume");
+    strong.note_sentinel();
+    CHECK(strong.take_sentinel() != 0,
+          "4600: #4084 sentinel note/take pair round-trips (strong SO)");
+
+    // AC3: deopt-storm attribution — a guard deopt notes the fn (§4
+    // policy applies to guard exits, same as prologue deopts).
+    CHECK(storms.count("fn4600f") == 1, "4600: guard deopt attributes to DeoptStorms");
+
+    // AC4: host roundtrip — armed host receives (name, block, instr,
+    // slots, nslots, argc) verbatim; a successful host resume clears the
+    // sentinel path (no sentinel set) and bumps the resume counter.
+    static std::string cap_name;
+    static std::uint32_t cap_block = 0;
+    static std::uint32_t cap_instr = 0;
+    static std::uint32_t cap_nslots = 0;
+    static std::uint32_t cap_argc = 0;
+    static std::int64_t cap_slot0 = 0;
+    const auto host = [](const char* fn_name, std::uint32_t block, std::uint32_t instr,
+                         const std::int64_t* s, std::uint32_t nslots,
+                         std::uint32_t argc) -> std::int64_t {
+        cap_name = fn_name;
+        cap_block = block;
+        cap_instr = instr;
+        cap_nslots = nslots;
+        cap_argc = argc;
+        cap_slot0 = s ? s[0] : -1;
+        return 42;
+    };
+    strong.set_host(host);
+    const auto resumes0 = ja::stats().frame_deopt_resumes.load(std::memory_order_relaxed);
+    CHECK(strong.deopt_frame("fn4600h", 3, 4, slots, 2, 5) == 42,
+          "4600: stub returns the host resume value");
+    CHECK(cap_name == "fn4600h" && cap_block == 3 && cap_instr == 4 && cap_nslots == 2 &&
+              cap_argc == 5 && cap_slot0 == 7,
+          "4600: host sees name/block/instr/slots verbatim");
+    CHECK(strong.take_sentinel() == 0, "4600: hosted resume sets no sentinel");
+    CHECK(ja::stats().frame_deopt_resumes.load(std::memory_order_relaxed) == resumes0 + 1,
+          "4600: resume counter bumped");
+
+    // AC5: unregistered-name entry helpers stay 0 (no runtime table row).
+    CHECK(strong.env_count("no-such-fn-4600") == 0, "4600: env count 0 for unregistered fn");
+    CHECK(strong.arg_count("no-such-fn-4600") == 0, "4600: arg count 0 for unregistered fn");
+
+    // Restore: no host (tests must not leak the arm into later suites).
+    strong.set_host(nullptr);
+    storms.clear_for_test();
+    std::println("--- #4600 frame-deopt stub: {} checks done ---", g_passed);
 }
 
 static void stringpool_intern_fastpath_4558() {
@@ -995,6 +1126,7 @@ int run_test_mutate_type_gate() {
     stringpool_intern_fastpath_4558();
     jit_assumptions_4569();
     jit_word_and_storm_4600();
+    jit_frame_deopt_4600();
     return g_failed ? 1 : 0;
 }
 

@@ -198,6 +198,18 @@ public:
 
     // Execute the top-level function and return result
     EvalResult execute();
+    // Issue #4600 §2 (phase 2): frame-state deopt resume. A JIT guard exit
+    // spilled the live IR locals and a resume point; this entry pushes an
+    // ExecFrame at (block, instr) — the exact re-entry #2292 built for
+    // post-PendingCall resumes — and drains it as a top-level frame. The
+    // frame runs to Return; the result is the deopting native call's value.
+    // `args` matters only for entry-block resumes before the Arg ops
+    // (block == entry && instr == 0); mid-body resumes pass an empty span.
+    // `locals` must be sized >= func.local_count (pad with make_void()
+    // beyond the spilled region — never shrink it).
+    EvalResult resume_deopt_frame(const aura::ir::IRFunction& func, std::uint32_t block,
+                                  std::size_t instr, std::vector<EvalValue> locals,
+                                  std::span<const EvalValue> args);
 
     // Issue #272: invoke a runtime closure by id (full IR path).
     EvalResult call_closure(std::uint64_t closure_id, std::span<const EvalValue> args);
@@ -296,6 +308,7 @@ private:
 
     // Execute a specific function with given args (backward compat wrapper)
     EvalResult execute_function(const aura::ir::IRFunction& func, std::span<const EvalValue> args);
+
 
     // Step through instructions. Returns RunResult:
     //   - EvalResult on Return/error
