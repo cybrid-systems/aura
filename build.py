@@ -9845,6 +9845,29 @@ def cmd_lint():
             "Issue #4606 --jit prim-callee refuse linter failed — run python3 scripts/check_jit_prim_callee_refuse_4606.py"
         )
         return r
+    # Issue #4607: under --jit an unbound variable was not reported. The
+    # lowering compiled a name it could not resolve as the constant 0
+    # (the "unknown reference" encoding) and the native dispatch then
+    # treated 0 as closure id 0 — a live closure (wrong callee ->
+    # infinite recursion -> stack overflow -> SIGSEGV) or an out-of-range
+    # id (the bounds-fail echo returned the 0 silently). The eval face
+    # never compiles such a reference (needs_tree_walker_fallback routes
+    # it to the tree walker, which raises the canonical "unbound
+    # variable: <name>"). The lowering now records the names it could
+    # not resolve and exec_jit refuses to compile such a program: it
+    # takes the tree walker (the eval face) instead. The gate pins the
+    # sink, the refuse (before the compile stage) and the runtime door in
+    # tests/compiler/test_jit_unbound_callee_4607.cpp.
+    gate4607_script = ROOT / "scripts" / "check_jit_unbound_callee_4607.py"
+    if not gate4607_script.exists():
+        fail(f"missing {gate4607_script}")
+        return 1
+    r = run([sys.executable, str(gate4607_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4607 --jit unbound-callee refuse linter failed — run python3 scripts/check_jit_unbound_callee_4607.py"
+        )
+        return r
 
     gate4600c_script = ROOT / "scripts" / "check_jit_osr_4600.py"
     if not gate4600c_script.exists():

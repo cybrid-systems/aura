@@ -4145,8 +4145,43 @@ public:
             aura::compiler::jit_assume::define_clock().load(std::memory_order_acquire);
 
         // Lower to IR
+        // Issue #4607: the lowering reports the name references it could
+        // not resolve (an unbound global). The eval face never compiles
+        // such a reference: needs_tree_walker_fallback (service.ixx) sends
+        // every program with an unresolved name to the tree walker, which
+        // raises the canonical "unbound variable: <name>" diagnostic
+        // (evaluator_eval_flat.cpp, Variable case). The JIT path had no
+        // such check: the reference was compiled as the constant 0, and
+        // the native dispatch then treated 0 as closure id 0 -- a live
+        // closure (wrong callee -> infinite recursion -> stack overflow ->
+        // SIGSEGV) or an out-of-range id (the bounds-fail echo returned
+        // the 0 silently).
+        //
+        // Refuse to compile such a program and take the tree walker
+        // instead: the interpreter raises the canonical error with the
+        // same message, the same source location and the same non-zero
+        // exit as eval -- and, for a reference that is never reached, the
+        // same result as eval (no error at all). The refuse happens
+        // BEFORE anything is compiled or executed, so no program state is
+        // produced twice.
+        std::vector<std::pair<std::string, aura::ast::NodeId>> unbound_globals;
         auto ir_mod = aura::compiler::lower_to_ir(*flat_ptr, *pool_ptr, arena_,
-                                                  &evaluator_.primitives(), &type_registry_);
+                                                  &evaluator_.primitives(), &type_registry_,
+                                                  /*narrowing_evidence=*/0, &unbound_globals);
+        if (!unbound_globals.empty()) {
+            // Issue #4607: the tree walker is the eval face -- the
+            // reference face for "unbound variable: <name>". Expand
+            // macros first (eval()/eval_ir() do the same; the JIT path
+            // never expanded them, so a macro program keeps working).
+            auto expanded_root_4607 =
+                aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, flat_ptr->root);
+            // Drop the mutation read lock before the walker runs: a
+            // mutation primitive in the program takes mutate_mtx_ in
+            // write mode and this thread already holds it in read mode.
+            mutate_read.unlock();
+            return evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root_4607,
+                                        evaluator_.top_env());
+        }
 
         // Run passes
         {

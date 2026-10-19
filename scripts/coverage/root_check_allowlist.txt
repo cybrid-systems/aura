@@ -271,3 +271,4 @@ check_snapshot_share_stamps_4598.py
 check_string_heap_reclaim_4608.py
 check_jit_prim_callee_refuse_4606.py
 check_vector_hash_cow_4614.py
+check_jit_unbound_callee_4607.py

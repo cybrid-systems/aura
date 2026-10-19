@@ -4664,6 +4664,17 @@ aura_add_issue_test(test_orphan_reap_stress)
 aura_issue_test_link_light(test_orphan_reap_stress)
 add_dependencies(all_test_issue_targets test_orphan_reap_stress)
 
+# Issue #4607: --jit must report an unbound variable like eval. The
+# lowering records the names it could not resolve (the unbound-global
+# sink) and exec_jit refuses to compile such a program — it takes the
+# tree walker (the eval face), which raises the canonical
+# "unbound variable: <name>" diagnostic. Door: the sink in TAIL /
+# NON-TAIL / HIGHER-ORDER callee position, the no-false-positive
+# controls and the source-cite rows.
+aura_add_issue_test(test_jit_unbound_callee)
+aura_issue_test_link_light(test_jit_unbound_callee)
+add_dependencies(all_test_issue_targets test_jit_unbound_callee)
+
 # Issue #2586: single-use / mutation-bound grant (auto-revoke after first
 # successful check_and_record_effect that uses the grant's bits; deny path
 # does NOT consume). Source-cite in capability_model.hh (CapabilityGrant
