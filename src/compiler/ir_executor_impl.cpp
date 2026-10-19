@@ -23,6 +23,7 @@ module;
 #include "compiler/typed_mutation_audit.h" // Issue #2899: linear_ir_fastpath_try_skip
 #include "compiler/mutation_hold_budget.h" // Issue #3988: opcode-stride poll stride
 #include "compiler/user_arity.hh"          // Issue #4467: call-site procedure arity
+#include "compiler/locked_string_heap.hh" // Issue #4608: the IR reads strings from the evaluator heap
 // Issue #4568: this TU owns the feedback row map. The macro must be
 // set before the include so the definition arrives via the header
 // (a global module fragment may only contain preprocessor inclusion).
@@ -320,8 +321,11 @@ static std::uint32_t runtime_shape_of(const EvalValue& v) {
 }
 
 // Content-aware equality helper for strings (used by Eq instruction)
+// Issue #4608: the evaluator's string heap is the only string store — the
+// IR keeps no index-parallel mirror, so a reclaimed (and re-used) slot can
+// never leave a stale copy behind.
 static bool eq_str_content(const EvalValue& a, const EvalValue& b,
-                           std::vector<std::string>& string_heap) {
+                           const LockedStringHeap& string_heap) {
     if (a == b)
         return true;
     if (is_string(a) && is_string(b)) {
@@ -975,6 +979,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
             return static_cast<double>(as_int(v));
         return 0.0;
     };
+    // Issue #4608: the evaluator's string heap is the only string store
+    // (the IR keeps no index-parallel mirror).
     auto string_text_of = [&](const types::EvalValue& v) -> std::string_view {
         if (!is_string(v))
             return {};
@@ -982,8 +988,6 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
         auto& prim_heap = context_.primitives.string_heap();
         if (idx < prim_heap.size())
             return prim_heap[idx];
-        if (idx < string_heap_.size())
-            return string_heap_[idx];
         return {};
     };
     // Stores a primitive error. A fresh non-number also prints the legacy
@@ -1318,29 +1322,38 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     }
                     if (auto cit = const_string_cache_.find(pool_idx);
                         cit != const_string_cache_.end()) {
+                        // Issue #4608: the reclaim may have released the
+                        // slot (and the next mint re-used it) — validate
+                        // the content before handing the cached value out
+                        // and re-materialize when it changed. (The IR's
+                        // own sweep keeps the cache in its roots; a
+                        // tree-walker sweep nested inside this IR run
+                        // does not see it.)
+                        auto& prim_heap = context_.primitives.string_heap();
+                        const std::string content = (pool_idx < module_.string_pool.size())
+                                                        ? module_.string_pool[pool_idx]
+                                                        : std::string{};
+                        const auto cached_idx = as_string_idx(cit->second);
+                        if (cached_idx < prim_heap.size() && prim_heap[cached_idx] == content) {
+                            locals[ops[0]] = cit->second;
+                            break;
+                        }
+                        const auto fresh = prim_heap.mint(content);
+                        cit->second = make_string(fresh);
                         locals[ops[0]] = cit->second;
                         break;
                     }
-                    // First hit: store in both heaps — primitives (display /
-                    // prims) and local (coercion / eq_str_content). Pad so
-                    // sizes match before push: make_string(idx) is a
-                    // prim_heap index; coerce_i / eq_str also need the same
-                    // idx valid on string_heap_ when they consult it.
+                    // First hit: materialize the literal in the evaluator's
+                    // string heap — the only string store (Issue #4608: the
+                    // IR keeps no index-parallel mirror, so a reclaimed and
+                    // re-used slot can never leave a stale copy behind).
                     auto& prim_heap = context_.primitives.string_heap();
-                    while (string_heap_.size() < prim_heap.size())
-                        string_heap_.push_back({});
-                    while (prim_heap.size() < string_heap_.size())
-                        (void)prim_heap.mint(std::string{});
                     const std::string content = (pool_idx < module_.string_pool.size())
                                                     ? module_.string_pool[pool_idx]
                                                     : std::string{};
                     // Issue #4543: the evaluator heap only grows via mint()
-                    // (locked, returns the real index). Keep the IR-local
-                    // mirror index-aligned with it.
+                    // (locked, returns the real index).
                     const auto idx = prim_heap.mint(content);
-                    while (string_heap_.size() < idx)
-                        string_heap_.push_back({});
-                    string_heap_.push_back(content);
                     auto val = make_string(idx);
                     const_string_cache_.emplace(pool_idx, val);
                     locals[ops[0]] = val;
@@ -1414,7 +1427,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     }
                     // String comparison by content
                     if (is_string(a) && is_string(b)) {
-                        locals[ops[0]] = make_bool(eq_str_content(a, b, string_heap_));
+                        locals[ops[0]] =
+                            make_bool(eq_str_content(a, b, context_.primitives.string_heap()));
                         break;
                     }
                     // Pair/list: fall back to raw equality (no pairs_ access here)
@@ -1498,6 +1512,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto& val = locals[ops[1]];
                     auto blame_loc = ops[3];
                     auto blame_node = instr.type_id;
+                    // Issue #4608: the evaluator's string heap is the only
+                    // string store (the IR keeps no index-parallel mirror).
+                    auto& prim_heap = context_.primitives.string_heap();
 
                     switch (ops[2]) {
                         case 0: { // Coerce to Int
@@ -1505,11 +1522,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                 locals[ops[0]] = val;
                             } else if (is_string(val)) {
                                 auto idx = as_string_idx(val);
-                                if (idx < string_heap_.size()) {
+                                if (idx < prim_heap.size()) {
                                     try {
-                                        locals[ops[0]] =
-                                            make_int_or_promote(static_cast<std::int64_t>(
-                                                std::stoll(string_heap_[idx])));
+                                        locals[ops[0]] = make_int_or_promote(
+                                            static_cast<std::int64_t>(std::stoll(prim_heap[idx])));
                                     } catch (...) {
                                         // [SILENCE-PRIM-#615] string→int
                                         // coerce fail → 0 (#1669 class A).
@@ -1530,23 +1546,21 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             break;
                         }
                         case 1: { // Coerce to String
+                            // Issue #4608: the coerced string goes into the
+                            // evaluator's string heap (the only string store),
+                            // so a dropped coercion is reclaimable and a
+                            // re-used slot never leaves a stale copy behind.
                             if (is_string(val)) {
                                 locals[ops[0]] = val;
                             } else if (is_int(val)) {
                                 auto s = std::to_string(as_int(val));
-                                auto id = string_heap_.size();
-                                string_heap_.push_back(std::move(s));
-                                locals[ops[0]] = make_string(id);
+                                locals[ops[0]] = make_string(prim_heap.mint(std::move(s)));
                             } else if (is_bool(val)) {
                                 auto s = as_bool(val) ? "#t" : "#f";
-                                auto id = string_heap_.size();
-                                string_heap_.push_back(std::move(s));
-                                locals[ops[0]] = make_string(id);
+                                locals[ops[0]] = make_string(prim_heap.mint(std::move(s)));
                             } else if (is_float(val)) {
                                 auto s = std::to_string(as_float(val));
-                                auto id = string_heap_.size();
-                                string_heap_.push_back(std::move(s));
-                                locals[ops[0]] = make_string(id);
+                                locals[ops[0]] = make_string(prim_heap.mint(std::move(s)));
                             } else {
                                 locals[ops[0]] = val;
                             }
@@ -1563,9 +1577,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                 locals[ops[0]] = make_float(static_cast<double>(as_int(val)));
                             } else if (is_string(val)) {
                                 auto idx = as_string_idx(val);
-                                if (idx < string_heap_.size()) {
+                                if (idx < prim_heap.size()) {
                                     try {
-                                        locals[ops[0]] = make_float(std::stod(string_heap_[idx]));
+                                        locals[ops[0]] = make_float(std::stod(prim_heap[idx]));
                                     } catch (...) {
                                         // [SILENCE-PRIM-#615] string→float
                                         // coerce fail → 0.0 (#1669 class A).
@@ -2887,6 +2901,13 @@ void IRInterpreter::maybe_reclaim_unreachable() {
     }
     for (const auto& entry : empty_env_closure_by_func_)
         roots.push_back(make_closure(entry.second));
+    // Issue #4608: the const string caches hold string indices into
+    // the evaluator's string heap. They are roots: a cached index must
+    // never be released under the cache.
+    for (const auto& entry : const_string_cache_)
+        roots.push_back(entry.second);
+    for (const auto& entry : const_keyword_cache_)
+        roots.push_back(entry.second);
     // Issue #4481: absorb TW-side in-flight roots (call-env bindings,
     // pinned arg vectors, live results). This sweep fires at IR instruction
     // boundaries that can be nested inside a live TW evaluation; without

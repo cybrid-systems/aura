@@ -381,12 +381,15 @@ private:
     std::uint64_t next_linear_id_ = 1;
     std::vector<LinearEntry> linear_heap_;
 
-    // Runtime string heap (for Int→String coercion)
-    std::vector<std::string> string_heap_;
+    // Issue #4608: the IR keeps NO index-parallel copy of the string
+    // heap. The evaluator's heap (primitives.string_heap()) is the only
+    // string store: a copy would go stale when the reclaim releases a
+    // slot and the next mint re-uses it. The IR reads the content from
+    // the evaluator heap wherever it needs it.
 
     // Issue #2573: intern ConstString by IRModule string_pool index.
     // Without this, each execution of ConstString push_back'd a fresh
-    // copy into primitives.string_heap() + string_heap_ — hot loops
+    // copy into primitives.string_heap() — hot loops
     // with body literals grew O(iterations). Same pool index always
     // has the same content for the bound module_; cache the EvalValue
     // (prim_heap index) and reuse. Miss materializes once.

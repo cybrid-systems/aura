@@ -9873,6 +9873,25 @@ def cmd_lint():
             "Issue #4474 large-heap reclaim window linter failed — run python3 scripts/check_reclaim_trigger_large_heap_4474.py"
         )
         return r
+    # Issue #4608: the file-mode reclaim recycled pairs, cells and
+    # closures, but never the string heap — every string minted and
+    # dropped inside a running program kept its slot until exit (~70
+    # bytes per string), so a mint-and-drop loop grew the RSS
+    # linearly. The reclaim now marks the string slots (a string value
+    # IS the slot index) and releases the unreachable ones onto the
+    # heap's free list; a reused slot drops its #4548 code-point cache
+    # entry and re-runs the #4428 owner stamp. The IR keeps no
+    # index-parallel copy of the string heap.
+    # Runtime doors live in tests/compiler/test_pmr_alloc_fiber_safe.cpp
+    # (ac4608_string_heap_reclaim).
+    stringreclaim4608_script = ROOT / "scripts" / "check_string_heap_reclaim_4608.py"
+    if not stringreclaim4608_script.exists():
+        fail(f"missing {stringreclaim4608_script}")
+        return 1
+    r = run([sys.executable, str(stringreclaim4608_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4608 string-heap reclaim linter failed — run python3 scripts/check_string_heap_reclaim_4608.py")
+        return r
     # Issue #4240 (WAL segment prune after ring wrap): after the typed
     # (256) + SE (1024) rings wrap AND AURA_WAL_MAX_SEGMENTS retention
     # prunes the only durable segment holding the mid (#3338), every
