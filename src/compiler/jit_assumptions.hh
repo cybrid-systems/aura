@@ -75,6 +75,11 @@ struct Stats {
     std::atomic<std::uint64_t> frame_deopt_exits{0};
     std::atomic<std::uint64_t> frame_deopt_resumes{0};
     std::atomic<std::uint64_t> frame_deopt_unhosted{0};
+    // Issue #4600 §3 (phase 3): named-let OSR. `osr_tail_fires` counts
+    // drain-loop escapes where an interpreted tail self-call chain was
+    // handed to the module's registered native code (the bridge bumps
+    // on a handled host call).
+    std::atomic<std::uint64_t> osr_tail_fires{0};
 };
 
 inline Stats& stats() noexcept {
@@ -295,6 +300,7 @@ struct Fnv {
     kv("frame_deopt_exits", s.frame_deopt_exits.load(std::memory_order_relaxed));
     kv("frame_deopt_resumes", s.frame_deopt_resumes.load(std::memory_order_relaxed));
     kv("frame_deopt_unhosted", s.frame_deopt_unhosted.load(std::memory_order_relaxed));
+    kv("osr_tail_fires", s.osr_tail_fires.load(std::memory_order_relaxed));
     kv("events", EventLog::instance().total());
     return out;
 }

@@ -308,6 +308,96 @@ static void jit_frame_deopt_4600() {
     std::println("--- #4600 frame-deopt stub: {} checks done ---", g_passed);
 }
 
+static void jit_osr_tail_4600() {
+    namespace ja = aura::compiler::jit_assume;
+
+    // §3 unit face of the named-let OSR bridge. The drain-loop escape
+    // wiring is source-cited by the 4600 linter; the end-to-end
+    // interpreted-loop → native-escape equivalence lives in
+    // tests/python/test_regression.py (exec_jit is LLVM-only). Same
+    // link-profile rule as jit_frame_deopt_4600: resolve the STRONG
+    // bridge by handle (the batch's light JIT SO prepends weak stubs).
+    struct StrongOsr4600 {
+        int (*osr_enter)(const char*, const std::int64_t*, std::uint32_t, std::uint32_t,
+                         std::int64_t*) = nullptr;
+        void (*set_host)(aura_jit_osr_fn) noexcept = nullptr;
+    } strong;
+    void* strong_so = ::dlopen("libaura_test_objects.so", RTLD_LAZY | RTLD_NOLOAD);
+    CHECK(strong_so != nullptr, "4600 osr: strong bridge SO loaded in this batch");
+    if (strong_so) {
+        strong.osr_enter =
+            reinterpret_cast<int (*)(const char*, const std::int64_t*, std::uint32_t, std::uint32_t,
+                                     std::int64_t*)>(::dlsym(strong_so, "aura_jit_osr_enter"));
+        strong.set_host = reinterpret_cast<decltype(strong.set_host)>(
+            ::dlsym(strong_so, "aura_jit_set_osr_host"));
+    }
+    CHECK(strong.osr_enter && strong.set_host, "4600 osr: strong OSR ABI symbols resolvable");
+    CHECK(ja::format_stats().find("osr_tail_fires=") != std::string::npos,
+          "4600 osr: stats line carries osr_tail_fires");
+    if (!strong.osr_enter || !strong.set_host) {
+        std::println("--- #4600 osr-tail: skipped (strong ABI unresolvable) ---");
+        return;
+    }
+
+    const auto fires0 = ja::stats().osr_tail_fires.load(std::memory_order_relaxed);
+
+    // AC1: unhosted decline — no host armed returns 0 and never counts
+    // a fire (the drain keeps interpreting).
+    strong.set_host(nullptr);
+    std::int64_t out = -1;
+    std::int64_t slots[2] = {11, 13};
+    CHECK(strong.osr_enter("fn4600osr", slots, 2, 2, &out) == 0,
+          "4600 osr: unhosted bridge declines");
+    CHECK(out == -1, "4600 osr: decline leaves out_value untouched");
+    CHECK(ja::stats().osr_tail_fires.load(std::memory_order_relaxed) == fires0,
+          "4600 osr: decline does not bump osr_tail_fires");
+
+    // AC2: host roundtrip — armed host sees (name, slots, nslots, argc)
+    // verbatim; handled call bumps osr_tail_fires and publishes out_value.
+    static std::string cap_name;
+    static std::uint32_t cap_n = 0;
+    static std::uint32_t cap_argc = 0;
+    static std::int64_t cap_slot0 = 0;
+    const auto host = [](const char* fn_name, const std::int64_t* s, std::uint32_t n,
+                         std::uint32_t argc, std::int64_t* out_value) -> int {
+        cap_name = fn_name;
+        cap_n = n;
+        cap_argc = argc;
+        cap_slot0 = s ? s[0] : -1;
+        *out_value = 4292;
+        return 1;
+    };
+    strong.set_host(host);
+    CHECK(strong.osr_enter("fn4600osr2", slots, 2, 2, &out) == 1,
+          "4600 osr: hosted bridge reports handled");
+    CHECK(out == 4292, "4600 osr: host result published via out_value");
+    CHECK(cap_name == "fn4600osr2" && cap_n == 2 && cap_argc == 2 && cap_slot0 == 11,
+          "4600 osr: host sees name/slots/nslots/argc verbatim");
+    CHECK(ja::stats().osr_tail_fires.load(std::memory_order_relaxed) == fires0 + 1,
+          "4600 osr: handled call bumps osr_tail_fires");
+
+    // AC3: host decline — a host that returns 0 (busy guard / unknown
+    // fn on the service side) propagates as decline, no fire.
+    const auto decline = [](const char*, const std::int64_t*, std::uint32_t, std::uint32_t,
+                            std::int64_t*) -> int { return 0; };
+    strong.set_host(decline);
+    CHECK(strong.osr_enter("fn4600osr3", slots, 2, 2, &out) == 0,
+          "4600 osr: declining host surfaces as bridge decline");
+    CHECK(ja::stats().osr_tail_fires.load(std::memory_order_relaxed) == fires0 + 1,
+          "4600 osr: host decline does not bump osr_tail_fires");
+
+    // AC4: degenerate args decline before the host is consulted.
+    strong.set_host(host);
+    CHECK(strong.osr_enter(nullptr, slots, 2, 2, &out) == 0, "4600 osr: null name declines");
+    CHECK(strong.osr_enter("fn4600osr4", slots, 0, 0, &out) == 0, "4600 osr: zero nslots declines");
+    CHECK(strong.osr_enter("fn4600osr5", slots, 2, 2, nullptr) == 0,
+          "4600 osr: null out_value declines");
+
+    // Restore: no host (tests must not leak the arm into later suites).
+    strong.set_host(nullptr);
+    std::println("--- #4600 osr-tail: {} checks done ---", g_passed);
+}
+
 static void stringpool_intern_fastpath_4558() {
     aura::ast::StringPool pool;
     const auto a = pool.intern("alpha4558");
@@ -1127,6 +1217,7 @@ int run_test_mutate_type_gate() {
     jit_assumptions_4569();
     jit_word_and_storm_4600();
     jit_frame_deopt_4600();
+    jit_osr_tail_4600();
     return g_failed ? 1 : 0;
 }
 

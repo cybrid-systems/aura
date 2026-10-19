@@ -413,6 +413,14 @@ aura_jit_deopt_frame_arg_count(const char* /*fn_name*/) noexcept {
 extern "C" __attribute__((weak)) int aura_jit_take_prologue_deopt_sentinel(void) noexcept {
     return 0;
 }
+// Issue #4600 §3 (phase 3): light links never OSR (no host, no stats) —
+// interpreted tail loops keep running in the drain.
+extern "C" __attribute__((weak)) int
+aura_jit_osr_enter(const char* /*fn_name*/, const std::int64_t* /*slots*/, std::uint32_t /*nslots*/,
+                   std::uint32_t /*argc*/, std::int64_t* /*out_value*/) {
+    return 0;
+}
+extern "C" __attribute__((weak)) void aura_jit_set_osr_host(aura_jit_osr_fn /*fn*/) noexcept {}
 extern "C" __attribute__((weak)) void aura_jit_note_prologue_deopt_sentinel(void) noexcept {}
 extern "C" __attribute__((weak)) void aura_jit_clear_prologue_deopt_sentinel(void) noexcept {}
 extern "C" __attribute__((weak)) int aura_jit_peek_prologue_deopt_sentinel(void) noexcept {

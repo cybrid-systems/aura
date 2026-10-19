@@ -3613,6 +3613,11 @@ extern "C" int aura_jit_take_prologue_deopt_sentinel(void) noexcept {
     return v;
 }
 
+// Issue #4600 §3 (phase 3): named-let OSR bridge. AURA_JIT_OSR=0 keeps
+// every loop interpreted (the drain counter still runs but the bridge
+// declines before the host is consulted). Successful entries bump the
+// osr_tail_fires stat so query:jit-assumption-stats shows the escapes.
+
 // Issue #4451: closure-dispatch refuses share this TLS. note does not
 // batch-deopt a caller. clear runs at dispatch entry so a prior direct
 // refuse cannot poison the next call. peek does not clear — the host
@@ -3673,6 +3678,19 @@ extern "C" std::int64_t aura_jit_deopt_to_interpreter(const char* name) {
 // deopt-storm policy's call (§4, DeoptStorms attribution below).
 namespace {
 aura_jit_deopt_frame_fn g_deopt_frame_host = nullptr;
+// Issue #4600 §3 (phase 3): named-let OSR host. Armed by exec_jit next
+// to the frame-deopt host; the bridge dispatches hot interpreted tail
+// self-calls into the module's already-registered native code.
+aura_jit_osr_fn g_osr_host = nullptr;
+// Static (not static-init-fn) so the check is two loads on the hot
+// decline path; AURA_JIT_OSR=0 disables the escape entirely.
+int osr_enabled_env() noexcept {
+    static const int on = [] {
+        const char* v = std::getenv("AURA_JIT_OSR");
+        return !(v && v[0] == '0');
+    }();
+    return on;
+}
 // aura_jit_runtime.cpp name→entry table (no shared header; C ABI).
 extern "C" int64_t aura_lookup_fn_by_name(const char* name, int64_t* out_local_count,
                                           int64_t* out_arg_count, int64_t* out_env_count);
@@ -3711,6 +3729,29 @@ extern "C" std::int64_t aura_jit_deopt_frame(const char* fn_name, std::uint32_t 
     st.frame_deopt_unhosted.fetch_add(1, std::memory_order_relaxed);
     aura_jit_note_prologue_deopt_sentinel();
     return 0;
+}
+
+// Issue #4600 §3 (phase 3): see aura_jit_bridge.h. The host carries the
+// module's registered ScalarFn table; slots are the pended frame's
+// env+args bits. A decline (0) leaves the loop interpreted — the drain
+// counter stays hot so the next replacement re-attempts once the host
+// is free again (the host-side busy guard breaks OSR→deopt→resume
+// nesting under AURA_JIT_FORCE_GUARD_DEOPT=2, where every native entry
+// immediately deopts back into the interpreter).
+extern "C" int aura_jit_osr_enter(const char* fn_name, const std::int64_t* slots,
+                                  std::uint32_t nslots, std::uint32_t argc,
+                                  std::int64_t* out_value) {
+    if (!osr_enabled_env() || !g_osr_host || !fn_name || !fn_name[0] || !slots || nslots == 0 ||
+        !out_value)
+        return 0;
+    if (!g_osr_host(fn_name, slots, nslots, argc, out_value))
+        return 0;
+    aura::compiler::jit_assume::stats().osr_tail_fires.fetch_add(1, std::memory_order_relaxed);
+    return 1;
+}
+
+extern "C" void aura_jit_set_osr_host(aura_jit_osr_fn fn) noexcept {
+    g_osr_host = fn;
 }
 
 // Issue #1534: OpGuardShape dual-epoch fence (JIT Apply / GuardShape path).
