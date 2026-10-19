@@ -9873,6 +9873,28 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4599 call-path resolve-cache linter failed — run python3 scripts/check_call_resolve_cache_4599.py")
         return r
+    # Issue #4611: the tree-walker's cached primitive-call fast path
+    # (try_eval_flat_hot) evaluates a call's arguments into a stack
+    # buffer. The buffer was pinned as a GC root only AFTER the argument
+    # loop, so an already-evaluated argument was unrooted while a later
+    # argument was evaluated; the nested eval reaches the top of its own
+    # TCO loop where the periodic file-mode reclaim marks and sweeps the
+    # heap, and the earlier argument's freshly minted pair was freed as
+    # unreachable. The pin now carries a LIVE root count and is
+    # registered before the argument loop. The ACs cite the span-root
+    # shape, both root collectors, the prim-call window and the runtime
+    # regression (1000-element named-let list, = and < over (car i)).
+    gate4611_script = ROOT / "scripts" / "check_prim_call_arg_rooting_4611.py"
+    if not gate4611_script.exists():
+        fail(f"missing {gate4611_script}")
+        return 1
+    r = run([sys.executable, str(gate4611_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4611 cached prim-call argument-rooting linter failed — "
+            "run python3 scripts/check_prim_call_arg_rooting_4611.py"
+        )
+        return r
     # Issue #4474 (third reopen): the fixed kReclaimTriggerCeiling=32768
     # froze the live/32 reclaim window above ~1M live objects, so each
     # O(live) full-heap mark amortized over at most 32768 allocations and

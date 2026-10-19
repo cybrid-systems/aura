@@ -1183,6 +1183,79 @@ static void ac4599_call_resolve_cache() {
     }
 }
 
+// ── Issue #4611: the cached prim-call fast path must root its arguments ──
+// try_eval_flat_hot's cached primitive-call path evaluates a call's
+// arguments into a stack buffer. Pinning that buffer as a GC root only
+// AFTER the argument loop left the already-evaluated arguments unrooted
+// while a later argument was evaluated: the nested eval reaches the top of
+// its own TCO loop, where the periodic file-mode reclaim marks and sweeps
+// the heap. An earlier argument's freshly minted pair was then unreachable
+// from any root (env frame / pinned vector / pinned result) and the sweep
+// freed it, so the call continued with a dangling pair.
+//
+// The visible face: (filter (lambda (i) (= (car i) 7)) items) over a
+// named-let-built list read freed memory and reported
+// "type mismatch — expected Int, got Pair" once the list was long enough
+// for the reclaim to fire mid-build (the #4459 128-allocation floor).
+static void ac4611_prim_call_arg_rooting() {
+    std::println("\n--- #4611: cached prim-call arguments stay rooted across the reclaim ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+
+    // AC1: the issue repro — a named-let-built list of 1000 elements; the
+    // `=` predicate over (car i) keeps the single matching element.
+    auto r1 = cs.eval("(begin"
+                      " (define items4611 (let loop ((k 0) (acc (list)))"
+                      "   (if (= k 1000) acc (loop (+ k 1) (cons (list k) acc)))))"
+                      " (equal? (filter (lambda (i) (= (car i) 7)) items4611)"
+                      " (quote ((7)))))");
+    CHECK(r1 && is_bool(*r1) && as_bool(*r1),
+          "4611 AC1: filter with = over (car i) on a 1000-element named-let list returns ((7))");
+
+    // AC2: the `<` predicate over (car i) keeps the three matching elements.
+    auto r2 = cs.eval("(begin"
+                      " (define items4611b (let loop ((k 0) (acc (list)))"
+                      "   (if (= k 1000) acc (loop (+ k 1) (cons (list k) acc)))))"
+                      " (equal? (filter (lambda (i) (< (car i) 3)) items4611b)"
+                      " (quote ((2) (1) (0)))))");
+    CHECK(r2 && is_bool(*r2) && as_bool(*r2), "4611 AC2: filter with < over (car i) on a "
+                                              "1000-element named-let list returns ((2) (1) (0))");
+
+    // AC3: the predicate must not read freed memory — no element's car is
+    // a pair, so the pair? filter keeps nothing.
+    auto r3 = cs.eval("(begin"
+                      " (define items4611c (let loop ((k 0) (acc (list)))"
+                      "   (if (= k 1000) acc (loop (+ k 1) (cons (list k) acc)))))"
+                      " (equal? (filter (lambda (i) (pair? (car i))) items4611c) (quote ())))");
+    CHECK(r3 && is_bool(*r3) && as_bool(*r3),
+          "4611 AC3: the pair? predicate reads no freed memory (keeps nothing)");
+
+    // AC4: the built list itself stays intact — length, list-ref and the
+    // mapped cars all match the named-let construction.
+    auto r4 = cs.eval("(begin"
+                      " (define items4611d (let loop ((k 0) (acc (list)))"
+                      "   (if (= k 1000) acc (loop (+ k 1) (cons (list k) acc)))))"
+                      " (and (= (length items4611d) 1000)"
+                      "      (= (car (list-ref items4611d 7)) 992)"
+                      "      (= (length (map (lambda (i) (car i)) items4611d)) 1000)))");
+    CHECK(r4 && is_bool(*r4) && as_bool(*r4),
+          "4611 AC4: the named-let-built list stays intact (length / list-ref / map)");
+
+    // AC5: the window was really exercised — the periodic reclaim fired
+    // while the list was built, so the ACs above are not vacuous.
+    CHECK(ev.file_heap_reclaim_runs_for_test() > 0,
+          "4611 AC5: the periodic reclaim fired during the 1000-element build");
+
+    // AC6: the anchor — the cached prim-call path pins its argument buffer
+    // with a live count BEFORE the argument loop, so an argument that is
+    // already evaluated stays a root while a later argument is evaluated.
+    const auto src = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(src.find("TwPinSpan pin(TwPinSpan::Live{}, buf.data(), &buf_n);") != std::string::npos,
+          "4611 AC6: the cached prim-call path pins its argument buffer before the loop");
+    CHECK(src.find("buf_n = i + 1;") != std::string::npos,
+          "4611 AC6: the pinned buffer publishes each evaluated argument");
+}
+
 int run_test_pmr_alloc_fiber_safe() {
     std::println("=== Issue #2651: PMR / string_heap concurrent alloc safety ===");
     ac1_concurrent_push_string();
@@ -1202,6 +1275,7 @@ int run_test_pmr_alloc_fiber_safe() {
     ac4525_burst_rebalance();
     ac4350_4474_top_level_capture();
     ac4599_call_resolve_cache();
+    ac4611_prim_call_arg_rooting();
     std::println("\n=== #2651/#2997: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
