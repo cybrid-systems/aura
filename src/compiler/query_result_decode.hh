@@ -16,6 +16,8 @@
 #include <string>
 #include <string_view>
 
+#include "hash_meta.h" // Issue #4612: kTombstoneSlot (deleted hash slot)
+
 namespace aura::compiler::query_result_decode {
 
 inline constexpr int kQueryResultHashResolveIssue = 3424;
@@ -170,7 +172,8 @@ template <typename StringHeap, typename PairVec>
     auto keys = ht->keys();
     auto vals = ht->values();
     for (std::size_t i = 0; i < ht->capacity; ++i) {
-        if (meta[i] == 0xFF)
+        // Issue #4612: a deleted slot (tombstone) is not a live key.
+        if (!::aura::compiler::hash::hash_slot_is_live(meta[i]))
             continue;
         types::EvalValue k{keys[i]};
         if (!is_string(k))

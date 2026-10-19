@@ -4,6 +4,7 @@
 module;
 
 #include "runtime_shared.h"
+#include "hash_meta.h" // Issue #4612: hash_slot_is_live (tombstone)
 
 module aura.compiler.evaluator;
 
@@ -82,7 +83,8 @@ void register_policy_primitives(PrimRegistrar add, Evaluator& ev) {
                 // back to a string and compare to the target.
                 auto hget = [&](const std::string& k) -> EvalValue {
                     for (std::uint64_t i = 0; i < ht->capacity; ++i) {
-                        if (ht->metadata()[i] == 0xFF)
+                        // Issue #4612: a deleted slot (tombstone) is not a live key.
+                        if (!::aura::compiler::hash::hash_slot_is_live(ht->metadata()[i]))
                             continue;
                         EvalValue kev(ht->keys()[i]);
                         if (is_string(kev)) {

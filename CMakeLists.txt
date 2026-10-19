@@ -4675,6 +4675,17 @@ aura_add_issue_test(test_jit_unbound_callee)
 aura_issue_test_link_light(test_jit_unbound_callee)
 add_dependencies(all_test_issue_targets test_jit_unbound_callee)
 
+# Issue #4612: hash-ref / hash-has-key? probe by hash (open addressing)
+# instead of scanning every slot of the table -- a miss used to cost
+# O(table size). Source-cite in
+# src/compiler/evaluator_primitives_vector.cpp (the eval_hash_probe
+# helper + the four lookup prims) and src/compiler/hash_meta.h (the
+# shared tombstone marker). Test in tests/compiler/test_hash_probe.cpp
+# (src-aligned per #81934).
+aura_add_issue_test(test_hash_probe)
+aura_issue_test_link_light(test_hash_probe)
+add_dependencies(all_test_issue_targets test_hash_probe)
+
 # Issue #2586: single-use / mutation-bound grant (auto-revoke after first
 # successful check_and_record_effect that uses the grant's bits; deny path
 # does NOT consume). Source-cite in capability_model.hh (CapabilityGrant

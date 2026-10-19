@@ -9936,6 +9936,7 @@ def cmd_lint():
             "run python3 scripts/check_vector_hash_cow_4614.py"
         )
         return r
+
     # Issue #4602: under --jit a set-car! on a pair the frame allocated
     # left the pair at its OLD car, so the next car answered 1 instead
     # of 9 (--ir / eval answered 9). set-car! is not a JIT opcode and
@@ -9960,6 +9961,23 @@ def cmd_lint():
             "Issue #4602 --jit pair-mutation visibility linter failed — "
             "run python3 scripts/check_jit_pair_mutation_4602.py"
         )
+        return r
+
+    # Issue #4612: hash-ref / hash-has-key? / hash-set! / hash-remove! used
+    # to scan EVERY slot of the table and compare every key, so a miss
+    # cost O(capacity) (810 us/op at 40,000 entries) and (hash) was
+    # unusable as an index. The lookup now probes by hash (open
+    # addressing) through one shared probe helper; a removal writes a
+    # tombstone so the chain stays alive. The linter pins the probe, the
+    # four prims, the shared string hash, the tombstone contract, the IR
+    # path and the test home.
+    gate4612_script = ROOT / "scripts" / "check_hash_probe_4612.py"
+    if not gate4612_script.exists():
+        fail(f"missing {gate4612_script}")
+        return 1
+    r = run([sys.executable, str(gate4612_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4612 hash lookup probe linter failed — run python3 scripts/check_hash_probe_4612.py")
         return r
     # Issue #4474 (third reopen): the fixed kReclaimTriggerCeiling=32768
     # froze the live/32 reclaim window above ~1M live objects, so each

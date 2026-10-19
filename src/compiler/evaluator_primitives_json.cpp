@@ -167,7 +167,8 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     std::string r = "{";
                     bool first = true;
                     for (std::size_t i = ht->capacity; i > 0; --i) {
-                        if (meta[i - 1] != 0xFF) {
+                        // Issue #4612: a deleted slot (tombstone) is not a live entry.
+                        if (::aura::compiler::hash::hash_slot_is_live(meta[i - 1])) {
                             if (!first)
                                 r += ",";
                             first = false;
@@ -522,6 +523,10 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     auto new_vals = new_ht->values();
                     for (std::uint64_t i = 0; i < old_cap; ++i) {
                         if (old_meta[i] == 0xFF)
+                            continue;
+                        // Issue #4612: a deleted slot (tombstone) must not be
+                        // resurrected by the rehash.
+                        if (old_meta[i] == ::aura::compiler::hash::kTombstoneSlot)
                             continue;
                         EvalValue kv{old_keys[i]};
                         auto kh = json_object_key_hash(kv);
