@@ -277,7 +277,10 @@ int run_test_must_deopt_before_next_call() {
             // after the Aug-23 rewrite dropped it): prologue growth while
             // the member was dark put the bridge_epochs store at +6597 —
             // window now 8000.
-            const auto body = rt.substr(call, 8000);
+            // Issue #4606: the RefPrimitive-callee refuse arm (ahead of the
+            // legacy callee_val echo) moved the clear sites past 8000 —
+            // same rule, window follows the function; assertions unchanged.
+            const auto body = rt.substr(call, 10000);
             CHECK(body.find("g_closure_must_deopt[cid] = 0") != std::string::npos,
                   "3247 AC2: call path still clears under exclusive");
             CHECK(body.find("g_closure_bridge_epochs[cid] = 0") != std::string::npos,

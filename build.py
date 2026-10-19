@@ -9824,6 +9824,27 @@ def cmd_lint():
     r = run([sys.executable, str(gate4600b_script)], cwd=ROOT)
     if r != 0:
         fail("Issue #4600 frame-deopt guard-exit linter failed — run python3 scripts/check_jit_frame_deopt_4600.py")
+    # Issue #4606: under --jit the predicate primitives (string?/eqv?/memv/
+    # getenv/fiber:join/channel:recv/monotonic-ms) came back as raw words
+    # (a RefPrimitive-tagged callee echoed by the dispatch bounds-fail
+    # fallthrough) instead of #f, so every branch on such a result took
+    # the wrong arm. The blessed dispatch entry now refuses a
+    # RefPrimitive callee with the #4084 leave-native sentinel, so the
+    # driver re-runs the restored IR and the interpreter's is_primitive
+    # OpCall arm produces the eval-identical value. The gate pins the
+    # arm, its ordering (after the workspace unlock, before the legacy
+    # callee_val echo) and the runtime door in
+    # tests/compiler/test_closure_call_must_deopt_toctou.cpp.
+    gate4606_script = ROOT / "scripts" / "check_jit_prim_callee_refuse_4606.py"
+    if not gate4606_script.exists():
+        fail(f"missing {gate4606_script}")
+        return 1
+    r = run([sys.executable, str(gate4606_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4606 --jit prim-callee refuse linter failed — run python3 scripts/check_jit_prim_callee_refuse_4606.py"
+        )
+        return r
 
     gate4600c_script = ROOT / "scripts" / "check_jit_osr_4600.py"
     if not gate4600c_script.exists():

@@ -268,3 +268,4 @@ check_call_resolve_cache_4599.py
 check_jit_osr_4600.py
 check_snapshot_share_stamps_4598.py
 check_string_heap_reclaim_4608.py
+check_jit_prim_callee_refuse_4606.py

@@ -776,6 +776,103 @@ def test_jit_soundness_4567():
         "(display (car (car (cons (cons 5 ()) ()))))",
         expect="5",
     )
+    # ── Issue #4606: --jit primitive results must be eval-identical ──
+    # A JIT'd OpCall to an evaluator-level primitive (string?/getenv/...)
+    # came back as the raw RefPrimitive word (3733 for string?), so every
+    # branch on such a result took the wrong arm. The issue's repro rows
+    # plus a predicate sweep (hit + miss) must agree in every mode.
+    add(
+        programs,
+        "prim-getenv-stringp-4606",
+        '(define (g) (string? (getenv "NOPE_4606_X"))) (display (g))',
+        expect="#f",
+    )
+    add(
+        programs,
+        "prim-getenv-value-4606",
+        '(define (g) (getenv "NOPE_4606_X")) (display (g))',
+        expect="#f",
+    )
+    add(
+        programs,
+        "prim-getenv-let-branch-4606",
+        '(define (g) (let ((s (getenv "NOPE_4606_X"))) (if (string? s) 1 10))) (display (g))',
+        expect="10",
+    )
+    add(
+        programs,
+        "prim-false-let-branch-4606",
+        "(define (g) (let ((s #f)) (if (string? s) 1 10))) (display (g))",
+        expect="10",
+    )
+    add(
+        programs,
+        "prim-getenv-truthy-4606",
+        '(define (g) (let ((s (getenv "NOPE_4606_X"))) (if s 1 10))) (display (g))',
+        expect="10",
+    )
+    add(
+        programs,
+        "prim-inline-branch-4606",
+        '(define (g) (if (string? (getenv "NOPE_4606_X")) 1 10)) (display (g))',
+        expect="10",
+    )
+    # The getenv hit: the probe variable is set for the corpus run (the
+    # child processes inherit os.environ).
+    add(
+        programs,
+        "prim-getenv-hit-4606",
+        '(define (g) (if (string? (getenv "AURA_4606_PROBE")) 1 10)) (display (g))',
+        expect="1",
+    )
+    # Predicate sweep: every predicate prim, a real hit and a real miss.
+    # symbol? is a constant #f in Aura (symbols are not first-class
+    # values), so it is swept for call parity only.
+    for pred, hit, miss in (
+        ("string?", '"s"', "42"),
+        ("number?", "42", '"s"'),
+        ("integer?", "42", "1.5"),
+        ("float?", "1.5", "42"),
+        ("procedure?", "(lambda (x) x)", "42"),
+        ("null?", "(void)", "42"),
+        ("void?", "(void)", "42"),
+        ("pair?", "(cons 1 2)", "42"),
+        ("list?", "'(1 2)", "42"),
+        ("boolean?", "#t", "42"),
+        ("char?", "#\\a", '"s"'),
+        ("keyword?", ":kw", "42"),
+        ("vector?", "(make-vector 2 0)", "42"),
+    ):
+        add(
+            programs,
+            f"prim-{pred}-hit-4606",
+            f"(define (g) (if ({pred} {hit}) 1 10)) (display (g))",
+            expect="1",
+        )
+        add(
+            programs,
+            f"prim-{pred}-miss-4606",
+            f"(define (g) (if ({pred} {miss}) 1 10)) (display (g))",
+            expect="10",
+        )
+    add(
+        programs,
+        "prim-symbol?-4606",
+        "(define (g) (if (symbol? 42) 1 10)) (display (g))",
+        expect="10",
+    )
+    add(
+        programs,
+        "prim-eqv?-4606",
+        "(define (g) (eqv? 1 1)) (display (g))",
+        expect="#t",
+    )
+    add(
+        programs,
+        "prim-monotonic-ms-4606",
+        "(define (g) (if (number? (monotonic-ms)) 1 10)) (display (g))",
+        expect="1",
+    )
     if len(programs) < 200:
         raise Exception(f"corpus has {len(programs)} programs, need >= 200")
 
@@ -798,6 +895,9 @@ def test_jit_soundness_4567():
                 env["AURA_JIT_FORCE_GUARD_DEOPT"] = "2"
         return subprocess.run(cmd, input=code, capture_output=True, text=True, timeout=timeout, env=env)
 
+    # Issue #4606: the getenv hit row needs the probe variable set (the
+    # child processes inherit os.environ).
+    os.environ["AURA_4606_PROBE"] = "yes"
     for name, code, timeout, expect in programs:
         outs = {}
         for mode in ("ir", "eval", "jit", "jitf1", "jitf2"):
@@ -816,6 +916,7 @@ def test_jit_soundness_4567():
             )
         if expect is not None and outs["ir"] != expect:
             raise Exception(f"{name}: expected {expect!r}, got {outs['ir']!r}")
+    os.environ.pop("AURA_4606_PROBE", None)
     print(f"  ✅ jit-soundness-4567 ({len(programs)} programs, forced-deopt modes included)")
 
 

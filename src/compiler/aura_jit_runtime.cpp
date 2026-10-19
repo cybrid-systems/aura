@@ -5463,6 +5463,27 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
     aura_lock_workspace_read();
     if (closure_id < 0 || static_cast<size_t>(closure_id) >= g_closure_func_ids.size()) {
         aura_unlock_workspace_read();
+        // Issue #4606: a RefPrimitive-tagged callee word — (slot <<
+        // kRefPoolShift) | (RefPrimitive << kRefTypeShift) | kRefLowTag, e.g.
+        // string?/getenv/eqv?/memv/fiber:join/channel:recv/monotonic-ms loaded
+        // from a global or define cell — is never a closure id, so it lands
+        // here. The pre-#4606 fallthrough echoed the raw word back ("return
+        // callee_val for non-callable"), so every --jit branch on the result
+        // of such a prim call read a prim reference (3733 for string?) instead
+        // of #f and took the wrong arm. The stale echo contract predates both
+        // the IR interpreter's primitive-dispatch OpCall arm (#1676/#3834:
+        // invoke_prim_with_telemetry through context_.primitives) and #4478's
+        // raise-for-non-callable. Refuse instead (the same leave-native shape
+        // as the freed-closure arm): the #4084 prologue sentinel makes the
+        // driver return nullopt and re-run the restored IR, where the
+        // interpreter's is_primitive arm executes the identical OpCall and
+        // produces the eval-identical tagged result. Unlock before arming —
+        // the resumed interpreter runs arbitrary evaluator code under its own
+        // locks, none of which may nest inside g_closure_table_mtx.
+        if (closure_id >= 0 && aura::compiler::types::is_ref(closure_id) &&
+            aura::compiler::types::ref_type(closure_id) == aura::compiler::types::RefPrimitive) {
+            return closure_dispatch_leave_native();
+        }
         return closure_id; /* match IRInterpreter: return callee_val for non-callable */
     }
     // Issue #1361 / #3021: refuse to call a freed closure (apply/use-site

@@ -42,13 +42,15 @@ def main() -> int:
     # (Issue #3635: aura_closure_call is a thin forward; the transaction
     # body moved to aura_closure_dispatch_native_checked).
     idx = rt.find("int64_t aura_closure_dispatch_native_checked(")
-    # Window 6500: grown twice as the prologue grew — the #3948 densify
+    # Window 8500 / 4200: grown as the prologue grew — the #3948 densify
     # refuse, then the #3972 this-window remap arm inserted ahead of the
-    # #2128 consume block (refuses must precede consume). Grow the window
-    # with the function, assertions unchanged.
-    body = rt[idx : idx + 6500] if idx >= 0 else ""
+    # #2128 consume block (refuses must precede consume), then the #4606
+    # RefPrimitive-callee refuse arm inserted ahead of the legacy
+    # callee_val echo (that arm pushes the MustDeopt block further down
+    # the entry). Grow the window with the function, assertions unchanged.
+    body = rt[idx : idx + 8500] if idx >= 0 else ""
     md = body.find("MustDeoptBeforeNextCall")
-    md_body = body[md : md + 2200] if md >= 0 else ""
+    md_body = body[md : md + 4200] if md >= 0 else ""
 
     must("Issue #2472", "AC1", rt)
     must("2472 AC1", "AC1", test)

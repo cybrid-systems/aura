@@ -24,13 +24,29 @@
 //   AC9 (#3635): gate wiring — blessed entry + wrapper forward in the
 //        table TU, header declaration, build.py linter wiring,
 //        fast-path generation double-check preserved
+//
+//   Issue #4606 ACs (--jit primitive results came back as raw words):
+//   AC1 (#4606): the issue's raw words decode exactly as the value_tags
+//        SSOT prim-ref encoding — 3733 = make_ref(RefPrimitive, 58)
+//        (string?), 23765 = make_ref(RefPrimitive, 371) (getenv)
+//   AC2 (#4606): a RefPrimitive callee word through the blessed entry
+//        takes the leave-native refuse (fixnum 0 + #4084 sentinel) so
+//        the driver deopts to the interpreter, whose is_primitive OpCall
+//        arm produces the eval-identical result; non-prim ref words
+//        keep the pre-#4606 callee_val echo contract
+//   AC3 (#4606): source cites — refuse arm inside the blessed entry,
+//        value_tags word test, leave-native shape, arm precedes the
+//        legacy echo return
+//   AC4 (#4606): gate wiring — linter script + build.py + allowlist
 
 #include "test_harness.hpp"
 
 #include "compiler/runtime_shared.h"
+#include "compiler/value_tags.h" // Issue #4606: make_ref / RefPrimitive word SSOT
 
 #include <atomic>
 #include <cstdint>
+#include <dlfcn.h> // Issue #4606: strong-bridge handle dlsym (light SO stub face)
 #include <fstream>
 #include <print>
 #include <string>
@@ -42,6 +58,10 @@ import std;
 // aura_deopt_count is defined in aura_jit_runtime (not always in headers).
 extern "C" std::uint64_t aura_deopt_count(void);
 extern "C" void aura_reset_runtime(void);
+// Issue #4606: #4084 prologue-refuse sentinel ABI (strong defs in
+// aura_jit_bridge.cpp, linked via aura_test_objects).
+extern "C" int aura_jit_peek_prologue_deopt_sentinel(void);
+extern "C" int aura_jit_take_prologue_deopt_sentinel(void);
 // Issue #3635: stale-epoch injection helper (test-only, table TU).
 extern "C" void aura_inject_stale_closure_bridge_epoch_for_test(std::int64_t closure_id);
 
@@ -194,7 +214,10 @@ static void ac4_source_cite() {
         // (observed at +4516, CI run 35602271991). Same growth the #2472
         // coverage linter took in 415d1d33b (4500 → 6500); assertions
         // unchanged.
-        const auto body = rt.substr(call, 6500);
+        // Issue #4606: the RefPrimitive-callee refuse arm (ahead of the
+        // legacy callee_val echo) moved the MustDeopt sites past 6500 —
+        // same rule, window follows the function; assertions unchanged.
+        const auto body = rt.substr(call, 8500);
         CHECK(body.find("Issue #2472") != std::string::npos, "AC4: #2472 in MustDeopt path");
         CHECK(body.find("g_closure_freed") != std::string::npos,
               "AC4: freed re-check in MustDeopt exclusive");
@@ -390,6 +413,102 @@ static void ac3635_gate_wiring() {
           "AC9: fast-path generation double-check preserved");
 }
 
+// ── Issue #4606: RefPrimitive callee words refuse (deopt to interpreter) ──
+static void ac4606_prim_word_refuse() {
+    std::println("\n=== Issue #4606: --jit prim-result raw words (dispatch face) ===");
+    std::println("--- #4606 AC1: issue raw words decode as value_tags prim refs ---");
+    namespace vt = aura::compiler::types;
+    CHECK(vt::make_ref(vt::RefPrimitive, 58) == 3733,
+          "ac4606_1_stringp_word: string? callee word is make_ref(RefPrimitive, 58)");
+    CHECK(vt::make_ref(vt::RefPrimitive, 371) == 23765,
+          "ac4606_1_getenv_word: getenv callee word is make_ref(RefPrimitive, 371)");
+    CHECK(vt::is_ref(3733) && vt::ref_type(3733) == vt::RefPrimitive,
+          "ac4606_1_decode: 3733 is a RefPrimitive ref");
+
+    std::println("--- #4606 AC2: prim-word callee refuses leave-native ---");
+    // Issue #4606: this batch links the light (no-LLVM) face, where the
+    // #4084 sentinel's note/peek/take resolve to the weak stub in
+    // aura_jit_bridge_stub.cpp — the dispatch's arm is interposed by that
+    // stub, so the *armed* sentinel is not observable from here. The door
+    // therefore pins what the light face can observe (the fixnum-0
+    // leave-native shape + the unchanged callee_val echo) and the sentinel
+    // round-trip through the strong bridge SO (the #2012/#4600 dlsym
+    // precedent in test_mutate_type_gate.cpp). The dispatch's use of the
+    // leave-native shape is pinned by the source-cite face below, and the
+    // armed-sentinel *effect* (the refusal unwinding the native frame so
+    // the interpreter re-runs the call) is pinned end-to-end by the
+    // jit-soundness-4567 corpus (tests/python/test_regression.py): the
+    // --jit rows match eval only when the sentinel path works.
+    void* strong_so = ::dlopen("libaura_test_objects.so", RTLD_LAZY | RTLD_NOLOAD);
+    CHECK(strong_so != nullptr, "ac4606_2_strong_so: strong bridge SO loaded in this batch");
+    auto strong_note = reinterpret_cast<void (*)(void) noexcept>(
+        strong_so ? ::dlsym(strong_so, "aura_jit_note_prologue_deopt_sentinel") : nullptr);
+    auto strong_peek = reinterpret_cast<int (*)(void) noexcept>(
+        strong_so ? ::dlsym(strong_so, "aura_jit_peek_prologue_deopt_sentinel") : nullptr);
+    auto strong_take = reinterpret_cast<int (*)(void) noexcept>(
+        strong_so ? ::dlsym(strong_so, "aura_jit_take_prologue_deopt_sentinel") : nullptr);
+    CHECK(strong_note != nullptr && strong_peek != nullptr && strong_take != nullptr,
+          "ac4606_2_strong_abi: strong #4084 sentinel ABI resolvable");
+    aura_reset_runtime();
+    std::int64_t args[1] = {0};
+    (void)aura_jit_take_prologue_deopt_sentinel();
+    const auto r =
+        aura_closure_dispatch_native_checked(vt::make_ref(vt::RefPrimitive, 58), args, 0);
+    CHECK(r == 0, "ac4606_2_refuse_zero: refuse returns fixnum 0 (#4451 shape)");
+    if (strong_note && strong_peek && strong_take) {
+        // The #4084 sentinel currency the leave-native refuse rides:
+        // arm -> peek sees it -> take consumes it -> peek is clean.
+        strong_note();
+        CHECK(strong_peek() != 0, "ac4606_2_sentinel_armed: #4084 sentinel arms for the JIT leave");
+        CHECK(strong_take() != 0, "ac4606_2_sentinel_take: take consumes the armed sentinel");
+        CHECK(strong_peek() == 0, "ac4606_2_sentinel_clear: sentinel clean after take");
+    }
+    // Non-prim ref-tagged words keep the pre-#4606 callee_val echo contract
+    // (only the RefPrimitive tag is answered with the refuse).
+    const auto cell_word = vt::make_ref(vt::RefCell, 3);
+    CHECK(aura_closure_dispatch_native_checked(cell_word, args, 0) == cell_word,
+          "ac4606_2_echo_kept: non-prim ref word still echoes callee_val");
+    CHECK(aura_closure_dispatch_native_checked(-7, args, 0) == -7,
+          "ac4606_2_negative_kept: negative callee_val echo unchanged");
+}
+
+// ── #4606 AC3: source cite ──
+static void ac4606_source_cite() {
+    std::println("--- #4606 AC3: source cites the prim-word refuse arm ---");
+    auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(!rt.empty(), "ac4606_3_read: aura_jit_runtime.cpp readable");
+    const auto entry = rt.find("int64_t aura_closure_dispatch_native_checked(");
+    CHECK(entry != std::string::npos, "ac4606_3_entry: blessed dispatch entry present");
+    if (entry != std::string::npos) {
+        const auto body = rt.substr(entry, 6500);
+        const auto arm = body.find("Issue #4606");
+        CHECK(arm != std::string::npos, "ac4606_3_cite: #4606 refuse arm inside the entry");
+        CHECK(body.find("aura::compiler::types::is_ref(closure_id)") != std::string::npos,
+              "ac4606_3_is_ref: value_tags word test");
+        CHECK(body.find("aura::compiler::types::RefPrimitive") != std::string::npos,
+              "ac4606_3_tag: RefPrimitive tag compare");
+        CHECK(body.find("closure_dispatch_leave_native()") != std::string::npos,
+              "ac4606_3_shape: leave-native refuse (#4451 parity)");
+        const auto echo = body.find("return closure_id; /* match IRInterpreter");
+        CHECK(echo != std::string::npos && arm != std::string::npos && arm < echo,
+              "ac4606_3_order: refuse arm precedes the legacy echo return");
+    }
+}
+
+// ── #4606 AC4: gate wiring ──
+static void ac4606_gate_wiring() {
+    std::println("--- #4606 AC4: gate wiring ---");
+    auto build = read_file("build.py");
+    auto allow = read_file("scripts/coverage/root_check_allowlist.txt");
+    auto script = read_file("scripts/check_jit_prim_callee_refuse_4606.py");
+    CHECK(build.find("check_jit_prim_callee_refuse_4606") != std::string::npos,
+          "ac4606_4_build: linter wired in build.py cmd_lint");
+    CHECK(allow.find("check_jit_prim_callee_refuse_4606") != std::string::npos,
+          "ac4606_4_allow: linter on the coverage root allowlist");
+    CHECK(!script.empty() && script.find("4606") != std::string::npos,
+          "ac4606_4_script: linter script exists");
+}
+
 } // namespace
 
 int run_test_closure_call_must_deopt_toctou() {
@@ -405,7 +524,11 @@ int run_test_closure_call_must_deopt_toctou() {
     ac3635_stale_entry_fallback();
     ac3635_linter_probe();
     ac3635_gate_wiring();
-    std::println("\n=== #2472 + #3635 results: {} passed, {} failed ===", g_passed, g_failed);
+    ac4606_prim_word_refuse();
+    ac4606_source_cite();
+    ac4606_gate_wiring();
+    std::println("\n=== #2472 + #3635 + #4606 results: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 

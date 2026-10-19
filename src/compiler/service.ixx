@@ -4697,9 +4697,16 @@ public:
         auto raw_result =
             reinterpret_cast<aura::jit::ScalarFn>(fn_ptr)(locals.data(), entry.arg_count);
         // Issue #4084: prologue deopt's fixnum 0 is not a successful value.
+        // Issue #4606: a refused callee — a RefPrimitive-tagged prim word
+        // (string?/getenv/eqv?/memv/...) loaded from a global or define
+        // cell — is answered by the blessed dispatch entry with the
+        // #4084 leave-native refuse, so the native frame unwinds with
+        // the sentinel armed. The IR interpreter runs the restored IR
+        // here — the same contract as try_jit_execute's nullopt ->
+        // interpreter fallback (#4084): the result is eval-identical
+        // instead of the raw prim word the old callee_val echo returned.
         if (aura_jit_take_prologue_deopt_sentinel() != 0) {
-            return std::unexpected(
-                aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError, "jit prologue deopt"});
+            return eval_ir(input);
         }
 
         // ── Convert JIT result to proper EvalValue type ──
