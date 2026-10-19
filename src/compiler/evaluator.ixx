@@ -7405,6 +7405,16 @@ private:
             vals.clear();
             hit.clear();
         }
+        // Issue #4608: the cached values are string indices into
+        // string_heap_. The reclaim treats every cached value as a
+        // root, so a cached index is never released under the cache.
+        template <class F> void for_each_live(F&& fn) const {
+            const auto n = std::min(vals.size(), hit.size());
+            for (std::size_t i = 0; i < n; ++i) {
+                if (hit[i])
+                    fn(vals[i]);
+            }
+        }
     };
     static constexpr int kEvalFlatSymInternIssue = 3457;
     SymIdIntern string_intern_by_sym_;
@@ -8386,10 +8396,46 @@ public:
     }
     // Issue #4428: record the executing tenant on a string intern.
     // Caller holds alloc_storage_lock_. Encoding matches the pair mint.
+    //
+    // Issue #4608: a string mint is a file-heap allocation like a pair
+    // or a vector mint — it drives the same reclaim window. Without
+    // this a loop that only mints strings (number->string, a c-func
+    // that returns a String) never reached the reclaim trigger, so
+    // the string heap grew by one slot per minted string.
     void note_inrange_string_mint(std::size_t idx) noexcept {
         if (string_slot_tenants_.size() <= idx)
             string_slot_tenants_.resize(idx + 1, 0);
         string_slot_tenants_[idx] = capability_tenant_id_ + 1;
+        ++file_heap_allocs_since_reclaim_;
+    }
+    // Issue #4608: release the string slots the reclaim proved
+    // unreachable. seen_string[i] != 0 means slot i is still
+    // referenced; free_at_mark is the free-slot snapshot taken when
+    // the mark started (a slot that was already free — or re-minted
+    // since the mark — is left alone). The #4428 owner record is
+    // reset with the slot, so a reused slot never carries the old
+    // owner's tenant. Returns the number of live string slots.
+    std::size_t release_unreachable_string_slots(const std::vector<std::uint8_t>& seen_string,
+                                                 const std::vector<std::uint8_t>& free_at_mark) {
+        std::lock_guard lock(alloc_storage_lock_);
+        const auto live = string_heap_.release_unmarked(seen_string, free_at_mark);
+        const auto n = std::min(string_slot_tenants_.size(), string_heap_.size());
+        for (std::size_t i = 0; i < n; ++i) {
+            if (string_heap_.slot_is_free(i))
+                string_slot_tenants_[i] = 0;
+        }
+        return live;
+    }
+    // Issue #4608: live string slots (heap size minus the free ones) —
+    // the test door for the string reclaim.
+    [[nodiscard]] std::size_t string_heap_live_size() const {
+        std::lock_guard lock(alloc_storage_lock_);
+        return string_heap_.live_slot_count();
+    }
+    // Issue #4608: number of reusable string slots (the free list).
+    [[nodiscard]] std::size_t string_heap_free_slots() const {
+        std::lock_guard lock(alloc_storage_lock_);
+        return string_heap_.free_slot_count();
     }
     // Issue #4543: test read of the #4428 owner record (0 = never stamped).
     [[nodiscard]] std::uint64_t string_slot_tenant_record_for_test(std::size_t idx) const {

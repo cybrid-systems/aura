@@ -1398,7 +1398,17 @@ static void file_reclaim_mark_value(
     const Evaluator::FileModeReclaimView& view, const std::pmr::vector<Pair>& pairs,
     const std::vector<std::vector<EvalValue>>& vector_heap,
     const std::pmr::vector<EvalValue>& cells, const std::vector<EvalValue>& error_values,
-    std::vector<std::uint8_t>& seen_opaque, std::span<const std::uint32_t> opaque_gen) {
+    std::vector<std::uint8_t>& seen_opaque, std::span<const std::uint32_t> opaque_gen,
+    std::vector<std::uint8_t>& seen_string) {
+    // Issue #4608: a string value is a slot index into string_heap_.
+    // Mark it so the reclaim can release the slots nothing references
+    // any more (the pair freelist's obligation, extended to strings).
+    if (is_string(v)) {
+        const auto idx = as_string_idx(v);
+        if (idx < seen_string.size())
+            seen_string[idx] = 1;
+        return;
+    }
     if (is_pair(v)) {
         const auto id = as_pair_idx(v);
         if (id < seen_pair.size() && !seen_pair[id]) {
@@ -1548,14 +1558,34 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
             }
         }
     }
+    // Issue #4608: the intern caches hold string indices (symbol
+    // names, quote literals, keywords). They are roots: a cached
+    // index must never be released under the cache.
+    {
+        std::lock_guard lock(alloc_storage_lock_);
+        for (const auto& entry : short_str_cache_)
+            roots.push_back(entry.second);
+        string_intern_by_sym_.for_each_live([&roots](const EvalValue& v) { roots.push_back(v); });
+        keyword_intern_by_sym_.for_each_live([&roots](const EvalValue& v) { roots.push_back(v); });
+        if (last_eval_current_result_)
+            roots.push_back(*last_eval_current_result_);
+    }
 
     const std::size_t n_pairs = pairs_.size();
     const std::size_t n_vecs = vector_heap_.size();
+    // Issue #4608: the string heap takes part in the mark. The size
+    // snapshot bounds the release to the slots that existed when the
+    // mark started (a slot minted after the mark is newborn and stays
+    // live); the free-slot snapshot tells the release which slots
+    // were already reusable (or re-minted since the mark).
+    const std::size_t n_strings = string_heap_.size();
+    const auto free_at_mark = string_heap_.free_slot_snapshot();
     std::vector<std::uint8_t> seen_pair(n_pairs, 0);
     std::vector<std::uint8_t> seen_vec(n_vecs, 0);
     std::vector<std::uint8_t> seen_hash;
     std::vector<std::uint8_t> seen_ev_cell(cells_.size(), 0);
     std::vector<std::uint8_t> seen_err(error_values_.size(), 0);
+    std::vector<std::uint8_t> seen_string(n_strings, 0);
     std::unordered_set<std::uint64_t> seen_ir;
     std::unordered_set<std::uint64_t> live_tw;
 
@@ -1583,7 +1613,7 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         for (std::size_t wi = 0; wi < work.size(); ++wi) {
             file_reclaim_mark_value(work[wi], work, seen_pair, seen_vec, seen_hash, seen_ev_cell,
                                     seen_err, seen_ir, live_tw, view, pairs_, vector_heap_, cells_,
-                                    error_values_, seen_opaque, opaque_gen);
+                                    error_values_, seen_opaque, opaque_gen, seen_string);
         }
     }
 
@@ -1606,6 +1636,13 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
             }
         }
     }
+
+    // Issue #4608: release the string slots the mark found
+    // unreachable. They go on the heap's free list, so the next mint
+    // reuses a slot instead of growing the heap — a loop that mints
+    // and drops strings keeps a flat heap (and a flat RSS) instead of
+    // one slot per minted string.
+    const auto live_strings = release_unreachable_string_slots(seen_string, free_at_mark);
 
     {
         std::lock_guard lock(alloc_storage_lock_);
@@ -1655,7 +1692,9 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         file_heap_allocs_since_reclaim_ = 0;
         // Issue #4474: the mark just walked the heap — scale the next
         // reclaim triggers from the reachable set (live/32, clamped).
-        note_live_set_for_reclaim_trigger(live_pairs + live_vecs, mints_at_mark);
+        // Issue #4608: the live string slots count too — the string
+        // heap is part of the walked heap now.
+        note_live_set_for_reclaim_trigger(live_pairs + live_vecs + live_strings, mints_at_mark);
     }
     // Issue #4597: finalize unreachable handles once, after every lock is
     // dropped. file_reclaim_active_ stays set until this function returns,
@@ -1752,6 +1791,13 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         n_cells = cells_.size();
         n_errs = error_values_.size();
     }
+    // Issue #4608: the string heap takes part in the mark. The size
+    // snapshot bounds the release to the slots that existed when the
+    // mark started (a slot minted after the mark is newborn and stays
+    // live); the free-slot snapshot tells the release which slots
+    // were already reusable (or re-minted since the mark).
+    const std::size_t n_strings = string_heap_.size();
+    const auto free_at_mark = string_heap_.free_slot_snapshot();
     std::size_t n_frames = 0;
     {
         std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
@@ -1765,6 +1811,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     std::vector<std::uint8_t> seen_hash;
     std::vector<std::uint8_t> seen_ev_cell(n_cells, 0);
     std::vector<std::uint8_t> seen_err(n_errs, 0);
+    std::vector<std::uint8_t> seen_string(n_strings, 0);
     std::vector<std::uint8_t> live_frame(n_frames, 0);
     std::vector<std::uint8_t> frame_scanned(n_frames, 0);
     std::unordered_set<std::uint64_t> seen_ir;
@@ -1829,6 +1876,33 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     }
     for (const auto& h : held)
         work.push_back(h);
+    // Issue #4608: the intern caches hold string indices (symbol
+    // names, quote literals, keywords). They are roots: a cached
+    // index must never be released under the cache.
+    {
+        std::lock_guard lock(alloc_storage_lock_);
+        for (const auto& entry : short_str_cache_)
+            work.push_back(entry.second);
+        string_intern_by_sym_.for_each_live([&work](const EvalValue& v) { work.push_back(v); });
+        keyword_intern_by_sym_.for_each_live([&work](const EvalValue& v) { work.push_back(v); });
+        if (last_eval_current_result_)
+            work.push_back(*last_eval_current_result_);
+    }
+    // Issue #4608: the capability snapshots hold bindings (and so
+    // string values). The file-mode reclaim walks the whole snapshot
+    // cache; the tree-walker reclaim must do the same or a snapshot
+    // binding could be released under the snapshot.
+    {
+        std::lock_guard<std::mutex> snap_lock(cap_snap_mtx_);
+        for (const auto& entry : cap_snap_cache_) {
+            for (auto sp = entry.second; sp; sp = sp->parent) {
+                for (const auto& b : sp->bindings_)
+                    work.push_back(b.second);
+                for (const auto& b : sp->bindings_symid_)
+                    work.push_back(b.second);
+            }
+        }
+    }
 
     auto absorb = [&](std::vector<EnvId>& ids) {
         if (ids.empty())
@@ -1882,7 +1956,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
                 file_reclaim_mark_value(work[traced++], work, seen_pair, seen_vec, seen_hash,
                                         seen_ev_cell, seen_err, seen_ir, live_tw, view, pairs_,
                                         vector_heap_, cells_, error_values_, seen_opaque,
-                                        opaque_gen);
+                                        opaque_gen, seen_string);
             }
         }
         std::vector<EnvId> more;
@@ -1970,6 +2044,13 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
             cap_snap_cache_.erase(id);
     }
 
+    // Issue #4608: release the string slots the mark found
+    // unreachable. They go on the heap's free list, so the next mint
+    // reuses a slot instead of growing the heap — a loop that mints
+    // and drops strings keeps a flat heap (and a flat RSS) instead of
+    // one slot per minted string.
+    const auto live_strings = release_unreachable_string_slots(seen_string, free_at_mark);
+
     {
         std::lock_guard lock(alloc_storage_lock_);
         const auto voidv = types::make_void();
@@ -2034,7 +2115,10 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         file_heap_allocs_since_reclaim_ = 0;
         // Issue #4474: the mark just walked the heap — scale the next
         // reclaim triggers from the reachable set (live/32, clamped).
-        note_live_set_for_reclaim_trigger(live_pairs + live_vecs + live_cells, mints_at_mark);
+        // Issue #4608: the live string slots count too — the string
+        // heap is part of the walked heap now.
+        note_live_set_for_reclaim_trigger(live_pairs + live_vecs + live_cells + live_strings,
+                                          mints_at_mark);
     }
     tw_closure_allocs_ = 0;
     // Issue #4525: benchmark observability — a full whole-heap mark ran.

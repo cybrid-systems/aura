@@ -37,6 +37,7 @@
 // (string-fill!, f64vector-set!, slot reuse in the agent loop).
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -81,13 +82,106 @@ public:
     [[nodiscard]] std::recursive_mutex* mutex() const noexcept { return mu_; }
 
     // The only growth path. Returns the index of the new string.
+    //
+    // Issue #4608: a slot that the reclaim proved unreachable is
+    // reused instead of growing the heap. Without the reuse path a
+    // program that minted and dropped strings kept one slot per
+    // string until exit (~70 bytes per string: the slot object, the
+    // #4428 owner record and the vector's growth slack).
     template <class... Args> std::uint64_t mint(Args&&... args) {
         Guard g(mu_);
+        if (!free_slots_.empty()) {
+            // Reuse a released slot. The swap drops the old content
+            // (and its heap buffer) with the temporary, so a reused
+            // slot never keeps the previous string's memory alive.
+            const auto idx = free_slots_.back();
+            free_slots_.pop_back();
+            if (idx < slot_free_.size())
+                slot_free_[idx] = 0;
+            {
+                std::string tmp(std::forward<Args>(args)...);
+                v_[idx].swap(tmp);
+            }
+            // Issue #4608 + #4548: the reused slot is a fresh content
+            // write, so the cached code-point index for that slot
+            // must go (the same obligation note_write carries for an
+            // in-place write). A stale index would be trusted when
+            // the new content has the same byte length.
+            invalidate_cp_index_locked(idx);
+            // Issue #4428: the owner stamp is rewritten by the hook,
+            // so a reused slot never carries the previous owner's
+            // tenant (the hook runs on the reuse path too).
+            if (hook_)
+                hook_(hook_ctx_, idx);
+            return static_cast<std::uint64_t>(idx);
+        }
         const auto idx = v_.size();
         v_.emplace_back(std::forward<Args>(args)...);
+        slot_free_.push_back(0);
         if (hook_)
             hook_(hook_ctx_, idx);
         return static_cast<std::uint64_t>(idx);
+    }
+
+    // ── Issue #4608: slot release / reuse ───────────────────────────
+    // A string value is an index into this heap, so a slot may only
+    // be recycled when no live value references it any more. The
+    // reclaim (file-mode / tree-walker) proves that with the same
+    // mark it uses for pairs, then hands the dead slots back here.
+
+    // Mark-time snapshot of the free slots. release_unmarked uses it
+    // to tell "already free" apart from "free and re-minted since
+    // the mark" (a concurrent mint may pop a free slot; such a slot
+    // holds a live string again and must not be released).
+    [[nodiscard]] std::vector<std::uint8_t> free_slot_snapshot() const {
+        Guard g(mu_);
+        return slot_free_;
+    }
+
+    // Release the slots the reclaim found unreachable: seen[i] != 0
+    // means slot i is still referenced. Slots that were already free
+    // at snapshot time are left alone (they are on the free list
+    // already, or a concurrent mint re-used them). Returns the
+    // number of slots that are still live after the release.
+    std::size_t release_unmarked(const std::vector<std::uint8_t>& seen,
+                                 const std::vector<std::uint8_t>& free_at_mark) {
+        Guard g(mu_);
+        const auto n = std::min(seen.size(), v_.size());
+        std::size_t live = 0;
+        for (std::size_t i = 1; i < n; ++i) {
+            // Slot 0 is the immortal empty string (the default error
+            // cause sentinel) — it is never released.
+            if (seen[i]) {
+                ++live;
+                continue;
+            }
+            if (i < free_at_mark.size() && free_at_mark[i])
+                continue; // already free (or re-minted since the mark)
+            if (i < slot_free_.size() && slot_free_[i])
+                continue; // already on the free list
+            // Drop the content: swapping in an empty string releases
+            // the old heap buffer with the temporary.
+            std::string().swap(v_[i]);
+            invalidate_cp_index_locked(i);
+            if (i < slot_free_.size())
+                slot_free_[i] = 1;
+            free_slots_.push_back(i);
+        }
+        // Slots minted after the mark are newborn and stay live.
+        if (v_.size() > n)
+            live += (v_.size() - n);
+        return live;
+    }
+
+    // Number of slots currently on the free list (reusable).
+    [[nodiscard]] size_type free_slot_count() const noexcept { return free_slots_.size(); }
+    // Slots that still hold a string (the heap high-water mark minus
+    // the free ones).
+    [[nodiscard]] size_type live_slot_count() const noexcept {
+        return v_.size() - free_slots_.size();
+    }
+    [[nodiscard]] bool slot_is_free(size_type i) const noexcept {
+        return i < slot_free_.size() && slot_free_[i] != 0;
     }
 
     // ── reads (vector surface) ─────────────────────────────────────
@@ -185,15 +279,21 @@ public:
 
     // ── structural writes (locked) ─────────────────────────────────
     // Shrink to n (panic checkpoint restore) or pad with empty strings.
+    // Issue #4608: the free list is index-parallel to the heap, so a
+    // shrink drops the free slots past the new end.
     void resize(size_type n) {
         Guard g(mu_);
         ++write_gen_;
         v_.resize(n);
+        slot_free_.resize(n, 0);
+        std::erase_if(free_slots_, [n](size_type i) { return i >= n; });
     }
     void clear() noexcept {
         Guard g(mu_);
         ++write_gen_;
         v_.clear();
+        slot_free_.clear();
+        free_slots_.clear();
     }
     void shrink_to_fit() {
         Guard g(mu_);
@@ -204,16 +304,25 @@ public:
         v_.reserve(n);
     }
     // GC compaction: install the rebuilt heap.
+    // Issue #4608: the rebuilt heap has no free slots (the compaction
+    // already dropped the dead ones), so the free list is reset.
     void replace(Vec&& v) {
         Guard g(mu_);
         ++write_gen_;
         v_ = std::move(v);
+        slot_free_.assign(v_.size(), 0);
+        free_slots_.clear();
     }
     // Escape hatch for code that must see the raw vector (bulk remap).
     // Caller holds mutex() or runs with every mutator stopped.
     // Issue #4548: the caller may rewrite slots, so cached indexes go.
+    // Issue #4608: the caller may rewrite the slots' liveness too, so
+    // the free list is dropped (every slot is live until proven
+    // otherwise by the next reclaim).
     Vec& unsafe_storage() noexcept {
         ++write_gen_;
+        slot_free_.assign(v_.size(), 0);
+        free_slots_.clear();
         return v_;
     }
 
@@ -311,10 +420,22 @@ private:
         Guard(const Guard&) = delete;
         Guard& operator=(const Guard&) = delete;
     };
+    // Issue #4608: a slot that no live value references any more.
+    // Drop the cached code-point index for one slot (the #4548
+    // obligation note_write carries for an in-place write). The
+    // caller holds the lock.
+    void invalidate_cp_index_locked(size_type idx) noexcept { cp_meta_.erase(idx); }
+
     Vec v_;
     std::recursive_mutex* mu_ = nullptr;
     MintHook hook_ = nullptr;
     void* hook_ctx_ = nullptr;
+    // Issue #4608: reusable slots (the reclaim hands the slots it
+    // proved unreachable back). free_slots_ is the LIFO of free slot
+    // indices; slot_free_ is index-parallel to v_ (1 = the slot is on
+    // the free list). Both are guarded by mu_ like v_.
+    std::vector<std::size_t> free_slots_;
+    std::vector<std::uint8_t> slot_free_;
     // Issue #4548: guarded by mu_ like v_.
     std::uint64_t write_gen_ = 0;
     mutable std::uint64_t cp_meta_gen_ = 0;

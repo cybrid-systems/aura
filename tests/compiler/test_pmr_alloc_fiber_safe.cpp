@@ -647,6 +647,89 @@ static void ac4492_nested_map_filter_pinned() {
           "4492 AC3: filter holds a TwVecPin root over its snapshot/accumulator");
 }
 
+// ── Issue #4608: the string heap reclaims unreachable strings ──
+// The file-mode reclaim recycled pairs, cells and closures, but never
+// the string heap: every string minted and dropped inside a running
+// program kept its slot until exit (~70 bytes per string — the slot
+// object, the #4428 owner record and the vector's growth slack). A
+// loop that mints and dropped strings (number->string, a c-func that
+// returns a String) therefore grew the heap — and the RSS — linearly.
+//
+// The reclaim now marks the string slots the same way it marks pairs
+// (the string value IS the slot index) and releases the unreachable
+// ones onto the heap's free list, so the next mint reuses a slot
+// instead of growing the heap. A reused slot is a fresh content write:
+// the #4548 code-point cache entry for that slot is dropped and the
+// #4428 owner stamp is rewritten by the mint hook.
+static void ac4608_string_heap_reclaim() {
+    std::println("\n--- #4608: the string heap reclaims unreachable strings ---");
+
+    // AC1: a mint-and-drop loop keeps the string heap flat. Pre-fix the
+    // loop grew the heap by one slot per minted string (20k slots for
+    // 20k iterations); post-fix the dead slots go back on the free
+    // list and the heap stays at the live set.
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto warm = cs.eval("(begin (define (run n) (if (< n 20000) (begin (number->string n) "
+                            "(run (+ n 1))) #t)) (run 0))");
+        CHECK(warm.has_value(), "4608 AC1: warm-up eval");
+        const auto before = ev.string_heap_size();
+        auto r = cs.eval("(begin (define (run n) (if (< n 20000) (begin (number->string n) "
+                         "(run (+ n 1))) #t)) (run 20000))");
+        CHECK(r && is_bool(*r) && as_bool(*r), "4608 AC1: mint-and-drop loop evals");
+        const auto grown = ev.string_heap_size() - before;
+        CHECK(grown <= 1024,
+              "4608 AC1: the string heap stays flat across 20k dropped strings (grew " +
+                  std::to_string(grown) + " slots, want <= 1024)");
+        CHECK(ev.string_heap_free_slots() > 0,
+              "4608 AC1: the reclaim put the dead slots on the free list");
+    }
+
+    // AC2: the strings that ARE reachable survive the reclaim: an env
+    // frame binding, a pair, a vector, a closure capture and a let
+    // cell all keep their content across 20k minted-and-dropped
+    // strings (5 of 5).
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto r =
+            cs.eval("(begin"
+                    " (define (run n) (if (< n 20000) (begin (number->string n) (run (+ n 1))) #t))"
+                    " (define s (number->string 42))"
+                    " (define p (cons s 1))"
+                    " (define v (vector s))"
+                    " (define f (lambda () s))"
+                    " (define c (let ((x s)) (lambda () x)))"
+                    " (run 20000)"
+                    " (+ (+ (+ (+ (if (string=? s \"42\") 1 0)"
+                    "            (if (string=? (car p) \"42\") 1 0))"
+                    "           (if (string=? (vector-ref v 0) \"42\") 1 0))"
+                    "          (if (string=? (f) \"42\") 1 0))"
+                    "         (if (string=? (c) \"42\") 1 0)))");
+        CHECK(r && is_int(*r), "4608 AC2: survival program evals");
+        CHECK(r && is_int(*r) && as_int(*r) == 5,
+              "4608 AC2: live strings survive the reclaim (env/pair/vector/closure/cell), got " +
+                  (r && is_int(*r) ? std::to_string(as_int(*r)) : std::string("no result")) +
+                  " of 5");
+        CHECK(ev.string_heap_free_slots() > 0,
+              "4608 AC2: the reclaim ran under the survival program too");
+    }
+
+    // AC3: the source cite — the string heap is part of the mark and
+    // the release, the free list lives in the string-heap owner.
+    const auto gc = read_file("src/compiler/evaluator_gc.cpp");
+    CHECK(gc.find("seen_string") != std::string::npos,
+          "4608 AC3: the reclaim marks the string slots");
+    CHECK(gc.find("release_unreachable_string_slots") != std::string::npos,
+          "4608 AC3: the reclaim releases the unreachable string slots");
+    const auto heap = read_file("src/compiler/locked_string_heap.hh");
+    CHECK(heap.find("release_unmarked") != std::string::npos,
+          "4608 AC3: the string heap owns the free list");
+    CHECK(heap.find("invalidate_cp_index_locked") != std::string::npos,
+          "4608 AC3: a reused slot drops its cached code-point index");
+}
+
 // ── Issue #4525: float allocation pressure vs #4474 whole-heap reclaim ──
 // Spike verdict (see close comment): boxed floats are bump-allocated in
 // lib/runtime.c's float_pool — OUTSIDE the mark heap — so pure float loops
@@ -1113,6 +1196,7 @@ int run_test_pmr_alloc_fiber_safe() {
     ac4473_list_mint_reuse();
     ac4474_dynamic_reclaim_trigger();
     ac4474r3_large_heap_window();
+    ac4608_string_heap_reclaim();
     ac4480_map_accumulator_pinned();
     ac4492_nested_map_filter_pinned();
     ac4525_burst_rebalance();
