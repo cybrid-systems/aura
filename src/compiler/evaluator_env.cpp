@@ -2004,6 +2004,52 @@ std::optional<EnvFrameRef> Evaluator::materialize_call_env_ref(const Closure& cl
 // via RAII. Callers at invalidate / compact / truncate / JIT / fiber / GC
 // boundaries pair this with scan_live_closures_for_linear_captures for
 // forced Drop (bridge_epoch=0) on linear/Moved captures.
+// Issue #4373: (eval "(let () (define (k x) …) k)") returns a closure
+// that lost its internal define. Root cause chain: the empty (let () …)
+// body runs in top_ (#4359 transparent let), so the define's pre-bound
+// cell lands IN top_; the closure is created directly in top_ and the
+// #4350/#4474 top_capture_is_live_safe branch gives it an EMPTY capture
+// frame (live_safe_top_) whose free vars resolve through the LIVE top_
+// consult (Env::lookup, #4595); the eval primitive's RestoreTopPool then
+// drops the let-nested define from top_ — unbinding the very name the
+// closure's self-reference resolves through ("invalid closure reference"
+// on (f 4)). Rehome: swap every flagged closure created at/after
+// first_cid to a real copy of the CURRENT top_ (pre-#4350 exact frame),
+// taken BEFORE the caller drops anything. One shared copy per call —
+// content is identical for every rehomed closure (#4474 share pattern).
+// Fiber-gated off: the live consult itself is host-thread-only there.
+void Evaluator::rehome_live_safe_top_captures_from(std::uint64_t first_cid) {
+    if (aura::serve::g_current_fiber != nullptr)
+        return;
+    const std::uint64_t last = next_id_.load(std::memory_order_acquire);
+    if (first_cid >= last)
+        return;
+    EnvId rehome_id = NULL_ENV_ID;
+    for (std::uint64_t raw = first_cid; raw < last; ++raw) {
+        const ClosureId cid = static_cast<ClosureId>(raw);
+        // Lock order #1664: closures shard → env_frames (never reverse).
+        auto& shard = closures_shards_[closures_shard_index(cid)];
+        std::unique_lock<std::shared_mutex> wlock(shard.mu);
+        auto it = shard.map.find(cid);
+        if (it == shard.map.end())
+            continue;
+        const EnvId cap = it->second.env_id;
+        if (cap == NULL_ENV_ID)
+            continue;
+        const auto fr = resolve_env_frame_detailed(cap);
+        if (!fr || fr.frame == nullptr || !fr.frame->live_safe_top_)
+            continue;
+        if (rehome_id == NULL_ENV_ID) {
+            rehome_id = alloc_env_frame_from_env(top_);
+            if (rehome_id == NULL_ENV_ID)
+                return;
+        }
+        it->second.env_id = rehome_id;
+    }
+    if (rehome_id != NULL_ENV_ID)
+        bump_closures_apply_epoch(); // Issue #3832: appliers re-read env_id
+}
+
 void Evaluator::name_live_closure(ClosureId cid, std::string_view name) {
     if (name.empty())
         return;

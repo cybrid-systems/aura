@@ -741,7 +741,36 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                     top.bind(kv.first, kv.second);
             }
         } restore_top_pool(ev.top_env(), &root_defines);
+        // Issue #4373: closures created directly in top_ during this eval
+        // carry EMPTY live-safe captures (#4350/#4474) whose free vars
+        // resolve through the LIVE top_ consult (#4595). When the restore
+        // is about to drop let-nested internal defines, rehome those
+        // closures to a real copy of top_ FIRST — otherwise the returned
+        // closure loses its internal define (self-call → "invalid closure
+        // reference"). Root defines stay in top_ and keep the live consult.
+        const std::uint64_t rehome_from = ev.closure_id_watermark();
         auto result = ev.eval_flat(*flat_p, *pool_p, pr.root, ev.top_);
+        {
+            const auto& tb = ev.top_env().bindings();
+            if (tb.size() > restore_top_pool.binds) {
+                bool any_drop = false;
+                for (std::size_t i = restore_top_pool.binds; i < tb.size(); ++i) {
+                    bool kept = false;
+                    for (const auto& k : root_defines) {
+                        if (k == tb[i].first) {
+                            kept = true;
+                            break;
+                        }
+                    }
+                    if (!kept) {
+                        any_drop = true;
+                        break;
+                    }
+                }
+                if (any_drop)
+                    ev.rehome_live_safe_top_captures_from(rehome_from);
+            }
+        }
         if (result)
             return *result;
         return make_void();

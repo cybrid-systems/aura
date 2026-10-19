@@ -1176,6 +1176,18 @@ export struct EnvFrame {
     // as bindings_symid_). 0=untracked … 4=Moved. Walked by
     // linear_post_mutate_enforce.
     std::vector<std::uint8_t> bindings_linear_ownership_state_;
+    // Issue #4373: set by the Lambda walker's #4350/#4474
+    // top_capture_is_live_safe branch — this frame is an EMPTY capture
+    // parented at top_'s root, and the closure resolves free vars through
+    // the live top_ consult (Env::lookup, #4595) instead of frame content.
+    // When a consumer is about to unbind names from top_ that closures
+    // created during its window may still reference (the (eval …)
+    // primitive's RestoreTopPool drops let-nested internal defines), it
+    // rehomes flagged closures to a real copy of top_ first
+    // (Evaluator::rehome_live_safe_top_captures_from) so the returned
+    // closure stays self-sufficient instead of losing its internal
+    // define ("invalid closure reference" on self-call).
+    bool live_safe_top_ = false;
 
     // Bind by name. Resolves to SymId via pool_ if set, mirrors
     // to bindings_symid_ so legacy lookup_by_symid still finds
@@ -5048,6 +5060,25 @@ public:
     // in the SoA arena (P0: legacy Closure::env pointer path removed;
     // env_id is the only capture handle).
     EnvId alloc_env_frame_from_env(const Env& e, EnvId parent_id = NULL_ENV_ID);
+    // Issue #4373: watermark of the closure-id allocator (next_id_).
+    // The (eval …) primitive snapshots this before evaluating its string
+    // so rehome_live_safe_top_captures_from can scope to exactly the
+    // closures that eval created.
+    [[nodiscard]] std::uint64_t closure_id_watermark() const noexcept {
+        return next_id_.load(std::memory_order_acquire);
+    }
+    // Issue #4373: rehome live-safe-empty top_ captures. A closure created
+    // directly in top_ during an (eval …) whose restore will drop
+    // let-nested internal defines from top_ loses those names (its empty
+    // capture resolves them through the LIVE top_ consult, #4595 — the
+    // pre-drop cell lands in top_ and the drop unbinds it). Give every
+    // closure with id >= first_cid whose capture frame carries the
+    // live_safe_top_ flag a real copy of the CURRENT top_ (the exact frame
+    // the pre-#4350 capture would have built) so the closure keeps seeing
+    // its internal defines. One shared copy per call (identical content,
+    // #4474 share pattern). Skipped under fibers (live-consult semantics
+    // unchanged there). No-op when the range has no flagged closures.
+    void rehome_live_safe_top_captures_from(std::uint64_t first_cid);
     // Issue #145 Phase 2.3 — materialize a fresh Env suitable
     // for evaluating a closure body. Always uses env_frames_[cl.env_id]
     // (SoA walk, GC-safe; P0 legacy cl.env fallback completely removed).

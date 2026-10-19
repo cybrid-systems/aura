@@ -776,6 +776,15 @@ static int64_t ac4510_G_fn(int64_t* locals, uint32_t argc) {
 static void ac4510_production_shape_deopt_owner_scoped() {
     std::println("\n--- #4510: production shape deopt → owner-scoped demotion ---");
     apply_production_audit_defaults();
+    // Issue #4510: production require_effect fails closed a session-less
+    // (epoch 0) set-code peek (#4241/#3691) — the denied primitive returns
+    // an error VALUE this AC's .has_value() CHECKs swallow, so the
+    // workspace never installs, the v2 rows never store, and the whole
+    // hook/demotion contract below asserts vacuously (CI red: cached
+    // f=false g=false → fire_shape_deopt_hook never resolves the define).
+    // Establish the mutation epoch first (same shape as #4452 in
+    // test_aot_reload_primitive: bump_mutation_epoch(1) under production).
+    aura::core::bump_mutation_epoch(1);
     {
         // Single CompilerService: the deopt trampoline routes through
         // g_current_compiler_service (set by the ctor). The peer face is a
@@ -995,6 +1004,10 @@ static int64_t ac4578_G_fn(int64_t* locals, uint32_t argc) {
 static void ac4578_shape_deopt_erases_jit_bundle() {
     std::println("\n--- #4578: shape deopt erases jit_cache_ bundle rows ---");
     apply_production_audit_defaults();
+    // Issue #4578/#4510: same session-less set-code deny guard — keep the
+    // epoch non-zero so the production face under test is the shape-deopt
+    // erase, not an effect-admission vacuity.
+    aura::core::bump_mutation_epoch(1);
     {
         CompilerService cs;
         CHECK(aura_production_defaults_active_probe() != 0, "4578: production face");
