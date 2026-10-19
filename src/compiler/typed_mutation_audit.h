@@ -1724,6 +1724,9 @@ inline std::atomic<std::uint8_t> g_remount_last_zero_strip_face{0};
     return g_remount_last_zero_strip_face.load(std::memory_order_relaxed);
 }
 inline constexpr std::int64_t kRemountLastZeroForceReasonCode = 17;
+// Issue #2610: auto_partial-from-cone force reason (the #3347 remirror
+// armed the pending latch; cleared only by the next infer_flat_partial).
+inline constexpr std::int64_t kAutoPartialFromConeForceReasonCode = 6;
 inline std::atomic<std::uint8_t> g_last_proof_linear_ok{0};
 // Issue #4534: last stamped proof face scalars for the fidelity stats
 // handler (readiness bp / force reason code / occurrence consistency).
