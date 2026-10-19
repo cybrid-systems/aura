@@ -3659,6 +3659,60 @@ extern "C" std::int64_t aura_jit_deopt_to_interpreter(const char* name) {
     return 0; // fixnum 0 sentinel
 }
 
+// ── Issue #4600 §1/§2 (phase 2): shared frame-state deopt stub ──
+// Guard exits branch here instead of carrying inline generic fallbacks:
+// the cold path spills the live IR locals (EvalValue bits; float shadows
+// reboxed by the lowering's load()) plus the resume (block, instr) and
+// calls this stub once. The armed host (CompilerService::exec_jit)
+// materializes an IRInterpreter frame at the resume point and returns the
+// completed call's tagged result, so the deopting native frame simply
+// returns the stub value. Without a host the stub degrades to the #4084
+// protocol: fixnum 0 + the prologue sentinel, so OpCall/OpApply sites
+// (leave_if_callee_refused) and try_jit_execute fall back one level up.
+// The stub does NOT batch-deopt the fn — repeated guard deopts are the
+// deopt-storm policy's call (§4, DeoptStorms attribution below).
+namespace {
+aura_jit_deopt_frame_fn g_deopt_frame_host = nullptr;
+// aura_jit_runtime.cpp name→entry table (no shared header; C ABI).
+extern "C" int64_t aura_lookup_fn_by_name(const char* name, int64_t* out_local_count,
+                                          int64_t* out_arg_count, int64_t* out_env_count);
+} // namespace
+
+extern "C" void aura_jit_set_deopt_frame_host(aura_jit_deopt_frame_fn fn) noexcept {
+    g_deopt_frame_host = fn;
+}
+
+extern "C" std::uint32_t aura_jit_deopt_frame_env_count(const char* fn_name) noexcept {
+    int64_t env_count = 0;
+    (void)aura_lookup_fn_by_name(fn_name, nullptr, nullptr, &env_count);
+    return env_count > 0 ? static_cast<std::uint32_t>(env_count) : 0u;
+}
+
+extern "C" std::uint32_t aura_jit_deopt_frame_arg_count(const char* fn_name) noexcept {
+    int64_t arg_count = 0;
+    (void)aura_lookup_fn_by_name(fn_name, nullptr, &arg_count, nullptr);
+    return arg_count > 0 ? static_cast<std::uint32_t>(arg_count) : 0u;
+}
+
+extern "C" std::int64_t aura_jit_deopt_frame(const char* fn_name, std::uint32_t block,
+                                             std::uint32_t instr, const std::int64_t* slots,
+                                             std::uint32_t nslots, std::uint32_t argc) {
+    auto& st = aura::compiler::jit_assume::stats();
+    st.frame_deopt_exits.fetch_add(1, std::memory_order_relaxed);
+    if (fn_name && fn_name[0])
+        aura::compiler::jit_assume::DeoptStorms::instance().note(fn_name);
+    if (g_deopt_frame_host && fn_name && fn_name[0] && slots) {
+        const std::int64_t resumed = g_deopt_frame_host(fn_name, block, instr, slots, nslots, argc);
+        st.frame_deopt_resumes.fetch_add(1, std::memory_order_relaxed);
+        return resumed;
+    }
+    // Unhosted degrade: same shape as a prologue deopt so the existing
+    // caller-side fallbacks drive the interpreter retry one level up.
+    st.frame_deopt_unhosted.fetch_add(1, std::memory_order_relaxed);
+    aura_jit_note_prologue_deopt_sentinel();
+    return 0;
+}
+
 // Issue #1534: OpGuardShape dual-epoch fence (JIT Apply / GuardShape path).
 // Uses #1477 is_fn_epoch_stale + AOT table epoch (lockstep with bridge_epoch).
 extern "C" int aura_jit_guard_shape_epoch_check(const char* name) {

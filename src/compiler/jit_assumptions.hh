@@ -65,6 +65,16 @@ struct Stats {
     std::atomic<std::uint64_t> guard_deopt_notes{0};
     // Issue #4600 §4: fns marked stormed (deopt count reached the threshold).
     std::atomic<std::uint64_t> storm_marks{0};
+    // Issue #4600 §1/§2 (phase 2): guard exits to the shared frame-deopt
+    // stub. `frame_deopt_armed` counts fns compiled with at least one
+    // frame-deopt exit; `frame_deopt_exits` counts stub entries at
+    // runtime; `frame_deopt_resumes` counts host-side IR-interpreter
+    // resumes; `frame_deopt_unhosted` counts entries with no host armed
+    // (degraded to the #4084 fixnum-0 sentinel protocol).
+    std::atomic<std::uint64_t> frame_deopt_armed{0};
+    std::atomic<std::uint64_t> frame_deopt_exits{0};
+    std::atomic<std::uint64_t> frame_deopt_resumes{0};
+    std::atomic<std::uint64_t> frame_deopt_unhosted{0};
 };
 
 inline Stats& stats() noexcept {
@@ -281,6 +291,10 @@ struct Fnv {
     kv("prologue_word_armed", s.prologue_word_armed.load(std::memory_order_relaxed));
     kv("guard_deopt_notes", s.guard_deopt_notes.load(std::memory_order_relaxed));
     kv("storm_marks", s.storm_marks.load(std::memory_order_relaxed));
+    kv("frame_deopt_armed", s.frame_deopt_armed.load(std::memory_order_relaxed));
+    kv("frame_deopt_exits", s.frame_deopt_exits.load(std::memory_order_relaxed));
+    kv("frame_deopt_resumes", s.frame_deopt_resumes.load(std::memory_order_relaxed));
+    kv("frame_deopt_unhosted", s.frame_deopt_unhosted.load(std::memory_order_relaxed));
     kv("events", EventLog::instance().total());
     return out;
 }

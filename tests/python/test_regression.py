@@ -755,6 +755,27 @@ def test_jit_soundness_4567():
             f"mix-{n}",
             f"(define (mix a b) (if (< a b) (+ a b) (- a b))) (display (mix {n} {n // 2}))",
         )
+    # Issue #4600 §2: pair-field reads so the forced-deopt modes exercise
+    # mid-body guard exits (entry-deopt alone would never reach a body
+    # guard). f2c deopts inside a CALLED define and returns to native.
+    add(
+        programs,
+        "cadr-top",
+        "(display (car (cdr (cons 1 (cons 2 ())))))",
+        expect="2",
+    )
+    add(
+        programs,
+        "f2c-78",
+        "(define (f2c p) (+ (car p) (cdr p))) (display (f2c (cons 7 8)))",
+        expect="15",
+    )
+    add(
+        programs,
+        "deep-pair",
+        "(display (car (car (cons (cons 5 ()) ()))))",
+        expect="5",
+    )
     if len(programs) < 200:
         raise Exception(f"corpus has {len(programs)} programs, need >= 200")
 
@@ -767,13 +788,19 @@ def test_jit_soundness_4567():
         cmd = [AURA]
         if mode == "ir":
             env["AURA_FORCE_IR"] = "1"
-        elif mode == "jit":
+        elif mode in ("jit", "jitf1", "jitf2"):
             cmd.append("--jit")
+            if mode == "jitf1":
+                # Issue #4600 §2 acceptance: forced-deopt-at-every-guard
+                # mode over this corpus, byte-identical output.
+                env["AURA_JIT_FORCE_GUARD_DEOPT"] = "1"
+            elif mode == "jitf2":
+                env["AURA_JIT_FORCE_GUARD_DEOPT"] = "2"
         return subprocess.run(cmd, input=code, capture_output=True, text=True, timeout=timeout, env=env)
 
     for name, code, timeout, expect in programs:
         outs = {}
-        for mode in ("ir", "eval", "jit"):
+        for mode in ("ir", "eval", "jit", "jitf1", "jitf2"):
             try:
                 r = run_mode(code, mode, timeout)
             except subprocess.TimeoutExpired as exc:
@@ -782,11 +809,14 @@ def test_jit_soundness_4567():
             if r.returncode != 0 or "spec:" in err:
                 raise Exception(f"{name} {mode}: rc={r.returncode} out={r.stdout!r} err={err[:300]!r}")
             outs[mode] = (r.stdout or "").strip()
-        if not (outs["ir"] == outs["eval"] == outs["jit"]):
-            raise Exception(f"{name}: ir={outs['ir']!r} eval={outs['eval']!r} jit={outs['jit']!r}")
+        if not (outs["ir"] == outs["eval"] == outs["jit"] == outs["jitf1"] == outs["jitf2"]):
+            raise Exception(
+                f"{name}: ir={outs['ir']!r} eval={outs['eval']!r} jit={outs['jit']!r} "
+                f"jitf1={outs['jitf1']!r} jitf2={outs['jitf2']!r}"
+            )
         if expect is not None and outs["ir"] != expect:
             raise Exception(f"{name}: expected {expect!r}, got {outs['ir']!r}")
-    print(f"  ✅ jit-soundness-4567 ({len(programs)} programs)")
+    print(f"  ✅ jit-soundness-4567 ({len(programs)} programs, forced-deopt modes included)")
 
 
 def test_jit_assumption_invalidation_4569():
@@ -879,7 +909,11 @@ def test_jit_prologue_word_and_storm_4600():
     """
     n = 6
     defs = " ".join(f"(define (f{i} x) (+ x {i}))" for i in range(n))
-    p = f"{defs} (define (g4600 a) (+ (car a) (cdr a))) (g4600 (cons 7 8)) (+ (f0 1) (f5 1))"
+    # Issue #4600 phase-2 note: the session prints the LAST top-level
+    # expr's value, so the tail must wrap g4600 — otherwise the value is
+    # (+ (f0 1) (f5 1)) = 7 and the 22 pin can never hold (born-red
+    # expectation; the static gate never executes this net).
+    p = f"{defs} (define (g4600 a) (+ (car a) (cdr a))) (+ (g4600 (cons 7 8)) (+ (f0 1) (f5 1)))"
     expected = 7 + 8 + 1 + 6
 
     def session(env, lines):

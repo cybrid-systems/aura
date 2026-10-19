@@ -461,6 +461,84 @@ namespace {
         return result.val;
     }
 
+    // ── Issue #4600 §1/§2 (phase 2): frame-state deopt host ──
+    // Armed by exec_jit around the entry native call. A JIT guard exit
+    // calls the bridge stub aura_jit_deopt_frame, which dispatches here:
+    // materialize an IRInterpreter frame at the guard's (block, instr)
+    // resume point with the spilled locals and drain it — the resumed
+    // run IS the IR interpreter, so the deopting native call returns the
+    // same value the IR path would have produced (the #4567 corpus pins
+    // that byte-identical). Mid-body resumes carry the spill array;
+    // entry resumes (block == entry && instr == 0) carry the caller's
+    // marshalled buffer and re-run the Arg ops from env++args.
+    struct JitDeoptHostState {
+        const aura::ir::IRModule* mod = nullptr;
+        Primitives* prims = nullptr;
+        const aura::core::TypeRegistry* types = nullptr;
+        CompilerMetrics* metrics = nullptr;
+        Evaluator* evaluator = nullptr;
+    };
+    thread_local JitDeoptHostState t_jit_deopt_host;
+
+    std::int64_t jit_deopt_frame_host_impl(const char* fn_name, std::uint32_t block,
+                                           std::uint32_t instr, const std::int64_t* slots,
+                                           std::uint32_t nslots, std::uint32_t argc) {
+        const JitDeoptHostState st = t_jit_deopt_host;
+        const auto degrade = [] {
+            aura_jit_note_prologue_deopt_sentinel();
+            return static_cast<std::int64_t>(0);
+        };
+        if (!st.mod || !fn_name || !fn_name[0] || !slots || !st.prims)
+            return degrade();
+        const aura::ir::IRFunction* fn = nullptr;
+        for (const auto& f : st.mod->functions)
+            if (f.name == fn_name) {
+                fn = &f;
+                break;
+            }
+        if (!fn)
+            return degrade();
+        std::vector<types::EvalValue> args;
+        if (block == fn->entry_block && instr == 0) {
+            const std::uint32_t env_count = aura_jit_deopt_frame_env_count(fn_name);
+            const std::uint32_t arg_cap = aura_jit_deopt_frame_arg_count(fn_name);
+            if (argc > arg_cap)
+                argc = arg_cap;
+            const std::size_t n =
+                std::min<std::size_t>(std::size_t(env_count) + std::size_t(argc), nslots);
+            args.reserve(n);
+            for (std::size_t i = 0; i < n; ++i)
+                args.emplace_back(slots[i]);
+        }
+        std::vector<types::EvalValue> locals;
+        locals.reserve(nslots);
+        for (std::uint32_t i = 0; i < nslots; ++i)
+            locals.emplace_back(slots[i]);
+        aura::compiler::IRContext ctx(*st.prims, st.types, st.metrics, st.evaluator);
+        aura::compiler::IRInterpreter interp(*st.mod, ctx);
+        auto res = interp.resume_deopt_frame(*fn, block, instr, std::move(locals), args);
+        if (!res)
+            return degrade();
+        return static_cast<std::int64_t>(*res);
+    }
+
+    // RAII arm: install the host for the duration of one exec_jit native
+    // call (the IRModule is a local there). Restores the previous host on
+    // unwind so nested/re-entrant exec_jit stays correct.
+    struct JitDeoptHostArm {
+        JitDeoptHostState prev;
+        explicit JitDeoptHostArm(const JitDeoptHostState& next) {
+            prev = t_jit_deopt_host;
+            t_jit_deopt_host = next;
+            aura_jit_set_deopt_frame_host(&jit_deopt_frame_host_impl);
+        }
+        ~JitDeoptHostArm() {
+            t_jit_deopt_host = prev;
+            if (!prev.mod)
+                aura_jit_set_deopt_frame_host(nullptr);
+        }
+    };
+
 } // namespace
 } // namespace aura::compiler
 
@@ -4551,6 +4629,13 @@ public:
         // production face) consults the callback as an audited no-op
         // (#1731) instead of deopting every entry.
         aura_jit_set_linear_env_none();
+        // Issue #4600 §1/§2 (phase 2): arm the frame-state deopt host for
+        // the duration of the native call — every guard exit (prologue,
+        // entry shape guard, car/cdr, GuardShape) resumes the IR
+        // interpreter here instead of surfacing an error/sentinel.
+        const aura::compiler::JitDeoptHostState deopt_state_4600{
+            &ir_mod, &evaluator_.primitives(), &type_registry_, &metrics_, &evaluator_};
+        aura::compiler::JitDeoptHostArm deopt_host_4600{deopt_state_4600};
         auto raw_result =
             reinterpret_cast<aura::jit::ScalarFn>(fn_ptr)(locals.data(), entry.arg_count);
         // Issue #4084: prologue deopt's fixnum 0 is not a successful value.

@@ -338,6 +338,35 @@ static bool jit_defuse_word_enabled() {
     return on;
 }
 
+// Issue #4600 §1/§2 (phase 2): guard exits share one frame-deopt stub.
+// Default on; AURA_JIT_FRAME_DEOPT=0 restores the inline generic
+// fallbacks (and the prologue sentinel path) everywhere.
+static bool jit_frame_deopt_enabled() {
+    static const bool on = [] {
+        const char* v = std::getenv("AURA_JIT_FRAME_DEOPT");
+        return !(v && v[0] == '0');
+    }();
+    return on;
+}
+
+// Issue #4600 §2 acceptance: forced-deopt-at-every-guard mode.
+//   1 = body guards only (car/cdr speculation forced on + forced
+//       mismatch; GuardShape epoch arm forced stale) — exercises
+//       mid-body resume + return-to-native composition.
+//   2 = additionally force the prologue word-gate stale — every native
+//       invocation deopts at entry (entry resume runs the whole body in
+//       the interpreter).
+// 0/absent = real guards.
+static int jit_force_guard_deopt() {
+    static const int level = [] {
+        const char* v = std::getenv("AURA_JIT_FORCE_GUARD_DEOPT");
+        if (!v || !v[0] || v[0] == '0')
+            return 0;
+        return v[0] == '2' ? 2 : 1;
+    }();
+    return level;
+}
+
 // Mirrors runtime_ssot.cpp kPairSegSlots / kPairMaxSegs (#898); the
 // runtime static_asserts the same values next to aura_pair_seg_dir_base.
 constexpr std::uint64_t kL2PairSegSlots = 1024;
@@ -1072,6 +1101,20 @@ struct LLVMBuilder {
     llvm::Function* fn_get_current_bridge_epoch = nullptr;
     llvm::Function* fn_is_fn_epoch_stale = nullptr;
     llvm::Function* fn_deopt_to_interpreter = nullptr;
+    // Issue #4600 §1/§2 (phase 2): shared frame-state deopt stub +
+    // guard exits. frame_deopt_ok gates every conversion (named fn, not
+    // AOT, no promoted cells / scalar-replaced pairs — those hold state
+    // the spill cannot materialize back into heap form yet). cur_block /
+    // cur_instr carry the emit-loop position so a guard exit can name
+    // its resume point. spill_buf (entry alloca, local_count i64s)
+    // receives the explicit per-guard spill; load(slot) reboxes float
+    // shadows.
+    llvm::Function* fn_deopt_frame = nullptr;
+    bool frame_deopt_ok = false;
+    std::uint32_t entry_block_idx = 0;
+    std::uint32_t cur_block = 0;
+    std::uint32_t cur_instr = 0;
+    llvm::Value* spill_buf = nullptr;
     // Issue #4567: entry guard for a real per-arg shape map.
     llvm::Function* fn_check_shape_guard = nullptr;
     // Issue #4451: peek the #4084 sentinel after OpCall / OpApply.
@@ -1229,6 +1272,15 @@ struct LLVMBuilder {
         fn_deopt_to_interpreter = llvm::Function::Create(
             llvm::FunctionType::get(i64, {ptr_i8}, false), llvm::Function::ExternalLinkage,
             "aura_jit_deopt_to_interpreter", mod);
+        // Issue #4600 §1/§2 (phase 2): shared frame-state deopt stub.
+        //   i64 @aura_jit_deopt_frame(i8* name, i32 block, i32 instr,
+        //                             i64* slots, i32 nslots, i32 argc)
+        // Guard-exit cold blocks spill the live locals and tail into this
+        // one call; the armed host resumes the IR interpreter at
+        // (block, instr) and the deopting frame returns the resumed value.
+        fn_deopt_frame = llvm::Function::Create(
+            llvm::FunctionType::get(i64, {ptr_i8, i32_ty, i32_ty, ptr_i8, i32_ty, i32_ty}, false),
+            llvm::Function::ExternalLinkage, "aura_jit_deopt_frame", mod);
         // Issue #4567: i32 aura_check_shape_guard(i64* args, i32 n, i8* map, i32 map_n)
         fn_check_shape_guard = llvm::Function::Create(
             llvm::FunctionType::get(i32_ty, {ptr_i8, i32_ty, ptr_i8, i32_ty}, false),
@@ -1492,6 +1544,49 @@ struct LLVMBuilder {
             return;
         }
         irb->CreateStore(val, llvm_locals[slot]);
+    }
+    // Issue #4600 §1/§2 (phase 2): emit a guard exit — one shared stub
+    // call. Terminates the cold block with `ret stub(...)`; the caller
+    // rewires the guard's fail edge to a fresh cold BB and calls this on
+    // it. from_entry=true resumes at (block, 0) before any internal slot
+    // is written, so the spill source is the caller's locals buffer (fn
+    // args 0/1) and the host re-runs the Arg ops from env++args; mid-body
+    // resumes spill the internal slots (load() reboxes float shadows)
+    // into spill_buf with argc=0 (Arg ops are past the resume point).
+    void emit_frame_deopt_exit(const FlatFunction& fn, std::uint32_t block, std::uint32_t instr,
+                               bool from_entry) {
+        auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+        llvm::Value* slots = nullptr;
+        llvm::Value* nslots = nullptr;
+        llvm::Value* argc = nullptr;
+        auto n32 = [&](std::uint32_t v) { return llvm::ConstantInt::get(i32_ty, v); };
+        if (from_entry) {
+            auto arg_it = func->arg_begin();
+            slots = arg_it;
+            argc = ++arg_it;
+            nslots = n32(fn.local_count);
+        } else {
+            // Explicit per-guard spill: every live slot through load()
+            // (float shadows reboxed), then one stub call.
+            for (std::uint32_t i = 0; i < fn.local_count; ++i) {
+                auto* gep = irb->CreateGEP(llvm::Type::getInt64Ty(ctx), spill_buf, c64(i));
+                irb->CreateStore(load(i), gep);
+            }
+            slots = spill_buf;
+            nslots = n32(fn.local_count);
+            argc = n32(0);
+        }
+        auto* name_gv = irb->CreateGlobalString(fn.name, "frame_deopt_fn_name");
+        auto* zero32 = llvm::ConstantInt::get(i32_ty, 0);
+        auto* name_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+            name_gv->getValueType(), name_gv, llvm::ArrayRef<llvm::Constant*>{zero32, zero32});
+        auto* call = irb->CreateCall(
+            llvm::FunctionCallee(fn_deopt_frame),
+            llvm::ArrayRef<llvm::Value*>{
+                name_ptr, llvm::ConstantInt::get(i32_ty, block),
+                llvm::ConstantInt::get(i32_ty, instr),
+                irb->CreateBitCast(slots, llvm::PointerType::getUnqual(ctx)), nslots, argc});
+        irb->CreateRet(call);
     }
     llvm::Value* c64(int64_t v) { return llvm::ConstantInt::get(llvm::Type::getInt64Ty(ctx), v); }
     // Issue #4491: the single JIT truthiness test. Must match
@@ -2384,6 +2479,11 @@ struct LLVMBuilder {
                         irb->CreateCall(llvm::FunctionCallee(fn_guard_shape_epoch_check),
                                         llvm::ArrayRef<llvm::Value*>{name_ptr});
                     auto* is_stale = irb->CreateICmpNE(stale_i, zero32);
+                    // Issue #4600 §1/§2: force mode drives the epoch arm
+                    // stale so every GuardShape site exercises the
+                    // mid-body frame-deopt resume.
+                    if (frame_deopt_ok && jit_force_guard_deopt() >= 1)
+                        is_stale = llvm::ConstantInt::getTrue(ctx);
                     // Issue #3270: linear-unsafe fail-closes to bb_stale
                     // (store false) instead of continuing the fresh path.
                     if (lin_unsafe)
@@ -2391,12 +2491,19 @@ struct LLVMBuilder {
                     irb->CreateCondBr(is_stale, bb_stale, bb_ok);
                 }
 
-                // Stale path: deopt-to-interpreter (guard fails → generic).
+                // Stale path: Issue #4600 §1/§2 — armed form exits to the
+                // shared frame-deopt stub (resume re-executes this GuardShape
+                // in the interpreter, which computes it fresh); un-armed form
+                // keeps the inline generic fallback (guard fails → false).
                 irb->SetInsertPoint(bb_stale);
-                if (fn_deopt_inc)
-                    irb->CreateCall(llvm::FunctionCallee(fn_deopt_inc));
-                store(inst.ops[0], c64(KWD_FALSE_VAL));
-                irb->CreateBr(bb_merge);
+                if (frame_deopt_ok) {
+                    emit_frame_deopt_exit(fn, cur_block, cur_instr, /*from_entry=*/false);
+                } else {
+                    if (fn_deopt_inc)
+                        irb->CreateCall(llvm::FunctionCallee(fn_deopt_inc));
+                    store(inst.ops[0], c64(KWD_FALSE_VAL));
+                    irb->CreateBr(bb_merge);
+                }
 
                 // Fresh path: existing narrow_evidence / shape check.
                 irb->SetInsertPoint(bb_ok);
@@ -3274,7 +3381,63 @@ struct LLVMBuilder {
                           }));
                     return true;
                 }
-                bool spec_pair = (inst_shape(inst) == SHAPE_PAIR);
+                // Issue #4600 §1/§2 (phase 2): with the frame-deopt stub
+                // armed, the guard is one compare + branch to a shared
+                // deopt exit — the cold path is that stub call alone
+                // (S1); the armed host resumes the IR interpreter at this
+                // (block, instr) with the spilled locals (S2). Force mode
+                // additionally speculates the pair shape with the compare
+                // forced to mismatch, so the unchecked fast path is dead
+                // code by construction and every car site deopts
+                // mid-body (acceptance mode over the #4567 corpus).
+                const bool pair_guard_exit = frame_deopt_ok;
+                const bool pair_force = pair_guard_exit && jit_force_guard_deopt() >= 1;
+                bool spec_pair = (inst_shape(inst) == SHAPE_PAIR) || pair_force;
+                if (spec_pair && pair_guard_exit) {
+                    auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+                    llvm::Value* match = nullptr;
+                    if (pair_force) {
+                        match = llvm::ConstantInt::getFalse(ctx);
+                    } else {
+                        llvm::Value* cur = nullptr;
+                        if (jit_defuse_word_enabled()) {
+                            auto* slotp = irb->CreateIntToPtr(c64(aura_jit_defuse_word_slot_addr()),
+                                                              llvm::PointerType::getUnqual(ctx));
+                            auto* wp = irb->CreateLoad(llvm::PointerType::getUnqual(ctx), slotp);
+                            wp->setAtomic(llvm::AtomicOrdering::Acquire);
+                            wp->setAlignment(llvm::Align(8));
+                            auto* cur_word = irb->CreateLoad(i64_ty, wp);
+                            cur_word->setAtomic(llvm::AtomicOrdering::Acquire);
+                            cur_word->setAlignment(llvm::Align(8));
+                            cur = cur_word;
+                        } else {
+                            cur = irb->CreateCall(llvm::FunctionCallee(fn_get_defuse_version),
+                                                  llvm::ArrayRef<llvm::Value*>{});
+                        }
+                        auto* expected = irb->CreateLoad(i64_ty, llvm_locals[fn.local_count]);
+                        match = irb->CreateICmpEQ(cur, expected);
+                    }
+                    auto* entry_bb = irb->GetInsertBlock();
+                    auto* parent_func = entry_bb->getParent();
+                    auto* bb_fast = llvm::BasicBlock::Create(ctx, "car_fast", parent_func);
+                    auto* bb_exit = llvm::BasicBlock::Create(ctx, "car_frame_deopt", parent_func);
+                    auto* bb_cont = llvm::BasicBlock::Create(ctx, "car_guard_cont", parent_func);
+                    irb->CreateCondBr(match, bb_fast, bb_exit);
+                    irb->SetInsertPoint(bb_fast);
+                    if (metrics)
+                        metrics->intrinsic_count.fetch_add(1, std::memory_order_relaxed);
+                    auto* fast_result = irb->CreateCall(llvm::FunctionCallee(fn_pair_car_unchecked),
+                                                        llvm::ArrayRef<llvm::Value*>{pair_val});
+                    store(inst.ops[0], fast_result);
+                    irb->CreateBr(bb_cont);
+                    irb->SetInsertPoint(bb_exit);
+                    emit_frame_deopt_exit(fn, cur_block, cur_instr, /*from_entry=*/false);
+                    irb->SetInsertPoint(bb_cont);
+                    return true;
+                }
+                // Issue #4600 §1: un-armed form (AURA_JIT_FRAME_DEOPT=0,
+                // AOT, anon fns, hidden pcell/spair state) keeps the
+                // inline generic fallback — fast / slow-call / merge.
                 if (spec_pair) {
                     auto* i64_ty = llvm::Type::getInt64Ty(ctx);
                     // Issue #4600 §5: direct word read — two acquire loads
@@ -3380,7 +3543,63 @@ struct LLVMBuilder {
                           }));
                     return true;
                 }
-                bool spec_pair = (inst_shape(inst) == SHAPE_PAIR);
+                // Issue #4600 §1/§2 (phase 2): with the frame-deopt stub
+                // armed, the guard is one compare + branch to a shared
+                // deopt exit — the cold path is that stub call alone
+                // (S1); the armed host resumes the IR interpreter at this
+                // (block, instr) with the spilled locals (S2). Force mode
+                // additionally speculates the pair shape with the compare
+                // forced to mismatch, so the unchecked fast path is dead
+                // code by construction and every cdr site deopts
+                // mid-body (acceptance mode over the #4567 corpus).
+                const bool pair_guard_exit = frame_deopt_ok;
+                const bool pair_force = pair_guard_exit && jit_force_guard_deopt() >= 1;
+                bool spec_pair = (inst_shape(inst) == SHAPE_PAIR) || pair_force;
+                if (spec_pair && pair_guard_exit) {
+                    auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+                    llvm::Value* match = nullptr;
+                    if (pair_force) {
+                        match = llvm::ConstantInt::getFalse(ctx);
+                    } else {
+                        llvm::Value* cur = nullptr;
+                        if (jit_defuse_word_enabled()) {
+                            auto* slotp = irb->CreateIntToPtr(c64(aura_jit_defuse_word_slot_addr()),
+                                                              llvm::PointerType::getUnqual(ctx));
+                            auto* wp = irb->CreateLoad(llvm::PointerType::getUnqual(ctx), slotp);
+                            wp->setAtomic(llvm::AtomicOrdering::Acquire);
+                            wp->setAlignment(llvm::Align(8));
+                            auto* cur_word = irb->CreateLoad(i64_ty, wp);
+                            cur_word->setAtomic(llvm::AtomicOrdering::Acquire);
+                            cur_word->setAlignment(llvm::Align(8));
+                            cur = cur_word;
+                        } else {
+                            cur = irb->CreateCall(llvm::FunctionCallee(fn_get_defuse_version),
+                                                  llvm::ArrayRef<llvm::Value*>{});
+                        }
+                        auto* expected = irb->CreateLoad(i64_ty, llvm_locals[fn.local_count]);
+                        match = irb->CreateICmpEQ(cur, expected);
+                    }
+                    auto* entry_bb = irb->GetInsertBlock();
+                    auto* parent_func = entry_bb->getParent();
+                    auto* bb_fast = llvm::BasicBlock::Create(ctx, "cdr_fast", parent_func);
+                    auto* bb_exit = llvm::BasicBlock::Create(ctx, "cdr_frame_deopt", parent_func);
+                    auto* bb_cont = llvm::BasicBlock::Create(ctx, "cdr_guard_cont", parent_func);
+                    irb->CreateCondBr(match, bb_fast, bb_exit);
+                    irb->SetInsertPoint(bb_fast);
+                    if (metrics)
+                        metrics->intrinsic_count.fetch_add(1, std::memory_order_relaxed);
+                    auto* fast_result = irb->CreateCall(llvm::FunctionCallee(fn_pair_cdr_unchecked),
+                                                        llvm::ArrayRef<llvm::Value*>{pair_val});
+                    store(inst.ops[0], fast_result);
+                    irb->CreateBr(bb_cont);
+                    irb->SetInsertPoint(bb_exit);
+                    emit_frame_deopt_exit(fn, cur_block, cur_instr, /*from_entry=*/false);
+                    irb->SetInsertPoint(bb_cont);
+                    return true;
+                }
+                // Issue #4600 §1: un-armed form (AURA_JIT_FRAME_DEOPT=0,
+                // AOT, anon fns, hidden pcell/spair state) keeps the
+                // inline generic fallback — fast / slow-call / merge.
                 if (spec_pair) {
                     auto* i64_ty = llvm::Type::getInt64Ty(ctx);
                     // Issue #4600 §5: same direct word read as OpCar.
@@ -4113,6 +4332,10 @@ int aura_jit_linear_post_mutate_enforce(std::uint32_t env_id);
 std::uint64_t aura_jit_get_current_bridge_epoch(void);
 int aura_jit_is_fn_epoch_stale(const char* name, std::uint64_t current_bridge_epoch);
 std::int64_t aura_jit_deopt_to_interpreter(const char* name);
+// Issue #4600 §1/§2 (phase 2): shared frame-state deopt stub (bridge).
+std::int64_t aura_jit_deopt_frame(const char* fn_name, std::uint32_t block, std::uint32_t instr,
+                                  const std::int64_t* slots, std::uint32_t nslots,
+                                  std::uint32_t argc);
 // Issue #4567: defined in spec_jit_controller.cpp (C linkage).
 int aura_check_shape_guard(const std::int64_t* args, std::uint32_t arg_count,
                            const std::uint8_t* shape_map, std::uint32_t map_size);
@@ -4616,6 +4839,8 @@ struct AuraJIT::Impl {
         reg("aura_jit_get_current_bridge_epoch", (void*)aura_jit_get_current_bridge_epoch);
         reg("aura_jit_is_fn_epoch_stale", (void*)aura_jit_is_fn_epoch_stale);
         reg("aura_jit_deopt_to_interpreter", (void*)aura_jit_deopt_to_interpreter);
+        // Issue #4600 §1/§2 (phase 2): shared frame-state deopt stub.
+        reg("aura_jit_deopt_frame", (void*)aura_jit_deopt_frame);
         reg("aura_check_shape_guard", (void*)aura_check_shape_guard);
         reg("aura_jit_peek_prologue_deopt_sentinel", (void*)aura_jit_peek_prologue_deopt_sentinel);
         reg("aura_deopt_inc", (void*)aura_deopt_inc);
@@ -4845,6 +5070,33 @@ struct AuraJIT::Impl {
         // lock). On match, take the fast path (aura_pair_car_unchecked
         // / aura_pair_cdr_unchecked, no bounds, no lock).
         builder.llvm_locals.push_back(builder.irb->CreateAlloca(llvm::Type::getInt64Ty(ctx)));
+        // Issue #4600 §1/§2 (phase 2): arm guard exits to the shared
+        // frame-deopt stub. Named fns only (the stub resolves the resume
+        // IRFunction by module-unique name); no AOT (host resume is
+        // in-process only); no promoted cells / scalar-replaced pairs —
+        // their content lives in allocas the interpreter cannot see, and
+        // materializing it back to heap form is follow-up scope. Float
+        // shadows are fine: load() reboxes them into the spill.
+        builder.frame_deopt_ok = false;
+        {
+            std::uint32_t entry_idx_scan = 0;
+            for (std::uint32_t bi = 0; bi < fn.num_blocks; ++bi)
+                if (fn.blocks[bi].id == fn.entry_block)
+                    entry_idx_scan = bi;
+            builder.entry_block_idx = entry_idx_scan;
+            bool has_hidden_state = false;
+            for (std::uint32_t i = 0; i < fn.local_count && !has_hidden_state; ++i)
+                has_hidden_state = builder.is_pcell(i) || builder.is_spair(i) ||
+                                   builder.is_spair(fn.local_count + i);
+            if (jit_frame_deopt_enabled() && fn.name && fn.name[0] && !builder.aot_mode &&
+                fn.local_count > 0 && builder.fn_deopt_frame && !has_hidden_state) {
+                builder.frame_deopt_ok = true;
+                aura::compiler::jit_assume::stats().frame_deopt_armed.fetch_add(
+                    1, std::memory_order_relaxed);
+                builder.spill_buf = builder.irb->CreateAlloca(
+                    llvm::ArrayType::get(llvm::Type::getInt64Ty(ctx), fn.local_count));
+            }
+        }
         // Issue #4572: the captured version is only read by the SHAPE_PAIR
         // car/cdr lowering below; functions without car/cdr (fib, loops)
         // and L2 functions (pair_ok path) skip the per-activation call.
@@ -4862,7 +5114,13 @@ struct AuraJIT::Impl {
         // Issue #4571 (L2): functions that read pairs evaluate the tenant
         // gate once per activation and bake the segment directory address
         // (in-process JIT only; the AOT path keeps the call lowering).
-        if (jit_l2_enabled() && builder.fn_pair_inline_ok && reads_pairs) {
+        // Issue #4600 §2: force mode routes car/cdr through the spec_pair
+        // guard (whose compare is forced to mismatch) so every access is
+        // a frame-deopt exit — skip the L2 inline arming there.
+        const bool force_deopt_routes_pairs =
+            builder.frame_deopt_ok && jit_force_guard_deopt() >= 1 && reads_pairs;
+        if (jit_l2_enabled() && !force_deopt_routes_pairs && builder.fn_pair_inline_ok &&
+            reads_pairs) {
             auto* ok = builder.irb->CreateCall(builder.fn_pair_inline_ok, {});
             builder.pair_ok = builder.irb->CreateICmpNE(ok, builder.c64(0));
             builder.pair_dir = builder.irb->CreateIntToPtr(
@@ -5016,13 +5274,28 @@ struct AuraJIT::Impl {
             }
             if (!is_unsafe)
                 is_unsafe = llvm::ConstantInt::getFalse(ctx);
+            // Issue #4600 §2: force level 2 makes every prologue stale so
+            // each native invocation deopts at entry (acceptance mode —
+            // entry resume runs the whole body in the interpreter).
+            if (builder.frame_deopt_ok && jit_force_guard_deopt() >= 2)
+                is_unsafe = llvm::ConstantInt::getTrue(ctx);
             builder.irb->CreateCondBr(is_unsafe, bb_deopt, bb_cont);
-            // Deopt path: return interpreter-fallback sentinel.
+            // Deopt path: Issue #4600 §1/§2 — with the frame-deopt stub
+            // armed the stale path resumes the IR interpreter at the
+            // entry (block, 0) from the caller's locals buffer, runs the
+            // body to completion and returns its value (no sentinel, no
+            // host-side error). Without the stub this stays the #4084
+            // fixnum-0 sentinel path.
             builder.irb->SetInsertPoint(bb_deopt);
-            auto* deopt_ret =
-                builder.irb->CreateCall(llvm::FunctionCallee(builder.fn_deopt_to_interpreter),
-                                        llvm::ArrayRef<llvm::Value*>{name_ptr});
-            builder.irb->CreateRet(deopt_ret);
+            if (builder.frame_deopt_ok) {
+                builder.emit_frame_deopt_exit(fn, builder.entry_block_idx, 0,
+                                              /*from_entry=*/true);
+            } else {
+                auto* deopt_ret =
+                    builder.irb->CreateCall(llvm::FunctionCallee(builder.fn_deopt_to_interpreter),
+                                            llvm::ArrayRef<llvm::Value*>{name_ptr});
+                builder.irb->CreateRet(deopt_ret);
+            }
             // Body continues in cont BB.
             builder.entry_body_bb = bb_cont;
             if (metrics)
@@ -5076,19 +5349,32 @@ struct AuraJIT::Impl {
                     llvm::FunctionCallee(builder.fn_check_shape_guard),
                     llvm::ArrayRef<llvm::Value*>{locals_ptr, n32, map_ptr, n32});
                 auto* miss = builder.irb->CreateICmpEQ(guard_ok, zero32);
+                // Issue #4600 §2: force mode makes the entry shape guard
+                // miss so the body-entry resume is exercised (real maps
+                // only — no map, no guard, nothing to force).
+                if (builder.frame_deopt_ok && jit_force_guard_deopt() >= 1)
+                    miss = llvm::ConstantInt::getTrue(ctx);
                 auto* bb_deopt = llvm::BasicBlock::Create(ctx, "shape_guard_deopt", builder.func);
                 auto* bb_cont = llvm::BasicBlock::Create(ctx, "shape_guard_cont", builder.func);
                 builder.irb->CreateCondBr(miss, bb_deopt, bb_cont);
                 builder.irb->SetInsertPoint(bb_deopt);
-                const char* gname = (fn.name && fn.name[0]) ? fn.name : "<anon>";
-                auto* name_gv = builder.irb->CreateGlobalString(gname, "shape_guard_fn_name");
-                auto* name_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
-                    name_gv->getValueType(), name_gv,
-                    llvm::ArrayRef<llvm::Constant*>{zero32, zero32});
-                auto* deopt_ret =
-                    builder.irb->CreateCall(llvm::FunctionCallee(builder.fn_deopt_to_interpreter),
-                                            llvm::ArrayRef<llvm::Value*>{name_ptr});
-                builder.irb->CreateRet(deopt_ret);
+                if (builder.frame_deopt_ok) {
+                    // Issue #4600 §1/§2: shared frame-deopt stub — resume at
+                    // the entry (block, 0); the host re-runs the Arg ops from
+                    // the caller's env++args buffer.
+                    builder.emit_frame_deopt_exit(fn, builder.entry_block_idx, 0,
+                                                  /*from_entry=*/true);
+                } else {
+                    const char* gname = (fn.name && fn.name[0]) ? fn.name : "<anon>";
+                    auto* name_gv = builder.irb->CreateGlobalString(gname, "shape_guard_fn_name");
+                    auto* name_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+                        name_gv->getValueType(), name_gv,
+                        llvm::ArrayRef<llvm::Constant*>{zero32, zero32});
+                    auto* deopt_ret = builder.irb->CreateCall(
+                        llvm::FunctionCallee(builder.fn_deopt_to_interpreter),
+                        llvm::ArrayRef<llvm::Value*>{name_ptr});
+                    builder.irb->CreateRet(deopt_ret);
+                }
                 builder.entry_body_bb = bb_cont;
             }
         }
@@ -5102,6 +5388,8 @@ struct AuraJIT::Impl {
             else
                 builder.irb->SetInsertPoint(builder.block_map[fb.id]);
             for (uint32_t ii = 0; ii < fb.num_instructions; ++ii) {
+                builder.cur_block = bi; // Issue #4600 §2: guard-exit resume point
+                builder.cur_instr = ii;
                 builder.next_inst =
                     ii + 1 < fb.num_instructions ? &fb.instructions[ii + 1] : nullptr;
                 builder.consumed_next = false;

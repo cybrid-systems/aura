@@ -998,12 +998,42 @@ std::uint64_t aura_jit_walk_active_closures_stale_found(void);
 std::uint64_t aura_jit_get_current_bridge_epoch(void);
 int aura_jit_is_fn_epoch_stale(const char* name, std::uint64_t current_bridge_epoch);
 std::int64_t aura_jit_deopt_to_interpreter(const char* name);
+
+// Issue #4600 §1/§2 (phase 2): shared frame-state deopt stub. A guard
+// exit spills the live IR locals (tagged i64 = EvalValue bits; float
+// shadows reboxed by the lowering's load()) plus the resume point
+// (block index, instruction index) and calls aura_jit_deopt_frame.
+// The armed host materializes an IRInterpreter frame at that resume
+// point and returns the completed call's value as tagged bits. With no
+// host armed the stub degrades to the #4084 protocol (fixnum 0 + the
+// prologue sentinel) so callers fall back one level up.
+//   fn_name  — module-unique define name (empty/anon fns never emit exits)
+//   block    — IRFunction::blocks index the guard lives in
+//   instr    — instruction index to re-execute in the interpreter
+//   slots    — spilled locals (entry resumes pass the caller's locals
+//              buffer directly; mid-body resumes pass the spill array)
+//   nslots   — slot count (>= fn local_count)
+//   argc     — actual runtime arg count (entry resume slices env++args
+//              from slots; mid-body resumes pass 0 — Arg ops are past)
+using aura_jit_deopt_frame_fn = std::int64_t (*)(const char* fn_name, std::uint32_t block,
+                                                 std::uint32_t instr, const std::int64_t* slots,
+                                                 std::uint32_t nslots, std::uint32_t argc);
+std::int64_t aura_jit_deopt_frame(const char* fn_name, std::uint32_t block, std::uint32_t instr,
+                                  const std::int64_t* slots, std::uint32_t nslots,
+                                  std::uint32_t argc);
+void aura_jit_set_deopt_frame_host(aura_jit_deopt_frame_fn fn) noexcept;
+std::uint32_t aura_jit_deopt_frame_env_count(const char* fn_name) noexcept;
+std::uint32_t aura_jit_deopt_frame_arg_count(const char* fn_name) noexcept;
 // Issue #4451: same TLS as the prologue sentinel. note sets it, clear
 // drops it, peek reads it without taking. OpCall / OpApply peek so a
 // callee refuse is not published as success. Not a query key.
 void aura_jit_note_prologue_deopt_sentinel(void) noexcept;
 void aura_jit_clear_prologue_deopt_sentinel(void) noexcept;
 int aura_jit_peek_prologue_deopt_sentinel(void) noexcept;
+// Issue #4600 §1/§2: take (read + clear) — the frame-deopt stub's
+// unhosted degrade and the exec_jit host path consume the sentinel
+// arm-once (service.ixx keeps its local extern too).
+int aura_jit_take_prologue_deopt_sentinel(void) noexcept;
 
 // Issue #1534: GuardShape dual-epoch fence — runtime helper called from
 // JIT-compiled OpGuardShape before narrow_evidence / shape fast-path.

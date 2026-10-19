@@ -839,6 +839,39 @@ EvalResult IRInterpreter::execute_function(const IRFunction& func,
     return std::unexpected(Diagnostic{ErrorKind::IRCorruption, "unexpected pending call"});
 }
 
+// Issue #4600 §2 (phase 2): see ir_executor.ixx header comment. Same
+// frame/pop discipline as execute(): keep any frames a reentrant caller
+// still owns (base = current depth), push the deopt frame, drain to base.
+EvalResult IRInterpreter::resume_deopt_frame(const IRFunction& func, std::uint32_t block,
+                                             std::size_t instr, std::vector<EvalValue> locals,
+                                             std::span<const EvalValue> args) {
+    if (auto blocked = ir_typed_entry_blocked_result(context_.metrics))
+        return *blocked;
+    if (func.blocks.empty())
+        return std::unexpected(Diagnostic{ErrorKind::IRNoReturn, "empty function"});
+    if (block >= func.blocks.size())
+        return std::unexpected(
+            Diagnostic{ErrorKind::IRCorruption, "deopt resume block out of range"});
+    if (instr > func.blocks[block].instructions.size())
+        return std::unexpected(
+            Diagnostic{ErrorKind::IRCorruption, "deopt resume instr out of range"});
+    // Pad with void (interpreter convention) beyond the spilled slots so
+    // reads of not-yet-written slots match a fresh interpreter frame.
+    const std::size_t want = static_cast<std::size_t>(func.local_count) + 64;
+    if (locals.size() < want)
+        locals.resize(want, make_void());
+    const auto base = call_stack_.size();
+    call_stack_.push_back({.func = &func,
+                           .current_block = block,
+                           .locals = std::move(locals),
+                           .args = std::vector<EvalValue>(args.begin(), args.end()),
+                           .resume_instr = instr,
+                           .is_top_level = true,
+                           .result_slot = 0,
+                           .ex_depth_at_entry = ex_stack_.size()});
+    return drain_call_stack(base);
+}
+
 IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                                      std::vector<EvalValue>& locals,
                                                      std::span<const EvalValue> args) {
