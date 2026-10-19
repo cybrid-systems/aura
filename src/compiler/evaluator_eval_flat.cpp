@@ -7792,6 +7792,15 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             cfr.pool_ = top_.pool();
                             cfr.set_owner(this);
                             cfr.version_ = defuse_version_.load(std::memory_order_acquire);
+                            // Issue #4373: mark the frame so a consumer that
+                            // unbinds names from top_ (the (eval …)
+                            // primitive's RestoreTopPool dropping let-nested
+                            // internal defines) can rehome closures created
+                            // in its window to a real copy first — the empty
+                            // capture resolves those names through the LIVE
+                            // top_ consult, so the drop would unbind them out
+                            // from under the returned closure.
+                            cfr.live_safe_top_ = true;
                             std::lock_guard<std::mutex> snap_lock(cap_snap_mtx_);
                             cap_snap_cache_.erase(cap_id);
                         }

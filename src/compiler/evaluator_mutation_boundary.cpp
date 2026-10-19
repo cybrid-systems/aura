@@ -3228,7 +3228,44 @@ static bool densify_throttle_still_blocks_admit(Evaluator& ev) noexcept {
     return aura::core::moving_densify_health::agent_throttle_for_moving_densify();
 }
 
-// ── try_acquire (#1547 / #1556 / #1590) ──────────────────────────────────
+// ── try_acquire (#1547 / #1556 / #1590) ──────────────────────────────
+// Issue #4540 / #4575 (CLI rebind / batch / plain-off variants of the
+// outermost-persist fail-closed family): a set-code re-lower adds
+// residual CastOp persist sites, and the commit's own readiness consult
+// remirrors them into the cone (aura_force_residual_castop_undermark_
+// into_cone, #3347) which arms the auto_partial-from-cone pending latch
+// (#2610, force reason 6) — a latch ONLY the next mutate's
+// infer_flat_partial path can clear. Feeding reason 6 into this
+// ADMISSION signal wedges every production-mode mutate after a set-code:
+// admission rejects the very mutate whose post-mutate typecheck would
+// have cleared the latch (AdmissionRejected: security-schedule:
+// commit-not-ready on the first rebind). Same self-healing wedge shape
+// as the #4011 reason-17 exemption in commit_readiness_live_signals.
+// Scoped to this admit consumer only — the commit_readiness surface
+// (proofs, evolution-snapshot, commit-health queries) keeps reporting
+// would_allow=false + reason 6 for Agent visibility. Computed only when
+// the gate already carries a commit-readiness hard reject (rare), so the
+// happy path pays nothing.
+static void exempt_self_healing_cone_latch_admit_(aura::orch::SecurityScheduleInput& in) noexcept {
+    if (in.commit_readiness_would_allow || !in.commit_readiness_hard_reject)
+        return;
+    namespace ta = aura::compiler::typed_audit;
+    auto pin = ta::commit_readiness_live_policy();
+    // Mirror the #3414 quiet-timeout suppression the live helper applies
+    // (security_schedule_gate.h commit_readiness_live_signals).
+    if (pin.solve_status == 2 &&
+        ta::g_last_type_linear_proof_outcome.load(std::memory_order_relaxed) !=
+            ta::kTypeLinearProofOutcomeStamped)
+        pin.solve_status = 0;
+    const auto raw = ta::commit_readiness(pin);
+    // Stable force-reason int (typed_mutation_audit.h CommitReadiness:
+    // "6=auto_partial"). Local alias: no header-level name at HEAD.
+    constexpr std::int64_t kAutoPartialFromCone = 6;
+    if (raw.force_reason_code == kAutoPartialFromCone) {
+        in.commit_readiness_would_allow = true;
+        in.commit_readiness_hard_reject = false;
+    }
+}
 aura::core::AuraResult<std::unique_ptr<Evaluator::MutationBoundaryGuard>>
 Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pending_count,
                                               bool* success_flag, bool fine_rollback) noexcept {
@@ -3341,8 +3378,9 @@ Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pendi
         // starve/p99 cannot ScheduleGate a quiet named mutate. Spawn
         // already uses this 4-arg helper (#3932); starve probe is
         // per-scope (#3775). Soft/Off: empty scope, observe-only.
-        const auto in = aura::orch::make_security_schedule_input_live(
-            ev.effect_sandbox_mode(), prod, /*soft_mode=*/!prod, starve_scope);
+        auto in = aura::orch::make_security_schedule_input_live(ev.effect_sandbox_mode(), prod,
+                                                                /*soft_mode=*/!prod, starve_scope);
+        exempt_self_healing_cone_latch_admit_(in);
         if (auto reason = aura::orch::admit_security_schedule(in); reason.has_value()) {
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_)) {
                 m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
@@ -3761,8 +3799,9 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
     {
         const auto prod = typed_audit::production_defaults_active();
         // Issue #3938: same per-scope live sample as try_acquire.
-        const auto in = aura::orch::make_security_schedule_input_live(
+        auto in = aura::orch::make_security_schedule_input_live(
             ev.effect_sandbox_mode(), prod, /*soft_mode=*/!prod, starve_scope_region);
+        exempt_self_healing_cone_latch_admit_(in);
         if (auto reason = aura::orch::admit_security_schedule(in); reason.has_value()) {
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_)) {
                 m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
