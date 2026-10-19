@@ -3752,6 +3752,14 @@ aura::ast::NodeId expand_inner_macros(
 aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                    aura::ast::NodeId root, int max_passes) {
     using namespace aura::ast;
+    // Issue #4034-residual / #4598: retire THIS fiber's pre-walk deny stamp at
+    // TOP-LEVEL ENTRY — the #4598 macro-free fast path and the #2023
+    // capability gate both return before macro_expand_all_body, so a stamp
+    // from a PREVIOUS top-level call survived those early exits and the
+    // #4078 eval-entry consult then misattributed the old deny to this
+    // macro-free program (set-code / eval-current returned InternalError
+    // hygiene-pass-limit under Restricted with a stale reason armed).
+    retire_own_fiber_pre_walk_deny();
     // Issue #2023: MacroSelfEvo capability gate — consult before any clone work.
     // Sandbox Off → permissive (no clamp). Strict / Restricted+active without
     // grant → reject with clear error and return root unchanged.

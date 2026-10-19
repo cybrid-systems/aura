@@ -2013,6 +2013,30 @@ public:
         const bool needs = needs_tree_walker_fallback(flat, pool, root);
         if (!needs)
             return TreeWalkerFallbackDisposition::ContinueIr;
+        // #2213 (2026-10-06 face, restored): the ROOT form is a Call whose
+        // head resolves to a REGISTERED primitive — eval_flat dispatches
+        // that prim by contract, so this is not SoA abandonment. Take the
+        // walker for registered-prim roots; every other needs=true source
+        // (unknown names, query:/mutate: DSL, while/fiber calls) keeps the
+        // policy dispositions. Fixing this at the needs/membership layer
+        // instead routes these calls into the IR pipeline — the exact
+        // mishandling the tree_walker_only set exists for (verified
+        // 2026-10-06: exempting membership broke module_query ×3 and
+        // occurrence_coercion ×2).
+        if (root != aura::ast::NULL_NODE && root < flat.size()) {
+            const auto rv = flat.get(root);
+            if (rv.tag == aura::ast::NodeTag::Call && !rv.children.empty()) {
+                const auto cal = flat.get(rv.child(0));
+                if (cal.tag == aura::ast::NodeTag::Variable) {
+                    const auto head = pool.resolve(cal.sym_id);
+                    if (!head.empty() && evaluator_.primitives().slot_for_name(std::string(head)) <
+                                             evaluator_.primitives().slot_count()) {
+                        metrics_.tree_walker_fallback_total.fetch_add(1, std::memory_order_relaxed);
+                        return TreeWalkerFallbackDisposition::TakeWalker;
+                    }
+                }
+            }
+        }
         metrics_.tree_walker_fallback_total.fetch_add(1, std::memory_order_relaxed);
         const auto disp = tree_walker_fallback_disposition(/*needs_fallback=*/true);
         if (disp == TreeWalkerFallbackDisposition::HardError)
@@ -15774,14 +15798,6 @@ public:
         try_jit_scalar_invokes_for_test_.store(0, std::memory_order_relaxed);
         try_jit_scalar_override_for_test_ = &counting_scalar_fn_for_test_;
         constexpr const char* kName = "ac3758_cached";
-        {
-            std::unique_lock cache_write(jit_cache_mtx_);
-            auto [it, _ins] = jit_cache_.try_emplace(kName);
-            it->second.fn_ptr.store(&counting_scalar_fn_for_test_, std::memory_order_release);
-            it->second.local_count = 1;
-            it->second.arg_count = 0;
-            it->second.last_seen_epoch_ = aura::core::current_mutation_epoch();
-        }
         aura::ir::IRModule mod;
         aura::ir::IRFunction fn;
         fn.id = 0;
@@ -15797,6 +15813,21 @@ public:
         fn.blocks.push_back(std::move(block));
         mod.functions.push_back(std::move(fn));
         mod.entry_function_id = 0;
+        // Issue #4569: seed the assumption fingerprint too — jit_entry_stale_
+        // treats fingerprint_==0 as a miss, so a default-constructed row
+        // never hits in assumption mode and the counting ScalarFn stayed
+        // at 0 (3758 AC3 vacuous-green AC1).
+        const JitAssumeKey akey =
+            jit_assume_key_(mod.functions[0], mod.string_pool, nullptr, nullptr, 0);
+        {
+            std::unique_lock cache_write(jit_cache_mtx_);
+            auto [it, _ins] = jit_cache_.try_emplace(kName);
+            it->second.fn_ptr.store(&counting_scalar_fn_for_test_, std::memory_order_release);
+            it->second.local_count = 1;
+            it->second.arg_count = 0;
+            it->second.last_seen_epoch_ = aura::core::current_mutation_epoch();
+            it->second.fingerprint_ = akey.fp;
+        }
         (void)try_jit_execute(mod, nullptr);
         try_jit_scalar_override_for_test_ = nullptr;
         {
