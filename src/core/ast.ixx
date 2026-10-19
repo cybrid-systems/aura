@@ -9429,6 +9429,17 @@ public:
 
     void bump_generation() noexcept post(generation_ != 0);
 
+    // Issue #4598 phase 3: light per-define content-write note. Bumps ONLY
+    // the enclosing top-level Define's subtree_gen_ cell — no global
+    // generation_ bump, no node_gen_ restamp — so ast:snapshot define
+    // stamps can detect define-scoped change at O(depth) per write.
+    // Over-bumps (dirty marks that accompany aborts or the #3865 phantom
+    // caller-entry cones) only degrade stamp sharing, never correctness:
+    // a stamped-unchanged define is skipped at restore only when its cell
+    // is byte-equal to the stamp.
+    void note_subtree_content_write(NodeId node) noexcept;
+
+    void bump_generation_subtree(NodeId subtree_root) noexcept;
 
     // Issue #392: scoped generation bumping for a single
     // top-level Define subtree. Walks up from subtree_root to
@@ -9473,8 +9484,6 @@ public:
         std::atomic_ref<std::uint32_t>(subtree_gen_[top])
             .store(static_cast<std::uint32_t>(gen), std::memory_order_release);
     }
-
-    void bump_generation_subtree(NodeId subtree_root) noexcept;
 
 
     // Issue #392: read the current per-subtree generation for

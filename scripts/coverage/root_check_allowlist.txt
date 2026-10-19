@@ -265,3 +265,4 @@ check_jit_assumption_gate_4600.py
 check_jit_frame_deopt_4600.py
 check_reclaim_trigger_large_heap_4474.py
 check_call_resolve_cache_4599.py
+check_snapshot_share_stamps_4598.py

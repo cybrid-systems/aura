@@ -8615,6 +8615,25 @@ def cmd_lint():
             "Issue #4598 boundary-exit counters linter failed - run python3 scripts/check_boundary_exit_counters_4598.py"
         )
         return r
+    # Issue #4598 phase 3 (perf): persistent snapshot — ast:snapshot shares
+    # the prior frozen copy when the live workspace is provably identical
+    # (generation / size / pool watermark), and ast:restore diffs per-define
+    # subtree_gen stamps (mark_dirty_upward attributes content changes to
+    # the owning Define) so a one-define restore unparses only the dirty
+    # cone. #4360/#4349 owner-drop + production mark-all preserved. Runtime
+    # ACs live in test_summary_recompute_sym.cpp (#4598 AC11) and
+    # test_current_source_roundtrip.cpp (phase-3 function; no
+    # test_issue_4598.cpp per #81934, no docs/design/4598-* per #1655).
+    sss4598_script = ROOT / "scripts" / "check_snapshot_share_stamps_4598.py"
+    if not sss4598_script.exists():
+        fail(f"missing {sss4598_script}")
+        return 1
+    r = run([sys.executable, str(sss4598_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4598 phase-3 snapshot share/stamps linter failed - run python3 scripts/check_snapshot_share_stamps_4598.py"
+        )
+        return r
     # Issue #4232 (Soft): "cannot call: car" in soft_worldline_pick (serve-async
     # Soft Ready denseness, soft_select.via=host_fallback). The tree-walker's
     # prim-value call handler re-resolved a registry-manufactured PrimitiveRef
@@ -9805,7 +9824,7 @@ def cmd_lint():
     r = run([sys.executable, str(gate4600b_script)], cwd=ROOT)
     if r != 0:
         fail("Issue #4600 frame-deopt guard-exit linter failed — run python3 scripts/check_jit_frame_deopt_4600.py")
-        return r
+
     # Issue #4599 (interpreter baseline follow-up, phase 2): the tree
     # walker's call path performs no StringPool resolve and no string-keyed
     # env / prim-table probes on hot iterations — a body-pool frame binding
