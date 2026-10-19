@@ -4961,6 +4961,12 @@ public:
     // breaking — the usual proportional-trigger trade-off.
     static constexpr std::uint32_t kReclaimTriggerCeiling = 32768;
     static constexpr std::uint32_t kReclaimTriggerDivisor = 32;
+    // Issue #4613: the reclaim window counts allocation units of this
+    // size (a pair is two EvalValues = 16 bytes). A mint that costs
+    // more memory charges the window proportionally, so the window
+    // bounds the BYTES of garbage between two marks, not the object
+    // count.
+    static constexpr std::uint64_t kReclaimWindowUnitBytes = 16;
     static constexpr std::uint32_t kReclaimTriggerLargeHeapDivisor = 4;
     // The effective window ceiling for a heap with `live_objects`
     // live objects: the fixed small-heap cap until live/4 overtakes
@@ -7675,6 +7681,24 @@ private:
     // make-vector of the same length does not allocate.
     std::vector<std::size_t> vector_reuse_freelist_;
     std::vector<std::uint8_t> vector_on_freelist_;
+    // Issue #4613: the hash-table free list. g_hash_tables is the
+    // process-global table of FlatHashTable* the (hash) primitive
+    // publishes into; the file-mode reclaim releases the tables it
+    // proved unreachable (the block is freed) and the next mint reuses
+    // the slot. hash_owned_ is index-parallel to g_hash_tables: only a
+    // table THIS evaluator minted is released by this evaluator's
+    // reclaim, so a second evaluator in the same process (a serve
+    // session) never loses a table it still holds.
+    std::vector<std::size_t> hash_reuse_freelist_;
+    std::vector<std::uint8_t> hash_on_freelist_;
+    std::vector<std::uint8_t> hash_owned_;
+    // Issue #4613: the number of hash tables the reclaim released (the
+    // runtime door: the free list holds at most a couple of slots, so
+    // the release COUNT is what a mint-and-drop loop pins).
+    std::uint64_t hash_tables_released_ = 0;
+    // Issue #4613: the number of hash tables this evaluator published
+    // (the runtime door that pairs with hash_tables_released_).
+    std::uint64_t hash_tables_minted_total_ = 0;
     std::uint32_t file_heap_allocs_since_reclaim_ = 0;
     // Issue #4525: file-mode reclaim run count (spike/benchmark observability;
     // counts completed whole-heap marks in reclaim_tw_unreachable).
@@ -8471,6 +8495,150 @@ public:
     [[nodiscard]] std::uint64_t string_slot_tenant_record_for_test(std::size_t idx) const {
         std::lock_guard lock(alloc_storage_lock_);
         return idx < string_slot_tenants_.size() ? string_slot_tenants_[idx] : 0;
+    }
+    // Issue #4613: publish a hash table into the evaluator's hash free
+    // list. A table the file-mode reclaim proved unreachable was freed
+    // and its slot released, so the next (hash) mint reuses that slot
+    // instead of leaking another table block (~560 bytes) per call: a
+    // mint-and-drop loop keeps a flat RSS.
+    // The mint also counts toward the file-heap reclaim window - without
+    // that a loop that only mints (hash) tables never reached the
+    // trigger at all, so the reclaim never ran for it.
+    // Lock order: the caller holds hash_tables_mutex() (the (hash)
+    // primitive does); alloc_storage_lock_ is recursive, so the caller
+    // may already hold it too.
+    [[nodiscard]] std::size_t mint_hash_table(FlatHashTable* ht) {
+        std::lock_guard lock(alloc_storage_lock_);
+        std::size_t hidx = 0;
+        bool reused = false;
+        while (!hash_reuse_freelist_.empty()) {
+            const auto id = hash_reuse_freelist_.back();
+            hash_reuse_freelist_.pop_back();
+            if (id >= g_hash_tables.size())
+                continue;
+            if (id < hash_on_freelist_.size())
+                hash_on_freelist_[id] = 0;
+            g_hash_tables[id] = ht;
+            hidx = id;
+            reused = true;
+            break;
+        }
+        if (!reused) {
+            hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+        }
+        if (g_hash_tenants.size() < g_hash_tables.size())
+            g_hash_tenants.resize(g_hash_tables.size(), 0);
+        // Issue #4428: the owner stamp is rewritten on every publish, so a
+        // reused slot never carries the previous owner's tenant.
+        g_hash_tenants[hidx] = capability_tenant_id_;
+        if (hash_owned_.size() <= hidx)
+            hash_owned_.resize(hidx + 1, 0);
+        // A published hash table is THIS evaluator's: only such a table
+        // is released by this evaluator's reclaim, so a second evaluator
+        // in the same process (a serve session) never loses a table it
+        // still holds.
+        hash_owned_[hidx] = 1;
+        // Issue #4613: the reclaim window counts allocation units of
+        // kReclaimWindowUnitBytes (a pair is two EvalValues = 16 bytes),
+        // so a mint that costs more memory must charge the window
+        // proportionally. Charging a 560-byte table as ONE unit let the
+        // window (32768 units) hold 32768 live tables - 18 MB of
+        // garbage - between two marks: exactly the residual RSS the
+        // reclaim was supposed to bound. The real footprint keeps the
+        // bytes-between-marks budget the same as for the other heaps.
+        const std::uint64_t bytes = FlatHashTable::total_bytes(ht->capacity);
+        const std::uint64_t units = (bytes + kReclaimWindowUnitBytes - 1) / kReclaimWindowUnitBytes;
+        file_heap_allocs_since_reclaim_ += static_cast<std::uint32_t>(units > 0 ? units : 1);
+        ++hash_tables_minted_total_;
+        return hidx;
+    }
+    // Issue #4613: release the hash tables the mark proved unreachable.
+    // The table's block is freed and the slot goes on the free list, so
+    // the next (hash) mint reuses the slot instead of leaking the block
+    // (a 32-slot table is ~560 bytes). A table this evaluator did NOT
+    // mint (another evaluator in the same process, the JIT, or a
+    // query/stats primitive) is left alone: the mark only saw THIS
+    // evaluator's roots, so it cannot prove such a table dead.
+    // at_mark is the snapshot taken when the mark started - a slot
+    // whose table is not the one the mark saw was re-minted since and
+    // is left alone. Returns the number of live hash tables.
+    std::size_t release_unreachable_hash_tables(const std::vector<std::uint8_t>& seen_hash,
+                                                const std::vector<FlatHashTable*>& at_mark) {
+        std::lock_guard hlock(hash_tables_mtx_);
+        std::lock_guard lock(alloc_storage_lock_);
+        std::size_t live = 0;
+        const auto n = std::min(std::min(seen_hash.size(), at_mark.size()), g_hash_tables.size());
+        for (std::size_t i = 0; i < n; ++i) {
+            if (seen_hash[i]) {
+                ++live;
+                continue;
+            }
+            if (i >= hash_owned_.size() || !hash_owned_[i])
+                continue; // not this evaluator's table
+            if (i < hash_on_freelist_.size() && hash_on_freelist_[i])
+                continue; // already released
+            if (g_hash_tables[i] != at_mark[i])
+                continue; // re-minted since the mark - not the table the mark saw
+            // The owner stamp must still be this evaluator's: a slot
+            // another principal stamped is not this evaluator's table to
+            // release (the mark only saw THIS evaluator's roots).
+            if (i < g_hash_tenants.size() && g_hash_tenants[i] != capability_tenant_id_)
+                continue;
+            auto* ht = g_hash_tables[i];
+            g_hash_tables[i] = nullptr;
+            if (ht)
+                FlatHashTable::destroy(ht);
+            // Issue #4428: the stamp dies with the slot - a released slot
+            // never carries the old owner's tenant.
+            if (i < g_hash_tenants.size())
+                g_hash_tenants[i] = 0;
+            hash_owned_[i] = 0;
+            if (hash_on_freelist_.size() <= i)
+                hash_on_freelist_.resize(i + 1, 0);
+            hash_on_freelist_[i] = 1;
+            hash_reuse_freelist_.push_back(i);
+            ++hash_tables_released_;
+        }
+        return live;
+    }
+    // Issue #4613: the hash free list (the runtime door).
+    [[nodiscard]] std::size_t hash_table_free_slots() const {
+        std::lock_guard lock(alloc_storage_lock_);
+        return hash_reuse_freelist_.size();
+    }
+    // Issue #4613: the number of hash tables the reclaim released (the
+    // runtime door for the release itself: the free list holds at most
+    // a couple of slots, so the release COUNT is the stable witness).
+    [[nodiscard]] std::uint64_t hash_tables_minted_total() const {
+        std::lock_guard lock(alloc_storage_lock_);
+        return hash_tables_minted_total_;
+    }
+    [[nodiscard]] std::uint64_t hash_tables_released_total() const {
+        std::lock_guard lock(alloc_storage_lock_);
+        return hash_tables_released_;
+    }
+    // Issue #4613: the pair free list (the runtime door) and the
+    // vector_heap_ high-water mark (companion to pairs_size) so the
+    // reclaim ACs can bound the garbage a loop leaves between marks.
+    [[nodiscard]] std::size_t pair_heap_free_slots() const {
+        std::lock_guard lock(alloc_storage_lock_);
+        return pair_reuse_freelist_.size();
+    }
+    [[nodiscard]] std::size_t vector_heap_size() const {
+        std::lock_guard lock(alloc_storage_lock_);
+        return vector_heap_.size();
+    }
+    [[nodiscard]] std::size_t vector_heap_free_slots() const {
+        std::lock_guard lock(alloc_storage_lock_);
+        return vector_reuse_freelist_.size();
+    }
+    // Issue #4613: the number of hash table slots the process ever
+    // published (the runtime door: it must stay flat across a
+    // mint-and-drop loop).
+    [[nodiscard]] std::size_t hash_table_slots() const {
+        std::lock_guard lock(hash_tables_mtx_);
+        return g_hash_tables.size();
     }
     // Issue #4428: stamp a tree-walker ClosureId before the map insert.
     // Do not call while holding a closures shard lock.

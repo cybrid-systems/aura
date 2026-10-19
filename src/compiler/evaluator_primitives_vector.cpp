@@ -517,8 +517,14 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         pure_general(2, "(int any) -> vector", "Allocate a vector filled with a value."));
     register_prim(
         add, ev, "list->vector",
-        [&ev, &pairs, &vector_heap, &string_heap, &error_values,
+        [&ev, &pairs, &string_heap, &error_values,
          primitive_error_counter](std::span<const EvalValue> a) {
+            // Issue #4613: hold the per-heap lock across the walk. The
+            // pairs are read from pairs_ and the result is minted into
+            // vector_heap_; a reclaim that ran in between could poison
+            // the pair slots the walk is reading (the same shape the
+            // list constructors use).
+            Evaluator::ListCtorLockHold hold(ev);
             std::vector<EvalValue> elems;
             if (!a.empty()) {
                 auto v = a[0];
@@ -539,15 +545,25 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                     v = pairs[idx].cdr;
                 }
             }
-            auto idx = vector_heap.size();
-            vector_heap.push_back(std::move(elems));
-            ev.note_inrange_vector_mint(idx); // Issue #4298
+            // Issue #4613: mint the result vector through the
+            // evaluator's vector heap. A raw vector_heap.push_back grew
+            // the heap by one slot - and one element buffer - per call
+            // and never consulted the file-mode reclaim's vector free
+            // list, so a loop that converted a list to a vector leaked
+            // the whole buffer every iteration.
+            const auto idx = ev.mint_vector(std::move(elems), /*check_quota=*/true);
+            if (idx == Evaluator::kFileHeapMintDenied) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Vectors)),
+                    primitive_error_counter);
+            }
             return make_vector(idx);
         },
         pure_general(1, "(list) -> vector", "Convert a list to a vector."));
     register_prim(
         add, ev, "vector->list",
-        [&ev, &pairs, &vector_heap, &string_heap, &error_values,
+        [&ev, &vector_heap, &string_heap, &error_values,
          primitive_error_counter](std::span<const EvalValue> a) {
             if (a.empty() || !is_vector(a[0])) {
                 return make_primitive_error(string_heap, error_values, "vector->list: not a vector",
@@ -567,13 +583,29 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                     "vector->list: cross-tenant vector slot read denied (#4505)",
                     primitive_error_counter);
             }
+            // Issue #4613: mint the pairs through the evaluator's pair
+            // heap. A raw pairs.push_back grew the heap by one slot per
+            // element and never consulted the file-mode reclaim's pair
+            // free list, so a loop that converted a vector to a list
+            // leaked every pair it minted (and the mint never counted
+            // toward the reclaim window, so the reclaim never ran).
+            // The ListCtorLockHold keeps the reclaim out while the list
+            // is half-built: the pairs are not reachable from any root
+            // until the list is returned.
+            Evaluator::ListCtorLockHold hold(ev);
+            std::vector<EvalValue> elems(vector_heap[idx].begin(), vector_heap[idx].end());
             EvalValue result = make_void();
-            for (auto it = vector_heap[idx].rbegin(); it != vector_heap[idx].rend(); ++it) {
-                auto pid = pairs.size();
-                pairs.push_back({*it, result});
-                ev.note_inrange_pair_mint(pid); // Issue #4298
+            for (auto it = elems.rbegin(); it != elems.rend(); ++it) {
+                const auto pid = ev.mint_pair(*it, result, /*check_quota=*/true);
+                if (pid == Evaluator::kFileHeapMintDenied) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                        primitive_error_counter);
+                }
                 result = make_pair(pid);
             }
+            ev.bump_pair_alloc_count_n(static_cast<std::uint64_t>(elems.size()));
             return result;
         },
         pure_general(1, "(vector) -> list", "Convert a vector to a list."));
@@ -717,15 +749,15 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                     return make_void();
                 }
             }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            // Issue #4093 / #4296: stamp the executing evaluator's principal
-            // (#4057 pair-slot shape). The JIT owner hook is a different
-            // principal whenever g_jit_prim_ctx is unwired or bound to
-            // another Evaluator — the prim runs on `ev`.
-            if (g_hash_tenants.size() < g_hash_tables.size())
-                g_hash_tenants.resize(g_hash_tables.size(), 0);
-            g_hash_tenants[hidx] = ev.capability_tenant_id();
+            // Issue #4613: publish the table through the evaluator's
+            // hash free list. A table the file-mode reclaim proved
+            // unreachable was freed and its slot released, so the next
+            // (hash) mint reuses that slot instead of leaking another
+            // table block (~560 bytes) per iteration. With no released
+            // slot the table is published into a fresh slot, exactly as
+            // before. The mint counts toward the reclaim window too:
+            // without that a hash-only loop never reached the trigger.
+            const auto hidx = ev.mint_hash_table(ht);
             return make_hash(hidx);
         },
         pure_general(255, "(...kvs) -> hash", "Construct a hash from key/value pairs."));
