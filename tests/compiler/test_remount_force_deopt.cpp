@@ -1599,7 +1599,10 @@ static void ac4417_remount_fail_stays_off_native() {
     const auto call = rt.find("int64_t aura_closure_dispatch_native_checked(");
     CHECK(call != std::string::npos, "4417: dispatch present");
     if (call != std::string::npos) {
-        const auto body = rt.substr(call, 8000);
+        // Issue #4606: the RefPrimitive-callee refuse arm (ahead of the
+        // legacy callee_val echo) moved the consume sites past 8000 —
+        // same rule, window follows the function; assertions unchanged.
+        const auto body = rt.substr(call, 10000);
         CHECK(body.find("closure_remount_fail_sticky_unlocked") != std::string::npos,
               "4417: consume consults the remount-fail belt");
         CHECK(body.find("g_closure_must_deopt[cid] = 0") != std::string::npos,
@@ -1780,7 +1783,10 @@ static void ac4418_foreign_slot_stays_off_native() {
     const auto call = rt.find("int64_t aura_closure_dispatch_native_checked(");
     CHECK(call != std::string::npos, "4418: dispatch present");
     if (call != std::string::npos) {
-        const auto body = rt.substr(call, 8000);
+        // Issue #4606: the RefPrimitive-callee refuse arm (ahead of the
+        // legacy callee_val echo) moved the consume sites past 8000 —
+        // same rule, window follows the function; assertions unchanged.
+        const auto body = rt.substr(call, 10000);
         CHECK(body.find("closure_remount_fail_sticky_unlocked") != std::string::npos,
               "4418: #4417 consume consult stays in the dispatch window");
         CHECK(body.find("g_closure_must_deopt[cid] = 0") != std::string::npos,
