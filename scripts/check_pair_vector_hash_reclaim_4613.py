@@ -182,16 +182,16 @@ def main() -> int:
             f"AC2: the {name} reclaim snapshots the slot tables under the mark's hash lock",
         )
         must(
-            "live_hashes" in body,
-            f"AC2: the {name} reclaim counts the live hash tables",
+            "live_hash_units" in body,
+            f"AC2: the {name} reclaim counts the live hash tables (in window units)",
         )
     must(
-        has(file_mode, "note_live_set_for_reclaim_trigger(live_pairs + live_vecs + live_strings + live_hashes"),
-        "AC2: the file-mode trigger counts the live hash tables",
+        has(file_mode, "note_live_set_for_reclaim_trigger(live_pairs + live_vecs + live_strings + live_hash_units"),
+        "AC2: the file-mode trigger counts the live hash tables (in window units)",
     )
     must(
-        has(tw, "live_cells + live_strings + live_hashes"),
-        "AC2: the tree-walker trigger counts the live hash tables",
+        has(tw, "live_cells + live_strings + live_hash_units"),
+        "AC2: the tree-walker trigger counts the live hash tables (in window units)",
     )
 
     # ── AC3: the evaluator side (the hash free list) ─────────────────
