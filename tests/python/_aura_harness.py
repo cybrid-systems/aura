@@ -7,6 +7,7 @@ build.py-adjacent runners, and gate scripts.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -22,7 +23,7 @@ PYTHON = TESTS / "python"
 BENCH = TESTS / "bench"
 FUZZ = TESTS / "fuzz"
 MEMORY = TESTS / "memory"
-BUILD = ROOT / "build"
+BUILD = ROOT / os.environ.get("AURA_BUILD_DIR", "build")  # per-agent build dirs (#1573; standing rule 2026-10-19)
 AURA_BIN = BUILD / "aura"
 
 G = "\033[32m"
