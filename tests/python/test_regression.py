@@ -873,6 +873,39 @@ def test_jit_soundness_4567():
         "(define (g) (if (number? (monotonic-ms)) 1 10)) (display (g))",
         expect="1",
     )
+    # -- Issue #4602: a pair mutation must be visible to the next car/cdr.
+    # set-car!/set-cdr! are not JIT opcodes and not prim_call_map entries:
+    # they reach the evaluator through the general call, so the JIT'd frame
+    # has to EXECUTE the evaluator primitive for the write to land at all.
+    # Before #4606 the blessed dispatch entry answered a RefPrimitive
+    # callee word with the legacy "match IRInterpreter" echo, so the
+    # primitive never ran: the pair kept its old car and car returned the
+    # OLD value (1 instead of 9). The rows must agree in every mode --
+    # ir (AURA_FORCE_IR=1), eval, jit, and the two forced-deopt modes.
+    add(
+        programs,
+        "pair-setcar-let-4602",
+        "(define (g n) (let ((p (cons 1 2))) (set-car! p 9) (car p))) (display (g 1))",
+        expect="9",
+    )
+    add(
+        programs,
+        "pair-setcar-arg-4602",
+        "(define (g p) (set-car! p 9) (car p)) (display (g (cons 1 2)))",
+        expect="9",
+    )
+    add(
+        programs,
+        "pair-setcdr-arg-4602",
+        "(define (g p) (set-cdr! p 9) (cdr p)) (display (g (cons 1 2)))",
+        expect="9",
+    )
+    add(
+        programs,
+        "pair-setcar-twice-4602",
+        "(define (g p) (set-car! p 9) (set-car! p 8) (car p)) (display (g (cons 1 2)))",
+        expect="8",
+    )
     if len(programs) < 200:
         raise Exception(f"corpus has {len(programs)} programs, need >= 200")
 
@@ -1771,9 +1804,16 @@ def test_jit_scalar_pairs_4573():
             "15",
         ),
         (
+            # Issue #4602: the set-car! visibility row used to be EXCLUDED
+            # from the parity check (the `--jit` frame answered the
+            # RefPrimitive callee word with the legacy echo, so the write
+            # never landed and the pair kept its old car). #4606 refuses
+            # that callee and re-runs the restored IR in the interpreter,
+            # so the write lands and the row agrees in every mode again:
+            # car = 9, cdr = 2, sum = 11.
             "set-car-escape",
             "(define (sc x) (let ((p (cons x 2))) (set-car! p 9) (+ (car p) (cdr p)))) (display (sc 1))",
-            None,
+            "11",
         ),
         ("callee-escape", "(define (f p) (car p)) (define (k x) (let ((p (cons x 1))) (f p))) (display (k 6))", "6"),
         (
@@ -1819,12 +1859,6 @@ def test_jit_scalar_pairs_4573():
             if out_j != ir_out and re.fullmatch(re.escape(ir_out) + r"(#f|<cell\[\d+\]>)", out_j):
                 outs[m] = (rc_j, ir_out)
                 quirk += 1
-        if name == "set-car-escape":
-            # Pre-existing `--jit` set-car! mismatch (#4602, also on
-            # AURA_JIT_SR=0): only require SR to leave the result unchanged.
-            if outs["jit"] != outs["jit-nosr"]:
-                raise Exception(f"{name}: SR changed the result: {outs!r}")
-            continue
         if not (outs["ir"] == outs["eval"] == outs["jit"] == outs["jit-nosr"]):
             raise Exception(f"{name}: {outs!r}")
         if expect is not None and outs["jit"] != (0, expect):
@@ -1861,8 +1895,10 @@ def test_jit_tier_differential_4574():
     closures) and #4573 scalar pairs, each over several input sizes.
     Forced-deopt-everywhere is not a mode yet (#4600 §2 / #4601 §4).
     Pre-existing `--jit` bugs are excluded by construction and tracked:
-    set-car! visibility (#4602), stale callee after redefine (#4604),
-    predicate/eqv? primitive results (#4606), unbound variables (#4607).
+    stale callee after redefine (#4604). The set-car! visibility row
+    (#4602) is BACK in the corpus: #4606 refuses the RefPrimitive callee
+    word and re-runs the restored IR in the interpreter, so the write
+    lands and every mode agrees (see the pair-mutate template).
     The trailing top-level print
     artifact (#4601 §7: a trailing "#f", "<cell[N]>" or "<unknown>") is
     tolerated as in test_jit_l2_4571.
@@ -1886,6 +1922,14 @@ def test_jit_tier_differential_4574():
         "(set! s (+ s (- (cdr p) (car p))))) (set! i (+ i 1))) s)) (display (f {n}))",
         "pair-return": "(define (mk a) (let ((p (cons a (* a 2)))) p)) (define (f n) (let ((q (mk n))) (+ (car q) (cdr q)))) "
         "(display (f {n}))",
+        # Issue #4602: a pair MUTATION (set-car! on a pair the frame
+        # allocated) must be visible to the next car in every mode --
+        # ir, eval, jit and the baseline jit (L1/L2/SR off). set-car! is
+        # not a JIT opcode: it reaches the evaluator through the general
+        # call, so the JIT frame has to execute the evaluator primitive
+        # for the write to land (#4606 refuses the RefPrimitive callee
+        # word and re-runs the restored IR in the interpreter).
+        "pair-mutate": "(define (f n) (let ((p (cons n 2))) (set-car! p 9) (+ (car p) (cdr p)))) (display (f {n}))",
         "pair-branchy": "(define (f x) (let ((p (if (< x 3) (cons 1 2) (cons x 4)))) (- (cdr p) (car p)))) (display (f {n}))",
         "list-walk": "(define (build n) (let ((i 0) (xs (quote ()))) (while (< i n) (set! xs (cons i xs)) (set! i (+ i 1))) xs)) "
         "(define (sumcar xs) (let ((s 0)) (while (pair? xs) (set! s (+ s (car xs))) (set! xs (cdr xs))) s)) "
