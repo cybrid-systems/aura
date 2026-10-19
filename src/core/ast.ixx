@@ -6185,6 +6185,42 @@ public:
 
     [[nodiscard]] std::size_t recycle_dead_nodes() {
         auto live = mark_live_nodes();
+        // Issue #1408 (typed-mutate-atomic abort cross-wire): a rebind
+        // record's rollback payload stores NodeIds (field_offset 0 = the
+        // Define value child). The #4583 rebind-entry recycle freed the
+        // unlinked OLD body slot; the NEXT op's parse reused that slot for
+        // its own literal, and the abort's set_child(define, 0, old_value)
+        // then restored the wrong body (x read the y-rebind's 200). Keep
+        // every live slot a rollback record still references as a root —
+        // uncommitted records must survive until their rollback/commit
+        // consumes them. Values outside NodeId range (field payloads from
+        // other ops) fail the bounds check and are ignored.
+        const auto keep_rollback_ref = [&](std::uint64_t v) {
+            if (v < static_cast<std::uint64_t>(size()) && !is_free_slot(static_cast<NodeId>(v)))
+                live[static_cast<NodeId>(v)] = true;
+        };
+        // Only rebind-style records restore via set_child(define, 0,
+        // old_value_node) (try_rollback_rebind_op — same filter as the
+        // rollback consumer); structural child ops restore through the
+        // Guard's children_ snapshot and their orphaned slots stay
+        // recyclable (#2412 AC1).
+        const auto is_rebind_record = [](const std::string& op) {
+            return op == "rebind" || op == "batch-rebind";
+        };
+        for (const auto& rec : mutation_log_) {
+            if (!rec.has_rollback_data || !is_rebind_record(rec.operator_name))
+                continue;
+            keep_rollback_ref(rec.old_value);
+            keep_rollback_ref(rec.new_value);
+        }
+        for (const auto& frame : lightweight_frames_) {
+            for (const auto& rec : frame) {
+                if (!rec.has_rollback_data || !is_rebind_record(rec.operator_name))
+                    continue;
+                keep_rollback_ref(rec.old_value);
+                keep_rollback_ref(rec.new_value);
+            }
+        }
         std::size_t recycled = 0;
         for (NodeId id = 0; id < size(); ++id) {
             if (is_free_slot(id))
