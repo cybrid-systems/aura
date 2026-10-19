@@ -201,6 +201,7 @@ check_hygiene_limit_stamp_4149.py
 check_serve_async_join_wake_4176.py
 check_oneshot_stdlib_4178.py
 check_list_take_drop_4177.py
+check_boundary_exit_counters_4598.py
 check_oneshot_stdlib_4220.py
 check_oneshot_stdlib_4224.py
 check_oneshot_filter_4228.py
