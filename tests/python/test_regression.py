@@ -3896,6 +3896,102 @@ def test_member_structural_equality_4628():
     print("  ✅ test_member_structural_equality_4628 (AOT member matches the evaluator)")
 
 
+def _aot_emit_and_run(code, tag, timeout=300):
+    """Emit a native AOT image for `code` and return its stdout.
+
+    Issue #4640: the emit path resolves the stdlib and the runtime
+    relative to the CWD, so pin both to the repo tree -- the image must
+    not depend on where the suite happens to run from.
+    """
+    env = os.environ.copy()
+    env["AURA_SANDBOX"] = "off"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env["AURA_STDLIB_DIR"] = str(REPO / "lib" / "std")
+    env["AURA_RUNTIME_DIR"] = str(REPO / "lib")
+    env.pop("AURA_SOFT", None)
+    env.pop("AURA_FORCE_IR", None)
+    with tempfile.NamedTemporaryFile("w", suffix=".aura", delete=False) as f:
+        f.write(code)
+        path = f.name
+    out_path = f"/tmp/aura-aot-{tag}"
+    try:
+        r = subprocess.run([AURA, path], capture_output=True, text=True, timeout=120, env=env)
+        assert r.returncode == 0, f"{tag}: eval failed rc={r.returncode} {r.stdout!r} {r.stderr[-400:]!r}"
+        expected = r.stdout
+        emit = subprocess.run(
+            [AURA, "--emit-binary", path, out_path],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+        )
+        assert os.path.exists(out_path), f"{tag}: binary not created: {emit.stderr[-400:]!r}"
+        os.chmod(out_path, 0o755)
+        try:
+            r2 = subprocess.run([out_path], capture_output=True, timeout=60, env=env)
+        finally:
+            if os.path.exists(out_path):
+                os.remove(out_path)
+        return expected, (r2.stdout or b"").decode()
+    finally:
+        os.unlink(path)
+
+
+def test_aot_multi_call_site_4640():
+    """Issue #4640: the AOT image must keep EVERY call site of a function.
+
+    The AOT image runs against lib/runtime.c, whose pair encoding is
+    (pair_id << 2) | 1 -- NOT the evaluator's ref layout, where bits
+    2-5 of a value carry the RefType. The evaluator's error test
+    ((v & 0x3F) == 0x21) therefore misfired on a pair whose id is
+    8 (mod 16): the function returned that pair as if it were an error
+    and every later row was dropped, so a SECOND member call site in
+    one function never ran, and a helper called twice answered with a
+    different value on the second call.
+
+    The AOT face must answer exactly what the evaluator answers, and
+    every row must be present (a dropped row can never hide behind an
+    equal-but-empty output).
+    """
+    code = (
+        '(display (list "r1" (member (list 1 2) (list (list 1 2))))) (newline)\n'
+        '(display (list "r2" (member (list 3 4) (list (list 1 2) (list 3 4))))) (newline)\n'
+        '(display (list "r3" (member (list 5 6) (list (list 1 2) (list 3 4) (list 5 6))))) (newline)\n'
+        "(define (helper) (member (list 7 8) (list (list 7 8))))\n"
+        '(display (list "h1" (helper))) (newline)\n'
+        '(display (list "h2" (helper))) (newline)\n'
+    )
+    expected, aot_out = _aot_emit_and_run(code, "multi-4640")
+    for tag in ("r1", "r2", "r3", "h1", "h2"):
+        assert f"({tag} " in expected, f"eval missing row {tag}: {expected!r}"
+        assert f"({tag} " in aot_out, f"aot dropped row {tag}: {aot_out!r}"
+    assert aot_out == expected, f"aot-multi-4640: {aot_out!r} != {expected!r}"
+    print("  ✅ test_aot_multi_call_site_4640 (AOT keeps every call site)")
+
+
+def test_aot_assoc_matches_evaluator_4640():
+    """Issue #4640: assoc must be AOT-emittable and match the evaluator.
+
+    assoc is a std/list FUNCTION, not a primitive: the emit path did
+    not auto-load the std module the oneshot eval path loads, so the
+    emit died with "cannot call: assoc" while the evaluator answered
+    the alist lookup. The emit now loads the same std module, and the
+    AOT's equal? is the structural comparison (the one assoc compares
+    the key with), so the answer matches the evaluator's.
+    """
+    code = (
+        '(display (list "a" (assoc (list 1) (list (list (list 1) 9))))) (newline)\n'
+        '(display (list "b" (assoc (list 2) (list (list (list 1) 9) (list (list 2) 8))))) (newline)\n'
+        '(display (list "c" (assoc (list 3) (list (list (list 1) 9))))) (newline)\n'
+    )
+    expected, aot_out = _aot_emit_and_run(code, "assoc-4640")
+    assert "(a ((1) 9))" in expected, f"eval assoc row: {expected!r}"
+    assert "(b ((2) 8))" in expected, f"eval assoc row: {expected!r}"
+    assert "(c #f)" in expected, f"eval assoc row: {expected!r}"
+    assert aot_out == expected, f"aot-assoc-4640: {aot_out!r} != {expected!r}"
+    print("  ✅ test_aot_assoc_matches_evaluator_4640 (AOT assoc matches the evaluator)")
+
+
 def test_file_mode_pair_list_corruption_4629():
     """Issue #4629: a named-let list of pairs must survive the file-mode reclaim.
 
@@ -4177,6 +4273,8 @@ for tf in [
     test_workspace_inline_callback_4626,
     test_sweep_set_fold_prov_index_4625,
     test_member_structural_equality_4628,
+    test_aot_multi_call_site_4640,
+    test_aot_assoc_matches_evaluator_4640,
     test_file_mode_equal_fresh_list_corruption_4627,
     test_file_mode_pair_list_corruption_4629,
 ]:
