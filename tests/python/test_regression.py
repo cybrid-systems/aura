@@ -3127,6 +3127,140 @@ def test_char_literal_form_split_4622():
     print("  ✅ test_char_literal_form_split_4622 (5 rows x file/pipe/-e modes)")
 
 
+def test_while_when_error_propagation_4619():
+    """Issue #4619: a raise/error in a while test or body, or in a when/unless
+    body form, must propagate like it does from begin, do or named let.
+
+    The bare while loop (evaluator_eval_flat.cpp) dropped an error value
+    from every body form and treated an error value in the test as truthy
+    -- a raise in the test made the loop spin forever. when/unless dropped
+    an error value from every non-final body form (the tree-walker face and
+    the workspace data-as-code face). The IR lowering of while
+    (lowering_impl.cpp) and the closure-form while primitive
+    (evaluator_primitives_control.cpp) discarded the same slots.
+
+    Rows: the issue's own repro program verbatim (the file-level rows and
+    the workspace define row), the workspace face on its own, the
+    raise-in-while-test row (it hung before the fix), the closure-form
+    while rows, and controls that pin the ordinary loops. Every error row
+    must print the caught error, never "returned".
+    """
+
+    def run(code, mode="eval", timeout=30):
+        env = os.environ.copy()
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "0"
+        env.pop("AURA_SOFT", None)
+        env.pop("AURA_FORCE_IR", None)
+        cmd = [AURA]
+        if mode == "ir":
+            env["AURA_FORCE_IR"] = "1"
+        return subprocess.run(cmd, input=code, capture_output=True, text=True, timeout=timeout, env=env)
+
+    def row(label, code, expect, modes=("eval", "ir")):
+        seen = {}
+        for mode in modes:
+            r = run(code, mode)
+            err = (r.stderr or "")[-400:]
+            assert r.returncode == 0, f"{label} {mode}: rc={r.returncode} out={r.stdout!r} err={err!r}"
+            seen[mode] = (r.stdout or "").strip()
+        first = seen[modes[0]]
+        for mode in modes[1:]:
+            assert seen[mode] == first, f"{label}: {modes[0]}={first!r} {mode}={seen[mode]!r}"
+        assert first == expect, f"{label}: expected {expect!r} got {first!r} ({seen})"
+
+    def hang_row(label, code, expect, modes=("eval", "ir"), timeout=30):
+        # A loop that never ends IS the #4619 symptom: the error value in
+        # the test (or in a body form) was read as truthy, so the loop spun
+        # on until the external timeout killed it.
+        for mode in modes:
+            try:
+                r = run(code, mode, timeout)
+            except subprocess.TimeoutExpired:
+                raise AssertionError(f"{label} {mode}: the loop never ended (timeout {timeout}s)") from None
+            err = (r.stderr or "")[-400:]
+            got = (r.stdout or "").strip()
+            assert r.returncode == 0, f"{label} {mode}: rc={r.returncode} out={r.stdout!r} err={err!r}"
+            assert got == expect, f"{label} {mode}: expected {expect!r} got {got!r}"
+
+    helper = (
+        "(define (row what v) (display (list what v)) (newline))\n"
+        '(define (t th) (try (begin (th) "returned") (catch (e) (list "caught" e))))\n'
+    )
+
+    # 1. The issue's own repro program, verbatim (minus the row that hangs
+    #    the program -- that one runs as its own bounded row below).
+    issue_repro = helper + (
+        '(row "when non-final" (t (lambda () (when #t (raise "w") 1))))\n'
+        '(row "when final" (t (lambda () (when #t (raise "w")))))\n'
+        '(row "unless non-final" (t (lambda () (unless #f (raise "u") 1))))\n'
+        '(row "cond clause non-final" (t (lambda () (cond (#t (raise "c") 1)))))\n'
+        '(row "let body non-final" (t (lambda () (let ((x 1)) (raise "l") x))))\n'
+        '(row "lambda body non-final" (t (lambda () ((lambda () (raise "lb") 1)))))\n'
+        '(row "case clause non-final" (t (lambda () (case 1 ((1) (raise "k") 1) (else 2)))))\n'
+        '(row "do body" (t (lambda () (do ((i 0 (+ i 1))) ((= i 3) i) (raise "z")))))\n'
+        '(row "while body raise" (t (lambda () (let ((i 0)) (while (< i 3) (set! i (+ i 1)) (raise "x"))))))\n'
+        '(row "while body (car 5)" (t (lambda () (let ((i 0)) (while (< i 2) (set! i (+ i 1)) (car 5))))))\n'
+        '(set-code "(define wsw (lambda () (when #t (raise \\"w\\") 1)))\\n")\n'
+        "(eval-current)\n"
+        '(row "ws define: when non-final" (t wsw))\n'
+    )
+    row(
+        "issue-repro-4619",
+        issue_repro,
+        "(when non-final (caught w))\n"
+        "(when final (caught w))\n"
+        "(unless non-final (caught u))\n"
+        "(cond clause non-final (caught c))\n"
+        "(let body non-final (caught l))\n"
+        "(lambda body non-final (caught lb))\n"
+        "(case clause non-final (caught k))\n"
+        "(do body (caught z))\n"
+        "(while body raise (caught x))\n"
+        "(while body (car 5) (caught car: not a pair))\n"
+        "(ws define: when non-final (caught w))",
+    )
+    # 2. The workspace face on its own. The issue says the file-level and
+    #    the workspace define both dropped the error; the workspace define
+    #    body is the data-as-code face of when/unless.
+    row(
+        "ws-when-4619",
+        helper
+        + '(set-code "(define wsw2 (lambda () (when #t (raise \\"w\\") 1)))\\n")\n'
+        + "(eval-current)\n"
+        + '(display (list "ws when" (t wsw2))) (newline)\n',
+        "(ws when (caught w))",
+    )
+    # 3. A raise in the while TEST. The error value was read as truthy, so
+    #    the loop never ended (the issue's "this one never returns" row).
+    hang_row(
+        "while-test-4619",
+        helper
+        + '(row "raise in while test" (t (lambda () (let ((i 0)) (while (begin (set! i (+ i 1)) (if (> i 2) (raise "t") #t)) 1)))))\n',
+        "(raise in while test (caught t))",
+    )
+    # 4. The closure-form while (the EDSL primitive face, plus the IR
+    #    lowering's all-thunk shape): the error value in the test closure
+    #    and in a body closure was dropped / read as truthy as well.
+    hang_row(
+        "closure-while-4619",
+        helper
+        + '(row "closure while test" (t (lambda () (while (lambda () (raise "x")) (lambda () 1)))))\n'
+        + '(row "closure while body" (t (lambda () (while (lambda () #t) (lambda () (raise "y"))))))\n',
+        "(closure while test (caught x))\n(closure while body (caught y))",
+    )
+    # 5. Controls: an ordinary loop still runs to completion. The fix must
+    #    not turn a normal while into an error.
+    row(
+        "while-control-4619",
+        helper
+        + '(row "while ok" (t (lambda () (let ((i 0)) (while (< i 3) (set! i (+ i 1))) i))))\n'
+        + '(row "closure while ok" (t (lambda () (let ((i 0)) (while (lambda () (< i 3)) (lambda () (set! i (+ i 1)))) i))))\n',
+        "(while ok returned)\n(closure while ok returned)",
+    )
+    print("  OK test_while_when_error_propagation_4619 (issue repro + workspace + while-test + closure + controls)")
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -3168,6 +3302,7 @@ for tf in [
     test_cross_session,
     test_fuzz_edsl,
     test_char_literal_form_split_4622,
+    test_while_when_error_propagation_4619,
 ]:
     try:
         tf()

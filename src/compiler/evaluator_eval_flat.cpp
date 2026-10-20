@@ -2593,6 +2593,11 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 auto cond_result = eval_data_as_code(cond_val, env, flat, pool);
                 if (!cond_result)
                     return cond_result;
+                // Issue #4619: an error value as the test is not a truth
+                // value — it propagates, the same way an IfExpr test does
+                // (Issue #4493).
+                if (is_error(*cond_result))
+                    return cond_result;
                 // unless runs the body on a false test (was treated like when).
                 if (aura::compiler::pure::is_truthy(*cond_result) == (fn_name == "when")) {
                     // Evaluate body expressions sequentially
@@ -2602,6 +2607,11 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         auto bp = types::as_pair_idx(body_rest);
                         last = eval_data_as_code(pairs_[bp].car, env, flat, pool);
                         if (!last)
+                            return last;
+                        // Issue #4619: an error value in a body form leaves
+                        // the body the way begin lets it leave (#2570) — it
+                        // is not a value the body may drop.
+                        if (is_error(*last))
                             return last;
                         body_rest = pairs_[bp].cdr;
                     }
@@ -6990,6 +7000,11 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             auto cond_result = eval_flat(*f, *p, cond_id, eval_env);
                             if (!cond_result)
                                 return cond_result;
+                            // Issue #4619: an error value as the test is not a
+                            // true test — it propagates, the same way an
+                            // IfExpr test does (Issue #4493).
+                            if (is_error(*cond_result))
+                                return cond_result;
                             // (when cond) and a falsy cond are void. Issue #4454:
                             // non-tail body forms stay recursive; the last form
                             // is tail position (same continue as IfExpr).
@@ -6998,6 +7013,11 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             for (std::size_t ci = 2; ci + 1 < v.children.size(); ++ci) {
                                 auto step = eval_flat(*f, *p, v.child(ci), eval_env);
                                 if (!step)
+                                    return step;
+                                // Issue #4619: an error value in a body form
+                                // leaves the body the way begin lets it leave
+                                // (#2570) — it is not a value the body may drop.
+                                if (is_error(*step))
                                     return step;
                             }
                             current_id = v.child(v.children.size() - 1);
@@ -7009,12 +7029,22 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             auto cond_result = eval_flat(*f, *p, cond_id, eval_env);
                             if (!cond_result)
                                 return cond_result;
+                            // Issue #4619: an error value as the test is not a
+                            // false test — it propagates, the same way an
+                            // IfExpr test does (Issue #4493).
+                            if (is_error(*cond_result))
+                                return cond_result;
                             // Issue #4454: tail-call the last body form.
                             if (is_truthy(*cond_result) || v.children.size() < 3)
                                 return types::make_unspecified(); // #4502 step 4
                             for (std::size_t ci = 2; ci + 1 < v.children.size(); ++ci) {
                                 auto step = eval_flat(*f, *p, v.child(ci), eval_env);
                                 if (!step)
+                                    return step;
+                                // Issue #4619: an error value in a body form
+                                // leaves the body the way begin lets it leave
+                                // (#2570) — it is not a value the body may drop.
+                                if (is_error(*step))
                                     return step;
                             }
                             current_id = v.child(v.children.size() - 1);
@@ -7205,14 +7235,23 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                     auto cond_result = eval_flat(*f, *p, v.child(1), eval_env);
                                     if (!cond_result)
                                         return cond_result;
+                                    // Issue #4619: an error value as the test is
+                                    // not a truth value — it leaves the loop the
+                                    // way begin lets an error leave (#2570).
+                                    // Treating it as true ran the loop forever.
+                                    if (is_error(*cond_result))
+                                        return cond_result;
                                     if (!is_truthy(*cond_result))
                                         break;
                                     // Issue #4466: implicit begin. An unexpected
-                                    // diagnostic still aborts. An error value does
-                                    // not, matching the one-body loop.
+                                    // diagnostic still aborts. Issue #4619: an
+                                    // error value does too — it is not a body
+                                    // result the loop may drop.
                                     for (std::size_t bi = 2; bi < v.children.size(); ++bi) {
                                         auto body_result = eval_flat(*f, *p, v.child(bi), eval_env);
                                         if (!body_result)
+                                            return body_result;
+                                        if (is_error(*body_result))
                                             return body_result;
                                     }
                                 }

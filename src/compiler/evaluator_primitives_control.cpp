@@ -88,6 +88,11 @@ void register_control_primitives(PrimRegistrar add, Evaluator& ev) {
             if (!pred_result)
                 break;
             auto& val = *pred_result;
+            // Issue #4619: an error value as the test is not a truth value.
+            // Treating it as true ran the loop forever; it propagates the
+            // way an IfExpr test does (Issue #4493).
+            if (types::is_error(val))
+                return val;
             // Issue #4491: same truthiness as if/cond (only #f stops).
             bool cont = ::aura::compiler::types::raw_is_truthy(val.val);
             if (!cont)
@@ -95,7 +100,12 @@ void register_control_primitives(PrimRegistrar add, Evaluator& ev) {
             for (std::size_t i = 1; i < a.size(); ++i) {
                 if (!types::is_closure(a[i]))
                     continue;
-                (void)ev.apply_closure(types::as_closure_id(a[i]), {});
+                auto body_result = ev.apply_closure(types::as_closure_id(a[i]), {});
+                // Issue #4619: an error value in a body form leaves the loop
+                // the way begin lets an error leave (#2570) — it is not a
+                // value the loop may drop.
+                if (body_result && types::is_error(*body_result))
+                    return *body_result;
             }
         }
         return make_void();
