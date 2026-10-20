@@ -4620,6 +4620,14 @@ aura_add_issue_test(test_string_heap_corruption_guard)
 aura_issue_test_link_light(test_string_heap_corruption_guard)
 add_dependencies(all_test_issue_targets test_string_heap_corruption_guard)
 
+# Issue #4631: the hash CONSTRUCTOR and hash-set! silently dropped the
+# empty string as a key (the #2652 guard treated "" as a corruption
+# sentinel). The empty string is an ordinary key; a corrupt string index
+# must RAISE, never no-op.
+aura_add_issue_test(test_hash_empty_string_key)
+aura_issue_test_link_light(test_hash_empty_string_key)
+add_dependencies(all_test_issue_targets test_hash_empty_string_key)
+
 aura_add_issue_test(test_stale_ref_string_heap)
 aura_issue_test_link_light(test_stale_ref_string_heap)
 add_dependencies(all_test_issue_targets test_stale_ref_string_heap)
