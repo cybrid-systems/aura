@@ -2165,6 +2165,67 @@ private:
     MultiFiberMailboxStats local_stats_{};
 };
 
+// Issue #4639: caller-scope registry (fiber id -> the agent's mailbox).
+// The agent body detaches its mailbox when the body ends
+// (src/orch/agent_spawn.h) and MultiFiberMailbox::detach clears the
+// fiber's primary-mailbox back-pointer (#3369). A caller that resolves
+// its bp_scope_id from that TRANSIENT pointer (the parallel-intend
+// security-schedule gate) then sees an EMPTY scope, and the gate falls
+// back to the PROCESS sample: a sibling scope's starve throttle denies
+// a clean tenant (the #3938 class). The registry keeps the caller's own
+// scope resolvable while the agent lives. The weak_ptr holds the mailbox
+// only for the duration of a lookup; an expired entry (the agent is
+// gone) is pruned on the next lookup.
+inline constexpr int kCallerScopeRegistryIssue = 4639;
+inline std::mutex g_caller_scope_mtx{};
+inline std::unordered_map<std::uint64_t, std::weak_ptr<MultiFiberMailbox>> g_caller_scope_map{};
+
+// Record the agent's mailbox for its fiber (spawn path). Issue #4639.
+inline void register_caller_scope(std::uint64_t fiber_id,
+                                  const std::shared_ptr<MultiFiberMailbox>& mb) noexcept {
+    if (fiber_id == 0 || !mb)
+        return;
+    std::lock_guard<std::mutex> lock(g_caller_scope_mtx);
+    if (g_caller_scope_map.size() >= 4096) {
+        for (auto it = g_caller_scope_map.begin(); it != g_caller_scope_map.end();) {
+            if (it->second.expired())
+                it = g_caller_scope_map.erase(it);
+            else
+                ++it;
+        }
+    }
+    g_caller_scope_map[fiber_id] = mb;
+}
+
+// Drop the fiber's registry entry (agent teardown). Issue #4639.
+inline void unregister_caller_scope(std::uint64_t fiber_id) noexcept {
+    if (fiber_id == 0)
+        return;
+    std::lock_guard<std::mutex> lock(g_caller_scope_mtx);
+    g_caller_scope_map.erase(fiber_id);
+}
+
+// The scope id of the agent that owns the fiber ("" = unknown -> the
+// process bucket). Copy: the caller keeps the value past the mailbox
+// handle. Issue #4639.
+[[nodiscard]] inline std::string lookup_caller_scope(std::uint64_t fiber_id) noexcept {
+    if (fiber_id == 0)
+        return {};
+    std::lock_guard<std::mutex> lock(g_caller_scope_mtx);
+    auto it = g_caller_scope_map.find(fiber_id);
+    if (it == g_caller_scope_map.end())
+        return {};
+    auto mb = it->second.lock();
+    if (!mb) {
+        g_caller_scope_map.erase(it);
+        return {};
+    }
+    const auto s = mb->bp_scope_id();
+    if (s.empty() || s == "-")
+        return {};
+    return std::string(s);
+}
+
 } // namespace aura::serve::mf_mailbox
 
 #endif // AURA_SERVE_MULTI_FIBER_MAILBOX_H

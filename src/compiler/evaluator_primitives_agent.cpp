@@ -2798,14 +2798,15 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         // fiber keeps the empty process sample.
         {
             const auto prod = aura::compiler::typed_audit::production_defaults_active();
-            std::string_view intend_scope{};
-            if (auto* f = aura::serve::g_current_fiber) {
-                if (auto* mb = f->mailbox()) {
-                    const auto s = mb->bp_scope_id();
-                    if (!s.empty() && s != "-")
-                        intend_scope = s;
-                }
-            }
+            // Issue #4639: resolve the scope through the shared caller-scope
+            // resolver. The mailbox-only lookup lost the scope once the
+            // agent body ended (it detaches its mailbox and the fiber's
+            // primary-mailbox back-pointer is cleared with it, #3369), so
+            // the gate fell back to the PROCESS sample and a sibling
+            // scope's starve throttle denied this caller. The resolver
+            // keeps the caller's own scope (fiber id -> agent mailbox) so
+            // scope B samples scope B.
+            const std::string intend_scope = aura::orch::caller_bp_scope_id();
             const auto in = aura::orch::make_security_schedule_input_live(
                 ev.effect_sandbox_mode(), prod, /*soft_mode=*/!prod, intend_scope);
             if (auto reason = aura::orch::admit_security_schedule(in); reason.has_value()) {
