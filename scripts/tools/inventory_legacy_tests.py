@@ -751,6 +751,17 @@ def render_markdown(entries: list[TestEntry]) -> str:
     return "\n".join(lines)
 
 
+_GENERATED_DATE_RE = re.compile(
+    r"^[*][*]Generated:[*][*] .* by .scripts/tools/inventory_legacy_tests[.]py.$", re.MULTILINE
+)
+
+
+def _strip_generated_date(text: str) -> str:
+    """Drop the wall-clock Generated: stamp so the staleness check compares
+    content, not the day the file happened to be rendered."""
+    return _GENERATED_DATE_RE.sub("**Generated:** DATE-NORMALIZED", text)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
@@ -806,7 +817,12 @@ def main() -> int:
             print(f"CHECK FAIL: missing {out}", file=sys.stderr)
             return 1
         existing = out.read_text(encoding="utf-8")
-        if existing != md:
+        # The generated-date stamp is metadata, not content: comparing it
+        # byte-for-byte made the freshness check fail on the day AFTER a
+        # regeneration (the file said yesterday, the script renders today)
+        # and in any timezone whose calendar day differs from the one the
+        # file was written on. Compare the CONTENT and ignore the stamp.
+        if _strip_generated_date(existing) != _strip_generated_date(md):
             print(f"CHECK FAIL: {out} is stale — re-run without --check", file=sys.stderr)
             return 1
         print(f"CHECK OK: {out} up to date")
