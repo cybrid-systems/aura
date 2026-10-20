@@ -5646,6 +5646,19 @@ public:
         // Issue #684: per-instruction dirty bitmask (parallel to SoA
         // instruction_dirty_ column). Indexed [func_idx][instr_idx].
         std::vector<std::vector<std::uint8_t>> instruction_dirty_per_func_;
+        // Issue #4615: cached block→instruction prefix offsets, one entry
+        // per irs[] function. offsets[fi][b] is the flat instruction index
+        // of block b's first instruction, so offsets[fi].back() is the
+        // function's instruction total. The table is rebuilt lazily after
+        // an irs layout change (irs_layout_epoch_ moves; every write to irs
+        // must call invalidate_irs_layout_() — both halves are linted by
+        // scripts/check_block_prefix_offsets_4615.py). Before this cache,
+        // cascade_block_to_instructions and is_instruction_dirty recomputed
+        // the total and the prefix base per block/query, so mutate:rebind
+        // was O(B^2) in a calling define's basic blocks.
+        mutable std::vector<std::vector<std::size_t>> block_inst_offsets_;
+        mutable std::uint64_t block_inst_offsets_epoch_ = 0;
+        std::uint64_t irs_layout_epoch_ = 0;
         // Issue #2045: persisted NodeId → (func, block[, instr]) reverse
         // index for compute_impact_scope. Rebuilt/patched after every
         // store_define_v2 / partial re-lower so selective invalidate
@@ -5798,24 +5811,54 @@ public:
             }
         }
 
+        // Issue #4615: irs layout changed — drop the cached prefix offsets.
+        // Call after every write to irs[] (store, clear, per-function
+        // replace, __top__ prepend, poison sweep, test plant).
+        void invalidate_irs_layout_() noexcept { ++irs_layout_epoch_; }
+
+        // Issue #4615: O(1) amortized block→instruction prefix lookup.
+        // The whole per-function table is rebuilt once per layout epoch;
+        // every cascade / query after that is one indexed read.
+        const std::vector<std::size_t>& block_inst_offsets_at_(std::size_t func_idx) const {
+            if (block_inst_offsets_epoch_ != irs_layout_epoch_ ||
+                block_inst_offsets_.size() != irs.size()) {
+                block_inst_offsets_.clear();
+                block_inst_offsets_.resize(irs.size());
+                for (std::size_t fi = 0; fi < irs.size(); ++fi) {
+                    const auto& blocks = irs[fi].blocks;
+                    auto& offs = block_inst_offsets_[fi];
+                    offs.assign(blocks.size() + 1, 0);
+                    std::size_t acc = 0;
+                    for (std::size_t bi = 0; bi < blocks.size(); ++bi) {
+                        acc += blocks[bi].instructions.size();
+                        offs[bi + 1] = acc;
+                    }
+                }
+                block_inst_offsets_epoch_ = irs_layout_epoch_;
+            }
+            static const std::vector<std::size_t> kNoOffsets;
+            if (func_idx >= block_inst_offsets_.size())
+                return kNoOffsets;
+            return block_inst_offsets_[func_idx];
+        }
+
         // Issue #684: mark every instruction in a block dirty (SoA cascade).
+        // Issue #4615: base/total come from the cached prefix — no per-call
+        // sum over every block.
         void cascade_block_to_instructions(std::size_t func_idx, std::uint32_t block_idx) {
             if (func_idx >= irs.size())
                 return;
             if (func_idx >= instruction_dirty_per_func_.size())
                 instruction_dirty_per_func_.resize(func_idx + 1);
             const auto& func = irs[func_idx];
-            std::size_t total = 0;
-            for (const auto& b : func.blocks)
-                total += b.instructions.size();
+            const auto& offs = block_inst_offsets_at_(func_idx);
+            const std::size_t total = offs.empty() ? 0 : offs.back();
             auto& idf = instruction_dirty_per_func_[func_idx];
             if (idf.size() < total)
                 idf.resize(total, 0);
-            if (block_idx >= func.blocks.size())
+            if (block_idx >= func.blocks.size() || block_idx + 1 >= offs.size())
                 return;
-            std::size_t base = 0;
-            for (std::uint32_t bi = 0; bi < block_idx; ++bi)
-                base += func.blocks[bi].instructions.size();
+            const std::size_t base = offs[block_idx];
             const auto count = func.blocks[block_idx].instructions.size();
             for (std::size_t i = base; i < base + count; ++i)
                 idf[i] = 1;
@@ -5823,6 +5866,37 @@ public:
                 if (instr.narrow_evidence != 0 || instr.type_id != 0 ||
                     instr.linear_ownership_state != 0)
                     jit_typed_mutation::record_type_propagation_stamp();
+            }
+        }
+
+        // Issue #4615: batch body mark — one resize + one contiguous fill
+        // instead of a per-block cascade whose total/prefix scans were
+        // O(B) each (O(B^2) per dirty mark). block_limit is the caller's
+        // body bitmask width (block_dirty_per_func_[body_idx].size()); only
+        // blocks below it were cascaded pre-fix, so the fill stops there
+        // while the dirty column is still sized to the whole function
+        // (matching the old per-call resize). Type-propagation stamps stay
+        // per instruction so the #746 counters are unchanged.
+        void mark_body_instructions_dirty_(std::size_t func_idx, std::size_t block_limit) {
+            if (func_idx >= irs.size())
+                return;
+            if (func_idx >= instruction_dirty_per_func_.size())
+                instruction_dirty_per_func_.resize(func_idx + 1);
+            const auto& func = irs[func_idx];
+            const auto& offs = block_inst_offsets_at_(func_idx);
+            const std::size_t total = offs.empty() ? 0 : offs.back();
+            auto& idf = instruction_dirty_per_func_[func_idx];
+            if (idf.size() < total)
+                idf.resize(total, 0);
+            const std::size_t blocks_done = std::min(block_limit, func.blocks.size());
+            const std::size_t end = offs.empty() ? 0 : offs[blocks_done];
+            std::fill(idf.begin(), idf.begin() + static_cast<std::ptrdiff_t>(end), std::uint8_t{1});
+            for (std::size_t bi = 0; bi < blocks_done; ++bi) {
+                for (const auto& instr : func.blocks[bi].instructions) {
+                    if (instr.narrow_evidence != 0 || instr.type_id != 0 ||
+                        instr.linear_ownership_state != 0)
+                        jit_typed_mutation::record_type_propagation_stamp();
+                }
             }
         }
 
@@ -5859,10 +5933,11 @@ public:
             const auto& func = irs[func_idx];
             if (block_idx >= func.blocks.size())
                 return false;
-            std::size_t base = 0;
-            for (std::uint32_t bi = 0; bi < block_idx; ++bi)
-                base += func.blocks[bi].instructions.size();
-            const auto idx = base + inst_in_block;
+            // Issue #4615: prefix base from the cached offset table (O(1)).
+            const auto& offs = block_inst_offsets_at_(func_idx);
+            if (block_idx + 1 >= offs.size())
+                return false;
+            const auto idx = offs[block_idx] + inst_in_block;
             const auto& idf = instruction_dirty_per_func_[func_idx];
             if (idx >= idf.size())
                 return false;
@@ -5876,18 +5951,15 @@ public:
             if (func_idx >= instruction_dirty_per_func_.size())
                 instruction_dirty_per_func_.resize(func_idx + 1);
             const auto& func = irs[func_idx];
-            std::size_t total = 0;
-            for (const auto& b : func.blocks)
-                total += b.instructions.size();
+            // Issue #4615: total + base from the cached prefix (O(1)).
+            const auto& offs = block_inst_offsets_at_(func_idx);
+            const std::size_t total = offs.empty() ? 0 : offs.back();
             auto& idf = instruction_dirty_per_func_[func_idx];
             if (idf.size() < total)
                 idf.resize(total, 0);
-            if (block_idx >= func.blocks.size())
+            if (block_idx >= func.blocks.size() || block_idx + 1 >= offs.size())
                 return;
-            std::size_t base = 0;
-            for (std::uint32_t bi = 0; bi < block_idx; ++bi)
-                base += func.blocks[bi].instructions.size();
-            const auto idx = base + inst_in_block;
+            const auto idx = offs[block_idx] + inst_in_block;
             if (idx < idf.size())
                 idf[idx] = 1;
         }
@@ -5901,10 +5973,11 @@ public:
             const auto& func = irs[func_idx];
             if (block_idx >= func.blocks.size())
                 return;
-            std::size_t base = 0;
-            for (std::uint32_t bi = 0; bi < block_idx; ++bi)
-                base += func.blocks[bi].instructions.size();
-            const auto idx = base + inst_in_block;
+            // Issue #4615: prefix base from the cached offset table (O(1)).
+            const auto& offs = block_inst_offsets_at_(func_idx);
+            if (block_idx + 1 >= offs.size())
+                return;
+            const auto idx = offs[block_idx] + inst_in_block;
             auto& idf = instruction_dirty_per_func_[func_idx];
             if (idx < idf.size())
                 idf[idx] = 0;
@@ -6062,8 +6135,12 @@ public:
             for (std::uint32_t bi = 0; bi < static_cast<std::uint32_t>(fb.size()); ++bi) {
                 fb[bi] = 1;
                 body_ids.push_back(bi);
-                cascade_block_to_instructions(body_idx, bi);
             }
+            // Issue #4615: one batch instruction cascade for the whole body.
+            // The old loop called cascade_block_to_instructions per block,
+            // and each call rescanned every block for the total and blocks
+            // 0..bi for the prefix base — O(B^2) per body-dirty mark.
+            mark_body_instructions_dirty_(body_idx, fb.size());
             if (body_idx < soa_mod.functions.size() && !body_ids.empty())
                 soa_mod.functions[body_idx].mark_blocks_dirty(body_ids);
             const std::size_t n = body_ids.size();
@@ -6348,6 +6425,7 @@ public:
         entry.source = std::move(source);
         entry.source_hash = hash;
         entry.irs = std::move(irs);
+        entry.invalidate_irs_layout_();
         entry.bridges = std::move(bridges);
         entry.strings = std::move(strings);
         entry.dirty = false;
@@ -6834,6 +6912,7 @@ public:
         if (it == ir_cache_v2_.end())
             return;
         it->second.irs.clear();
+        it->second.invalidate_irs_layout_(); // Issue #4615
         it->second.source_to_ir_map.clear();
         g_phase5_abort_cache_clear_total.fetch_add(1, std::memory_order_relaxed);
     }
@@ -7397,6 +7476,7 @@ public:
                     0, std::memory_order_relaxed),
                 std::memory_order_relaxed);
             entry.irs = std::move(mod.functions);
+            entry.invalidate_irs_layout_(); // Issue #4615: pass writeback may resize blocks.
         }
 
         // Clear dirty bits after instr-level pass work.
@@ -8659,6 +8739,7 @@ public:
                                 ++blocks_replaced;
                         } else {
                             entry.irs[func_idx].blocks[bi] = std::move(new_func.blocks[bi]);
+                            entry.invalidate_irs_layout_(); // Issue #4615
                             ++blocks_replaced;
                             // Clear instr dirty for this block range.
                             if (idf) {
@@ -8675,6 +8756,7 @@ public:
                 // Shape mismatch — fall back to full replace.
                 blocks_replaced = new_func.blocks.size();
                 entry.irs[func_idx] = std::move(new_func);
+                entry.invalidate_irs_layout_(); // Issue #4615
                 for (auto& b : dirty_mask)
                     b = 0;
             }
@@ -8682,6 +8764,7 @@ public:
             // No bitmask — fall back to full replace.
             blocks_replaced = new_func.blocks.size();
             entry.irs[func_idx] = std::move(new_func);
+            entry.invalidate_irs_layout_(); // Issue #4615
         }
         // Issue #1474: bump per-block replaced counter.
         metrics_.incremental_relower_blocks_total.fetch_add(blocks_replaced,
@@ -8827,6 +8910,7 @@ public:
                 entry.source = canonical;
                 entry.source_hash = hash;
                 entry.irs.clear();
+                entry.invalidate_irs_layout_(); // Issue #4615
                 entry.bridges.clear();
                 entry.strings.clear();
                 entry.block_dirty_per_func_.clear();
@@ -10141,6 +10225,7 @@ public:
             blk.id = 0;
             top.blocks.push_back(std::move(blk));
             entry.irs.insert(entry.irs.begin(), std::move(top));
+            entry.invalidate_irs_layout_(); // Issue #4615: synthetic __top__ prepend.
         }
         entry.soa_mod = {};
         entry.init_block_dirty_from_irs();
@@ -10169,6 +10254,7 @@ public:
                     fn.blocks[0].instructions[0].operands[3] = 0x4103u;
                 }
             }
+            entry.invalidate_irs_layout_(); // Issue #4615: poison may add blocks/instructions.
         }
         return entry.irs.size();
     }
@@ -10259,6 +10345,7 @@ public:
             return false;
         auto& e = it->second;
         e.irs.clear();
+        e.invalidate_irs_layout_(); // Issue #4615
         e.block_dirty_per_func_.clear();
         e.instruction_dirty_per_func_.clear();
         e.dirty = false;
@@ -11359,6 +11446,7 @@ public:
                 // The interpreter just took this body. A dirty v2 row would
                 // report 'full' for a let-loop even though the bind is clean.
                 vit->second.irs = std::move(bundle);
+                vit->second.invalidate_irs_layout_(); // Issue #4615
                 vit->second.init_block_dirty_from_irs();
                 vit->second.clear_all_block_dirty();
                 vit->second.dirty = false;
