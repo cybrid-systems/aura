@@ -8716,11 +8716,17 @@ public:
     // Older snapshots keep source for fallback restore; ids stay stable.
     static constexpr std::size_t kMaxAstSnapshotDeepFlats = 32;
     [[nodiscard]] std::size_t ast_snapshot_deep_flat_count() const noexcept {
-        std::size_t n = 0;
+        // Issue #4598 residual: count DISTINCT frozen copies, not entries.
+        // Phase 3 shares one frozen copy across any number of share-hit
+        // snapshots and the #4271 cap now bounds copies (a shared entry
+        // costs one handle, not a workspace-sized deep copy). Counting
+        // entries here would report a deep count above the cap whenever the
+        // share path wins, contradicting the bounded-retention contract.
+        std::unordered_set<const aura::ast::FlatAST*> seen;
         for (const auto& s : snapshot_flats_)
-            if (s.has_flat)
-                ++n;
-        return n;
+            if (s.has_flat && s.flat)
+                seen.insert(s.flat.get());
+        return seen.size();
     }
     [[nodiscard]] std::uint64_t ast_snapshot_deep_flat_drops_total() const noexcept {
         return ast_snapshot_deep_flat_drops_total_;

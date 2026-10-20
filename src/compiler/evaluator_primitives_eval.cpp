@@ -1113,16 +1113,29 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // drop the effect from that response.
         auto replay_io_effects = [](aura::ast::FlatAST& f, aura::ast::StringPool& pool) {
             static constexpr std::string_view kIo[] = {"display", "newline", "print", "write"};
-            for (aura::ast::NodeId id = 0; id < f.size(); ++id) {
+            // Issue #4598 residual: SoA-only probe. The former f.get(id) walk
+            // assembled a full NodeView (child PCV + field copies) for every
+            // live node of the workspace on EVERY eval-current — measured as
+            // ~16% of the single-define hot-swap loop at W=200 (callgrind:
+            // 698k assemble_nodeview calls per 20 iterations). tag/sym_id are
+            // single-column loads and children() is a borrowed span, so the
+            // scan stays O(nodes) but no longer allocates or copies NodeView
+            // fields it does not read.
+            const auto n = f.size();
+            for (aura::ast::NodeId id = 0; id < n; ++id) {
                 if (f.is_free_slot(id))
                     continue;
-                auto node = f.get(id);
-                if (node.tag != aura::ast::NodeTag::Call || node.children.empty())
+                if (f.tag(id) != aura::ast::NodeTag::Call)
                     continue;
-                auto head = f.get(node.child(0));
-                if (head.tag != aura::ast::NodeTag::Variable)
+                const auto ch = f.children(id);
+                if (ch.empty())
                     continue;
-                const auto name = pool.resolve(head.sym_id);
+                const auto callee = ch[0];
+                if (callee == aura::ast::NULL_NODE || callee >= n)
+                    continue;
+                if (f.tag(callee) != aura::ast::NodeTag::Variable)
+                    continue;
+                const auto name = pool.resolve(f.sym_id(callee));
                 for (auto io : kIo) {
                     if (name == io)
                         return true;

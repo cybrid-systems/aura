@@ -49,6 +49,7 @@
 #include "core/workspace_epoch.hh"
 
 import std;
+import aura.compiler.evaluator; // Issue #4598 phase 4: kMaxAstSnapshotDeepFlats
 import aura.compiler.service;
 import aura.compiler.value;
 
@@ -924,6 +925,44 @@ static void ac4598_phase3_snapshot_share_and_stamp_restore() {
           "4598p3 AC13: restored value is the captured change (no stale share)");
 }
 
+// Issue #4598 phase 4 residual: the #4271 deep-flat cap bounds DISTINCT
+// frozen copies, not entries. Phase 3 lets a share hit alias one frozen copy
+// across any number of snapshots; counting entries here evicted a copy that
+// sibling entries still alias (freeing nothing) and demoted the oldest ids to
+// the O(workspace) source-reparse restore path. The AC creates cap+8
+// share-hit snapshots of one workspace and proves: one distinct copy, no
+// drops, and the oldest id still restores directly.
+static void ac4598_phase4_snapshot_cap_counts_copies() {
+    std::println("\n--- #4598 phase 4: snapshot cap counts distinct copies ---");
+    CompilerService cs;
+    const auto cap = aura::compiler::Evaluator::kMaxAstSnapshotDeepFlats;
+    std::string src = "(define (b4598) 1)\n(define (u4598) (+ (b4598) 1))\n";
+    for (int i = 0; i < 8; ++i)
+        src += std::format("(define (c4598f{} x) (+ x {}))\n", i, i);
+    CHECK(set_code(cs, src), "4598p4: set-code workspace");
+    CHECK(cs.eval("(eval-current)").has_value(), "4598p4: eval-current binds");
+    auto first = cs.eval("(ast:snapshot \"4598p4-0\")");
+    CHECK(first && is_int(*first) && as_int(*first) >= 0, "4598p4 AC14: first snapshot id");
+    const auto hits0 = snap_stat(cs, "ast-snapshot-share-hits");
+    const auto drops0 = cs.evaluator().ast_snapshot_deep_flat_drops_total();
+    const std::size_t extra = cap + 8;
+    for (std::size_t i = 1; i <= extra; ++i) {
+        auto s = cs.eval(std::format("(ast:snapshot \"4598p4-{}\")", i));
+        CHECK(s && is_int(*s) && as_int(*s) >= 0, "4598p4 AC14: share-hit snapshot id");
+    }
+    CHECK(snap_stat(cs, "ast-snapshot-share-hits") == hits0 + static_cast<std::int64_t>(extra),
+          "4598p4 AC14: every extra snapshot shares the frozen copy");
+    CHECK(cs.evaluator().ast_snapshot_deep_flat_count() == 1,
+          "4598p4 AC14: distinct-copy count stays 1");
+    CHECK(cs.evaluator().ast_snapshot_deep_flat_drops_total() == drops0,
+          "4598p4 AC14: shared burst does not evict the live copy");
+    auto st = cs.eval(std::format("(ast:restore {})", as_int(*first)));
+    CHECK(st && is_bool(*st) && as_bool(*st), "4598p4 AC14: oldest shared id restores");
+    CHECK(cs.eval("(eval-current)").has_value(), "4598p4: eval after restore");
+    auto b = cs.eval("(b4598)");
+    CHECK(b && is_int(*b) && as_int(*b) == 1, "4598p4 AC14: restored workspace binds");
+}
+
 // Issue #4357: set-code pre-cache unparses defines into function_sources_
 // and eval-current re-lowers that text onto the IR interpreter. A bool
 // printed as 1/0 comes back as an integer ((q) was 1, (boolean? (q)) #f).
@@ -1787,6 +1826,7 @@ int run_test_current_source_roundtrip() {
     ac4349_snapshot_keeps_caller();
     ac4598_transitive_rebind_and_restore();
     ac4598_phase3_snapshot_share_and_stamp_restore();
+    ac4598_phase4_snapshot_cap_counts_copies();
     ac4357_workspace_bools();
     ac4475_workspace_floats();
     run_4450_runtime_mint_ids();
