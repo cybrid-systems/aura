@@ -8615,8 +8615,6 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             }
                         }
 
-                        auto& me = const_cast<Env&>(eval_env);
-
                         // Issue #1539: stamp Owned when init is Linear e.
                         // State lives on Env.bindings_linear_ownership_state_ and is
                         // copied into EnvFrame by alloc_env_frame_from_env (closure capture).
@@ -8625,16 +8623,48 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             f->get(val_id).tag == aura::ast::NodeTag::Linear) {
                             lin_state = linear_rt::Owned;
                         }
+                        // Issue #4599: an uncaptured non-set! let binds the value.
+                        // A cell mint is what made (g 1) scale with define count.
+                        // Letrec stays a cell (self-reference, #232 / #4595).
+                        const std::uint8_t bind_kind =
+                            let_bind_kind_cached(*f, current_id, v.sym_id, body_id);
+                        const bool needs_cell = lin_state != linear_rt::Untracked || bind_kind != 1;
+                        // Issue #4618: the in-place bind below writes into the
+                        // LIVE top_ for a top-level let. A lambda created in
+                        // the body then captures top_ as the #4350 empty
+                        // live-safe frame and resolves the name through the
+                        // live top_, while a second define's same-named let
+                        // appends a new cell. Both closures then share
+                        // whichever cell is newest: set! writes that cell
+                        // while a closure that captured earlier keeps its own
+                        // read path (or the reverse), so a counter and a
+                        // neg?-style predicate built from the same let shape
+                        // interfere. A cell-binding top-level let gets its own
+                        // child env, parented at a registered copy of top_, so
+                        // each define owns its cell (normal capture, no
+                        // live-top consult). A plain value bind has no
+                        // captured cell, so it keeps the in-place fast path.
+                        Env* bind_env = const_cast<Env*>(&eval_env);
+                        const bool scoped_child = needs_cell && current_env == &top_;
+                        if (scoped_child) {
+                            pin_if_current_in_tail();
+                            const Env& let_parent = *current_env;
+                            const EnvId pid = let_parent.parent_id() != NULL_ENV_ID
+                                                  ? let_parent.parent_id()
+                                                  : alloc_env_frame_from_env(let_parent);
+                            tail_env.emplace(&let_parent);
+                            bind_env = &*tail_env;
+                            bind_env->set_primitives(&primitives_);
+                            bind_env->set_owner(this);
+                            bind_env->set_parent_id(pid);
+                        }
+                        Env& me = *bind_env;
                         me.set_pool(p);
                         // bind_symid_with_linear_state mirrors into string bindings_
                         // when pool_ is set. Do NOT also call bind() — that would
                         // dual-write a second Untracked entry and shadow Owned
                         // linear state for (let ((x (Linear ...))) ...).
-                        // Issue #4599: an uncaptured non-set! let binds the value.
-                        // A cell mint is what made (g 1) scale with define count.
-                        // Letrec stays a cell (self-reference, #232 / #4595).
-                        if (lin_state == linear_rt::Untracked &&
-                            let_bind_kind_cached(*f, current_id, v.sym_id, body_id) == 1) {
+                        if (!needs_cell) {
                             me.bind_symid_with_linear_state(v.sym_id, std::move(*vv), lin_state);
                         } else {
                             auto ci = alloc_cell(*vv);
@@ -8642,6 +8672,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         }
                         // Issue #2871: TCO into let body (tail position).
                         if (body_id != aura::ast::NULL_NODE) {
+                            if (scoped_child)
+                                current_env = bind_env;
                             current_id = body_id;
                             continue;
                         }
