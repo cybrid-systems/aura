@@ -3620,6 +3620,70 @@ def test_named_let_bind_list_repeat_4623():
     print("  ✅ test_named_let_bind_list_repeat_4623 (A == tree == R, named-let bindings intact)")
 
 
+def test_callback_diagnostic_4624():
+    """Issue #4624: an unbound variable inside a list callback must surface.
+
+    Evaluator::apply_closure returned nullopt when the callback body raised a
+    diagnostic, so map dropped the element (the row printed "()"), filter
+    dropped the element and try never saw an error; for-each went on to
+    report its own result. The list primitives now keep the diagnostic and
+    hand it back as an error value (the #4586 propagation path), so try
+    catches it exactly like the let-bound-lambda and direct-call rows.
+
+    Rows: map-cb / filter / for-each must print (caught ... unbound
+    variable: nope). let-lambda / direct are the pre-fix controls. The
+    normal map / filter / for-each / foldl / list-sort rows must be
+    unchanged by the new callback path.
+    """
+    code = r"""
+(define (g x) (nope x))
+(define (h x) (map (lambda (y) (nope y)) x))
+(define (k x) (let ((f (lambda (y) (nope y)))) (f x)))
+(display (list "map-cb" (try (h (list 1 2)) (catch (e) (list "caught" e))))) (newline)
+(display (list "let-lambda" (try (k 1) (catch (e) (list "caught" e))))) (newline)
+(display (list "for-each" (try (begin (for-each (lambda (y) (nope y)) (list 1)) "done") (catch (e) (list "caught" e))))) (newline)
+(display (list "filter" (try (filter (lambda (y) (nope y)) (list 1 2)) (catch (e) (list "caught" e))))) (newline)
+(display (list "direct" (try (g 1) (catch (e) (list "caught" e))))) (newline)
+(display (list "normal-map" (map (lambda (x) (* x 2)) (list 1 2 3)))) (newline)
+(display (list "normal-filter" (filter (lambda (x) (= 0 (remainder x 2))) (list 1 2 3 4)))) (newline)
+(display (list "normal-for-each" (begin (for-each (lambda (x) x) (list 1 2)) "done"))) (newline)
+(display (list "normal-foldl" (foldl + 0 (list 1 2 3)))) (newline)
+(display (list "normal-sort" (list-sort < (list 3 1 2)))) (newline)
+(display (list "after")) (newline)
+"""
+    env = os.environ.copy()
+    env["AURA_SANDBOX"] = "off"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env.pop("AURA_SOFT", None)
+    env.pop("AURA_FORCE_IR", None)
+    with tempfile.NamedTemporaryFile("w", suffix=".aura", delete=False) as f:
+        f.write(code)
+        path = f.name
+    try:
+        r = subprocess.run([AURA, path], capture_output=True, text=True, timeout=120, env=env)
+    finally:
+        os.unlink(path)
+    out = r.stdout or ""
+    err = r.stderr or ""
+    assert r.returncode == 0, f"rc={r.returncode} out={out[-400:]!r} err={err[-400:]!r}"
+    rows = {}
+    for ln in out.splitlines():
+        m = re.match(r"^\((\S+)(?: (.*))?\)$", ln)
+        if m:
+            rows[m.group(1)] = m.group(2) or ""
+    for tag in ("map-cb", "filter", "for-each", "let-lambda", "direct"):
+        assert tag in rows, f"missing row {tag!r}: {out!r}"
+        assert "(caught" in rows[tag], f"{tag} row: {rows[tag]!r}"
+        assert "unbound variable: nope" in rows[tag], f"{tag} row: {rows[tag]!r}"
+    assert rows.get("normal-map") == "(2 4 6)", f"normal-map: {rows.get('normal-map')!r}"
+    assert rows.get("normal-filter") == "(2 4)", f"normal-filter: {rows.get('normal-filter')!r}"
+    assert rows.get("normal-for-each") == "done", f"normal-for-each: {rows.get('normal-for-each')!r}"
+    assert rows.get("normal-foldl") == "6", f"normal-foldl: {rows.get('normal-foldl')!r}"
+    assert rows.get("normal-sort") == "(1 2 3)", f"normal-sort: {rows.get('normal-sort')!r}"
+    assert rows.get("after") == "", f"after row: {rows.get('after')!r}"
+    print("  ✅ test_callback_diagnostic_4624 (map/filter/for-each keep the callback diagnostic)")
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -3665,6 +3729,7 @@ for tf in [
     test_while_when_error_propagation_4619,
     test_workspace_rest_params_4621,
     test_named_let_bind_list_repeat_4623,
+    test_callback_diagnostic_4624,
 ]:
     try:
         tf()
