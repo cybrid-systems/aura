@@ -25,6 +25,7 @@ module;
 #include "compiler/mark_all_owner_clear.hh"   // Issue #4360: snapshot restore clears IR owners
 #include "compiler/user_arity.hh"             // Issue #4467: call-site procedure arity
 #include "compiler/type_feedback.h"           // Issue #4568: tree-walker lattices
+#include "compiler/ir_inflight_roots.hh"      // Issue #4617: IR in-flight roots for the TW sweep
 
 
 module aura.compiler.evaluator;
@@ -1037,6 +1038,21 @@ void Evaluator::maybe_reclaim_tw_unreachable() {
         const auto n = sp.count();
         for (std::size_t i = 0; i < n; ++i)
             held.push_back(sp.data[i]);
+    }
+    // Issue #4617: the symmetric direction of #4481. IR code that calls a
+    // tree-walked file-level procedure by name is suspended mid-frame while
+    // this sweep runs (the callee's eval loop reaches this point). The
+    // caller's IR locals/args, linear slots, cell contents and const
+    // string/keyword caches are live but are not in g_tw_*: without them the
+    // sweep freed the caller's vectors and pairs, so a local vector read
+    // length 0 and a local list's cells read (). The provider is installed
+    // by IRInterpreter::drain_call_stack; a plain tree-walked program has
+    // none on the stack and pays one empty vector.
+    std::vector<std::int64_t> ir_roots;
+    if (ir_inflight::collect(ir_roots) > 0) {
+        held.reserve(held.size() + ir_roots.size());
+        for (const auto raw : ir_roots)
+            held.push_back(types::EvalValue(raw));
     }
     (void)reclaim_tw_unreachable(envs, held);
 }

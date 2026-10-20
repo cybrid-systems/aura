@@ -2811,6 +2811,60 @@ def test_rebind_cascade_linear_4615():
     )
 
 
+def test_tw_reclaim_ir_frame_roots_4617():
+    """Issue #4617: the tree-walker's reclaim must root in-flight IR frames.
+
+    A workspace define (IR) that calls a *file-level* procedure by name is
+    suspended mid-frame while that procedure's eval loop reaches
+    Evaluator::maybe_reclaim_tw_unreachable. The sweep rooted only
+    g_tw_frames / results / vecs / spans, so the caller's IR locals were
+    freed: a local vector read length 0 and a local list's cells read ().
+    Passing the same procedure as a value takes a different call path and
+    never corrupted. The four rows are the issue's standalone repro; every
+    one must report `wrong 0 of 1000`.
+    """
+    code = r"""
+(define *junk* #f)
+(define (host-alloc) (set! *junk* (list 1 2 3 4 5 6 7 8)) #f)
+(define (host-nop) #f)
+(set-code (string-append
+  "(define keep-a (lambda () (let ((v (vector 1 2 3)) (l (list 10 20 30))) (host-alloc) (list (vector-length v) (cadr l)))))\n"
+  "(define keep-n (lambda () (let ((v (vector 1 2 3)) (l (list 10 20 30))) (host-nop) (list (vector-length v) (cadr l)))))\n"
+  "(define keep-f (lambda (f) (let ((v (vector 1 2 3)) (l (list 10 20 30))) (f) (list (vector-length v) (cadr l)))))\n"))
+(eval-current)
+(define (host-keep) (let ((v (vector 1 2 3)) (l (list 10 20 30))) (host-alloc) (list (vector-length v) (cadr l))))
+(define (run what keep f n)
+  (let loop ((i 0) (bad 0) (ex (list)))
+    (if (= i n)
+        (begin (display (list what "wrong" bad "of" n "first wrong results" (reverse ex))) (newline))
+        (let ((r (try (if f (keep f) (keep)) (catch (e) (list "raised" e)))))
+          (if (equal? r (list 3 20)) (loop (+ i 1) bad ex)
+              (loop (+ i 1) (+ bad 1) (if (< (length ex) 3) (cons r ex) ex)))))))
+(run "workspace define calls (host-alloc) by name:" keep-a #f 1000)
+(run "workspace define calls (host-nop) by name:" keep-n #f 1000)
+(run "workspace define calls host-alloc passed as arg:" keep-f host-alloc 1000)
+(run "file define, same body, (host-alloc) by name:" host-keep #f 1000)
+"""
+    env = os.environ.copy()
+    env["AURA_SANDBOX"] = "off"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env.pop("AURA_SOFT", None)
+    env.pop("AURA_FORCE_IR", None)
+    r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=180, env=env)
+    out = r.stdout or ""
+    err = r.stderr or ""
+    assert r.returncode == 0, f"rc={r.returncode} out={out[-400:]!r} err={err[-400:]!r}"
+    assert err == "", f"unexpected stderr: {err[-400:]!r}"
+    rows = [ln for ln in out.splitlines() if ln.startswith("(")]
+    assert len(rows) == 4, f"expected 4 rows, got {rows!r}"
+    for row in rows:
+        assert "wrong 0 of 1000" in row, f"corrupted row: {row!r}"
+    # The two rows that were already correct before the fix stay correct.
+    assert "passed as arg" in rows[2], rows[2]
+    assert "file define" in rows[3], rows[3]
+    print("  \u2705 test_tw_reclaim_ir_frame_roots_4617 (4 rows, 0/1000 wrong)")
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -2833,6 +2887,7 @@ for tf in [
     test_cfunc_budget_4555,
     test_nary_map_for_each_4616,
     test_rebind_cascade_linear_4615,
+    test_tw_reclaim_ir_frame_roots_4617,
     test_jit,
     test_mutation_sequences,
     test_freeze_load,

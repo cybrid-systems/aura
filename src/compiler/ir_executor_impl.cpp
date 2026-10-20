@@ -24,6 +24,7 @@ module;
 #include "compiler/mutation_hold_budget.h" // Issue #3988: opcode-stride poll stride
 #include "compiler/user_arity.hh"          // Issue #4467: call-site procedure arity
 #include "compiler/locked_string_heap.hh" // Issue #4608: the IR reads strings from the evaluator heap
+#include "compiler/ir_inflight_roots.hh" // Issue #4617: IR frame roots for the TW reclaim
 // Issue #4568: this TU owns the feedback row map. The macro must be
 // set before the include so the definition arrives via the header
 // (a global module fragment may only contain preprocessor inclusion).
@@ -410,6 +411,43 @@ EvalResult IRInterpreter::drain_call_stack(std::size_t base) {
     // A JIT guard exit inside a native callee resumes the deopting frame;
     // that resume must run here, where the frame's cell / closure ids live.
     const ActiveInstanceGuard active_guard{this};
+    // Issue #4617: publish this frame set to the tree-walker's file-mode
+    // reclaim for the duration of the drain. IR code can call a tree-walked
+    // file-level procedure by name; that procedure's eval loop fires
+    // Evaluator::maybe_reclaim_tw_unreachable while this frame is suspended.
+    // Without these roots the sweep freed the caller's locals (a vector read
+    // length 0, a list's cells read ()). Access control is lexical, so this
+    // no-capture lambda may read the private frame/heap fields.
+    const ir_inflight::ScopedProvider inflight_roots(
+        [](void* ctx, std::vector<std::int64_t>& out) {
+            const auto* self = static_cast<const IRInterpreter*>(ctx);
+            std::size_t n = 0;
+            for (const auto& fr : self->call_stack_)
+                n += fr.locals.size() + fr.args.size();
+            n += self->linear_heap_.size() + self->cell_heap_.size() +
+                 self->const_string_cache_.size() + self->const_keyword_cache_.size();
+            out.reserve(out.size() + n);
+            for (const auto& fr : self->call_stack_) {
+                for (const auto& v : fr.locals)
+                    out.push_back(v.val);
+                for (const auto& v : fr.args)
+                    out.push_back(v.val);
+            }
+            for (const auto& le : self->linear_heap_) {
+                if (le.live)
+                    out.push_back(le.value.val);
+            }
+            // A local can name an IR cell; the TW mark does not walk
+            // cell_heap_, so export the contents or the cell's pair/vector
+            // is freed even though the cell value itself is rooted.
+            for (const auto& v : self->cell_heap_)
+                out.push_back(v.val);
+            for (const auto& entry : self->const_string_cache_)
+                out.push_back(entry.second.val);
+            for (const auto& entry : self->const_keyword_cache_)
+                out.push_back(entry.second.val);
+        },
+        this);
     // Issue #4600 §3 (phase 3): consecutive same-function tail-call
     // replacements = the named-let back-edge as the interpreter sees it
     // (the loop closure calls itself; #4459 replaces the frame per
