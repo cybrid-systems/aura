@@ -3,6 +3,7 @@
 
 import os
 import re
+import resource
 import subprocess
 import sys
 import tempfile
@@ -3261,6 +3262,113 @@ def test_while_when_error_propagation_4619():
     print("  OK test_while_when_error_propagation_4619 (issue repro + workspace + while-test + closure + controls)")
 
 
+def test_ir_call_depth_limit_4620():
+    """Issue #4620: the IR call stack needs a depth limit.
+
+    The IR interpreter keeps its frames on the heap (a deque), so an
+    unbounded non-tail recursion never trips the tree-walker's C-stack
+    guard (Evaluator::eval_flat's MAX_C_STACK_DEPTH = 512, which
+    returns "recursion depth exceeded"): the frames piled up at about
+    0.77 KB each until the kernel OOM-killed the process (rc=-9, no
+    output, no chance for the program to try/catch). A host that
+    evaluates untrusted or generated code could not survive a single
+    runaway recursion.
+
+    The IR path now has a configurable call-depth limit
+    (AURA_IR_MAX_CALL_DEPTH) and raises the same "recursion depth
+    exceeded" error the tree-walker raises, and a frame is sized to the
+    function's own slot count instead of a 64-slot floor (about half
+    the memory per frame).
+
+    The issue's table: the 10 000 / 100 000 / 1 000 000 deep
+    recursions still complete, and the 10 000 000 deep one - the row
+    that died with SIGKILL at 4 GB - now stops with the depth error.
+    The workspace row (set-code + eval-current, then the host calls
+    the workspace procedure) gets the same bounded failure.
+    """
+    env = os.environ.copy()
+    env["AURA_SANDBOX"] = "off"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env.pop("AURA_SOFT", None)
+    env.pop("AURA_FORCE_IR", None)
+    env.pop("AURA_IR_MAX_CALL_DEPTH", None)
+
+    # 1 GB of address space. Pre-#4620 the runaway recursion grew the
+    # heap until the allocation failed (std::bad_alloc -> SIGABRT) and
+    # without the cap it ate the whole host; the bounded interpreter
+    # stops at the depth limit well under the cap.
+    CAP_BYTES = 1024 * 1024 * 1024
+
+    def run(code, extra_env=None, timeout=300):
+        e = env.copy()
+        if extra_env:
+            e.update(extra_env)
+
+        def cap():
+            resource.setrlimit(resource.RLIMIT_AS, (CAP_BYTES, CAP_BYTES))
+
+        return subprocess.run(
+            [AURA],
+            input=code,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=e,
+            preexec_fn=cap,
+        )
+
+    # The issue's standalone repro: a non-tail recursion of depth N.
+    def prog(depth):
+        return f'(define (f n) (if (= n 0) 0 (+ 1 (f (- n 1)))))\n(display (list "N" {depth} "result" (f {depth})))\n'
+
+    # Row 1-3: the issue's rows that completed before the fix must
+    # still complete - the limit is above them.
+    for depth in (10000, 100000, 1000000):
+        r = run(prog(depth))
+        out = r.stdout or ""
+        err = r.stderr or ""
+        assert r.returncode == 0, f"depth {depth}: rc={r.returncode} err={err[-300:]!r}"
+        assert "recursion depth exceeded" not in err, f"depth {depth}: {err[-300:]!r}"
+        assert f"result {depth}" in out, f"depth {depth}: out={out[-200:]!r}"
+
+    # Row 4: the runaway recursion - SIGKILL / no output before the
+    # fix. It must now be a bounded, catchable depth error.
+    r = run(prog(10000000))
+    err = r.stderr or ""
+    out = r.stdout or ""
+    assert r.returncode >= 0, f"runaway recursion killed the process (rc={r.returncode}); err={err[-300:]!r}"
+    assert "recursion depth exceeded" in err, f"no depth error: rc={r.returncode} err={err[-300:]!r}"
+    assert "result" not in out, f"the runaway recursion still produced a result: {out[-200:]!r}"
+
+    # The workspace face: the define lives in the workspace
+    # (set-code + eval-current) and the host calls it. Same bounded
+    # failure - the IR path is what runs the recursion.
+    ws = (
+        '(set-code "(define (f n) (if (= n 0) 0 (+ 1 (f (- n 1)))))")\n'
+        "(eval-current)\n"
+        '(display (list "result" (f 10000000)))\n'
+    )
+    r = run(ws)
+    err = r.stderr or ""
+    out = r.stdout or ""
+    assert r.returncode >= 0, f"workspace runaway killed the process (rc={r.returncode}); err={err[-300:]!r}"
+    assert "recursion depth exceeded" in err, f"workspace: no depth error: err={err[-300:]!r}"
+    assert "result" not in out, f"workspace: the runaway recursion still produced a result: {out[-200:]!r}"
+
+    # The limit is configurable: a small budget trips the same error
+    # much earlier, a large one lets the recursion through.
+    r = run(prog(5000), {"AURA_IR_MAX_CALL_DEPTH": "50"})
+    err = r.stderr or ""
+    assert "recursion depth exceeded (>50)" in err, f"configured limit: err={err[-300:]!r}"
+    r = run(prog(50000), {"AURA_IR_MAX_CALL_DEPTH": "100000"})
+    out = r.stdout or ""
+    err = r.stderr or ""
+    assert r.returncode == 0, f"raised limit: rc={r.returncode} err={err[-300:]!r}"
+    assert "result 50000" in out, f"raised limit: out={out[-200:]!r}"
+
+    print("  ✅ test_ir_call_depth_limit_4620 (3 depth rows + runaway + workspace + configurable)")
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -3281,6 +3389,7 @@ for tf in [
     test_jit_tier_differential_4574,
     test_jit_unbound_callee_4607,
     test_workspace_set_global_4618,
+    test_ir_call_depth_limit_4620,
     test_cfunc_budget_4555,
     test_nary_map_for_each_4616,
     test_rebind_cascade_linear_4615,

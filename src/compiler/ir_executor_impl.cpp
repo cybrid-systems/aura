@@ -87,6 +87,58 @@ using types::make_primitive;
 using types::make_string;
 using types::make_void;
 
+// Issue #4620: the IR call stack is a heap deque, so an unbounded
+// non-tail recursion never trips the tree-walker's C-stack guard
+// (Evaluator::eval_flat's MAX_C_STACK_DEPTH = 512, which returns
+// "recursion depth exceeded"). The IR frames just pile up on the
+// heap - about 0.77 KB each - until the kernel OOM-kills the process
+// (rc=-9, nothing on stderr, no chance for the program to try/catch).
+// A host that evaluates untrusted or generated code cannot survive a
+// single runaway recursion, so the IR path gets the same bounded,
+// catchable failure the tree-walker has.
+//
+// AURA_IR_MAX_CALL_DEPTH overrides the default. 0 disables the check
+// (the pre-#4620 behaviour) for a host that budgets the call itself.
+//
+// The default (2^20 frames) keeps the issue's own table working: the
+// 10 000 / 100 000 / 1 000 000 deep recursions still complete, and the
+// 10 000 000 deep one - the row that died with SIGKILL at 4 GB - now
+// stops with the depth error. With a frame sized to the function's own
+// slots (~0.32 KB) the worst case is ~340 MB of IR frames, an order of
+// magnitude under the container limit the issue hit.
+inline constexpr std::size_t kIrDefaultMaxCallDepth = 1048576;
+
+static std::size_t ir_max_call_depth() {
+    static const std::size_t limit = [] {
+        const char* e = std::getenv("AURA_IR_MAX_CALL_DEPTH");
+        if (!e || !*e)
+            return kIrDefaultMaxCallDepth;
+        char* end = nullptr;
+        const long long v = std::strtoll(e, &end, 10);
+        if (end == e || v < 0)
+            return kIrDefaultMaxCallDepth;
+        return static_cast<std::size_t>(v);
+    }();
+    return limit;
+}
+
+// Issue #4620: the operand index that carries an opcode's result
+// slot. Most opcodes write their result to operands[0]; Call and
+// PrimCall write it to operands[3] and Apply to operands[2]. The
+// opcode table's has_result_slot flag only models the operands[0]
+// shape, so the frame-size check (the frame is sized to the
+// function's slot count now) has to ask here which operand the
+// opcode really writes.
+// (An if-chain, not a switch: a Call opcode label here would shadow the
+// opcode arms the #3834 / #3798 coverage checks window on.)
+static std::uint32_t ir_result_slot_operand(IROpcode op) {
+    if (op == IROpcode::Call || op == IROpcode::PrimCall)
+        return 3;
+    if (op == IROpcode::Apply)
+        return 2;
+    return 0;
+}
+
 // Issue #638: bump linear ownership + GuardShape runtime safety
 // counters when an instruction carries linear_ownership_state.
 static void record_linear_runtime_safety(CompilerMetrics* metrics, bool mismatch) {
@@ -472,7 +524,35 @@ EvalResult IRInterpreter::drain_call_stack(std::size_t base) {
                 context_.metrics->closure_calls_total.fetch_add(1, std::memory_order_relaxed);
             }
             auto& pc = std::get<PendingCall>(result);
-            auto new_count = pc.func->local_count + std::max(std::size_t(64), pc.args.size());
+            // Issue #4620: bound the call depth. A tail call replaces
+            // the caller frame (the depth does not grow), so only a
+            // non-tail call can run away. The check counts the
+            // interpreter's whole frame stack, so a reentrant
+            // call_closure (a nested drain) cannot slip past it
+            // either. Unwind this drain's frames and raise the same
+            // "recursion depth exceeded" error the tree-walker
+            // raises, so the host sees a catchable failure instead of
+            // an OOM kill.
+            if (!pc.tail) {
+                const std::size_t max_depth = ir_max_call_depth();
+                if (max_depth > 0 && call_stack_.size() >= max_depth) {
+                    depth_exceeded_ = true;
+                    call_stack_.resize(base);
+                    return std::unexpected(
+                        Diagnostic{ErrorKind::InternalError,
+                                   std::format("recursion depth exceeded (>{})", max_depth)});
+                }
+            }
+            // Issue #4620: a frame's locals are the callee's own
+            // slots. The old floor of 64 slots per frame made every
+            // frame ~0.77 KB, so a deep recursion grew the heap ~10x
+            // faster than the function needed. fn.local_count IS the
+            // frame size: the JIT's native frame has exactly that many
+            // slots (aura_jit.cpp: "for result-producing opcodes,
+            // inst.ops[0] must be a valid local slot (<
+            // fn.local_count)"), and every pass that allocates a slot
+            // bumps local_count with it.
+            auto new_count = pc.func->local_count;
             std::vector<EvalValue> new_locals(new_count, make_void());
             // Issue #4459: replace the caller. run_function has returned, so
             // its locals& is dead — pop here, not inside the opcode.
@@ -590,7 +670,9 @@ EvalResult IRInterpreter::execute() {
         return *blocked;
 
     const auto& entry = module_.entry();
-    auto local_count = entry.local_count + 64;
+    // Issue #4620: the entry frame holds the function's own slots
+    // (the same contract as every other frame - see drain_call_stack).
+    auto local_count = entry.local_count;
     // Keep any frames a reentrant caller still owns. clear() dropped them.
     const auto base = call_stack_.size();
     call_stack_.push_back({.func = &entry,
@@ -933,7 +1015,8 @@ EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const
     // minted while run_function still holds the outer frame. clear()
     // freed that frame; the outer pop_back then aborted.
     const auto base = call_stack_.size();
-    auto local_count = callee_func.local_count + std::max(std::size_t(64), all_args.size());
+    // Issue #4620: frame locals are the callee's own slots.
+    auto local_count = callee_func.local_count;
     call_stack_.push_back({.func = &callee_func,
                            .current_block = callee_func.entry_block,
                            .locals = std::vector<EvalValue>(local_count, make_void()),
@@ -942,14 +1025,27 @@ EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const
                            .is_top_level = true,
                            .result_slot = 0,
                            .ex_depth_at_entry = ex_stack_.size()});
-    return drain_call_stack(base);
+    depth_exceeded_ = false;
+    auto result = drain_call_stack(base);
+    if (!result && depth_exceeded_) {
+        // Issue #4620: the service's bridge (dispatch_ir_define_closure)
+        // turns a call_closure failure into nullopt, so the tree-walker
+        // would report "eval_flat: invalid closure" and lose the
+        // reason. Park the depth message in the same channel the arity
+        // error uses (#4467): eval_flat picks it up and reports the
+        // real cause.
+        depth_exceeded_ = false;
+        set_pending_user_arity(std::format("recursion depth exceeded (>{})", ir_max_call_depth()));
+    }
+    return result;
 }
 
 EvalResult IRInterpreter::execute_function(const IRFunction& func,
                                            std::span<const EvalValue> args) {
     if (auto blocked = ir_typed_entry_blocked_result(context_.metrics))
         return *blocked;
-    auto local_count = func.local_count + std::max(std::size_t(64), args.size());
+    // Issue #4620: frame locals are the function's own slots.
+    auto local_count = func.local_count;
     std::vector<EvalValue> locals(local_count, make_void());
     auto result = run_function(func, locals, args);
     if (std::holds_alternative<EvalResult>(result))
@@ -1195,10 +1291,26 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
             // check + array access in one call, returning nullptr
             // for invalid opcodes.
             if (auto* info = lookup_opcode(instr.opcode)) {
-                if (info->has_result_slot && ops[0] >= locals.size()) {
-                    return std::unexpected(Diagnostic{
-                        ErrorKind::IRCorruption,
-                        std::format("{}: result slot {} out of bounds", info->name, ops[0])});
+                // Issue #4620: the frame is sized to the function's own
+                // slot count, so a stale local_count must fail closed
+                // instead of writing out of bounds. The check has to
+                // look at the operand the opcode really writes: most
+                // opcodes write their result to operands[0], but
+                // Call / PrimCall write it to operands[3] and Apply to
+                // operands[2]. The opcode table's has_result_slot flag
+                // only knows the operands[0] shape - a PrimCall's
+                // operands[0] is a prim id, not a slot (the 64-slot
+                // frame floor used to hide that).
+                const bool has_result = info->has_result_slot || instr.opcode == IROpcode::Call ||
+                                        instr.opcode == IROpcode::Apply;
+                if (has_result) {
+                    const std::uint32_t res_op = ir_result_slot_operand(instr.opcode);
+                    if (ops[res_op] >= locals.size()) {
+                        return std::unexpected(Diagnostic{
+                            ErrorKind::IRCorruption,
+                            std::format("{}: result slot {} out of bounds (function '{}')",
+                                        info->name, ops[res_op], func.name)});
+                    }
                 }
             }
 
