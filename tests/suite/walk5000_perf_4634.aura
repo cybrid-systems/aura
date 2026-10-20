@@ -1,0 +1,93 @@
+; Issue #4634 - the `walk-5000` program of test_jit_l2_4571 was reported taking
+; >150 s in eval/ir non-JIT mode, with the reclaim-trigger window family
+; (#4459 / #4474 / #4525) named as the suspect (per-allocation cost that
+; scales with the live heap). Measured on main 60c530f31:
+;   * walk-5000 runs in ~0.11 s in both eval and ir mode (baseline 150 s),
+;   * its wall is LINEAR in n (n=1000..50000, ~22 us per list element), and
+;   * a gdb sample of the last build that still showed the slow shape put
+;     0/25 samples in reclaim_tw_unreachable / file_reclaim_mark_value and
+;     25/25 in the tree-walker body (eval_flat_body / try_eval_flat_hot), so
+;     the slow shape was the evaluator, not the whole-heap mark.
+; The reclaim window is still the mechanism that would produce that shape if
+; it regressed to a fixed small trigger, so these cases pin the SHAPE rather
+; than the number: a return of live-heap-scaled per-allocation cost turns
+; AC3/AC4 quadratic and fails here.
+;
+; AC1  walk-5000 still computes 12502500 (the #4571 expected value).
+; AC2  walk-5000 finishes far inside the 150 s baseline.
+; AC3  5x the list costs < 9x the time - per-allocation cost is flat in the
+;      live set. A live-heap-scaled per-allocation cost would be ~25x.
+; AC4  the empty-loop control (the issue's control claim) is flat too, and
+;      the allocating walk stays the expensive side of the pair.
+;
+;; expect: OK-4634 walk-5000 stays linear and far under the 150 s baseline
+
+(define *fails* 0)
+(define *passes* 0)
+(define (check name got want)
+  (if (equal? got want)
+      (set! *passes* (+ *passes* 1))
+      (begin (set! *fails* (+ *fails* 1))
+             (display "  FAIL: ") (display name) (display " got ") (display got)
+             (display " want ") (display want) (newline))))
+
+; The #4571 walk-5000 program, verbatim in shape: build two n-element cons
+; chains, then length-walk one and car-sum the other.
+(define (build n) (let ((i 0) (xs (quote ()))) (while (< i n) (set! xs (cons i xs)) (set! i (+ i 1))) xs))
+(define (len xs) (let ((n 0)) (while (pair? xs) (set! n (+ n 1)) (set! xs (cdr xs))) n))
+(define (sumcar xs) (let ((s 0)) (while (pair? xs) (set! s (+ s (car xs))) (set! xs (cdr xs))) s))
+(define (walk n) (+ (len (build n)) (sumcar (build n))))
+
+; The control: walk(n) runs 4n `while` trips (build twice, len, sumcar).
+; empty-walk runs the same 4n trips through the same `while` shape with the
+; cons and the car/cdr reads removed, so the pair differs only in allocation.
+(define (empty-walk n)
+  (let ((i 0) (a 0) (b 0) (c 0) (d 0))
+    (while (< i n)
+      (set! a (+ a 1)) (set! b (+ b 1)) (set! c (+ c 1)) (set! d (+ d 1))
+      (set! i (+ i 1)))
+    (+ a (+ b (+ c d)))))
+
+(define (time-ms th) (let ((t0 (current-time-ms))) (th) (- (current-time-ms) t0)))
+(define (best-of th) (let ((a (time-ms th))) (let ((b (time-ms th))) (if (< a b) a b))))
+
+; AC1 - the value is the #4571 one: 5000 + 5000*4999/2.
+(check "walk-5000 value" (walk 5000) 12502500)
+(if (> *fails* 0)
+    (begin (display "FAIL-4634 value\n") (exit 1)))
+
+(define n-small 5000)
+(define n-big 25000)
+
+(define t-small (best-of (lambda () (walk n-small))))
+(define t-big (best-of (lambda () (walk n-big))))
+(define t-empty-small (best-of (lambda () (empty-walk n-small))))
+(define t-empty-big (best-of (lambda () (empty-walk n-big))))
+
+; AC2 - the reported baseline was >150000 ms. 15000 keeps ~10x of slack for a
+; loaded box while failing any return of the reported shape.
+(check "walk-5000 under the 150 s baseline" (<= t-small 15000) #t)
+
+; AC3 - 5x the elements. Linear is ~5x; a per-allocation cost that scales with
+; the live heap is quadratic (~25x), so 9x separates the two with room either
+; way (and the +500 ms term only helps on a slow box).
+(check "walk cost per element flat in live set" (<= t-big (+ (* 9 t-small) 500)) #t)
+
+; AC4 - the control claim: the allocation-free loop is flat as well (nothing
+; in the walk shape is quadratic on its own) and stays the cheap side.
+(check "empty control flat" (<= t-empty-big (+ (* 10 t-empty-small) 500)) #t)
+(check "empty control is the cheap side" (< t-empty-small t-small) #t)
+
+(display "walk-5000 ms=") (display t-small)
+(display " walk-25000 ms=") (display t-big)
+(display " empty ms=") (display t-empty-small)
+(display "/") (display t-empty-big)
+(newline)
+
+(if (and (= *fails* 0) (= *passes* 5))
+    (display "OK-4634 walk-5000 stays linear and far under the 150 s baseline\n")
+    (begin
+      (display "FAIL-4634 fails=") (display *fails*)
+      (display " passes=") (display *passes*)
+      (newline)
+      (exit 1)))
