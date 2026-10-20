@@ -689,7 +689,10 @@ static void ac4608_string_heap_reclaim() {
     // AC2: the strings that ARE reachable survive the reclaim: an env
     // frame binding, a pair, a vector, a closure capture and a let
     // cell all keep their content across 20k minted-and-dropped
-    // strings (5 of 5).
+    // strings (5 of 5). `run` counts UP from its argument to 20000,
+    // so the call must start at 0: (run 20000) is zero iterations and
+    // the survival program would never mint a string, so the reclaim
+    // would never fire and the free-slot check below would read 0.
     {
         CompilerService cs;
         auto& ev = cs.evaluator();
@@ -701,7 +704,7 @@ static void ac4608_string_heap_reclaim() {
                     " (define v (vector s))"
                     " (define f (lambda () s))"
                     " (define c (let ((x s)) (lambda () x)))"
-                    " (run 20000)"
+                    " (run 0)"
                     " (+ (+ (+ (+ (if (string=? s \"42\") 1 0)"
                     "            (if (string=? (car p) \"42\") 1 0))"
                     "           (if (string=? (vector-ref v 0) \"42\") 1 0))"
