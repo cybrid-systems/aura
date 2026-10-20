@@ -2341,13 +2341,38 @@ int main(int argc, char* argv[]) {
             }
         } else {
             // Stdin mode: echo '(+ 1 2)' | ./aura --emit-binary myapp
-            std::getline(std::cin, input);
+            // Issue #4640: read the WHOLE stdin, not just its first
+            // line. The eval path reads all of stdin, so a program
+            // piped in with several lines was emitted with only its
+            // first line -- the AOT binary then disagreed with the
+            // evaluator by construction (every row after the first
+            // line was missing from the image).
+            {
+                std::ostringstream buf;
+                buf << std::cin.rdbuf();
+                input = buf.str();
+            }
             out_path = argv[2];
         }
 
         if (input.empty()) {
             std::println(std::cerr, "error: no input");
             return 1;
+        }
+
+        // Issue #4640: the emit must resolve the SAME names as the
+        // evaluator. The oneshot eval path auto-loads the std modules
+        // the program can reference (build_lazy_oneshot_std_prelude),
+        // because assoc / foldr / zip / ... are std FUNCTIONS, not
+        // primitives: without the std module the IR path cannot call
+        // them and the emit died with "cannot call: assoc" while the
+        // evaluator answered. Prepend the same lazy prelude so the
+        // std module source is inlined by the import/require step
+        // below and the AOT image carries the same definitions.
+        {
+            std::string prelude = build_lazy_oneshot_std_prelude(input);
+            if (!prelude.empty())
+                input = prelude + input;
         }
 
         // ── Resolve import/require: prepend module source (recursive) ──
@@ -2685,16 +2710,39 @@ int main(int argc, char* argv[]) {
                 else if (n == "/")
                     code += "    if(c<1)return 1; int64_t r=a[0]; for(int "
                             "i=1;i<c;i++){if(a[i]==0){r=0;break;}r/=a[i];} return r;\n";
-                else if (n == "=" || n == "eq?" || n == "eqv?" || n == "equal?")
-                    code += "    for(int i=0;i<c-1;i++) if(a[i]!=a[i+1]) return 0; return 1;\n";
+                else if (n == "=" || n == "eq?" || n == "eqv?")
+                    // Issue #4640: a boolean result must be the TAGGED
+                    // #t / #f (7 / 3), not a raw 1 / 0: the AOT display
+                    // reads the low bits, and a raw 1 looks like a pair
+                    // (low2 == 01) -- the image printed "(0)" / "(2)"
+                    // instead of #t. The evaluator's booleans are the
+                    // tagged specials (value_tags.h: kSpecialTrue 7,
+                    // kSpecialFalse 3).
+                    code += "    for(int i=0;i<c-1;i++) if(a[i]!=a[i+1]) return AURA_AOT_FALSE; "
+                            "return AURA_AOT_TRUE;\n";
+                else if (n == "equal?")
+                    // Issue #4640: equal? is the STRUCTURAL comparison
+                    // (R7RS 6.4): content compare for strings, value
+                    // compare for numbers, structural compare for pairs
+                    // -- the same walk member uses (#4628). The AOT face
+                    // compared raw words, so two structurally equal lists
+                    // were never equal and the std assoc (which compares
+                    // the key with equal?) answered differently from the
+                    // evaluator.
+                    code += "    for(int i=0;i<c-1;i++) if(!aura_aot_equal(a[i],a[i+1],0)) "
+                            "return AURA_AOT_FALSE; return AURA_AOT_TRUE;\n";
                 else if (n == "<")
-                    code += "    for(int i=0;i<c-1;i++) if(!(a[i]<a[i+1])) return 0; return 1;\n";
+                    code += "    for(int i=0;i<c-1;i++) if(!(a[i]<a[i+1])) return AURA_AOT_FALSE; "
+                            "return AURA_AOT_TRUE;\n";
                 else if (n == ">")
-                    code += "    for(int i=0;i<c-1;i++) if(!(a[i]>a[i+1])) return 0; return 1;\n";
+                    code += "    for(int i=0;i<c-1;i++) if(!(a[i]>a[i+1])) return AURA_AOT_FALSE; "
+                            "return AURA_AOT_TRUE;\n";
                 else if (n == "<=")
-                    code += "    for(int i=0;i<c-1;i++) if(!(a[i]<=a[i+1])) return 0; return 1;\n";
+                    code += "    for(int i=0;i<c-1;i++) if(!(a[i]<=a[i+1])) return AURA_AOT_FALSE; "
+                            "return AURA_AOT_TRUE;\n";
                 else if (n == ">=")
-                    code += "    for(int i=0;i<c-1;i++) if(!(a[i]>=a[i+1])) return 0; return 1;\n";
+                    code += "    for(int i=0;i<c-1;i++) if(!(a[i]>=a[i+1])) return AURA_AOT_FALSE; "
+                            "return AURA_AOT_TRUE;\n";
                 else if (n == "not")
                     code += "    return "
                             "(c<1||a[0]==AURA_AOT_FALSE)?AURA_AOT_TRUE:AURA_AOT_FALSE;\n"; // #4491:
@@ -2731,8 +2779,11 @@ int main(int argc, char* argv[]) {
                             "r=aura_alloc_pair(rev[i],r);\n";
                     code += "    return r;\n";
                 } else if (n == "null?")
-                    code += "    return (c>=1&&a[0]==AURA_AOT_VOID)?1:0;\n"; // #4502: only '(), not
-                                                                             // 0 or unspecified
+                    // Issue #4640: tagged #t / #f, not a raw 1 / 0 (see
+                    // the comparison wrappers above).
+                    // #4502: only '() is null -- not 0 or unspecified.
+                    code += "    return "
+                            "(c>=1&&a[0]==AURA_AOT_VOID)?AURA_AOT_TRUE:AURA_AOT_FALSE;\n";
                 else if (n == "pair?")
                     // Issue #106 sub-task 4 (audit): the previous
                     // expression was (c>0&&(((a[0]&3)==1))||a[0]<0)
@@ -2744,7 +2795,9 @@ int main(int argc, char* argv[]) {
                     // (the old -9000... string sentinel is no
                     // longer part of the pair tag; we just check
                     // the low-bit tag like IS_PAIR in the runtime).
-                    code += "    return (c>0 && ((a[0]&3)==1)) ? 1 : 0;\n";
+                    // Issue #4640: tagged #t / #f, not a raw 1 / 0 (see
+                    // the comparison wrappers above).
+                    code += "    return (c>0 && ((a[0]&3)==1)) ? AURA_AOT_TRUE : AURA_AOT_FALSE;\n";
                 else if (n == "cons")
                     code += "    return aura_alloc_pair(c>0?a[0]:0,c>1?a[1]:0);\n";
                 else if (n == "car")

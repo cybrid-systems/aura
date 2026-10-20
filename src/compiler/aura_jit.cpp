@@ -3577,6 +3577,24 @@ struct LLVMBuilder {
                     metrics->exception_opcode_lowered.fetch_add(1, std::memory_order_relaxed);
                     metrics->exception_opcode_mask.fetch_or(1ull << 0, std::memory_order_relaxed);
                 }
+                // Issue #4640: the standalone AOT image runs against
+                // lib/runtime.c, whose value model is NOT the evaluator's
+                // ref layout: a pair is (pair_id << 2) | 1, so bits 2-5 of
+                // a pair hold the low nibble of the pair id instead of a
+                // RefType. The evaluator's error test ((v & 0x3F) == 0x21)
+                // therefore misfires on a pair whose id is 8 (mod 16): the
+                // enclosing function returns that pair as if it were an
+                // error and every later row of the program is dropped
+                // (a second member call site in one function never runs).
+                // The AOT runtime has no error value at all -- its
+                // primitives report a failure on stderr and return 0 --
+                // so the AOT's error test is a constant #f. The JIT path
+                // keeps the evaluator's test: its pair encoding IS the
+                // evaluator's ((id << 6) | 1).
+                if (aot_mode) {
+                    store(inst.ops[0], c64(KWD_FALSE_VAL));
+                    return true;
+                }
                 // ops[0] = result_slot, ops[1] = value_slot
                 // Issue #4573: a scalar-replaced pair is never an error.
                 if (is_spair(inst.ops[1])) {
@@ -4335,6 +4353,15 @@ struct LLVMBuilder {
                     case PrimVectorP: {
                         // Issue #1917: vector? matches is_vector (RefVector=3):
                         // low 6 bits == (RefVector << 2) | kRefLowTag == 0x0D.
+                        // Issue #4640: the AOT runtime has no vector value
+                        // (its vector prims are stubs) and the AOT runtime's
+                        // pair encoding makes this masked test collide with
+                        // a pair whose id is 3 (mod 16) -- so answer #f.
+                        if (aot_mode) {
+                            store(result_slot, c64(3));
+                            bump_fastpath();
+                            return true;
+                        }
                         constexpr std::uint64_t REF_TYPE_LOW_MASK = 0x3F;
                         constexpr std::uint64_t REF_VECTOR_TAG = (3ull << 2) | 1ull;
                         auto masked = irb->CreateAnd(a1, c64(REF_TYPE_LOW_MASK));
@@ -4348,6 +4375,16 @@ struct LLVMBuilder {
                         // low 6 bits == (RefError << 2) | kRefLowTag == 0x21.
                         // (OpIsError uses a coarser historical mask; PrimCall
                         // uses the full type field for interpreter parity.)
+                        // Issue #4640: the AOT image has no error value (see
+                        // the OpIsError case) and the AOT runtime's pair
+                        // encoding makes this masked test collide with a
+                        // pair whose id is 8 (mod 16) -- so answer #f, the
+                        // only answer the AOT value model can give.
+                        if (aot_mode) {
+                            store(result_slot, c64(3));
+                            bump_fastpath();
+                            return true;
+                        }
                         constexpr std::uint64_t REF_TYPE_LOW_MASK = 0x3F;
                         constexpr std::uint64_t REF_ERROR_TAG = (8ull << 2) | 1ull;
                         auto masked = irb->CreateAnd(a1, c64(REF_TYPE_LOW_MASK));
