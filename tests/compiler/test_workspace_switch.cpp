@@ -7,7 +7,9 @@
 //   AC3: live switch still returns #t and changes :current
 //   AC4: COW epoch on flat matches workspace node after switch
 //   AC5: this suite + linter; no docs/design/2785-*; no test_issue_2785.cpp
-
+//
+//   AC7 (#4632): after ONE mutate:rebind in a child workspace the
+//        per-switch cost stays flat (it used to grow with the switch count)
 //   AC6 (#4630): the workspace compile of a call chain carries ONE IR
 //        function per callee, not 2^depth duplicate copies, and the compile
 //        cost does not double per chain level
@@ -190,6 +192,95 @@ static void ac4630_workspace_compile_is_not_exponential() {
               "4630 AC6: the depth-14 compile must not cost 2^6 times the depth-8 compile");
     }
 }
+// Issue #4632: ONE mutate:rebind in a child workspace made every later
+// workspace :switch re-scan the whole top environment. A switch into a
+// rebound workspace re-binds that workspace's defines, and every re-bind
+// appends to the env's binding vector, so the env grew with the number of
+// switches while the compiler service re-walked all of it on every switch.
+// A multi-tenant switch loop therefore became quadratic.
+static std::string ac4632_switch_loop_script(int trips) {
+    return std::format(R"(
+(set-code "(define ttl (lambda (cat) 0))\n(define admit (lambda (cat src) #t))")
+(eval-current)
+(define w (workspace :create "c1"))
+(workspace :switch w)
+(eval-current)
+(mutate:rebind "ttl" "(lambda (cat) 7)" "r")
+(eval-current)
+(workspace :switch 0)
+(eval-current)
+(define t0 (current-time-ms))
+(let loop ((i 0)) (if (< i {}) (begin (workspace :switch w) (workspace :switch 0) (loop (+ i 1)))))
+(define t1 (current-time-ms))
+(display (list "trips" {} "ms" (- t1 t0)))
+(newline)
+)",
+                 trips, trips);
+}
+
+static void ac4632_switch_cost_stays_flat() {
+    std::println("\n--- AC7 (#4632): the per-switch cost stays flat after one rebind ---");
+    // The rebound child still evaluates its defines after many switches.
+    {
+        CompilerService cs;
+        CHECK(cs.eval(ac4632_switch_loop_script(50)).has_value(), "4632 AC7: the switch loop runs");
+        const auto created = cs.eval("(workspace :create \"ac4632\")");
+        CHECK(created.has_value(), "4632 AC7: workspace :create");
+        if (!created.has_value() || !is_int(*created))
+            return;
+        const auto id = as_int(*created);
+        CHECK(cs.eval(std::format("(workspace :switch {})", id)).has_value(), "4632 AC7: switch");
+        CHECK(cs.eval("(eval-current)").has_value(), "4632 AC7: eval-current");
+        CHECK(cs.eval("(mutate:rebind \"ttl\" \"(lambda (cat) 7)\" \"r\")").has_value(),
+              "4632 AC7: mutate:rebind");
+        CHECK(cs.eval("(eval-current)").has_value(), "4632 AC7: eval-current after rebind");
+        for (int i = 0; i < 20; ++i) {
+            CHECK(cs.eval(std::format("(workspace :switch {})", id)).has_value(),
+                  "4632 AC7: switch back to the child");
+            CHECK(cs.eval("(workspace :switch 0)").has_value(), "4632 AC7: switch to the root");
+        }
+        CHECK(cs.eval(std::format("(workspace :switch {})", id)).has_value(),
+              "4632 AC7: switch to the child");
+        const auto res = cs.eval("(ttl \"cat\")");
+        CHECK(res.has_value(), "4632 AC7: the rebound define evaluates");
+        if (res.has_value() && is_int(*res))
+            CHECK(as_int(*res) == 7, "4632 AC7: the rebound define returns the rebound body");
+    }
+    // The per-switch cost does not grow with the number of switches.
+    {
+        constexpr int kSmall = 500;
+        constexpr int kLarge = 4000;
+        double small_ms = 1e18;
+        double large_ms = 1e18;
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            for (const int trips : {kSmall, kLarge}) {
+                CompilerService cs;
+                const auto t0 = std::chrono::steady_clock::now();
+                const auto res = cs.eval(ac4632_switch_loop_script(trips));
+                const auto t1 = std::chrono::steady_clock::now();
+                if (!res.has_value())
+                    continue;
+                const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+                if (trips == kSmall)
+                    small_ms = std::min(small_ms, ms);
+                else
+                    large_ms = std::min(large_ms, ms);
+            }
+        }
+        const double small_per_trip = small_ms / static_cast<double>(kSmall);
+        const double large_per_trip = large_ms / static_cast<double>(kLarge);
+        std::println("4632 AC7: {} trips -> {:.4} ms/trip, {} trips -> {:.4} ms/trip", kSmall,
+                     small_per_trip, kLarge, large_per_trip);
+        CHECK(small_per_trip > 0.0, "4632 AC7: the small loop was measured");
+        // The unfixed path re-scanned the whole env per switch, so the
+        // per-trip cost grew with the number of switches (quadratic
+        // overall). The fixed path keeps it flat. 2.5x leaves room for a
+        // loaded machine.
+        CHECK(large_per_trip < small_per_trip * 2.5,
+              "4632 AC7: the per-switch cost must not grow with the number of switches");
+    }
+}
+
 int run_test_workspace_switch() {
     std::println("=== Issue #2785: workspace:switch consolidated bind ===");
     CHECK(true, "ac2785: issue stamp");
@@ -285,6 +376,9 @@ int run_test_workspace_switch() {
 
     std::println("\n=== Issue #4630: workspace compile call-chain memoization ===");
     ac4630_workspace_compile_is_not_exponential();
+
+    std::println("\n=== Issue #4632: workspace switch cost after one rebind ===");
+    ac4632_switch_cost_stays_flat();
 
     std::println("\n=== #2785 workspace:switch: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
