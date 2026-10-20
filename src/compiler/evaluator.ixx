@@ -1057,6 +1057,14 @@ export struct CapSnapshot {
     // rebuild on mismatch; compact / truncate clear the cache in the
     // same critical section as their env_generation_ bump.
     std::uint64_t env_gen = 0;
+    // Issue #4595: this snapshot is a live-safe EMPTY top_ capture (#4350/
+    // #4474 — a lambda created directly in top_). Its free vars must be
+    // answered by the LIVE top_ consult in Env::lookup / lookup_cell_*,
+    // never by the SoA parent chain (which can alias the letrec #232
+    // registration frame — a frozen copy of top_ from named-let time).
+    // Copied from EnvFrame::live_safe_top_ so fast paths that do not take
+    // the frame lock can apply the same guard (#4599 chain_read_var).
+    bool live_safe_top = false;
     std::shared_ptr<const CapSnapshot> parent;
 };
 

@@ -5598,6 +5598,12 @@ std::optional<EvalResult> Evaluator::try_eval_flat_hot(aura::ast::FlatAST& flat,
         // through; they are never stored in the name cache.
         if (!env.binding_mirrors_aligned())
             return std::nullopt;
+        // Issue #4595: a live-safe EMPTY top_ capture answers through the
+        // live top_ consult in Env::lookup, not through the per-node cache
+        // (a cached Cell from the letrec #232 frozen registration frame
+        // would re-introduce the stale-global split the consult fixes).
+        if (const auto& cs = env.cap_snapshot(); cs && cs->live_safe_top)
+            return std::nullopt;
         const auto sym = flat.sym_id(id);
         if (sym == aura::ast::INVALID_SYM)
             return std::nullopt;
@@ -5935,6 +5941,24 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
         auto chain_read_var = [&](const Env& start,
                                   aura::ast::SymId sym) -> std::optional<types::EvalValue> {
             constexpr std::size_t kMaxChainHops = 1024; // Env::lookup MAX_ENV_DEPTH parity
+            // Issue #4595: a live-safe EMPTY capture (a lambda created
+            // directly in top_ — #4350/#4474) has no local bindings of its
+            // own; its authoritative answer is the LIVE top_ consult in
+            // Env::lookup. Walking the SoA parent chain here instead hits
+            // the letrec #232 registration frame — a frozen copy of top_
+            // taken at named-let time — and answers with the stale global
+            // cell (the #4595 repro read x=0 instead of the later let's 42,
+            // and set! then split from the read). Decline on the capture's
+            // live_safe_top marker (copied into the snapshot) so the exact
+            // Env::lookup path runs the live top_ consult.
+            {
+                const auto& cs = start.cap_snapshot();
+                const bool live_safe_empty =
+                    cs ? cs->live_safe_top
+                       : (start.parent_id() != NULL_ENV_ID && start.bindings().empty());
+                if (live_safe_empty)
+                    return std::nullopt;
+            }
             const Env* e = &start;
             for (std::size_t hops = 0; e != nullptr && hops < kMaxChainHops; ++hops) {
                 if (e->pool() != p || !e->binding_mirrors_aligned())
