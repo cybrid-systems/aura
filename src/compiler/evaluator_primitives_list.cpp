@@ -6,6 +6,8 @@
 module;
 #include "compiler/locked_string_heap.hh" // Issue #4543
 
+#include <string_view> // Issue #4628: values_equal takes a string_view op
+
 #include "primitives_detail.h"
 #include "observability_metrics.h"
 #include "prim_heap_quota.hh" // Issue #2916 / #2997
@@ -62,6 +64,12 @@ using types::make_primitive;
 using types::make_string;
 using types::make_vector;
 using types::make_void;
+
+// Issue #4628: the structural comparison equal? uses, shared with the
+// member primitive (R7RS 6.4: member compares the elements with
+// equal?). Defined in evaluator_primitives_runtime.cpp (same module).
+bool values_equal(Evaluator& ev, const EvalValue& x, const EvalValue& y, std::string_view op,
+                  bool& denied);
 
 namespace {
 
@@ -517,20 +525,6 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 return make_primitive_error(string_heap, error_values, "member: not a list",
                                             counter);
             }
-            auto elem_eq = [&](const EvalValue& x, const EvalValue& y) -> bool {
-                if (x == y)
-                    return true;
-                if (is_int(x) && is_int(y))
-                    return as_int(x) == as_int(y);
-                if (is_string(x) && is_string(y)) {
-                    auto xi = as_string_idx(x), yi = as_string_idx(y);
-                    return xi < string_heap.size() && yi < string_heap.size() &&
-                           string_heap[xi] == string_heap[yi];
-                }
-                if (is_bool(x) && is_bool(y))
-                    return as_bool(x) == as_bool(y);
-                return false;
-            };
             while (!is_end_of_list(v)) {
                 if (!is_pair(v)) {
                     return make_primitive_error(string_heap, error_values, "member: improper list",
@@ -549,7 +543,19 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         string_heap, error_values,
                         "member: cross-tenant pair slot read denied (#4505)", counter);
                 }
-                if (elem_eq(pairs[idx].car, val))
+                // Issue #4628: R7RS 6.4 — member compares the elements with
+                // equal?, not by identity. The old elem_eq only knew
+                // identical values, ints, strings and bools, so a
+                // structurally equal pair, vector or float was never found.
+                // The shared comparison is the one equal? uses.
+                bool denied = false;
+                const bool hit = values_equal(ev, pairs[idx].car, val, "member", denied);
+                if (denied) {
+                    return make_primitive_error(string_heap, error_values,
+                                                "member: cross-tenant slot read denied (#4505)",
+                                                counter);
+                }
+                if (hit)
                     return v;
                 v = pairs[idx].cdr;
             }
