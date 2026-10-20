@@ -9007,6 +9007,7 @@ public:
         sync_soft_tw_export_cells_into_ir_value_bindings_();
     }
 
+
     void sync_soft_tw_export_cells_into_ir_value_bindings_() {
         // Soft (require … all:) injects via Env::bind into legacy string
         // bindings_ (top_ often has no StringPool, so bindings_symid_ /
@@ -11686,6 +11687,10 @@ public:
         auto ir_mod = lower_to_ir_with_cache_tracked(
             flat, pool, arena_, cache_ptr, nullptr, &evaluator_.primitives(), cache_bridge_ptr,
             cache_strings_ptr, &name, &type_registry_, value_cells_for_lowering());
+        // Issue #4630: hash-cons the inlined callee copies (one copy per
+        // callee instead of one per call site) so the specialised bundle
+        // stays O(depth) instead of 2^depth.
+        (void)hash_cons_module_functions_4630(ir_mod);
         if (ir_mod.functions.empty())
             return false;
         std::vector<aura::ir::IRFunction> bundle;
@@ -12408,6 +12413,12 @@ public:
         auto ir_mod = lower_to_ir_with_cache_tracked(
             flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), cache_bridge_ptr,
             cache_strings_ptr, &name_str, &type_registry_, value_cells_for_lowering());
+        // Issue #4630: the lowering inlines a cached callee bundle at every
+        // call site, so a define whose body calls the next define twice
+        // carries two copies of that bundle (2^depth down a chain). Hash-cons
+        // the copies: the bundle then carries one copy per callee and the
+        // per-function passes below run on O(depth) functions, not 2^depth.
+        (void)hash_cons_module_functions_4630(ir_mod);
         // Issue #660 debug: dump IR after lowering
         if (name_str.empty()) {
             for (auto& func : ir_mod.functions) {
@@ -15820,6 +15831,153 @@ private:
     //   Does NOT take workspace_mtx_ / env_frames_mtx_ directly.
     //   invalidate_bridge_for / batch_deopt run under mutate only.
     void invalidate_function(const std::string& name);
+
+
+    // Issue #4630: hash-cons the functions of a lowered module.
+    //
+    // The workspace compile inlines a callee's cached IR bundle at EVERY
+    // call site (the lowering copies the whole cached bundle per hit). A
+    // define whose body calls the next define twice therefore carries two
+    // copies of that define's bundle, and a chain of such defines carries
+    // 2^depth copies - while the call graph has only `depth` edges. Every
+    // later step (the per-function coercion elimination, the source->IR map
+    // rebuild, the bundle copies into the IR cache) is then O(2^depth), so
+    // the workspace set-code / eval-current / mutate:rebind cost doubles per
+    // chain level (#4630).
+    //
+    // The copies of one callee function differ ONLY in the function ids they
+    // reference (the lowering remaps the MakeClosure target per copy), so
+    // the copies are interchangeable: keep one copy per name group and point
+    // every reference at the kept copy. The kept copy runs the same code, so
+    // behaviour is unchanged - the bundle simply stops carrying duplicates.
+    // That is the memoisation the call graph deserves: a callee visited
+    // twice is carried once.
+    //
+    // Returns the number of duplicate functions removed.
+    std::size_t hash_cons_module_functions_4630(aura::ir::IRModule& mod) {
+        auto& fns = mod.functions;
+        if (fns.size() < 2)
+            return 0;
+        // Shape of a function: its instructions with every function-id
+        // operand masked out. Two copies of one function share the shape;
+        // two genuinely different functions that happen to share a name do
+        // not (both are then kept).
+        auto shape_of = [](const aura::ir::IRFunction& f) -> std::uint64_t {
+            std::uint64_t h = 1469598103934665603ULL;
+            auto mix = [&h](std::uint64_t v) noexcept {
+                h ^= v;
+                h *= 1099511628211ULL;
+            };
+            mix(f.blocks.size());
+            for (const auto& blk : f.blocks) {
+                mix(blk.instructions.size());
+                for (const auto& inst : blk.instructions) {
+                    mix(static_cast<std::uint64_t>(inst.opcode));
+                    for (std::size_t k = 0; k < inst.operands.size(); ++k) {
+                        // MakeClosure operand[1] is the callee function id
+                        // (IRModule::find_callers_of reads it the same way).
+                        if (inst.opcode == aura::ir::IROpcode::MakeClosure && k == 1)
+                            mix(0); // masked - the copies differ only here
+                        else
+                            mix(inst.operands[k]);
+                    }
+                }
+            }
+            return h;
+        };
+        // Group by function name: every member of a group is a copy of the
+        // same cached function, so one member can serve all of them.
+        struct Group {
+            std::size_t keeper = 0;
+            std::uint64_t shape = 0;
+        };
+        std::unordered_map<std::string, Group, aura::core::TransparentStringHash, std::equal_to<>>
+            groups;
+        groups.reserve(fns.size());
+        std::vector<char> keep(fns.size(), 1);
+        std::size_t duplicates = 0;
+        for (std::size_t i = 0; i < fns.size(); ++i) {
+            const auto shape = shape_of(fns[i]);
+            auto it = groups.find(fns[i].name);
+            if (it == groups.end()) {
+                groups.emplace(fns[i].name, Group{i, shape});
+                continue;
+            }
+            if (it->second.shape != shape)
+                continue; // same name, different body - keep both
+            keep[i] = 0;
+            ++duplicates;
+        }
+        if (duplicates == 0)
+            return 0;
+        // dropped function id -> kept function id
+        std::unordered_map<std::uint32_t, std::uint32_t> to_kept;
+        to_kept.reserve(duplicates * 2);
+        for (std::size_t i = 0; i < fns.size(); ++i) {
+            if (keep[i] != 0)
+                continue;
+            const auto& g = groups[fns[i].name];
+            to_kept[fns[i].id] = fns[g.keeper].id;
+        }
+        // Point every reference at the kept copy.
+        auto retarget = [&](std::vector<aura::ir::IRFunction>& fns_in) {
+            for (auto& f : fns_in)
+                for (auto& blk : f.blocks)
+                    for (auto& inst : blk.instructions) {
+                        if (inst.opcode != aura::ir::IROpcode::MakeClosure)
+                            continue;
+                        if (inst.operands.size() < 2)
+                            continue;
+                        auto it = to_kept.find(inst.operands[1]);
+                        if (it != to_kept.end())
+                            inst.operands[1] = it->second;
+                    }
+        };
+        retarget(fns);
+        // Drop the duplicates and renumber the survivors.
+        auto old_bridge = std::move(mod.closure_bridge);
+        std::vector<aura::ir::IRFunction> kept;
+        kept.reserve(fns.size() - duplicates);
+        std::vector<std::uint32_t> old_ids;
+        old_ids.reserve(fns.size() - duplicates);
+        std::unordered_map<std::uint32_t, std::uint32_t> to_new;
+        to_new.reserve(fns.size());
+        for (std::size_t i = 0; i < fns.size(); ++i) {
+            if (keep[i] == 0)
+                continue;
+            to_new[fns[i].id] = static_cast<std::uint32_t>(kept.size());
+            old_ids.push_back(fns[i].id);
+            kept.push_back(std::move(fns[i]));
+        }
+        for (auto& f : kept) {
+            for (auto& blk : f.blocks)
+                for (auto& inst : blk.instructions) {
+                    if (inst.opcode != aura::ir::IROpcode::MakeClosure)
+                        continue;
+                    if (inst.operands.size() < 2)
+                        continue;
+                    auto it = to_new.find(inst.operands[1]);
+                    if (it != to_new.end())
+                        inst.operands[1] = it->second;
+                }
+            // generic_id indexes IRModule.functions[] - remap it too.
+            if (f.generic_id != 0xFFFFFFFFu) {
+                auto it = to_new.find(f.generic_id);
+                f.generic_id = (it == to_new.end()) ? 0xFFFFFFFFu : it->second;
+            }
+            f.id = to_new[f.id];
+        }
+        mod.functions = std::move(kept);
+        mod.closure_bridge.assign(mod.functions.size(), aura::ir::ClosureBridgeData{});
+        for (std::size_t j = 0; j < mod.functions.size(); ++j) {
+            const auto old = old_ids[j];
+            if (old < old_bridge.size())
+                mod.closure_bridge[j] = std::move(old_bridge[old]);
+        }
+        if (auto it = to_new.find(mod.entry_function_id); it != to_new.end())
+            mod.entry_function_id = it->second;
+        return duplicates;
+    }
 
 
     // Issue #684: lower + absorb SoA dual-emit snapshot.

@@ -8,9 +8,14 @@
 //   AC4: COW epoch on flat matches workspace node after switch
 //   AC5: this suite + linter; no docs/design/2785-*; no test_issue_2785.cpp
 
+//   AC6 (#4630): the workspace compile of a call chain carries ONE IR
+//        function per callee, not 2^depth duplicate copies, and the compile
+//        cost does not double per chain level
+
 #include "test_harness.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <format>
 #include <fstream>
 #include <print>
@@ -80,6 +85,111 @@ static void ac4332_1_child_mutate_cow_isolates_parent() {
           "4332 AC1: parent B untouched (rename stayed in the child layer)");
 }
 
+// Issue #4630: the workspace compile inlined a callee's cached IR bundle at
+// EVERY call site, so a define whose body calls the next define twice
+// carried 2^depth copies of the same functions. Every later step (the
+// per-function coercion elimination, the source->IR map rebuild, the bundle
+// copies into the IR cache) was then O(2^depth) and the workspace set-code /
+// eval-current / mutate:rebind cost doubled per chain level - even though the
+// call graph has only "depth" edges. The bundle now carries one copy per
+// callee.
+static std::string ac4630_chain_source(int depth) {
+    std::string src = "(define k0 (lambda (x) (+ x 1)))\n";
+    for (int j = 1; j <= depth; ++j) {
+        src +=
+            std::format("(define k{} (lambda (x) (+ (k{} x) (k{} (+ x 1)))))\n", j, j - 1, j - 1);
+    }
+    return src;
+}
+
+// The chain source goes into an Aura string literal: newlines are escaped.
+static std::string ac4630_set_code_form(const std::string& src) {
+    std::string escaped;
+    escaped.reserve(src.size() + 16);
+    for (const char c : src) {
+        if (c == '\n')
+            escaped += "\\n";
+        else if (c == '"')
+            escaped += "\\\"";
+        else
+            escaped += c;
+    }
+    return std::format("(set-code \"{}\")", escaped);
+}
+
+// k0(x) = x+1, k_n(x) = k_{n-1}(x) + k_{n-1}(x+1) => k_n(x) = 2^n * x + b_n.
+static long long ac4630_chain_value(int depth, long long x) {
+    long long a = 1;
+    long long b = 1;
+    for (int n = 1; n <= depth; ++n) {
+        const long long na = a * 2;
+        const long long nb = b * 2 + a;
+        a = na;
+        b = nb;
+    }
+    return a * x + b;
+}
+
+static void ac4630_workspace_compile_is_not_exponential() {
+    std::println("\n--- AC6 (#4630): the workspace compile carries one copy per callee ---");
+    constexpr int kDepth = 14;
+    CompilerService cs;
+    CHECK(cs.eval(ac4630_set_code_form(ac4630_chain_source(kDepth))).has_value(),
+          "4630 AC6: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4630 AC6: eval-current");
+    const auto* entry = cs.get_define_v2(std::format("k{}", kDepth));
+    CHECK(entry != nullptr, "4630 AC6: the top define has an IR cache entry");
+    if (entry != nullptr) {
+        const auto functions = entry->irs.size();
+        std::println("4630 AC6: IR bundle functions = {}", functions);
+        // One function per define in the chain (plus room for the entry), NOT
+        // 2^14 = 16384 copies of the same callee body.
+        CHECK(functions <= static_cast<std::size_t>(kDepth) + 2,
+              "4630 AC6: the IR bundle must carry one function per callee, not 2^depth copies");
+    }
+    // The chain still evaluates to the same values.
+    {
+        constexpr int kEvalDepth = 5;
+        CompilerService ev;
+        CHECK(ev.eval(ac4630_set_code_form(ac4630_chain_source(kEvalDepth))).has_value(),
+              "4630 AC6: set-code (value check)");
+        CHECK(ev.eval("(eval-current)").has_value(), "4630 AC6: eval-current (value check)");
+        for (int n = 0; n <= kEvalDepth; ++n) {
+            const auto res = ev.eval(std::format("(k{} 10)", n));
+            CHECK(res.has_value(), std::format("4630 AC6: k{} evaluates", n));
+            if (!res.has_value() || !is_int(*res))
+                continue;
+            CHECK(as_int(*res) == ac4630_chain_value(n, 10),
+                  std::format("4630 AC6: k{}(10) == {}", n, ac4630_chain_value(n, 10)));
+        }
+    }
+    // The compile cost does not double per chain level.
+    {
+        auto compile_ms = [](int depth) -> double {
+            double best = 1e18;
+            for (int attempt = 0; attempt < 3; ++attempt) {
+                CompilerService svc;
+                const auto t0 = std::chrono::steady_clock::now();
+                if (!svc.eval(ac4630_set_code_form(ac4630_chain_source(depth))).has_value())
+                    return 1e18;
+                if (!svc.eval("(eval-current)").has_value())
+                    return 1e18;
+                const auto t1 = std::chrono::steady_clock::now();
+                const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+                best = std::min(best, ms);
+            }
+            return best;
+        };
+        const double shallow = compile_ms(8);
+        const double deep = compile_ms(14);
+        std::println("4630 AC6: depth 8 = {:.2} ms, depth 14 = {:.2} ms", shallow, deep);
+        CHECK(shallow > 0.0, "4630 AC6: the shallow compile was measured");
+        // 2^6 = 64x for the unfixed path; the fixed path is flat. 10x leaves
+        // room for a loaded machine in both directions.
+        CHECK(deep < shallow * 10.0,
+              "4630 AC6: the depth-14 compile must not cost 2^6 times the depth-8 compile");
+    }
+}
 int run_test_workspace_switch() {
     std::println("=== Issue #2785: workspace:switch consolidated bind ===");
     CHECK(true, "ac2785: issue stamp");
@@ -172,6 +282,10 @@ int run_test_workspace_switch() {
 
     std::println("\n=== Issue #4332: child-layer mutate COW isolation ===");
     ac4332_1_child_mutate_cow_isolates_parent();
+
+    std::println("\n=== Issue #4630: workspace compile call-chain memoization ===");
+    ac4630_workspace_compile_is_not_exponential();
+
     std::println("\n=== #2785 workspace:switch: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
