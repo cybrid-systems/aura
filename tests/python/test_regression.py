@@ -2753,6 +2753,64 @@ def test_nary_map_for_each_4616():
     print(f"  ✅ test_nary_map_for_each_4616 ({len(rows)} value rows + {len(err_rows)} error rows)")
 
 
+def test_rebind_cascade_linear_4615():
+    """Issue #4615: rebind of a callee is linear in the caller's body size.
+
+    IRCacheEntry::mark_body_only_dirty() looped every body block and called
+    cascade_block_to_instructions(body_idx, bi); each call re-summed every
+    block for the total and blocks 0..bi for the prefix base, so one
+    body-dirty mark of a caller with B blocks was O(B^2). A K=4000 call-site
+    caller paid ~250 ms (issue gdb) per rebind of the callee it references.
+    Correctness first — the rebind is visible through the caller's body and
+    through a caller-less define — then the scaling guard: 8x the call sites
+    must not cost the pre-fix quadratic wall clock (measured 191/506/2064 ms
+    at K=1000/2000/4000 before this fix; the K=8000 run extrapolates to
+    seconds there, ~0.3 s after).
+    """
+
+    def run(k):
+        calls = " ".join(f"(f {i})" for i in range(k))
+        prog = f"""
+(set-code "(define f (lambda (x) (+ x 1))) (define g (lambda (x) (* x 2))) (define caller (lambda () (list {calls})))")
+(eval-current)
+(define pre (caller))
+(mutate:rebind "f" "(lambda (x) (+ x 2))" "r")
+(define post (caller))
+(mutate:rebind "g" "(lambda (x) (* x 3))" "r")
+(define (time-it reps thunk)
+  (let ((t0 (current-time-ms)))
+    (let loop ((r 0)) (if (< r reps) (begin (thunk) (loop (+ r 1))) #f))
+    (quotient (- (current-time-ms) t0) reps)))
+(display (list "R" (car post) (car (reverse post)) (car pre) (g 5)
+               (time-it 3 (lambda () (mutate:rebind "f" "(lambda (x) (+ x 2))" "r")))))
+(newline)
+"""
+        r = subprocess.run([AURA], input=prog, capture_output=True, text=True, timeout=300)
+        assert r.returncode == 0, (r.stderr or "")[-500:]
+        line = next(x for x in r.stdout.splitlines() if x.startswith("(R "))
+        vals = [int(v) for v in re.findall(r"-?\d+", line)]
+        assert len(vals) == 5, line
+        return vals
+
+    first_lo, last_lo, pre_lo, g_lo, t_lo = run(1000)
+    first_hi, last_hi, pre_hi, g_hi, t_hi = run(8000)
+    assert pre_lo == 1 and pre_hi == 1, f"pre-rebind caller starts at f(0)=1 ({pre_lo}/{pre_hi})"
+    assert first_lo == 2 and last_lo == 1001, f"K=1000 cascade stale: first={first_lo} last={last_lo}"
+    assert first_hi == 2 and last_hi == 8001, f"K=8000 cascade stale: first={first_hi} last={last_hi}"
+    assert g_lo == 15 and g_hi == 15, f"caller-less rebind stale: g(5)={g_lo}/{g_hi}"
+    ratio = t_hi / max(1.0, float(t_lo))
+    # 8x the call sites: linear ~8x, pre-#4615 quadratic ~40x+. The bound
+    # sits well clear of both (measured 3.9x after the fix on the same box).
+    assert ratio <= 12.0, (
+        f"rebind of f scales superlinearly with the caller body: "
+        f"K=1000 {t_lo}ms -> K=8000 {t_hi}ms (ratio {ratio:.1f}; pre-#4615 ~40x, linear ~8x)"
+    )
+    assert t_hi <= 2000, f"K=8000 rebind {t_hi}ms (pre-#4615 extrapolates to seconds)"
+    print(
+        f"  ✅ rebind-cascade-linear-4615 (K=1000 {t_lo}ms, K=8000 {t_hi}ms, ratio {ratio:.1f}; redefinition visible)"
+    )
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -2774,6 +2832,7 @@ for tf in [
     test_jit_unbound_callee_4607,
     test_cfunc_budget_4555,
     test_nary_map_for_each_4616,
+    test_rebind_cascade_linear_4615,
     test_jit,
     test_mutation_sequences,
     test_freeze_load,

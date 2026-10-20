@@ -8634,6 +8634,24 @@ def cmd_lint():
             "Issue #4598 phase-3 snapshot share/stamps linter failed - run python3 scripts/check_snapshot_share_stamps_4598.py"
         )
         return r
+    # Issue #4615 (perf): mutate:rebind of a callee is O(B^2) in the basic
+    # blocks of a calling define. IRCacheEntry::mark_body_only_dirty looped
+    # the body blocks and cascade_block_to_instructions re-summed every block
+    # for the total + blocks 0..bi for the prefix base per call;
+    # is_instruction_dirty recomputed the same prefix per query. The entry now
+    # caches per-function block→instruction prefix offsets (invalidated on
+    # every irs[] write), the body mark is one resize + std::fill, and the
+    # per-instruction queries are O(1). Runtime evidence lives in
+    # tests/python/test_regression.py::test_rebind_cascade_linear_4615 (no
+    # test_issue_4615.cpp per #81934, no docs/design/4615-* per #1655).
+    bpo4615_script = ROOT / "scripts" / "check_block_prefix_offsets_4615.py"
+    if not bpo4615_script.exists():
+        fail(f"missing {bpo4615_script}")
+        return 1
+    r = run([sys.executable, str(bpo4615_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4615 block-prefix offset linter failed - run python3 scripts/check_block_prefix_offsets_4615.py")
+        return r
     # Issue #4232 (Soft): "cannot call: car" in soft_worldline_pick (serve-async
     # Soft Ready denseness, soft_select.via=host_fallback). The tree-walker's
     # prim-value call handler re-resolved a registry-manufactured PrimitiveRef
