@@ -2980,7 +2980,35 @@ def test_workspace_set_global_4618():
         "(display hostv) (newline)\n",
         "(1 2)\n2",
     )
-    # 7. --jit: one begin form (the runner only executes a single
+    # 7. Issue #4618 residual: two top-level defines whose `let` cell
+    #    uses the same name must own independent cells. The second `let`
+    #    used to append its cell to the live top_; the first closure's
+    #    empty live-safe capture then resolved the name through the live
+    #    top_ instead of its own cell, so (b) read and wrote a's n and
+    #    this printed (1 2) / #f / 2.
+    row(
+        "same-let-name-4618",
+        "(define a (let ((n 0)) (lambda () (set! n (+ n 1)) n)))\n"
+        "(define b (let ((n 0)) (lambda () (set! n (- n 1)) (< n 0))))\n"
+        "(display (list (a) (a))) (newline)\n"
+        "(display (b)) (newline)\n"
+        "(display (a)) (newline)\n",
+        "(1 2)\n#t\n3",
+    )
+    # 8. Same shape through a workspace set-code block (the issue's
+    #    counter / neg? rows): the two cells must be independent here
+    #    too, and a's counter must keep counting (3) after neg?'s set!.
+    row(
+        "ws-same-let-name-4618",
+        '(set-code "(define counter (let ((n 0)) (lambda () (set! n (+ n 1)) n))) '
+        '(define neg? (let ((n 0)) (lambda () (set! n (- n 1)) (< n 0))))")\n'
+        "(eval-current)\n"
+        "(display (list (counter) (counter))) (newline)\n"
+        "(display (neg?)) (newline)\n"
+        "(display (counter)) (newline)\n",
+        "(1 2)\n#t\n3",
+    )
+    # 9. --jit: one begin form (the runner only executes a single
     #    expression form in this face), same store contract.
     jit_code = (
         '(begin (set-code "(define wsv 0) (define bump-ws (lambda () (set! wsv (+ wsv 1)) wsv))") '
@@ -2992,7 +3020,7 @@ def test_workspace_set_global_4618():
     jit_out = (run(jit_code, "jit").stdout or "").strip()
     ev_out = (run(jit_code, "eval").stdout or "").strip()
     assert jit_out == ev_out == "(1 2)\n2", f"jit-shape: eval={ev_out!r} jit={jit_out!r}"
-    print("  ✅ test_workspace_set_global_4618 (4 store rows + 2 controls x eval/ir, jit shape)")
+    print("  ✅ test_workspace_set_global_4618 (4 store rows + 4 controls x eval/ir, jit shape)")
 
 
 for tf in [
