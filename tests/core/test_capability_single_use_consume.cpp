@@ -28,6 +28,9 @@
 //     surfaces capability-single-use-consumed-total / schema-2586 / issue-2586.
 
 #include "test_harness.hpp"
+#include "compiler/source_contract.hpp"
+
+using aura::test::source_contract::brace_body;
 
 #include "compiler/mutation_hold_budget.h"
 #include "compiler/security_capabilities.h"
@@ -1371,9 +1374,10 @@ static void ac3997_4_source_cite() {
     std::println("\n--- #3997 AC4: source-cite live-registry dedup; no invent ---");
     const auto sec = read_file("src/compiler/evaluator_security.cpp");
     CHECK(sec.find("Issue #3997") != std::string::npos, "3997 AC4: grant_capability cites");
-    const auto g4 = sec.find("void Evaluator::grant_capability(std::string cap, bool single_use");
-    CHECK(g4 != std::string::npos, "3997 AC4: 4-arg grant_capability present");
-    const auto win = sec.substr(g4, 2200);
+    const auto g4 =
+        brace_body(sec, "void Evaluator::grant_capability(std::string cap, bool single_use");
+    CHECK(g4.ok, "3997 AC4: 4-arg grant_capability body boundary found");
+    const auto win = g4.view;
     CHECK(win.find("by_tenant") != std::string::npos && win.find("!g.revoked") != std::string::npos,
           "3997 AC4: dedup consults live registry row");
     CHECK(win.find("granted_capabilities_.erase") != std::string::npos,
@@ -2484,9 +2488,9 @@ static void ac3996_4_source_cite() {
           "3996 AC4: grant_locked token-based exemption");
     CHECK(cap.find("high_bits && !session_bound") == std::string::npos,
           "3996 AC4: shape-based session exemption removed");
-    const auto sess = sec.find("void Evaluator::grant_effect_session(");
-    CHECK(sess != std::string::npos, "3996 AC4: grant_effect_session present");
-    const auto win = sec.substr(sess, 8000);
+    const auto sess = brace_body(sec, "void Evaluator::grant_effect_session(");
+    CHECK(sess.ok, "3996 AC4: grant_effect_session body boundary found");
+    const auto win = sess.view;
     CHECK(win.find("Issue #3996") != std::string::npos, "3996 AC4: session surface cites");
     CHECK(win.find("session-grant-needs-tenant-admin") != std::string::npos, "3996 AC4: SE reason");
     CHECK(win.find("is_high_risk && !is_admin") != std::string::npos,
@@ -3244,9 +3248,9 @@ static void ac3992_3_source_cite() {
     CHECK(cap.find("kCapabilityMidRevokeEpochHonestIssue = 3992") != std::string::npos,
           "3992 AC3: issue stamp");
     CHECK(cap.find("Issue #3992") != std::string::npos, "3992 AC3: mid-locked cites #3992");
-    auto pos = cap.find("revoke_session_grants_for_mid_locked");
-    CHECK(pos != std::string::npos, "3992 AC3: mid-locked present");
-    auto win = pos == std::string::npos ? std::string{} : cap.substr(pos, 2800);
+    const auto pos = brace_body(cap, "revoke_session_grants_for_mid_locked");
+    CHECK(pos.ok, "3992 AC3: mid-locked body boundary found");
+    const auto win = pos.view;
     CHECK(win.find("capability_epoch_hard_face()") != std::string::npos,
           "3992 AC3: hard-face invent only");
     CHECK(win.find("if (ep == 0)\n            ep = 1;") == std::string::npos,

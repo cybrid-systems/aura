@@ -20,6 +20,9 @@
 #include <vector>
 
 #include "compiler/observability_metrics.h"
+#include "compiler/source_contract.hpp"
+
+using aura::test::source_contract::brace_body;
 
 import std;
 import aura.compiler.service;
@@ -70,7 +73,9 @@ int main() {
         CHECK(!prim.empty(), "read compile_05.cpp");
         auto pos = prim.find("\"compile:type-cache-stats\"");
         CHECK(pos != std::string::npos, "primitive present");
-        auto win = prim.substr(pos, 1200);
+        const auto slice = brace_body(prim, "\"compile:type-cache-stats\", [&ev]");
+        CHECK(slice.ok, "stats primitive body boundary found");
+        const auto win = slice.view;
         CHECK(win.find("snapshot_type_cache_stats") != std::string::npos, "uses snapshot");
         CHECK(win.find("typecheck_cache_hits_total.load") == std::string::npos,
               "no raw hits.load in primitive");

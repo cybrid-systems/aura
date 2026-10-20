@@ -54,6 +54,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from source_window import body_between  # noqa: E402
+from source_window import check as _structural  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -73,13 +77,10 @@ def main() -> int:
         if n in hay:
             fails.append(f"{label}: must not contain {n!r}")
 
-    def window(src: str, begin: str, end: str, label: str, width: int = 5200) -> str:
-        b = src.find(begin)
-        if b == -1:
-            fails.append(f"{label}: anchor {begin!r} missing")
-            return ""
-        e = src.find(end, b + len(begin))
-        return src[b : (e if e != -1 else b + width)]
+    def window(src: str, begin: str, end: str, label: str) -> str:
+        # Anchor-based only: a missing end anchor is a FAIL, never a byte
+        # width guess (that is how a growing body silently escaped a check).
+        return _structural(label, body_between(src, begin, end), fails, f"{begin!r}..{end!r}")
 
     sec = _read("src/compiler/evaluator_security.cpp")
     ixx = _read("src/compiler/evaluator.ixx")
@@ -132,7 +133,7 @@ def main() -> int:
         fails.append(f"AC3 query_workspace resolve sites: expected >=2, found {hits}")
     fresh = window(qws, 'add("query:result-fresh?"', 'add("query:result-matches"', "AC3 result-fresh?")
     must("Issue #4165", "AC3 result-fresh? cites the issue", fresh)
-    matches = window(qws, 'add("query:result-matches"', 'add("query:query-epoch-stats"', "AC3 result-matches")
+    matches = window(qws, 'add("query:result-matches"', "auto query_epoch_stats_fn =", "AC3 result-matches")
     must("Issue #4165", "AC3 result-matches cites the issue", matches)
     must("ev.agent_scoped_fiber_id()", "AC3 stable-ref-provenance Agent-scoped", qprov)
 

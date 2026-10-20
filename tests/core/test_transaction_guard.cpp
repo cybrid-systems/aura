@@ -9,6 +9,9 @@
 //   AC5: Coverage linter + source-cite schema-2555 / #2555
 
 #include "test_harness.hpp"
+#include "compiler/source_contract.hpp"
+
+using aura::test::source_contract::brace_body;
 
 #include <atomic>
 #include <cstdint>
@@ -122,9 +125,9 @@ static void ac2_call_sites() {
     // Issue #3192: mutate:set-body moved from host try_acquire to
     // mutate_dispatch_try_acquire (SSOT Guard per #3074).
     {
-        const auto pos = mut.find("add_mutate(\"mutate:set-body\"");
-        CHECK(pos != std::string::npos, "AC2: mutate:set-body registered");
-        const auto block = (pos != std::string::npos) ? mut.substr(pos, 1200) : std::string{};
+        const auto block_slice = brace_body(mut, "add_mutate(\"mutate:set-body\"");
+        CHECK(block_slice.ok, "AC2: mutate:set-body body boundary found");
+        const auto block = block_slice.view;
         CHECK(block.find("mutate_dispatch_try_acquire") != std::string::npos,
               "AC2: set-body uses mutate_dispatch_try_acquire");
         CHECK(block.find("TransactionGuard tg") == std::string::npos,

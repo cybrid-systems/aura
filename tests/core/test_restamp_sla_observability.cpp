@@ -22,6 +22,10 @@
 //        exercises the new SLA surface directly.
 
 #include "test_harness.hpp"
+#include "compiler/source_contract.hpp"
+
+using aura::test::source_contract::brace_body;
+using aura::test::source_contract::slice_between;
 
 #include "compiler/typed_mutation_audit.h"
 #include "core/workspace_epoch.hh"
@@ -309,12 +313,13 @@ static void ac3019_1_unified_entry_four_sites() {
 static void ac3019_2_order_node_stable_pin() {
     std::println("\n--- #3019 AC2: restamp order node → stable → pin ---");
     const auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
-    const auto uni = fm.find("Evaluator::unified_restamp_after_boundary");
-    CHECK(uni != std::string::npos, "AC2: unified impl present");
-    const auto triad = uni == std::string::npos ? std::string::npos : fm.find("if (ws) {", uni);
-    // Window 2800: unified restamp body grew past 1600 (comment block
-    // growth, #3287 alignment — check_unified_restamp_3019.py uses 2800).
-    const auto body = triad == std::string::npos ? std::string{} : fm.substr(triad, 2800);
+    const auto uni = brace_body(fm, "Evaluator::unified_restamp_after_boundary");
+    CHECK(uni.ok, "AC2: unified impl body boundary found");
+    // The triad runs from the `if (ws) {` arm through the pin restamp just
+    // before the function's final `return r;`.
+    const auto triad = slice_between(uni.view, "if (ws) {", "return r;");
+    CHECK(triad.ok, "AC2: unified restamp body boundary found");
+    const auto body = triad.view;
     const auto node = body.find("restamp_all_node_generations");
     const auto stable = body.find("auto_restamp_pinned_stable_refs_at");
     const auto pin = body.find("restamp_all_pins_for_arena");

@@ -11,6 +11,9 @@
 //   AC5: multi-thread FlatAST metadata write/read stress terminates
 
 #include "test_harness.hpp"
+#include "compiler/source_contract.hpp"
+
+using aura::test::source_contract::brace_body;
 
 #include <atomic>
 #include <chrono>
@@ -80,33 +83,33 @@ int main() {
         CHECK(!prim.empty(), "read compile_05.cpp");
         CHECK(prim.find("#1783") != std::string::npos, "cites #1783");
 
-        auto set_m = prim.find("add(\"syntax:set-marker\"");
-        CHECK(set_m != std::string::npos, "set-marker present");
-        auto win_sm = prim.substr(set_m, 2500);
+        const auto set_m = brace_body(prim, "add(\"syntax:set-marker\"");
+        CHECK(set_m.ok, "set-marker body boundary found");
+        const auto win_sm = set_m.view;
         CHECK(win_sm.find("begin_metadata_mutation") != std::string::npos,
               "set-marker takes write lock");
 
-        auto get_m = prim.find("add(\"syntax-marker\"");
-        CHECK(get_m != std::string::npos, "syntax-marker present");
-        auto win_gm = prim.substr(get_m, 800);
+        const auto get_m = brace_body(prim, "add(\"syntax-marker\"");
+        CHECK(get_m.ok, "syntax-marker body boundary found");
+        const auto win_gm = get_m.view;
         CHECK(win_gm.find("try_acquire_metadata_reader_lock") != std::string::npos,
               "syntax-marker takes read lock");
 
-        auto set_p = prim.find("add(\"syntax:set-provenance\"");
-        CHECK(set_p != std::string::npos, "set-provenance present");
-        auto win_sp = prim.substr(set_p, 1200);
+        const auto set_p = brace_body(prim, "add(\"syntax:set-provenance\"");
+        CHECK(set_p.ok, "set-provenance body boundary found");
+        const auto win_sp = set_p.view;
         CHECK(win_sp.find("begin_metadata_mutation") != std::string::npos,
               "set-provenance takes write lock");
 
-        auto get_p = prim.find("add(\"syntax:get-provenance\"");
-        CHECK(get_p != std::string::npos, "get-provenance present");
-        auto win_gp = prim.substr(get_p, 900);
+        const auto get_p = brace_body(prim, "add(\"syntax:get-provenance\"");
+        CHECK(get_p.ok, "get-provenance body boundary found");
+        const auto win_gp = get_p.view;
         CHECK(win_gp.find("try_acquire_metadata_reader_lock") != std::string::npos,
               "get-provenance takes read lock");
 
-        auto prop = prim.find("add(\"syntax:propagate-marker\"");
-        CHECK(prop != std::string::npos, "propagate-marker present");
-        auto win_pr = prim.substr(prop, 1200);
+        const auto prop = brace_body(prim, "add(\"syntax:propagate-marker\"");
+        CHECK(prop.ok, "propagate-marker body boundary found");
+        const auto win_pr = prop.view;
         CHECK(win_pr.find("begin_metadata_mutation") != std::string::npos,
               "propagate-marker holds write lock");
     }

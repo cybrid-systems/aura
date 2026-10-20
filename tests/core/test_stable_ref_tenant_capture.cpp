@@ -13,6 +13,10 @@
 //   AC7: This sibling of test_workspace_isolation_wire (reuse #81967)
 
 #include "test_harness.hpp"
+#include "compiler/source_contract.hpp"
+
+using aura::test::source_contract::brace_body;
+using aura::test::source_contract::slice_between;
 
 #include "compiler/security_capabilities.h"
 #include "compiler/typed_mutation_audit.h"
@@ -243,9 +247,9 @@ void ac3259_3_soft_gen0_zero_extra() {
     CHECK(live != NULL_NODE, "3259 AC3: live");
     CHECK(ev.allow_query_stable_ref_export(live), "3259 AC3: Soft/unlimited allow");
     const auto fiber = read_src("src/compiler/evaluator_fiber_mutation.cpp");
-    auto upos = fiber.find("if (r.budget_exceeded)");
-    CHECK(upos != std::string::npos, "3259 AC3: unified budget-exceeded");
-    auto uwin = fiber.substr(upos, 2000);
+    auto upos = brace_body(fiber, "if (r.budget_exceeded)");
+    CHECK(upos.ok, "3259 AC3: unified budget-exceeded block found");
+    auto uwin = upos.view;
     CHECK(uwin.find("if (production)") != std::string::npos, "3259 AC3: production gate");
     CHECK(uwin.find("restamp_hot_cone_after_budget") != std::string::npos,
           "3259 AC3: hot-cone only under production");
@@ -279,8 +283,9 @@ void ac3259_4_torn_counters_accurate() {
     CHECK(ws->restamp_generation_torn(), "3259 AC4: generation still torn");
     CHECK(ws->restamp_over_budget_torn(), "3259 AC4: over-budget torn helper");
     const auto fiber = read_src("src/compiler/evaluator_fiber_mutation.cpp");
-    auto upos = fiber.find("if (r.budget_exceeded)");
-    auto uwin = upos == std::string::npos ? std::string{} : fiber.substr(upos, 2000);
+    auto upos = brace_body(fiber, "if (r.budget_exceeded)");
+    CHECK(upos.ok, "3259 AC4: unified budget-exceeded block found");
+    auto uwin = upos.view;
     CHECK(uwin.find("g_unified_restamp_torn_visible_total") != std::string::npos,
           "3259 AC4: torn-visible still bumped");
     CHECK(uwin.find("force_query_epoch_stale_from_restamp_budget") != std::string::npos,
@@ -308,9 +313,9 @@ void ac3259_5_source_and_linter() {
     CHECK(impl.find("Issue #3259") != std::string::npos, "3259 AC5: restamp_all cite");
     CHECK(fiber.find("restamp_hot_cone_after_budget") != std::string::npos,
           "3259 AC5: outermost unified");
-    auto npos = emb.find("if (workspace_flat_ && !stack.empty())");
-    CHECK(npos != std::string::npos, "3259 AC5: nested restamp");
-    auto nwin = emb.substr(npos, 3200);
+    auto npos = brace_body(emb, "if (workspace_flat_ && !stack.empty())");
+    CHECK(npos.ok, "3259 AC5: nested restamp block found");
+    auto nwin = npos.view;
     CHECK(nwin.find("restamp_all_node_generations") != std::string::npos,
           "3259 AC5: nested still restamp_all");
     CHECK(nwin.find("unified_restamp_after_boundary(") == std::string::npos,
@@ -356,17 +361,11 @@ void ac3287_1_residual_lag_deny_surface() {
     // production (no clean export on a lagging node — issue required
     // close #1 deny-clean-hit branch).
     const auto q = read_src("src/compiler/evaluator_primitives_query.cpp");
-    auto qpos = q.find("query:stable-ref-provenance");
     // Anchor on the surface body: skip the leading comment occurrence and
     // land on the add(...) registration (the gate lives just inside).
-    auto qpos2 = q.find("add(\"query:stable-ref-provenance\"", qpos);
-    if (qpos2 == std::string::npos)
-        qpos2 = q.find("query:stable-ref-provenance", qpos + 1);
-    CHECK(qpos2 != std::string::npos, "3287 AC1: stable-ref-provenance surface");
-    // Issue #4106: production operand-resolve block widened the surface
-    // body — cite (+3493) and gate consult (+3974) sit past the old 3000
-    // window; 6000 matches the linter's widened slice.
-    auto qwin = q.substr(qpos2, 6000);
+    auto qwin_slice = brace_body(q, "add(\"query:stable-ref-provenance\"");
+    CHECK(qwin_slice.ok, "3287 AC1: stable-ref-provenance surface body found");
+    auto qwin = qwin_slice.view;
     CHECK(qwin.find("Issue #3287") != std::string::npos, "3287 AC1: surface cites #3287");
     CHECK(qwin.find("allow_query_stable_ref_export") != std::string::npos,
           "3287 AC1: surface consults torn gate");
@@ -374,9 +373,10 @@ void ac3287_1_residual_lag_deny_surface() {
     // still over-budget torn under production, bump the torn-visible bus
     // so residual faces are never left clean-exportable.
     const auto fiber = read_src("src/compiler/evaluator_fiber_mutation.cpp");
-    auto fpos = fiber.find("Issue #3287: residual-lag assertion");
-    CHECK(fpos != std::string::npos, "3287 AC1: boundary cites #3287 residual-lag");
-    auto fwin = fiber.substr(fpos, 1400);
+    auto fwin_slice =
+        slice_between(fiber, "if (ws->restamp_over_budget_torn())", "const auto sref_site =");
+    CHECK(fwin_slice.ok, "3287 AC1: residual-lag block found");
+    auto fwin = fwin_slice.view;
     CHECK(fwin.find("restamp_over_budget_torn()") != std::string::npos,
           "3287 AC1: residual tear check after hot cone");
     CHECK(fwin.find("g_unified_restamp_torn_visible_total") != std::string::npos,
@@ -521,16 +521,17 @@ void ac3327_3_soft_no_held_walk() {
     reset_all();
     CHECK(restamp_hot_cone_budget(0) == 0, "3327 AC3: budget==0 cap is 0");
     const auto impl = read_src("src/core/ast_impl.cpp");
-    auto pos = impl.find("std::size_t FlatAST::restamp_hot_cone_after_budget");
-    CHECK(pos != std::string::npos, "3327 AC3: hot-cone impl");
-    auto win = pos == std::string::npos ? std::string{} : impl.substr(pos, 4500);
+    auto pos = brace_body(impl, "std::size_t FlatAST::restamp_hot_cone_after_budget");
+    CHECK(pos.ok, "3327 AC3: hot-cone impl body found");
+    auto win = pos.view;
     CHECK(win.find("restamp_hot_cone_held_count") != std::string::npos,
           "3327 AC3: outermost path consults held set");
     CHECK(win.find("mutation_log_from != ~std::size_t{0}") != std::string::npos,
           "3327 AC3: nested log-from still distinct");
     const auto fiber = read_src("src/compiler/evaluator_fiber_mutation.cpp");
-    auto upos = fiber.find("if (r.budget_exceeded)");
-    auto uwin = upos == std::string::npos ? std::string{} : fiber.substr(upos, 2800);
+    auto upos = brace_body(fiber, "if (r.budget_exceeded)");
+    CHECK(upos.ok, "3327 AC3: budget-exceeded block found");
+    auto uwin = upos.view;
     CHECK(uwin.find("if (production)") != std::string::npos, "3327 AC3: production gate");
     CHECK(uwin.find("restamp_hot_cone_after_budget") != std::string::npos,
           "3327 AC3: hot-cone only under production");

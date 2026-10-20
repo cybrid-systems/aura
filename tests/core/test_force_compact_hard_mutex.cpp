@@ -8,6 +8,9 @@
 //          metrics + schema-2157 on query surfaces
 
 #include "test_harness.hpp"
+#include "compiler/source_contract.hpp"
+
+using aura::test::source_contract::brace_body;
 
 #include <cstdint>
 #include <fstream>
@@ -149,9 +152,9 @@ int run_test_force_compact_hard_mutex() {
             if (!in)
                 in.open("../src/core/envframe_lifetime.ixx");
             std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-            const auto dtor = src.find("~EnvFrameLifetimeGuard()");
-            CHECK(dtor != std::string::npos, "3908: Guard dtor present");
-            const auto win = src.substr(dtor, 3200);
+            const auto dtor = brace_body(src, "~EnvFrameLifetimeGuard()");
+            CHECK(dtor.ok, "3908: Guard dtor body boundary found");
+            const auto win = dtor.view;
             CHECK(win.find("Issue #3908") != std::string::npos, "3908 AC: scan-before-depth cite");
             const auto scan = win.find("scan_skip_freed");
             const auto drop = win.find("g_envframe_active_guard_depth().compare_exchange_weak");
