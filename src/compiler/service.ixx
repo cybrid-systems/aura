@@ -7938,6 +7938,15 @@ public:
             it->second.dirty = true;
             return false;
         }
+        // Issue #4621: the same refusal for a rest parameter - it cannot
+        // be lowered to IR (the rest slot takes the argument as-is, not as
+        // a pair list). Leave the entry dirty; the caller's fallback is
+        // cache_define, which skips IR and keeps the tree-walker closure
+        // that binds the rest as a pair list.
+        if (define_body_has_rest_param_4621(flat, expanded_root)) {
+            it->second.dirty = true;
+            return false;
+        }
         // Issue #3550: callee cascade before partial peel / block count.
         // Issue #3656: unknown cone (calls empty + node fn edges) is not
         // a successful instr peel — fail-closed full.
@@ -8838,6 +8847,33 @@ public:
     // The heavy populate_ir_cache_v2_from_workspace actually does the IR
     // lowering via cache_define. Opt-in only; not called by default to
     // avoid the side-effect issue. Future work.
+    //
+    // Issue #4621: a workspace define's canonical source is re-parsed and
+    // re-lowered (populate_ir_cache_v2_from_workspace -> cache_define,
+    // relower_dirty_defines_from_workspace -> relower_define_blocks,
+    // specialize_one_lambda_via_ir -> parse_to_flat). It must therefore
+    // round-trip the define's parameter list. The legacy unparse_node
+    // dropped a lambda's dotted rest marker — `(lambda (a . r) r)`
+    // unparsed to `(lambda (a r) r)` and the all-args form
+    // `(lambda xs ...)` to `(lambda (xs) ...)` — so the re-parse turned a
+    // variadic workspace define into a fixed-arity one and silently
+    // changed the define's arity (issue #4621). aura::ast::unparse_to_string
+    // is the #2922 SSOT unparser: it keeps the `. rest` marker, so the
+    // re-parse restores the same parameter list.
+    static std::string workspace_define_canonical_source(const aura::ast::FlatAST& flat,
+                                                         const aura::ast::StringPool& pool,
+                                                         const std::string& name,
+                                                         aura::ast::NodeId body_id) {
+        std::string body_src;
+        if (body_id != aura::ast::NULL_NODE && body_id < flat.size() && !flat.is_free_slot(body_id))
+            body_src = aura::ast::unparse_to_string(flat, pool, body_id, {});
+        if (body_src.empty())
+            body_src = unparse_node(flat, pool, body_id, 0);
+        if (body_src.empty())
+            return {};
+        return "(define " + name + " " + body_src + ")";
+    }
+
     void populate_dep_graph_from_workspace() {
         auto* ws_flat = evaluator_.workspace_flat();
         auto* ws_pool = evaluator_.workspace_pool();
@@ -8866,8 +8902,8 @@ public:
             // Build canonical source + hash for the v2 entry (lightweight —
             // just unparse, no cache_define, no eval_flat side effects).
             auto child_id = v.child(0);
-            std::string body_src = unparse_node(*ws_flat, *ws_pool, child_id, 0);
-            std::string canonical = "(define " + name + " " + body_src + ")";
+            std::string canonical =
+                workspace_define_canonical_source(*ws_flat, *ws_pool, name, child_id);
             auto hash = fnv1a_64(canonical);
             // Walk the define body to find Variable references that resolve
             // to other defines in the workspace. Record caller→callee in
@@ -9052,8 +9088,8 @@ public:
             if (v.children.empty())
                 continue;
             auto child_id = v.child(0);
-            std::string body_src = unparse_node(*ws_flat, *ws_pool, child_id, 0);
-            std::string canonical = "(define " + name + " " + body_src + ")";
+            std::string canonical =
+                workspace_define_canonical_source(*ws_flat, *ws_pool, name, child_id);
             auto hash = fnv1a_64(canonical);
             auto it = ir_cache_v2_.find(name);
             // populate_dep_graph_from_workspace may have created a
@@ -9667,8 +9703,8 @@ public:
                                    ws_flat->get(lambda_id).tag == aura::ast::NodeTag::Lambda)
                                       ? lambda_id
                                       : def_id;
-            std::string body_src = unparse_node(*ws_flat, *ws_pool, lambda_id, 0);
-            std::string canonical = "(define " + name + " " + body_src + ")";
+            std::string canonical =
+                workspace_define_canonical_source(*ws_flat, *ws_pool, name, lambda_id);
             // Gate: should_partial_relower OR single-function dirty
             // (body-only from #1495 mark). Large dirty surfaces still
             // go through relower_define_blocks which may full-fallback.
@@ -10325,8 +10361,7 @@ public:
         }
         if (lambda == aura::ast::NULL_NODE)
             return false;
-        const std::string body_src = unparse_node(*flat, *pool, lambda, 0);
-        const std::string canonical = "(define " + name + " " + body_src + ")";
+        const std::string canonical = workspace_define_canonical_source(*flat, *pool, name, lambda);
         return relower_define_blocks(name, canonical, *flat, *pool, lambda,
                                      /*commit_per_fn_partial=*/false);
     }
@@ -11147,6 +11182,44 @@ public:
         return bw.needs_fallback;
     }
 
+    // Issue #4621: a lambda with a rest parameter cannot be lowered to IR.
+    // The rest parameter is lowered as a single Arg slot, not as a pair
+    // list, so the IR closure binds the rest argument AS-IS: the define's
+    // arity silently changes (a two-argument call binds the rest to the
+    // second argument, a one-argument call is an arity error). The
+    // file-level gate already refuses this shape for a whole file
+    // (needs_tree_walker_fallback: "Dotted rest lambda cannot be lowered
+    // to IR"), so a file define keeps the tree-walker closure and binds
+    // the rest as a pair list. The workspace IR paths (the #4357
+    // specialise pass, the v2 IR cache populate, the dirty re-lower)
+    // bypassed that gate, so a workspace define with a rest parameter was
+    // rebound to a fixed-arity IR closure and its arity changed silently
+    // (issue #4621). Such a define stays on the tree walker - the same
+    // rest-parameter semantics a file define has.
+    //
+    // Lambda::int_value bit 0 is the dotted-rest flag (FlatAST::add_lambda
+    // stores `dotted ? 1 : 0`). Both rest shapes carry it: the dotted
+    // formal list `(lambda (a . r) ...)` and the all-args shorthand
+    // `(lambda xs ...)`.
+    [[nodiscard]] static bool define_body_has_rest_param_4621(const aura::ast::FlatAST& flat,
+                                                              aura::ast::NodeId root) {
+        if (root == aura::ast::NULL_NODE || root >= flat.size() || flat.is_free_slot(root))
+            return false;
+        const auto v = flat.get(root);
+        aura::ast::NodeId body = root;
+        if (v.tag == aura::ast::NodeTag::Define) {
+            if (v.children.empty())
+                return false;
+            body = v.child(0);
+        }
+        if (body >= flat.size() || flat.is_free_slot(body))
+            return false;
+        const auto bv = flat.get(body);
+        if (bv.tag != aura::ast::NodeTag::Lambda)
+            return false;
+        return (bv.int_value & 1) != 0;
+    }
+
     // Issue #4618: lowering_impl.cpp's NodeTag::Set path stores only into a
     // lambda scope (BindingKind::Local / Cell) or a captured cell. A target
     // it cannot resolve is returned unchanged, so the store is silently
@@ -11533,6 +11606,13 @@ public:
         if (!pr.success || pr.root == aura::ast::NULL_NODE)
             return false;
         flat.root = pr.root;
+        // Issue #4621: a define with a rest parameter keeps the tree-walker
+        // closure eval-current bound. The IR closure binds the rest slot
+        // to the argument as-is (not as a pair list), so specialising it
+        // silently changed the define's arity. The tree walker binds the
+        // rest as a pair list - the same semantics a file define has.
+        if (define_body_has_rest_param_4621(flat, pr.root))
+            return false;
         // Issue #4618: a body whose set! targets a non-local cannot be
         // lowered to IR - lowering_impl.cpp's Set has no store for a
         // top-level cell and returns the value with the store dropped.
@@ -12241,6 +12321,12 @@ public:
         // define that bumps a global before returning a constant) still
         // reached lowering, which drops the store. Refuse it the same way.
         if (!skip_ir_cache && define_body_sets_nonlocal_4618(flat, pool, expanded_root, name_str))
+            skip_ir_cache = true;
+        // Issue #4621: a rest parameter cannot be lowered to IR (the rest
+        // slot takes the argument as-is, not as a pair list). Keep the
+        // define on the tree walker, like a file define with a rest
+        // parameter.
+        if (!skip_ir_cache && define_body_has_rest_param_4621(flat, expanded_root))
             skip_ir_cache = true;
 
         if (skip_ir_cache) {
