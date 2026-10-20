@@ -678,7 +678,13 @@ static void ac4093_source_cite() {
     // Issue #4296: interpreter/agent mints stamp the executing evaluator.
     // JIT aura_new_cell / aura_hash_set / aura_hash_ref keep the owner hook
     // (cited above on the runtime TU).
-    CHECK(vec.find("g_hash_tenants[hidx] = ev.capability_tenant_id();") != std::string::npos,
+    // Issue #4613: the (hash) prim publishes through the evaluator's
+    // mint_hash_table seam, which stamps capability_tenant_id_ (the same
+    // principal as ev.capability_tenant_id()).
+    CHECK(vec.find("ev.mint_hash_table(") != std::string::npos,
+          "4093 cite: hash prim publishes through the evaluator mint seam (#4296)");
+    CHECK(read_file("src/compiler/evaluator.ixx")
+                  .find("g_hash_tenants[hidx] = capability_tenant_id_;") != std::string::npos,
           "4093 cite: hash prim stamps the executing evaluator (#4296)");
     CHECK(vec.find("g_hash_tenants[hidx] = aura_jit_owner_capability_tenant();") ==
               std::string::npos,
@@ -1155,8 +1161,11 @@ static void ac4110_source_cite() {
     for (const auto f : kSwept) {
         const auto src = read_file(std::string(f).c_str());
         CHECK(!src.empty(), "4110 cite: swept mint file readable");
+        // Issue #4613: the evaluator's own mint stamps the executing
+        // principal inline (the #4110 linter counts that shape too).
         CHECK(count_of(src, "g_hash_tables.push_back(ht);") ==
-                  count_of(src, "aura_hash_stamp_new_table_owner();"),
+                  count_of(src, "aura_hash_stamp_new_table_owner();") +
+                      count_of(src, "g_hash_tenants[hidx] = capability_tenant_id_;"),
               "4110 cite: every push in the mint file stamps the owner");
     }
     const auto qw = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
@@ -1165,7 +1174,10 @@ static void ac4110_source_cite() {
     // Issue #4296: inline stamps stay, principal is the executing evaluator
     // (the helper above still stamps from the JIT owner hook).
     const auto vec = read_file("src/compiler/evaluator_primitives_vector.cpp");
-    CHECK(vec.find("g_hash_tenants[hidx] = ev.capability_tenant_id();") != std::string::npos,
+    CHECK(vec.find("ev.mint_hash_table(") != std::string::npos,
+          "4110 cite: vector hash prim publishes through the evaluator mint (#4296)");
+    CHECK(read_file("src/compiler/evaluator.ixx")
+                  .find("g_hash_tenants[hidx] = capability_tenant_id_;") != std::string::npos,
           "4110 cite: vector hash prim stamps the executing evaluator (#4296)");
     const auto ag = read_file("src/compiler/evaluator_primitives_agent.cpp");
     CHECK(ag.find("g_hash_tenants[hidx] = ev.capability_tenant_id();") != std::string::npos,
@@ -2734,7 +2746,14 @@ static void ac4505_inrange_reader_prims() {
     EvalValue own9s, own9vec, own9pair;
     {
         aura::compiler::Evaluator::TenantScope t9(ev, 9);
-        own9s = make_string(static_cast<std::uint64_t>(ev.push_string_heap("zz")));
+        // Issue #4612: the lookup now walks the key hash's open-addressed
+        // chain and stops at the first empty slot, so a probe key with a
+        // different hash never reaches the foreign key (no compare, no
+        // deny -- and no foreign byte read). Use the SAME content as str7
+        // so the chain is walked and the probe must deny the foreign
+        // slot's stamp; the content-equal foreign key still reads as a
+        // miss, which is the #4505 contract this arm pins.
+        own9s = make_string(static_cast<std::uint64_t>(ev.push_string_heap("hello")));
         own9vec = (*vec_fn)({make_int(5)});
         own9pair = (*cons_fn)({make_int(5), make_int(6)});
     }

@@ -132,7 +132,7 @@ static void ac2_flat_costs() {
         (define (probe-small-miss) (hash-ref small "zz" #f))
         (define (probe-big-miss) (hash-ref big "zz" #f))
         (define (probe-big-hit) (hash-ref big "k77" #f))
-        (define (probe-big-set) (hash-set! big "k77" 1))
+        (define (probe-big-set) (hash-set! big "k78" 1))
         (define small-us (bench-us 2000 probe-small-miss))
         (define big-us (bench-us 2000 probe-big-miss))
         (define big-hit-us (bench-us 2000 probe-big-hit))
