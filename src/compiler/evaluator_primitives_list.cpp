@@ -121,6 +121,7 @@ namespace {
 void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                               ::aura::compiler::LockedStringHeap& string_heap,
                               std::vector<EvalValue>& error_values, Evaluator& ev) {
+    using aura::compiler::impure_general;
     using aura::compiler::pure_general;
     using aura::compiler::register_prim;
 
@@ -819,20 +820,16 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         },
         pure_general(255, "(fn list ...) -> list",
                      "Apply fn to the k-th element of every list; stop at the shortest."));
-    {
-        auto spec = pure_general(255, "(fn list ...) -> unspecified",
-                                 "Apply fn to the k-th element of every list for effect; "
-                                 "stop at the shortest.");
-        // for-each runs fn for its effects; the scaffold's pure_general default
-        // is a discovery hint, so mark it impure explicitly.
-        spec.pure = false;
-        register_prim(
-            add, ev, "for-each",
-            [walk_lists](std::span<const EvalValue> a) {
-                return walk_lists(a, "for-each", /*collect=*/false);
-            },
-            spec);
-    }
+    register_prim(
+        add, ev, "for-each",
+        [walk_lists](std::span<const EvalValue> a) {
+            return walk_lists(a, "for-each", /*collect=*/false);
+        },
+        // Issue #4616: for-each invokes fn for its effects; impure_general keeps
+        // the pure_general discovery defaults minus purity (no IO/mutation flags).
+        impure_general(255, "(fn list ...) -> unspecified",
+                       "Apply fn to the k-th element of every list for effect; "
+                       "stop at the shortest."));
     register_prim(
         add, ev, "filter",
         [&pairs, &string_heap, &error_values, apply_pred, &ev](std::span<const EvalValue> a) {

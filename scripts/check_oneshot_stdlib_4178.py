@@ -32,7 +32,9 @@ CASES: list[tuple[int, str, str]] = [
     (4187, '(ends-with? "ab" "b")', "#t"),
     (4188, '(contains? "ab" "a")', "#t"),
     (4189, "(make-list 2 9)", "(9 9)"),
-    (4190, "(for-each (lambda (x) x) (list 1))", "#t"),
+    # #4616 made for-each a native R7RS primitive (returns unspecified), so
+    # keep the smoke but return a value the one-shot printer can assert.
+    (4190, "(begin (for-each (lambda (x) x) (list 1)) #t)", "#t"),
     (4191, "(foldr + 0 (list 1 2))", "3"),
     (4192, "(any even? (list 1 2))", "#t"),
     (4193, "(all even? (list 2 4))", "#t"),

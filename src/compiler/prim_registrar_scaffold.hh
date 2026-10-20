@@ -114,6 +114,16 @@ inline constexpr int kContainerMutateGuardIssue = 3235;
     return s;
 }
 
+// Issue #4616: impure but neither IO nor mutating (e.g. for-each invokes its
+// callee for effects while its own arguments are untouched). Keeps the
+// pure_general discovery defaults and drops only the purity hint.
+[[nodiscard]] inline PrimSpec impure_general(std::uint8_t arity, std::string_view schema,
+                                             std::string_view doc) noexcept {
+    PrimSpec s = pure_general(arity, schema, doc);
+    s.pure = false;
+    return s;
+}
+
 [[nodiscard]] inline PrimSpec io_general(std::uint8_t arity, std::string_view schema,
                                          std::string_view doc) noexcept {
     PrimSpec s = pure_general(arity, schema, doc);
