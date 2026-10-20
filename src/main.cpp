@@ -492,6 +492,54 @@ static std::string build_lazy_oneshot_std_prelude(const std::string& source) {
 // Issue #4497: defined in evaluator_primitives_runtime.cpp.
 extern "C" std::uint64_t aura_displayed_error_count() noexcept;
 
+// Issue #4622: length of the Scheme-style character literal that starts at
+// 'i' in 'src' (src[i] == '#' and src[i+1] == '\\'), or 0 when those bytes
+// do not open one. The lexer (src/parser/lexer_impl.cpp, read_character,
+// #4129) reads a character literal as ONE atomic token:
+//
+//   #\x41 / #\X41  hex form -- 'x' plus up to six hex digits
+//   #\( #\) #\" #\; #\[ #\] #\- #\0
+//                   single-character form -- one non-alphabetic character
+//   #\a #\space #\newline
+//                   name form -- an alphabetic run of alphanumerics and '-'
+//
+// The CLI's top-level form splitter used to count the delimiter inside a
+// literal as a real paren / quote / comment start: #\( unbalanced the scan
+// (the whole file was refused with "no complete S-expression in program
+// source"), #\" opened a string that never closed, and #\; started a comment
+// that swallowed the rest of the line.
+static std::size_t character_literal_length(std::string_view src, std::size_t i) {
+    if (i + 1 >= src.size() || src[i] != '#' || src[i + 1] != '\\')
+        return 0;
+    std::size_t p = i + 2; // past the '#' and the '\'
+    if (p >= src.size())
+        return 0; // bare #\ at EOF -- malformed, the lexer reports it
+    auto hex_val = [](char c) -> int {
+        if (c >= '0' && c <= '9')
+            return c - '0';
+        if (c >= 'a' && c <= 'f')
+            return 10 + (c - 'a');
+        if (c >= 'A' && c <= 'F')
+            return 10 + (c - 'A');
+        return -1;
+    };
+    const char c = src[p];
+    if ((c == 'x' || c == 'X') && p + 1 < src.size() && hex_val(src[p + 1]) >= 0) {
+        ++p; // the 'x'
+        int digits = 0;
+        while (p < src.size() && digits < 6 && hex_val(src[p]) >= 0) {
+            ++p;
+            ++digits;
+        }
+        return p - i;
+    }
+    if (!std::isalpha(static_cast<unsigned char>(c)))
+        return p + 1 - i; // single-character form
+    while (p < src.size() && (std::isalnum(static_cast<unsigned char>(src[p])) || src[p] == '-'))
+        ++p;
+    return p - i;
+}
+
 int main(int argc, char* argv[]) {
     // Issue #137: register an atexit handler that frees the
     // runtime's hash tables. The `hash` primitive in the
@@ -3330,6 +3378,18 @@ int main(int argc, char* argv[]) {
                 in_string = false;
             }
             continue;
+        }
+
+        // Issue #4622: a #\x character literal is one atomic token, so a
+        // delimiter inside it (#\( #\) #\" #\; #\[ #\]) is not a delimiter
+        // here either -- skip the whole literal instead of counting it.
+        if (c == '#') {
+            const std::size_t lit = character_literal_length(all_input, i);
+            if (lit > 0) {
+                current.append(all_input, i, lit);
+                i += lit - 1;
+                continue;
+            }
         }
 
         if (c == ';') {

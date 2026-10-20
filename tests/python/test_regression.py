@@ -3033,6 +3033,100 @@ def test_workspace_set_global_4618():
     print("  ✅ test_workspace_set_global_4618 (4 store rows + 4 controls x eval/ir, jit shape)")
 
 
+def test_char_literal_form_split_4622():
+    r"""Issue #4622: the CLI form splitter must skip #\x character literals.
+
+    The CLI file runner splits a program into top-level forms with a
+    character scan (src/main.cpp, the depth counter that ends in
+    "warning: unbalanced parentheses in input"). The scan skipped string
+    literals but NOT character literals: the delimiter inside #\(, #\),
+    #\" or #\; was counted as a real paren / quote / comment start.
+
+    A first form with an unpaired #\( or a #\" made the runner refuse
+    the whole file ("error: no complete S-expression in program source",
+    usage text, rc=1); a later form printed a spurious "warning:
+    unbalanced parentheses in input" and ran the forms anyway. The parser
+    reads these literals correctly since #4129 -- only the top-level
+    splitter was wrong.
+
+    Rows (the issue's three programs plus the delimiter set the issue
+    names), each run in file mode, pipe mode and -e mode:
+
+      a  #\( in the FIRST form       -> (40 1)
+      b  #\" in the FIRST form       -> 34
+      c  #\" in a LATER form        -> a / 34 / b, no warning
+      d  #\( and #\) cancel out     -> (40 41)  (control: worked before)
+      e  #\) #\[ #\] #\; #\" #\space -> (41 91 93 59 34 32)
+    """
+
+    env = os.environ.copy()
+    env["AURA_SANDBOX"] = "off"
+    env["AURA_PIPELINE_STRICT"] = "0"
+
+    def run_file(code):
+        with tempfile.NamedTemporaryFile("w", suffix=".aura", delete=False) as f:
+            f.write(code)
+            path = f.name
+        try:
+            return subprocess.run([AURA, path], capture_output=True, text=True, timeout=60, env=env)
+        finally:
+            os.unlink(path)
+
+    def run_pipe(code):
+        return subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=60, env=env)
+
+    def run_eval(code):
+        return subprocess.run([AURA, "-e", code], capture_output=True, text=True, timeout=60, env=env)
+
+    def row(label, code, expect):
+        for mode, run in (("file", run_file), ("pipe", run_pipe), ("-e", run_eval)):
+            r = run(code)
+            err = r.stderr or ""
+            assert r.returncode == 0, f"{label} {mode}: rc={r.returncode} out={r.stdout!r} err={err[-400:]!r}"
+            assert (r.stdout or "") == expect, f"{label} {mode}: expected {expect!r} got {r.stdout!r}"
+            assert "unbalanced parentheses" not in err, f"{label} {mode}: spurious splitter warning: {err[-400:]!r}"
+            assert "no complete S-expression" not in err, f"{label} {mode}: the program was refused: {err[-400:]!r}"
+
+    # a: the issue's first program -- #\( in the FIRST form. The splitter
+    #    used to count that paren and refuse the whole file.
+    row(
+        "first-form-lparen-4622",
+        r"(display (list (char->integer #\() 1))" + "\n(newline)\n",
+        "(40 1)\n",
+    )
+    # b: the issue's second program -- #\" in the FIRST form. The splitter
+    #    used to open a string there that never closed.
+    row(
+        "first-form-quote-4622",
+        r"(display (char->integer #\"))" + "\n(newline)\n",
+        "34\n",
+    )
+    # c: the issue's third program -- #\" in a LATER form. The forms ran,
+    #    but the splitter printed a spurious warning.
+    row(
+        "later-form-quote-4622",
+        '(display "a")\n(newline)\n' + r"(display (char->integer #\"))" + '\n(newline)\n(display "b")\n(newline)\n',
+        "a\n34\nb\n",
+    )
+    # d: control -- the two miscounts cancel, so this program worked before
+    #    the fix too and must keep working.
+    row(
+        "cancel-pair-4622",
+        r"(display (list (char->integer #\() (char->integer #\))))" + "\n",
+        "(40 41)",
+    )
+    # e: the delimiter set the issue names -- #\) #\[ #\] #\; #\" and the
+    #    named form #\space.
+    row(
+        "delimiter-set-4622",
+        r"(display (list (char->integer #\)) (char->integer #\[) "
+        r"(char->integer #\]) (char->integer #\;) (char->integer #\") "
+        r"(char->integer #\space)))" + "\n(newline)\n",
+        "(41 91 93 59 34 32)\n",
+    )
+    print("  ✅ test_char_literal_form_split_4622 (5 rows x file/pipe/-e modes)")
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -3073,6 +3167,7 @@ for tf in [
     test_module_chain_5,
     test_cross_session,
     test_fuzz_edsl,
+    test_char_literal_form_split_4622,
 ]:
     try:
         tf()
