@@ -23,6 +23,16 @@ REPO = Path(__file__).resolve().parents[2]  # #1932 repo root
 # face is covered by tests/compiler/test_pack_pipeline_strict.cpp. Pin
 # the diagnostics face for every invocation in this module.
 os.environ["AURA_PIPELINE_STRICT"] = "0"
+# The dev face has TWO axes: the pipeline axis above and the sandbox
+# axis. Only the pipeline axis was pinned, so the sandbox axis was
+# inherited from whatever the caller exported -- and the net spawns
+# children with no env of their own (the aura-type tests, the fuzz
+# driver, the snippet suite), so a caller without AURA_SANDBOX=off put
+# those children on the production security face, where the mutation
+# effect is denied ("effect-denied: mutate not granted ... op=set-code").
+# Pin the sandbox axis here too, so the whole net runs on the face it
+# is written for whatever the caller exported.
+os.environ["AURA_SANDBOX"] = "off"
 
 # Fixture snippets live in tests/fixtures/regression/*.json (#1962)
 # and run through aura_file_runner.run_snippet_suite.
@@ -2735,8 +2745,24 @@ for case in load_regression_cases():
 # covered by tests/compiler/test_pack_pipeline_strict.cpp. Pin the
 # diagnostics face for the suite (same rationale as the asan-verify
 # multi-session step).
+#
+# The sandbox axis was MISSING here. Every other env built in this net
+# pins both axes (29 "os.environ.copy()" sites set AURA_SANDBOX="off"
+# next to AURA_PIPELINE_STRICT="0"; this suite env was the single
+# outlier), so the 157 fixture rows inherited the caller's sandbox axis
+# instead of the net's own dev face. Under production security defaults
+# (AURA_SANDBOX unset / not "off") the "set-code" / "mutate:*" effect is
+# denied -- "effect-denied: mutate not granted tenant=0 op=set-code" --
+# so the program aborts before printing anything and the row is scored
+# as "expected '...' in stdout" on an empty stdout. That is exactly the
+# ci/p0 signature of the four set-code+require rows in
+# tests/fixtures/regression/two.json (colony-no-fns / colony-search /
+# ast-viz-dot / ast-viz-dot-mutation). Pin the sandbox axis here too,
+# exactly like the 29 sibling envs and like the module-level
+# AURA_PIPELINE_STRICT pin at the top of this file.
 suite_env = os.environ.copy()
 suite_env["AURA_PIPELINE_STRICT"] = "0"
+suite_env["AURA_SANDBOX"] = "off"
 snippet_rc = run_snippet_suite(
     "P0 snippets",
     specs,

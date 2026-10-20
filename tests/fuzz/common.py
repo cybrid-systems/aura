@@ -23,7 +23,34 @@ DRIVERS = FUZZ_ROOT / "drivers"
 CORPUS = FUZZ_ROOT / "corpus"
 REPRODUCERS = FUZZ_ROOT / "reproducers"
 
-AURA_BIN = Path(os.environ.get("AURA_BIN", str(REPO / "build" / "aura")))
+# Issue #1573 standing rule (2026-10-19): the per-agent build dir lives
+# OUTSIDE the checkout (AURA_BUILD_DIR), so the binary is
+# <build dir>/aura -- the same rule the Python test harness already
+# uses (tests/python/_aura_harness.py: BUILD = ROOT /
+# os.environ.get("AURA_BUILD_DIR", "build")). Hard-coding REPO/"build"
+# made every fuzz driver die at Popen with a FileNotFoundError
+# traceback (tests/fuzz/drivers/fuzz_edsl.py:169 -- run_fuzz_session)
+# as soon as AURA_BUILD_DIR pointed anywhere else, which silently
+# turned the whole fuzz lane into "exit 1 (non-critical)" in the p0
+# tier. AURA_BIN still wins when it is set explicitly.
+_BUILD_DIR = os.environ.get("AURA_BUILD_DIR", "build")
+AURA_BIN = Path(os.environ.get("AURA_BIN", str(REPO / _BUILD_DIR / "aura")))
+
+
+def dev_face_env() -> dict[str, str]:
+    """Env for spawning the aura under test on the diagnostics face.
+
+    The fuzz drivers drive mutation primitives (set-code, mutate:*),
+    which the production security defaults deny ("effect-denied: mutate
+    not granted"). The p0 tier runs these drivers on the dev face, so
+    the child needs the same two pins the rest of that net uses
+    (AURA_SANDBOX=off + AURA_PIPELINE_STRICT=0) instead of whatever the
+    ambient shell happened to export.
+    """
+    env = os.environ.copy()
+    env["AURA_SANDBOX"] = "off"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    return env
 
 
 @dataclass
