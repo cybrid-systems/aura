@@ -3369,6 +3369,133 @@ def test_ir_call_depth_limit_4620():
     print("  ✅ test_ir_call_depth_limit_4620 (3 depth rows + runaway + workspace + configurable)")
 
 
+def test_workspace_rest_params_4621():
+    """Issue #4621: rest parameters must work in workspace defines.
+
+    A workspace define (set-code + eval-current, or mutate:rebind) was
+    re-lowered to IR and rebound to the IR closure. The IR cannot
+    represent a rest parameter - the rest slot takes the argument AS-IS
+    instead of a pair list - so the define's arity silently changed: a
+    two-argument call bound the rest to the second argument and a
+    one-argument call was an arity error. The file-level gate already
+    refuses that shape for a whole file ("Dotted rest lambda cannot be
+    lowered to IR"), so a file define kept its tree-walker closure and
+    bound the rest as a pair list.
+
+    Rows: the dotted formal list `(a . r)` with one / two / three
+    arguments and with a list argument, the all-args shorthand `xs` with
+    one and two arguments, a workspace define that CALLS a rest-parameter
+    define, and the same through mutate:rebind. Every row prints the
+    workspace value and the file value; both must equal the expected
+    rest-parameter semantics, byte-identical in eval and AURA_FORCE_IR=1.
+    """
+
+    def run(code, mode, timeout=60):
+        env = os.environ.copy()
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "0"
+        env.pop("AURA_SOFT", None)
+        env.pop("AURA_FORCE_IR", None)
+        cmd = [AURA]
+        if mode == "ir":
+            env["AURA_FORCE_IR"] = "1"
+        elif mode == "jit":
+            cmd.append("--jit")
+        return subprocess.run(cmd, input=code, capture_output=True, text=True, timeout=timeout, env=env)
+
+    def row(label, code, expect, modes=("eval", "ir")):
+        seen = {}
+        for mode in modes:
+            r = run(code, mode)
+            assert r.returncode == 0, (
+                f"{label} {mode}: rc={r.returncode} out={r.stdout!r} err={(r.stderr or '')[-400:]!r}"
+            )
+            seen[mode] = (r.stdout or "").strip()
+        first = seen[modes[0]]
+        for mode in modes[1:]:
+            assert seen[mode] == first, f"{label}: {modes[0]}={first!r} {mode}={seen[mode]!r}"
+        assert first == expect, f"{label}: expected {expect!r} got {first!r} ({seen})"
+
+    # File-level controls: the face the issue says already worked.
+    file_defs = "(define (f-rest a . r) r)\n(define (f-all . xs) xs)\n"
+    # Workspace setup: the dotted formal list and the all-args shorthand.
+    setup = '(set-code "(define w-rest (lambda (a . r) r)) (define w-all (lambda xs xs))")\n(eval-current)\n'
+
+    # 1. dotted formal list, two arguments: the rest is the pair list (2).
+    row(
+        "ws-rest-two-4621",
+        file_defs + setup + "(display (w-rest 1 2)) (newline)\n(display (f-rest 1 2)) (newline)\n",
+        "(2)\n(2)",
+    )
+    # 2. dotted formal list, three arguments: the rest is (2 3).
+    row(
+        "ws-rest-three-4621",
+        file_defs + setup + "(display (w-rest 1 2 3)) (newline)\n(display (f-rest 1 2 3)) (newline)\n",
+        "(2 3)\n(2 3)",
+    )
+    # 3. dotted formal list, list argument: the rest is ((2)) - the list
+    #    is NOT spliced into the rest, it is one rest element.
+    row(
+        "ws-rest-list-4621",
+        file_defs + setup + "(display (w-rest 1 (list 2))) (newline)\n" + "(display (f-rest 1 (list 2))) (newline)\n",
+        "((2))\n((2))",
+    )
+    # 4. dotted formal list, one argument: the rest is the empty list.
+    row(
+        "ws-rest-one-4621",
+        file_defs + setup + "(display (w-rest 1)) (newline)\n(display (f-rest 1)) (newline)\n",
+        "()\n()",
+    )
+    # 5. all-args shorthand, two arguments: every argument is the rest.
+    row(
+        "ws-all-two-4621",
+        file_defs + setup + "(display (w-all 1 2)) (newline)\n(display (f-all 1 2)) (newline)\n",
+        "(1 2)\n(1 2)",
+    )
+    # 6. all-args shorthand, one list argument: the rest is ((1)).
+    row(
+        "ws-all-list-4621",
+        file_defs + setup + "(display (w-all (list 1))) (newline)\n(display (f-all (list 1))) (newline)\n",
+        "((1))\n((1))",
+    )
+    # 7. A workspace define that CALLS a rest-parameter define: the
+    #    caller must see the same rest-parameter semantics (the callee's
+    #    IR body must not be inlined into the caller).
+    row(
+        "ws-rest-caller-4621",
+        '(set-code "(define w-rest (lambda (a . r) r)) '
+        '(define w-caller (lambda () (w-rest 1 2 3)))")\n'
+        "(eval-current)\n"
+        "(display (w-caller)) (newline)\n",
+        "(2 3)",
+    )
+    # 8. mutate:rebind to a body with a rest parameter: the rebound
+    #    define keeps the rest-parameter semantics after the re-lower.
+    row(
+        "ws-rest-rebind-4621",
+        '(set-code "(define wb (lambda () 0))")\n'
+        "(eval-current)\n"
+        '(mutate:rebind "wb" "(lambda (a . r) r)" "4621")\n'
+        "(eval-current)\n"
+        "(display (wb 1 2)) (newline)\n"
+        "(display (wb 1 2 3)) (newline)\n"
+        "(display (wb 1)) (newline)\n",
+        "(2)\n(2 3)\n()",
+    )
+    # 9. --jit: one begin form (the runner only executes a single
+    #    expression form in this face), same rest-parameter contract.
+    jit_code = (
+        '(begin (set-code "(define w-rest (lambda (a . r) r))") (eval-current) (display (w-rest 1 2 3)) (newline))'
+    )
+    for mode in ("eval", "ir", "jit"):
+        r = run(jit_code, mode)
+        assert r.returncode == 0, f"jit-shape {mode}: rc={r.returncode} err={(r.stderr or '')[-300:]!r}"
+    jit_out = (run(jit_code, "jit").stdout or "").strip()
+    ev_out = (run(jit_code, "eval").stdout or "").strip()
+    assert jit_out == ev_out == "(2 3)", f"jit-shape: eval={ev_out!r} jit={jit_out!r}"
+    print("  ✅ test_workspace_rest_params_4621 (6 rest rows + caller + rebind x eval/ir, jit shape)")
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -3412,6 +3539,7 @@ for tf in [
     test_fuzz_edsl,
     test_char_literal_form_split_4622,
     test_while_when_error_propagation_4619,
+    test_workspace_rest_params_4621,
 ]:
     try:
         tf()
