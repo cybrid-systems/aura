@@ -694,6 +694,64 @@ struct StaticFloats {
     std::vector<std::uint8_t> slot;
     std::vector<std::uint8_t> cell;
 };
+// Result slot of an instruction (UINT32_MAX = none); false = the opcode
+// is not classified here (callers must treat the function conservatively).
+// Shared by static_float_slots and the #4601 env-cell hoist analysis.
+static bool ir_result_slot(const FlatInstruction& in, uint32_t& r) {
+    r = UINT32_MAX;
+    switch (in.opcode) {
+        case Op::OpCall:
+        case Op::OpPrimCall:
+            r = in.ops[3];
+            return true;
+        case Op::OpApply:
+            r = in.ops[2];
+            return true;
+        case Op::OpCellSet:
+        case Op::OpBranch:
+        case Op::OpReturn:
+        case Op::OpJump:
+        case Op::OpNop:
+            return true;
+        case Op::OpNewCell:
+        case Op::OpCellGet:
+        case Op::OpAdd:
+        case Op::OpSub:
+        case Op::OpMul:
+        case Op::OpDiv:
+        case Op::OpEq:
+        case Op::OpLt:
+        case Op::OpGt:
+        case Op::OpLe:
+        case Op::OpGe:
+        case Op::OpAnd:
+        case Op::OpOr:
+        case Op::OpMakePair:
+        case Op::OpHashRef: // #4571: non-float results
+        case Op::OpHashSet:
+        case Op::OpHashRemove:
+        case Op::OpLocal:
+        case Op::OpNot:
+        case Op::OpCar:
+        case Op::OpCdr:
+        case Op::OpIsError:
+        case Op::OpCastOp:
+        case Op::OpGuardShape:
+        case Op::OpPrimitive:
+        case Op::OpConstI64:
+        case Op::OpConstF64:
+        case Op::OpConstString:
+        case Op::OpConstBool:
+        case Op::OpConstVoid:
+        case Op::OpArg:
+        case Op::OpTopCellLoad:
+            r = in.ops[0];
+            return true;
+        default:
+            return false;
+    }
+}
+
 static StaticFloats static_float_slots(const FlatFunction& fn,
                                        const std::vector<std::uint8_t>& promo) {
     const uint32_t n = fn.local_count;
@@ -702,66 +760,11 @@ static StaticFloats static_float_slots(const FlatFunction& fn,
         return out;
     auto& fs = out.slot;
     auto& fc = out.cell;
-    // Result slot of an instruction (UINT32_MAX = none); false = unknown op.
-    auto result_slot = [](const FlatInstruction& in, uint32_t& r) -> bool {
-        r = UINT32_MAX;
-        switch (in.opcode) {
-            case Op::OpCall:
-            case Op::OpPrimCall:
-                r = in.ops[3];
-                return true;
-            case Op::OpApply:
-                r = in.ops[2];
-                return true;
-            case Op::OpCellSet:
-            case Op::OpBranch:
-            case Op::OpReturn:
-            case Op::OpJump:
-            case Op::OpNop:
-                return true;
-            case Op::OpNewCell:
-            case Op::OpCellGet:
-            case Op::OpAdd:
-            case Op::OpSub:
-            case Op::OpMul:
-            case Op::OpDiv:
-            case Op::OpEq:
-            case Op::OpLt:
-            case Op::OpGt:
-            case Op::OpLe:
-            case Op::OpGe:
-            case Op::OpAnd:
-            case Op::OpOr:
-            case Op::OpMakePair:
-            case Op::OpHashRef: // #4571: non-float results
-            case Op::OpHashSet:
-            case Op::OpHashRemove:
-            case Op::OpLocal:
-            case Op::OpNot:
-            case Op::OpCar:
-            case Op::OpCdr:
-            case Op::OpIsError:
-            case Op::OpCastOp:
-            case Op::OpGuardShape:
-            case Op::OpPrimitive:
-            case Op::OpConstI64:
-            case Op::OpConstF64:
-            case Op::OpConstString:
-            case Op::OpConstBool:
-            case Op::OpConstVoid:
-            case Op::OpArg:
-            case Op::OpTopCellLoad:
-                r = in.ops[0];
-                return true;
-            default:
-                return false;
-        }
-    };
     for (uint32_t bi = 0; bi < fn.num_blocks; ++bi) {
         const auto& fb = fn.blocks[bi];
         for (uint32_t ii = 0; ii < fb.num_instructions; ++ii) {
             uint32_t r = 0;
-            if (!result_slot(fb.instructions[ii], r))
+            if (!ir_result_slot(fb.instructions[ii], r))
                 return StaticFloats{std::vector<std::uint8_t>(n, 0),
                                     std::vector<std::uint8_t>(n, 0)}; // unknown op: none
             if (r < n)
@@ -786,7 +789,7 @@ static StaticFloats static_float_slots(const FlatFunction& fn,
                     continue;
                 }
                 uint32_t r = 0;
-                (void)result_slot(in, r);
+                (void)ir_result_slot(in, r);
                 if (r >= n || !fs[r])
                     continue;
                 bool is_float = false;
@@ -818,6 +821,58 @@ static StaticFloats static_float_slots(const FlatFunction& fn,
     }
     return out;
 }
+
+// Issue #4601: env slots whose cell read can be hoisted to function
+// entry. A slot qualifies when it is the destination of exactly one OpArg
+// (so the cell id is stable for the whole activation), is inside the env
+// prefix, and is read by at least one OpCellGet. The read is still
+// re-validated at the use site against the cell-heap write epoch, so a
+// mutation (set!/rebind/new-cell growth) falls back to the locked call.
+// Disabled on the production tenant face: the inline read would bypass
+// the #4093 per-cell owner gate.
+static std::vector<std::uint8_t> hoistable_env_cells(const FlatFunction& fn) {
+    std::vector<std::uint8_t> out(fn.local_count, 0);
+    if (!jit_l1_enabled() || fn.env_count == 0 || fn.env_count > fn.local_count || !fn.blocks ||
+        fn.source_marker == 1)
+        return out;
+    if (aura::compiler::typed_audit::production_defaults_active())
+        return out;
+    std::vector<std::uint16_t> defs(fn.local_count, 0);
+    std::vector<std::uint8_t> env_arg(fn.local_count, 0);
+    std::vector<std::uint8_t> read(fn.local_count, 0);
+    for (uint32_t bi = 0; bi < fn.num_blocks; ++bi) {
+        const auto& fb = fn.blocks[bi];
+        for (uint32_t ii = 0; ii < fb.num_instructions; ++ii) {
+            const auto& in = fb.instructions[ii];
+            uint32_t r = 0;
+            if (!ir_result_slot(in, r)) {
+                // Unknown lowering: treat ops[0] as a potential destination
+                // so a slot that could be rewritten by it stays unhoisted,
+                // but do not give up on the whole function.
+                r = in.ops[0];
+            }
+            if (r < fn.local_count) {
+                if (defs[r] != 0xFFFF)
+                    ++defs[r];
+                // The env prefix is addressed by the OpArg buffer index, not
+                // by the IR slot number (slot 0 can be unused; fib's self
+                // cell lands in slot 1 from buf 0).
+                if (in.opcode == Op::OpArg && in.ops[1] < fn.env_count)
+                    env_arg[r] = 1;
+            }
+            if (in.opcode == Op::OpCellGet && in.ops[1] < fn.local_count)
+                read[in.ops[1]] = 1;
+        }
+    }
+    for (uint32_t k = 0; k < fn.local_count; ++k)
+        if (defs[k] == 1 && env_arg[k] && read[k])
+            out[k] = 1;
+    return out;
+}
+
+// Issue #4601: JIT self-call / cell-epoch runtime seams (aura_jit_runtime.cpp).
+extern "C" int64_t aura_jit_native_self_id();
+extern "C" std::uint64_t aura_cell_heap_epoch;
 
 // LLVM IR Builder
 struct LLVMBuilder {
@@ -879,6 +934,48 @@ struct LLVMBuilder {
     // Issue #4570: 1 = pcells[slot] is a double alloca (a statically-float
     // cell, see static_float_slots); 0 = tagged i64 content.
     std::vector<std::uint8_t> pcell_f{};
+
+    // Issue #4601: direct recursive self-call.
+    //   self_call_ok    - the function is named, non-AOT, L1 enabled and
+    //                     not in force-every-guard mode.
+    //   self_id_alloca  - i64 entry alloca holding this activation's
+    //                     closure id (aura_jit_native_self_id, read once
+    //                     after the prologue).
+    //   self_word_addr  - stable DefineVersion word for fn.name; the fast
+    //                     path compares an acquire load against the value
+    //                     captured at body entry (#4569 assumption: the
+    //                     define still names this function for this call).
+    bool self_call_ok = false;
+    llvm::Value* self_id_alloca = nullptr;
+    // Stable DefineVersion word address + the value captured at THIS
+    // activation's body entry. The prologue admits the body only for a
+    // non-stale fn, so an unchanged word for the activation's lifetime is
+    // the #4569 assumption the direct self-call needs; a mid-body bump
+    // falls back to aura_closure_call.
+    std::uint64_t* self_word_addr = nullptr;
+    llvm::Value* self_word_alloca = nullptr;
+    std::uint32_t self_env_count = 0;
+    std::uint32_t self_arg_count = 0;
+    std::uint32_t self_local_count = 0;
+    // IR slot holding the env value for locals-buffer index i. The IR slot
+    // numbers are not the buffer indices (OpArg carries the buffer index in
+    // ops[1]); a self-call rebuilds the callee frame from these slots.
+    std::vector<std::uint32_t> self_env_slots{};
+    // One callee locals buffer per function: self-call sites are sequential
+    // within an activation, so a single entry-block allocation is enough.
+    llvm::Value* self_locals_buf = nullptr;
+
+    // Issue #4601: hoisted env-cell reads. An env slot that is written
+    // only by its entry OpArg and read by OpCellGet is read once at body
+    // entry under the cell-heap epoch; the use site reuses that value
+    // while the epoch is unchanged and otherwise falls back to the
+    // locked aura_cell_get call. This removes the lock from the
+    // recursive path without assuming the cell is immutable.
+    struct HoistedCell {
+        llvm::Value* value = nullptr;
+        llvm::Value* epoch = nullptr;
+    };
+    std::vector<HoistedCell> hoisted_cells{};
     // Issue #4573: scalar-replaced pairs. spair_car/spair_cdr[slot] are i64
     // allocas holding the fields of a pair that never leaves the function
     // (see scalar_pairs); nullptr = a real runtime pair.
@@ -1120,6 +1217,9 @@ struct LLVMBuilder {
     // Issue #4451: peek the #4084 sentinel after OpCall / OpApply.
     // Does not clear it. The host take-after still sees a callee refuse.
     llvm::Function* fn_peek_prologue_deopt_sentinel = nullptr;
+    // Issue #4601: i64 aura_jit_native_self_id() — innermost native
+    // activation's closure id on this thread.
+    llvm::Function* fn_native_self_id = nullptr;
     // When set, entry-block instructions lower into this BB (after prologue).
     llvm::BasicBlock* entry_body_bb = nullptr;
     // Hash operations (inline dispatch, avoids PrimCall overhead)
@@ -1289,6 +1389,10 @@ struct LLVMBuilder {
         fn_peek_prologue_deopt_sentinel = llvm::Function::Create(
             llvm::FunctionType::get(i32_ty, false), llvm::Function::ExternalLinkage,
             "aura_jit_peek_prologue_deopt_sentinel", mod);
+        // Issue #4601: i64 aura_jit_native_self_id(void)
+        fn_native_self_id =
+            llvm::Function::Create(llvm::FunctionType::get(i64, false),
+                                   llvm::Function::ExternalLinkage, "aura_jit_native_self_id", mod);
 
         // Issue #2576: (slot, args*, count) — full N-arg PrimCall
         fn_prim_call = llvm::Function::Create(
@@ -1636,6 +1740,122 @@ struct LLVMBuilder {
         // bb_err returns; bb_call is the sole live continuation.
         irb->SetInsertPoint(bb_call);
         return irb->CreateCall(checked_fn, llvm::ArrayRef<llvm::Value*>{v});
+    }
+    // Issue #4601: alloca in the function entry block, so a buffer used by
+    // a call site is per-activation even when the site sits in a loop.
+    llvm::AllocaInst* create_entry_alloca(llvm::Type* ty, const char* name) {
+        auto* entry = &func->getEntryBlock();
+        llvm::IRBuilder<> ab(&*entry->begin());
+        return ab.CreateAlloca(ty, nullptr, name);
+    }
+    // Issue #4601: acquire load of the process cell-heap write epoch.
+    llvm::Value* load_cell_epoch() {
+        auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+        auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+        auto* wptr = irb->CreateIntToPtr(
+            c64(static_cast<int64_t>(reinterpret_cast<std::uintptr_t>(&aura_cell_heap_epoch))),
+            ptr_ty);
+        auto* wv = irb->CreateLoad(i64_ty, wptr);
+        wv->setAtomic(llvm::AtomicOrdering::Acquire);
+        wv->setAlignment(llvm::Align(8));
+        return wv;
+    }
+    // Issue #4601: read an env cell through the entry-hoisted value while
+    // the cell-heap epoch is unchanged; otherwise run the slow path (the
+    // locked aura_cell_get lowering). No call and no lock on the hit path.
+    template <class Slow> llvm::Value* emit_l1_cell_get(uint32_t slot, Slow slow) {
+        if (slot >= hoisted_cells.size() || !hoisted_cells[slot].value)
+            return slow();
+        auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+        auto* parent = irb->GetInsertBlock()->getParent();
+        auto* bb_hit = llvm::BasicBlock::Create(ctx, "l1_cell_hit", parent);
+        auto* bb_slow = llvm::BasicBlock::Create(ctx, "l1_cell_slow", parent);
+        auto* bb_done = llvm::BasicBlock::Create(ctx, "l1_cell_done", parent);
+        auto* cur = load_cell_epoch();
+        auto* same = irb->CreateICmpEQ(cur, irb->CreateLoad(i64_ty, hoisted_cells[slot].epoch));
+        br_likely(same, bb_hit, bb_slow);
+
+        irb->SetInsertPoint(bb_hit);
+        auto* hitv = irb->CreateLoad(i64_ty, hoisted_cells[slot].value);
+        irb->CreateBr(bb_done);
+
+        irb->SetInsertPoint(bb_slow);
+        // Refresh the cache: sample the epoch BEFORE the read, so a
+        // concurrent write that lands during the read leaves a stale
+        // epoch behind and the next use misses again.
+        auto* pre = load_cell_epoch();
+        auto* slowv = slow();
+        irb->CreateStore(slowv, hoisted_cells[slot].value);
+        irb->CreateStore(pre, hoisted_cells[slot].epoch);
+        auto* slow_end = irb->GetInsertBlock();
+        irb->CreateBr(bb_done);
+
+        irb->SetInsertPoint(bb_done);
+        auto* phi = irb->CreatePHI(i64_ty, 2, "l1_cell");
+        phi->addIncoming(hitv, bb_hit);
+        phi->addIncoming(slowv, slow_end);
+        return phi;
+    }
+    // Issue #4601: guarded direct self-call. The callee word must equal
+    // this activation's closure id (reproducible recursion on the same
+    // closure) and the fn's DefineVersion word must still hold the value
+    // captured at compile time (#4569 assumption: the define names this
+    // function). Both hit -> rebuild the callee frame from our own env
+    // prefix + the call args and call the native body directly; miss ->
+    // the unchanged aura_closure_call lowering. frame_deopt_ok is
+    // required so a prologue deopt inside the callee returns the
+    // interpreted value instead of the #4084 sentinel.
+    template <class ArgAt, class Generic>
+    bool emit_self_call(llvm::Value* callee, uint32_t arg_count, uint32_t result_slot, ArgAt arg_at,
+                        Generic generic) {
+        if (!self_call_ok || !self_id_alloca || !fn_native_self_id || arg_count != self_arg_count ||
+            self_env_count + arg_count > self_local_count)
+            return false;
+        auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+        auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+        auto* parent = irb->GetInsertBlock()->getParent();
+        auto* bb_self = llvm::BasicBlock::Create(ctx, "l1_self_call", parent);
+        auto* bb_gen = llvm::BasicBlock::Create(ctx, "l1_self_generic", parent);
+        auto* bb_done = llvm::BasicBlock::Create(ctx, "l1_self_done", parent);
+        auto* sid = irb->CreateLoad(i64_ty, self_id_alloca);
+        auto* is_self = irb->CreateICmpEQ(callee, sid);
+        auto* wptr = irb->CreateIntToPtr(
+            c64(static_cast<int64_t>(reinterpret_cast<std::uintptr_t>(self_word_addr))), ptr_ty);
+        auto* wv = irb->CreateLoad(i64_ty, wptr);
+        wv->setAtomic(llvm::AtomicOrdering::Acquire);
+        wv->setAlignment(llvm::Align(8));
+        auto* word_ok = irb->CreateICmpEQ(wv, irb->CreateLoad(i64_ty, self_word_alloca));
+        br_likely(irb->CreateAnd(is_self, word_ok), bb_self, bb_gen);
+
+        irb->SetInsertPoint(bb_self);
+        if (!self_locals_buf)
+            self_locals_buf = create_entry_alloca(llvm::ArrayType::get(i64_ty, self_local_count),
+                                                  "l1_self_locals");
+        auto* arr = self_locals_buf;
+        for (uint32_t i = 0; i < self_env_count; ++i) {
+            auto* gep = irb->CreateGEP(i64_ty, arr, c64(i));
+            auto* src = llvm_locals[self_env_slots[i]];
+            irb->CreateStore(irb->CreateLoad(i64_ty, src), gep);
+        }
+        for (uint32_t i = 0; i < arg_count; ++i) {
+            auto* gep = irb->CreateGEP(i64_ty, arr, c64(self_env_count + i));
+            irb->CreateStore(arg_at(i), gep);
+        }
+        llvm::Value* own = irb->CreateCall(
+            llvm::FunctionCallee(func),
+            llvm::ArrayRef<llvm::Value*>{
+                arr, llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), arg_count)});
+        irb->CreateStore(own, llvm_locals[result_slot]);
+        irb->CreateBr(bb_done);
+
+        irb->SetInsertPoint(bb_gen);
+        generic();
+        irb->CreateBr(bb_done);
+
+        irb->SetInsertPoint(bb_done);
+        if (metrics)
+            metrics->l1_self_call_total.fetch_add(1, std::memory_order_relaxed);
+        return true;
     }
 
     // Issue #4571 (L2): inline pair field read. pair_ok is the i1 the JIT
@@ -2848,19 +3068,28 @@ struct LLVMBuilder {
                 }
                 auto closure = load(inst.ops[0]);
                 auto arg_count = inst.ops[1];
-                auto alloca_ty = llvm::ArrayType::get(llvm::Type::getInt64Ty(ctx), arg_count);
-                auto args_arr = irb->CreateAlloca(alloca_ty);
-                // Inline args: locals[ops[0]+1] ... locals[ops[0]+arg_count]
-                for (uint32_t i = 0; i < arg_count; ++i) {
-                    auto gep = irb->CreateGEP(llvm::Type::getInt64Ty(ctx), args_arr, c64(i));
-                    irb->CreateStore(load(inst.ops[0] + 1 + i), gep);
-                }
-                auto call = irb->CreateCall(
-                    fn_closure_call,
-                    {closure, irb->CreateBitCast(args_arr, llvm::PointerType::getUnqual(ctx)),
-                     c64(arg_count)});
-                store(inst.ops[2], call);
-                leave_if_callee_refused();
+                auto generic_apply = [&]() {
+                    auto alloca_ty = llvm::ArrayType::get(llvm::Type::getInt64Ty(ctx), arg_count);
+                    auto args_arr = irb->CreateAlloca(alloca_ty);
+                    // Inline args: locals[ops[0]+1] ... locals[ops[0]+arg_count]
+                    for (uint32_t i = 0; i < arg_count; ++i) {
+                        auto gep = irb->CreateGEP(llvm::Type::getInt64Ty(ctx), args_arr, c64(i));
+                        irb->CreateStore(load(inst.ops[0] + 1 + i), gep);
+                    }
+                    auto call = irb->CreateCall(
+                        fn_closure_call,
+                        {closure, irb->CreateBitCast(args_arr, llvm::PointerType::getUnqual(ctx)),
+                         c64(arg_count)});
+                    store(inst.ops[2], call);
+                    leave_if_callee_refused();
+                };
+                // Issue #4601: a self-apply takes the direct native path
+                // (id + DefineVersion guarded). The #1917 site probe above
+                // already ran for both arms.
+                if (!emit_self_call(
+                        closure, arg_count, inst.ops[2],
+                        [&](uint32_t i) { return load(inst.ops[0] + 1 + i); }, generic_apply))
+                    generic_apply();
                 if (lin)
                     end_linear_epoch_fence(fb);
                 return true;
@@ -2873,18 +3102,27 @@ struct LLVMBuilder {
                 auto callee = load(inst.ops[0]);
                 auto arg_base = inst.ops[1];
                 auto arg_count = inst.ops[2];
-                auto alloca_ty = llvm::ArrayType::get(llvm::Type::getInt64Ty(ctx), arg_count);
-                auto args_arr = irb->CreateAlloca(alloca_ty);
-                for (uint32_t i = 0; i < arg_count; ++i) {
-                    auto gep = irb->CreateGEP(llvm::Type::getInt64Ty(ctx), args_arr, c64(i));
-                    irb->CreateStore(load(arg_base + i), gep);
-                }
-                auto call = irb->CreateCall(
-                    fn_closure_call,
-                    {callee, irb->CreateBitCast(args_arr, llvm::PointerType::getUnqual(ctx)),
-                     c64(arg_count)});
-                store(inst.ops[3], call);
-                leave_if_callee_refused();
+                auto generic_call = [&]() {
+                    auto alloca_ty = llvm::ArrayType::get(llvm::Type::getInt64Ty(ctx), arg_count);
+                    auto args_arr = irb->CreateAlloca(alloca_ty);
+                    for (uint32_t i = 0; i < arg_count; ++i) {
+                        auto gep = irb->CreateGEP(llvm::Type::getInt64Ty(ctx), args_arr, c64(i));
+                        irb->CreateStore(load(arg_base + i), gep);
+                    }
+                    auto call = irb->CreateCall(
+                        fn_closure_call,
+                        {callee, irb->CreateBitCast(args_arr, llvm::PointerType::getUnqual(ctx)),
+                         c64(arg_count)});
+                    store(inst.ops[3], call);
+                    leave_if_callee_refused();
+                };
+                // Issue #4601: self-recursion calls this function's own
+                // native body directly — no aura_closure_call, no dispatch
+                // locks, no general prologue re-check.
+                if (!emit_self_call(
+                        callee, arg_count, inst.ops[3],
+                        [&](uint32_t i) { return load(arg_base + i); }, generic_call))
+                    generic_call();
                 return true;
             }
 
@@ -2925,9 +3163,14 @@ struct LLVMBuilder {
                           irb->CreateLoad(llvm::Type::getInt64Ty(ctx), pcells[inst.ops[1]]));
                     return true;
                 }
-                auto call = irb->CreateCall(llvm::FunctionCallee(fn_cell_get),
-                                            llvm::ArrayRef<llvm::Value*>{load(inst.ops[1])});
-                store(inst.ops[0], call);
+                // Issue #4601: an env-cell read reuses the entry-hoisted
+                // value while the cell-heap epoch is unchanged (no lock, no
+                // call); any cell write falls back to the runtime read.
+                auto* v = emit_l1_cell_get(inst.ops[1], [&]() {
+                    return irb->CreateCall(llvm::FunctionCallee(fn_cell_get),
+                                           llvm::ArrayRef<llvm::Value*>{load(inst.ops[1])});
+                });
+                store(inst.ops[0], v);
                 return true;
             }
             case OpCellSet: {
@@ -4912,6 +5155,8 @@ struct AuraJIT::Impl {
         reg("aura_jit_deopt_frame", (void*)aura_jit_deopt_frame);
         reg("aura_check_shape_guard", (void*)aura_check_shape_guard);
         reg("aura_jit_peek_prologue_deopt_sentinel", (void*)aura_jit_peek_prologue_deopt_sentinel);
+        // Issue #4601: direct self-call activation id.
+        reg("aura_jit_native_self_id", (void*)aura_jit_native_self_id);
         reg("aura_deopt_inc", (void*)aura_deopt_inc);
         // Issue #3988: Jump back-edge poll (strong in evaluator_fiber_mutation).
         reg("aura_jit_poll_hold_budget_safepoint", (void*)aura_jit_poll_hold_budget_safepoint);
@@ -5369,6 +5614,74 @@ struct AuraJIT::Impl {
             builder.entry_body_bb = bb_cont;
             if (metrics)
                 metrics->prologue_emit_total.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        // Issue #4601: direct recursive self-call support, emitted once
+        // after the prologue and before the body:
+        //   - cache this activation's closure id (TLS read);
+        //   - cache the fn's DefineVersion word + the value the code was
+        //     compiled under (#4569 assumption);
+        //   - hoist each eligible env-cell read, bracketed by the
+        //     cell-heap write epoch so a mutation falls back to the call.
+        builder.self_call_ok = jit_l1_enabled() && !builder.aot_mode && fn.name && fn.name[0] &&
+                               fn.source_marker != 1 && builder.frame_deopt_ok &&
+                               builder.fn_native_self_id && jit_force_guard_deopt() < 2 &&
+                               fn.local_count > 0 && fn.env_count <= fn.local_count &&
+                               fn.arg_count <= fn.local_count - fn.env_count;
+        if (builder.self_call_ok) {
+            // Map each env buffer index to the IR slot the entry OpArg
+            // wrote. Missing or out-of-range mapping: keep the generic path.
+            builder.self_env_slots.assign(fn.env_count, UINT32_MAX);
+            for (std::uint32_t bi = 0; bi < fn.num_blocks && builder.self_call_ok; ++bi) {
+                const auto& fb = fn.blocks[bi];
+                for (std::uint32_t ii = 0; ii < fb.num_instructions; ++ii) {
+                    const auto& inst = fb.instructions[ii];
+                    if (inst.opcode == OpArg && inst.ops[1] < fn.env_count)
+                        builder.self_env_slots[inst.ops[1]] = inst.ops[0];
+                }
+            }
+            for (auto s : builder.self_env_slots)
+                if (s >= fn.local_count)
+                    builder.self_call_ok = false;
+        }
+        if (builder.self_call_ok) {
+            auto* body_bb =
+                builder.entry_body_bb ? builder.entry_body_bb : builder.block_map[fn.entry_block];
+            builder.irb->SetInsertPoint(body_bb);
+            auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+            builder.self_env_count = fn.env_count;
+            builder.self_arg_count = fn.arg_count;
+            builder.self_local_count = fn.local_count;
+            builder.self_id_alloca = builder.create_entry_alloca(i64_ty, "l1_self_id");
+            auto* sid =
+                builder.irb->CreateCall(llvm::FunctionCallee(builder.fn_native_self_id), {});
+            builder.irb->CreateStore(sid, builder.self_id_alloca);
+            auto* word = aura::compiler::jit_assume::DefineVersions::instance().word(fn.name);
+            builder.self_word_addr = reinterpret_cast<std::uint64_t*>(&word->v);
+            builder.self_word_alloca = builder.create_entry_alloca(i64_ty, "l1_self_word");
+            auto* wptr0 = builder.irb->CreateIntToPtr(
+                builder.c64(
+                    static_cast<int64_t>(reinterpret_cast<std::uintptr_t>(builder.self_word_addr))),
+                llvm::PointerType::getUnqual(ctx));
+            auto* wv0 = builder.irb->CreateLoad(i64_ty, wptr0);
+            wv0->setAtomic(llvm::AtomicOrdering::Acquire);
+            wv0->setAlignment(llvm::Align(8));
+            builder.irb->CreateStore(wv0, builder.self_word_alloca);
+            const auto hoist = hoistable_env_cells(fn);
+            builder.hoisted_cells.assign(fn.local_count, {});
+            for (std::uint32_t k = 0; k < fn.local_count; ++k) {
+                if (!hoist[k])
+                    continue;
+                // Empty cache: epoch 0 never matches the live word (which
+                // starts at 1), so the first use takes the read path. Did
+                // not read here — the OpArg that fills llvm_locals[k] is
+                // lowered after this point.
+                auto* vp = builder.create_entry_alloca(i64_ty, "l1_cell_val");
+                builder.irb->CreateStore(builder.c64(0), vp);
+                auto* ep = builder.create_entry_alloca(i64_ty, "l1_cell_epoch");
+                builder.irb->CreateStore(builder.c64(0), ep);
+                builder.hoisted_cells[k] = {vp, ep};
+            }
         }
 
         // Issue #4567: a shape map speculates argument slots. Check the

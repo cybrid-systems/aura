@@ -1740,6 +1740,95 @@ def test_jit_mixed_compare_4570():
     print(f"  ✅ test_jit_mixed_compare_4570 ({len(cases)} cases)")
 
 
+def test_jit_self_call_4601():
+    """Issue #4601: guarded direct recursive self-call + env-cell hoist.
+
+    A call whose callee word equals this activation's closure id takes a
+    direct native call of the function's own body, guarded by the
+    DefineVersion word captured at body entry (no aura_closure_call, no
+    #4084 sentinel peek, no general prologue re-check). An env cell that
+    is only written by its entry OpArg and read by OpCellGet is read once
+    under the cell-heap write epoch and re-read through the locked runtime
+    call whenever the epoch moved. Output must stay byte-identical to the
+    IR interpreter, the eval path, L1-off, and forced-deopt-at-every-guard
+    modes; a mutually recursive sibling (callee != self) and a mutated
+    captured cell must keep the generic semantics.
+    """
+
+    def run(code, *, mode="eval", extra=None):
+        env = os.environ.copy()
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "0"
+        env.pop("AURA_FORCE_IR", None)
+        cmd = [AURA]
+        if mode == "ir":
+            env["AURA_FORCE_IR"] = "1"
+        elif mode == "jit":
+            cmd.append("--jit")
+        if extra:
+            env.update(extra)
+        r = subprocess.run(cmd, input=code, capture_output=True, text=True, timeout=60, env=env)
+        assert r.returncode == 0, f"{mode} rc={r.returncode}: {r.stderr[-500:]}"
+        return r.stdout
+
+    fib = "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))) "
+    programs = [(f"fib-{n}", f"{fib}(display (fib {n}))") for n in (0, 1, 2, 3, 5, 10, 20)]
+    programs += [
+        (
+            "mutual-sibling",
+            "(define (ev n) (if (= n 0) 1 (od (- n 1)))) "
+            "(define (od n) (if (= n 0) 0 (ev (- n 1)))) "
+            "(display (ev 20)) (display (od 20))",
+        ),
+        (
+            "mutated-captured-cell",
+            "(define (mk) (let ((c 0)) (lambda () (set! c (+ c 1)) c))) "
+            "(define g (mk)) (display (g)) (display (g)) (display (g))",
+        ),
+        (
+            "self-cell-sum",
+            "(define (sum n) (if (< n 1) 0 (+ n (sum (- n 1))))) (display (sum 100))",
+        ),
+    ]
+    for name, code in programs:
+        outs = {
+            "ir": run(code, mode="ir"),
+            "eval": run(code),
+            "jit": run(code, mode="jit"),
+            "jit_l1_off": run(code, mode="jit", extra={"AURA_JIT_L1": "0"}),
+            "jit_force1": run(code, mode="jit", extra={"AURA_JIT_FORCE_GUARD_DEOPT": "1"}),
+            "jit_force2": run(code, mode="jit", extra={"AURA_JIT_FORCE_GUARD_DEOPT": "2"}),
+        }
+        if len(set(outs.values())) != 1:
+            raise Exception(f"{name}: {outs}")
+
+    # IR: the recursive call is lowered to a direct call of @fib, and the
+    # self-call block has no dispatch / cell / sentinel call in it.
+    sess = "\n".join([fib + "(fib 3)", ";;ir fib"]) + "\n"
+    env = os.environ.copy()
+    env["AURA_SANDBOX"] = "off"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    r = subprocess.run([AURA, "--jit-session"], input=sess, capture_output=True, text=True, timeout=60, env=env)
+    out = r.stdout or ""
+    assert r.returncode == 0, f"--jit-session rc={r.returncode}: {r.stderr[-600:]}"
+    assert "define i64 @fib" in out, out[:400]
+    ir = out[out.index("define i64 @fib") :]
+    ir = ir[: ir.index("\n}")]
+    assert "l1_self_call:" in ir, "no direct self-call block in fib IR"
+    block = ir.split("l1_self_call:")[1].split("\n\n")[0]
+    assert "call i64 @fib(" in block, block
+    for banned in (
+        "@aura_closure_call",
+        "@aura_cell_get",
+        "@aura_jit_peek_prologue_deopt_sentinel",
+    ):
+        assert banned not in block, f"self-call block still calls {banned}: {block}"
+    # The env-cell read is not unconditional any more: the hot path uses
+    # the cached word and only the slow block reaches the locked call.
+    assert "l1_cell_slow" in ir, "env-cell hoist slow block missing"
+    print(f"  ✅ test_jit_self_call_4601 ({len(programs)} programs × 6 modes; fib IR direct self-call)")
+
+
 def test_type_feedback_4568():
     """Issue #4568: query:type-feedback lattice, polymorphic calls, rebind reset."""
     code = r"""
@@ -2282,6 +2371,7 @@ for tf in [
     test_jit_reuse_lowering_4600,
     test_jit_l1_4570,
     test_jit_mixed_compare_4570,
+    test_jit_self_call_4601,
     test_jit_l2_4571,
     test_jit_general_call_4603,
     test_jit_call_path_4572,

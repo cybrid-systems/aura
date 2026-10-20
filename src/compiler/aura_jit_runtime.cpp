@@ -5460,6 +5460,32 @@ static int64_t closure_dispatch_leave_native() noexcept {
     return 0;
 }
 
+// Issue #4601: closure id of the innermost native activation on this
+// thread. dispatch_native_checked sets it around the native invoke
+// (save/restore so nesting is exact); a JIT activation reads it once at
+// body entry and takes the direct self-call path when the callee word is
+// its own id. Never written by AOT code, where a miss just keeps the
+// generic aura_closure_call lowering.
+namespace {
+    thread_local int64_t g_native_self_id = -1;
+} // namespace
+
+extern "C" int64_t aura_jit_native_self_id() noexcept {
+    return g_native_self_id;
+}
+
+// Issue #4601: cell-heap write epoch. Every g_cell_heap mutation bumps it
+// under the workspace write lock; the JIT reads it (acquire) before and
+// after a hoisted env-cell read and only reuses the cached value when the
+// word is unchanged. A stale cache therefore falls back to aura_cell_get
+// (lock + bounds + tenant gate) instead of observing an old slot.
+extern "C" {
+alignas(64) std::uint64_t aura_cell_heap_epoch = 1;
+}
+static inline void note_cell_heap_write_() noexcept {
+    __atomic_add_fetch(&aura_cell_heap_epoch, 1, __ATOMIC_RELEASE);
+}
+
 extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int64_t* args,
                                                         int64_t argc) {
     // Issue #4451: a prior direct refuse must not poison the next call.
@@ -5921,7 +5947,12 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
                 // dtor still unnotes under it. Do not unlock the read twice.
                 tlock.unlock();
                 aura_unlock_workspace_read();
+                // Issue #4601: publish this activation's closure id for the
+                // direct self-call lowering (save/restore for nesting).
+                const int64_t prev_native_self = g_native_self_id;
+                g_native_self_id = closure_id;
                 int64_t fast_result = fn(locals, static_cast<uint32_t>(argc));
+                g_native_self_id = prev_native_self;
                 tlock.lock();
                 return fast_result;
             }
@@ -6056,7 +6087,12 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
     // while this frame holds the shared lock and the workspace read.
     tlock.unlock();
     aura_unlock_workspace_read();
+    // Issue #4601: publish this activation's closure id for the direct
+    // self-call lowering (same save/restore as the fast path).
+    const int64_t prev_native_self = g_native_self_id;
+    g_native_self_id = closure_id;
     int64_t result = entry.fn(locals, static_cast<uint32_t>(argc));
+    g_native_self_id = prev_native_self;
 
     // ── Update cache (Issue #1305: write under exclusive lock — not read lock) ──
     // Pre-#1305 updated 5 fields under read lock → TOCTOU with concurrent
@@ -6289,6 +6325,7 @@ int64_t aura_new_cell() {
     aura_lock_workspace_write();
     int64_t id = static_cast<int64_t>(g_cell_heap.size());
     g_cell_heap.push_back(0);
+    note_cell_heap_write_(); // Issue #4601: invalidate JIT cell-read caches
     // Issue #4093: stamp the owning principal parallel to the cell (the
     // #4057 pair-slot shape) at the same publish point as the slot.
     if (g_cell_tenants.size() < g_cell_heap.size())
@@ -6307,6 +6344,7 @@ extern "C" int64_t aura_new_cell_tenant(int64_t owner_tenant) {
     aura_lock_workspace_write();
     int64_t id = static_cast<int64_t>(g_cell_heap.size());
     g_cell_heap.push_back(0);
+    note_cell_heap_write_(); // Issue #4601: invalidate JIT cell-read caches
     if (g_cell_tenants.size() < g_cell_heap.size())
         g_cell_tenants.resize(g_cell_heap.size(), 0);
     g_cell_tenants[static_cast<std::size_t>(id)] = static_cast<std::uint64_t>(owner_tenant);
@@ -6382,6 +6420,7 @@ extern "C" void aura_cell_set_checked(int64_t cell_id, int64_t val, std::uint64_
             }
         }
         g_cell_heap[static_cast<size_t>(cell_id)] = val;
+        note_cell_heap_write_(); // Issue #4601: invalidate JIT cell-read caches
     }
     aura_unlock_workspace_write();
 }
@@ -7558,6 +7597,7 @@ void aura_reset_runtime() {
     g_jit_fns_by_name.clear();
     g_ir_func_define_names.clear(); // Issue #4405
     g_cell_heap.clear();
+    note_cell_heap_write_(); // Issue #4601: a reset invalidates JIT cell caches
     // Issue #4093: tenant stamps die with the slots (a stale stamp must
     // never survive a reset and re-attach to a reused index).
     g_cell_tenants.clear();
