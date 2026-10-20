@@ -42,6 +42,7 @@
 
 #include "orch/security_schedule_gate.h"
 #include "compiler/aot_hot_update_health.hh"
+#include "compiler/source_contract.hpp"
 #include "compiler/typed_mutation_audit.h"
 #include "core/mutation_audit_wal.hh"
 #include "core/sandbox.hh"
@@ -1338,6 +1339,20 @@ int run_test_security_schedule_gate() {
         reset_orch_security_schedule_counters_for_test();
     }
 
+    // Issue #4639: the security-schedule gate's commit-readiness face is a
+    // process-wide stale latch (the "solve" reason plus the residual
+    // faces): leftover state from earlier activity hard-rejects the admit
+    // for a reason that has nothing to do with the scope. Clear the faces
+    // so the members below decide on the mailbox-hold-slo face - the face
+    // they pin.
+    const auto clear_commit_readiness_faces = []() noexcept {
+        aura::compiler::typed_audit::clear_type_linear_proof_outcome_for_test();
+        aura::compiler::typed_audit::reset_rehydrate_miss_invalidate_for_test();
+        aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test();
+        aura::compiler::typed_audit::clear_cone_outside_goal_drop_for_test();
+        aura::compiler::typed_audit::clear_occurrence_empty_after_fence_for_test();
+    };
+
     {
         // Issue #3938: named scope A starve/p99 must not ScheduleGate
         // tenant B mutate / parallel-intend with a distinct bp_scope_id.
@@ -1385,9 +1400,25 @@ int run_test_security_schedule_gate() {
             h.mailbox->attach(h.fiber);
         auto* prev_fiber = g_current_fiber;
         g_current_fiber = h.fiber;
+        // Issue #4639: parallel-intend is a strategy primitive, and the
+        // CAPABILITY face refuses it ("capability denied: strategy
+        // required") BEFORE the schedule gate runs - a member that only
+        // checked "the eval returned a value" then never exercised the
+        // gate it pins. Build the evaluator while the capability registry
+        // is Off (the Evaluator latches its sandbox bool at construction)
+        // and arm the production schedule gate right after.
+        set_mode(SandboxMode::Off);
         CompilerService cs;
+        set_mode(SandboxMode::Strict);
         auto& ev = cs.evaluator();
         using Ev = std::remove_reference_t<decltype(ev)>;
+        // Issue #4639: the gate's commit-readiness face is a process-wide
+        // stale latch ("solve"): a rehydrate-miss generation mismatch left
+        // over from earlier activity hard-rejects the admit for a reason
+        // that has nothing to do with the scope. Clear it so the member
+        // decides on the mailbox-hold-slo face - the face this member
+        // pins.
+        clear_commit_readiness_faces();
         bool guard_ok = true;
         auto gr = Ev::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &guard_ok);
         if (!gr.has_value()) {
@@ -1410,7 +1441,10 @@ int run_test_security_schedule_gate() {
         CHECK(!rej_b.has_value() || rej_b->find("mailbox-hold-slo") == std::string::npos,
               "3938: B live schedule-gate is not mailbox-hold-slo");
         auto intend = cs.eval(R"((parallel-intend (vector)))");
-        CHECK(intend.has_value(), "3938: B parallel-intend evaluated");
+        // Issue #4639: a real value, not an error value - a schedule-gate
+        // denial must not pass as "evaluated".
+        CHECK(intend.has_value() && !aura::compiler::types::is_error(*intend),
+              "3938: B parallel-intend evaluated");
         g_current_fiber = prev_fiber;
         if (h.ok)
             (void)join_agent(h, JoinPolicy{.primary_ms = 500, .drain_ms = 100});
@@ -1422,6 +1456,152 @@ int run_test_security_schedule_gate() {
                   mbc.find("make_security_schedule_input_live") != std::string::npos,
               "3938: try_acquire passes starve_scope");
         CHECK(read_file("tests/orch/test_issue_3938.cpp").empty(), "3938: no test_issue_3938.cpp");
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(0, std::memory_order_relaxed);
+        reset_scope_starve_map_for_test();
+        aura::core::audit_wal::g_mutation_audit_wal().disable();
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        set_mode(SandboxMode::Off);
+        if (!prev_sb_s.empty())
+            ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        else
+            ::unsetenv("AURA_SANDBOX");
+        reset_orch_security_schedule_counters_for_test();
+    }
+
+    {
+        // Issue #4639: the parallel-intend schedule gate must sample the
+        // CALLER's own scope. A scope-B caller is admitted while scope A is
+        // starved; a scope-A caller is still denied - the fix threads the
+        // scope, it does not weaken the gate.
+        std::println("\n--- #4639: parallel-intend threads the caller's scope ---");
+        using aura::core::sandbox::SandboxMode;
+        using aura::core::sandbox::set_mode;
+        using aura::orch::AgentSpec;
+        using aura::orch::join_agent;
+        using aura::orch::JoinPolicy;
+        using aura::orch::spawn_agent_with_mailbox;
+        using aura::serve::g_current_fiber;
+        using aura::serve::SchedRunner;
+        using aura::serve::Scheduler;
+        using aura::serve::mf_mailbox::arm_scope_starve_throttle;
+        using aura::serve::mf_mailbox::aura_orch_mailbox_starvation_throttled;
+        using aura::serve::mf_mailbox::g_mf_mailbox_stats;
+        using aura::serve::mf_mailbox::reset_scope_starve_map_for_test;
+
+        const char* prev_sb = std::getenv("AURA_SANDBOX");
+        std::string prev_sb_s = prev_sb ? prev_sb : "";
+        ::setenv("AURA_SANDBOX", "restricted", 1);
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        set_mode(SandboxMode::Strict);
+        std::filesystem::create_directories("build/test-wal-4639");
+        if (!aura::core::audit_wal::g_mutation_audit_wal().is_enabled())
+            (void)aura::core::audit_wal::g_mutation_audit_wal().enable(
+                std::string_view("build/test-wal-4639"), nullptr, 0);
+        reset_scope_starve_map_for_test();
+        // The PROCESS sample is over the hold SLO: a caller that resolves
+        // the empty scope samples the process bucket and is denied. A named
+        // scope samples its own (clean) p99.
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(50'000,
+                                                                    std::memory_order_relaxed);
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        // Both agents spawn BEFORE scope A is armed: the spawn preflight
+        // samples the resolved scope, so an armed scope A would refuse the
+        // spawn itself.
+        AgentSpec spec_b;
+        spec_b.name = "4639-B";
+        spec_b.attach_mailbox = true;
+        spec_b.bp_scope_id = "scope-B-4639";
+        spec_b.body = [] {};
+        auto hb = spawn_agent_with_mailbox(sched, spec_b);
+        CHECK(hb.ok && hb.fiber && hb.mailbox, "4639: B spawn ok");
+        AgentSpec spec_a;
+        spec_a.name = "4639-A";
+        spec_a.attach_mailbox = true;
+        spec_a.bp_scope_id = "scope-A-4639";
+        spec_a.body = [] {};
+        auto ha = spawn_agent_with_mailbox(sched, spec_a);
+        CHECK(ha.ok && ha.fiber && ha.mailbox, "4639: A spawn ok");
+        // Starve scope A only - scope B stays clean.
+        arm_scope_starve_throttle("scope-A-4639");
+        // The gate's commit-readiness face is a process-wide stale latch
+        // ("solve"): a rehydrate-miss generation mismatch left over from
+        // earlier activity hard-rejects the admit for a reason that has
+        // nothing to do with the scope. Clear it (after the spawns - the
+        // spawn preflight can re-arm the generation) so the member decides
+        // on the mailbox-hold-slo face - the face this member pins.
+        clear_commit_readiness_faces();
+        CHECK(aura_orch_mailbox_starvation_throttled("scope-A-4639"), "4639: A throttle armed");
+        CHECK(!aura_orch_mailbox_starvation_throttled("scope-B-4639"),
+              "4639: B throttle stays false");
+        // Caller in scope B: the gate samples scope B -> admitted.
+        {
+            auto* prev_fiber = g_current_fiber;
+            g_current_fiber = hb.fiber;
+            // The CAPABILITY face refuses the strategy primitive before the
+            // schedule gate runs; build the evaluator with the capability
+            // registry Off so the member exercises the SCHEDULE GATE.
+            set_mode(SandboxMode::Off);
+            CompilerService cs;
+            set_mode(SandboxMode::Strict);
+            auto& ev = cs.evaluator();
+            const auto caller_scope = aura::orch::caller_bp_scope_id();
+            CHECK(caller_scope == "scope-B-4639", "4639: B caller resolves scope B");
+            const auto in_b = aura::orch::make_security_schedule_input_live(
+                ev.effect_sandbox_mode(), /*prod=*/true, /*soft=*/false, caller_scope);
+            CHECK(!in_b.mailbox_starvation_throttled && in_b.mailbox_wait_p99_us == 0,
+                  "4639: B samples scope B, not the process bucket");
+            auto intend = cs.eval(R"((parallel-intend (vector)))");
+            CHECK(intend.has_value() && !aura::compiler::types::is_error(*intend),
+                  "4639: B parallel-intend evaluated");
+            g_current_fiber = prev_fiber;
+        }
+        // Caller in scope A: the gate samples scope A -> still denied.
+        {
+            auto* prev_fiber = g_current_fiber;
+            g_current_fiber = ha.fiber;
+            set_mode(SandboxMode::Off);
+            CompilerService cs;
+            set_mode(SandboxMode::Strict);
+            auto& ev = cs.evaluator();
+            const auto caller_scope = aura::orch::caller_bp_scope_id();
+            CHECK(caller_scope == "scope-A-4639", "4639: A caller resolves scope A");
+            const auto in_a = aura::orch::make_security_schedule_input_live(
+                ev.effect_sandbox_mode(), /*prod=*/true, /*soft=*/false, caller_scope);
+            CHECK(in_a.mailbox_starvation_throttled,
+                  "4639: A samples scope A, so the starve throttle applies");
+            auto intend = cs.eval(R"((parallel-intend (vector)))");
+            CHECK(!intend.has_value() || aura::compiler::types::is_error(*intend),
+                  "4639: A parallel-intend is denied");
+            g_current_fiber = prev_fiber;
+        }
+        if (hb.ok)
+            (void)join_agent(hb, JoinPolicy{.primary_ms = 500, .drain_ms = 100});
+        if (ha.ok)
+            (void)join_agent(ha, JoinPolicy{.primary_ms = 500, .drain_ms = 100});
+        // Source-cite: the primitive threads the caller's scope and the
+        // spawn path registers / drops the registry entry. Anchor-based
+        // windows (tests/compiler/source_contract.hpp) - no byte widths.
+        using aura::test::source_contract::brace_body;
+        const auto prim_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto prim_win = brace_body(prim_src, "add(\"parallel-intend\"");
+        CHECK(prim_win.ok, "4639: parallel-intend body window found");
+        CHECK(prim_win.view.find("caller_bp_scope_id()") != std::string_view::npos,
+              "4639: parallel-intend threads the caller scope");
+        CHECK(prim_win.view.find("mb->bp_scope_id()") == std::string_view::npos,
+              "4639: parallel-intend has no inline mailbox scope lookup");
+        const auto gate_src = read_file("src/orch/security_schedule_gate.h");
+        CHECK(gate_src.find("caller_bp_scope_id") != std::string::npos,
+              "4639: gate exposes the caller-scope resolver");
+        const auto spawn_src = read_file("src/orch/agent_spawn.h");
+        CHECK(spawn_src.find("register_caller_scope") != std::string::npos &&
+                  spawn_src.find("unregister_caller_scope") != std::string::npos,
+              "4639: spawn registers and drops the caller scope");
+        const auto mb_src = read_file("src/serve/multi_fiber_mailbox.h");
+        CHECK(mb_src.find("register_caller_scope") != std::string::npos &&
+                  mb_src.find("lookup_caller_scope") != std::string::npos &&
+                  mb_src.find("Issue #4639") != std::string::npos,
+              "4639: mailbox owns the caller-scope registry");
         g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(0, std::memory_order_relaxed);
         reset_scope_starve_map_for_test();
         aura::core::audit_wal::g_mutation_audit_wal().disable();
@@ -1489,9 +1669,9 @@ int run_test_security_schedule_gate() {
 
     reset_orch_security_schedule_counters_for_test();
     aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
-    std::println(
-        "\n=== #2590/#2947/#3211/#3244/#3251/#3777/#3932/#3938/#3952: {}/{} checks passed ===",
-        g_passed, g_passed + g_failed);
+    std::println("\n=== #2590/#2947/#3211/#3244/#3251/#3777/#3932/#3938/#3952/#4639: {}/{} checks "
+                 "passed ===",
+                 g_passed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

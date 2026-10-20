@@ -518,6 +518,27 @@ inline bool wal_enable_failed_would_arm_live(bool production_defaults, bool soft
            ::aura_query_hash_overflow_total() > 0;
 }
 
+// Issue #4639: resolve the CALLER's bp_scope_id for the schedule gate.
+// Fast path: the live fiber's primary mailbox (the agent body is still
+// running). Fallback: the registered caller scope (fiber id -> agent
+// mailbox) - the agent body detaches its mailbox when it ends and the
+// fiber's primary-mailbox back-pointer goes with it (#3369), so the
+// mailbox-only lookup resolves to the EMPTY scope and the gate samples
+// the PROCESS bucket, where a sibling scope's starve throttle denies a
+// clean tenant (the #3938 class). Empty / "-" stay the process bucket
+// on purpose.
+[[nodiscard]] inline std::string caller_bp_scope_id() noexcept {
+    using aura::serve::g_current_fiber;
+    if (!g_current_fiber)
+        return {};
+    if (auto* mb = g_current_fiber->mailbox()) {
+        const auto s = mb->bp_scope_id();
+        if (!s.empty() && s != "-")
+            return std::string(s);
+    }
+    return aura::serve::mf_mailbox::lookup_caller_scope(g_current_fiber->id());
+}
+
 inline SecurityScheduleInput
 make_security_schedule_input_live(std::uint8_t eval_sandbox_mode, bool production_defaults,
                                   bool soft_mode, std::string_view bp_scope_id = {}) noexcept {

@@ -1,0 +1,62 @@
+{
+  "issue": 4639,
+  "title": "Issue #4639: parallel-intend denies a non-starved scope - the caller mailbox bp_scope_id is not threaded into the security-schedule gate",
+  "ok": "OK #4639 caller scope: the parallel-intend gate samples the CALLER's own scope (scope B admitted while scope A is starved; a scope-A caller is still denied)",
+  "checks": [
+    {
+      "ac": "AC1-primitive",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "Issue #4639",
+        "caller_bp_scope_id()"
+      ]
+    },
+    {
+      "ac": "AC2-gate",
+      "path": "src/orch/security_schedule_gate.h",
+      "contains": [
+        "Issue #4639",
+        "caller_bp_scope_id",
+        "lookup_caller_scope"
+      ]
+    },
+    {
+      "ac": "AC3-registry",
+      "path": "src/serve/multi_fiber_mailbox.h",
+      "contains": [
+        "Issue #4639",
+        "register_caller_scope",
+        "unregister_caller_scope",
+        "lookup_caller_scope"
+      ]
+    },
+    {
+      "ac": "AC4-spawn",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "Issue #4639",
+        "register_caller_scope",
+        "unregister_caller_scope"
+      ]
+    },
+    {
+      "ac": "AC5-tests",
+      "path": "tests/orch/test_security_schedule_gate.cpp",
+      "contains": [
+        "4639: B caller resolves scope B",
+        "4639: A caller resolves scope A",
+        "4639: B parallel-intend evaluated",
+        "4639: A parallel-intend is denied",
+        "4639: parallel-intend threads the caller scope"
+      ]
+    },
+    {
+      "ac": "AC6-forbid",
+      "forbid": [
+        "tests/orch/test_issue_4639.cpp",
+        "tests/orch/test_security_schedule_gate_4639.cpp",
+        "docs/design/4639-parallel-intend-caller-scope.md"
+      ]
+    }
+  ]
+}

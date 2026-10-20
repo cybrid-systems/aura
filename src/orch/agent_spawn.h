@@ -3069,6 +3069,14 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
     h.fiber = f;
     h.id = f->id();
     h.mailbox = mb;
+    // Issue #4639: record the caller's scope for this fiber. The agent
+    // body detaches its mailbox when the body ends (MultiFiberMailbox::
+    // detach clears the fiber's primary-mailbox back-pointer), so a
+    // later caller that resolved its bp_scope_id from the mailbox fell
+    // back to the PROCESS bucket and a sibling scope's starve throttle
+    // denied it. The registry keeps the caller's own scope resolvable
+    // while the agent lives.
+    serve::mf_mailbox::register_caller_scope(h.id, mb);
     h.ok = true;
     // Issue #3434: stamp the resolved tenant (spec / parent / quota TLS)
     // on the production spawn path so the TenantScope resume mandate
@@ -3289,6 +3297,9 @@ inline void release_refused_spawn(AgentHandle& h) noexcept {
     }
     if (h.mailbox && h.fiber)
         h.mailbox->detach(h.fiber);
+    // Issue #4639: the spawn was refused - the fiber never owned a
+    // caller scope, so drop the registry entry again.
+    serve::mf_mailbox::unregister_caller_scope(h.id);
     h.mailbox.reset();
     h.release_reservation_if_any();
     h.ok = false;
@@ -3315,6 +3326,10 @@ inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) no
     // second caller is a no-op.
     if (h.mailbox && h.fiber)
         h.mailbox->detach(h.fiber);
+    // Issue #4639: the agent ended - the fiber no longer resolves a
+    // caller scope, so drop the registry entry (the schedule gate falls
+    // back to the process bucket again, as before the registry existed).
+    serve::mf_mailbox::unregister_caller_scope(h.id);
     release_agent_memory_reservation(h);
     // Issue #4097: only a finished body drops the live gauge. A fiber
     // that is still running stays counted until a later Done-path.
