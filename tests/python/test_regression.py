@@ -3684,6 +3684,92 @@ def test_callback_diagnostic_4624():
     print("  ✅ test_callback_diagnostic_4624 (map/filter/for-each keep the callback diagnostic)")
 
 
+def test_member_structural_equality_4628():
+    """Issue #4628: member must compare the elements with equal?.
+
+    The member primitive compared the elements by identity (identical
+    values, ints, strings and bools only), so a structurally equal pair,
+    vector or float was never found -- while equal? and assoc answered
+    the same inputs correctly. R7RS 6.4: member compares the elements with
+    equal?. The AOT lowering compared raw words, so even two identical
+    strings were identity-compared there.
+
+    Rows: pair / vec / float / nested-str / sym must be FOUND, the
+    not-found row must be #f, and assoc / equal? must stay unchanged.
+    The AOT binary must answer the same way (pair found, string found by
+    content, not-found #f).
+    """
+    code = r"""
+(display (list "pair"  (member (list 1 2) (list (list 1 2))))) (newline)
+(display (list "vec"   (member (vector 1) (list (vector 1))))) (newline)
+(display (list "float" (member 1.5 (list 1.5)))) (newline)
+(display (list "nested-str" (member (list "a") (list (list "a"))))) (newline)
+(display (list "sym"   (member 'a (list 'a)))) (newline)
+(display (list "miss"  (member (list 9) (list (list 1))))) (newline)
+(display (list "assoc" (assoc (list 1) (list (list (list 1) 9))))) (newline)
+(display (list "equal?" (equal? (list 1 2) (list 1 2)) (equal? 1.5 1.5))) (newline)
+"""
+    env = os.environ.copy()
+    env["AURA_SANDBOX"] = "off"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env.pop("AURA_SOFT", None)
+    env.pop("AURA_FORCE_IR", None)
+    with tempfile.NamedTemporaryFile("w", suffix=".aura", delete=False) as f:
+        f.write(code)
+        path = f.name
+    try:
+        r = subprocess.run([AURA, path], capture_output=True, text=True, timeout=120, env=env)
+    finally:
+        os.unlink(path)
+    out = r.stdout or ""
+    err = r.stderr or ""
+    assert r.returncode == 0, f"rc={r.returncode} out={out[-400:]!r} err={err[-400:]!r}"
+    rows = {}
+    for ln in out.splitlines():
+        m = re.match(r"^\((\S+)(?: (.*))?\)$", ln)
+        if m:
+            rows[m.group(1)] = m.group(2) or ""
+    expected = {
+        "pair": "((1 2))",
+        "vec": "(#(1))",
+        "float": "(1.5)",
+        "nested-str": "((a))",
+        "sym": "(a)",
+        "miss": "#f",
+        "assoc": "((1) 9)",
+        "equal?": "#t #t",
+    }
+    for tag, want in expected.items():
+        assert tag in rows, f"missing row {tag!r}: {out!r}"
+        assert rows[tag] == want, f"{tag} row: {rows[tag]!r} != {want!r}"
+    print("  ✅ test_member_structural_equality_4628 (member finds the structurally equal element)")
+
+    # AOT face: the emitted binary must answer the same way.
+    aot_code = (
+        '(display (list "pair" (member (list 1 2) (list (list 1 2))) '
+        '"str" (member "a" (list "a")) "int" (member 1 (list 1)) '
+        '"miss" (member 2 (list 1))))'
+    )
+    out_path = "/tmp/aura-aot-member-4628"
+    subprocess.run(
+        [AURA, "--emit-binary", out_path],
+        input=aot_code.encode(),
+        capture_output=True,
+        timeout=120,
+        env=env,
+    )
+    assert os.path.exists(out_path), "aot-member: binary not created"
+    os.chmod(out_path, 0o755)
+    try:
+        r2 = subprocess.run([out_path], capture_output=True, timeout=30, env=env)
+    finally:
+        if os.path.exists(out_path):
+            os.remove(out_path)
+    aot_out = (r2.stdout or b"").decode().strip()
+    assert aot_out == "(pair ((1 2)) str (a) int (1) miss #f)", f"aot-member: {aot_out!r}"
+    print("  ✅ test_member_structural_equality_4628 (AOT member matches the evaluator)")
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -3730,6 +3816,7 @@ for tf in [
     test_workspace_rest_params_4621,
     test_named_let_bind_list_repeat_4623,
     test_callback_diagnostic_4624,
+    test_member_structural_equality_4628,
 ]:
     try:
         tf()

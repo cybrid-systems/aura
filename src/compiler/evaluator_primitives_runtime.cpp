@@ -427,7 +427,118 @@ namespace {
     }
 } // namespace
 
+// Issue #4628: R7RS structural equality — the comparison equal? already
+// implements, now shared with the member primitive.
+//
+// equal? answers structural facts (R7RS 6.4: member compares the elements
+// with equal?), but member used to compare elements by identity only, so a
+// structurally equal pair, vector or float was never found. The walk below
+// is the one equal? has always used: content compare for strings, value
+// compare for numbers, structural compare for pairs and vectors.
+struct StructuralEqual {
+    Evaluator& e;
+    std::string_view op;
+    // Issue #4530: set on the first cross-tenant denial; one IsolationDeny
+    // per denied call (the latch skips re-emits).
+    mutable bool denied = false;
+    bool operator()(const EvalValue& x, const EvalValue& y, int depth) const {
+        if (depth > 64)
+            return true;
+        if (x == y)
+            return true;
+        // Nested only: unify empty-list sentinels (void ↔ int 0) so
+        // ADT zero-arg match patterns (equal? val (cons "Tag" 0)) work
+        // while top-level (equal? 0 '()) stays #f (outer guard).
+        if (depth > 0 && (is_void(x) || (is_int(x) && as_int(x) == 0)) &&
+            (is_void(y) || (is_int(y) && as_int(y) == 0)))
+            return true;
+        if (is_int(x) && is_int(y))
+            return as_int(x) == as_int(y);
+        if (is_float(x) && is_float(y))
+            return as_float(x) == as_float(y);
+        if (is_bool(x) && is_bool(y))
+            return as_bool(x) == as_bool(y);
+        // Issue #2568: quoted symbols are string-heap values; equal?
+        // compares by content so same-name symbols/strings match even
+        // if intern paths produced distinct indices (defense in depth).
+        if (is_string(x) && is_string(y)) {
+            auto xi = as_string_idx(x), yi = as_string_idx(y);
+            if (xi == yi)
+                return true;
+            if (xi < e.string_heap().size() && yi < e.string_heap().size()) {
+                // Issue #4530: content compare answers byte facts —
+                // gate both operands before the compare.
+                if (!denied && !e.inrange_string_tenant_allows(xi, /*required_effects=*/0, op)) {
+                    denied = true;
+                    return false;
+                }
+                if (!denied && !e.inrange_string_tenant_allows(yi, /*required_effects=*/0, op)) {
+                    denied = true;
+                    return false;
+                }
+                if (denied)
+                    return false;
+                return e.string_heap()[xi] == e.string_heap()[yi];
+            }
+            return false;
+        }
+        if (is_pair(x) && is_pair(y)) {
+            auto xi = as_pair_idx(x), yi = as_pair_idx(y);
+            if (xi < e.pairs().size() && yi < e.pairs().size()) {
+                // Issue #4530: the spine walk answers structural
+                // facts — gate the visited slots like string-join.
+                if (!denied && (!e.inrange_slot_tenant_allows(xi, /*vector_heap=*/false,
+                                                              /*required_effects=*/0, op) ||
+                                !e.inrange_slot_tenant_allows(yi, /*vector_heap=*/false,
+                                                              /*required_effects=*/0, op))) {
+                    denied = true;
+                    return false;
+                }
+                return (*this)(e.pairs()[xi].car, e.pairs()[yi].car, depth + 1) &&
+                       (*this)(e.pairs()[xi].cdr, e.pairs()[yi].cdr, depth + 1);
+            }
+            return false;
+        }
+        if (is_vector(x) && is_vector(y)) {
+            auto xi = as_vector_idx(x), yi = as_vector_idx(y);
+            if (xi < e.vector_heap().size() && yi < e.vector_heap().size()) {
+                auto& vx = e.vector_heap()[xi];
+                auto& vy = e.vector_heap()[yi];
+                if (vx.size() != vy.size())
+                    return false;
+                for (std::size_t i = 0; i < vx.size(); ++i)
+                    if (!(*this)(vx[i], vy[i], depth + 1))
+                        return false;
+                return true;
+            }
+            return false;
+        }
+        if (is_void(x) && is_void(y))
+            return true;
+        return false;
+    }
+};
+
+// Issue #4628: shared entry point for the structural comparison. The
+// denied out-parameter reports a cross-tenant read refusal (#4505) so the
+// caller raises a primitive error instead of answering "not equal".
+bool values_equal(Evaluator& ev, const EvalValue& x, const EvalValue& y, std::string_view op,
+                  bool& denied) {
+    // Issue #1137: int vs empty-list (void) are never equal — including 0
+    // vs '(). Must check before any deep walk; also equal? is not lowered
+    // to IR Eq. Quote of () is void (kSpecialVoid); bare 0 is fixnum.
+    if ((is_int(x) && is_void(y)) || (is_void(x) && is_int(y))) {
+        denied = false;
+        return false;
+    }
+    StructuralEqual eq{ev, op};
+    const bool res = eq(x, y, 0);
+    denied = eq.denied;
+    return res;
+}
+
 void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
+
 
     // Issue #4496: (exit [code]) ends the process with that status
     // (default 0; #t => 0, #f => 1). Refused under a sandbox so a hosted
@@ -453,101 +564,11 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         if (a.size() < 2)
             return make_bool(true);
 
-        // Issue #1137: int vs empty-list (void) are never equal — including 0 vs '().
-        // Must check before any deep walk; also equal? is not lowered to IR Eq.
-        // Quote of () is void (kSpecialVoid); bare 0 is fixnum — see eval Quote path.
-        if ((is_int(a[0]) && is_void(a[1])) || (is_void(a[0]) && is_int(a[1])))
-            return make_bool(false);
-
-        struct EqCheck {
-            Evaluator& e;
-            // Issue #4530: set on the first cross-tenant denial; one
-            // IsolationDeny per denied equal? call (latch skips re-emits).
-            mutable bool denied = false;
-            bool operator()(const EvalValue& x, const EvalValue& y, int depth) const {
-                if (depth > 64)
-                    return true;
-                if (x == y)
-                    return true;
-                // Nested only: unify empty-list sentinels (void ↔ int 0) so
-                // ADT zero-arg match patterns (equal? val (cons "Tag" 0)) work
-                // while top-level (equal? 0 '()) stays #f (outer guard).
-                if (depth > 0 && (is_void(x) || (is_int(x) && as_int(x) == 0)) &&
-                    (is_void(y) || (is_int(y) && as_int(y) == 0)))
-                    return true;
-                if (is_int(x) && is_int(y))
-                    return as_int(x) == as_int(y);
-                if (is_float(x) && is_float(y))
-                    return as_float(x) == as_float(y);
-                if (is_bool(x) && is_bool(y))
-                    return as_bool(x) == as_bool(y);
-                // Issue #2568: quoted symbols are string-heap values; equal?
-                // compares by content so same-name symbols/strings match even
-                // if intern paths produced distinct indices (defense in depth).
-                if (is_string(x) && is_string(y)) {
-                    auto xi = as_string_idx(x), yi = as_string_idx(y);
-                    if (xi == yi)
-                        return true;
-                    if (xi < e.string_heap_.size() && yi < e.string_heap_.size()) {
-                        // Issue #4530: content compare answers byte facts —
-                        // gate both operands before the compare.
-                        if (!denied &&
-                            !e.inrange_string_tenant_allows(xi, /*required_effects=*/0, "equal?")) {
-                            denied = true;
-                            return false;
-                        }
-                        if (!denied &&
-                            !e.inrange_string_tenant_allows(yi, /*required_effects=*/0, "equal?")) {
-                            denied = true;
-                            return false;
-                        }
-                        if (denied)
-                            return false;
-                        return e.string_heap_[xi] == e.string_heap_[yi];
-                    }
-                    return false;
-                }
-                if (is_pair(x) && is_pair(y)) {
-                    auto xi = as_pair_idx(x), yi = as_pair_idx(y);
-                    if (xi < e.pairs_.size() && yi < e.pairs_.size()) {
-                        // Issue #4530: the spine walk answers structural
-                        // facts — gate the visited slots like string-join.
-                        if (!denied &&
-                            (!e.inrange_slot_tenant_allows(xi, /*vector_heap=*/false,
-                                                           /*required_effects=*/0, "equal?") ||
-                             !e.inrange_slot_tenant_allows(yi, /*vector_heap=*/false,
-                                                           /*required_effects=*/0, "equal?"))) {
-                            denied = true;
-                            return false;
-                        }
-                        return (*this)(e.pairs_[xi].car, e.pairs_[yi].car, depth + 1) &&
-                               (*this)(e.pairs_[xi].cdr, e.pairs_[yi].cdr, depth + 1);
-                    }
-                    return false;
-                }
-                if (is_vector(x) && is_vector(y)) {
-                    auto xi = as_vector_idx(x), yi = as_vector_idx(y);
-                    if (xi < e.vector_heap_.size() && yi < e.vector_heap_.size()) {
-                        auto& vx = e.vector_heap_[xi];
-                        auto& vy = e.vector_heap_[yi];
-                        if (vx.size() != vy.size())
-                            return false;
-                        for (std::size_t i = 0; i < vx.size(); ++i)
-                            if (!(*this)(vx[i], vy[i], depth + 1))
-                                return false;
-                        return true;
-                    }
-                    return false;
-                }
-                if (is_void(x) && is_void(y))
-                    return true;
-                return false;
-            }
-        };
-
-        EqCheck eq{ev};
-        const bool eq_res = eq(a[0], a[1], 0);
-        if (eq.denied)
+        // Issue #4628: the structural comparison is shared with the member
+        // primitive (R7RS 6.4: member compares the elements with equal?).
+        bool denied = false;
+        const bool eq_res = values_equal(ev, a[0], a[1], "equal?", denied);
+        if (denied)
             return make_primitive_error(ev.string_heap_, ev.error_values_,
                                         "equal?: cross-tenant string slot read denied (#4505)",
                                         ev.primitive_error_counter_ptr());
