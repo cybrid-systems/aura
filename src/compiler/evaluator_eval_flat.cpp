@@ -6128,6 +6128,33 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                        : (start.parent_id() != NULL_ENV_ID && start.bindings().empty());
                 if (live_safe_empty)
                     return std::nullopt;
+                // Locals of this env (params / let binds) win over the
+                // closure's capture — Env::lookup checks them first.
+                if (start.pool() == p && start.binding_mirrors_aligned()) {
+                    if (auto loc = start.local_symid_last(sym))
+                        return loc;
+                }
+                // Issue #4595 follow-up (#4618): the capture snapshot is
+                // CLOSER than the SoA chain, which starts at the capture
+                // frame's PARENT. A top-level let cell binds in its own
+                // child env (#4618), so a closure created in that body
+                // captured the shadowing cell — while the chain still leads
+                // to the letrec #232 frozen copy of top_ and answers the
+                // stale global (AC3 read 0 instead of 42). Answer the
+                // snapshot by NAME first — the same pool-independent order
+                // Env::lookup uses. A miss on every level keeps the walk:
+                // the chain content is then all that is left.
+                if (cs) {
+                    const std::string_view nm = p->resolve(sym);
+                    if (!nm.empty()) {
+                        for (const CapSnapshot* s = cs.get(); s; s = s->parent.get()) {
+                            auto it = s->name_index_.find(nm);
+                            if (it == s->name_index_.end())
+                                continue;
+                            return s->bindings_[it->second].second;
+                        }
+                    }
+                }
             }
             const Env* e = &start;
             for (std::size_t hops = 0; e != nullptr && hops < kMaxChainHops; ++hops) {

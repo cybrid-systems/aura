@@ -440,7 +440,14 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
     // the resolved cell mid-flight (a loop's reads jump to another
     // fiber's rebind — the chaos release blocker hung with fibers_done=0);
     // host-thread lookups are single-fiber and stable-by-construction.
-    if (owner_ && aura::serve::g_current_fiber == nullptr && bindings_.empty() &&
+    // Issue #4595 (#4618): MATERIALIZED capture envs only — a stack child
+    // env (call frame, let body, inline lambda) keeps the raw lexical
+    // parent_ and must resolve there first. Consulting live top_ ahead of
+    // that chain answered the global cell a top-level let's own child env
+    // shadows (#4618: (let ((x 42)) ((lambda () x))) read 0).
+    const bool host_empty_capture4595 =
+        aura::serve::g_current_fiber == nullptr && bindings_.empty();
+    if (owner_ && parent_ == nullptr && host_empty_capture4595 &&
         (!cap_snap_ || (cap_snap_->bindings_.empty() && cap_snap_->bindings_symid_.empty()) ||
          cap_snap_->live_safe_top)) {
         if (const auto* b = local_binding(std::as_const(*owner_).top_env())) {
@@ -4448,7 +4455,12 @@ EvalValue* Env::lookup_cell_ptr(std::string_view n, std::vector<EvalValue>* cell
     // cell the read path returns.
     // Fiber-gated (#4595): see Env::lookup — host-thread only, and only
     // for truly-empty captures (symid-only snapshots keep capture order).
-    if (owner_ && aura::serve::g_current_fiber == nullptr && bindings_.empty() &&
+    // Issue #4595 (#4618): see Env::lookup — the consult is for a
+    // MATERIALIZED capture env (no raw parent_); a stack child env resolves
+    // set! lexically through parent_ first.
+    const bool host_empty_capture4595 =
+        aura::serve::g_current_fiber == nullptr && bindings_.empty();
+    if (owner_ && parent_ == nullptr && host_empty_capture4595 &&
         (!cap_snap_ || (cap_snap_->bindings_.empty() && cap_snap_->bindings_symid_.empty()) ||
          cap_snap_->live_safe_top)) {
         auto tb4595 = owner_->top_env().bindings();
@@ -4599,7 +4611,12 @@ std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
     // cell the read path returns.
     // Fiber-gated (#4595): see Env::lookup — host-thread only, and only
     // for truly-empty captures (symid-only snapshots keep capture order).
-    if (owner_ && aura::serve::g_current_fiber == nullptr && bindings_.empty() &&
+    // Issue #4595 (#4618): see Env::lookup — the consult is for a
+    // MATERIALIZED capture env (no raw parent_); a stack child env resolves
+    // its cell lexically through parent_ first.
+    const bool host_empty_capture4595 =
+        aura::serve::g_current_fiber == nullptr && bindings_.empty();
+    if (owner_ && parent_ == nullptr && host_empty_capture4595 &&
         (!cap_snap_ || (cap_snap_->bindings_.empty() && cap_snap_->bindings_symid_.empty()) ||
          cap_snap_->live_safe_top)) {
         auto tb4595 = owner_->top_env().bindings();
