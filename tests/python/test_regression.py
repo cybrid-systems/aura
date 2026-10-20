@@ -3770,6 +3770,75 @@ def test_member_structural_equality_4628():
     print("  ✅ test_member_structural_equality_4628 (AOT member matches the evaluator)")
 
 
+def test_file_mode_pair_list_corruption_4629():
+    """Issue #4629: a named-let list of pairs must survive the file-mode reclaim.
+
+    A c6a18e8a5 (#4599) regression. The tree-walker's cached primitive-call
+    fast path (Evaluator::try_eval_flat_hot) evaluates a call's arguments
+    into a stack buffer and registered that buffer as a GC root only AFTER
+    the argument loop, so an already-evaluated argument lived in an
+    unrooted buffer while a later argument was evaluated. The nested eval
+    reaches the top of its own TCO loop, where the periodic file-mode
+    reclaim (maybe_reclaim_tw_unreachable) marks and sweeps the file heap:
+    the unrooted pair was in no root set, so the sweep freed it (voided the
+    cell and put the slot on the reuse freelist) and the call continued
+    with a dangling pair.
+
+    The issue's three-line repro is used verbatim: a named-let builds 2000
+    (i "episodic") pairs and the checker flags every element whose car is
+    not a number. On the broken builds the checker printed the indices of
+    the corrupted elements (18 of 2000 on 39595edd4); the list must come
+    back with no flagged element. The plain recursive-define shape (the
+    issue's second variant) must be clean as well, and the length row pins
+    the list itself.
+
+    The fix is 4f4ae5d51 (#4611) -- the cached prim-call path pins its
+    argument buffer with a LIVE count BEFORE the argument loop and
+    publishes each evaluated argument. The source-cite row pins that shape
+    so this guard cannot pass vacuously.
+    """
+    code = r"""
+(define s (let loop ((i 0) (acc (list))) (if (= i 2000) acc (loop (+ i 1) (cons (list i "episodic") acc)))))
+(define (bad ds k acc) (if (pair? ds) (bad (cdr ds) (+ k 1) (if (number? (car (car ds))) acc (cons k acc))) (reverse acc)))
+(define t (let loop ((i 0) (acc (list))) (if (= i 2000) acc (loop (+ i 1) (cons (list i i) acc)))))
+(display (list "len" (length s) "len2" (length t))) (newline)
+(display (list "bad" (bad s 0 (list)))) (newline)
+(display (list "bad2" (bad t 0 (list)))) (newline)
+"""
+    env = os.environ.copy()
+    env["AURA_SANDBOX"] = "off"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env.pop("AURA_SOFT", None)
+    env.pop("AURA_FORCE_IR", None)
+    with tempfile.NamedTemporaryFile("w", suffix=".aura", delete=False) as f:
+        f.write(code)
+        path = f.name
+    try:
+        r = subprocess.run([AURA, path], capture_output=True, text=True, timeout=180, env=env)
+    finally:
+        os.unlink(path)
+    out = r.stdout or ""
+    err = r.stderr or ""
+    assert r.returncode == 0, f"rc={r.returncode} out={out[-400:]!r} err={err[-400:]!r}"
+    assert err == "", f"unexpected stderr: {err[-400:]!r}"
+    rows = out.strip().splitlines()
+    expected = [
+        "(len 2000 len2 2000)",
+        "(bad ())",
+        "(bad2 ())",
+    ]
+    assert rows == expected, f"corrupted rows: {rows!r} != {expected!r}"
+    # Source cite: the cached prim-call path pins its argument buffer with a
+    # live count BEFORE the argument loop, so an argument that is already
+    # evaluated stays a root while a later argument is evaluated.
+    tw = (REPO / "src/compiler/evaluator_eval_flat.cpp").read_text(encoding="utf-8")
+    assert "TwPinSpan pin(TwPinSpan::Live{}, buf.data(), &buf_n);" in tw, (
+        "the cached prim-call path no longer pins its argument buffer with a live count"
+    )
+    assert "buf_n = i + 1;" in tw, "the pinned buffer no longer publishes each evaluated argument"
+    print("  ✅ test_file_mode_pair_list_corruption_4629 (2000-element pair list intact, 0 bad)")
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -3817,6 +3886,7 @@ for tf in [
     test_named_let_bind_list_repeat_4623,
     test_callback_diagnostic_4624,
     test_member_structural_equality_4628,
+    test_file_mode_pair_list_corruption_4629,
 ]:
     try:
         tf()
