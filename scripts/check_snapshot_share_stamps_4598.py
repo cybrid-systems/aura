@@ -27,8 +27,10 @@ Contract:
       subtree_gen_ cell (no global generation_ bump, no restamp) and
       mark_dirty_upward calls it — the soundness anchor.
   AC2 snapshot share: FlatSnapshot holds shared_ptr copies; the probe
-      requires generation + size + pool watermark match and a FROZEN copy
-      (never the live object); hit/miss counters recorded.
+      requires generation + size + pool watermark match, the same workspace
+      source text, and a FROZEN copy (never the live object); hit/miss
+      counters recorded. (The source-text match is the content identity: a
+      set-code allocates a fresh FlatAST whose generation restarts at 1.)
   AC3 stamp capture at snapshot: collect_define_stamps walks the LIVE flat
       (name → root, gen16) on the deep path only; shared entries reuse the
       prior stamps.
@@ -103,9 +105,15 @@ def main() -> int:
     must("std::shared_ptr<aura::ast::FlatAST> flat;", "AC2", evixx)
     must("std::shared_ptr<aura::ast::StringPool> pool;", "AC2", evixx)
     must("std::size_t pool_size = 0;", "AC2", evixx)
-    must("it->flat.get() != ev.workspace_flat_ &&", "AC2", prim)
-    must("it->flat_generation == ev.workspace_flat_->generation()", "AC2", prim)
-    must("it->pool_size <= ev.workspace_pool_->data_size()", "AC2", prim)
+    must("it.flat.get() != ev.workspace_flat_ &&", "AC2", prim)
+    must("it.flat_generation == ev.workspace_flat_->generation()", "AC2", prim)
+    must("it.pool_size <= ev.workspace_pool_->data_size()", "AC2", prim)
+    # Issue #4613 residual: set-code allocates a FRESH FlatAST whose
+    # generation restarts at 1 and whose node count can be unchanged when
+    # only a literal changes — the triple above is not a content identity
+    # across set-code. A share needs the same workspace source text too,
+    # or an older snapshot's frozen copy is served for new source.
+    must("ev.snapshot_sources_[i] == source", "AC2", prim)
     must("++ev.ast_snapshot_share_hits_total_;", "AC2", prim)
     must("++ev.ast_snapshot_share_misses_total_;", "AC2", prim)
     must(

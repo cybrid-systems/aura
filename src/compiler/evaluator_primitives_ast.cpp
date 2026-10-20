@@ -393,18 +393,29 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             // and a snapshot aliasing it would observe later writes.
             const Evaluator::FlatSnapshot* share_src = nullptr;
             if (ev.workspace_flat_ && ev.workspace_pool_) {
-                for (auto it = ev.snapshot_flats_.rbegin(); it != ev.snapshot_flats_.rend(); ++it) {
-                    if (it->has_flat && it->flat && it->pool &&
-                        it->flat.get() != ev.workspace_flat_ &&
-                        it->flat_generation == ev.workspace_flat_->generation() &&
-                        it->flat_size == ev.workspace_flat_->size() &&
+                for (std::size_t i = ev.snapshot_flats_.size(); i-- > 0;) {
+                    const auto& it = ev.snapshot_flats_[i];
+                    if (it.has_flat && it.flat && it.pool && it.flat.get() != ev.workspace_flat_ &&
+                        it.flat_generation == ev.workspace_flat_->generation() &&
+                        it.flat_size == ev.workspace_flat_->size() &&
                         // The pool is append-only: the captured watermark
                         // must be a PREFIX of the live pool (C1's SymIds
                         // stay valid under any later mint — observed in the
                         // #4598 loop: the restore tail re-mints a few body
                         // syms, so equality never holds post-restore).
-                        it->pool_size <= ev.workspace_pool_->data_size()) {
-                        share_src = &*it;
+                        it.pool_size <= ev.workspace_pool_->data_size() &&
+                        // Issue #4613 residual: set-code allocates a FRESH
+                        // FlatAST, whose generation restarts at 1 and whose
+                        // node count is often unchanged when only a literal
+                        // changes. The generation/size/watermark triple is
+                        // therefore NOT a content identity across set-code:
+                        // sharing on it alone handed back a frozen copy of an
+                        // older source (and kept every #4271 snapshot entry
+                        // aliased to one copy, so the cap never dropped).
+                        // Only the same workspace source text is provably the
+                        // same tree.
+                        i < ev.snapshot_sources_.size() && ev.snapshot_sources_[i] == source) {
+                        share_src = &it;
                         break;
                     }
                 }

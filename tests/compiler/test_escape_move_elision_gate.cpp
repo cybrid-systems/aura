@@ -1529,7 +1529,10 @@ static void ac3759_1_apply_capture_linear_uses_fence() {
     const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
     const auto apply = jit.find("case OpApply:");
     CHECK(apply != std::string::npos, "3759 AC1: OpApply present");
-    const auto apply_body = apply == std::string::npos ? std::string{} : jit.substr(apply, 4200);
+    // Issue #4599 phase 4 grew the OpApply body past the old 4200-byte
+    // window (the end-fence sits at ~4560); keep headroom over the whole
+    // case body (the next "case Op" starts at ~4650).
+    const auto apply_body = apply == std::string::npos ? std::string{} : jit.substr(apply, 5200);
     CHECK(apply_body.find("Issue #3759") != std::string::npos, "3759 AC1: OpApply cites #3759");
     CHECK(apply_body.find("begin_linear_epoch_fence()") != std::string::npos,
           "3759 AC1: OpApply uses fence for linear locals");
