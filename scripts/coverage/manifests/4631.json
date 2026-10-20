@@ -1,0 +1,49 @@
+{
+  "issue": 4631,
+  "title": "Issue #4631: hash / hash-set! silently drop the empty-string key",
+  "ok": "OK #4631 empty-string key: the hash constructor and hash-set! KEEP the empty-string key, and a corrupt string index RAISES instead of no-op",
+  "checks": [
+    {
+      "ac": "AC1-constructor",
+      "path": "src/compiler/evaluator_primitives_vector.cpp",
+      "contains": [
+        "Issue #4631",
+        "hash: corrupt string key (index out of range)"
+      ]
+    },
+    {
+      "ac": "AC2-setter",
+      "path": "src/compiler/evaluator_primitives_vector.cpp",
+      "contains": [
+        "hash-set!: corrupt string key (index out of range)"
+      ]
+    },
+    {
+      "ac": "AC3-tests",
+      "path": "tests/compiler/test_hash_empty_string_key.cpp",
+      "contains": [
+        "#4631",
+        "ac1_hash_ctor_keeps_empty_key",
+        "ac2_hash_set_keeps_empty_key",
+        "ac3_empty_key_coexists",
+        "ac4_corrupt_string_key_raises",
+        "ac5_source_cite"
+      ]
+    },
+    {
+      "ac": "AC4-wiring",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_hash_empty_string_key"
+      ]
+    },
+    {
+      "ac": "AC5-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_4631.cpp",
+        "tests/compiler/test_hash_empty_string_key_4631.cpp",
+        "docs/design/4631-hash-empty-string-key.md"
+      ]
+    }
+  ]
+}

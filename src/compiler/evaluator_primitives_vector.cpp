@@ -719,7 +719,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
 
     register_prim(
         add, ev, "hash",
-        [&ev, &string_heap](std::span<const EvalValue> a) {
+        [&ev, &string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
             // Issue #2652: lock string_heap reads + g_hash_tables push.
             // Issue #2654: grow past fixed capacity 8 so 16+ k/v pairs are not
             // silently dropped (same class as #2481 json-parse). Pre-size so
@@ -736,11 +736,20 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             if (!ht)
                 return make_void();
             for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
-                // Skip empty string keys (corruption / make_string(0) sentinel).
+                // Issue #4631: the empty string is an ORDINARY key. The #2652
+                // guard treated "" as a corruption sentinel (make_string(0))
+                // and SKIPPED the pair, so (hash "" v) lost its entry with no
+                // error at all. Only a genuinely corrupt string INDEX is
+                // invalid now, and it RAISES instead of silently dropping
+                // the pair.
                 if (is_string(a[i])) {
                     auto ki = as_string_idx(a[i]);
-                    if (ki >= string_heap.size() || string_heap[ki].empty())
-                        continue;
+                    if (ki >= string_heap.size()) {
+                        FlatHashTable::destroy(ht);
+                        return make_primitive_error(string_heap, error_values,
+                                                    "hash: corrupt string key (index out of range)",
+                                                    primitive_error_counter);
+                    }
                 }
                 // Unpublished table: safe to free old blocks on grow.
                 if (!flat_hash_insert_eval(ht, a[i], a[i + 1], string_heap,
@@ -871,7 +880,8 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         pure_general(2, "(hash any) -> bool", "True if hash contains the key."));
     register_prim(
         add, ev, "hash-set!",
-        [&ev, &string_heap, &pairs, &vector_heap](std::span<const EvalValue> a) {
+        [&ev, &string_heap, &pairs, &vector_heap, &error_values,
+         primitive_error_counter](std::span<const EvalValue> a) {
             if (a.size() < 3 || !is_hash(a[0]))
                 return make_void();
             // Issue #2652: aether:stats-bump! path — concurrent hash-set! + string
@@ -883,6 +893,23 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             auto hidx = as_hash_idx(a[0]);
             if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
                 return make_void();
+            // Issue #4631: the empty string is an ORDINARY key. The #2652
+            // guard REFUSED "" as if it were a corruption sentinel
+            // (make_string(0)), so the write was dropped with no error at all
+            // -- a silent data loss (a missing field, the root namespace, a
+            // default tenant). Only a genuinely corrupt string INDEX is
+            // invalid now, and it RAISES instead of no-op'ing. Checked before
+            // the tenant gate: a corrupt key is a caller-side fault, not a
+            // tenancy decision.
+            if (is_string(a[1])) {
+                auto bi = as_string_idx(a[1]);
+                if (bi >= string_heap.size()) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        "hash-set!: corrupt string key (index out of range)",
+                        primitive_error_counter);
+                }
+            }
             // Issue #4110 / #4296: armed + foreign stamp → void WITHOUT
             // storing. Caller/face are the executing evaluator; the deny
             // fires through check_workspace_isolation. Unarmed: no load.
@@ -890,12 +917,6 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                                        "hash-set!"))
                 return make_void();
             auto* ht = g_hash_tables[hidx];
-            // Issue #2652: refuse empty string keys (corruption / sentinel make_string(0)).
-            if (is_string(a[1])) {
-                auto bi = as_string_idx(a[1]);
-                if (bi >= string_heap.size() || string_heap[bi].empty())
-                    return make_void();
-            }
             // Issue #4612: probe by hash (open addressing) -- finding the
             // existing key used to scan every slot of the table.
             const auto kh = eval_hash_key_hash(a[1], string_heap);
