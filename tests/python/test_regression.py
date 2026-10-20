@@ -1237,29 +1237,120 @@ def test_jit_invalidation_walltime_4600():
         out = r.stdout.splitlines()
         comp = [int(m.group(1)) for m in (re.match(r"compiles=(\d+)", x) for x in out) if m]
         vals = [x for x in out if re.fullmatch(r"-?\d+", x)]
-        return wall, comp, vals
+        skips = [int(m.group(1)) for m in (re.search(r"lowering_skips=(\d+)", x) for x in out) if m]
+        return wall, comp, vals, skips
 
     expected = str(2 * (50 * (50 - 1) // 2))  # k < 50 sums k=0..49, twice
-    wall_a, comp_a, vals_a = session({"AURA_JIT_GLOBAL_EPOCH_INVALIDATE": "0"})
+    wall_a, comp_a, vals_a, skips_a = session({"AURA_JIT_GLOBAL_EPOCH_INVALIDATE": "0"})
     assert len(comp_a) == rounds, f"assumption: {len(comp_a)} stats rows"
     assert vals_a == [expected] * (rounds + 1), f"assumption values drift: {vals_a[:3]}"
     first = comp_a[0]
-    per_round = [comp_a[i + 1] - comp_a[i] for i in range(rounds)]
+    # comp has one row per round (the program before the first ;;stats and
+    # every round after it), so the deltas span len(comp)-1 intervals.
+    # (phase 4: this used to index comp[i+1] over range(rounds) and was
+    # born red with an IndexError — the bench never actually ran.)
+    per_round = [comp_a[i] - comp_a[i - 1] for i in range(1, len(comp_a))]
     assert first >= n, f"first run compiled {first} < {n}"
     assert max(per_round) <= 1, f"unrelated invalidate recompiled {max(per_round)} (>1)"
+    # Issue #4600 §8: lowering is skipped on an unchanged define — every
+    # round after the first reuses the re-lowering memo, and the kill
+    # switch restores the old behaviour.
+    # lines = [p] + rounds x (invalidate, p, ;;stats), so the first stats
+    # row already follows the second run of p: every row should be a skip.
+    assert skips_a[0] == 1, f"first re-run skipped lowering (skips={skips_a[:3]})"
+    assert skips_a[-1] >= rounds - 1, f"assumption skipped only {skips_a[-1]} lowerings"
+    wall_k, _, vals_k, skips_k = session({"AURA_JIT_GLOBAL_EPOCH_INVALIDATE": "0", "AURA_JIT_REUSE_LOWERING": "0"})
+    assert vals_k == [expected] * (rounds + 1), f"kill-switch values drift: {vals_k[:3]}"
+    assert skips_k[-1] == 0, f"AURA_JIT_REUSE_LOWERING=0 still skipped {skips_k[-1]}"
 
-    wall_g, comp_g, vals_g = session({"AURA_JIT_GLOBAL_EPOCH_INVALIDATE": "1"})
+    wall_g, comp_g, vals_g, _ = session({"AURA_JIT_GLOBAL_EPOCH_INVALIDATE": "1"})
     assert vals_g == [expected] * (rounds + 1), f"global values drift: {vals_g[:3]}"
-    g_per_round = [comp_g[i + 1] - comp_g[i] for i in range(rounds)]
+    g_per_round = [comp_g[i] - comp_g[i - 1] for i in range(1, len(comp_g))]
     assert min(g_per_round) >= n, f"global-epoch round recompiled only {min(g_per_round)}"
 
     print(f"    assumption: first={first} compiles, wall={wall_a:.2f}s, rounds recompile 0..{max(per_round)}")
-    print(f"    global-epoch: ~{min(g_per_round)} compiles/round, wall={wall_g:.2f}s")
+    print(f"    assumption re-lowering skipped: {skips_a[-1]}/{rounds} rounds")
+    print(f"    re-lowering off: wall={wall_k:.2f}s; global-epoch wall={wall_g:.2f}s")
     print(
         f"    wall ratio assumption/global = {wall_a / max(wall_g, 1e-9):.2f}x "
         f"(evidence only — not asserted, load-robust)"
     )
-    print("  ✅ jit-invalidation-walltime-4600 (§8 bench: contracts + wall clocks)")
+    print("  ✅ jit-invalidation-walltime-4600 (§8 bench: contracts + lowering skips + wall clocks)")
+
+
+def test_jit_reuse_lowering_4600():
+    """Issue #4600 §8: lowering is skipped on an unchanged define.
+
+    A `--jit-session` re-run of the identical program text whose own
+    define names have not moved reuses the post-pipeline IRModule instead
+    of re-parsing, re-typechecking, re-lowering and re-running the
+    pipeline: `lowering_skips` in `;;stats` counts the reuse. The session
+    still runs the per-function #4569 assumption probe, so values must
+    stay byte-identical; a moved dep (`;;invalidate`), a different text,
+    and AURA_JIT_REUSE_LOWERING=0 must all miss.
+    """
+    n = 40
+    defs = " ".join(
+        f"(define (rl{i} x) (let loop ((k 0) (acc 0)) (if (< k x) (loop (+ k 1) (+ acc k)) acc)))" for i in range(n)
+    )
+    p = f"{defs} (+ (rl0 20) (rl{n - 1} 20))"
+    expected = str(2 * (20 * (20 - 1) // 2))  # k < 20 sums k=0..19, twice
+
+    def session(lines, extra=None):
+        env = os.environ.copy()
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "0"
+        env.pop("AURA_JIT_REUSE_LOWERING", None)
+        env.pop("AURA_JIT_GLOBAL_EPOCH_INVALIDATE", None)
+        env["AURA_JIT_GLOBAL_EPOCH_INVALIDATE"] = "0"
+        if extra:
+            env.update(extra)
+        r = subprocess.run(
+            [AURA, "--jit-session"],
+            input="\n".join(lines) + "\n",
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+        )
+        assert r.returncode == 0, f"--jit-session rc={r.returncode}: {r.stderr[-500:]}"
+        out = r.stdout.splitlines()
+        skips = [int(m.group(1)) for m in (re.search(r"lowering_skips=(\d+)", x) for x in out) if m]
+        comp = [int(m.group(1)) for m in (re.match(r"compiles=(\d+)", x) for x in out) if m]
+        vals = [x for x in out if re.fullmatch(r"-?\d+", x)]
+        return skips, comp, vals
+
+    # 1. Identical re-runs skip lowering and stay byte-identical.
+    skips, comp, vals = session([p, ";;stats", p, ";;stats", p, ";;stats"])
+    assert vals == [expected] * 3, f"values drift: {vals}"
+    assert skips == [0, 1, 2], f"lowering_skips={skips} (want [0,1,2])"
+    assert comp[1] - comp[0] <= 1, f"re-run recompiled {comp[1] - comp[0]} fns (>1)"
+    assert comp[2] - comp[1] <= 1, f"third run recompiled {comp[2] - comp[1]} fns (>1)"
+
+    # 2. Kill switch restores the re-lower-every-run path.
+    skips_off, _, vals_off = session(
+        [p, ";;stats", p, ";;stats", p, ";;stats"],
+        {"AURA_JIT_REUSE_LOWERING": "0"},
+    )
+    assert vals_off == [expected] * 3, f"kill-switch values drift: {vals_off}"
+    assert skips_off == [0, 0, 0], f"kill switch still skipped: {skips_off}"
+
+    # 3. A moved dep is a memo miss for exactly that run; the next one
+    #    re-establishes the memo. The value is unchanged (exec_jit re-parses
+    #    the same text on the miss).
+    skips_rb, comp_rb, vals_rb = session([p, ";;stats", ";;invalidate rl7", p, ";;stats", p, ";;stats"])
+    assert vals_rb == [expected] * 3, f"rebind values drift: {vals_rb}"
+    assert skips_rb == [0, 0, 1], f"rebind lowering_skips={skips_rb} (want [0,0,1])"
+
+    # 4. A different text is a miss, and re-running the first text after it
+    #    is a miss too (one-entry memo, last program).
+    changed = p.replace("(rl0 20)", "(rl0 21)")
+    expected_c = str((20 * 19 // 2) + (21 * 20 // 2))
+    skips_c, _, vals_c = session([p, ";;stats", changed, ";;stats", p, ";;stats"])
+    assert vals_c == [expected, expected_c, expected], f"changed-text values: {vals_c}"
+    assert skips_c == [0, 0, 0], f"changed-text lowering_skips={skips_c} (want [0,0,0])"
+
+    print("  ✅ jit-reuse-lowering-4600 (§8: unchanged define skips lowering; rebind/text/kill-switch miss)")
 
 
 def test_jit_l1_4570():
@@ -2110,6 +2201,7 @@ for tf in [
     test_jit_prologue_word_and_storm_4600,
     test_jit_osr_tail_4600,
     test_jit_invalidation_walltime_4600,
+    test_jit_reuse_lowering_4600,
     test_jit_l1_4570,
     test_jit_mixed_compare_4570,
     test_jit_l2_4571,
