@@ -9824,6 +9824,22 @@ def cmd_lint():
     r = run([sys.executable, str(gate4600b_script)], cwd=ROOT)
     if r != 0:
         fail("Issue #4600 frame-deopt guard-exit linter failed — run python3 scripts/check_jit_frame_deopt_4600.py")
+        return r
+    # Issue #4600 (speculative JIT follow-up, phase 4 — §8): an unchanged
+    # define is not re-lowered. The session lowering memo reuses the
+    # post-pipeline IRModule + escape maps for identical text whose own
+    # define names have not moved (lowering_skips in ;;stats); the
+    # per-fn #4569 assumption probe still runs. A recompile whose IR
+    # fingerprint changed also evicts AuraJIT's name-keyed compile_fns_
+    # entry, so an edited define in a --jit-session takes effect.
+    gate4600c_script = ROOT / "scripts" / "check_jit_reuse_lowering_4600.py"
+    if not gate4600c_script.exists():
+        fail(f"missing {gate4600c_script}")
+        return 1
+    r = run([sys.executable, str(gate4600c_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4600 lowering-reuse linter failed — run python3 scripts/check_jit_reuse_lowering_4600.py")
+        return r
     # Issue #4606: under --jit the predicate primitives (string?/eqv?/memv/
     # getenv/fiber:join/channel:recv/monotonic-ms) came back as raw words
     # (a RefPrimitive-tagged callee echoed by the dispatch bounds-fail

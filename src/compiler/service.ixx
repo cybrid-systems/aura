@@ -2053,6 +2053,10 @@ public:
             entry.mark_all_blocks_dirty();
         }
         ir_cache_v2_.clear();
+        // Issue #4600 §8: the lowering memo's IR carries no-op-deleter
+        // FlatAST/StringPool views from this arena — drop it with the
+        // arena reset (same rule as ir_cache_bridge_ below).
+        jit_program_memo_.reset();
         // Issue #225 cycle 3: explicitly clear all bridge data.
         // The shared_ptr-based bridges (Issue #224) hold a
         // non-owning view of the FlatAST, but the FlatAST's
@@ -4078,55 +4082,80 @@ public:
         // concurrently with each other, but a mutate:* must wait
         // for in-flight compiles to drain.
         std::shared_lock mutate_read(mutate_mtx_);
-        // Parse expression
-        auto alloc = arena_.allocator();
+
+        // Issue #4600 §8 (phase 4): session lowering memo. A re-run of the
+        // identical program text whose own define names have not moved
+        // reuses its post-pipeline IRModule: parse, typecheck, lowering,
+        // the production pipeline and escape analysis are skipped. The
+        // per-function jit_cache_ probe below still runs, so the #4569
+        // assumption predicate is unchanged — this only removes the
+        // re-lowering of an unchanged define. (The prior call's FlatAST
+        // and StringPool stay alive in arena_ for the session, so the
+        // skipped parse's evaluator_/current_* pointers remain live.)
         aura::ast::StringPool* pool_ptr = nullptr;
         aura::ast::FlatAST* flat_ptr = nullptr;
-        // Issue #4070: EXEMPT — stack void** dies before the next Moving rewrite.
-        pool_ptr = arena_.create_with_cover<aura::ast::StringPool>(
-            nullptr, "stack-cover-dies-at-return", alloc);
-        flat_ptr = arena_.create_with_cover<aura::ast::FlatAST>(
-            nullptr, "stack-cover-dies-at-return", alloc);
-        if (!pool_ptr || !flat_ptr) {
-            return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
-                                                          "exec_jit: arena allocate failed"});
-        }
-        auto pr = aura::parser::parse_to_flat(input, *flat_ptr, *pool_ptr);
-        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-            return std::unexpected(parse_error_diag(pr));
-        }
-        flat_ptr->root = pr.root;
-        current_ast_ = flat_ptr;
-        current_pool_ = pool_ptr;
-        // Dual-workspace (Phase 1): propagate to Evaluator.
-        evaluator_.set_flat_pool(flat_ptr, pool_ptr);
-        evaluator_.set_current_flat(flat_ptr);
-        evaluator_.set_current_pool(pool_ptr);
-
-        // Issue #73 Phase 5: run typecheck before lowering so the
-        // FlatAST's type_id column is populated. Without this, the
-        // JIT path compiles type-blind IR (every instruction's
-        // type_id = 0) and any type-driven optimization (CastOp
-        // insertion via TypeSpecializationWrap, type-aware
-        // specialization) sees no types. Compare to eval_ir
-        // (line ~957) and eval (line ~663) which both do this already.
-        {
-            aura::compiler::TypeCheckWrap tc_pass;
-            aura::diag::DiagnosticCollector diags;
-            tc_pass.set_bidirectional_mode(bidirectional_mode_);
-            tc_pass.set_gradual_permissiveness(gradual_permissiveness_);
-            tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, flat_ptr->root, type_registry_,
-                                          diags, aura::core::current_mutation_epoch(), &metrics_);
-            bool has_type_error = false;
-            for (auto& d : diags.diagnostics()) {
-                if (d.kind == aura::diag::ErrorKind::TypeError) {
-                    std::println(std::cerr, "type warning (exec_jit): {}", d.format());
-                    has_type_error = true;
-                }
+        bool memo_hit = false;
+        if (jit_reuse_lowering_enabled()) {
+            const auto* memo = jit_program_memo_.get();
+            if (memo != nullptr && memo->input_size == input.size() &&
+                memo->strict == strict_mode_ && memo->input_hash == jit_program_hash_(input) &&
+                aura::compiler::jit_assume::first_broken(memo->deps) == nullptr) {
+                memo_hit = true;
+                aura::compiler::jit_assume::stats().lowering_skips.fetch_add(
+                    1, std::memory_order_relaxed);
             }
-            if (strict_mode_ && has_type_error) {
-                return std::unexpected(aura::diag::Diagnostic{
-                    aura::diag::ErrorKind::TypeError, "type error (strict mode, exec_jit)"});
+        }
+
+        if (!memo_hit) {
+            // Parse expression
+            auto alloc = arena_.allocator();
+            // Issue #4070: EXEMPT — stack void** dies before the next Moving rewrite.
+            pool_ptr = arena_.create_with_cover<aura::ast::StringPool>(
+                nullptr, "stack-cover-dies-at-return", alloc);
+            flat_ptr = arena_.create_with_cover<aura::ast::FlatAST>(
+                nullptr, "stack-cover-dies-at-return", alloc);
+            if (!pool_ptr || !flat_ptr) {
+                return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                              "exec_jit: arena allocate failed"});
+            }
+            auto pr = aura::parser::parse_to_flat(input, *flat_ptr, *pool_ptr);
+            if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+                return std::unexpected(parse_error_diag(pr));
+            }
+            flat_ptr->root = pr.root;
+            current_ast_ = flat_ptr;
+            current_pool_ = pool_ptr;
+            // Dual-workspace (Phase 1): propagate to Evaluator.
+            evaluator_.set_flat_pool(flat_ptr, pool_ptr);
+            evaluator_.set_current_flat(flat_ptr);
+            evaluator_.set_current_pool(pool_ptr);
+
+            // Issue #73 Phase 5: run typecheck before lowering so the
+            // FlatAST's type_id column is populated. Without this, the
+            // JIT path compiles type-blind IR (every instruction's
+            // type_id = 0) and any type-driven optimization (CastOp
+            // insertion via TypeSpecializationWrap, type-aware
+            // specialization) sees no types. Compare to eval_ir
+            // (line ~957) and eval (line ~663) which both do this already.
+            {
+                aura::compiler::TypeCheckWrap tc_pass;
+                aura::diag::DiagnosticCollector diags;
+                tc_pass.set_bidirectional_mode(bidirectional_mode_);
+                tc_pass.set_gradual_permissiveness(gradual_permissiveness_);
+                tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, flat_ptr->root, type_registry_,
+                                              diags, aura::core::current_mutation_epoch(),
+                                              &metrics_);
+                bool has_type_error = false;
+                for (auto& d : diags.diagnostics()) {
+                    if (d.kind == aura::diag::ErrorKind::TypeError) {
+                        std::println(std::cerr, "type warning (exec_jit): {}", d.format());
+                        has_type_error = true;
+                    }
+                }
+                if (strict_mode_ && has_type_error) {
+                    return std::unexpected(aura::diag::Diagnostic{
+                        aura::diag::ErrorKind::TypeError, "type error (strict mode, exec_jit)"});
+                }
             }
         }
 
@@ -4164,66 +4193,77 @@ public:
         // same result as eval (no error at all). The refuse happens
         // BEFORE anything is compiled or executed, so no program state is
         // produced twice.
-        std::vector<std::pair<std::string, aura::ast::NodeId>> unbound_globals;
-        auto ir_mod = aura::compiler::lower_to_ir(*flat_ptr, *pool_ptr, arena_,
-                                                  &evaluator_.primitives(), &type_registry_,
-                                                  /*narrowing_evidence=*/0, &unbound_globals);
-        if (!unbound_globals.empty()) {
-            // Issue #4607: the tree walker is the eval face -- the
-            // reference face for "unbound variable: <name>". Expand
-            // macros first (eval()/eval_ir() do the same; the JIT path
-            // never expanded them, so a macro program keeps working).
-            auto expanded_root_4607 =
-                aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, flat_ptr->root);
-            // Drop the mutation read lock before the walker runs: a
-            // mutation primitive in the program takes mutate_mtx_ in
-            // write mode and this thread already holds it in read mode.
-            mutate_read.unlock();
-            return evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root_4607,
-                                        evaluator_.top_env());
-        }
-
-        // Run passes
-        {
-            aura::compiler::TypeSpecializationWrap ts(&type_registry_);
-            aura::compiler::TypePropagationPass tprop(&type_registry_);
-            aura::compiler::ComputeKindWrap ck;
-            aura::compiler::ArityWrap ar;
-            aura::compiler::ConstantFoldingWrap cf;
-            // Issue #1418: DCE was missing from the exec_jit
-            // run_pipeline pack (only default eval + post-mutate
-            // re-lower ran it). Wire after ConstantFolding so JIT
-            // never compiles dead CastOps.
-            // Issue #1457: TypePropagation before DCE.
-            aura::compiler::DeadCoercionEliminationPass dce(&type_registry_);
-            const std::uint64_t pipeline_epoch = aura::core::current_mutation_epoch();
-            ts.set_pipeline_epoch(pipeline_epoch);
-            tprop.set_pipeline_epoch(pipeline_epoch);
-            ar.set_pipeline_epoch(pipeline_epoch);
-            cf.set_pipeline_epoch(pipeline_epoch);
-            dce.set_pipeline_epoch(pipeline_epoch);
-            // Issue #163: run_pipeline (Pass concept fold) replaces
-            // the individual *.run() calls. Issue #1418: include DCE.
-            // Issue #3329: production purity / SoA / DirtyPropagator gate.
-            // Issue #4007: exec_jit interpreter AoS — same first-eval
-            // residual as eval_ir (no live V2 under SoA-only).
-            aura::compiler::run_production_pipeline(ir_mod, ts, tprop, ck, ar, cf, dce);
-            accumulate_type_propagation_metrics(tprop);
-            accumulate_coercion_pass_metrics(ts, dce);
-            // Issue #253: accumulate linear-move elision count.
-            if (ts.linear_elide_count() > 0) {
-                metrics_.linear_elide_count.fetch_add(ts.linear_elide_count(),
-                                                      std::memory_order_relaxed);
-            }
-        }
-
-        // ── Run escape analysis pass ───────────────────────
+        aura::ir::IRModule ir_mod;
         EscapeAnalysisWrap escape_pass;
-        escape_pass.run(ir_mod);
+        if (memo_hit) {
+            // Issue #4600 §8 (phase 4): reuse the post-pipeline module. The
+            // escape maps ride along so the #4569 fingerprint below is the
+            // one the cached native code was published under (escape maps
+            // are part of jit_assume_key_) — without them every fn would
+            // fingerprint differently and recompile.
+            ir_mod = jit_program_memo_->mod;
+            escape_pass.maps = jit_program_memo_->escape_maps;
+        } else {
+            std::vector<std::pair<std::string, aura::ast::NodeId>> unbound_globals;
+            ir_mod = aura::compiler::lower_to_ir(*flat_ptr, *pool_ptr, arena_,
+                                                 &evaluator_.primitives(), &type_registry_,
+                                                 /*narrowing_evidence=*/0, &unbound_globals);
+            if (!unbound_globals.empty()) {
+                // Issue #4607: the tree walker is the eval face -- the
+                // reference face for "unbound variable: <name>". Expand
+                // macros first (eval()/eval_ir() do the same; the JIT path
+                // never expanded them, so a macro program keeps working).
+                auto expanded_root_4607 =
+                    aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, flat_ptr->root);
+                // Drop the mutation read lock before the walker runs: a
+                // mutation primitive in the program takes mutate_mtx_ in
+                // write mode and this thread already holds it in read mode.
+                mutate_read.unlock();
+                return evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root_4607,
+                                            evaluator_.top_env());
+            }
 
-        if (ir_mod.functions.empty()) {
-            return EvalResult(types::make_void());
-        }
+            // Run passes
+            {
+                aura::compiler::TypeSpecializationWrap ts(&type_registry_);
+                aura::compiler::TypePropagationPass tprop(&type_registry_);
+                aura::compiler::ComputeKindWrap ck;
+                aura::compiler::ArityWrap ar;
+                aura::compiler::ConstantFoldingWrap cf;
+                // Issue #1418: DCE was missing from the exec_jit
+                // run_pipeline pack (only default eval + post-mutate
+                // re-lower ran it). Wire after ConstantFolding so JIT
+                // never compiles dead CastOps.
+                // Issue #1457: TypePropagation before DCE.
+                aura::compiler::DeadCoercionEliminationPass dce(&type_registry_);
+                const std::uint64_t pipeline_epoch = aura::core::current_mutation_epoch();
+                ts.set_pipeline_epoch(pipeline_epoch);
+                tprop.set_pipeline_epoch(pipeline_epoch);
+                ar.set_pipeline_epoch(pipeline_epoch);
+                cf.set_pipeline_epoch(pipeline_epoch);
+                dce.set_pipeline_epoch(pipeline_epoch);
+                // Issue #163: run_pipeline (Pass concept fold) replaces
+                // the individual *.run() calls. Issue #1418: include DCE.
+                // Issue #3329: production purity / SoA / DirtyPropagator gate.
+                // Issue #4007: exec_jit interpreter AoS — same first-eval
+                // residual as eval_ir (no live V2 under SoA-only).
+                aura::compiler::run_production_pipeline(ir_mod, ts, tprop, ck, ar, cf, dce);
+                accumulate_type_propagation_metrics(tprop);
+                accumulate_coercion_pass_metrics(ts, dce);
+                // Issue #253: accumulate linear-move elision count.
+                if (ts.linear_elide_count() > 0) {
+                    metrics_.linear_elide_count.fetch_add(ts.linear_elide_count(),
+                                                          std::memory_order_relaxed);
+                }
+            }
+
+            // ── Run escape analysis pass ───────────────────────
+            escape_pass.run(ir_mod);
+
+            if (ir_mod.functions.empty()) {
+                return EvalResult(types::make_void());
+            }
+        } // !memo_hit
 
 
         // Register primitives with JIT runtime (first call only)
@@ -4406,6 +4446,12 @@ public:
             aura::jit::ScalarFn fn_ptr = nullptr;
             bool is_top_level = (ir_fn.name == "__top__");
             bool need_compile = true;
+            // Issue #4600 §8 (phase 4): true when a live jit_cache_ row
+            // already carries this exact IR fingerprint, so a compile that
+            // happens anyway (global-epoch mode, shape re-specialization)
+            // may reuse AuraJIT's name-keyed native code. __top__ has no
+            // row by construction and is recompiled per program.
+            bool jit_name_same_ir = false;
             bool cache_hit = false;
             std::uint64_t hit_epoch = 0;
             std::uint64_t hit_drop_gen = 0;
@@ -4455,6 +4501,11 @@ public:
                             // (we hold only the shared lock); the
                             // insert path will overwrite with a fresh
                             // entry that has the new epoch.
+                            // Issue #4600 §8: an epoch-only staleness
+                            // (global-epoch mode) still has the same IR,
+                            // so the native code is reusable.
+                            jit_name_same_ir = cache_it->second.fingerprint_ != 0 &&
+                                               cache_it->second.fingerprint_ == akey.fp;
                         } else {
                             // Hot recompilation: if profiler now has stable shape for this
                             // function but cache entry was compiled without shape_map,
@@ -4496,6 +4547,10 @@ public:
                     // Issue #4569: assumption predicate (records the event).
                     if (cache_it != jit_cache_.end() &&
                         jit_entry_stale_(cache_it->second, akey, ir_fn.name, true)) {
+                        // Issue #4600 §8: same-IR epoch staleness (global
+                        // mode) keeps the native body usable.
+                        jit_name_same_ir = cache_it->second.fingerprint_ != 0 &&
+                                           cache_it->second.fingerprint_ == akey.fp;
                         jit_cache_.erase(cache_it);
                     } else if (cache_it != jit_cache_.end() && !cache_it->second.has_shape_map &&
                                !cache_it->second.spec_declined &&
@@ -4550,6 +4605,18 @@ public:
                         }
                     }
                 }
+                // Issue #4600 §8 (phase 4): AuraJIT::compile() serves its
+                // name-keyed compile_fns_ cache (fn.name → ScalarFn) without
+                // consulting the IR, so a service-level recompile — a
+                // fingerprint/DefineVersion miss, or the always-recompiled
+                // __top__ — would otherwise get the PREVIOUS body back. In
+                // a session that made an edited constant (or a rebound
+                // callee) invisible: the second program printed the first
+                // program's value. Evict the name first when a prior body
+                // exists; invalidate() is the JIT's own (re)define path
+                // (resource tracker + compile_fns_ + unhandled counts).
+                if (!jit_name_same_ir && jit_.get_function_ptr(ir_fn.name.c_str()) != nullptr)
+                    jit_.invalidate(ir_fn.name.c_str());
                 fn_ptr = jit_.compile(builder.flat_fn);
                 // Issue #1512: mirror AuraJIT coverage / unhandled masks into
                 // CompilerMetrics for Agent query surfaces.
@@ -4680,6 +4747,24 @@ public:
                 entry_hit_epoch = hit_epoch;
                 entry_hit_drop_gen = hit_drop_gen;
             }
+        }
+
+        // Issue #4600 §8 (phase 4): publish the lowering memo for the next
+        // run of this exact text. Stored after the loop so the uniquified
+        // function names (__lambda__#N) and the finalized entry id are the
+        // ones the cache probe just used. The dep snapshot is the union of
+        // the functions' own define names + free variables — the same name
+        // set jit_assume_key_ records per function; any bump (rebind /
+        // set-code cascade) turns the next run into a memo miss.
+        if (jit_reuse_lowering_enabled()) {
+            auto memo = std::make_unique<JitProgramMemo>();
+            memo->input_hash = jit_program_hash_(input);
+            memo->input_size = input.size();
+            memo->strict = strict_mode_;
+            memo->mod = ir_mod;
+            memo->escape_maps = escape_pass.maps;
+            memo->deps = jit_program_deps_(jit_program_dep_names_(ir_mod));
+            jit_program_memo_ = std::move(memo);
         }
 
         // Find entry function and execute it
@@ -16555,6 +16640,70 @@ public:
     };
     std::unordered_map<std::string, JitCachedFn, aura::core::TransparentStringHash, std::equal_to<>>
         jit_cache_;
+
+    // Issue #4600 §8 (phase 4): session lowering memo. A re-run of the
+    // identical program text whose own define names have not moved reuses
+    // the post-pipeline IRModule (+ escape maps) and skips parse,
+    // typecheck, lowering and the production pipeline. The per-function
+    // jit_cache_ probe below still runs, so the #4569 assumption predicate
+    // (IR fingerprint + DefineVersion deps) is unchanged: this memo only
+    // removes re-lowering of an unchanged define. One entry — the last
+    // program — which is the #4569/#4600 §8 session-bench shape. A dep
+    // that moved (rebind / set-code cascade), a different text, or a
+    // different strict mode is a memo miss and takes the full path.
+    // AURA_JIT_REUSE_LOWERING=0 restores the old re-lower-every-run path.
+    struct JitProgramMemo {
+        std::uint64_t input_hash = 0;
+        std::size_t input_size = 0;
+        bool strict = false;
+        aura::ir::IRModule mod;
+        std::vector<std::vector<std::uint8_t>> escape_maps;
+        std::vector<aura::compiler::jit_assume::Dep> deps;
+    };
+    std::unique_ptr<JitProgramMemo> jit_program_memo_;
+
+    static bool jit_reuse_lowering_enabled() {
+        static const bool on = [] {
+            const char* v = std::getenv("AURA_JIT_REUSE_LOWERING");
+            return !(v && v[0] == '0');
+        }();
+        return on;
+    }
+    static std::uint64_t jit_program_hash_(std::string_view s) {
+        aura::compiler::jit_assume::Fnv h;
+        h.u64(s.size());
+        h.bytes(s.data(), s.size());
+        return h.done();
+    }
+    // Own define names + captured free variables of every function — the
+    // same name set jit_assume_key_ records as DefineVersion deps.
+    static std::vector<std::string> jit_program_dep_names_(const aura::ir::IRModule& mod) {
+        std::vector<std::string> names;
+        std::unordered_set<std::string> seen;
+        for (const auto& f : mod.functions) {
+            std::string_view own = f.name;
+            if (auto hash = own.find('#'); hash != std::string_view::npos)
+                own = own.substr(0, hash);
+            if (!own.empty() && own != "__lambda__" && own != "__top__" &&
+                own != "__self_placeholder__" && seen.insert(std::string(own)).second)
+                names.emplace_back(own);
+            for (const auto& fv : f.free_vars)
+                if (!fv.empty() && seen.insert(fv).second)
+                    names.push_back(fv);
+        }
+        return names;
+    }
+    static std::vector<aura::compiler::jit_assume::Dep>
+    jit_program_deps_(const std::vector<std::string>& names) {
+        std::vector<aura::compiler::jit_assume::Dep> deps;
+        deps.reserve(names.size());
+        for (const auto& n : names) {
+            auto* w = aura::compiler::jit_assume::DefineVersions::instance().word(n);
+            deps.push_back(
+                aura::compiler::jit_assume::Dep{w, w->v.load(std::memory_order_acquire), n});
+        }
+        return deps;
+    }
 
     // Issue #4569: per-function assumption key, computed from the IR the
     // cache is probed with. fp covers everything FlatFnBuilder hands the

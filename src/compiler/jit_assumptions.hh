@@ -80,6 +80,13 @@ struct Stats {
     // handed to the module's registered native code (the bridge bumps
     // on a handled host call).
     std::atomic<std::uint64_t> osr_tail_fires{0};
+    // Issue #4600 §8 (phase 4): session lowering memo. An identical
+    // program whose own define names have not moved reuses its
+    // post-pipeline IRModule instead of re-parsing, re-typechecking,
+    // re-lowering and re-running the production pipeline. The per-fn
+    // JIT cache probe below still runs, so the #4569 assumption
+    // predicate is unchanged.
+    std::atomic<std::uint64_t> lowering_skips{0};
 };
 
 inline Stats& stats() noexcept {
@@ -301,6 +308,7 @@ struct Fnv {
     kv("frame_deopt_resumes", s.frame_deopt_resumes.load(std::memory_order_relaxed));
     kv("frame_deopt_unhosted", s.frame_deopt_unhosted.load(std::memory_order_relaxed));
     kv("osr_tail_fires", s.osr_tail_fires.load(std::memory_order_relaxed));
+    kv("lowering_skips", s.lowering_skips.load(std::memory_order_relaxed));
     kv("events", EventLog::instance().total());
     return out;
 }
