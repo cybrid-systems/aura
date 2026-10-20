@@ -7927,6 +7927,17 @@ public:
         // fall through to full re-lower below — no under-invalidate.
         const bool allow_partial_peel =
             !abort_stale_map && gate_partial_soa_dirty_sync_(it->second);
+        // Issue #4618: the same refusal as cache_define / the workspace
+        // specialise pass. A body that set!s a non-local (workspace or host
+        // global) cannot be lowered to IR - lowering_impl.cpp's Set returns
+        // the value with no store. Re-lowering it here republished the
+        // dropped store for a mutate:rebind / dirty body, so leave the entry
+        // dirty: the caller's fallback is cache_define, which skips IR and
+        // keeps the tree-walker closure.
+        if (define_body_sets_nonlocal_4618(flat, pool, expanded_root, name)) {
+            it->second.dirty = true;
+            return false;
+        }
         // Issue #3550: callee cascade before partial peel / block count.
         // Issue #3656: unknown cone (calls empty + node fn edges) is not
         // a successful instr peel — fail-closed full.
@@ -11136,6 +11147,161 @@ public:
         return bw.needs_fallback;
     }
 
+    // Issue #4618: lowering_impl.cpp's NodeTag::Set path stores only into a
+    // lambda scope (BindingKind::Local / Cell) or a captured cell. A target
+    // it cannot resolve is returned unchanged, so the store is silently
+    // dropped - the #3927 defect. cache_define's LambdaBodyWalker refuses
+    // such a body, but two later paths lowered it anyway and rebound the
+    // define to the IR closure, so the store vanished after (eval-current):
+    //   - specialize_one_lambda_via_ir (#4357 hot workspace lambdas);
+    //   - relower_define_blocks (#1495 dirty / mutate:rebind re-lower).
+    // Both now keep the define on the tree walker, whose Set writes the
+    // cell lookup_cell_index resolves (visible to the caller and to later
+    // references). Same rule as the LambdaBodyWalker: a Set target that is
+    // not a let/letrec/begin-define cell in the body, not the body lambda's
+    // own parameter, and not the define's name is a non-local store.
+    // Parameters (of this or any enclosing lambda) stay local: that is the
+    // #3927 LambdaBodyWalker rule, and the tree walker is the weaker face
+    // for them ("unbound variable: set!: x"), so those bodies keep IR.
+    [[nodiscard]] bool define_body_sets_nonlocal_4618(const aura::ast::FlatAST& flat,
+                                                      const aura::ast::StringPool& pool,
+                                                      aura::ast::NodeId root,
+                                                      const std::string& self_name = {}) const {
+        if (root == aura::ast::NULL_NODE || root >= flat.size())
+            return false;
+        std::string self = self_name;
+        auto root_v = flat.get(root);
+        aura::ast::NodeId body = root;
+        if (root_v.tag == aura::ast::NodeTag::Define) {
+            if (root_v.sym_id != aura::ast::INVALID_SYM)
+                self = std::string(pool.resolve(root_v.sym_id));
+            if (root_v.children.empty())
+                return false;
+            body = root_v.child(0);
+        }
+        struct Walk {
+            const aura::ast::FlatAST& f;
+            const aura::ast::StringPool& p;
+            const std::string& self_name;
+            bool hit = false;
+            // Cell bindings: let / letrec / begin-define. Capturing one is a
+            // cell capture, and IR CellSet is a real store.
+            std::vector<std::unordered_set<std::string>> cell_scopes;
+            // Parameters of every lambda on the walk (see store_is_local).
+            std::vector<std::unordered_set<std::string>> param_scopes;
+
+            [[nodiscard]] bool cell_bound(const std::string& nm) const {
+                for (auto it = cell_scopes.rbegin(); it != cell_scopes.rend(); ++it)
+                    if (it->count(nm) != 0)
+                        return true;
+                return false;
+            }
+            [[nodiscard]] bool store_is_local(const std::string& nm) const {
+                if (!self_name.empty() && nm == self_name)
+                    return true;
+                if (cell_bound(nm))
+                    return true;
+                // A parameter of this or any enclosing lambda is a frame
+                // binding, exactly as the #3927 LambdaBodyWalker treats it
+                // (see the header note: the tree walker is weaker there).
+                for (auto it = param_scopes.rbegin(); it != param_scopes.rend(); ++it)
+                    if (it->count(nm) != 0)
+                        return true;
+                return false;
+            }
+            void walk(aura::ast::NodeId id) {
+                if (hit || id == aura::ast::NULL_NODE || id >= f.size() || f.is_free_slot(id))
+                    return;
+                auto nv = f.get(id);
+                if (nv.tag == aura::ast::NodeTag::Quote)
+                    return; // quoted data is not code
+                if (nv.tag == aura::ast::NodeTag::Lambda) {
+                    param_scopes.emplace_back();
+                    for (auto pid : nv.params) {
+                        auto pn = std::string(p.resolve(pid));
+                        if (!pn.empty())
+                            param_scopes.back().insert(std::move(pn));
+                    }
+                    for (auto c : nv.children)
+                        walk(c);
+                    param_scopes.pop_back();
+                    return;
+                }
+                if (nv.tag == aura::ast::NodeTag::Let || nv.tag == aura::ast::NodeTag::LetRec) {
+                    const bool rec = nv.tag == aura::ast::NodeTag::LetRec;
+                    std::string nm;
+                    if (nv.sym_id != aura::ast::INVALID_SYM)
+                        nm = std::string(p.resolve(nv.sym_id));
+                    const bool named = !nm.empty();
+                    if (rec && named) {
+                        cell_scopes.push_back({});
+                        cell_scopes.back().insert(nm);
+                    }
+                    if (!nv.children.empty())
+                        walk(nv.child(0));
+                    if (!rec && named) {
+                        cell_scopes.push_back({});
+                        cell_scopes.back().insert(nm);
+                    }
+                    for (std::size_t i = 1; i < nv.children.size(); ++i)
+                        walk(nv.child(i));
+                    if (named)
+                        cell_scopes.pop_back();
+                    return;
+                }
+                if (nv.tag == aura::ast::NodeTag::Begin) {
+                    cell_scopes.push_back({});
+                    for (auto c : nv.children) {
+                        if (c >= f.size() || f.is_free_slot(c))
+                            continue;
+                        auto cv = f.get(c);
+                        if (cv.tag != aura::ast::NodeTag::Define ||
+                            cv.sym_id == aura::ast::INVALID_SYM)
+                            continue;
+                        auto dn = std::string(p.resolve(cv.sym_id));
+                        if (!dn.empty())
+                            cell_scopes.back().insert(std::move(dn));
+                    }
+                    for (auto c : nv.children)
+                        walk(c);
+                    cell_scopes.pop_back();
+                    return;
+                }
+                if (nv.tag == aura::ast::NodeTag::Define) {
+                    if (nv.sym_id != aura::ast::INVALID_SYM) {
+                        auto dn = std::string(p.resolve(nv.sym_id));
+                        if (!dn.empty()) {
+                            cell_scopes.push_back({});
+                            cell_scopes.back().insert(std::move(dn));
+                            if (!nv.children.empty())
+                                walk(nv.child(0));
+                            cell_scopes.pop_back();
+                            return;
+                        }
+                    }
+                    if (!nv.children.empty())
+                        walk(nv.child(0));
+                    return;
+                }
+                if (nv.tag == aura::ast::NodeTag::Set) {
+                    if (nv.sym_id != aura::ast::INVALID_SYM) {
+                        auto nm = std::string(p.resolve(nv.sym_id));
+                        if (!nm.empty() && !store_is_local(nm))
+                            hit = true;
+                    }
+                    for (auto c : nv.children)
+                        walk(c);
+                    return;
+                }
+                for (auto c : nv.children)
+                    walk(c);
+            }
+        };
+        Walk w{flat, pool, self};
+        w.walk(body);
+        return w.hit;
+    }
+
     void snapshot_ir_for_disk(const std::string& name) {
         auto it = ir_cache_.find(name);
         if (it == ir_cache_.end() || it->second.empty())
@@ -11367,6 +11533,16 @@ public:
         if (!pr.success || pr.root == aura::ast::NULL_NODE)
             return false;
         flat.root = pr.root;
+        // Issue #4618: a body whose set! targets a non-local cannot be
+        // lowered to IR - lowering_impl.cpp's Set has no store for a
+        // top-level cell and returns the value with the store dropped.
+        // cache_define refuses such a body (#3927); this pass re-lowered it
+        // and rebound the define to the IR closure, so a set! of a
+        // workspace or host global was a silent no-op after
+        // (eval-current). Keep the tree-walker closure eval-current bound,
+        // the same refusal shape #4372 uses for a lambda-form while.
+        if (define_body_sets_nonlocal_4618(flat, pool, pr.root, name))
+            return false;
         // Issue #4372: lambda-form while applies its closures from the
         // primitive. Those ids are not this define's IR closure, so the
         // bridge never observes set! of the let cell and the call returns
@@ -12060,7 +12236,28 @@ public:
             }
         }
 
+        // Issue #4618: the LambdaBodyWalker above is lambda-only, so a
+        // value define whose body set!s a non-local (e.g. a workspace
+        // define that bumps a global before returning a constant) still
+        // reached lowering, which drops the store. Refuse it the same way.
+        if (!skip_ir_cache && define_body_sets_nonlocal_4618(flat, pool, expanded_root, name_str))
+            skip_ir_cache = true;
+
         if (skip_ir_cache) {
+            // Issue #4618: a refused define owns no IR body. A rebind /
+            // dirty re-lower (relower_define_blocks) or the workspace
+            // specialise pass may have published a bundle for this name
+            // earlier; populate_ir_cache_v2_from_workspace mirrors
+            // entry.irs back as the next clean generation whenever
+            // ir_cache_ has no entry, and a caller lower would then embed
+            // the pre-rebind body. Drop the IR body; the tree walker owns
+            // the name (its Set writes the cell lookup_cell_index hits).
+            if (auto vit = ir_cache_v2_.find(name_str); vit != ir_cache_v2_.end()) {
+                vit->second.irs.clear();
+                vit->second.bridges.clear();
+                vit->second.init_block_dirty_from_irs();
+                vit->second.clear_all_block_dirty();
+            }
             // Issue #4513: fail closed with no copy of the refused hit.
             // Drop this define's own v1 bundle — it embeds the stale
             // callee — so populate_ir_cache_v2_from_workspace cannot

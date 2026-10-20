@@ -2865,6 +2865,136 @@ def test_tw_reclaim_ir_frame_roots_4617():
     print("  \u2705 test_tw_reclaim_ir_frame_roots_4617 (4 rows, 0/1000 wrong)")
 
 
+def test_workspace_set_global_4618():
+    """Issue #4618: set! of a global from a workspace define must store.
+
+    A workspace define (set-code + eval-current, or mutate:rebind) was
+    re-lowered to IR after the tree walker had bound it. IR's Set path
+    (lowering_impl.cpp) stores only into a lambda scope or a captured
+    cell; a top-level name falls through to "return the value" with no
+    store (#3927's IR face). cache_define already refuses such a body
+    (LambdaBodyWalker), but the workspace specialise pass (#4357) and
+    the dirty / rebind re-lower (#1495) bypassed the refusal and rebound
+    the name to the IR closure, so the global kept its old value and a
+    comparison emitted after the set! read the stale cell.
+
+    Rows: a workspace define writing a workspace value define, one
+    writing a host (file-level) define, the same after mutate:rebind,
+    and a comparison that follows the set! (it must read the stored
+    value, never a frozen one). Two control rows pin what already
+    worked -- set! of a let local / of a captured let cell, and the
+    file-define face. Each row must be byte-identical in eval,
+    AURA_FORCE_IR=1 and --jit and print the expected value.
+    """
+
+    def run(code, mode, timeout=60):
+        env = os.environ.copy()
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "0"
+        env.pop("AURA_SOFT", None)
+        env.pop("AURA_FORCE_IR", None)
+        cmd = [AURA]
+        if mode == "ir":
+            env["AURA_FORCE_IR"] = "1"
+        elif mode == "jit":
+            cmd.append("--jit")
+        return subprocess.run(cmd, input=code, capture_output=True, text=True, timeout=timeout, env=env)
+
+    def row(label, code, expect, modes=("eval", "ir")):
+        seen = {}
+        for mode in modes:
+            r = run(code, mode)
+            assert r.returncode == 0, (
+                f"{label} {mode}: rc={r.returncode} out={r.stdout!r} err={(r.stderr or '')[-400:]!r}"
+            )
+            seen[mode] = (r.stdout or "").strip()
+        first = seen[modes[0]]
+        for mode in modes[1:]:
+            assert seen[mode] == first, f"{label}: {modes[0]}={first!r} {mode}={seen[mode]!r}"
+        assert first == expect, f"{label}: expected {expect!r} got {first!r} ({seen})"
+
+    # 1. set! of a workspace value define, from a workspace lambda.
+    row(
+        "ws-global-4618",
+        '(set-code "(define wsv 0) (define bump-ws (lambda () (set! wsv (+ wsv 1)) wsv))")\n'
+        "(eval-current)\n"
+        "(display (list (bump-ws) (bump-ws))) (newline)\n"
+        "(display wsv) (newline)\n",
+        "(1 2)\n2",
+    )
+    # 2. set! of a host (file-level) define, from a workspace lambda.
+    row(
+        "ws-global-host-4618",
+        "(define hostv 0)\n"
+        '(set-code "(define bump-host (lambda () (set! hostv (+ hostv 1)) hostv))")\n'
+        "(eval-current)\n"
+        "(display (list (bump-host) (bump-host))) (newline)\n"
+        "(display hostv) (newline)\n",
+        "(1 2)\n2",
+    )
+    # 3. mutate:rebind to a body that set!s a workspace global. The
+    #    rebind dirty sweep must not republish a lowered store-less body.
+    row(
+        "ws-global-rebind-4618",
+        '(set-code "(define wsv 0) (define g (lambda () 0))")\n'
+        "(eval-current)\n"
+        '(mutate:rebind "g" "(lambda () (set! wsv (+ wsv 100)) wsv)" "r")\n'
+        "(eval-current)\n"
+        "(display (g)) (newline)\n"
+        "(display (g)) (newline)\n"
+        "(display wsv) (newline)\n",
+        "100\n200\n200",
+    )
+    # 4. A comparison emitted after the set! must observe the store
+    #    (it must read the cell the set! wrote, not a value captured
+    #    before it). Host cell: a comparison over a workspace VALUE
+    #    define is a separate typechecker complaint (set! result types
+    #    as Value), not this store path.
+    row(
+        "ws-global-compare-4618",
+        "(define gc 0)\n"
+        '(set-code "(define bump-then-test (lambda () (set! gc (+ gc 1)) (< gc 2)))")\n'
+        "(eval-current)\n"
+        "(display (bump-then-test)) (newline)\n"
+        "(display (bump-then-test)) (newline)\n"
+        "(display gc) (newline)\n",
+        "#t\n#f\n2",
+    )
+    # 5. Controls: let-local and captured-let-cell set! stay on the IR
+    #    fast path and still store (no over-refusal).
+    row(
+        "ws-local-control-4618",
+        '(set-code "(define local (lambda () (let ((x 0)) (set! x (+ x 1)) x))) '
+        '(define counter (let ((n 0)) (lambda () (set! n (+ n 1)) n)))")\n'
+        "(eval-current)\n"
+        "(display (local)) (newline)\n"
+        "(display (list (counter) (counter))) (newline)\n",
+        "1\n(1 2)",
+    )
+    # 6. File-define control (the face the issue says already worked).
+    row(
+        "file-global-4618",
+        "(define hostv 0)\n"
+        "(define (file-bump) (set! hostv (+ hostv 1)) hostv)\n"
+        "(display (list (file-bump) (file-bump))) (newline)\n"
+        "(display hostv) (newline)\n",
+        "(1 2)\n2",
+    )
+    # 7. --jit: one begin form (the runner only executes a single
+    #    expression form in this face), same store contract.
+    jit_code = (
+        '(begin (set-code "(define wsv 0) (define bump-ws (lambda () (set! wsv (+ wsv 1)) wsv))") '
+        "(eval-current) (display (list (bump-ws) (bump-ws))) (newline) (display wsv))"
+    )
+    for mode in ("eval", "ir", "jit"):
+        r = run(jit_code, mode)
+        assert r.returncode == 0, f"jit-shape {mode}: rc={r.returncode} err={(r.stderr or '')[-300:]!r}"
+    jit_out = (run(jit_code, "jit").stdout or "").strip()
+    ev_out = (run(jit_code, "eval").stdout or "").strip()
+    assert jit_out == ev_out == "(1 2)\n2", f"jit-shape: eval={ev_out!r} jit={jit_out!r}"
+    print("  ✅ test_workspace_set_global_4618 (4 store rows + 2 controls x eval/ir, jit shape)")
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -2884,6 +3014,7 @@ for tf in [
     test_jit_float_pair_fields_4605,
     test_jit_tier_differential_4574,
     test_jit_unbound_callee_4607,
+    test_workspace_set_global_4618,
     test_cfunc_budget_4555,
     test_nary_map_for_each_4616,
     test_rebind_cascade_linear_4615,
