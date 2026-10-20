@@ -25,14 +25,17 @@ if str(_FUZZ) not in _sys.path:
 import contextlib
 import datetime
 import json
+import queue
 import random
 import re
 import subprocess
 import sys
+import threading
 import time
 
 from common import AURA_BIN as _AURA_BIN  # noqa: E402
 from common import REPO as _REPO
+from common import dev_face_env as _dev_face_env  # noqa: E402
 
 # Suppress BrokenPipeError on cleanup (normal when killing serve)
 HERE = _FUZZ
@@ -97,19 +100,69 @@ def escaped(s):
     return s.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def send(proc, cmd):
-    """Send one command to --serve, read one response line, parse JSON suffix."""
+class _LineReader:
+    """Background reader for the `--serve` stdout pipe.
+
+    The previous implementation called `proc.stdout.readline()` inline,
+    which blocks forever when the serve process wedges: the session's
+    soft deadline was only checked *between* ops, so one unanswered
+    command kept the whole p0 tier blocked until the outer 240s timeout
+    killed it (the p0 leaf is one wave of `build.py test`, so a stuck
+    leaf stalls the wave). Reading on a daemon thread and consuming
+    with a timeout makes the soft deadline authoritative.
+    """
+
+    def __init__(self, stream):
+        self._queue = queue.Queue()
+        self._stream = stream
+        self._thread = threading.Thread(target=self._pump, daemon=True)
+        self._thread.start()
+
+    def _pump(self):
+        try:
+            for line in self._stream:
+                self._queue.put(line)
+        except Exception:
+            pass
+        finally:
+            self._queue.put(None)
+
+    def readline(self, timeout):
+        """Next line, or None on EOF / timeout."""
+        try:
+            return self._queue.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+
+def _remaining(deadline):
+    """Seconds left until `deadline` (0.0 when it has passed).
+
+    A missing deadline falls back to a bounded 30s read: the driver must
+    never block on a wedged serve process, whatever the caller did.
+    """
+    if deadline is None:
+        return 30.0
+    return max(0.0, deadline - time.monotonic())
+
+
+def send(proc, cmd, reader=None, deadline=None):
+    """Send one command to --serve, read one response line, parse JSON suffix.
+
+    `deadline` is an absolute `time.monotonic()` value: the read is
+    bounded by the remaining budget, so an unresponsive serve process
+    ends the session instead of hanging the tier.
+    """
     try:
         if proc.poll() is not None:
             return None  # process already dead
         proc.stdin.write(cmd + "\n")
         proc.stdin.flush()
-        # No sleep — readline() blocks until the subprocess writes a
-        # complete line, which is the right synchronization primitive
+        # No sleep — the response line is the synchronization primitive
         # here. The previous `time.sleep(0.005)` was vestigial
         # (a relic from when readline wasn't blocking, back when
         # the subprocess used unbuffered stdout).
-        line = proc.stdout.readline()
+        line = proc.stdout.readline() if reader is None else reader.readline(_remaining(deadline))
     except BrokenPipeError:
         return None  # pipe closed, process shutting down
     except Exception:
@@ -166,25 +219,41 @@ def run_fuzz_session(n_ops, soft_deadline_s=60.0):
     to its full N ops, so the test still reports pass/fail
     instead of getting killed at the outer timeout.
     """
-    proc = subprocess.Popen(
-        [AURA, "--serve"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+    try:
+        proc = subprocess.Popen(
+            [AURA, "--serve"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            # The lane drives set-code / mutate:* — denied under the
+            # production security defaults — so the serve child runs on
+            # the same diagnostics face as the rest of the p0 net.
+            env=_dev_face_env(),
+        )
+    except OSError as exc:
+        # A missing / unusable binary is harness bookkeeping, not a fuzz
+        # finding: report it as a clear one-liner instead of a bare
+        # FileNotFoundError traceback out of Popen (which used to kill
+        # the driver at line 169 and silently void the whole fuzz lane).
+        raise SystemExit(f"fuzz_edsl: cannot start {AURA} --serve: {exc}") from exc
     # Replace Popen's stdin with a non-blocking-friendly version.
     # The original 0.1s sleep was for "let the subprocess start" —
     # the first send() will block on readline() if not ready, so
     # the sleep is redundant.
     session_start = time.monotonic()
+    # Absolute soft deadline: every read is bounded by the remaining
+    # budget, so a wedged serve process ends the session instead of
+    # blocking the p0 tier until the outer timeout kills it.
+    deadline = session_start + soft_deadline_s
+    reader = _LineReader(proc.stdout)
 
     stats = {"pass": 0, "fail": 0, "crash": 0, "ops": 0}
     code = make_program()
     fns = extract_fns(code)
 
     # Initial set-code
-    resp = send(proc, f'(set-code "{escaped(code)}")')
+    resp = send(proc, f'(set-code "{escaped(code)}")', reader, deadline)
     if not resp or resp.get("status") != "ok":
         with contextlib.suppress(Exception):
             proc.kill()
@@ -205,7 +274,7 @@ def run_fuzz_session(n_ops, soft_deadline_s=60.0):
 
         # Refresh code state periodically
         if i % 10 == 0:
-            resp = send(proc, "(display (current-source))")
+            resp = send(proc, "(display (current-source))", reader, deadline)
             if resp and resp.get("status") == "ok" and resp.get("_display"):
                 new_code = resp["_display"]
                 if new_code and new_code not in ("", "()"):
@@ -214,13 +283,13 @@ def run_fuzz_session(n_ops, soft_deadline_s=60.0):
 
         # Every 20 ops: typecheck
         if i % 20 == 0:
-            send(proc, "(typecheck-current)")
+            send(proc, "(typecheck-current)", reader, deadline)
 
         # Every 50 ops: re-set-code to a new program (mix it up)
         if i > 0 and i % 50 == 0 and rng.random() < 0.3:
             code = make_program()
             fns = extract_fns(code)
-            resp = send(proc, f'(set-code "{escaped(code)}")')
+            resp = send(proc, f'(set-code "{escaped(code)}")', reader, deadline)
             if resp and resp.get("status") == "ok":
                 stats["ops"] += 1
                 stats["pass"] += 1
@@ -238,7 +307,7 @@ def run_fuzz_session(n_ops, soft_deadline_s=60.0):
         new_val = val + delta
         cmd = op_template.format(fn=fn, op=op, val=val, delta=delta, new_val=new_val, tag=tag, sym=sym, i=i)
 
-        resp = send(proc, cmd)
+        resp = send(proc, cmd, reader, deadline)
         if resp is None:
             stats["fail"] += 1
             break
@@ -308,6 +377,13 @@ def main():
 
     if all_stats["crash"]:
         print("\n  💥 CRASH detected!")
+        sys.exit(1)
+
+    if not all_stats["ops"]:
+        # The lane never executed a single op (e.g. the --serve child
+        # could not start). Reporting that as a success used to hide a
+        # broken fuzz lane behind "✅ test_fuzz_edsl" in the p0 tier.
+        print("\n  ⚠ fuzz lane never ran (0 ops) — the --serve child did not start")
         sys.exit(1)
 
 
