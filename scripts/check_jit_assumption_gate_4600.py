@@ -102,6 +102,21 @@ def _between(text: str, start: str, end: str) -> str:
     return text[i : j if j > 0 else len(text)]
 
 
+def _between_call(text: str, case: str, call: str, end: str) -> str:
+    # Window from the first call site inside the case up to end.
+    #
+    # The call argument list is clang-format reflowed, so the argument
+    # text is not a stable anchor; the case label and the call name are.
+    i = text.find(case)
+    if i < 0:
+        return ""
+    j = text.find(call, i)
+    if j < 0:
+        return ""
+    k = text.find(end, j)
+    return text[j : k if k > 0 else len(text)]
+
+
 def main() -> int:
     aj = AJ.read_text()
     rt = RT.read_text()
@@ -147,8 +162,11 @@ def main() -> int:
 
     # ── AC2: §5 direct defuse word on car/cdr guards ────────────────
     must("AURA_JIT_DEFUSE_WORD" in aj, "AC2: defuse word kill switch env")
-    car = _between(aj, 'emit_l2_pair_field(pair_val, 0, "car"', "case OpCdr:")
-    cdr = _between(aj, 'emit_l2_pair_field(pair_val, 1, "cdr"', "// CastOp: runtime type check")
+    # Issue #4603 reflowed the emit_l2_pair_field call across lines, so its
+    # argument text is no longer a contiguous literal. Anchor on the case
+    # label and the call name instead - both are stable.
+    car = _between_call(aj, "case OpCar:", "emit_l2_pair_field(", "case OpCdr:")
+    cdr = _between_call(aj, "case OpCdr:", "emit_l2_pair_field(", "// CastOp: runtime type check")
     must(bool(car) and bool(cdr), "AC2: car/cdr lowering windows found")
     for name, win in (("car", car), ("cdr", cdr)):
         must(
