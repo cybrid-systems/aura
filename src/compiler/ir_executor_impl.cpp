@@ -403,7 +403,13 @@ static bool ir_call_is_tail(const IRFunction& func, std::uint32_t block_idx, std
     return false;
 }
 
+thread_local IRInterpreter* IRInterpreter::t_active_ = nullptr;
+
 EvalResult IRInterpreter::drain_call_stack(std::size_t base) {
+    // Issue #4600 §3: publish this instance for the duration of the drain.
+    // A JIT guard exit inside a native callee resumes the deopting frame;
+    // that resume must run here, where the frame's cell / closure ids live.
+    const ActiveInstanceGuard active_guard{this};
     // Issue #4600 §3 (phase 3): consecutive same-function tail-call
     // replacements = the named-let back-edge as the interpreter sees it
     // (the loop closure calls itself; #4459 replaces the frame per
@@ -450,11 +456,24 @@ EvalResult IRInterpreter::drain_call_stack(std::size_t base) {
                         const long v = e && *e ? std::strtol(e, nullptr, 10) : 64;
                         return v > 0 ? static_cast<std::uint64_t>(v) : std::uint64_t{64};
                     }();
+                    // Issue #4600 §3: the hand-off targets a DEFINE's
+                    // registered body. A letrec/lambda body is lowered as
+                    // "__lambda__" and stamped "__lambda__#<id>" (the #4567
+                    // name rule), i.e. a per-lowering identity rather than a
+                    // define — the same name set the §8 memo/dep snapshot
+                    // treats as non-defines. Those frames read their self-
+                    // reference cell through the env prefix and keep running
+                    // in the interpreter (the §1/§2 deopt stub already
+                    // resumes them), so the escape never publishes a #4084 0
+                    // for them.
+                    const std::string_view osr_fname = pc.func->name;
+                    const bool osr_define_body =
+                        !osr_fname.empty() && osr_fname.rfind("__", 0) != 0;
                     // One attempt per chain: a decline (no host, busy) is
                     // sticky — the busy guard outlives the chain it
                     // protects, so re-marshal + re-attempt per iteration
                     // would only burn allocations.
-                    if (osr_tail_self == osr_threshold && !osr_declined && !pc.func->name.empty()) {
+                    if (osr_tail_self == osr_threshold && !osr_declined && osr_define_body) {
                         std::vector<std::int64_t> osr_slots(
                             static_cast<std::size_t>(pc.func->local_count), 0);
                         if (osr_slots.size() < pc.args.size())

@@ -211,6 +211,15 @@ public:
                                   std::size_t instr, std::vector<EvalValue> locals,
                                   std::span<const EvalValue> args);
 
+    // Issue #4600 §3: the innermost interpreter executing a frame on this
+    // thread, or nullptr. A deopt resume of a frame whose spilled values
+    // carry cell / closure ids MUST run on the instance that minted them —
+    // cell_heap_ and runtime_closures_ are per-instance, so a fresh
+    // interpreter cannot resolve a resumed frame's captures (it degrades
+    // every CellGet to void and the body then calls a non-procedure).
+    static IRInterpreter* active_instance() noexcept { return t_active_; }
+    [[nodiscard]] const aura::ir::IRModule* module_ptr() const noexcept { return &module_; }
+
     // Issue #272: invoke a runtime closure by id (full IR path).
     EvalResult call_closure(std::uint64_t closure_id, std::span<const EvalValue> args);
 
@@ -366,6 +375,21 @@ private:
     // Issue #892: dense vector indexed by sequential id (id 0 unused).
     std::uint64_t next_cell_id_ = 1;
     std::vector<EvalValue> cell_heap_;
+
+    // Issue #4600 §3: active-instance chain for resume_deopt_frame. Set by
+    // drain_call_stack (the single place frames execute), so a JIT deopt
+    // host invoked from inside a running frame sees its owner.
+    static thread_local IRInterpreter* t_active_;
+    struct ActiveInstanceGuard {
+        IRInterpreter* prev = nullptr;
+        explicit ActiveInstanceGuard(IRInterpreter* self) noexcept
+            : prev(t_active_) {
+            t_active_ = self;
+        }
+        ~ActiveInstanceGuard() { t_active_ = prev; }
+        ActiveInstanceGuard(const ActiveInstanceGuard&) = delete;
+        ActiveInstanceGuard& operator=(const ActiveInstanceGuard&) = delete;
+    };
 
     // M4 Linear ownership runtime heap
     // Issue #892: dense vector; live==false means erased/tombstone.

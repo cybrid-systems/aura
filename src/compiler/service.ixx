@@ -518,8 +518,20 @@ namespace {
         for (std::uint32_t i = 0; i < nslots; ++i)
             locals.emplace_back(slots[i]);
         aura::compiler::IRContext ctx(*st.prims, st.types, st.metrics, st.evaluator);
-        aura::compiler::IRInterpreter interp(*st.mod, ctx);
-        auto res = interp.resume_deopt_frame(*fn, block, instr, std::move(locals), args);
+        // Issue #4600 §3: a frame reached through a native call made by an
+        // interpreter on this thread carries that interpreter's cell /
+        // closure ids in its spilled locals (e.g. the named-let self cell
+        // read back by CellGet). CellGet / closure dispatch are per-instance
+        // heaps, so the resume must run on the owning interpreter — a fresh
+        // one degrades every such id to void and the body then calls a
+        // non-procedure. Only reuse it when it executes the same module.
+        std::unique_ptr<aura::compiler::IRInterpreter> owned;
+        aura::compiler::IRInterpreter* interp = aura::compiler::IRInterpreter::active_instance();
+        if (interp == nullptr || interp->module_ptr() != st.mod) {
+            owned = std::make_unique<aura::compiler::IRInterpreter>(*st.mod, ctx);
+            interp = owned.get();
+        }
+        auto res = interp->resume_deopt_frame(*fn, block, instr, std::move(locals), args);
         if (!res)
             return degrade();
         return static_cast<std::int64_t>(*res);
