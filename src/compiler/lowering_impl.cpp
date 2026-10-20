@@ -1259,19 +1259,27 @@ static std::uint32_t lower_flat_expr(
                         }
                     }
                     if (bare || all_thunk) {
+                        // Issue #4619: an error value in the test or in a body
+                        // form leaves the loop the way begin lets an error
+                        // leave (#2570) — it is not a value the loop may drop.
+                        // The Begin rule (Issue #4552) decides when the error
+                        // escapes: inside a lambda body or a try body.
+                        const bool escape_errors =
+                            state.lambda_depth > 0 || !state.err_escapes.empty();
                         auto cond_id = all_thunk ? flat.get(v.child(1)).child(0) : v.child(1);
                         auto head = state.alloc_block();
                         state.emit(IROpcode::Jump, head);
                         state.cur_block = head;
-                        auto cond_slot =
-                            lower_flat_expr(state, flat, pool, cond_id, cache, cache_hits);
+                        auto cond_slot = lower_data_operand(state, flat, pool, cond_id, cache,
+                                                            cache_hits, escape_errors);
                         auto body_blk = state.alloc_block();
                         auto done_blk = state.alloc_block();
                         state.emit(IROpcode::Branch, cond_slot, body_blk, done_blk);
                         state.cur_block = body_blk;
                         for (std::size_t i = 2; i < v.children.size(); ++i) {
                             auto body_id = all_thunk ? flat.get(v.child(i)).child(0) : v.child(i);
-                            (void)lower_flat_expr(state, flat, pool, body_id, cache, cache_hits);
+                            (void)lower_data_operand(state, flat, pool, body_id, cache, cache_hits,
+                                                     escape_errors);
                         }
                         state.emit(IROpcode::Jump, head);
                         state.cur_block = done_blk;
