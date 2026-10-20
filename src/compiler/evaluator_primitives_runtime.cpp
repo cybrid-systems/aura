@@ -14,6 +14,10 @@ import std;
 import aura.compiler.evaluator_pure;
 import aura.compiler.value;
 
+// Issue #4603: JIT-inlined display error arm (aura_jit_runtime.cpp). The
+// evaluator owns error_values_ + the #4497 displayed-error counter.
+extern "C" void aura_set_jit_error_display(void (*fn)(void*, std::int64_t), void* user);
+
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
@@ -1012,6 +1016,19 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         return make_bool(false);
     });
+
+    // Issue #4603: JIT-inlined display/write (aura_display_value) has no
+    // error arm; an error value escaping native code printed its raw
+    // RefError word. Route it through the same #4497 body the display prim
+    // uses: name it on stderr and mark the run failed.
+    aura_set_jit_error_display(
+        [](void* user, std::int64_t val) {
+            auto* evp = static_cast<Evaluator*>(user);
+            if (!evp)
+                return;
+            note_displayed_error(*evp, EvalValue{val});
+        },
+        static_cast<void*>(&ev));
 }
 
 } // namespace aura::compiler::primitives_detail

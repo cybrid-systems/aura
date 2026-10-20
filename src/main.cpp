@@ -2170,7 +2170,11 @@ int main(int argc, char* argv[]) {
         }
         if (!is_void(*result))
             std::println("{}", fmt_val(*result, cs));
-        return 0;
+        // Issue #4603: an error consumed by JIT-inlined display/write fails
+        // the run, like the eval path's #4497 rule. `(car 5)` after the
+        // non-pair deopt lands on aura_display_value's error arm, which
+        // bumps the same counter the tree walker uses.
+        return aura_displayed_error_count() > 0 ? 1 : 0;
 #else
         std::println(std::cerr, "JIT not available — rebuild with LLVM");
         return 1;
