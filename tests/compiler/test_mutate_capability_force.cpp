@@ -13,6 +13,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/observability_metrics.h"
+#include "compiler/pipeline_policy.hh" // Issue #4575: unit-face tree-walker policy
 #include "compiler/security_capabilities.h"
 #include "compiler/typed_mutation_audit.h"
 #include "core/capability_model.hh"
@@ -314,6 +315,14 @@ void run_issue_4575() {
 
     reset_all();
     aura::compiler::typed_audit::apply_dev_audit_defaults();
+    // Issue #4575: the production-security block above armed the #3627
+    // pipeline face (Forbidden) process-wide and the audit disarm does not
+    // own that axis. Under Forbidden the #2213 tree-walker gate hard-errors
+    // every EDSL prim root (set-code / load / mutate:*), so their capability
+    // checks never run and the matrix below would assert on empty results.
+    // This member tests the capability matrix on the documented unit face;
+    // take the same per-member reset as the sibling batch tests.
+    aura::compiler::reset_tree_walker_fallback_policy_for_test();
     {
         CompilerService cs;
         auto& ev = cs.evaluator();
