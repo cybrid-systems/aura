@@ -175,8 +175,10 @@ extern "C" int aura_jit_poll_hold_budget_safepoint() noexcept;
 
 #define EVAL_FLAT_HOLD_BUDGET_POLL()                                                               \
     do {                                                                                           \
-        if (auto _hb3693 = eval_flat_hold_budget_safepoint_poll())                                 \
-            return std::unexpected(*_hb3693);                                                      \
+        if (aura::serve::g_current_fiber != nullptr) {                                             \
+            if (auto _hb3693 = eval_flat_hold_budget_safepoint_poll())                             \
+                return std::unexpected(*_hb3693);                                                  \
+        }                                                                                          \
     } while (0)
 
 // Issue #739: acquire fence before epoch load so invalidate_function's
@@ -849,6 +851,7 @@ struct TwSpanRoot {
 };
 thread_local std::vector<TwSpanRoot> g_tw_spans;
 
+
 struct TwPinSpan {
     explicit TwPinSpan(const types::EvalValue* data, std::size_t n) {
         g_tw_spans.push_back(TwSpanRoot{data, nullptr, n});
@@ -863,6 +866,113 @@ struct TwPinSpan {
             g_tw_spans.pop_back();
     }
     TwPinSpan(const TwPinSpan&) = delete;
+};
+// Issue #4599 follow-up: tree-walker call arguments used to go through
+// three std::vector<EvalValue> allocations per call (provided / cargs /
+// rest). Calls with at most 8 arguments now use a stack buffer; the
+// live-count pin roots the filled prefix while later arguments evaluate.
+// A spill to a vector keeps the same pin contract for wider calls.
+struct TwSmallArgs {
+    static constexpr std::size_t kInline = 8;
+    std::array<types::EvalValue, kInline> in{};
+    std::vector<types::EvalValue> over;
+    std::size_t n_in = 0;
+    bool spilled = false;
+    // Lazy: an empty argument list (the common rest_args) must not touch
+    // the thread-local pin stacks at all.
+    std::optional<TwPinSpan> pin_in;
+    std::optional<TwPinMany> pin_over;
+
+    TwSmallArgs() = default;
+    TwSmallArgs(const TwSmallArgs&) = delete;
+    TwSmallArgs& operator=(const TwSmallArgs&) = delete;
+
+    [[nodiscard]] std::size_t size() const noexcept { return spilled ? over.size() : n_in; }
+    [[nodiscard]] bool empty() const noexcept { return size() == 0; }
+    [[nodiscard]] types::EvalValue* data() noexcept { return spilled ? over.data() : in.data(); }
+    [[nodiscard]] const types::EvalValue* data() const noexcept {
+        return spilled ? over.data() : in.data();
+    }
+    types::EvalValue& operator[](std::size_t i) noexcept { return spilled ? over[i] : in[i]; }
+    const types::EvalValue& operator[](std::size_t i) const noexcept {
+        return spilled ? over[i] : in[i];
+    }
+    void reserve(std::size_t n) {
+        if (n > kInline && !spilled)
+            over.reserve(n);
+    }
+    void push_back(types::EvalValue v) {
+        if (!pin_in)
+            pin_in.emplace(TwPinSpan::Live{}, in.data(), &n_in);
+        if (!spilled) {
+            if (n_in < kInline) {
+                in[n_in++] = std::move(v);
+                return;
+            }
+            over.reserve(kInline * 2);
+            for (std::size_t i = 0; i < n_in; ++i)
+                over.push_back(std::move(in[i]));
+            n_in = 0;
+            pin_over.emplace(over);
+            spilled = true;
+        }
+        over.push_back(std::move(v));
+    }
+};
+// Issue #4599 follow-up: the tree-walker closure call copied the whole
+// Closure out of the shard map (params vector allocation) once per call.
+// Only scalars and up to 8 parameters are needed after the lock drops.
+struct TwCallMeta {
+    std::array<aura::ast::SymId, 8> inline_params{};
+    std::vector<aura::ast::SymId> heap_params;
+    std::span<const aura::ast::SymId> params;
+    std::string name;
+    ast::FlatAST* flat = nullptr;
+    ast::StringPool* pool = nullptr;
+    ast::NodeId body_id = ast::NULL_NODE;
+    bool dotted = false;
+    std::uint64_t bridge_epoch = 0;
+    std::uint64_t lifetime_version = 0;
+    EnvId env_id = NULL_ENV_ID;
+    std::uint8_t linear_state = 0;
+    bool must_deopt_before_next_call = false;
+
+    [[nodiscard]] Closure to_closure() const {
+        Closure c;
+        c.name = name;
+        c.params.assign(params.begin(), params.end());
+        c.flat = flat;
+        c.pool = pool;
+        c.body_id = body_id;
+        c.env_id = env_id;
+        c.dotted = dotted;
+        c.bridge_epoch = bridge_epoch;
+        c.lifetime_version = lifetime_version;
+        c.linear_state = linear_state;
+        c.must_deopt_before_next_call = must_deopt_before_next_call;
+        return c;
+    }
+
+    void assign(const Closure& c) {
+        name = c.name;
+        flat = c.flat;
+        pool = c.pool;
+        body_id = c.body_id;
+        dotted = c.dotted;
+        bridge_epoch = c.bridge_epoch;
+        lifetime_version = c.lifetime_version;
+        env_id = c.env_id;
+        linear_state = c.linear_state;
+        must_deopt_before_next_call = c.must_deopt_before_next_call;
+        if (c.params.size() <= inline_params.size()) {
+            for (std::size_t i = 0; i < c.params.size(); ++i)
+                inline_params[i] = c.params[i];
+            params = std::span<const aura::ast::SymId>(inline_params.data(), c.params.size());
+        } else {
+            heap_params = c.params;
+            params = std::span<const aura::ast::SymId>(heap_params.data(), heap_params.size());
+        }
+    }
 };
 
 // Issue #4480: public root for primitive-local EvalValue vectors (map's
@@ -5434,12 +5544,28 @@ void Evaluator::remember_resolved_var(aura::ast::NodeId id, aura::ast::SymId sym
     // SymId equality is not enough. A closer frame can shadow a stdlib
     // name that shares the id (`count`, `map`). Caching that global cell
     // made the next read of the parameter return the function.
+    // Issue #4599 follow-up: the raw stored face may be the re-def cell
+    // (or the closure) while the walk answers the other one. Accept either
+    // direction before declining to cache.
+    auto note_agreed = [&](const types::EvalValue& raw) -> bool {
+        if (raw == bound) {
+            (void)note_cell(raw);
+            return true;
+        }
+        if (is_cell(raw)) {
+            const auto ci = as_cell_id(raw);
+            if (ci < cells_.size() && cells_[ci] == bound) {
+                store(NameResEntry::Kind::Cell, static_cast<std::uint32_t>(ci));
+                return true;
+            }
+        }
+        return false;
+    };
     if (cap) {
         const auto it = cap->symid_index_.find(sym);
         if (it != cap->symid_index_.end() && it->second < cap->bindings_symid_.size() &&
             cap->bindings_symid_[it->second].first == sym) {
-            if (cap->bindings_symid_[it->second].second == bound)
-                (void)note_cell(bound);
+            (void)note_agreed(cap->bindings_symid_[it->second].second);
             return;
         }
     }
@@ -5453,6 +5579,13 @@ void Evaluator::remember_resolved_var(aura::ast::NodeId id, aura::ast::SymId sym
         if (!agrees && is_cell(bound)) {
             const auto ci = as_cell_id(bound);
             if (ci < cells_.size() && cells_[ci] == *topv)
+                agrees = true;
+        }
+        // Issue #4599 follow-up: the SymId side may hold the re-def cell
+        // while the string probe already dereferenced it.
+        if (!agrees && is_cell(*topv)) {
+            const auto ci = as_cell_id(*topv);
+            if (ci < cells_.size() && cells_[ci] == bound)
                 agrees = true;
         }
         if (agrees) {
@@ -5536,6 +5669,15 @@ void Evaluator::remember_call_no_prim(aura::ast::NodeId id, aura::ast::SymId sym
         if (!agrees && bound && is_cell(*bound)) {
             const auto ci = as_cell_id(*bound);
             if (ci < cells_.size() && cells_[ci] == *tv)
+                agrees = true;
+        }
+        // Issue #4599 follow-up: the mirror direction. A define-bound cell
+        // lives on top_'s SymId side, while the string walk's live-top
+        // consult (Env::lookup) dereferences it and answers the closure.
+        // Deref the SymId side before refusing.
+        if (!agrees && bound.has_value() && is_cell(*tv)) {
+            const auto ci = as_cell_id(*tv);
+            if (ci < cells_.size() && cells_[ci] == *bound)
                 agrees = true;
         }
         if (!agrees)
@@ -5664,10 +5806,12 @@ std::optional<EvalResult> Evaluator::try_eval_flat_hot(aura::ast::FlatAST& flat,
     if (env.local_symid_last(e.sym))
         return std::nullopt;
     const std::string& cname = primitives_.name_for_slot(e.aux);
-    if (cname == "if" || cname == "and" || cname == "or")
-        return std::nullopt;
-    const auto pfn = primitives_.slot_lookup_fast(e.aux);
-    if (!pfn)
+    // Issue #4599 follow-up: remember_prim_call never stores if/and/or
+    // (the eager path must not run them), so the per-visit name compares
+    // here were dead weight on every cached primitive call.
+    // Issue #4599 follow-up: no PrimFn copy (SBO clone + destroy) per call.
+    const PrimFn* pfn = primitives_.slot_ptr_fast(e.aux);
+    if (pfn == nullptr)
         return std::nullopt;
     const auto nargs = static_cast<std::size_t>(e.nchild - 1);
     std::array<types::EvalValue, 8> buf{};
@@ -6012,7 +6156,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
             // Issue #4459: between opcodes, after the poll. Nested bodies
             // see outer envs via g_tw_frames, so the go loop under display
             // reclaims the previous iteration's closure.
-            maybe_reclaim_tw_unreachable();
+            if (tw_reclaim_due())
+                maybe_reclaim_tw_unreachable();
             current_flat_ = f;
             current_pool_ = p;
             // Issue #3457: SymId intern is pool-local. TCO / nested
@@ -6337,7 +6482,10 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     }
                     // Macro expansion: evaluate args, bind in env, evaluate body (produces template
                     // data), then re-evaluate the data as code
-                    if (callee.tag == aura::ast::NodeTag::Variable) {
+                    // Issue #4599 follow-up: an empty registry cannot match.
+                    // Every call used to pay a pool resolve + std::string +
+                    // hash-table probe here before the prim/closure paths.
+                    if (callee.tag == aura::ast::NodeTag::Variable && !macros_.empty()) {
                         auto cname = std::string(p->resolve(callee.sym_id));
                         auto macro_it = macros_.find(cname);
                         if (macro_it != macros_.end()) {
@@ -7468,7 +7616,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             m->closure_calls_total.fetch_add(1, std::memory_order_relaxed);
                             m->closure_tw_calls.fetch_add(1, std::memory_order_relaxed);
                         }
-                        Closure cl;
+                        TwCallMeta cl;
                         bool tw_closure = false;
                         {
                             std::shared_lock<std::shared_mutex> rlock(
@@ -7484,7 +7632,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                         Diagnostic{ErrorKind::InvalidClosure,
                                                    "eval_flat: freed/tombstoned closure"});
                                 }
-                                cl = it->second;
+                                cl.assign(it->second);
                                 tw_closure = true;
                             }
                         }
@@ -7529,8 +7677,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         // Issue #4467: every argument is evaluated first.
                         // A fixed-arity call with the wrong count is an error
                         // at this call, before the body runs.
-                        std::vector<EvalValue> provided;
-                        TwPinMany pin_provided(provided);
+                        // Issue #4599 follow-up: stack buffers for small calls.
+                        TwSmallArgs provided;
                         if (v.children.size() > 1)
                             provided.reserve(v.children.size() - 1);
                         for (std::size_t i = 1; i < v.children.size(); ++i) {
@@ -7558,16 +7706,24 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                                               cl.dotted, provided.size()),
                                            aura::diag::SourceLocation{line, col, 0}, current_id});
                         }
-                        std::vector<EvalValue> cargs;
-                        TwPinMany pin_cargs(cargs);
-                        cargs.reserve(named_count);
-                        for (std::size_t i = 0; i < named_count && i < provided.size(); ++i)
-                            cargs.push_back(std::move(provided[i]));
-                        std::vector<EvalValue> rest_args;
-                        TwPinMany pin_rest(rest_args);
-                        if (cl.dotted && !cl.params.empty()) {
-                            for (std::size_t i = named_count; i < provided.size(); ++i)
-                                rest_args.push_back(std::move(provided[i]));
+                        // Issue #4599 follow-up: a non-dotted call uses the
+                        // evaluated argument buffer directly — the second
+                        // TwSmallArgs + pin pair was a pure copy.
+                        TwSmallArgs cargs_buf;
+                        std::span<EvalValue> cargs;
+                        if (!cl.dotted) {
+                            cargs = std::span<EvalValue>(provided.data(), named_count);
+                        }
+                        TwSmallArgs rest_args;
+                        if (cl.dotted) {
+                            cargs_buf.reserve(named_count);
+                            for (std::size_t i = 0; i < named_count && i < provided.size(); ++i)
+                                cargs_buf.push_back(std::move(provided[i]));
+                            cargs = std::span<EvalValue>(cargs_buf.data(), cargs_buf.size());
+                            if (!cl.params.empty()) {
+                                for (std::size_t i = named_count; i < provided.size(); ++i)
+                                    rest_args.push_back(std::move(provided[i]));
+                            }
                         }
                         // Issue #4568: note the caller target, then the
                         // callee lattice, before bind_symid moves cargs.
@@ -7607,7 +7763,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         if (!reused) {
                             // Drop the stamp before materialize re-enters eval.
                             tco_reuse_live_ = false;
-                            tail_env = materialize_call_env(cl);
+                            tail_env = materialize_call_env(cl.to_closure());
                             tail_env->set_primitives(&primitives_);
 
                             // Issue #145: set the pool so bind_symid can mirror

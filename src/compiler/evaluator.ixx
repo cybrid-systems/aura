@@ -377,6 +377,11 @@ public:
             return std::nullopt;
         return fn_slots_[slot];
     }
+    // Issue #4599 follow-up: hot dispatch borrows the stored PrimFn instead
+    // of copying it (the SBO clone/destroy pair ran per primitive call).
+    [[nodiscard]] const PrimFn* slot_ptr_fast(std::size_t slot) const noexcept {
+        return slot < fn_slots_.size() ? &fn_slots_[slot] : nullptr;
+    }
     // Issue #891/#1356: name lookup — HotTierTable first, then main table_.
     [[nodiscard]] std::optional<PrimFn> lookup_cstr(std::string_view name) const {
         if (name.empty())
@@ -5001,6 +5006,12 @@ public:
     void note_tw_closure_alloc() noexcept { ++tw_closure_allocs_; }
     // Loop-head safepoint. No-op under the allocation threshold.
     void maybe_reclaim_tw_unreachable();
+    // Issue #4599 follow-up: the per-opcode call site checks the same
+    // counters the function opens with, so an idle trip is two loads.
+    [[nodiscard]] bool tw_reclaim_due() const noexcept {
+        return tw_closure_allocs_ >= tw_closure_allocs_trigger_ ||
+               file_heap_allocs_since_reclaim_ >= file_heap_allocs_trigger_;
+    }
     // Issue #4481: TW-side in-flight roots (call-env bindings, pinned arg
     // vectors, live results) for reclaim_file_mode_unreachable — an IR
     // instruction boundary can run nested inside a live TW evaluation, and
@@ -7579,17 +7590,28 @@ private:
         std::uint64_t defuse;
         std::uint64_t env_gen;
         std::array<aura::ast::SymId, 8> syms;
+        // Issue #4599 follow-up: a non-live stamp has no meaningful payload
+        // (every field is only read behind tco_reuse_live_), so the common
+        // nested-eval case restores just the flag instead of copying the
+        // whole stamp (8 SymIds + 7 counters) on every eval_flat_body entry.
         explicit TcoReuseGuard(Evaluator* e) noexcept
             : ev(e)
-            , live(e->tco_reuse_live_)
-            , cid(e->tco_reuse_cid_)
-            , envp(e->tco_reuse_env_)
-            , n(e->tco_reuse_n_)
-            , bridge(e->tco_reuse_bridge_)
-            , defuse(e->tco_reuse_defuse_)
-            , env_gen(e->tco_reuse_env_gen_)
-            , syms(e->tco_reuse_syms_) {}
+            , live(e->tco_reuse_live_) {
+            if (!live)
+                return;
+            cid = e->tco_reuse_cid_;
+            envp = e->tco_reuse_env_;
+            n = e->tco_reuse_n_;
+            bridge = e->tco_reuse_bridge_;
+            defuse = e->tco_reuse_defuse_;
+            env_gen = e->tco_reuse_env_gen_;
+            syms = e->tco_reuse_syms_;
+        }
         ~TcoReuseGuard() {
+            if (!live) {
+                ev->tco_reuse_live_ = false;
+                return;
+            }
             ev->tco_reuse_live_ = live;
             ev->tco_reuse_cid_ = cid;
             ev->tco_reuse_env_ = envp;
