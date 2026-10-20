@@ -365,6 +365,14 @@ private:
     // call_closure; execute() (define binding) leaves it false.
     std::unordered_set<std::uint64_t> runtime_minted_ids_;
     bool in_runtime_call_ = false;
+    // Issue #4620: the drain hit the call-depth limit (the IR call
+    // stack is a heap deque, so an unbounded non-tail recursion used
+    // to grow the heap until the kernel OOM-killed the process). The
+    // service's bridge turns a call_closure failure into nullopt, so
+    // call_closure parks the depth message in the channel the arity
+    // error uses (#4467) - the tree-walker then reports the real
+    // cause instead of "eval_flat: invalid closure".
+    bool depth_exceeded_ = false;
     // Issue #4357: a cached-define reference lowers to MakeClosure on every
     // evaluation. A 3000-step loop therefore kept 3000 empty-env closures,
     // and the next rebind paid to destroy them. Same function, no captures:
