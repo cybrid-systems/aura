@@ -8993,7 +8993,15 @@ public:
                 // top_env Soft-cell walk (not workspace Lambda skip alone).
                 if (ws_flat->get(v.child(0)).tag == aura::ast::NodeTag::Lambda)
                     continue;
-                auto existing = evaluator_.top_env().lookup_binding(name);
+                // Issue #4632: lookup_binding is a linear reverse scan over
+                // the env's whole binding vector. A workspace :switch into
+                // a workspace that has had one mutate:rebind re-binds that
+                // workspace's defines on EVERY switch, so the env's binding
+                // vector grows with the number of switches - and the scan
+                // made every switch O(env size), i.e. the switch loop
+                // quadratic. Env::lookup answers the same question through
+                // the env's O(1) binding index (same newest-wins answer).
+                auto existing = evaluator_.top_env().lookup(name);
                 if (!existing || !types::is_cell(*existing))
                     continue;
                 ir_value_cell_bindings_[name] = types::as_cell_id(*existing);
@@ -9007,6 +9015,11 @@ public:
         sync_soft_tw_export_cells_into_ir_value_bindings_();
     }
 
+    // Issue #4632: cursor over the env's append-only binding vector -
+    // the Soft export walk registers each binding once, when it appears,
+    // instead of re-scanning the whole env on every workspace :switch.
+    std::size_t soft_export_bindings_cursor_ = 0;
+    std::string soft_export_last_name_;
 
     void sync_soft_tw_export_cells_into_ir_value_bindings_() {
         // Soft (require … all:) injects via Env::bind into legacy string
@@ -9049,22 +9062,52 @@ public:
             ir_value_cell_bindings_[name] = ci;
         };
 
-        for (auto& [name, val] : evaluator_.top_env().bindings()) {
-            if (name.empty() || name[0] == '_')
+        // Issue #4632: this walk used to re-scan the WHOLE env on every
+        // call. A workspace :switch into a workspace that has had one
+        // mutate:rebind re-binds that workspace's defines on EVERY switch,
+        // and each re-bind appends to the env's binding vector - so the env
+        // grew with the number of switches and the full walk made the
+        // switch loop quadratic (one rebind was enough: the growth comes
+        // from the switches, not from the rebind count).
+        //
+        // The env's binding vector is append-only (Env::bind appends), so a
+        // cursor over it is sound: every binding is registered exactly
+        // once, when it appears. A wholesale replace
+        // (Env::replace_string_bindings) or an unbind shrinks the vector -
+        // the cursor then restarts and the walk runs again.
+        auto& bindings = evaluator_.top_env().bindings();
+        if (soft_export_bindings_cursor_ > bindings.size())
+            soft_export_bindings_cursor_ = 0; // wholesale replace - rescan
+        // A mid-vector erase shifts the tail down by one and would hide the
+        // last binding from the cursor. Detect it by re-reading the name of
+        // the last binding the cursor consumed.
+        if (soft_export_bindings_cursor_ > 0 and
+            soft_export_last_name_ != bindings[soft_export_bindings_cursor_ - 1].first) {
+            soft_export_bindings_cursor_ = 0;
+        }
+        while (soft_export_bindings_cursor_ < bindings.size()) {
+            // Copy the pair by value: try_register may bind a fresh cell,
+            // which appends to the vector (and would invalidate iterators).
+            const std::string name = bindings[soft_export_bindings_cursor_].first;
+            const types::EvalValue val = bindings[soft_export_bindings_cursor_].second;
+            ++soft_export_bindings_cursor_;
+            soft_export_last_name_ = name;
+            if (name.empty() or name[0] == '_')
                 continue;
             try_register(name, val);
         }
-        // Soft oneshot std/math preds — ensure even when bindings() is
-        // parent-shadowed or only visible via lookup_binding.
+        // Soft oneshot std/math preds - ensure even when bindings() is
+        // parent-shadowed or only visible via lookup.
         static constexpr const char* kSoftMathPreds[] = {
             "even?", "odd?", "positive?", "negative?", "zero?",
         };
         for (const char* pred : kSoftMathPreds) {
             if (ir_value_cell_bindings_.count(pred))
                 continue;
-            if (auto b = evaluator_.top_env().lookup_binding(pred))
-                try_register(pred, *b);
-            else if (auto v = evaluator_.top_env().lookup(pred))
+            // Issue #4632: Env::lookup answers the same question through the
+            // env's O(1) binding index; lookup_binding is a linear reverse
+            // scan over the whole env (quadratic over a switch loop).
+            if (auto v = evaluator_.top_env().lookup(pred))
                 try_register(pred, *v);
         }
     }
