@@ -424,7 +424,8 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
     // fiber's rebind — the chaos release blocker hung with fibers_done=0);
     // host-thread lookups are single-fiber and stable-by-construction.
     if (owner_ && aura::serve::g_current_fiber == nullptr && bindings_.empty() &&
-        (!cap_snap_ || (cap_snap_->bindings_.empty() && cap_snap_->bindings_symid_.empty()))) {
+        (!cap_snap_ || (cap_snap_->bindings_.empty() && cap_snap_->bindings_symid_.empty()) ||
+         cap_snap_->live_safe_top)) {
         if (const auto* b = local_binding(std::as_const(*owner_).top_env())) {
             if (is_cell(*b)) {
                 auto ci = as_cell_id(*b);
@@ -1482,6 +1483,10 @@ std::shared_ptr<const CapSnapshot> Evaluator::cap_snap_for_frame(EnvId frame_id)
                 ns->name_index_[ns->bindings_[i].first] = i;
             ns->parent_id = cfr.parent_id;
             ns->source_frame = frame_id;
+            // Issue #4595: carry the live-safe EMPTY top_ capture marker
+            // into the snapshot so the #4599 fast reads can decline the
+            // SoA walk and let the live top_ consult answer.
+            ns->live_safe_top = cfr.live_safe_top_;
             // Issue #4448: stamp the build-time generation so cache hits
             // can detect pre-compact / pre-truncate entries (see above).
             ns->env_gen = env_generation_;
@@ -4393,7 +4398,8 @@ EvalValue* Env::lookup_cell_ptr(std::string_view n, std::vector<EvalValue>* cell
     // Fiber-gated (#4595): see Env::lookup — host-thread only, and only
     // for truly-empty captures (symid-only snapshots keep capture order).
     if (owner_ && aura::serve::g_current_fiber == nullptr && bindings_.empty() &&
-        (!cap_snap_ || (cap_snap_->bindings_.empty() && cap_snap_->bindings_symid_.empty()))) {
+        (!cap_snap_ || (cap_snap_->bindings_.empty() && cap_snap_->bindings_symid_.empty()) ||
+         cap_snap_->live_safe_top)) {
         auto tb4595 = owner_->top_env().bindings();
         for (auto it = tb4595.rbegin(); it != tb4595.rend(); ++it) {
             auto& b = *it;
@@ -4543,7 +4549,8 @@ std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
     // Fiber-gated (#4595): see Env::lookup — host-thread only, and only
     // for truly-empty captures (symid-only snapshots keep capture order).
     if (owner_ && aura::serve::g_current_fiber == nullptr && bindings_.empty() &&
-        (!cap_snap_ || (cap_snap_->bindings_.empty() && cap_snap_->bindings_symid_.empty()))) {
+        (!cap_snap_ || (cap_snap_->bindings_.empty() && cap_snap_->bindings_symid_.empty()) ||
+         cap_snap_->live_safe_top)) {
         auto tb4595 = owner_->top_env().bindings();
         for (auto it = tb4595.rbegin(); it != tb4595.rend(); ++it) {
             auto& b = *it;
