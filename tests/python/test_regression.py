@@ -3496,6 +3496,130 @@ def test_workspace_rest_params_4621():
     print("  ✅ test_workspace_rest_params_4621 (6 rest rows + caller + rebind x eval/ir, jit shape)")
 
 
+def test_named_let_bind_list_repeat_4623():
+    """Issue #4623: the same tree transform twice must give the same answer.
+
+    A c6a18e8a5 (#4599) regression: the tree-walker name cache and the
+    uncaptured-let-cell skip left the SECOND identical call reading a
+    binding the file-mode reclaim had already released, so the named
+    let's binding list came back as (()) instead of ((i 0)). The issue's
+    81-line repro program is used verbatim.
+
+    Rows: A (first call), tree (the parsed tree R transformed) and R
+    (second call). All three must carry the same body -- R identical to
+    A -- with the named let's binding list ((i 0)) intact.
+    """
+    code = r"""
+(define *mutable* (list "route-tool"))
+(define (starts-with? s p) (and (>= (string-length s) (string-length p)) (equal? (substring s 0 (string-length p)) p)))
+(define *fuel-tick* "(%tick)")
+(define *renamed* (list "make-vector" "string-append" "append"))
+(define *allowed-syms*
+  (append
+   (list "lambda" "let" "let*" "letrec" "letrec*" "if" "cond" "case" "when" "unless" "begin" "and" "or" "else" "=>"
+         "do" "while" "quote"
+         "+" "-" "*" "/" "quotient" "remainder" "modulo" "abs" "min" "max" "=" "<" ">" "<=" ">=" "zero?" "positive?"
+         "negative?" "even?" "odd?" "number?" "integer?" "exact->inexact" "inexact->exact" "round"
+         "floor" "ceiling" "truncate" "sqrt" "expt" "not" "eq?" "eqv?" "equal?" "boolean?" "cons" "car" "cdr" "caar"
+         "cadr" "cdar" "cddr" "caddr" "cdddr" "cadddr" "list" "list?" "pair?" "null?" "length" "list-ref" "list-tail"
+         "member" "memq" "assq" "reverse" "map" "filter" "for-each" "last" "string?" "string-length" "substring"
+         "string=?" "string<?" "string>?" "string-index" "string-upcase" "string-downcase" "number->string"
+         "string->number" "symbol->string" "string-split" "string-ref" "string->list" "list->string" "char?" "char=?"
+         "symbol?" "procedure?" "vector" "vector?" "vector-ref" "vector-length" "vector-set!" "vector->list"
+         "list->vector" "hash" "hash-ref" "hash-set!" "hash-has-key?"
+         "needs" "kinds" "tools" "errs" "facts" "tkinds" "nsubs" "strategies")
+   *renamed*))
+(define (sx-allowed? a) (or (member a *allowed-syms*) (member a *mutable*)))
+(define *bad-codes* (list 59 96 44 91 93 123 125 124))     ;; ; ` , [ ] { } |
+(define (tok-flush s st i acc) (if (>= st 0) (cons (substring s st i) acc) acc))
+(define (sx-tokens s)
+  (let loop ((cs (string->list s)) (i 0) (st -1) (acc (list)))
+    (if (null? cs)
+        (reverse (tok-flush s st i acc))
+        (let ((c (car cs)))
+          (cond
+            ((or (= c 32) (= c 9) (= c 10) (= c 13)) (loop (cdr cs) (+ i 1) -1 (tok-flush s st i acc)))
+            ((or (= c 40) (= c 41) (= c 39))
+             (loop (cdr cs) (+ i 1) -1 (cons (substring s i (+ i 1)) (tok-flush s st i acc))))
+            (else (loop (cdr cs) (+ i 1) (if (>= st 0) st i) acc)))))))
+(define (sx-read ts)
+  (if (null? ts) (raise "unbalanced parens: unexpected end")
+      (let ((t (car ts)))
+        (cond ((equal? t "(") (sx-read-list (cdr ts) (list)))
+              ((equal? t ")") (raise "unbalanced parens: unexpected )"))
+              (else (cons t (cdr ts)))))))
+(define (sx-read-list ts acc)
+  (cond ((null? ts) (raise "unbalanced parens: unexpected end"))
+        ((equal? (car ts) ")") (cons (reverse acc) (cdr ts)))
+        (else (let ((r (sx-read ts))) (sx-read-list (cdr r) (cons (car r) acc))))))
+(define (sx-parse body)
+  (let ((r (sx-read (sx-tokens body))))
+    (if (not (null? (cdr r))) (raise "trailing text after the lambda"))
+    (car r)))
+(define (sx-emit x)                 ;; one native string-append per list (string-join is a std-lib loop)
+  (cond ((string? x) x)
+        ((null? x) "()")
+        (else (apply string-append (cons "(" (sx-emit-tail x))))))
+(define (sx-emit-tail xs)
+  (if (null? (cdr xs)) (list (sx-emit (car xs)) ")")
+      (cons (sx-emit (car xs)) (cons " " (sx-emit-tail (cdr xs))))))
+(define (sx-literal? a)
+  (or (starts-with? a "\"") (string->number a) (member a (list "#t" "#f" "#true" "#false"))))
+(define (sx-names ps) ps)
+(define (sx-atom a env) (cond ((sx-literal? a) a) ((member a env) a) ((sx-allowed? a) a) (else (raise "no"))))
+(define (sx-body xs env) (if (null? xs) (raise "empty body") (map (lambda (x) (sx-xf x env)) xs)))
+(define (sx-bind-names bs) (map car bs))
+(define (sx-binds bs env) (map (lambda (b) (list (car b) (sx-xf (cadr b) env))) bs))
+(define (sx-xf x env)
+  (cond
+    ((string? x) (sx-atom x env))
+    ((null? x) x)
+    ((and (string? (car x)) (not (member (car x) env)))
+     (let ((h (car x)) (n (length x)))
+       (cond
+         ((equal? h "lambda")
+          (if (< n 3) (raise "bad lambda"))
+          (let ((env2 (append (sx-names (cadr x)) env)))
+            (cons "lambda" (cons (cadr x) (cons *fuel-tick* (sx-body (cddr x) env2))))))
+         ((and (equal? h "let") (> n 3) (string? (cadr x)))          ;; named let: a loop
+          (let* ((bs (caddr x)) (vs (sx-bind-names bs)) (env2 (cons (cadr x) (append vs env))))
+            (cons "let" (cons (cadr x) (cons (sx-binds bs env) (cons *fuel-tick* (sx-body (cdddr x) env2)))))))
+         (else (map (lambda (y) (sx-xf y env)) x)))))
+    (else (map (lambda (y) (sx-xf y env)) x))))
+(define B "(lambda (need) (let loop ((i 0)) (loop (+ i 1))))")
+(define T (sx-parse B))
+(display (list "A" (try (sx-emit (sx-xf T (list))) (catch (e) "err")))) (newline)
+(display (list "R" (try (let ((r (sx-xf (sx-parse B) (list)))) (display (list "tree" r)) (newline) (sx-emit r)) (catch (e) "err")))) (newline)
+"""
+    env = os.environ.copy()
+    env["AURA_SANDBOX"] = "off"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env.pop("AURA_SOFT", None)
+    env.pop("AURA_FORCE_IR", None)
+    expected = "(lambda (need) (%tick) (let loop ((i 0)) (%tick) (loop (+ i 1))))"
+    with tempfile.NamedTemporaryFile("w", suffix=".aura", delete=False) as f:
+        f.write(code)
+        path = f.name
+    try:
+        r = subprocess.run([AURA, path], capture_output=True, text=True, timeout=180, env=env)
+    finally:
+        os.unlink(path)
+    out = r.stdout or ""
+    err = r.stderr or ""
+    assert r.returncode == 0, f"rc={r.returncode} out={out[-400:]!r} err={err[-400:]!r}"
+    rows = {}
+    for ln in out.splitlines():
+        for tag in ("A", "tree", "R"):
+            if ln.startswith("(" + tag + " "):
+                rows[tag] = ln[len(tag) + 2 : -1]
+    assert set(rows) == {"A", "tree", "R"}, f"expected A/tree/R rows, got {rows!r}"
+    assert rows["A"] == expected, f"A row: {rows['A']!r}"
+    assert rows["tree"] == expected, f"tree row: {rows['tree']!r}"
+    assert rows["R"] == expected, f"R row: {rows['R']!r}"
+    assert rows["R"] == rows["A"], f"R must be identical to A: {rows['R']!r} != {rows['A']!r}"
+    print("  ✅ test_named_let_bind_list_repeat_4623 (A == tree == R, named-let bindings intact)")
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -3540,6 +3664,7 @@ for tf in [
     test_char_literal_form_split_4622,
     test_while_when_error_propagation_4619,
     test_workspace_rest_params_4621,
+    test_named_let_bind_list_repeat_4623,
 ]:
     try:
         tf()
