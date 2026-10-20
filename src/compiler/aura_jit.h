@@ -250,6 +250,10 @@ public:
         std::atomic<std::uint64_t> l2_pair_inline_total{0};
         // Issue #4573: MakePair slots scalar-replaced (fields in registers).
         std::atomic<std::uint64_t> l3_pairs_scalar_replaced_total{0};
+        // Issue #4605 §1: scalar-replaced pair fields kept as a raw double
+        // (a provably-float field of a pair that never leaves the
+        // activation). The float box is sunk to the escape point.
+        std::atomic<std::uint64_t> l3_pairs_float_fields_total{0};
         // Issue #461: explicit IRInterpreter fallback counter.
         // Bumped by the runtime stub `aura_jit_fallback_to_interpreter`
         // each time the JIT lower() default case routes through

@@ -676,6 +676,94 @@ static std::vector<std::uint8_t> scalar_pairs(const FlatFunction& fn,
     return ok;
 }
 
+// Issue #4605 §1: which fields of a scalar-replaced pair are provably
+// floats. A pair field is a float when every write of that field comes
+// from a float source:
+//   - the pair's own MakePair: the field is a float iff the operand slot
+//     is a statically-float slot (static_float_slots);
+//   - a copy (OpLocal / CellGet / CellSet): the field is a float iff the
+//     source node's field is a float (a copy moves the whole pair).
+// The facts propagate along the copy edges with an AND fixed point, in
+// both directions: a copy inherits the source's field type, and a node
+// whose copies disagree with it stays tagged. The backward direction is
+// only a precision loss (it can never claim a float that is not there),
+// and it makes every copy-connected group uniform, so a copy never has
+// to change the representation of a field.
+// Returns 2n bitmasks: bit0 = the car field is a float, bit1 = the cdr
+// field is a float. Nodes that are not scalar-replaced get 0.
+static std::vector<std::uint8_t> scalar_pair_float_fields(const FlatFunction& fn,
+                                                          const std::vector<std::uint8_t>& promo,
+                                                          const std::vector<std::uint8_t>& sr,
+                                                          const std::vector<std::uint8_t>& fslot) {
+    const uint32_t n = fn.local_count;
+    std::vector<std::uint8_t> f(2ull * n, 0);
+    if (n == 0 || !fn.blocks)
+        return f;
+    constexpr std::uint8_t kCar = 1;
+    constexpr std::uint8_t kCdr = 2;
+    // direct[node] = the field type of the node's own MakePair (ANDed over
+    // several MakePairs of the same node). A node without a MakePair is
+    // vacuously unconstrained (3 = both fields free).
+    std::vector<std::uint8_t> direct(2ull * n, kCar | kCdr);
+    std::vector<std::pair<uint32_t, uint32_t>> copies; // (dst node, src node)
+    for (uint32_t bi = 0; bi < fn.num_blocks; ++bi) {
+        const auto& fb = fn.blocks[bi];
+        for (uint32_t ii = 0; ii < fb.num_instructions; ++ii) {
+            const auto& in = fb.instructions[ii];
+            switch (in.opcode) {
+                case Op::OpMakePair: { // dst (the pair), car, cdr
+                    const uint32_t dst = in.ops[0];
+                    if (dst >= n)
+                        break;
+                    const std::uint8_t cf = (in.ops[1] < n && fslot[in.ops[1]]) ? kCar : 0;
+                    const std::uint8_t df = (in.ops[2] < n && fslot[in.ops[2]]) ? kCdr : 0;
+                    direct[dst] &= static_cast<std::uint8_t>(cf | df);
+                    break;
+                }
+                case Op::OpLocal: // dst, src
+                    if (in.ops[0] < n && in.ops[1] < n && sr[in.ops[0]] && sr[in.ops[1]])
+                        copies.emplace_back(in.ops[0], in.ops[1]);
+                    break;
+                case Op::OpCellGet: // dst, cell
+                    if (in.ops[0] < n && in.ops[1] < n && promo[in.ops[1]] && sr[in.ops[0]] &&
+                        sr[n + in.ops[1]])
+                        copies.emplace_back(in.ops[0], n + in.ops[1]);
+                    break;
+                case Op::OpCellSet: // cell, val
+                    if (in.ops[0] < n && in.ops[1] < n && promo[in.ops[0]] && sr[n + in.ops[0]] &&
+                        sr[in.ops[1]])
+                        copies.emplace_back(n + in.ops[0], in.ops[1]);
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+    f = direct;
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (const auto& [dst, src] : copies) {
+            // forward: the copy inherits the source's field type
+            const std::uint8_t fwd = static_cast<std::uint8_t>(f[dst] & f[src]);
+            if (fwd != f[dst]) {
+                f[dst] = fwd;
+                changed = true;
+            }
+            // backward: a disagreement inside the group makes the whole
+            // group tagged (uniform representation, no re-box on a copy)
+            const std::uint8_t bwd = static_cast<std::uint8_t>(f[src] & f[dst]);
+            if (bwd != f[src]) {
+                f[src] = bwd;
+                changed = true;
+            }
+        }
+    }
+    for (std::size_t i = 0; i < f.size(); ++i)
+        if (i >= sr.size() || !sr[i])
+            f[i] = 0; // not a scalar-replaced pair: the fields are tagged
+    return f;
+}
+
 // Issue #4570 (L1 float): slots and promoted cells whose value is a
 // float on every path, proven from the IR alone (no profile needed).
 // Optimistic fixed point: start from "every defined slot / promoted cell
@@ -752,8 +840,14 @@ static bool ir_result_slot(const FlatInstruction& in, uint32_t& r) {
     }
 }
 
+// Issue #4605 §1: the optional sr/pf arguments extend the analysis with
+// the scalar-pair facts: the result of a car/cdr of a scalar-replaced
+// pair with a provably-float field is a float (the field never leaves
+// the activation as a raw double).
 static StaticFloats static_float_slots(const FlatFunction& fn,
-                                       const std::vector<std::uint8_t>& promo) {
+                                       const std::vector<std::uint8_t>& promo,
+                                       const std::vector<std::uint8_t>* sr = nullptr,
+                                       const std::vector<std::uint8_t>* pf = nullptr) {
     const uint32_t n = fn.local_count;
     StaticFloats out{std::vector<std::uint8_t>(n, 0), std::vector<std::uint8_t>(n, 0)};
     if (n == 0 || !fn.blocks || fn.source_marker == 1)
@@ -774,6 +868,18 @@ static StaticFloats static_float_slots(const FlatFunction& fn,
     for (uint32_t i = 0; i < n && i < promo.size(); ++i)
         fc[i] = promo[i];
     auto f = [&](uint32_t s) { return s < n && fs[s] != 0; };
+    // Issue #4605 §1: a car/cdr of a scalar-replaced pair with a
+    // provably-float field yields a float (the field is a raw double in
+    // the pair's field alloca, see scalar_pair_float_fields).
+    auto pair_field_float = [&](const FlatInstruction& in) -> bool {
+        if (!sr || !pf || in.source_marker == 1)
+            return false;
+        const uint32_t pair = in.ops[1];
+        if (pair >= n || pair >= sr->size() || !(*sr)[pair] || pair >= pf->size())
+            return false;
+        const std::uint8_t want = (in.opcode == Op::OpCar) ? 1 : 2;
+        return ((*pf)[pair] & want) != 0;
+    };
     for (bool changed = true; changed;) {
         changed = false;
         for (uint32_t bi = 0; bi < fn.num_blocks; ++bi) {
@@ -808,6 +914,10 @@ static StaticFloats static_float_slots(const FlatFunction& fn,
                         break;
                     case Op::OpCellGet:
                         is_float = in.ops[1] < n && fc[in.ops[1]] != 0;
+                        break;
+                    case Op::OpCar:
+                    case Op::OpCdr:
+                        is_float = pair_field_float(in);
                         break;
                     default:
                         break;
@@ -981,22 +1091,55 @@ struct LLVMBuilder {
     // (see scalar_pairs); nullptr = a real runtime pair.
     std::vector<llvm::Value*> spair_car{};
     std::vector<llvm::Value*> spair_cdr{};
+    // Issue #4605 §1: a provably-float field of a scalar-replaced pair
+    // lives in a raw-double alloca (spair_car_f / spair_cdr_f) instead
+    // of the tagged i64 one: the box is sunk to the escape point (the
+    // pair's materialization at Return, a capture, a callee argument),
+    // never to the hot path. spair_f[node] says which fields are raw:
+    // bit0 = the car field, bit1 = the cdr field.
+    std::vector<llvm::Value*> spair_car_f{};
+    std::vector<llvm::Value*> spair_cdr_f{};
+    std::vector<std::uint8_t> spair_f{};
     inline bool is_spair(uint32_t slot) const {
         return slot < spair_car.size() && spair_car[slot] != nullptr;
     }
+    // The car field of a scalar node is a raw double (Issue #4605 §1).
+    inline bool spair_car_is_float(std::size_t node) const {
+        return node < spair_f.size() && (spair_f[node] & 1) != 0;
+    }
+    // The cdr field of a scalar node is a raw double (Issue #4605 §1).
+    inline bool spair_cdr_is_float(std::size_t node) const {
+        return node < spair_f.size() && (spair_f[node] & 2) != 0;
+    }
+    // Issue #4570/#4605: the statically-float slot set (static_float_slots)
+    // and the statically-float cell set, kept for the scalar-pair pass.
+    std::vector<std::uint8_t> sf_slot{};
+    std::vector<std::uint8_t> sf_cell{};
+    // Issue #4605 §1: the scalar-replaced pair nodes and the provably-float
+    // field of each of them (bit0 = car, bit1 = cdr). Computed together
+    // with the float facts (setup_l1_slots).
+    std::vector<std::uint8_t> sr_nodes{};
+    std::vector<std::uint8_t> pf_nodes{};
     // Issue #4573: nodes 0..n-1 are slots, n + c is promoted cell c's
     // content (see scalar_pairs). Run after setup_l1_slots (pcells).
     void setup_scalar_pairs(const FlatFunction& fn) {
         const uint32_t n = fn.local_count;
         spair_car.assign(2ull * n, nullptr);
         spair_cdr.assign(2ull * n, nullptr);
+        spair_car_f.assign(2ull * n, nullptr);
+        spair_cdr_f.assign(2ull * n, nullptr);
+        spair_f.assign(2ull * n, 0);
         if (!jit_sr_enabled() || !jit_l1_enabled())
             return;
-        std::vector<std::uint8_t> promo(n, 0);
-        for (uint32_t i = 0; i < n; ++i)
-            promo[i] = (is_pcell(i) && !pcell_f[i]) ? 1 : 0; // float cells hold no pair
-        const auto sr = scalar_pairs(fn, promo);
+        // Issue #4605 §1: the scalar-replaced pair nodes and the
+        // provably-float field of each of them were computed together
+        // with the statically-float facts (setup_l1_slots): the two
+        // analyses depend on each other, so they are iterated together.
+        const auto& sr = sr_nodes;
+        const auto& pf = pf_nodes;
+        spair_f = pf;
         std::uint64_t replaced = 0;
+        std::uint64_t float_fields = 0;
         for (std::size_t i = 0; i < sr.size(); ++i) {
             if (!sr[i])
                 continue;
@@ -1004,19 +1147,44 @@ struct LLVMBuilder {
             spair_cdr[i] = irb->CreateAlloca(llvm::Type::getInt64Ty(ctx));
             irb->CreateStore(c64(0), spair_car[i]);
             irb->CreateStore(c64(0), spair_cdr[i]);
+            if (spair_car_is_float(i)) {
+                spair_car_f[i] = irb->CreateAlloca(double_ty);
+                irb->CreateStore(llvm::ConstantFP::get(double_ty, 0.0), spair_car_f[i]);
+                ++float_fields;
+            }
+            if (spair_cdr_is_float(i)) {
+                spair_cdr_f[i] = irb->CreateAlloca(double_ty);
+                irb->CreateStore(llvm::ConstantFP::get(double_ty, 0.0), spair_cdr_f[i]);
+                ++float_fields;
+            }
             if (i < n)
                 ++replaced;
         }
         if (metrics && replaced)
             metrics->l3_pairs_scalar_replaced_total.fetch_add(replaced, std::memory_order_relaxed);
+        if (metrics && float_fields)
+            metrics->l3_pairs_float_fields_total.fetch_add(float_fields, std::memory_order_relaxed);
     }
-    // Copy both fields of scalar node src into node dst.
+    // Copy both fields of scalar node src into node dst. A float field
+    // moves as a raw double (the copy group is uniform, see
+    // scalar_pair_float_fields); a tagged destination of a float field
+    // would need a box, which the uniform group rules out.
     void copy_spair(std::size_t dst, std::size_t src) {
         auto* i64_ty = llvm::Type::getInt64Ty(ctx);
-        auto* a = irb->CreateLoad(i64_ty, spair_car[src]);
-        auto* d = irb->CreateLoad(i64_ty, spair_cdr[src]);
-        irb->CreateStore(a, spair_car[dst]);
-        irb->CreateStore(d, spair_cdr[dst]);
+        if (spair_car_is_float(src) && spair_car_is_float(dst)) {
+            auto* a = irb->CreateLoad(double_ty, spair_car_f[src]);
+            irb->CreateStore(a, spair_car_f[dst]);
+        } else {
+            auto* a = irb->CreateLoad(i64_ty, spair_car[src]);
+            irb->CreateStore(a, spair_car[dst]);
+        }
+        if (spair_cdr_is_float(src) && spair_cdr_is_float(dst)) {
+            auto* d = irb->CreateLoad(double_ty, spair_cdr_f[src]);
+            irb->CreateStore(d, spair_cdr_f[dst]);
+        } else {
+            auto* d = irb->CreateLoad(i64_ty, spair_cdr[src]);
+            irb->CreateStore(d, spair_cdr[dst]);
+        }
     }
     inline bool is_pcell(uint32_t slot) const {
         return slot < pcells.size() && pcells[slot] != nullptr;
@@ -1030,7 +1198,44 @@ struct LLVMBuilder {
         if (!jit_l1_enabled())
             return;
         const auto promo = promotable_cells(fn);
-        const auto sf = static_float_slots(fn, promo);
+        auto sf = static_float_slots(fn, promo);
+        // Issue #4605 §1: the float facts and the scalar-pair facts are
+        // mutually dependent — a float cell is not a promotable cell (the
+        // two share one storage slot), and the car/cdr of a pair with a
+        // float field is a float — so iterate the two analyses to a fixed
+        // point. Every round is self-consistent, so a non-converging
+        // function still gets sound facts (the last round).
+        sr_nodes.assign(fn.local_count, 0);
+        pf_nodes.assign(2ull * fn.local_count, 0);
+        if (jit_sr_enabled()) {
+            for (int round = 0; round < 4; ++round) {
+                std::vector<std::uint8_t> pr(fn.local_count, 0);
+                for (uint32_t i = 0; i < fn.local_count; ++i)
+                    pr[i] = (promo[i] && !sf.cell[i]) ? 1 : 0; // a float cell holds no pair
+                const auto sr = scalar_pairs(fn, pr);
+                const auto pf = scalar_pair_float_fields(fn, pr, sr, sf.slot);
+                const auto next = static_float_slots(fn, promo, &sr, &pf);
+                if (next.slot == sf.slot && next.cell == sf.cell) {
+                    sf = next;
+                    break; // fixed point
+                }
+                sf = next;
+            }
+            // Final, self-consistent pass: the pair nodes and the field
+            // facts are derived from the float facts that the lowering
+            // uses (sf.slot / sf.cell), so a float field is only claimed
+            // when its operand slot really has the raw-double shadow, and
+            // a cell that is a float cell is never a pair cell.
+            std::vector<std::uint8_t> pr(fn.local_count, 0);
+            for (uint32_t i = 0; i < fn.local_count; ++i)
+                pr[i] = (promo[i] && !sf.cell[i]) ? 1 : 0;
+            sr_nodes = scalar_pairs(fn, pr);
+            pf_nodes = scalar_pair_float_fields(fn, pr, sr_nodes, sf.slot);
+        }
+        // Issue #4605 §1: keep the statically-float facts for the
+        // scalar-pair pass (the float field of a pair uses them).
+        sf_slot = sf.slot;
+        sf_cell = sf.cell;
         pcells.assign(fn.local_count, nullptr);
         pcell_f.assign(fn.local_count, 0);
         std::uint64_t promoted = 0;
@@ -2180,10 +2385,19 @@ struct LLVMBuilder {
         // test); an unknown operand keeps the runtime select (float ref vs
         // fixnum sitofp) — bit-identical to the pre-#4523 to_dbl when the
         // operand is not profiled.
-        auto emit_float_side = [&](llvm::Value* v, bool known_float) -> llvm::Value* {
-            if (known_float)
+        // Issue #4605 §1: raw is the operand's raw-double shadow when it
+        // has one (a known-float operand). Reading the shadow instead of
+        // the tagged value keeps the float out of the float pool: the
+        // tagged value of a float slot is a re-box (an aura_alloc_float
+        // per use) whose only purpose would be the float_ref read here.
+        auto emit_float_side = [&](llvm::Value* v, bool known_float,
+                                   llvm::Value* raw) -> llvm::Value* {
+            if (known_float) {
+                if (raw)
+                    return raw;
                 return irb->CreateCall(llvm::FunctionCallee(fn_float_ref),
                                        llvm::ArrayRef<llvm::Value*>{v});
+            }
             return irb->CreateSelect(jit_is_float(v),
                                      irb->CreateCall(llvm::FunctionCallee(fn_float_ref),
                                                      llvm::ArrayRef<llvm::Value*>{v}),
@@ -2196,7 +2410,8 @@ struct LLVMBuilder {
         // jit_is_float (static true folds any_float and the promote
         // dispatch; the float arm becomes the only arm).
         auto emit_fixnum_arith = [&](llvm::Value* a, llvm::Value* b, int kind, bool a_known_float,
-                                     bool b_known_float) -> llvm::Value* {
+                                     bool b_known_float, llvm::Value* a_dbl,
+                                     llvm::Value* b_dbl) -> llvm::Value* {
             auto* i64_ty = llvm::Type::getInt64Ty(ctx);
             auto* a_is_float = a_known_float ? irb->getTrue() : jit_is_float(a);
             auto* b_is_float = b_known_float ? irb->getTrue() : jit_is_float(b);
@@ -2240,8 +2455,8 @@ struct LLVMBuilder {
             irb->CreateBr(bb_done);
 
             irb->SetInsertPoint(bb_flt);
-            auto* da = emit_float_side(a, a_known_float);
-            auto* db = emit_float_side(b, b_known_float);
+            auto* da = emit_float_side(a, a_known_float, a_dbl);
+            auto* db = emit_float_side(b, b_known_float, b_dbl);
             llvm::Value* fd = kind == 1   ? irb->CreateFSub(da, db)
                               : kind == 2 ? irb->CreateFMul(da, db)
                                           : irb->CreateFAdd(da, db);
@@ -2338,15 +2553,20 @@ struct LLVMBuilder {
                 // publish the double directly (storef). This skips the
                 // per-iteration aura_alloc_float + immediate rebox read the
                 // tagged path would do (box → store mirror → unbox).
-                auto* da = a_f ? loadf(inst.ops[1]) : emit_float_side(a, false);
-                auto* db = b_f ? loadf(inst.ops[2]) : emit_float_side(b, false);
+                auto* da = a_f ? loadf(inst.ops[1]) : emit_float_side(a, false, nullptr);
+                auto* db = b_f ? loadf(inst.ops[2]) : emit_float_side(b, false, nullptr);
                 llvm::Value* fd = kind == 1   ? irb->CreateFSub(da, db)
                                   : kind == 2 ? irb->CreateFMul(da, db)
                                               : irb->CreateFAdd(da, db);
                 storef(inst.ops[0], fd);
             } else {
-                store(inst.ops[0], emit_fixnum_arith(a_f ? load(inst.ops[1]) : a,
-                                                     b_f ? load(inst.ops[2]) : b, kind, a_f, b_f));
+                // Issue #4605 §1: a known-float operand is read from its
+                // raw-double shadow (no re-box): the tagged path only
+                // needs the double, and the fixnum arm is dead while a
+                // float operand is present.
+                store(inst.ops[0], emit_fixnum_arith(a_f ? c64(0) : a, b_f ? c64(0) : b, kind, a_f,
+                                                     b_f, a_f ? loadf(inst.ops[1]) : nullptr,
+                                                     b_f ? loadf(inst.ops[2]) : nullptr));
             }
             irb->CreateBr(bb_join);
             irb->SetInsertPoint(bb_join);
@@ -2368,7 +2588,8 @@ struct LLVMBuilder {
         auto num_compare_slow = [&](llvm::Value* a, llvm::Value* b, llvm::CmpInst::Predicate ipred,
                                     llvm::CmpInst::Predicate fpred) -> llvm::Value* {
             auto* any_f = irb->CreateOr(jit_is_float(a), jit_is_float(b));
-            auto* fc = irb->CreateFCmp(fpred, emit_float_side(a, false), emit_float_side(b, false));
+            auto* fc = irb->CreateFCmp(fpred, emit_float_side(a, false, nullptr),
+                                       emit_float_side(b, false, nullptr));
             auto* c = irb->CreateSelect(any_f, fc, irb->CreateICmp(ipred, a, b));
             auto* boolv = irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL));
             auto* both = irb->CreateAnd(is_numeric_tag(a), is_numeric_tag(b));
@@ -2534,8 +2755,10 @@ struct LLVMBuilder {
                     // result slot — the known operand reads its shadow, the
                     // unknown one keeps its runtime conversion (div-by-zero
                     // stays ±inf); no per-iteration pool box + rebox read.
-                    auto* a_dbl = a_f ? loadf(inst.ops[1]) : emit_float_side(dividend, false);
-                    auto* b_dbl = b_f ? loadf(inst.ops[2]) : emit_float_side(divisor, false);
+                    auto* a_dbl =
+                        a_f ? loadf(inst.ops[1]) : emit_float_side(dividend, false, nullptr);
+                    auto* b_dbl =
+                        b_f ? loadf(inst.ops[2]) : emit_float_side(divisor, false, nullptr);
                     storef(inst.ops[0], irb->CreateFDiv(a_dbl, b_dbl));
                     irb->CreateBr(bb_join);
                     irb->SetInsertPoint(bb_join);
@@ -2556,8 +2779,10 @@ struct LLVMBuilder {
                     auto* a_is_float = a_f ? irb->getTrue() : jit_is_float(dividend); // #4482
                     auto* b_is_float = b_f ? irb->getTrue() : jit_is_float(divisor);
                     auto any_float = irb->CreateOr(a_is_float, b_is_float);
-                    auto a_dbl = emit_float_side(dividend, a_f);
-                    auto b_dbl = emit_float_side(divisor, b_f);
+                    // Issue #4605 §1: a known-float operand is read from
+                    // its raw-double shadow (no re-box, no pool read).
+                    auto a_dbl = emit_float_side(dividend, a_f, a_f ? loadf(inst.ops[1]) : nullptr);
+                    auto b_dbl = emit_float_side(divisor, b_f, b_f ? loadf(inst.ops[2]) : nullptr);
                     auto fdiv = irb->CreateFDiv(a_dbl, b_dbl);
                     auto float_res = irb->CreateCall(llvm::FunctionCallee(fn_alloc_float),
                                                      llvm::ArrayRef<llvm::Value*>{fdiv});
@@ -2833,8 +3058,15 @@ struct LLVMBuilder {
                 // is equivalent, and at most one allocation per call.
                 if (is_spair(inst.ops[0])) {
                     auto* i64_ty = llvm::Type::getInt64Ty(ctx);
-                    auto* a = irb->CreateLoad(i64_ty, spair_car[inst.ops[0]]);
-                    auto* d = irb->CreateLoad(i64_ty, spair_cdr[inst.ops[0]]);
+                    // Issue #4605 §1: a float field is a raw double inside
+                    // the activation; the box is sunk to this escape
+                    // point (the pair becomes a heap pair here).
+                    auto* a = spair_car_is_float(inst.ops[0])
+                                  ? box_double(irb->CreateLoad(double_ty, spair_car_f[inst.ops[0]]))
+                                  : irb->CreateLoad(i64_ty, spair_car[inst.ops[0]]);
+                    auto* d = spair_cdr_is_float(inst.ops[0])
+                                  ? box_double(irb->CreateLoad(double_ty, spair_cdr_f[inst.ops[0]]))
+                                  : irb->CreateLoad(i64_ty, spair_cdr[inst.ops[0]]);
                     irb->CreateRet(irb->CreateCall(llvm::FunctionCallee(fn_alloc_pair),
                                                    llvm::ArrayRef<llvm::Value*>{a, d}));
                     return true;
@@ -3555,15 +3787,24 @@ struct LLVMBuilder {
             // runtime bridges with aura_lock_workspace_write. This comment
             // is a navigation aid for the Phase 1 patch.
             case OpMakePair: {
-                auto car = load(inst.ops[1]);
-                auto cdr = load(inst.ops[2]);
                 auto result_slot = inst.ops[0];
                 // Issue #4573: non-escaping pair -> fields stay in registers.
                 if (is_spair(result_slot)) {
-                    irb->CreateStore(car, spair_car[result_slot]);
-                    irb->CreateStore(cdr, spair_cdr[result_slot]);
+                    // Issue #4605 §1: a provably-float field is stored as a
+                    // raw double (the #4570 shadow of its operand slot);
+                    // the box is sunk to the escape point, not here.
+                    if (spair_car_is_float(result_slot))
+                        irb->CreateStore(loadf(inst.ops[1]), spair_car_f[result_slot]);
+                    else
+                        irb->CreateStore(load(inst.ops[1]), spair_car[result_slot]);
+                    if (spair_cdr_is_float(result_slot))
+                        irb->CreateStore(loadf(inst.ops[2]), spair_cdr_f[result_slot]);
+                    else
+                        irb->CreateStore(load(inst.ops[2]), spair_cdr[result_slot]);
                     return true;
                 }
+                auto car = load(inst.ops[1]);
+                auto cdr = load(inst.ops[2]);
                 // Issue #60 Iter 4: L2 layout specialization on shape_id.
                 // If we KNOW the result is a Pair AND it doesn't escape
                 // (escape analysis), we can stack-allocate the pair layout
@@ -3632,6 +3873,18 @@ struct LLVMBuilder {
             case OpCar: {
                 // Issue #4573: field of a scalar-replaced pair.
                 if (is_spair(inst.ops[1])) {
+                    // Issue #4605 §1: a float field is a raw double; the
+                    // reader takes it as a raw double when its result
+                    // slot has a float shadow, and boxes it otherwise
+                    // (the generic reader is the escape point).
+                    if (spair_car_is_float(inst.ops[1])) {
+                        auto* d = irb->CreateLoad(double_ty, spair_car_f[inst.ops[1]]);
+                        if (is_flocal(inst.ops[0]))
+                            storef(inst.ops[0], d);
+                        else
+                            store(inst.ops[0], box_double(d));
+                        return true;
+                    }
                     store(inst.ops[0],
                           irb->CreateLoad(llvm::Type::getInt64Ty(ctx), spair_car[inst.ops[1]]));
                     return true;
@@ -3829,6 +4082,16 @@ struct LLVMBuilder {
             case OpCdr: {
                 // Issue #4573: field of a scalar-replaced pair.
                 if (is_spair(inst.ops[1])) {
+                    // Issue #4605 §1: see OpCar — a float field is a raw
+                    // double and is boxed only for a generic reader.
+                    if (spair_cdr_is_float(inst.ops[1])) {
+                        auto* d = irb->CreateLoad(double_ty, spair_cdr_f[inst.ops[1]]);
+                        if (is_flocal(inst.ops[0]))
+                            storef(inst.ops[0], d);
+                        else
+                            store(inst.ops[0], box_double(d));
+                        return true;
+                    }
                     store(inst.ops[0],
                           irb->CreateLoad(llvm::Type::getInt64Ty(ctx), spair_cdr[inst.ops[1]]));
                     return true;

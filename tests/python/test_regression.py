@@ -2271,6 +2271,162 @@ def test_jit_scalar_pairs_4573():
     )
 
 
+def test_jit_float_pair_fields_4605():
+    """Issue #4605 section 1: a provably-float field of a scalar-replaced
+    pair stays a raw double.
+
+    The #4573 scalar replacement keeps a pair's fields in allocas, but a
+    float field was still boxed through aura_alloc_float: the MakePair
+    read the *tagged* value of a float slot (a re-box of the #4570 raw
+    shadow) and every read of the field unboxed it again. The float
+    field now lives in a raw-double alloca and the box is sunk to the
+    escape point: the pair's materialization (Return), a generic reader
+    of the field, or a callee argument / capture.
+
+    Every mode (IR interpreter, eval, --jit, --jit with the #4573 kill
+    switch AURA_JIT_SR=0) must print the same bytes. The float-pair
+    loop must not box per iteration: the float pool does not grow over
+    50000 steps with the scalar replacement on, and does grow with it
+    off (the kill switch keeps the old boxing).
+    """
+    programs = [
+        (
+            "float-pair-sum",
+            "(define (fp x) (let ((p (cons x 0.5))) (+ (car p) (cdr p)))) (display (fp 1.5))",
+            "2.0",
+        ),
+        (
+            "float-pair-both",
+            "(define (fp) (let ((p (cons 1.5 0.5))) (+ (car p) (cdr p)))) (display (fp))",
+            "2.0",
+        ),
+        (
+            "mixed-car",
+            "(define (fp) (let ((p (cons 1 0.5))) (+ (car p) (cdr p)))) (display (fp))",
+            "1.5",
+        ),
+        (
+            "returned-pair",
+            "(define (mk) (let ((p (cons 1.5 0.5))) p)) (display (+ (car (mk)) (cdr (mk))))",
+            "2.0",
+        ),
+        (
+            "generic-reader",
+            "(define (fp) (let ((p (cons 1.5 0.5))) (display (cdr p)))) (fp)",
+            "0.5",
+        ),
+        (
+            "error-check",
+            "(define (fp) (let ((p (cons 1.5 0.5))) (if (error? p) 1 2))) (display (fp))",
+            "2",
+        ),
+        (
+            "rebound-pair",
+            "(define (fp) (let ((p (cons 1.5 0.5))) (set! p (cons 2.5 3.5)) (+ (car p) (cdr p)))) (display (fp))",
+            "6.0",
+        ),
+        (
+            "callee-escape",
+            "(define (f p) (cdr p)) (define (g) (let ((p (cons 1.5 0.5))) (f p))) (display (g))",
+            "0.5",
+        ),
+    ]
+
+    def run_mode(code, mode, sr=True):
+        env = os.environ.copy()
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "0"
+        env.pop("AURA_SOFT", None)
+        env.pop("AURA_FORCE_IR", None)
+        env.pop("AURA_JIT_SR", None)
+        if not sr:
+            env["AURA_JIT_SR"] = "0"
+        cmd = [AURA]
+        if mode == "ir":
+            env["AURA_FORCE_IR"] = "1"
+        elif mode == "jit":
+            cmd.append("--jit")
+        r = subprocess.run(cmd, input=code, capture_output=True, text=True, timeout=60, env=env)
+        return r.returncode, (r.stdout or "").strip()
+
+    quirk = 0
+    for name, code, expect in programs:
+        outs = {mode: run_mode(code, mode) for mode in ("ir", "eval", "jit")}
+        outs["jit-nosr"] = run_mode(code, "jit", sr=False)
+        ir_out = outs["ir"][1]
+        # Same pre-existing --jit top-level print quirk as
+        # test_jit_scalar_pairs_4573: a trailing "#f" / "<cell[N]>" after
+        # the value.
+        for m in ("jit", "jit-nosr"):
+            rc_j, out_j = outs[m]
+            if out_j != ir_out and re.fullmatch(re.escape(ir_out) + r"(#f|<cell\[\d+\]>)", out_j):
+                outs[m] = (rc_j, ir_out)
+                quirk += 1
+        if not (outs["ir"] == outs["eval"] == outs["jit"] == outs["jit-nosr"]):
+            raise Exception(f"{name}: {outs!r}")
+        if expect is not None and outs["jit"] != (0, expect):
+            raise Exception(f"{name}: expected {expect!r}, got {outs['jit']!r}")
+
+    # The float-pair loop: a float field of a scalar-replaced pair must
+    # not box per iteration. The float pool is append-only, so its size
+    # is the box count.
+    loop = (
+        "(define (g n) (let ((i 0) (s 0.0) (x 0.5)) (while (< i n) (let ((p (cons x 0.5))) "
+        "(set! s (+ s (+ (car p) (cdr p))))) (set! i (+ i 1)) (set! x (+ x 0.5))) s)) "
+    )
+
+    def pool_growth(sr):
+        env = os.environ.copy()
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "0"
+        env.pop("AURA_JIT_SR", None)
+        if not sr:
+            env["AURA_JIT_SR"] = "0"
+        lines = [loop + "(g 3)", ";;floatpool", loop + "(g 50000)", ";;floatpool"]
+        r = subprocess.run(
+            [AURA, "--jit-session"],
+            input="\n".join(lines) + "\n",
+            capture_output=True,
+            text=True,
+            timeout=300,
+            env=env,
+        )
+        assert r.returncode == 0, f"--jit-session rc={r.returncode}: {r.stderr[-600:]}"
+        pools = [int(x) for x in re.findall(r"floatpool=(\d+)", r.stdout)]
+        assert len(pools) == 2, r.stdout[-400:]
+        return pools[1] - pools[0]
+
+    grew = pool_growth(True)
+    assert grew < 100, f"float pool grew by {grew} over a 50000-step float-pair loop"
+    # Kill switch: with the scalar replacement off the pair is a heap
+    # pair and its float field is boxed per iteration again.
+    grew_off = pool_growth(False)
+    assert grew_off > 1000, f"AURA_JIT_SR=0 float pool grew by only {grew_off}"
+
+    env = os.environ.copy()
+    env["AURA_SANDBOX"] = "off"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env.pop("AURA_JIT_SR", None)
+    r = subprocess.run(
+        [AURA, "--jit-session"],
+        input="\n".join([loop, ";;ir g"]) + "\n",
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=env,
+    )
+    out = r.stdout or ""
+    assert r.returncode == 0, f"--jit-session rc={r.returncode}: {r.stderr[-600:]}"
+    assert "define i64 @g" in out, out[:400]
+    ir = out[out.index("define i64 @g") :]
+    ir = ir[: ir.index("\n}")]
+    assert "@aura_alloc_pair" not in ir, "the float pair in g is still heap-allocated"
+    print(
+        f"  ✅ test_jit_float_pair_fields_4605 ({len(programs)} programs x ir/eval/jit/jit-SR=0, "
+        f"{quirk} display-quirk; float-pair loop float-pool growth {grew} (SR=0: {grew_off}))"
+    )
+
+
 def test_jit_tier_differential_4574():
     """Issue #4574 (correctness metric): differential corpus across the
     speculative JIT tiers. Every program must print the same under the IR
@@ -2506,6 +2662,7 @@ for tf in [
     test_jit_call_path_4572,
     test_jit_redefine_4604,
     test_jit_scalar_pairs_4573,
+    test_jit_float_pair_fields_4605,
     test_jit_tier_differential_4574,
     test_jit_unbound_callee_4607,
     test_cfunc_budget_4555,
