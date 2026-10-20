@@ -3684,6 +3684,132 @@ def test_callback_diagnostic_4624():
     print("  ✅ test_callback_diagnostic_4624 (map/filter/for-each keep the callback diagnostic)")
 
 
+def test_sweep_set_fold_prov_index_4625():
+    """Issue #4625: a sweep fold that accumulates with set! on two captured
+    let-locals must not corrupt the global provenance index.
+
+    The aura-memory control plane swept its store with a fold whose callback
+    accumulated the expired / kept items with set! on two captured let-locals
+    and then filled a global 4096-slot vector of ((key . records) ...) buckets
+    with vector-set! from inside a map callback. On 9f82bede1 the file-mode
+    reclaim freed a pair the tree walker still held (the cached
+    primitive-call argument buffer was not a GC root -- #4611), the freed slot
+    was recycled by the next cons and the recycled slot ended up holding a
+    reference to itself: the bucket entry's car WAS the entry. The index then
+    lost both provenance records of the key and printing the key recursed
+    through the cycle into a SIGSEGV.
+
+    Rows: selfref must be 0 (no bucket entry may be self-referential),
+    prov-e501 must hold both records of the key and ops-e501 both operations.
+    The program never prints a bucket key, so a regression shows up as the
+    selfref row instead of the printer's SIGSEGV.
+    """
+    code = r""";; Issue #4625: a sweep fold that accumulates with set! on two captured
+;; let-locals must not corrupt the global provenance index.
+(define *nb* 4096)
+(define *prov-ix* (make-vector *nb* (list)))
+(define *items* (list))
+(define (kc k i) (char->integer (string-ref k i)))
+(define (key-hash k)
+  (let ((n (string-length k)))
+    (if (= n 0) 0
+        (modulo (+ (* 7 n) (* 31 (kc k 0)) (* 961 (kc k (- n 1)))) *nb*))))
+(define (ix-cons b key x)
+  (cond ((null? b) (list (cons key (list x))))
+        ((equal? (car (car b)) key) (cons (cons key (cons x (cdr (car b)))) (cdr b)))
+        (else (cons (car b) (ix-cons (cdr b) key x)))))
+(define (ix-find b key)
+  (cond ((null? b) (list))
+        ((equal? (car (car b)) key) (cdr (car b)))
+        (else (ix-find (cdr b) key))))
+(define (ix-add! v key x)
+  (let ((h (key-hash key))) (vector-set! v h (ix-cons (vector-ref v h) key x))))
+(define (ix-get v key) (ix-find (vector-ref v (key-hash key)) key))
+(define (it-id i) (list-ref i 0))
+(define (it-key i) (list-ref i 1))
+(define (it-cat i) (list-ref i 2))
+(define (it-last i) (list-ref i 3))
+(define (expired? i lim) (<= (it-last i) lim))
+(define (st-fold f acc xs)
+  (let walk ((xs xs) (acc acc))
+    (if (null? xs) acc (walk (cdr xs) (f (car xs) acc)))))
+(define (sweep-cat xs c lim)
+  (let ((ex (list)) (kept (list)))
+    (st-fold (lambda (i acc)
+                (if (equal? (it-cat i) c)
+                    (if (expired? i lim)
+                        (set! ex (cons i ex))
+                        (set! kept (cons i kept)))
+                    #f)
+              acc)
+             #f xs)
+    (list ex kept)))
+(define (index-expired! xs)
+  (map (lambda (i) (ix-add! *prov-ix* (it-key i) (list "decay" (it-id i)))) xs))
+(define (index-added! xs)
+  (map (lambda (i) (ix-add! *prov-ix* (it-key i) (list "added" (it-id i)))) xs))
+(define (mk-key id) (string-append "e" (number->string id)))
+(define (ids-from a n)
+  (if (= n 0) (list) (cons a (ids-from (+ a 1) (- n 1)))))
+(define (round! r)
+  (let ((base (* 100 r))
+        (new (map (lambda (k) (list k (mk-key k) "episodic" r)) (ids-from base 10))))
+    (set! *items* (append *items* new))
+    (index-added! new)
+    (let ((s (sweep-cat *items* "episodic" (- r 1))))
+      (index-expired! (filter (lambda (i) (= (it-last i) (- r 1))) (car s))))))
+(define (loop r n)
+  (if (> r n) #f (begin (round! r) (loop (+ r 1) n))))
+(loop 1 20)
+(define (bucket-selfref-count b)
+  (if (null? b)
+      0
+      (let ((e (car b)))
+        (if (eq? (car e) e)
+            (+ 1 (bucket-selfref-count (cdr b)))
+            (bucket-selfref-count (cdr b))))))
+(define (total-selfref v)
+  (let loop2 ((i 0) (n 0))
+    (if (>= i *nb*)
+        n
+        (loop2 (+ i 1) (+ n (bucket-selfref-count (vector-ref v i)))))))
+(define (ops key) (map (lambda (r) (car r)) (ix-get *prov-ix* key)))
+(display (list "selfref" (total-selfref *prov-ix*))) (newline)
+(display (list "prov-e501" (length (ix-get *prov-ix* "e501")))) (newline)
+(display (list "ops-e501" (ops "e501"))) (newline)
+(display (list "items" (length *items*))) (newline)"""
+    env = os.environ.copy()
+    env["AURA_SANDBOX"] = "off"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env.pop("AURA_SOFT", None)
+    env.pop("AURA_FORCE_IR", None)
+    with tempfile.NamedTemporaryFile("w", suffix=".aura", delete=False) as f:
+        f.write(code)
+        path = f.name
+    try:
+        r = subprocess.run([AURA, path], capture_output=True, text=True, timeout=120, env=env)
+    finally:
+        os.unlink(path)
+    out = r.stdout or ""
+    err = r.stderr or ""
+    assert r.returncode == 0, f"rc={r.returncode} out={out[-400:]!r} err={err[-400:]!r}"
+    rows = {}
+    for ln in out.splitlines():
+        m = re.match(r"^\((\S+)(?: (.*))?\)$", ln)
+        if m:
+            rows[m.group(1)] = m.group(2) or ""
+    for tag in ("selfref", "prov-e501", "ops-e501", "items"):
+        assert tag in rows, f"missing row {tag!r}: {out!r}"
+    assert rows["selfref"] == "0", f"self-referential bucket entry: {rows['selfref']!r}"
+    assert rows["prov-e501"] == "2", f"provenance records lost: {rows['prov-e501']!r}"
+    ops = rows["ops-e501"].strip()
+    if ops.startswith("(") and ops.endswith(")"):
+        ops = ops[1:-1]
+    assert set(ops.split()) == {"added", "decay"}, f"ops: {rows['ops-e501']!r}"
+    assert rows["items"] == "200", f"items: {rows['items']!r}"
+    print("  ✅ test_sweep_set_fold_prov_index_4625 (no self-referential bucket entry)")
+
+
 def test_member_structural_equality_4628():
     """Issue #4628: member must compare the elements with equal?.
 
@@ -3965,6 +4091,7 @@ for tf in [
     test_workspace_rest_params_4621,
     test_named_let_bind_list_repeat_4623,
     test_callback_diagnostic_4624,
+    test_sweep_set_fold_prov_index_4625,
     test_member_structural_equality_4628,
     test_file_mode_equal_fresh_list_corruption_4627,
     test_file_mode_pair_list_corruption_4629,
