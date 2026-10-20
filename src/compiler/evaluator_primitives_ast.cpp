@@ -463,23 +463,49 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             // Issue #4271: drop oldest deep FlatAST copies when over cap.
             // Source strings remain so ast:restore can fall back to set-code;
             // snapshot ids stay stable (no renumber).
+            //
+            // Issue #4598 residual: the cap bounds DISTINCT frozen FlatAST+pool
+            // copies, not entries. Phase 3 lets a share hit alias one frozen
+            // copy across many entries, so entry-counting evicted a copy that
+            // later entries still alias — resetting those handles frees no
+            // memory AND silently demotes the affected ids to the O(workspace)
+            // source-reparse restore path. Measured after 101 shared snapshots
+            // at W=200: ast:restore 7.3 ms (reparse fallback) vs 0.18 ms on the
+            // direct copy. Count unique flat pointers and, when over cap, drop
+            // the OLDEST distinct copy from every entry holding it; an entry
+            // sharing a still-live copy stays directly restorable at zero
+            // extra memory.
             {
-                std::size_t deep = 0;
-                for (const auto& s : ev.snapshot_flats_)
-                    if (s.has_flat)
-                        ++deep;
-                if (deep > Evaluator::kMaxAstSnapshotDeepFlats) {
-                    for (auto& s : ev.snapshot_flats_) {
-                        if (deep <= Evaluator::kMaxAstSnapshotDeepFlats)
+                auto distinct_copies = [&ev]() {
+                    std::unordered_map<const aura::ast::FlatAST*, char> seen;
+                    for (const auto& s : ev.snapshot_flats_)
+                        if (s.has_flat && s.flat)
+                            seen.emplace(s.flat.get(), 0);
+                    return seen.size();
+                };
+                std::size_t deep = distinct_copies();
+                while (deep > Evaluator::kMaxAstSnapshotDeepFlats) {
+                    // Oldest distinct copy (first entry still holding one).
+                    const aura::ast::FlatAST* oldest = nullptr;
+                    for (const auto& s : ev.snapshot_flats_) {
+                        if (s.has_flat && s.flat) {
+                            oldest = s.flat.get();
                             break;
-                        if (!s.has_flat)
-                            continue;
-                        s.flat.reset();
-                        s.pool.reset();
-                        s.has_flat = false;
-                        --deep;
-                        ++ev.ast_snapshot_deep_flat_drops_total_;
+                        }
                     }
+                    if (!oldest)
+                        break;
+                    // Drop every handle to that copy — one distinct copy, so
+                    // deep falls by exactly one however many entries alias it.
+                    for (auto& s : ev.snapshot_flats_) {
+                        if (s.has_flat && s.flat.get() == oldest) {
+                            s.flat.reset();
+                            s.pool.reset();
+                            s.has_flat = false;
+                            ++ev.ast_snapshot_deep_flat_drops_total_;
+                        }
+                    }
+                    --deep;
                 }
             }
             // Issue #2966: clear last fail reason on success.

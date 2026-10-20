@@ -78,6 +78,7 @@ def main() -> int:
     ast_impl = _read("src/core/ast_impl.cpp")
     evixx = _read("src/compiler/evaluator.ixx")
     prim = _read("src/compiler/evaluator_primitives_ast.cpp")
+    prim_eval = _read("src/compiler/evaluator_primitives_eval.cpp")
     obs = _read("src/compiler/evaluator_primitives_query_obs_mid.cpp")
     sym_test = _read("tests/core/test_summary_recompute_sym.cpp")
     round_test = _read("tests/compiler/test_current_source_roundtrip.cpp")
@@ -166,15 +167,33 @@ def main() -> int:
     )
     must_not("test_issue_4598.cpp", "AC7", round_test)
 
-    # AC8 wiring + allowlist
-    must("check_snapshot_share_stamps_4598.py", "AC8", build_py)
-    must("check_snapshot_share_stamps_4598.py", "AC8", allowlist)
+    # AC9 #4271 cap counts DISTINCT frozen copies (#4598 phase 4 residual).
+    # Phase 3 aliases one frozen copy across share-hit entries; entry-counting
+    # evicted an aliased copy (frees nothing) and demoted the affected ids to
+    # the O(workspace) source reparse (7.3 ms vs 0.18 ms at W=200).
+    must("Issue #4598 residual: the cap bounds DISTINCT frozen FlatAST+pool", "AC9", prim)
+    must("std::size_t deep = distinct_copies();", "AC9", prim)
+    must("if (s.has_flat && s.flat.get() == oldest) {", "AC9", prim)
+    must("std::unordered_set<const aura::ast::FlatAST*> seen;", "AC9", evixx)
+    must("4598p4 AC14: distinct-copy count stays 1", "AC9", round_test)
+    must("4598p4 AC14: shared burst does not evict the live copy", "AC9", round_test)
+
+    # AC10 eval-current IO replay probe is SoA-only: O(nodes) scan without a
+    # NodeView assemble per live node (callgrind: 698k assembles / 20 swaps).
+    must("Issue #4598 residual: SoA-only probe.", "AC10", prim_eval)
+    must("if (f.tag(id) != aura::ast::NodeTag::Call)", "AC10", prim_eval)
+    must("const auto ch = f.children(id);", "AC10", prim_eval)
+    must_not("auto node = f.get(id);", "AC10", prim_eval)
+
+    # AC11 wiring + allowlist
+    must("check_snapshot_share_stamps_4598.py", "AC11", build_py)
+    must("check_snapshot_share_stamps_4598.py", "AC11", allowlist)
 
     if fails:
         for f in fails:
             print(f"FAIL check_snapshot_share_stamps_4598: {f}")
         return 1
-    print("check_snapshot_share_stamps_4598: OK (8 ACs)")
+    print("check_snapshot_share_stamps_4598: OK (11 ACs)")
     return 0
 
 
