@@ -1579,6 +1579,35 @@ __attribute__((weak)) int aura_hash_remove(void* tbl, uint64_t key) {
     return 0;
 }
 
+// Issue #4640 follow-up: the OpHashRef / OpHashSet inline-scan code
+// paths call aura_hash_splitmix64 (the per-key hash) and
+// aura_hash_probe_slot (the linear probe) as EXTERNAL symbols
+// (src/compiler/aura_jit.cpp declares them ExternalLinkage). The
+// in-process JIT resolves them from aura_jit_runtime.cpp; the
+// standalone AOT image links lib/runtime.c, which never grew the
+// pair -- so an emit whose image contains a hash function (the
+// std/hash module is inlined by the std prelude) failed to LINK
+// with "undefined reference to aura_hash_splitmix64" and no binary
+// was produced at all.
+//
+// The math mirrors aura_jit_runtime.cpp exactly (same splitmix64
+// finalizer, same (h + i) % cap probe), so an AOT image that grows a
+// real hash table later hashes identically to the interpreter.
+__attribute__((weak)) uint64_t aura_hash_splitmix64(int64_t key) {
+    uint64_t x = (uint64_t)key;
+    x ^= x >> 33;
+    x *= 0xff51afd7ed558ccdULL;
+    x ^= x >> 33;
+    x *= 0xc4ceb9fe1a85ec53ULL;
+    x ^= x >> 33;
+    return x;
+}
+__attribute__((weak)) uint64_t aura_hash_probe_slot(uint64_t h, uint64_t i, uint64_t cap) {
+    if (cap == 0)
+        return 0;
+    return (h + i) % cap;
+}
+
 // OpGuardShape — return 0 (no guard invalidation in standalone AOT).
 __attribute__((weak)) int aura_jit_guard_shape_epoch_check(const char* fn_name) {
     (void)fn_name;
