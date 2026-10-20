@@ -4439,6 +4439,11 @@ public:
         aura::jit::ScalarFn entry_hit_fn = nullptr;
         std::uint64_t entry_hit_epoch = 0;
         std::uint64_t entry_hit_drop_gen = 0;
+        // Issue #4604: symbols already handed to the ORC JIT in this
+        // module. A program that defines the same name twice (a
+        // redefine) has two bodies under one name; they must not share
+        // a symbol, a name-keyed compile-cache entry or an ORC module.
+        std::unordered_set<std::string> jit_symbol_names;
         for (auto& ir_fn : ir_mod.functions) {
             if (ir_fn.id == ir_mod.entry_function_id) {
                 entry_func_id = static_cast<int64_t>(ir_fn.id);
@@ -4451,6 +4456,27 @@ public:
                 ir_fn.name == "__self_placeholder__") {
                 const std::string stem = ir_fn.name.empty() ? "__lambda__" : ir_fn.name;
                 ir_fn.name = stem + "#" + std::to_string(ir_fn.id);
+            }
+            // Issue #4604: a second define with the same name (a redefine
+            // inside one program) gets its own symbol. Without it the two
+            // bodies shared one name-keyed compile-cache entry AND one ORC
+            // module: the second compile evicted the first module (its
+            // memory came back for the new body), so the closure made from
+            // the FIRST definition kept dispatching to the SECOND body —
+            // "--jit" printed the last definition's value for every call
+            // ((define (g x) (+ x 1)) (display (g 1)) (define (g x) (* x
+            // 10)) (display (g 2)) printed 1020 instead of 220). With
+            // distinct symbols both modules stay live: the first closure
+            // keeps the first body, the second the second. The dep-name
+            // logic (jit_assume_key_ / jit_program_dep_names_) strips the
+            // "#<id>" suffix, so the renamed body still depends on the
+            // define "g" and is invalidated with it.
+            if (!jit_symbol_names.insert(ir_fn.name).second) {
+                const std::string base = ir_fn.name;
+                std::string candidate = base + "#" + std::to_string(ir_fn.id);
+                while (!jit_symbol_names.insert(candidate).second)
+                    candidate += "#";
+                ir_fn.name = candidate;
             }
 
             // env_count = number of captured free variables

@@ -1954,9 +1954,9 @@ def test_jit_call_path_4572():
     from lock-free counters while nothing is pending or stale and fall back to
     the locked lookup otherwise. Output of recursive, mutual, higher-order
     and multi-arg call paths must match the IR interpreter and eval.
-    (Redefining a callee inside one `--jit` program still reaches the first
-    definition on main, before and after this change: the callee is baked as
-    a constant closure id. Tracked in the #4572 follow-up, not tested here.) A --jit-session checks
+    (A redefine of a callee inside one `--jit` program is fixed in the
+    #4604 follow-up: the two bodies get two symbols, so the first closure
+    keeps the first body. Not tested here.) A --jit-session checks
     fib's prologue no longer calls aura_get_defuse_version (only car/cdr
     functions without the L2 path read it).
     """
@@ -2029,6 +2029,135 @@ def test_jit_call_path_4572():
     assert "@aura_get_defuse_version" not in ir, "fib prologue still reads the defuse version"
     assert "@aura_jit_is_fn_epoch_stale" in ir, "named prologue epoch probe missing"
     print(f"  ✅ test_jit_call_path_4572 ({len(programs)} programs, {quirk} display-quirk; fib IR has no defuse call)")
+
+
+def test_jit_redefine_4604():
+    """Issue #4604 §1: a redefine inside one --jit program must not alias
+    the two bodies.
+
+    Two defines with the same name in one program are two bodies and they
+    must get two symbols. Before the fix the second compile evicted the
+    first module (the ORC memory came back for the new body), so the
+    closure made from the FIRST definition kept dispatching to the SECOND
+    body: every call printed the last definition's value — "(define (g x)
+    (+ x 1)) (define (f n) (g n)) (display (f 1)) (define (g x) (* x 10))
+    (display (f 2))" printed 1020 instead of 220. The three repro
+    programs must now print the eval / AURA_FORCE_IR=1 output
+    byte-for-byte, in every JIT mode (L1 off, forced deopt at every
+    guard), and the two bodies must carry distinct symbols.
+    """
+
+    def run(code, *, mode="eval", extra=None):
+        env = os.environ.copy()
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "0"
+        env.pop("AURA_FORCE_IR", None)
+        cmd = [AURA]
+        if mode == "ir":
+            env["AURA_FORCE_IR"] = "1"
+        elif mode == "jit":
+            cmd.append("--jit")
+        if extra:
+            env.update(extra)
+        r = subprocess.run(cmd, input=code, capture_output=True, text=True, timeout=60, env=env)
+        assert r.returncode == 0, f"{mode} rc={r.returncode}: {r.stderr[-500:]}"
+        return r.stdout
+
+    programs = [
+        # The three #4604 repro programs.
+        (
+            "redefine-callee",
+            "(define (g x) (+ x 1)) (define (f n) (g n)) (display (f 1)) (define (g x) (* x 10)) (display (f 2))",
+            "220",
+        ),
+        (
+            "redefine-recursive",
+            "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))) "
+            "(display (fib 10)) (define (fib n) 7) (display (fib 10))",
+            "557",
+        ),
+        (
+            "redefine-in-loop",
+            "(define (g x) (+ x 1)) (define (f n) (let ((i 0) (s 0)) "
+            "(while (< i n) (set! s (+ s (g i))) (set! i (+ i 1))) s)) "
+            "(display (f 100)) (define (g x) 2) (display (f 100))",
+            "5050200",
+        ),
+        # A direct call, a redefine before the first call, a redefined
+        # caller, a third body and a let-shadowing binding keep the eval
+        # semantics.
+        (
+            "redefine-direct",
+            "(define (g x) (+ x 1)) (display (g 1)) (define (g x) (* x 10)) (display (g 2))",
+            "220",
+        ),
+        (
+            "redefine-before-first-call",
+            "(define (g x) (+ x 1)) (define (g x) (* x 10)) (display (g 2))",
+            "20",
+        ),
+        (
+            "redefine-caller",
+            "(define (f n) (+ n 1)) (define (g n) (f n)) (display (g 1)) (define (f n) (* n 10)) (display (g 2))",
+            "220",
+        ),
+        (
+            "redefine-three",
+            "(define (g x) (+ x 1)) (define (f n) (g n)) (display (f 1)) "
+            "(define (g x) (* x 10)) (display (f 2)) (define (g x) (- x 100)) (display (f 3))",
+            "220-97",
+        ),
+        (
+            "redefine-shadowed-by-let",
+            "(define (g x) (+ x 1)) (define (h x) (let ((g 5)) (+ g x))) (display (h 1)) "
+            "(define (g x) (* x 10)) (display (h 1))",
+            "66",
+        ),
+    ]
+    for name, code, expect in programs:
+        outs = {
+            "ir": run(code, mode="ir"),
+            "eval": run(code),
+            "jit": run(code, mode="jit"),
+            "jit_l1_off": run(code, mode="jit", extra={"AURA_JIT_L1": "0"}),
+            "jit_force1": run(code, mode="jit", extra={"AURA_JIT_FORCE_GUARD_DEOPT": "1"}),
+            "jit_force2": run(code, mode="jit", extra={"AURA_JIT_FORCE_GUARD_DEOPT": "2"}),
+        }
+        if len(set(outs.values())) != 1:
+            raise Exception(f"{name}: {outs}")
+        if outs["jit"] != expect:
+            raise Exception(f"{name}: expected {expect!r}, got {outs['jit']!r}")
+
+    # The two bodies carry distinct symbols: the first keeps the plain
+    # name, the second gets its own ("g#<id>"), so the first module is
+    # not evicted (and its address not recycled) for the second body.
+    env = os.environ.copy()
+    env["AURA_SANDBOX"] = "off"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    prog = "(define (g x) (+ x 1)) (define (f n) (g n)) (define (g x) (* x 10))"
+
+    def session_ir(dump):
+        r = subprocess.run(
+            [AURA, "--jit-session"],
+            input=prog + "\n" + dump + "\n",
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=env,
+        )
+        assert r.returncode == 0, f"--jit-session rc={r.returncode}: {r.stderr[-600:]}"
+        return r.stdout or ""
+
+    first = session_ir(";;ir g")
+    assert "define i64 @g(" in first, first[:400]
+    second = session_ir(";;ir g#2")
+    assert re.search(r'define i64 @"g#\d+"\(', second), second[:400]
+    # Source cite: the exec_jit compile loop splits a duplicate name
+    # instead of evicting the first module.
+    svc = (REPO / "src/compiler/service.ixx").read_text(encoding="utf-8")
+    assert "Issue #4604" in svc, "service.ixx does not cite #4604"
+    assert "jit_symbol_names" in svc, "the duplicate-name symbol split is missing"
+    print(f"  ✅ test_jit_redefine_4604 ({len(programs)} programs x 6 modes; distinct body symbols)")
 
 
 def test_jit_scalar_pairs_4573():
@@ -2375,6 +2504,7 @@ for tf in [
     test_jit_l2_4571,
     test_jit_general_call_4603,
     test_jit_call_path_4572,
+    test_jit_redefine_4604,
     test_jit_scalar_pairs_4573,
     test_jit_tier_differential_4574,
     test_jit_unbound_callee_4607,
