@@ -767,6 +767,7 @@ extern "C" void aura_set_lock_hooks(void (*lock_read)(void*), void (*unlock_read
 
 extern "C" void aura_clear_top_cell_getter_if_user(void* user);
 extern "C" void aura_clear_keyword_hooks_if_user(void* user);
+extern "C" void aura_clear_jit_error_display_if_user(void* user);
 extern "C" void aura_register_evaluator_runtime_hook_clearer(void (*fn)(void*));
 
 static void clear_evaluator_runtime_hooks_impl(void* user) {
@@ -779,6 +780,7 @@ static void clear_evaluator_runtime_hooks_impl(void* user) {
     }
     aura_clear_top_cell_getter_if_user(user);
     aura_clear_keyword_hooks_if_user(user);
+    aura_clear_jit_error_display_if_user(user);
 }
 
 namespace {
@@ -6121,6 +6123,33 @@ extern "C" int64_t aura_top_cell_get(int64_t cell_index) {
     return result;
 }
 
+// Issue #4603: an error value that escapes JIT code (a non-pair car/cdr,
+// an error-valued primitive result) has no arm in aura_display_value; the
+// pre-fix fallback printed the raw tagged word ("33" for (car 5)). The
+// evaluator owns error_values_ and the #4497 run-failed counter, so it
+// names the error on stderr through this hook — the same body the tree
+// walker and the IR display prim run. Unwired (AOT / light-link) keeps
+// the raw dump.
+namespace {
+    struct ErrorDisplayHook {
+        void (*fn)(void*, std::int64_t) = nullptr;
+        void* user = nullptr;
+    };
+    std::mutex g_error_display_mtx;
+    ErrorDisplayHook g_error_display;
+} // namespace
+
+extern "C" void aura_set_jit_error_display(void (*fn)(void*, std::int64_t), void* user) {
+    std::lock_guard<std::mutex> lock(g_error_display_mtx);
+    g_error_display = {fn, user};
+}
+
+extern "C" void aura_clear_jit_error_display_if_user(void* user) {
+    std::lock_guard<std::mutex> lock(g_error_display_mtx);
+    if (g_error_display.user == user)
+        g_error_display = {};
+}
+
 // Issue #4321: JIT keyword literals. The intern callback writes
 // Evaluator::keyword_table_ (same slots the tree walker uses).
 // No workspace lock here: try_jit_execute already holds the mutate
@@ -7244,6 +7273,24 @@ void aura_display_value(int64_t val, int64_t write_mode) {
             fprintf(stdout, ":%zu", static_cast<size_t>(kidx));
         fflush(stdout);
         return;
+    }
+    // Issue #4603: error values are named on stderr and mark the run
+    // failed (#4497), like the evaluator display prim. `(car 5)` under
+    // --jit used to print the raw RefError word (33).
+    if (aura::compiler::types::is_ref(val) &&
+        aura::compiler::types::ref_type(val) == aura::compiler::types::RefError) {
+        void (*fn)(void*, std::int64_t) = nullptr;
+        void* user = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(g_error_display_mtx);
+            fn = g_error_display.fn;
+            user = g_error_display.user;
+        }
+        if (fn) {
+            fflush(stdout);
+            fn(user, val);
+            return;
+        }
     }
     // Fallback: keep prior raw dump for unknown tags (debug visibility)
     fprintf(stdout, "%ld", static_cast<long>(val));

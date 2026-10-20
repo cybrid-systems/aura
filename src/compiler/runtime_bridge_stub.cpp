@@ -112,6 +112,12 @@ extern "C" __attribute__((weak)) void
 aura_set_keyword_hooks(std::int64_t (* /*intern*/)(void*, const char*),
                        const char* (* /*name*/)(void*, std::int64_t), void* /*user_data*/) {}
 
+// Issue #4603: strong body is aura_jit_runtime.cpp. A non-JIT link of the
+// evaluator partition still registers the error-display arm; the no-op
+// keeps that link resolvable, and the raw-dump fallback stays.
+extern "C" __attribute__((weak)) void
+aura_set_jit_error_display(void (* /*fn*/)(void*, std::int64_t), void* /*user*/) {}
+
 // aura_get_aot_metrics / aura_set_aot_metrics live in runtime_ssot.cpp.
 // aura_aot_func_table_epoch / aura_aot_bump_func_table_epoch /
 // aura_set/get_aot_live_env_frame_version /

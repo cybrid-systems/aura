@@ -1616,6 +1616,84 @@ def test_jit_l2_4571():
     print(f"  ✅ test_jit_l2_4571 ({len(programs)} programs, {quirk} display-quirk; len IR inline cdr hit has no call)")
 
 
+def test_jit_general_call_4603():
+    """Issue #4603 §5: JIT general-call / pair parity with the interpreter.
+
+    A non-pair receiver in car/cdr is an interpreter error ("car: not a
+    pair"), but the native lowering called the unchecked runtime, which
+    returns 0. The L2 guard and the non-L2 arms now exit to the shared
+    frame-deopt stub on a non-pair, so the interpreter raises the same
+    error. The second half pins the companion display bug: an error value
+    that escapes a JIT function used to print its raw RefError word ("33")
+    instead of naming the error, because aura_display_value had no error
+    arm. Both were also present with AURA_JIT_L2=0.
+    """
+
+    def run_mode(code, mode, extra_env=None):
+        env = os.environ.copy()
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "0"
+        env.pop("AURA_SOFT", None)
+        env.pop("AURA_FORCE_IR", None)
+        if extra_env:
+            env.update(extra_env)
+        cmd = [AURA]
+        if mode == "ir":
+            env["AURA_FORCE_IR"] = "1"
+        elif mode == "jit":
+            cmd.append("--jit")
+        r = subprocess.run(cmd, input=code, capture_output=True, text=True, timeout=60, env=env)
+        return r.returncode, (r.stdout or "").strip(), (r.stderr or "")
+
+    # Error arms: the run fails and the error is named on stderr, like --ir.
+    error_cases = [
+        ("car-nonpair", "(define (f x) (car x)) (display (f 5))", "car: not a pair"),
+        ("car-null", "(define (f x) (car x)) (display (f (quote ())))", "car: not a pair"),
+        ("cdr-nonpair", "(define (f x) (cdr x)) (display (f 5))", "cdr: not a pair"),
+        (
+            "prim-error-escapes",
+            "(define (f x) (vector-ref x 0)) (display (f 5))",
+            "vector-ref: not a vector",
+        ),
+    ]
+    for name, code, msg in error_cases:
+        outs = {m: run_mode(code, m) for m in ("ir", "eval", "jit")}
+        for mode, (rc, out, err) in outs.items():
+            assert msg in err, f"{name}/{mode}: missing {msg!r} in stderr {err[-300:]!r}"
+            assert "error:" in err, f"{name}/{mode}: unnamed error {err[-300:]!r}"
+            assert rc == 1, f"{name}/{mode}: rc={rc}, expected 1 ({err[-300:]!r})"
+            assert out == "", f"{name}/{mode}: stdout={out!r}, expected empty"
+        # One error report per run: the resume must not double-print.
+        assert outs["jit"][2].count(msg) == 1, f"{name}/jit: duplicated error {outs['jit'][2]!r}"
+
+    # Valid pairs keep the fast path and stay ir/eval-identical.
+    build = (
+        "(define (build n) (let ((i 0) (xs (quote ()))) (while (< i n) (set! xs (cons i xs)) (set! i (+ i 1))) xs)) "
+    )
+    walk = (
+        "(define (len xs) (let ((n 0)) (while (pair? xs) (set! n (+ n 1)) (set! xs (cdr xs))) n)) "
+        "(define (sumcar xs) (let ((s 0)) (while (pair? xs) (set! s (+ s (car xs))) "
+        "(set! xs (cdr xs))) s)) "
+    )
+    for n in (0, 1, 3, 2000):
+        code = f"{build}{walk}(display (+ (len (build {n})) (sumcar (build {n}))))"
+        expected = str(n + n * (n - 1) // 2)
+        outs = {m: run_mode(code, m)[:2] for m in ("ir", "eval", "jit")}
+        for mode, res in outs.items():
+            assert res == (0, expected), f"walk-{n}/{mode}: {res!r}, expected {(0, expected)!r}"
+
+    # Same result with the L2 directory off — the non-L2 arms carry the guard.
+    n = 2000
+    code = f"{build}{walk}(display (+ (len (build {n})) (sumcar (build {n}))))"
+    expect = (0, str(n + n * (n - 1) // 2))
+    l2_off = run_mode(code, "jit", {"AURA_JIT_L2": "0"})[:2]
+    assert l2_off == expect, f"l2-off: {l2_off!r}, expected {expect!r}"
+    err_l2_off = run_mode(error_cases[0][1], "jit", {"AURA_JIT_L2": "0"})
+    assert err_l2_off[0] == 1 and error_cases[0][2] in err_l2_off[2], f"l2-off car: {err_l2_off!r}"
+
+    print("  ✅ test_jit_general_call_4603 (4 error arms x 3 modes, pair walk, L2 off)")
+
+
 def test_jit_mixed_compare_4570():
     """Issue #4570: `--jit` numeric compares with one float operand compare
     by value, like the interpreter. Before #4570 the JIT compared raw tags:
@@ -2205,6 +2283,7 @@ for tf in [
     test_jit_l1_4570,
     test_jit_mixed_compare_4570,
     test_jit_l2_4571,
+    test_jit_general_call_4603,
     test_jit_call_path_4572,
     test_jit_scalar_pairs_4573,
     test_jit_tier_differential_4574,

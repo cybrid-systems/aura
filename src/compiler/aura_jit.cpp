@@ -1616,6 +1616,28 @@ struct LLVMBuilder {
         irb->CreateCondBr(cond, hot, cold, llvm::MDBuilder(ctx).createBranchWeights(2000, 1));
     }
 
+    // Issue #4603: non-pair receiver parity for the non-L2 forms. The
+    // interpreter raises "car: not a pair" / "cdr: not a pair"; the
+    // unchecked runtime helpers return 0. When the frame-deopt stub is
+    // armed, a non-pair exits to the interpreter at this instruction. The
+    // legacy call (and its 0) survives where nothing can host a resume
+    // (AOT, anonymous fns, hidden allocas).
+    llvm::Value* emit_pair_checked_call(llvm::Value* v, llvm::FunctionCallee checked_fn,
+                                        const FlatFunction& fn, uint32_t block, uint32_t instr) {
+        if (!frame_deopt_ok)
+            return irb->CreateCall(checked_fn, llvm::ArrayRef<llvm::Value*>{v});
+        auto* parent = irb->GetInsertBlock()->getParent();
+        auto* bb_call = llvm::BasicBlock::Create(ctx, "pair_checked_call", parent);
+        auto* bb_err = llvm::BasicBlock::Create(ctx, "pair_checked_nonpair", parent);
+        auto* is_pair = irb->CreateICmpEQ(irb->CreateAnd(v, c64(63)), c64(1));
+        irb->CreateCondBr(is_pair, bb_call, bb_err);
+        irb->SetInsertPoint(bb_err);
+        emit_frame_deopt_exit(fn, block, instr, /*from_entry=*/false);
+        // bb_err returns; bb_call is the sole live continuation.
+        irb->SetInsertPoint(bb_call);
+        return irb->CreateCall(checked_fn, llvm::ArrayRef<llvm::Value*>{v});
+    }
+
     // Issue #4571 (L2): inline pair field read. pair_ok is the i1 the JIT
     // prologue computed once per activation (aura_jit_pair_inline_ok: the
     // #4093 tenant gate is not armed, so no stamp compare is owed);
@@ -1631,19 +1653,22 @@ struct LLVMBuilder {
     // `slow`, the same runtime call as before, so the result and the
     // fallback metric are unchanged. No call and no lock on the hit path.
     template <class Slow>
-    llvm::Value* emit_l2_pair_field(llvm::Value* v, unsigned field, const char* tag, Slow slow) {
+    llvm::Value* emit_l2_pair_field(llvm::Value* v, unsigned field, const char* tag, Slow slow,
+                                    const FlatFunction* hfn = nullptr, uint32_t hblock = 0,
+                                    uint32_t hinstr = 0, bool deopt_nonpair = false) {
         auto* i64_ty = llvm::Type::getInt64Ty(ctx);
         auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
         auto* parent = irb->GetInsertBlock()->getParent();
         auto* bb_seg = llvm::BasicBlock::Create(ctx, std::string(tag) + "_l2_seg", parent);
         auto* bb_slot = llvm::BasicBlock::Create(ctx, std::string(tag) + "_l2_slot", parent);
         auto* bb_hit = llvm::BasicBlock::Create(ctx, std::string(tag) + "_l2_hit", parent);
+        auto* bb_miss = llvm::BasicBlock::Create(ctx, std::string(tag) + "_l2_miss", parent);
         auto* bb_slow = llvm::BasicBlock::Create(ctx, std::string(tag) + "_l2_slow", parent);
         auto* bb_done = llvm::BasicBlock::Create(ctx, std::string(tag) + "_l2_done", parent);
         auto* is_pair = irb->CreateICmpEQ(irb->CreateAnd(v, c64(63)), c64(1));
         auto* seg = irb->CreateLShr(v, c64(16));
         auto* in_dir = irb->CreateICmpULT(seg, c64(kL2PairMaxSegs));
-        br_likely(irb->CreateAnd(pair_ok, irb->CreateAnd(is_pair, in_dir)), bb_seg, bb_slow);
+        br_likely(irb->CreateAnd(pair_ok, irb->CreateAnd(is_pair, in_dir)), bb_seg, bb_miss);
 
         irb->SetInsertPoint(bb_seg);
         auto* segcell = irb->CreateGEP(ptr_ty, pair_dir, seg);
@@ -1662,6 +1687,21 @@ struct LLVMBuilder {
         irb->SetInsertPoint(bb_hit);
         auto* fast = irb->CreateLoad(i64_ty, irb->CreateGEP(i64_ty, slotp, c64(field)));
         irb->CreateBr(bb_done);
+
+        // Issue #4603: a non-pair receiver is an interpreter error, not a
+        // 0 field. With the frame-deopt stub armed the miss exits here and
+        // the interpreter raises "car: not a pair" / "cdr: not a pair" for
+        // this same instruction; an unpublished segment/slot (a live pair
+        // the L2 directory cannot see) still takes the slow call.
+        irb->SetInsertPoint(bb_miss);
+        if (deopt_nonpair && hfn) {
+            auto* bb_err = llvm::BasicBlock::Create(ctx, std::string(tag) + "_l2_nonpair", parent);
+            irb->CreateCondBr(is_pair, bb_slow, bb_err);
+            irb->SetInsertPoint(bb_err);
+            emit_frame_deopt_exit(*hfn, hblock, hinstr, /*from_entry=*/false);
+        } else {
+            irb->CreateBr(bb_slow);
+        }
 
         irb->SetInsertPoint(bb_slow);
         llvm::Value* slow_v = slow();
@@ -3375,10 +3415,15 @@ struct LLVMBuilder {
                     // concurrent redefinition is covered by #4569
                     // assumption invalidation, and the segment table never
                     // moves (#898). Misses take the aura_pair_car call.
-                    store(inst.ops[0], emit_l2_pair_field(pair_val, 0, "car", [&] {
-                              return irb->CreateCall(llvm::FunctionCallee(fn_pair_car),
-                                                     llvm::ArrayRef<llvm::Value*>{pair_val});
-                          }));
+                    store(inst.ops[0],
+                          emit_l2_pair_field(
+                              pair_val, 0, "car",
+                              [&] {
+                                  return irb->CreateCall(llvm::FunctionCallee(fn_pair_car),
+                                                         llvm::ArrayRef<llvm::Value*>{pair_val});
+                              },
+                              /*hfn=*/&fn, /*hblock=*/cur_block,
+                              /*hinstr=*/cur_instr, /*deopt_nonpair=*/frame_deopt_ok));
                     return true;
                 }
                 // Issue #4600 §1/§2 (phase 2): with the frame-deopt stub
@@ -3422,7 +3467,13 @@ struct LLVMBuilder {
                     auto* bb_fast = llvm::BasicBlock::Create(ctx, "car_fast", parent_func);
                     auto* bb_exit = llvm::BasicBlock::Create(ctx, "car_frame_deopt", parent_func);
                     auto* bb_cont = llvm::BasicBlock::Create(ctx, "car_guard_cont", parent_func);
-                    irb->CreateCondBr(match, bb_fast, bb_exit);
+                    // Issue #4603: the unchecked helper must not run on a
+                    // non-pair (it would read slot 0). A non-pair takes the
+                    // same frame-deopt exit as a stale version, so the
+                    // interpreter raises "car: not a pair".
+                    auto* is_pair_guard =
+                        irb->CreateICmpEQ(irb->CreateAnd(pair_val, c64(63)), c64(1));
+                    irb->CreateCondBr(irb->CreateAnd(match, is_pair_guard), bb_fast, bb_exit);
                     irb->SetInsertPoint(bb_fast);
                     if (metrics)
                         metrics->intrinsic_count.fetch_add(1, std::memory_order_relaxed);
@@ -3466,7 +3517,11 @@ struct LLVMBuilder {
                     auto* bb_fast = llvm::BasicBlock::Create(ctx, "car_fast", parent_func);
                     auto* bb_slow = llvm::BasicBlock::Create(ctx, "car_slow", parent_func);
                     auto* bb_done = llvm::BasicBlock::Create(ctx, "car_done", parent_func);
-                    irb->CreateCondBr(match, bb_fast, bb_slow);
+                    // Issue #4603: the unchecked arm must not run on a
+                    // non-pair; such a value takes the checked slow call.
+                    auto* is_pair_guard =
+                        irb->CreateICmpEQ(irb->CreateAnd(pair_val, c64(63)), c64(1));
+                    irb->CreateCondBr(irb->CreateAnd(match, is_pair_guard), bb_fast, bb_slow);
 
                     // Fast path: no bounds check, no lock
                     irb->SetInsertPoint(bb_fast);
@@ -3519,9 +3574,11 @@ struct LLVMBuilder {
                     phi->addIncoming(slow_result, bb_slow);
                     store(inst.ops[0], phi);
                 } else {
-                    // Non-L2 path: always take the slow path (with bounds + lock)
-                    auto call = irb->CreateCall(llvm::FunctionCallee(fn_pair_car),
-                                                llvm::ArrayRef<llvm::Value*>{pair_val});
+                    // Non-L2 path: always take the slow path (with bounds + lock).
+                    // Issue #4603: a non-pair deopts to the interpreter (which
+                    // raises "car: not a pair") when the frame-deopt stub is armed.
+                    auto call =
+                        emit_pair_checked_call(pair_val, fn_pair_car, fn, cur_block, cur_instr);
                     store(inst.ops[0], call);
                 }
                 return true;
@@ -3537,10 +3594,15 @@ struct LLVMBuilder {
                 auto pair_val = load(inst.ops[1]);
                 if (pair_ok) {
                     // Issue #4571 (L2): same inline read as OpCar, field 1.
-                    store(inst.ops[0], emit_l2_pair_field(pair_val, 1, "cdr", [&] {
-                              return irb->CreateCall(llvm::FunctionCallee(fn_pair_cdr),
-                                                     llvm::ArrayRef<llvm::Value*>{pair_val});
-                          }));
+                    store(inst.ops[0],
+                          emit_l2_pair_field(
+                              pair_val, 1, "cdr",
+                              [&] {
+                                  return irb->CreateCall(llvm::FunctionCallee(fn_pair_cdr),
+                                                         llvm::ArrayRef<llvm::Value*>{pair_val});
+                              },
+                              /*hfn=*/&fn, /*hblock=*/cur_block,
+                              /*hinstr=*/cur_instr, /*deopt_nonpair=*/frame_deopt_ok));
                     return true;
                 }
                 // Issue #4600 §1/§2 (phase 2): with the frame-deopt stub
@@ -3584,7 +3646,10 @@ struct LLVMBuilder {
                     auto* bb_fast = llvm::BasicBlock::Create(ctx, "cdr_fast", parent_func);
                     auto* bb_exit = llvm::BasicBlock::Create(ctx, "cdr_frame_deopt", parent_func);
                     auto* bb_cont = llvm::BasicBlock::Create(ctx, "cdr_guard_cont", parent_func);
-                    irb->CreateCondBr(match, bb_fast, bb_exit);
+                    // Issue #4603: same non-pair guard as the car arm.
+                    auto* is_pair_guard =
+                        irb->CreateICmpEQ(irb->CreateAnd(pair_val, c64(63)), c64(1));
+                    irb->CreateCondBr(irb->CreateAnd(match, is_pair_guard), bb_fast, bb_exit);
                     irb->SetInsertPoint(bb_fast);
                     if (metrics)
                         metrics->intrinsic_count.fetch_add(1, std::memory_order_relaxed);
@@ -3625,7 +3690,10 @@ struct LLVMBuilder {
                     auto* bb_fast = llvm::BasicBlock::Create(ctx, "cdr_fast", parent_func);
                     auto* bb_slow = llvm::BasicBlock::Create(ctx, "cdr_slow", parent_func);
                     auto* bb_done = llvm::BasicBlock::Create(ctx, "cdr_done", parent_func);
-                    irb->CreateCondBr(match, bb_fast, bb_slow);
+                    // Issue #4603: same non-pair guard as the car arm.
+                    auto* is_pair_guard =
+                        irb->CreateICmpEQ(irb->CreateAnd(pair_val, c64(63)), c64(1));
+                    irb->CreateCondBr(irb->CreateAnd(match, is_pair_guard), bb_fast, bb_slow);
 
                     irb->SetInsertPoint(bb_fast);
                     auto* fast_result = irb->CreateCall(llvm::FunctionCallee(fn_pair_cdr_unchecked),
@@ -3656,8 +3724,9 @@ struct LLVMBuilder {
                     phi->addIncoming(slow_result, bb_slow);
                     store(inst.ops[0], phi);
                 } else {
-                    auto call = irb->CreateCall(llvm::FunctionCallee(fn_pair_cdr),
-                                                llvm::ArrayRef<llvm::Value*>{pair_val});
+                    // Issue #4603: same non-pair deopt as the car arm.
+                    auto call =
+                        emit_pair_checked_call(pair_val, fn_pair_cdr, fn, cur_block, cur_instr);
                     store(inst.ops[0], call);
                 }
                 return true;
