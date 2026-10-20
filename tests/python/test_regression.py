@@ -3839,6 +3839,86 @@ def test_file_mode_pair_list_corruption_4629():
     print("  ✅ test_file_mode_pair_list_corruption_4629 (2000-element pair list intact, 0 bad)")
 
 
+def test_file_mode_equal_fresh_list_corruption_4627():
+    """Issue #4627: equal? on a fresh list must not fail at an allocation boundary.
+
+    A c6a18e8a5 (#4599) regression with the same root cause as #4629. The
+    tree-walker's cached primitive-call fast path (Evaluator::try_eval_flat_hot)
+    evaluated a call's arguments into a stack buffer and registered that
+    buffer as a GC root only AFTER the argument loop, so the first
+    argument's freshly minted pair was unrooted while the second argument
+    was evaluated. The nested eval reaches the top of its own TCO loop,
+    where the periodic file-mode reclaim (maybe_reclaim_tw_unreachable)
+    marks and sweeps the file heap: the unrooted pair was in no root set,
+    so the sweep freed it and equal? compared a recycled slot against the
+    stored list.
+
+    The issue's three-line repro is used verbatim: 1000 self tail calls
+    compare a fresh (list 1 2) with the stored (list 1 2) and collect the
+    iteration indices where the comparison failed. On the broken builds
+    that list was non-empty (every 66th iteration -- the allocation
+    boundary); it must come back empty. The issue's second variant
+    ((+ bad (if (equal? (mk) want) 0 1))) is checked the same way, and
+    the single-shot comparison shapes (quoted, both fresh, fresh second,
+    scalars) pin the correct answers.
+
+    The fix is 4f4ae5d51 (#4611) -- the cached prim-call path pins its
+    argument buffer with a LIVE count BEFORE the argument loop and
+    publishes each evaluated argument. The source-cite row pins that shape
+    so this guard cannot pass vacuously.
+    """
+    code = r"""
+(define want (list 1 2))
+(define (mk) (list 1 2))
+(define p (cons 1 2))
+(define (go i bad) (if (= i 0) bad (go (- i 1) (if (equal? (list 1 2) want) bad (cons i bad)))))
+(define (go2 i bad) (if (= i 0) bad (go2 (- i 1) (+ bad (if (equal? (mk) want) 0 1)))))
+(display (list "loop-fresh-vs-global" (go 1000 (list)))) (newline)
+(display (list "loop-fn-fresh-vs-global" (go2 1000 0))) (newline)
+(display (list "quoted" (equal? (list 1 2) '(1 2)))) (newline)
+(display (list "cons-cons" (equal? (cons 1 2) (cons 1 2)))) (newline)
+(display (list "fresh-fresh" (equal? (list 1 2) (list 1 2)))) (newline)
+(display (list "global-fresh" (equal? p (cons 1 2)))) (newline)
+(display (list "scalars" (equal? 7 7) (pair? (cons 1 2)) (= (car (cons 1 2)) 1))) (newline)
+"""
+    env = os.environ.copy()
+    env["AURA_SANDBOX"] = "off"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env.pop("AURA_SOFT", None)
+    env.pop("AURA_FORCE_IR", None)
+    with tempfile.NamedTemporaryFile("w", suffix=".aura", delete=False) as f:
+        f.write(code)
+        path = f.name
+    try:
+        r = subprocess.run([AURA, path], capture_output=True, text=True, timeout=180, env=env)
+    finally:
+        os.unlink(path)
+    out = r.stdout or ""
+    err = r.stderr or ""
+    assert r.returncode == 0, f"rc={r.returncode} out={out[-400:]!r} err={err[-400:]!r}"
+    assert err == "", f"unexpected stderr: {err[-400:]!r}"
+    rows = out.strip().splitlines()
+    expected = [
+        "(loop-fresh-vs-global ())",
+        "(loop-fn-fresh-vs-global 0)",
+        "(quoted #t)",
+        "(cons-cons #t)",
+        "(fresh-fresh #t)",
+        "(global-fresh #t)",
+        "(scalars #t #t #t)",
+    ]
+    assert rows == expected, f"corrupted rows: {rows!r} != {expected!r}"
+    # Source cite: the cached prim-call path pins its argument buffer with a
+    # live count BEFORE the argument loop, so an argument that is already
+    # evaluated stays a root while a later argument is evaluated.
+    tw = (REPO / "src/compiler/evaluator_eval_flat.cpp").read_text(encoding="utf-8")
+    assert "TwPinSpan pin(TwPinSpan::Live{}, buf.data(), &buf_n);" in tw, (
+        "the cached prim-call path no longer pins its argument buffer with a live count"
+    )
+    assert "buf_n = i + 1;" in tw, "the pinned buffer no longer publishes each evaluated argument"
+    print("  ✅ test_file_mode_equal_fresh_list_corruption_4627 (0 wrong of 1000, variants #t)")
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -3886,6 +3966,7 @@ for tf in [
     test_named_let_bind_list_repeat_4623,
     test_callback_diagnostic_4624,
     test_member_structural_equality_4628,
+    test_file_mode_equal_fresh_list_corruption_4627,
     test_file_mode_pair_list_corruption_4629,
 ]:
     try:
