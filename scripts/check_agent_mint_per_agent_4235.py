@@ -52,6 +52,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from source_window import body_between  # noqa: E402
+from source_window import check as _structural  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -71,13 +75,10 @@ def main() -> int:
         if n in hay:
             fails.append(f"{label}: must not contain {n!r}")
 
-    def window(src: str, begin: str, end: str, label: str, width: int = 7200) -> str:
-        b = src.find(begin)
-        if b == -1:
-            fails.append(f"{label}: anchor {begin!r} missing")
-            return ""
-        e = src.find(end, b + len(begin))
-        return src[b : (e if e != -1 else b + width)]
+    def window(src: str, begin: str, end: str, label: str) -> str:
+        # Anchor-based only: a missing end anchor is a FAIL, never a byte
+        # width guess (that is how a growing body silently escaped a check).
+        return _structural(label, body_between(src, begin, end), fails, f"{begin!r}..{end!r}")
 
     sec = _read("src/compiler/evaluator_security.cpp")
     ixx = _read("src/compiler/evaluator.ixx")

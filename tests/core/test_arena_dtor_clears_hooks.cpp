@@ -9,6 +9,9 @@
 //   AC4: Source-cite dtor clear contract + gate registration
 
 #include "arena_nonalloc_hooks.hpp"
+#include "compiler/source_contract.hpp"
+
+using aura::test::source_contract::brace_body;
 #include "test_harness.hpp"
 
 #include <atomic>
@@ -133,10 +136,10 @@ static void ac4_source_and_registration() {
           "AC4: dtor nulls on_layout_change_");
     CHECK(src.find("root_remap_.fn = nullptr") != std::string::npos, "AC4: dtor nulls root_remap_");
     // clear-before-run_destructors order (inside the real dtor body, not comments).
-    const auto dtor_pos = src.find("~ASTArena() {");
-    CHECK(dtor_pos != std::string::npos, "AC4: ~ASTArena() { present");
-    if (dtor_pos != std::string::npos) {
-        const auto snip = src.substr(dtor_pos, 2500);
+    const auto dtor_pos = brace_body(src, "~ASTArena() {");
+    CHECK(dtor_pos.ok, "AC4: ~ASTArena() body boundary found");
+    if (dtor_pos.ok) {
+        const auto snip = dtor_pos.view;
         const auto clear_pos = snip.find("slot.fn = nullptr");
         const auto run_pos = snip.find("run_destructors();");
         CHECK(clear_pos != std::string::npos && run_pos != std::string::npos && clear_pos < run_pos,

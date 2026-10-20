@@ -13,6 +13,9 @@
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "compiler/source_contract.hpp"
+
+using aura::test::source_contract::brace_body;
 #include "compiler/security_defaults.hh"
 
 #include <atomic>
@@ -304,13 +307,13 @@ int main() {
         CHECK(src.find("query:raw-pointer-safety-stats") != std::string::npos, "stats query");
         CHECK(src.find("raw_pointer_uaf_prevented_total") != std::string::npos, "uaf metric");
         // High-risk sites migrated.
-        auto ir = src.find("\"compile:ir-stats\"");
-        CHECK(ir != std::string::npos, "ir-stats present");
-        CHECK(src.substr(ir, 800).find("with_compiler_service_pin") != std::string::npos,
+        const auto ir = brace_body(src, "\"compile:ir-stats\", [&ev]");
+        CHECK(ir.ok, "ir-stats primitive body boundary found");
+        CHECK(ir.view.find("with_compiler_service_pin") != std::string::npos,
               "ir-stats uses service pin");
-        auto rel = src.find("\"compile:relower-strategy\"");
-        CHECK(rel != std::string::npos, "relower present");
-        CHECK(src.substr(rel, 1200).find("with_compiler_service_pin") != std::string::npos,
+        const auto rel = brace_body(src, "\"compile:relower-strategy\", [&ev]");
+        CHECK(rel.ok, "relower primitive body boundary found");
+        CHECK(rel.view.find("with_compiler_service_pin") != std::string::npos,
               "relower uses service pin");
     }
 

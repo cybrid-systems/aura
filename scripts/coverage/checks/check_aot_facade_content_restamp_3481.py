@@ -24,6 +24,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from source_window import brace_body, check  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -52,15 +55,18 @@ def main() -> int:
     t = _read("tests/compiler/test_cache_stamp_restamp_contract.cpp")
     build = _read("build.py")
 
-    lu = ixx.find("int lookup_define_v2(")
-    lu_win = ixx[lu : lu + 2800] if lu >= 0 else ""
+    lu_win = check("AC1 lookup", brace_body(ixx, "int lookup_define_v2("), fails, "lookup_define_v2 body")
     must("Issue #3481", "AC1 lookup cite", lu_win)
     must("content_stored_this_epoch", "AC1 lookup latch", lu_win)
     must("abort_map_invalid", "AC1 abort latch stays", lu_win)
     must("3481 AC1: lookup stays 1 after dirty-clear without store", "AC1 test", t)
 
-    maybe = ixx.find("bool maybe_restamp_cache_entry_content_live_")
-    maybe_win = ixx[maybe : maybe + 1200] if maybe >= 0 else ""
+    maybe_win = check(
+        "AC1 maybe_restamp",
+        brace_body(ixx, "bool maybe_restamp_cache_entry_content_live_"),
+        fails,
+        "maybe_restamp_cache_entry_content_live_ body",
+    )
     must("Issue #3481", "AC1 maybe_restamp cite", maybe_win)
     must("entry.dirty", "AC1 maybe_restamp dirty gate", maybe_win)
     must("abort_map_invalid", "AC1 maybe_restamp abort gate", maybe_win)
@@ -69,8 +75,12 @@ def main() -> int:
     # epoch argument is unchanged.
     must("restamp_cache_entry_live_(entry, sampled_mut, name)", "AC1 maybe_restamp content write", maybe_win)
 
-    cas = dirty.find("void CompilerService::notify_hot_update_after_cascade_")
-    cas_win = dirty[cas : cas + 16000] if cas >= 0 else ""
+    cas_win = check(
+        "AC1 cascade",
+        brace_body(dirty, "void CompilerService::notify_hot_update_after_cascade_"),
+        fails,
+        "notify_hot_update_after_cascade_ body",
+    )
     must("ack_peer_ir_stale_on_restamp_", "AC1 cascade ack", cas_win)
     must("content_stored_this_epoch", "AC1 cascade content gate", cas_win)
     must("restamp_cache_entry_live_", "AC1 cascade restamp gated", cas_win)
@@ -78,14 +88,17 @@ def main() -> int:
     must("relower_success_region_bit(name)", "AC1 coverage on content restamp", cas_win)
     must("relower_success_region_bit(d)", "AC1 dependent coverage", cas_win)
 
-    store = ixx.find("void store_define_v2(")
-    store_win = ixx[store : store + 2200] if store >= 0 else ""
+    store_win = check("AC1 store", brace_body(ixx, "void store_define_v2("), fails, "store_define_v2 body")
     must("content_stored_this_epoch = true", "AC1 store sets latch", store_win)
     must("abort_map_invalid = false", "AC1 store clears abort before restamp", store_win)
     must("restamp_cache_entry_live_(entry, sampled_mut_epoch, name)", "AC1 store still restamps", store_win)
 
-    rb = ixx.find("bool relower_define_blocks(")
-    rb_win = ixx[rb : rb + 22000] if rb >= 0 else ""
+    rb_win = check(
+        "AC2 relower",
+        brace_body(ixx, "bool relower_define_blocks(const std::string& name, std::string_view source,"),
+        fails,
+        "relower_define_blocks body",
+    )
     must("Issue #3481", "AC2 relower cite", rb_win)
     must("ack_cache_entry_fences_live_", "AC2 peel ack", rb_win)
     ack = rb_win.find("ack_cache_entry_fences_live_")
@@ -99,9 +112,12 @@ def main() -> int:
     must("content_stored_this_epoch", "AC2 skip-as-clean content gate", rb_win)
     must("3481 AC2: instr peel arm does not restamp content stamps", "AC2 test", t)
 
-    fac = hur.find("hard_invalidate_via_facade(const char* name, ReemitReason reason)")
-    nxt = hur.find("\nvoid HotUpdateRegistry::", fac + 1) if fac >= 0 else -1
-    fac_win = hur[fac:nxt] if nxt > fac else hur[fac : fac + 8000] if fac >= 0 else ""
+    fac_win = check(
+        "AC3 facade",
+        brace_body(hur, "bool HotUpdateRegistry::hard_invalidate_via_facade("),
+        fails,
+        "hard_invalidate_via_facade body",
+    )
     must("decide_and_reemit(aura_get_aot_defuse_version(), reason)", "AC3 facade reemit stays", fac_win)
     must("Issue #3481", "AC3 facade cite", fac_win)
     must("IR cache is NOT restamped here", "AC3 no content restamp", fac_win)
@@ -115,8 +131,12 @@ def main() -> int:
     must("3481 AC4: #2183 mismatch-force-relower still fires", "AC4 test", t)
     must("cache_stamp_mismatch_force_relower_total", "AC4 2183 metric stays", t)
 
-    fd = ixx.find("void force_ir_cache_dirty_after_abort()")
-    fd_win = ixx[fd : fd + 3200] if fd >= 0 else ""
+    fd_win = check(
+        "AC5 abort",
+        brace_body(ixx, "void force_ir_cache_dirty_after_abort()"),
+        fails,
+        "force_ir_cache_dirty_after_abort body",
+    )
     must("source_to_ir_map.clear()", "AC5 clear map", fd_win)
     must("abort_map_invalid = true", "AC5 invalid flag", fd_win)
     must("stamp_version(0, 0, 0, 0)", "AC5 zero stamps", fd_win)

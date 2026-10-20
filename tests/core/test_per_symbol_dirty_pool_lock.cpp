@@ -10,6 +10,9 @@
 //   AC4: unbound symbol returns sensible zeros (no pool pollution)
 
 #include "test_harness.hpp"
+#include "compiler/source_contract.hpp"
+
+using aura::test::source_contract::brace_body;
 
 #include <fstream>
 #include <print>
@@ -59,7 +62,9 @@ int main() {
         CHECK(pos != std::string::npos, "stats name present");
         CHECK(prim.find("register_stats_impl") != std::string::npos,
               "registered via register_stats_impl (#2628)");
-        auto win = prim.substr(pos, 3500);
+        const auto slice = brace_body(prim, "\"compile:per-symbol-dirty-stats\", [&ev]");
+        CHECK(slice.ok, "stats primitive body boundary found");
+        const auto win = slice.view;
         CHECK(win.find("workspace_mtx_") != std::string::npos, "uses workspace_mtx_");
         CHECK(win.find("shared_lock") != std::string::npos, "shared_lock for read path");
         CHECK(win.find("find_by_name") != std::string::npos, "uses find_by_name");

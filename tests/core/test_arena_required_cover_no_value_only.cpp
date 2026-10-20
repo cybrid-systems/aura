@@ -37,6 +37,9 @@
 //   AC9: New 3156 linter script exists + self-test passes.
 
 #include "test_harness.hpp"
+#include "compiler/source_contract.hpp"
+
+using aura::test::source_contract::brace_body;
 
 #include <cstdlib>
 #include <fstream>
@@ -524,9 +527,9 @@ static void ac3456_destroy_dtor_index() {
     CHECK(arena_src.find("dtor_index_") != std::string::npos, "AC1: dtor_index_");
     CHECK(arena_src.find("swap_remove_dtor_at_") != std::string::npos, "AC1: swap-remove");
     CHECK(arena_src.find("dtor_index_.find(ptr)") != std::string::npos, "AC1: happy-path find");
-    const auto dpos = arena_src.find("void destroy(T* ptr)");
-    CHECK(dpos != std::string::npos, "AC1: destroy present");
-    const auto dwin = dpos == std::string::npos ? std::string{} : arena_src.substr(dpos, 1800);
+    const auto dpos = brace_body(arena_src, "void destroy(T* ptr)");
+    CHECK(dpos.ok, "AC1: destroy body boundary found");
+    const auto dwin = dpos.view;
     CHECK(dwin.find("for (auto it = dtors_.begin(); it != dtors_.end(); ++it)") ==
               std::string::npos,
           "AC1: destroy does not walk dtors_.begin() on the happy path");
@@ -957,10 +960,10 @@ static void ac3402_dense_children_columns() {
     // still dirties never-synced. #3453: set_child_locked patches in-place.
     for (const auto* fn : {"insert_child_locked", "remove_child_locked"}) {
         const std::string needle = std::string("void ") + fn + "(";
-        const auto pos = ast_ixx.find(needle);
-        CHECK(pos != std::string::npos, (std::string("AC4: ") + fn + " definition found").c_str());
-        if (pos != std::string::npos) {
-            const auto window = ast_ixx.substr(pos, 2800);
+        const auto window_slice = brace_body(ast_ixx, needle);
+        CHECK(window_slice.ok, (std::string("AC4: ") + fn + " body boundary found").c_str());
+        if (window_slice.ok) {
+            const auto window = window_slice.view;
             CHECK(window.find("!dense_dirty_") != std::string::npos,
                   (std::string("3665 AC: ") + fn + " splices when !dense_dirty_").c_str());
             CHECK(window.find("dense_dirty_ = true") != std::string::npos,
@@ -968,10 +971,10 @@ static void ac3402_dense_children_columns() {
         }
     }
     {
-        const auto pos = ast_ixx.find("void set_child_locked(");
-        CHECK(pos != std::string::npos, "AC4/3453: set_child_locked definition found");
-        if (pos != std::string::npos) {
-            const auto window = ast_ixx.substr(pos, 3600);
+        const auto window_slice = brace_body(ast_ixx, "void set_child_locked(");
+        CHECK(window_slice.ok, "AC4/3453: set_child_locked body boundary found");
+        if (window_slice.ok) {
+            const auto window = window_slice.view;
             CHECK(window.find("!dense_dirty_") != std::string::npos,
                   "3453 AC1: set_child_locked in-place when !dense_dirty_");
             CHECK(window.find("child_data_[") != std::string::npos,
@@ -1110,11 +1113,11 @@ static void ac3665_insert_remove_dense_splice() {
           "3665 AC3: copy/move still dirties");
 
     {
-        const auto ipos = ast.find("void insert_child_locked(");
-        const auto rpos = ast.find("void remove_child_locked(");
-        CHECK(ipos != std::string::npos && rpos != std::string::npos, "3665 AC4: locked helpers");
-        const auto iwin = ast.substr(ipos, 2800);
-        const auto rwin = ast.substr(rpos, 2200);
+        const auto iwin_slice = brace_body(ast, "void insert_child_locked(");
+        const auto rwin_slice = brace_body(ast, "void remove_child_locked(");
+        CHECK(iwin_slice.ok && rwin_slice.ok, "3665 AC4: locked helper body boundaries");
+        const auto iwin = iwin_slice.view;
+        const auto rwin = rwin_slice.view;
         CHECK(iwin.find("flatast_locked_move_out_exclusive_total") != std::string::npos,
               "3665 AC4: insert exclusive counter kept");
         CHECK(iwin.find("flatast_locked_move_out_cow_total") != std::string::npos,

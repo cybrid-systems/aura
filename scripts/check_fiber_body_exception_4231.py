@@ -63,6 +63,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from source_window import body_between  # noqa: E402
+from source_window import check as _structural  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -87,16 +91,8 @@ def main() -> int:
         # match dispatch wiring on whitespace-normalized text.
         return " ".join(s.split())
 
-    def window(src: str, begin: str, end: str, label: str, width: int = 5200) -> str:
-        b = src.find(begin)
-        if b == -1:
-            fails.append(f"{label}: anchor {begin!r} missing")
-            return ""
-        e = src.find(end, b + 1)
-        if e == -1:
-            fails.append(f"{label}: end anchor {end!r} missing")
-            return ""
-        return src[b:e]
+    def window(src: str, begin: str, end: str, label: str) -> str:
+        return _structural(label, body_between(src, begin, end), fails, f"{begin!r}..{end!r}")
 
     # ── AC1: trampoline containment ────────────────────────────────
     fiber_src = _read("src/serve/fiber.cpp")

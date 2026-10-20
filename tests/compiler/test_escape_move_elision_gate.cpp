@@ -27,6 +27,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "compiler/source_contract.hpp"
 #include "compiler/ownership_escape_lowering_gate.h"
 #include "compiler/typed_mutation_audit.h"
 
@@ -66,6 +67,8 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::test::g_failed;
 using aura::test::g_passed;
+using aura::test::source_contract::brace_body;
+using aura::test::source_contract::case_body;
 
 static std::string read_file(const char* path) {
     for (const auto& p :
@@ -1408,9 +1411,9 @@ static void ac3446_1_fence_or_skips_move_body() {
     CHECK(jit.find("begin_linear_epoch_fence") != std::string::npos &&
               jit.find("store(inst.ops[1], c64(0))") != std::string::npos,
           "3446 AC1: Move source-zero stays after fence (skipped on stale)");
-    const auto fence = jit.find("auto begin_linear_epoch_fence");
-    CHECK(fence != std::string::npos, "3446 AC1: fence helper present");
-    const auto body = fence == std::string::npos ? std::string{} : jit.substr(fence, 2800);
+    const auto fence = brace_body(jit, "auto begin_linear_epoch_fence");
+    CHECK(fence.ok, "3446 AC1: fence helper present");
+    const auto body = fence.view;
     CHECK(body.find("linear_safety_probe()") == std::string::npos,
           "3446 AC1: fence does not route through probe (probe continues after deopt)");
 
@@ -1443,15 +1446,15 @@ static void ac3446_1_fence_or_skips_move_body() {
 static void ac3446_2_drop_borrow_same_fence() {
     std::println("\n--- #3446 AC2: Drop/Borrow inherit the same fence ---");
     const auto jit = read_file("src/compiler/aura_jit.cpp");
-    const auto drop = jit.find("case OpDropOp:");
-    CHECK(drop != std::string::npos, "3446 AC2: OpDropOp present");
-    const auto drop_body = drop == std::string::npos ? std::string{} : jit.substr(drop, 1800);
+    const auto drop = case_body(jit, "case OpDropOp:");
+    CHECK(drop.ok, "3446 AC2: OpDropOp present");
+    const auto drop_body = drop.view;
     CHECK(drop_body.find("begin_linear_epoch_fence()") != std::string::npos,
           "3446 AC2: OpDropOp uses fence");
     CHECK(drop_body.find("Issue #3446") != std::string::npos, "3446 AC2: Drop cites #3446");
-    const auto borrow = jit.find("case OpBorrowOp:");
-    CHECK(borrow != std::string::npos, "3446 AC2: OpBorrowOp present");
-    const auto borrow_body = borrow == std::string::npos ? std::string{} : jit.substr(borrow, 700);
+    const auto borrow = case_body(jit, "case OpBorrowOp:");
+    CHECK(borrow.ok, "3446 AC2: OpBorrowOp present");
+    const auto borrow_body = borrow.view;
     CHECK(borrow_body.find("begin_linear_epoch_fence()") != std::string::npos,
           "3446 AC2: Borrow/MutBorrow inherit fence");
 }
@@ -1527,12 +1530,11 @@ static void ac3759_1_apply_capture_linear_uses_fence() {
     const auto jit = read_file("src/compiler/aura_jit.cpp");
     const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
     const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
-    const auto apply = jit.find("case OpApply:");
-    CHECK(apply != std::string::npos, "3759 AC1: OpApply present");
-    // Issue #4599 phase 4 grew the OpApply body past the old 4200-byte
-    // window (the end-fence sits at ~4560); keep headroom over the whole
-    // case body (the next "case Op" starts at ~4650).
-    const auto apply_body = apply == std::string::npos ? std::string{} : jit.substr(apply, 5200);
+    const auto apply = case_body(jit, "case OpApply:");
+    CHECK(apply.ok, "3759 AC1: OpApply case boundary found");
+    // Structural, not byte-pinned: the slice ends at the next sibling
+    // case/default, so growing the body cannot push the fence out.
+    const auto apply_body = apply.view;
     CHECK(apply_body.find("Issue #3759") != std::string::npos, "3759 AC1: OpApply cites #3759");
     CHECK(apply_body.find("begin_linear_epoch_fence()") != std::string::npos,
           "3759 AC1: OpApply uses fence for linear locals");
@@ -1542,17 +1544,17 @@ static void ac3759_1_apply_capture_linear_uses_fence() {
           "3759 AC1: fence only when linear (Soft/untyped zero extra IR)");
     CHECK(apply_body.find("fn_closure_call") != std::string::npos,
           "3759 AC1: Apply body (closure_call) stays after fence");
-    const auto cap = jit.find("case OpCapture:");
-    CHECK(cap != std::string::npos, "3759 AC1: OpCapture present");
-    const auto cap_body = cap == std::string::npos ? std::string{} : jit.substr(cap, 1800);
+    const auto cap = case_body(jit, "case OpCapture:");
+    CHECK(cap.ok, "3759 AC1: OpCapture case boundary found");
+    const auto cap_body = cap.view;
     CHECK(cap_body.find("Issue #3759") != std::string::npos, "3759 AC1: OpCapture cites #3759");
     CHECK(cap_body.find("begin_linear_epoch_fence()") != std::string::npos,
           "3759 AC1: OpCapture uses fence");
     CHECK(cap_body.find("end_linear_epoch_fence(fb)") != std::string::npos,
           "3759 AC1: OpCapture ends fence after capture");
-    const auto cref = jit.find("case OpCaptureRef:");
-    CHECK(cref != std::string::npos, "3759 AC1: OpCaptureRef present");
-    const auto cref_body = cref == std::string::npos ? std::string{} : jit.substr(cref, 1600);
+    const auto cref = case_body(jit, "case OpCaptureRef:");
+    CHECK(cref.ok, "3759 AC1: OpCaptureRef case boundary found");
+    const auto cref_body = cref.view;
     CHECK(cref_body.find("begin_linear_epoch_fence()") != std::string::npos,
           "3759 AC1: OpCaptureRef uses fence");
     CHECK(ir.find("ir_typed_entry_blocked_result") != std::string::npos,
@@ -1583,20 +1585,22 @@ static void ac3759_1_apply_capture_linear_uses_fence() {
 static void ac3759_2_move_drop_fence_unchanged() {
     std::println("\n--- #3759 AC2: Move/Drop fence unchanged ---");
     const auto jit = read_file("src/compiler/aura_jit.cpp");
-    const auto move = jit.find("case OpMoveOp:");
-    CHECK(move != std::string::npos, "3759 AC2: OpMoveOp present");
-    const auto move_body = move == std::string::npos ? std::string{} : jit.substr(move, 2800);
+    const auto move = case_body(jit, "case OpMoveOp:");
+    CHECK(move.ok, "3759 AC2: OpMoveOp case boundary found");
+    const auto move_body = move.view;
     CHECK(move_body.find("begin_linear_epoch_fence()") != std::string::npos,
           "3759 AC2: Move still uses fence");
     CHECK(move_body.find("store(inst.ops[1], c64(0))") != std::string::npos,
           "3759 AC2: Move source-zero still after fence");
     CHECK(move_body.find("Issue #3446") != std::string::npos, "3759 AC2: #3446 Move cite kept");
-    const auto drop = jit.find("case OpDropOp:");
-    const auto drop_body = drop == std::string::npos ? std::string{} : jit.substr(drop, 1800);
+    const auto drop = case_body(jit, "case OpDropOp:");
+    CHECK(drop.ok, "3759 AC2: OpDropOp case boundary found");
+    const auto drop_body = drop.view;
     CHECK(drop_body.find("begin_linear_epoch_fence()") != std::string::npos,
           "3759 AC2: Drop still uses fence");
-    const auto fence = jit.find("auto begin_linear_epoch_fence");
-    const auto fence_body = fence == std::string::npos ? std::string{} : jit.substr(fence, 3200);
+    const auto fence = brace_body(jit, "auto begin_linear_epoch_fence");
+    CHECK(fence.ok, "3759 AC2: fence helper boundary found");
+    const auto fence_body = fence.view;
     CHECK(fence_body.find("fence_elision_blocked") != std::string::npos,
           "3759 AC2: fence still ORs elision_ok==0");
     CHECK(fence_body.find("fence_entry_blocked") != std::string::npos,
@@ -1697,9 +1701,9 @@ static void ac3982_1_source_live_pair() {
     std::println("\n--- #3982 AC1: slow path passes live Evaluator pair ---");
     const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
     CHECK(ir.find("Issue #3982") != std::string::npos, "3982 AC1: cpp cites #3982");
-    const auto fn = ir.find("static bool enforce_linear_ownership_state(");
-    CHECK(fn != std::string::npos, "3982 AC1: enforce helper");
-    const auto win = ir.substr(fn, 4500);
+    const auto fn = brace_body(ir, "static bool enforce_linear_ownership_state(");
+    CHECK(fn.ok, "3982 AC1: enforce helper body found");
+    const auto win = fn.view;
     CHECK(win.find("/*frame_version=*/0") == std::string::npos &&
               win.find("/*current_version=*/0") == std::string::npos,
           "3982 AC1: hardcoded 0/0 EnvFrame pair removed");
@@ -1786,9 +1790,9 @@ static void ac3982_2_remount_slow_path_refuses() {
 static void ac3982_3_soft_elision_true_no_extra() {
     std::println("\n--- #3982 AC3: Soft elision-true path unchanged ---");
     const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
-    const auto fn = ir.find("static bool enforce_linear_ownership_state(");
-    CHECK(fn != std::string::npos, "3982 AC3: helper");
-    const auto win = ir.substr(fn, 2200);
+    const auto fn = brace_body(ir, "static bool enforce_linear_ownership_state(");
+    CHECK(fn.ok, "3982 AC3: helper body found");
+    const auto win = fn.view;
     CHECK(win.find("linear_move_drop_elision_ok()") != std::string::npos &&
               win.find("return true;") != std::string::npos,
           "3982 AC3: elision-true returns before Evaluator loads");
@@ -2032,9 +2036,9 @@ static void ac3663_4_drop_and_executor_unchanged() {
     std::println("\n--- #3663 AC4: Drop always emit; IR/JIT #3446 OR unchanged ---");
     using namespace aura::compiler::typed_audit;
     const auto lin = read_file("src/compiler/lowering_linear_types_impl.cpp");
-    const auto drop = lin.find("case aura::ast::NodeTag::Drop:");
-    CHECK(drop != std::string::npos, "3663 AC4: Drop arm present");
-    const auto drop_body = drop == std::string::npos ? std::string{} : lin.substr(drop, 900);
+    const auto drop = case_body(lin, "case aura::ast::NodeTag::Drop:");
+    CHECK(drop.ok, "3663 AC4: Drop arm present");
+    const auto drop_body = drop.view;
     CHECK(drop_body.find("IROpcode::DropOp") != std::string::npos, "3663 AC4: Drop emits DropOp");
     CHECK(drop_body.find("aura_jit_linear_move_drop_elision_ok") == std::string::npos,
           "3663 AC4: Drop does not consult elision_ok");
