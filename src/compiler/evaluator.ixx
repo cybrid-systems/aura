@@ -17961,9 +17961,15 @@ format_value(const types::EvalValue& v, std::span<const std::string> heap,
                 result += " ";
             result += elements[i];
         }
-        // Check end-of-list: void sentinel (11) or fixnum 0 are list terminators
-        bool is_proper = (current.val == 11) || (current.val == 0) ||
-                         (types::is_int(current) && types::as_int(current) == 0);
+        // Issue #2482 parity (#4635): the empty list is make_void() ONLY --
+        // a fixnum 0 cdr is the NUMBER zero sitting in an improper tail.
+        // io_print_val's is_end_of_list (evaluator_primitives_runtime.cpp) and
+        // evaluator_primitives_list.cpp already say so; this arm still carried
+        // the pre-#2482 `val == 0 || is_int && as_int == 0` test, so the same
+        // value printed two ways in one run: `(display (cons 3 0))` -> "(3 . 0)"
+        // while the top-level echo of that very value -> "(3)". Any 0 flowing
+        // through the cdr chain of a formatted pair hit it.
+        const bool is_proper = types::is_void(current);
         if (is_proper) {
             // proper list
         } else {

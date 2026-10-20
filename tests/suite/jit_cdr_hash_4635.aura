@@ -1,0 +1,78 @@
+;; expect: ab (3 . 4) (3 . 0) (1 3) 3 4 1 #t #f 0 30 3675 5997000 0 0 0 11 7 (3 . 0)
+; Issue #4635 -- cdr / hash value printing parity.
+;
+; Bug 1 (cdr-string, jit-soundness-4567 corpus): the top-level value
+; formatter treated a fixnum 0 cdr as the empty-list sentinel, so the
+; SAME value printed two ways in one run --
+;   (display (cons 3 0))  -> "(3 . 0)"   (display/write prim path)
+;   <the value>          -> "(3)"       (format_value path)
+; Issue #2482 settled the rule ("empty list is make_void() only, int 0
+; is a number") in io_print_val and in evaluator_primitives_list.cpp;
+; format_value was the last site still carrying the old conflation, so
+; any 0 flowing through a formatted cdr chain was swallowed.
+;
+; Bug 2 (hash-kv-2000, same corpus): the kv loop below is the
+; fixnum-0-through-a-hash shape; it must print the same sum the
+; interpreter and the IR executor compute.
+;
+; The file's LAST form is a pair with a fixnum-0 cdr, so the runner's
+; own echo of the result value pins the formatter arm too.
+
+(define (cdr-of p) (cdr p))
+
+; ── cdr tails: string, pair, fixnum 0, real empty list ──
+(display (cdr-of (cons 1 "ab"))) (display " ")          ; cdr-string corpus row
+(display (cdr-of (cons 1 (cons 3 4)))) (display " ")
+(display (cdr-of (cons 1 (cons 3 0)))) (display " ")    ; improper dotted 0
+(display (cons 1 (cons 3 (quote ())))) (display " ")     ; proper list stays proper
+
+; ── the same pair read field-wise must agree with its printed form ──
+(display (car (cdr-of (cons 1 (cons 3 4))))) (display " ")
+(display (cdr (cdr-of (cons 1 (cons 3 4))))) (display " ")
+(display (length (cdr-of (cons 1 (cons 3 4))))) (display " ")
+(display (pair? (cdr-of (cons 1 (cons 3 4))))) (display " ")
+(display (null? (cdr-of (cons 1 (cons 3 0))))) (display " ")
+
+; ── hash-kv: the corpus loop (n = 1 / 5 / 50 / 2000) ──
+(define (kv n)
+  (let ((h (hash)) (i 0) (s 0))
+    (while (< i n)
+      (hash-set! h i (* i 3))
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i n)
+      (set! s (+ s (hash-ref h i)))
+      (set! i (+ i 1)))
+    s))
+
+(display (kv 1)) (display " ")
+(display (kv 5)) (display " ")
+(display (kv 50)) (display " ")
+(display (kv 2000)) (display " ")
+
+; ── "=0" shapes: key 0 / value 0 / miss at 0 must not read as nil ──
+(define (kv0 n)
+  (let ((h (hash)) (i 0) (s 0))
+    (while (< i n)
+      (hash-set! h i i)
+      (set! i (+ i 1)))
+    (hash-ref h 0)))
+(display (kv0 1)) (display " ")
+(display (kv0 5)) (display " ")
+
+(define (zero-val) (let ((h (hash))) (hash-set! h 1 0) (hash-ref h 1)))
+(display (zero-val)) (display " ")
+
+(define (miss-at-0)
+  (let ((h (hash)))
+    (hash-set! h "ab" 5)
+    (hash-set! h (string-append "c" "d") 6)
+    (+ (hash-ref h (string-append "a" "b")) (hash-ref h "cd"))))
+(display (miss-at-0)) (display " ")
+
+(define (kv-dotted n) (let ((h (hash))) (hash-set! h 1 7) (hash-ref h n)))
+(display (kv-dotted 1)) (display " ")
+
+; Last form: the runner echoes it, so the fixnum-0 cdr chain is pinned.
+; One contiguous stdout line -- the ;; expect: above must match it exactly.
+(cdr-of (cons 1 (cons 3 0)))
