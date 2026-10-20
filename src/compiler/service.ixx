@@ -11060,6 +11060,12 @@ public:
         std::unique_ptr<aura::compiler::IRInterpreter> interpreter;
         types::EvalValue bound_closure{};
         aura::compiler::ClosureId closure_id = 0;
+        // Issue #4626: the closure-id floor of this binding's runtime
+        // mints - the interpreter's id cursor when its first call started.
+        // Ids at or above the floor were minted during a call; the
+        // bind-time execute() mint is below it. Unset = the binding never
+        // ran a call, so it owns no runtime mint.
+        std::optional<std::uint64_t> runtime_mint_floor;
 
         IRDefineEnvBinding(aura::ir::IRModule mod, aura::compiler::Primitives& prim,
                            const aura::core::TypeRegistry* reg,
@@ -11883,8 +11889,33 @@ public:
             // body.
             for (auto& kv : ir_define_env_bindings_) {
                 auto* interp = kv.second->interpreter.get();
-                if (!interp || !interp->owns_runtime_mint(static_cast<std::uint64_t>(cid)))
+                if (!interp)
                     continue;
+                // Issue #4626: the interpreter's strict runtime-mint set is
+                // filled by a BOOL scope flag (IRInterpreter::call_closure
+                // raises in_runtime_call_ on entry and lowers it on exit).
+                // A NESTED call_closure - a tree-walker callback (map /
+                // filter / for-each) re-entering this same interpreter -
+                // lowers the flag when it returns, so every closure the
+                // OUTER call mints AFTER that nested call is missing from
+                // the strict set even though it IS a runtime mint. Such a
+                // callback lost its route: dispatch denied, the primitive
+                // saw an empty result and the element came back as ().
+                //
+                // The service keeps the same classification itself, from
+                // the interpreter's public id cursor: a binding remembers
+                // the cursor at the start of its first call
+                // (runtime_mint_floor). Every id at or above that floor was
+                // minted during a call; the bind-time execute() mint sits
+                // below it, so the strict #4450 rule (a bind-time mint must
+                // NOT resurrect after a workspace restore / rebind) still
+                // holds.
+                if (!interp->owns_runtime_mint(static_cast<std::uint64_t>(cid))) {
+                    const auto& floor = kv.second->runtime_mint_floor;
+                    if (!floor.has_value() || static_cast<std::uint64_t>(cid) < *floor ||
+                        !interp->owns_runtime_closure(static_cast<std::uint64_t>(cid)))
+                        continue;
+                }
                 interp->set_next_closure_id(next_ir_define_closure_id_);
                 auto r = interp->call_closure(static_cast<std::uint64_t>(cid), args);
                 next_ir_define_closure_id_ = interp->next_closure_id();
@@ -11957,6 +11988,13 @@ public:
         // drain the advanced cursor back afterwards.
         auto* owner_interp = bind_it->second->interpreter.get();
         owner_interp->set_next_closure_id(next_ir_define_closure_id_);
+        // Issue #4626: the runtime-mint floor is the interpreter's id cursor
+        // where the next mint starts. Set it BEFORE the call so a callback
+        // the call mints (and the tree walker re-enters for) is routable
+        // even when the nested call cleared the interpreter's own
+        // in_runtime_call_ flag.
+        if (!bind_it->second->runtime_mint_floor.has_value())
+            bind_it->second->runtime_mint_floor = owner_interp->next_closure_id();
         auto r = owner_interp->call_closure(static_cast<std::uint64_t>(cid), args);
         next_ir_define_closure_id_ = owner_interp->next_closure_id();
         if (!r)

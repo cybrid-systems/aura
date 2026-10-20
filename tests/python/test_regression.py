@@ -4045,6 +4045,89 @@ def test_file_mode_equal_fresh_list_corruption_4627():
     print("  ✅ test_file_mode_equal_fresh_list_corruption_4627 (0 wrong of 1000, variants #t)")
 
 
+def test_workspace_inline_callback_4626():
+    """Issue #4626: every inline callback of a workspace define must run.
+
+    A workspace define (set-code + eval-current, or mutate:rebind) whose
+    body passes INLINE lambdas to map / filter lost every callback except
+    the first one the body ran: the element came back as (). The IR
+    interpreter registers a call-time closure mint in its runtime-mint set,
+    but that set is filled by a BOOL scope flag that a NESTED call_closure
+    (the tree-walker callback re-entering the interpreter) clears on exit -
+    so a closure minted after that nested call was never registered, the
+    service denied the route and the callback result was empty.
+
+    Rows: two maps in one body, three maps, the same-param shape (two maps
+    with the SAME parameter name), a filter + map pair, plus the let-bound
+    control, the direct-call control and the file-level define control (all
+    of which were already correct). The mutate:rebind face must answer the
+    same as the set-code face.
+    """
+
+    def run(code, timeout=120):
+        env = os.environ.copy()
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "0"
+        env.pop("AURA_SOFT", None)
+        env.pop("AURA_FORCE_IR", None)
+        return subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=timeout, env=env)
+
+    program = r"""(set-code (string-append
+  "(define two-maps (lambda () (list (map (lambda (a) 1) (list 0 0)) (map (lambda (b) 2) (list 0 0)))))\n"
+  "(define one-map (lambda () (map (lambda (a) 1) (list 0 0))))\n"
+  "(define two-calls (lambda () (list ((lambda (a) 1) 0) ((lambda (b) 2) 0))))\n"
+  "(define let-bound (lambda () (let ((f (lambda (a) 1)) (g (lambda (b) 2))) (list (map f (list 0 0)) (map g (list 0 0))))))\n"
+  "(define same-param (lambda () (list (map (lambda (a) 1) (list 0 0)) (map (lambda (a) 2) (list 0 0)))))\n"
+  "(define three (lambda () (list (map (lambda (a) 1) (list 0)) (map (lambda (b) 2) (list 0)) (map (lambda (c) 3) (list 0)))))\n"
+  "(define filter-map (lambda () (list (filter (lambda (a) 0) (list 7 0)) (map (lambda (b) 0) (list 7 0)))))\n"
+))
+(eval-current)
+(define (file-two-maps) (list (map (lambda (a) 1) (list 0 0)) (map (lambda (b) 2) (list 0 0))))
+(display (list "ws-two-maps" (two-maps))) (newline)
+(display (list "ws-one-map" (one-map))) (newline)
+(display (list "ws-two-calls" (two-calls))) (newline)
+(display (list "ws-let-bound" (let-bound))) (newline)
+(display (list "ws-same-param" (same-param))) (newline)
+(display (list "ws-three" (three))) (newline)
+(display (list "ws-filter-map" (filter-map))) (newline)
+(display (list "file-two-maps" (file-two-maps))) (newline)"""
+    r = run(program)
+    assert r.returncode == 0, f"rc={r.returncode} out={r.stdout[-400:]!r} err={(r.stderr or '')[-400:]!r}"
+    rows = {}
+    for ln in (r.stdout or "").splitlines():
+        m = re.match(r"^\((\S+)(?: (.*))?\)$", ln)
+        if m:
+            rows[m.group(1)] = m.group(2) or ""
+    expect = {
+        "ws-two-maps": "((1 1) (2 2))",
+        "ws-one-map": "(1 1)",
+        "ws-two-calls": "(1 2)",
+        "ws-let-bound": "((1 1) (2 2))",
+        "ws-same-param": "((1 1) (2 2))",
+        "ws-three": "((1) (2) (3))",
+        "ws-filter-map": "((7 0) (0 0))",
+        "file-two-maps": "((1 1) (2 2))",
+    }
+    for tag, want in expect.items():
+        assert tag in rows, f"missing row {tag!r}: {r.stdout!r}"
+        assert rows[tag] == want, f"{tag}: expected {want!r} got {rows[tag]!r}"
+
+    rebind = r"""(set-code "(define rb-two-maps (lambda () (list (map (lambda (a) 1) (list 0 0)) (map (lambda (b) 2) (list 0 0)))))")
+(eval-current)
+(mutate:rebind "rb-two-maps" "(lambda () (list (map (lambda (a) 1) (list 0 0)) (map (lambda (b) 2) (list 0 0))))" "r")
+(eval-current)
+(display (list "ws-rebind" (rb-two-maps))) (newline)"""
+    r2 = run(rebind)
+    assert r2.returncode == 0, f"rebind rc={r2.returncode} err={(r2.stderr or '')[-400:]!r}"
+    rb = {}
+    for ln in (r2.stdout or "").splitlines():
+        m = re.match(r"^\((\S+)(?: (.*))?\)$", ln)
+        if m:
+            rb[m.group(1)] = m.group(2) or ""
+    assert rb.get("ws-rebind") == "((1 1) (2 2))", f"ws-rebind: {rb!r}"
+    print("  \u2705 test_workspace_inline_callback_4626 (inline map/filter callbacks in a workspace define)")
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -4091,6 +4174,7 @@ for tf in [
     test_workspace_rest_params_4621,
     test_named_let_bind_list_repeat_4623,
     test_callback_diagnostic_4624,
+    test_workspace_inline_callback_4626,
     test_sweep_set_fold_prov_index_4625,
     test_member_structural_equality_4628,
     test_file_mode_equal_fresh_list_corruption_4627,
