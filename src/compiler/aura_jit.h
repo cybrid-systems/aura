@@ -92,6 +92,12 @@ struct FlatFunction {
     // Issue #2022: representative provenance id for macro-origin functions
     // (first non-zero instruction provenance when source_marker==1).
     uint32_t provenance = 0;
+    // Issue #4601: number of captured environment cells. The runtime
+    // copies the closure's env values into locals[0..env_count-1] and the
+    // call arguments after them, so a direct self-call can rebuild the
+    // callee frame from this function's own env prefix. Trailing field so
+    // positional FlatFunction initializers stay source-compatible.
+    uint32_t env_count = 0;
 };
 
 using ScalarFn = int64_t (*)(int64_t*, uint32_t);
@@ -235,6 +241,10 @@ public:
         std::atomic<std::uint64_t> l1_cells_promoted_total{0};
         std::atomic<std::uint64_t> l1_fixnum_fast_total{0};
         std::atomic<std::uint64_t> l1_cmp_branch_fused_total{0};
+        // Issue #4601: recursive self-call sites lowered to a direct call
+        // of the function's own native body (closure-id + DefineVersion
+        // guarded), skipping aura_closure_call and the argument cell read.
+        std::atomic<std::uint64_t> l1_self_call_total{0};
         // Issue #4571 (L2): car/cdr sites lowered to the inline
         // segment-directory read (no call, no lock on the hit path).
         std::atomic<std::uint64_t> l2_pair_inline_total{0};

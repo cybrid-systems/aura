@@ -4355,6 +4355,8 @@ public:
                 flat_fn.entry_block = ir_fn.entry_block;
                 flat_fn.local_count = ir_fn.local_count;
                 flat_fn.arg_count = ir_fn.arg_count;
+                // Issue #4601: env prefix width for direct self-calls.
+                flat_fn.env_count = static_cast<std::uint32_t>(ir_fn.free_vars.size());
                 flat_fn.blocks = flat_blocks.data();
                 flat_fn.num_blocks = static_cast<std::uint32_t>(flat_blocks.size());
                 flat_fn.func_id_map = nullptr;
@@ -18240,6 +18242,8 @@ public:
                                                 nullptr,
                                                 0,
                                                 final_shape_map};
+                // Issue #4601: env prefix width for direct self-calls.
+                flat_fn.env_count = static_cast<std::uint32_t>(ir_fn.free_vars.size());
                 // Set escape map from escape analysis
                 if (!escape_storage.empty())
                     flat_fn.escape_map = escape_storage.data();
