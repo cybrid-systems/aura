@@ -77,6 +77,10 @@ SWEEP_FILES = [
 
 PUSH = "g_hash_tables.push_back(ht);"
 CALL = "aura_hash_stamp_new_table_owner();"
+# Issue #4613: the evaluator own hash mint stamps the executing
+# evaluator principal directly - the same value as
+# ev.capability_tenant_id(), so it counts as a publish stamp.
+EVAL_STAMP = "g_hash_tenants[hidx] = capability_tenant_id_;"
 
 
 def _strip_cpp_comments(src: str) -> str:
@@ -142,7 +146,7 @@ def main() -> int:
             fails.append(f"AC3: {rel} missing/unreadable")
             continue
         pushes = src.count(PUSH)
-        calls = src.count(CALL)
+        calls = src.count(CALL) + src.count(EVAL_STAMP)
         if pushes == 0:
             fails.append(f"AC3: {rel} has no push sites (sweep set stale?)")
         elif calls != pushes:
@@ -156,8 +160,15 @@ def main() -> int:
     # ── AC4: inline stamps present; #4296 executing-evaluator principal ──
     stamp = "g_hash_tenants[hidx] = ev.capability_tenant_id();"
     jit_stamp = "g_hash_tenants[hidx] = aura_jit_owner_capability_tenant();"
-    if stamp not in vec:
-        fails.append("AC4: vector hash prim does not stamp ev.capability_tenant_id()")
+    # Issue #4613: the (hash) prim publishes through the evaluator
+    # mint_hash_table seam, so the executing-evaluator stamp lives there
+    # (capability_tenant_id_ is the same principal as
+    # ev.capability_tenant_id()).
+    if "ev.mint_hash_table(" not in vec:
+        fails.append("AC4: vector hash prim does not publish through the evaluator mint seam")
+    ev_src = _strip_cpp_comments(_read("src/compiler/evaluator.ixx"))
+    if EVAL_STAMP not in ev_src:
+        fails.append("AC4: the evaluator mint seam does not stamp the executing evaluator")
     if jit_stamp in vec:
         fails.append("AC4: vector hash prim still stamps the JIT owner (#4296)")
     ag = _strip_cpp_comments(_read("src/compiler/evaluator_primitives_agent.cpp"))

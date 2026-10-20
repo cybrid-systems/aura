@@ -195,7 +195,6 @@ def main() -> int:
     if "std::vector<std::uint64_t> g_hash_tenants;" not in ssot:
         fails.append("AC4: runtime_ssot.cpp does not define g_hash_tenants")
     expected_sites = {
-        "src/compiler/evaluator_primitives_vector.cpp": 1,
         "src/compiler/evaluator_primitives_agent.cpp": 3,
     }
     # Issue #4296: interpreter/agent mints stamp the executing evaluator.
@@ -216,6 +215,29 @@ def main() -> int:
             if pub == -1 or ret == -1 or idx < pub or idx > ret:
                 fails.append(f"AC4: {rel} stamp not between the table publish and make_hash")
             idx += len(stamp_line)
+    # Issue #4613: the (hash) prim publishes through the evaluator own
+    # mint_hash_table seam, which owns the free list, the reclaim-window
+    # charge and the tenant stamp. The stamp uses the evaluating
+    # evaluator principal (capability_tenant_id_ is the same value as
+    # ev.capability_tenant_id()), never the JIT owner hook, and sits after
+    # the publish.
+    ev_src = _strip_cpp_comments(_read("src/compiler/evaluator.ixx"))
+    mint = ev_src.find("mint_hash_table(FlatHashTable* ht)")
+    if mint < 0:
+        fails.append("AC4: evaluator.ixx has no mint_hash_table seam")
+    else:
+        body = ev_src[mint : mint + 4000]
+        pub = body.find("g_hash_tables.push_back(ht);")
+        st = body.find("g_hash_tenants[hidx] = capability_tenant_id_;")
+        if pub == -1 or st == -1 or st < pub:
+            fails.append("AC4: mint_hash_table does not stamp the executing evaluator at the publish")
+        if "g_hash_tenants[hidx] = aura_jit_owner_capability_tenant()" in body:
+            fails.append("AC4: mint_hash_table stamps the JIT owner (#4296)")
+    vec_src = _strip_cpp_comments(_read("src/compiler/evaluator_primitives_vector.cpp"))
+    if "ev.mint_hash_table(" not in vec_src:
+        fails.append("AC4: vector hash prim does not publish through the evaluator mint seam")
+    if old_stamp in vec_src:
+        fails.append("AC4: vector hash prim still stamps the JIT owner (#4296)")
     a = rt.find('extern "C" int64_t aura_hash_alloc_tenant(int64_t owner_tenant)')
     if a == -1:
         fails.append("AC4: aura_hash_alloc_tenant C-ABI alloc seam missing")
