@@ -2728,6 +2728,16 @@ def test_nary_map_for_each_4616():
             "(define acc 0) (for-each (lambda (x y) (set! acc (+ acc x y))) (list 1 2 3) (list 10 20)) (display acc)",
             "33",
         ),
+        (
+            # purity pin: for-each is impure_general, so two identical calls
+            # must both run (not CSE'd/dropped as a pure result).
+            "for-each-impure-repeat",
+            "(define n 0)"
+            " (for-each (lambda (x) (set! n (+ n 1))) (list 1 2))"
+            " (for-each (lambda (x) (set! n (+ n 1))) (list 1 2))"
+            " (display n)",
+            "4",
+        ),
     ]
     for label, code, expected in rows:
         r = run(code)

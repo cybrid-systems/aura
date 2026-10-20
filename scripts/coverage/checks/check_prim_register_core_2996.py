@@ -109,7 +109,11 @@ def main() -> int:
     _lit = r"((?:\"[^\"]+\"\s*)+)"
     factory_re = re.compile(
         r"register_prim\s*\(\s*add\s*,\s*ev\s*,\s*\"([^\"]+)\"[\s\S]*?"
-        r"(pure_general|mutate_general|io_general)\s*\(\s*\d+\s*,\s*" + _lit + r"\s*,\s*" + _lit + r"\s*\)",
+        r"(pure_general|mutate_general|io_general|impure_general)\s*\(\s*\d+\s*,\s*"
+        + _lit
+        + r"\s*,\s*"
+        + _lit
+        + r"\s*\)",
         re.MULTILINE,
     )
 

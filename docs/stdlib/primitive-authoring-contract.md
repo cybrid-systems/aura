@@ -32,7 +32,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
 }
 ```
 
-Factories: `pure_general`, `io_general`, `mutate_general` (all in the scaffold header).
+Factories: `pure_general`, `impure_general`, `io_general`, `mutate_general` (all in the scaffold header). `impure_general` keeps the general defaults but marks the prim impure (e.g. `for-each`, which invokes its callee for effects without mutating its own arguments).
 
 ## Rules Agents must keep
 
