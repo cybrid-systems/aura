@@ -349,19 +349,36 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
     // Issue #4350: authoritative O(1) local probes (newest binding wins —
     // the same answer as a reverse scan, since every append re-points the
     // index at the new slot and erasures rebuild it).
+    // Issue #4599 follow-up: small frames keep no index maps (the per-call
+    // bind used to allocate two map nodes per parameter). A reverse scan is
+    // cheaper below the threshold and preserves newest-wins shadowing.
     auto local_binding = [n](const Env& e) -> const EvalValue* {
-        if (auto it = e.binding_index_.find(n); it != e.binding_index_.end()) {
-            const auto idx = it->second;
-            if (idx < e.bindings_.size() && e.bindings_[idx].first == n)
-                return &e.bindings_[idx].second;
+        if (!e.binding_index_.empty()) {
+            if (auto it = e.binding_index_.find(n); it != e.binding_index_.end()) {
+                const auto idx = it->second;
+                if (idx < e.bindings_.size() && e.bindings_[idx].first == n)
+                    return &e.bindings_[idx].second;
+            }
+            return nullptr;
+        }
+        for (auto it = e.bindings_.rbegin(); it != e.bindings_.rend(); ++it) {
+            if (it->first == n)
+                return &it->second;
         }
         return nullptr;
     };
     auto local_symid_binding = [](const Env& e, aura::ast::SymId s) -> const EvalValue* {
-        if (auto it = e.symid_index_.find(s); it != e.symid_index_.end()) {
-            const auto idx = it->second;
-            if (idx < e.bindings_symid_.size() && e.bindings_symid_[idx].first == s)
-                return &e.bindings_symid_[idx].second;
+        if (!e.symid_index_.empty()) {
+            if (auto it = e.symid_index_.find(s); it != e.symid_index_.end()) {
+                const auto idx = it->second;
+                if (idx < e.bindings_symid_.size() && e.bindings_symid_[idx].first == s)
+                    return &e.bindings_symid_[idx].second;
+            }
+            return nullptr;
+        }
+        for (auto it = e.bindings_symid_.rbegin(); it != e.bindings_symid_.rend(); ++it) {
+            if (it->first == s)
+                return &it->second;
         }
         return nullptr;
     };
@@ -697,7 +714,16 @@ void Env::bind_symid(aura::ast::SymId s, types::EvalValue v) {
 void Env::bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v, std::uint8_t state) {
     bindings_symid_.emplace_back(s, std::move(v));
     // Issue #4343: O(1) SymId lookup index (last-wins for shadowing).
-    symid_index_[s] = bindings_symid_.size() - 1;
+    // Issue #4599 follow-up: small frames (< 9 bindings) scan instead —
+    // no map node per call parameter.
+    if (!symid_index_.empty() || bindings_symid_.size() > 8) {
+        if (symid_index_.empty()) {
+            for (std::size_t i = 0; i < bindings_symid_.size(); ++i)
+                symid_index_[bindings_symid_[i].first] = i;
+        } else {
+            symid_index_[s] = bindings_symid_.size() - 1;
+        }
+    }
     bindings_linear_ownership_state_.push_back(state);
     // Mirror into string-keyed bindings_ so Env::lookup(name) finds
     // lambda params bound via apply_closure / Path B. Only when pool_
@@ -712,7 +738,14 @@ void Env::bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v, s
             const auto& val = bindings_symid_.back().second;
             const std::string key(name);
             bindings_.emplace_back(key, val);
-            binding_index_[key] = bindings_.size() - 1;
+            if (!binding_index_.empty() || bindings_.size() > 8) {
+                if (binding_index_.empty()) {
+                    for (std::size_t i = 0; i < bindings_.size(); ++i)
+                        binding_index_[bindings_[i].first] = i;
+                } else {
+                    binding_index_[key] = bindings_.size() - 1;
+                }
+            }
         }
     }
     // Issue #4599: only a bind on the live top env invalidates the
@@ -728,7 +761,14 @@ void Env::bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v, s
 // unsupported; do not add env_mtx_ on this hot path.
 void Env::bind_with_linear_state(std::string_view n, types::EvalValue v, std::uint8_t state) {
     bindings_.emplace_back(std::string(n), std::move(v));
-    binding_index_[bindings_.back().first] = bindings_.size() - 1;
+    if (!binding_index_.empty() || bindings_.size() > 8) {
+        if (binding_index_.empty()) {
+            for (std::size_t i = 0; i < bindings_.size(); ++i)
+                binding_index_[bindings_[i].first] = i;
+        } else {
+            binding_index_[bindings_.back().first] = bindings_.size() - 1;
+        }
+    }
     // Keep SymId SoA + linear state in lockstep when pool is set.
     if (pool_) {
         // pool_ is const*; intern mutates the pool. StringPool::intern
@@ -736,8 +776,15 @@ void Env::bind_with_linear_state(std::string_view n, types::EvalValue v, std::ui
         // pool mutation externally (single-fiber eval / workspace lock).
         auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
         bindings_symid_.emplace_back(s, bindings_.back().second);
-        // Issue #4343: O(1) SymId lookup index.
-        symid_index_[s] = bindings_symid_.size() - 1;
+        // Issue #4343: O(1) SymId lookup index (small frames scan).
+        if (!symid_index_.empty() || bindings_symid_.size() > 8) {
+            if (symid_index_.empty()) {
+                for (std::size_t i = 0; i < bindings_symid_.size(); ++i)
+                    symid_index_[bindings_symid_[i].first] = i;
+            } else {
+                symid_index_[s] = bindings_symid_.size() - 1;
+            }
+        }
         bindings_linear_ownership_state_.push_back(state);
     }
     // Issue #4599: same top_-only generation bump as bind_symid.
@@ -759,8 +806,10 @@ bool Env::unbind_local(std::string_view n) {
     }
     if (removed) {
         binding_index_.clear();
-        for (std::size_t j = 0; j < bindings_.size(); ++j)
-            binding_index_[bindings_[j].first] = j;
+        if (bindings_.size() > 8) {
+            for (std::size_t j = 0; j < bindings_.size(); ++j)
+                binding_index_[bindings_[j].first] = j;
+        }
         // Issue #4599: dropping a top-level name un-shadows a prim.
         if (owner_ != nullptr && this == &owner_->top_env())
             owner_->note_top_binding_changed();
@@ -778,8 +827,10 @@ bool Env::unbind_local_symid(aura::ast::SymId s) {
                                                        static_cast<std::ptrdiff_t>(i - 1));
             // Issue #4343: indices shifted — rebuild the O(1) index.
             symid_index_.clear();
-            for (std::size_t k = 0; k < bindings_symid_.size(); ++k)
-                symid_index_[bindings_symid_[k].first] = k;
+            if (bindings_symid_.size() > 8) {
+                for (std::size_t k = 0; k < bindings_symid_.size(); ++k)
+                    symid_index_[bindings_symid_[k].first] = k;
+            }
             removed = true;
             break;
         }

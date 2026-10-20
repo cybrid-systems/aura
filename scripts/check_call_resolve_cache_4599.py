@@ -296,6 +296,34 @@ def main() -> int:
     )
 
     # ── AC8: wiring ─────────────────────────────────────────────────
+    # AC11: phase 4 — the SymId-side deref direction. A define-bound cell
+    # lives on top_'s SymId side while the string walk's live-top consult
+    # dereferences it. Without this direction the CallNoPrim store refused
+    # on every visit (a pool resolve + env walk + prim probe per call).
+    must(
+        "!agrees && bound.has_value() && is_cell(*tv)" in cnp and "cells_[ci] == *bound" in cnp,
+        "AC11: CallNoPrim store derefs the top SymId cell before refusing",
+    )
+    rrv2 = _between(efl, "void Evaluator::remember_resolved_var", "void Evaluator::remember_prim_call")
+    must(
+        "note_agreed" in rrv2 and "if (is_cell(raw))" in rrv2 and "cells_[ci] == bound" in rrv2,
+        "AC11: cell-aware variable store accepts either raw face",
+    )
+
+    # AC12: small frames keep no index maps. The per-call bind used to
+    # allocate two unordered_map nodes per parameter. Frames at or below
+    # 8 bindings scan instead; every reader falls back to that scan.
+    must(
+        "bindings_symid_.size() > 8" in bind_sym
+        and "binding_index_.empty()" in bind_str
+        and "bindings_.size() > 8" in bind_str,
+        "AC12: small-frame binds skip the SymId / name index maps",
+    )
+    must(
+        "if (!e.binding_index_.empty())" in env and "if (!e.symid_index_.empty())" in env,
+        "AC12: local lookups branch on the index or reverse-scan",
+    )
+
     must("check_call_resolve_cache_4599.py" in build, "AC8: build.py registers the linter")
     must("check_call_resolve_cache_4599.py" in allow, "AC8: root_check_allowlist.txt lists the linter")
 
