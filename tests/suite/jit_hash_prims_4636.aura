@@ -1,0 +1,18 @@
+;; expect: 1 0 0 7 1
+;; Issue #4636: --jit hash? / make-hash / hash-ref / hash-set! family must match eval.
+;; (the prior JIT path died SIGSEGV on (make-hash) on the base pre-#4606 binary;
+;; after the #4606 refuse arm the JIT run reported "cannot call: make-hash"
+;; while eval printed 1. The bug is reproduced under --ir today.)
+(display
+  (list
+    (if (hash? (make-hash)) 1 0)
+    (if (hash? 42) 1 0)
+    (hash-length (make-hash))
+    (let ((h (make-hash)))
+      (hash-set! h "k" 7)
+      (hash-ref h "k" 0))
+    (hash-length
+      (let ((h (make-hash)))
+        (hash-set! h "k" 7)
+        h))))
+(newline)
