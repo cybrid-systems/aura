@@ -2656,6 +2656,103 @@ def test_jit_unbound_callee_4607():
     print(f"  ✅ test_jit_unbound_callee_4607 ({len(rows)} unbound rows x eval/ir/jit + never-reached parity)")
 
 
+def test_nary_map_for_each_4616():
+    """Issue #4616: R7RS n-ary map/for-each.
+
+    map used to read only its first list argument and silently drop the
+    rest: (map f xs ys) called f with one argument, so a two-parameter
+    lambda returned () / 0 / a partial procedure. for-each (std/list) was
+    a two-parameter closure and raised an arity error on the second list.
+    Both now walk every list in lockstep and stop at the shortest (R7RS).
+    Non-list arguments and a missing list are explicit errors.
+    """
+
+    def run(code, timeout=30):
+        env = os.environ.copy()
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "0"
+        return subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=timeout, env=env)
+
+    rows = [
+        # label, program, expected stdout
+        (
+            "map2-sum",
+            "(display (map (lambda (x y) (+ x y)) (list 1 2 3) (list 10 20 30)))",
+            "(11 22 33)",
+        ),
+        (
+            "map2-cons",
+            '(display (map cons (list 1 2) (list "a" "b")))',
+            "((1 . a) (2 . b))",
+        ),
+        (
+            "map2-list",
+            "(display (map list (list 1 2) (list 3 4)))",
+            "((1 3) (2 4))",
+        ),
+        (
+            "map2-named",
+            "(define (f x y) (* x y)) (display (map f (list 2 3) (list 5 7)))",
+            "(10 21)",
+        ),
+        (
+            "map2-shortest",
+            "(display (map + (list 1 2 3) (list 10 20)))",
+            "(11 22)",
+        ),
+        (
+            "map3-sum",
+            "(display (map + (list 1 2) (list 10 20) (list 100 200)))",
+            "(111 222)",
+        ),
+        (
+            "map1-unchanged",
+            "(display (map (lambda (x) (* x 2)) (list 1 2 3)))",
+            "(2 4 6)",
+        ),
+        (
+            "map2-empty-shortest",
+            "(display (map + (list) (list 1 2)))",
+            "()",
+        ),
+        (
+            "for-each-2-lists",
+            "(define acc (list))"
+            " (for-each (lambda (x y) (set! acc (cons (+ x y) acc))) "
+            "(list 1 2) (list 10 20)) "
+            "(display acc)",
+            "(22 11)",
+        ),
+        (
+            "for-each-2-shortest",
+            "(define acc 0) (for-each (lambda (x y) (set! acc (+ acc x y))) (list 1 2 3) (list 10 20)) (display acc)",
+            "33",
+        ),
+    ]
+    for label, code, expected in rows:
+        r = run(code)
+        assert r.returncode == 0, f"{label}: rc={r.returncode} err={(r.stderr or '')[-300:]!r}"
+        got = (r.stdout or "").strip()
+        assert got == expected, f"{label}: expected {expected!r}, got {got!r}"
+    # Explicit errors instead of silently dropping the offending argument.
+    err_rows = [
+        ("map-non-list", "(display (map + (list 1) 5))", "map: argument 3 is not a list"),
+        ("map-too-few", "(display (map +))", "map: too few args"),
+        (
+            "for-each-non-list",
+            "(display (for-each display 7))",
+            "for-each: argument 2 is not a list",
+        ),
+        ("for-each-too-few", "(display (for-each display))", "for-each: too few args"),
+    ]
+    for label, code, needle in err_rows:
+        r = run(code)
+        err = r.stderr or ""
+        assert r.returncode != 0, f"{label}: rc=0, expected an error (out={r.stdout!r})"
+        assert needle in err, f"{label}: expected {needle!r} in {err[-300:]!r}"
+    print(f"  ✅ test_nary_map_for_each_4616 ({len(rows)} value rows + {len(err_rows)} error rows)")
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -2676,6 +2773,7 @@ for tf in [
     test_jit_tier_differential_4574,
     test_jit_unbound_callee_4607,
     test_cfunc_budget_4555,
+    test_nary_map_for_each_4616,
     test_jit,
     test_mutation_sequences,
     test_freeze_load,

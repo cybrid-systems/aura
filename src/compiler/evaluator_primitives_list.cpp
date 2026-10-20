@@ -686,87 +686,153 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return result;
         },
         pure_general(1, "(list) -> list", "Reverse a proper list."));
-    register_prim(
-        add, ev, "map",
-        [&pairs, &string_heap, &error_values, apply_unary, &ev](std::span<const EvalValue> a) {
-            // (map func list) — apply func to each element, collect results
-            if (a.size() < 2) {
-                return make_primitive_error(string_heap, error_values, "map: too few args",
-                                            ev.primitive_error_counter_ptr());
-            }
-            if (is_void(a[1]))
+    // Issue #4616: R7RS n-ary map/for-each. A map call may carry more than
+    // one list; the old body read only a[1] and silently dropped a[2..],
+    // so (map f xs ys) called f with one argument. For-each lived only in
+    // std/list as a two-parameter closure and raised an arity error on the
+    // second list. Both walk every list in lockstep and stop at the
+    // shortest one (R7RS).
+    auto apply_n = [&ev](const EvalValue& fn, std::span<const EvalValue> args,
+                         bool list_hotpath = false) -> EvalValue {
+        // Issue #4228: deref define-cells before dispatch.
+        EvalValue callee = fn;
+        if (is_cell(callee)) {
+            auto ci = as_cell_id(callee);
+            if (ci < ev.cells().size())
+                callee = ev.cells()[ci];
+            else
                 return make_void();
-            if (!is_pair(a[1])) {
-                return make_primitive_error(string_heap, error_values, "map: not a list",
-                                            ev.primitive_error_counter_ptr());
-            }
-
-            // Issue #2997: snapshot under lock, apply outside, one construct CS.
-            std::vector<EvalValue> cars;
-            {
-                Evaluator::ListCtorLockHold hold(ev);
-                auto current = a[1];
+        }
+        if (is_primitive(callee)) {
+            auto slot = as_primitive_slot(callee);
+            ev.bump_primitives_apply_lookup_hits();
+            auto prim = ev.primitives_.slot_lookup_fast(slot);
+            if (!prim)
+                return make_void();
+            ev.bump_primitives_apply_fastpath_wins();
+            ev.bump_list_intrinsic_dispatches();
+            if (list_hotpath)
+                ev.bump_list_soa_hits();
+            primitives_detail::prim_record_fastpath_hit_for_slot(
+                static_cast<CompilerMetrics*>(ev.compiler_metrics()), slot);
+            return (*prim)(args);
+        }
+        if (is_closure(callee)) {
+            auto cid = as_closure_id(callee);
+            ev.bump_primitives_apply_closure_calls();
+            if (list_hotpath)
+                ev.bump_list_estimated_cache_misses();
+            auto result = ev.apply_closure(cid, args);
+            return result ? *result : make_void();
+        }
+        return make_void();
+    };
+    // Snapshot the cars of every list argument, then apply the procedure to
+    // the k-th tuple. Returns the mapped list (collect) or void (for-each).
+    auto walk_lists = [&pairs, &string_heap, &error_values, apply_n, &ev](
+                          std::span<const EvalValue> a, const char* op, bool collect) -> EvalValue {
+        if (a.size() < 2) {
+            return make_primitive_error(string_heap, error_values,
+                                        std::string(op) + ": too few args",
+                                        ev.primitive_error_counter_ptr());
+        }
+        const std::size_t nlists = a.size() - 1;
+        // Issue #2997: snapshot every list under one lock, apply outside.
+        // Issue #4505: deny before the snapshot copies a foreign car.
+        std::vector<EvalValue> flat;
+        std::vector<std::size_t> offs(nlists + 1, 0);
+        {
+            Evaluator::ListCtorLockHold hold(ev);
+            for (std::size_t i = 0; i < nlists; ++i) {
+                auto current = a[i + 1];
+                if (!is_end_of_list(current) && !is_pair(current)) {
+                    return make_primitive_error(string_heap, error_values,
+                                                std::string(op) + ": argument " +
+                                                    std::to_string(i + 2) + " is not a list",
+                                                ev.primitive_error_counter_ptr());
+                }
                 while (is_pair(current)) {
                     auto idx = as_pair_idx(current);
                     if (idx >= pairs.size())
                         break;
-                    // Issue #4505: deny before the snapshot copies a foreign
-                    // car (the mapped fn would otherwise observe it).
                     if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
-                                                       /*required_effects=*/0, "map")) {
+                                                       /*required_effects=*/0, op)) {
                         return make_primitive_error(
                             string_heap, error_values,
-                            "map: cross-tenant pair slot read denied (#4505)",
+                            std::string(op) + ": cross-tenant pair slot read denied (#4505)",
                             ev.primitive_error_counter_ptr());
                     }
-                    cars.push_back(pairs[idx].car);
+                    flat.push_back(pairs[idx].car);
                     current = pairs[idx].cdr;
                     ev.bump_list_chain_traversals();
                     ev.bump_list_estimated_cache_misses();
                 }
+                offs[i + 1] = flat.size();
             }
-            std::vector<EvalValue> mapped;
-            mapped.reserve(cars.size());
-            // Issue #4480: cars/mapped are the only roots for the row results
-            // while the mapped procedure runs. The tree-walker safepoint
-            // marks envs and pinned temporaries only, so an unpinned
-            // accumulator lets a reclaim inside a nested user-procedure call
-            // freelist the already computed row pairs; the later row mints
-            // and this outer-chain build then recycle those slots while map
-            // still holds them — the returned list aliases live rows.
-            const Evaluator::TwVecPin pin_cars(cars);
-            const Evaluator::TwVecPin pin_mapped(mapped);
-            for (const auto& car : cars) {
-                // Issue #4586: a callback error must leave map. Consing it
-                // prints <unknown> and try never sees an error value.
-                auto one = apply_unary(a[0], car, true);
-                if (is_error(one))
-                    return one;
+        }
+        std::size_t n = offs[1];
+        for (std::size_t i = 1; i < nlists; ++i)
+            n = std::min(n, offs[i + 1] - offs[i]);
+        std::vector<EvalValue> tuple(nlists);
+        std::vector<EvalValue> mapped;
+        if (collect)
+            mapped.reserve(n);
+        // Issue #4480: flat/tuple/mapped are the only roots for the row
+        // results while the callback runs; pin them across the call.
+        const Evaluator::TwVecPin pin_flat(flat);
+        const Evaluator::TwVecPin pin_tuple(tuple);
+        const Evaluator::TwVecPin pin_mapped(mapped);
+        for (std::size_t k = 0; k < n; ++k) {
+            for (std::size_t i = 0; i < nlists; ++i)
+                tuple[i] = flat[offs[i] + k];
+            // Issue #4586: a callback error must leave the walk.
+            auto one = apply_n(a[0], tuple, true);
+            if (is_error(one))
+                return one;
+            if (collect)
                 mapped.push_back(std::move(one));
+        }
+        if (!collect || n == 0)
+            return make_void();
+        Evaluator::ListCtorLockHold hold(ev);
+        // Issue #4473: per-mint quota inside mint_pair (freelist hits do
+        // not count) replaces the pairs.size()+n pre-check.
+        pairs.reserve(monotonic_pairs_reserve_cap(pairs.size(), pairs.capacity(), n));
+        EvalValue result = make_void();
+        for (auto it = mapped.rbegin(); it != mapped.rend(); ++it) {
+            const auto id = ev.mint_pair(*it, result, /*check_quota=*/true);
+            if (id == Evaluator::kFileHeapMintDenied) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                    ev.primitive_error_counter_ptr());
             }
-
-            Evaluator::ListCtorLockHold hold(ev);
-            const auto n = mapped.size();
-            if (n == 0)
-                return make_void();
-            // Issue #4473: per-mint quota inside mint_pair (freelist hits do
-            // not count) replaces the pairs.size()+n pre-check.
-            pairs.reserve(monotonic_pairs_reserve_cap(pairs.size(), pairs.capacity(), n));
-            EvalValue result = make_void();
-            for (auto it = mapped.rbegin(); it != mapped.rend(); ++it) {
-                const auto id = ev.mint_pair(*it, result, /*check_quota=*/true);
-                if (id == Evaluator::kFileHeapMintDenied) {
-                    return make_primitive_error(
-                        string_heap, error_values,
-                        std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
-                        ev.primitive_error_counter_ptr());
-                }
-                result = make_pair(id);
-            }
-            ev.bump_pair_alloc_count_n(static_cast<std::uint64_t>(n));
-            return result;
+            result = make_pair(id);
+        }
+        ev.bump_pair_alloc_count_n(static_cast<std::uint64_t>(n));
+        return result;
+    };
+    register_prim(
+        add, ev, "map",
+        [walk_lists](std::span<const EvalValue> a) {
+            return walk_lists(a, "map", /*collect=*/true);
         },
-        pure_general(2, "(fn list) -> list", "Apply fn to each element; collect results."));
+        pure_general(255, "(fn list ...) -> list",
+                     "Apply fn to the k-th element of every list; stop at the shortest."));
+    {
+        auto spec = pure_general(255, "(fn list ...) -> unspecified",
+                                 "Apply fn to the k-th element of every list for effect; "
+                                 "stop at the shortest.");
+        // for-each runs fn for its effects; the scaffold's pure_general default
+        // is a discovery hint, so mark it impure explicitly.
+        spec.pure = false;
+        register_prim(
+            add, ev, "for-each",
+            [walk_lists](std::span<const EvalValue> a) {
+                return walk_lists(a, "for-each", /*collect=*/false);
+            },
+            spec);
+    }
     register_prim(
         add, ev, "filter",
         [&pairs, &string_heap, &error_values, apply_pred, &ev](std::span<const EvalValue> a) {

@@ -26,10 +26,10 @@
 ; foldr f init (a b c) ≡ f(a, f(b, f(c, init)))
 (define (foldr f init lst)
   (foldl (lambda (acc x) (f x acc)) init (reverse lst)))
-(define (for-each f lst)
-  (let loop ((xs lst))
-    (if (null? xs) #t
-      (begin (f (car xs)) (loop (cdr xs))))))
+
+; for-each is the native n-ary primitive (Issue #4616). The former
+; two-parameter Scheme definition shadowed it after this module loaded and
+; rejected every extra list at the closure arity check.
 
 (define (member? elem lst)
   (let loop ((xs lst))
