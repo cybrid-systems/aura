@@ -4,6 +4,15 @@
 // (#3395 / #3286); the write/query helpers must accept it without
 // dropping provenance through a raw NodeId restamp.
 //
+// Issue #4654: node id 0 is a REAL node. FlatAST::add_node returns
+// tag_.size() when the free list is empty, so the first node a program
+// allocates is id 0 (parse_expr adds the literal before add_define).
+// NULL_NODE is ~0u, NOT 0 - the schema-2 occupancy block used to be
+// skipped for every id-0 match (the old id-0 guard), so a later
+// generation change still resolved as Fresh and the mutate write path
+// took the current occupant. Only a match that carries NO node (~0u)
+// skips the block now: id 0 takes the same checks as any other id.
+//
 // Include AFTER `module aura.compiler.evaluator;` (+ value / ast imports)
 // so Pair / EvalValue / FlatAST are in scope.
 
@@ -85,10 +94,13 @@ query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::a
             // not whole-table mutation_id_at_capture / hash mutation-epoch /
             // bridge-epoch (Agent hash-field compare is not the operand
             // SSOT; a reused NodeId with equal Mutation epoch is stale).
-            if (m.node_id != 0) {
+            if (m.node_id != static_cast<std::uint32_t>(aura::ast::NULL_NODE)) {
                 const auto nid = static_cast<aura::ast::NodeId>(m.node_id);
                 if (!flat.is_live_node(nid))
                     return aura::core::QueryResultFreshness::StaleByEpoch;
+                // Issue #4654: id 0 is a REAL node (NULL_NODE is ~0u, not 0)
+                // - it takes the same occupancy checks as every other id
+                // (the file header carries the full rationale).
                 // Issue #3989: leftover-unless-eager (reuse #3451 stale
                 // counter). Overflow skips the eager accept (#3426).
                 if (leftover_face && (aura::ast::restamp_hot_cone_held_overflow() ||

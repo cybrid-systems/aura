@@ -1,0 +1,44 @@
+{
+  "issue": 4654,
+  "title": "node id 0 is a real node: same occupancy checks + same effect gate",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/query_result_decode.hh",
+      "contains": [
+        "Issue #4654",
+        "m.node_id != static_cast<std::uint32_t>(aura::ast::NULL_NODE)",
+        "flat.node_gen_for(nid) != m.generation"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "Issue #4654",
+        "bool has_target = false;",
+        "if (has_target) {",
+        "require_effect_for_node_id",
+        "require_effect_on_ref"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_query_result_full_provenance.cpp",
+      "contains": [
+        "Issue #4654",
+        "test_ac4654_1_node_zero_match_same_occupancy_checks",
+        "test_ac4654_2_prod_node_zero_query_mutate_loop_goes_stale",
+        "test_ac4654_3_source_cite"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_4654.cpp",
+        "tests/issues/test_issue_4654.cpp",
+        "docs/design/4654-node-zero-occupancy.md"
+      ]
+    }
+  ]
+}
