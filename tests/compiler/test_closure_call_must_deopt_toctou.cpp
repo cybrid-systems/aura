@@ -93,6 +93,25 @@ static std::string find_path(const std::string& rel) {
 }
 
 // ── AC3: baseline force-deopt still works for same identity ──
+// Issue #4636: the blessed dispatch entry body, scoped by its own source
+// boundaries instead of a fixed byte count. Every guard arm that lands
+// ahead of the consume block pushes the later markers further down (the
+// #4606 and #4636 refuse arms each moved them), so a fixed window
+// silently clipped a needle out of range: the freed-closure arm sits at
+// entry+4010 while the old window ended at entry+4000, and
+// ac4636_1_order2 failed on correct code. The forward wrapper
+// (aura_closure_call) is the stable end anchor - the same entry->wrapper
+// pair the #3635 linter scopes its own window with.
+static std::string blessed_entry_body(const std::string& rt) {
+    const auto entry = rt.find("int64_t aura_closure_dispatch_native_checked(");
+    if (entry == std::string::npos)
+        return {};
+    const auto wrapper = rt.find("int64_t aura_closure_call(int64_t closure_id", entry);
+    if (wrapper == std::string::npos)
+        return {};
+    return rt.substr(entry, wrapper - entry);
+}
+
 static void ac3_baseline_force_deopt() {
     std::println("\n--- #2472 AC3: baseline force-deopt same identity ---");
     aura_reset_runtime();
@@ -220,7 +239,7 @@ static void ac4_source_cite() {
         // Issue #4636: the native-dispatch cycle guard (the refuse for a
         // callee that re-enters the innermost native activation, also
         // ahead of the consume block) moved them further — same rule.
-        const auto body = rt.substr(call, 12000);
+        const auto body = blessed_entry_body(rt);
         CHECK(body.find("Issue #2472") != std::string::npos, "AC4: #2472 in MustDeopt path");
         CHECK(body.find("g_closure_freed") != std::string::npos,
               "AC4: freed re-check in MustDeopt exclusive");
@@ -483,7 +502,7 @@ static void ac4606_source_cite() {
     const auto entry = rt.find("int64_t aura_closure_dispatch_native_checked(");
     CHECK(entry != std::string::npos, "ac4606_3_entry: blessed dispatch entry present");
     if (entry != std::string::npos) {
-        const auto body = rt.substr(entry, 6500);
+        const auto body = blessed_entry_body(rt);
         const auto arm = body.find("Issue #4606");
         CHECK(arm != std::string::npos, "ac4606_3_cite: #4606 refuse arm inside the entry");
         CHECK(body.find("aura::compiler::types::is_ref(closure_id)") != std::string::npos,
@@ -533,7 +552,7 @@ static void ac4636_cycle_guard() {
     const auto entry = rt.find("int64_t aura_closure_dispatch_native_checked(");
     CHECK(entry != std::string::npos, "ac4636_1_entry: blessed dispatch entry present");
     if (entry != std::string::npos) {
-        const auto body = rt.substr(entry, 4000);
+        const auto body = blessed_entry_body(rt);
         const auto cite = body.find("Issue #4636");
         CHECK(cite != std::string::npos, "ac4636_1_cite: #4636 guard inside the entry");
         CHECK(body.find("g_native_self_id") != std::string::npos,
