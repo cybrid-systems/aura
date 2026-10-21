@@ -3404,6 +3404,191 @@ static void ac4153_6_source_cite_invalidate_shape() {
           "4153: no docs/design");
 }
 
+
+// ── Issue #4650: a latched remount-last-zero strip must not be retired by
+// an explicit-outcome stamp (steal-complete / densify Phase-5) ──
+static void ac4650_1_latched_stamp_cannot_regreen() {
+    std::println("\n--- #4650 AC1: latched strip vetoes the explicit-outcome green stamp ---");
+    using namespace aura::compiler::typed_audit;
+    reset_for_test();
+    apply_production_audit_defaults();
+    clear_type_linear_proof_outcome_for_test();
+    clear_type_linear_commit_proof_for_test();
+    reset_rehydrate_miss_invalidate_for_test();
+    clear_refined_consistency_drift_for_test();
+    reset_pending_full_solve_residual_for_test();
+    clear_cone_outside_goal_drop_for_test();
+    clear_occurrence_empty_after_fence_for_test();
+    aura_typed_audit_clear_readiness_evaluator();
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+    // A green face, then the background hygiene strip (remount last==0).
+    publish_last_proof_face(true, true);
+    stamp_type_linear_commit_proof(1);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    {
+        const auto cr = commit_readiness(commit_readiness_live_policy());
+        CHECK(cr.would_allow_commit, "4650 AC1: green before the strip allows");
+    }
+    strip_green_face_on_remount_last_zero();
+    CHECK(remount_last_zero_strip_face_v_read() == 1, "4650 AC1: strip latch latched");
+    CHECK(last_proof_would_allow_commit_v_read() == 0, "4650 AC1: green face dropped");
+    CHECK(last_type_linear_proof_outcome_v_read() == kTypeLinearProofOutcomeQuiet,
+          "4650 AC1: outcome Quiet after the strip");
+    // The later stamp path (steal-complete / densify Phase-5) asks for an
+    // explicit green proof. While the strip latch is set it must not get one.
+    const auto proof = build_type_linear_commit_proof_from_live_with_outcome(
+        7, /*would_allow_commit=*/true, /*linear_ok=*/true);
+    CHECK(remount_last_zero_strip_face_v_read() == 1,
+          "4650 AC1: latch NOT retired by the explicit stamp");
+    CHECK(last_proof_would_allow_commit_v_read() == 0, "4650 AC1: no green face published");
+    CHECK(last_proof_linear_ok_v_read() == 0, "4650 AC1: no linear_ok published");
+    CHECK(g_rehydrate_miss_green_bind_gen.load(std::memory_order_acquire) !=
+              rehydrate_miss_invalidate_gen_v_read(),
+          "4650 AC1: green bind gen NOT rebound");
+    CHECK(!proof.would_allow_commit, "4650 AC1: proof denied");
+    CHECK(!proof.linear_ok, "4650 AC1: proof linear_ok denied");
+    CHECK(proof.force_reason_code == static_cast<std::uint32_t>(kRemountLastZeroForceReasonCode),
+          "4650 AC1: force_reason 17");
+    CHECK(last_type_linear_proof_outcome_v_read() != kTypeLinearProofOutcomeReject,
+          "4650 AC1: no process-global Reject");
+    // The live policy keeps observing the latch → deny (force_reason 17).
+    const auto in = commit_readiness_live_policy();
+    CHECK(in.remount_last_zero_strip, "4650 AC1: live policy still observes the latch");
+    const auto cr = commit_readiness(in);
+    CHECK(!cr.would_allow_commit, "4650 AC1: live policy denies");
+    CHECK(cr.force_reason_code == kRemountLastZeroForceReasonCode,
+          "4650 AC1: live force_reason 17");
+    // IR/JIT entry at depth>0 must refuse while the latch is set.
+    g_linear_ir_fastpath_boundary_depth_override = 1;
+    CHECK(!ir_typed_entry_commit_readiness_ok(),
+          "4650 AC1: depth>0 typed entry refused while latched");
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+    apply_dev_audit_defaults();
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+    reset_for_test();
+}
+
+static void ac4650_2_latch_retire_is_deferred_green_only() {
+    std::println("\n--- #4650 AC2: only the deferred green commit retires the latch ---");
+    using namespace aura::compiler::typed_audit;
+    reset_for_test();
+    apply_production_audit_defaults();
+    clear_type_linear_proof_outcome_for_test();
+    clear_type_linear_commit_proof_for_test();
+    reset_rehydrate_miss_invalidate_for_test();
+    clear_refined_consistency_drift_for_test();
+    reset_pending_full_solve_residual_for_test();
+    clear_cone_outside_goal_drop_for_test();
+    clear_occurrence_empty_after_fence_for_test();
+    aura_typed_audit_clear_readiness_evaluator();
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+    strip_green_face_on_remount_last_zero();
+    CHECK(remount_last_zero_strip_face_v_read() == 1, "4650 AC2: strip latch latched");
+    // The live builder must not retire the latch either (#4081 stays closed):
+    // only commit_deferred_outermost_green_proof (a live commit_readiness
+    // allow) publishes the green that clears it.
+    (void)build_type_linear_commit_proof_from_live(1);
+    CHECK(remount_last_zero_strip_face_v_read() == 1,
+          "4650 AC2: live builder does not retire the latch");
+    // Arm the deferred green exactly as the outermost persist defer does.
+    g_tls_deferred_outermost_green_would_allow = 1;
+    g_tls_deferred_outermost_green_linear_ok = 1;
+    g_tls_deferred_outermost_green_invalidate_gen = rehydrate_miss_invalidate_gen_v_read();
+    g_tls_deferred_outermost_green_live_goals = 0;
+    g_tls_deferred_outermost_green_fp = 0;
+    g_tls_deferred_outermost_green_linear_roots =
+        static_cast<std::uint64_t>(aura::compiler::linear_or_dirty_roots_count_for_rebind());
+    g_tls_deferred_outermost_green_mid = 0;
+    CHECK(commit_deferred_outermost_green_proof(), "4650 AC2: deferred green commits");
+    CHECK(remount_last_zero_strip_face_v_read() == 0, "4650 AC2: deferred green retires the latch");
+    CHECK(last_proof_would_allow_commit_v_read() == 1, "4650 AC2: green face published");
+    apply_dev_audit_defaults();
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+    reset_for_test();
+}
+
+static void ac4650_3_soft_no_veto() {
+    std::println("\n--- #4650 AC3: Soft / Off never latch the strip ---");
+    using namespace aura::compiler::typed_audit;
+    reset_for_test();
+    apply_dev_audit_defaults();
+    clear_type_linear_proof_outcome_for_test();
+    clear_type_linear_commit_proof_for_test();
+    reset_rehydrate_miss_invalidate_for_test();
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+    strip_green_face_on_remount_last_zero();
+    CHECK(remount_last_zero_strip_face_v_read() == 0, "4650 AC3: Soft never latches the strip");
+    // A stale latch byte left by a production member must not veto a Soft
+    // stamp: the veto is gated on the production hard face.
+    g_remount_last_zero_strip_face.store(1, std::memory_order_relaxed);
+    const auto proof = build_type_linear_commit_proof_from_live_with_outcome(
+        9, /*would_allow_commit=*/true, /*linear_ok=*/true);
+    CHECK(proof.would_allow_commit, "4650 AC3: Soft stamp is not vetoed");
+    CHECK(last_proof_would_allow_commit_v_read() == 1,
+          "4650 AC3: Soft publishes the green face (the veto is production-only)");
+    apply_dev_audit_defaults();
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+    reset_for_test();
+}
+
+static void ac4650_4_join_lcp_deny_drops_green() {
+    std::println("\n--- #4650 AC4: the join LCP-deny return drops the green face ---");
+    using namespace aura::compiler::typed_audit;
+    reset_for_test();
+    apply_production_audit_defaults();
+    clear_type_linear_proof_outcome_for_test();
+    clear_type_linear_commit_proof_for_test();
+    reset_rehydrate_miss_invalidate_for_test();
+    aura_typed_audit_clear_readiness_evaluator();
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+    // A green face written earlier in the same function.
+    publish_last_proof_face(true, true);
+    stamp_type_linear_commit_proof(1);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    CHECK(last_proof_would_allow_commit_v_read() == 1, "4650 AC4: green face before the deny");
+    // The LCP-deny drop: face + green bind gen dropped, outcome Quiet.
+    drop_type_linear_green_face_quiet();
+    CHECK(last_proof_would_allow_commit_v_read() == 0, "4650 AC4: green face dropped");
+    CHECK(last_proof_linear_ok_v_read() == 0, "4650 AC4: linear_ok dropped");
+    CHECK(g_rehydrate_miss_green_bind_gen.load(std::memory_order_acquire) !=
+              rehydrate_miss_invalidate_gen_v_read(),
+          "4650 AC4: green bind gen not rebound");
+    CHECK(last_type_linear_proof_outcome_v_read() == kTypeLinearProofOutcomeQuiet,
+          "4650 AC4: outcome Quiet (no process-global Reject)");
+    // The join path must call the drop on the LCP-deny return. Anchor the
+    // window on the deny branch itself, not on the first mention of the
+    // epoch symbol (that mention sits in the #3308 comment above the
+    // branch), so the row really ties the drop to the refusing branch.
+    const auto fib = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(fib.find("g_lcp_last_mutation_epoch") != std::string::npos,
+          "4650 AC4: LCP re-consult present");
+    const auto lcp = fib.find("last_epoch != 0 && !last_would_allow");
+    CHECK(lcp != std::string::npos, "4650 AC4: LCP deny branch present");
+    const auto win = lcp == std::string::npos ? std::string{} : fib.substr(lcp, 1400);
+    CHECK(win.find("drop_type_linear_green_face_quiet") != std::string::npos,
+          "4650 AC4: LCP-deny return drops the green face");
+    apply_dev_audit_defaults();
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+    reset_for_test();
+}
+
+static void ac4650_5_source_cite() {
+    std::println("\n--- #4650 AC5: source-cite, no new query key / counter ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("Issue #4650") != std::string::npos,
+          "4650 AC5: issue cited in the audit header");
+    CHECK(tma.find("remount_last_zero_strip_latched") != std::string::npos,
+          "4650 AC5: latch predicate exists");
+    CHECK(tma.find("drop_type_linear_green_face_quiet") != std::string::npos,
+          "4650 AC5: quiet green drop helper exists");
+    CHECK(tma.find("schema-4650") == std::string::npos, "4650 AC5: no new query key");
+    CHECK(tma.find("kRemountLastZeroForceReasonCode") != std::string::npos,
+          "4650 AC5: reuses the existing force-reason code");
+    CHECK(read_file("tests/compiler/test_issue_4650.cpp").empty(), "4650 AC5: no invent");
+    CHECK(read_file("docs/design/4650-remount-strip-green-veto.md").empty(),
+          "4650 AC5: no docs/design");
+}
+
 } // namespace
 
 int run_test_type_linear_commit_health() {
@@ -3652,6 +3837,14 @@ int run_test_type_linear_commit_health() {
     ac3577_3_allowlist_reason_source_cite();
     ac3577_4_linter_3448_not_regressed();
     ac3577_soak_typed_audit_face();
+    // Issue #4650: a latched remount-last-zero strip is not retired by an
+    // explicit-outcome stamp; the join LCP-deny return drops the green face.
+    std::println("\n=== Issue #4650: remount-last-zero strip vetoes the green stamp ===");
+    ac4650_1_latched_stamp_cannot_regreen();
+    ac4650_2_latch_retire_is_deferred_green_only();
+    ac4650_3_soft_no_veto();
+    ac4650_4_join_lcp_deny_drops_green();
+    ac4650_5_source_cite();
     std::println("\n=== #2613 + #2697 + #2717 + #2758 + #2842 + #2897 + #2911 + #2981 + #2984 + "
                  "#2995 + #3030 + #3031 + #3032 + #3091 + #3577 + #3591: {} "
                  "passed, {} "
