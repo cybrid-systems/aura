@@ -14,6 +14,7 @@
 #include <cstring>
 #include <filesystem>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -29,6 +30,10 @@ inline constexpr char kAuditWalMagic[8] = {'A', 'U', 'R', 'A', 'W', 'A', 'L', '1
 inline constexpr std::uint32_t kAuditWalVersion = 1;
 // Default rotate after ~1 MiB of records (keeps segments small).
 inline constexpr std::uint64_t kDefaultRotateBytes = 1ull << 20;
+// Issue #4641: stdio buffer size of one live segment. The enable swap
+// opens the new segment while the old one is still live, so each stream
+// needs its own buffer (two live FILE* must never share one).
+inline constexpr std::size_t kSegmentBufferBytes = 64 * 1024;
 
 // Issue #3465: v1 body (pre-reason tail). Readers of old segments
 // consume this many bytes and leave reason[] empty → wal-replay-legacy.
@@ -136,6 +141,12 @@ struct MutationAuditWal {
     std::string dir;
     std::string current_path;
     std::FILE* fp = nullptr;
+    // Issue #4641: stdio buffer owned by `fp` when the segment was opened
+    // by the enable swap (open_segment_at). The rotate / retry path keeps
+    // the shared static buffer. Two live segments must never share one
+    // stdio buffer (undefined behaviour) — the enable swap briefly has the
+    // old segment and the new one open at the same time.
+    char* fp_buf_ = nullptr;
     std::uint64_t current_bytes = 0;
     std::uint64_t rotate_bytes = kDefaultRotateBytes;
     std::uint32_t segment_index = 0;
@@ -174,6 +185,9 @@ struct MutationAuditWal {
             std::fclose(fp);
             fp = nullptr;
         }
+        // Issue #4641: release the swap-owned stdio buffer with the stream.
+        delete[] fp_buf_;
+        fp_buf_ = nullptr;
         unflushed = 0;
         close_typed_unlocked();
     }
@@ -191,7 +205,7 @@ struct MutationAuditWal {
         if (!fp)
             return false;
         // Larger stdio buffer for hot-path append amortization (#1567 AC6).
-        static char sbuf[64 * 1024];
+        static char sbuf[kSegmentBufferBytes];
         std::setvbuf(fp, sbuf, _IOFBF, sizeof(sbuf));
         // Measure current size
         if (std::fseek(fp, 0, SEEK_END) != 0) {
@@ -230,6 +244,84 @@ struct MutationAuditWal {
         }
         segment_index = seg;
         g_audit_wal_metrics().audit_wal_segments.store(seg + 1, std::memory_order_relaxed);
+        return true;
+    }
+
+    // Issue #4641: open a segment under `dir_in` into caller-owned locals.
+    // The live segment is NOT touched, so a failed open leaves the previous
+    // WAL enabled, on its old directory and still writable — the old
+    // close-first enable() returned false with the WAL already closed, so a
+    // directory that could not be created silently dropped the audit trail
+    // (and the WAL-off !enabled short-circuit swallowed the appends with no
+    // append_fail accounting).
+    // The opened stream owns its own stdio buffer (`out_buf`): the swap
+    // briefly has the old segment and the new one live at the same time and
+    // two live FILE* must never share one buffer.
+    [[nodiscard]] bool open_segment_at(const std::string& dir_in, std::uint32_t seg,
+                                       std::FILE*& out_fp, char*& out_buf, std::string& out_path,
+                                       std::uint64_t& out_bytes,
+                                       std::uint32_t& out_index) noexcept {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        fs::create_directories(dir_in, ec);
+        if (ec)
+            return false;
+        const auto path = (fs::path(dir_in) / ("audit-" + std::to_string(seg) + ".wal")).string();
+        std::FILE* f = std::fopen(path.c_str(), "ab+");
+        if (!f)
+            return false;
+        // Larger stdio buffer for hot-path append amortization (#1567 AC6).
+        char* buf = new (std::nothrow) char[kSegmentBufferBytes];
+        if (!buf) {
+            std::fclose(f);
+            return false;
+        }
+        std::setvbuf(f, buf, _IOFBF, kSegmentBufferBytes);
+        // Measure current size
+        std::uint64_t bytes = 0;
+        if (std::fseek(f, 0, SEEK_END) != 0) {
+            std::fclose(f);
+            delete[] buf;
+            return false;
+        }
+        const auto pos = std::ftell(f);
+        bytes = pos > 0 ? static_cast<std::uint64_t>(pos) : 0;
+        // Write magic header on fresh file
+        if (bytes == 0) {
+            if (std::fwrite(kAuditWalMagic, 1, 8, f) != 8) {
+                std::fclose(f);
+                delete[] buf;
+                return false;
+            }
+            const std::uint32_t ver = kAuditWalVersion;
+            if (std::fwrite(&ver, sizeof(ver), 1, f) != 1) {
+                std::fclose(f);
+                delete[] buf;
+                return false;
+            }
+            bytes = 8 + sizeof(ver);
+            std::fflush(f);
+        }
+        // Issue #3465: never append tail-bearing records into a v1 body.
+        if (bytes > 8 + sizeof(std::uint32_t)) {
+            std::uint16_t marker = 0;
+            const long off =
+                static_cast<long>(8 + sizeof(std::uint32_t) + kAuditWalReserved0Offset);
+            if (std::fseek(f, off, SEEK_SET) == 0)
+                (void)!std::fread(&marker, sizeof(marker), 1, f); // short read OK
+            (void)std::fseek(f, 0, SEEK_END);
+            if (marker != kAuditWalReasonTailMarker) {
+                std::fclose(f);
+                delete[] buf;
+                return open_segment_at(dir_in, seg + 1, out_fp, out_buf, out_path, out_bytes,
+                                       out_index);
+            }
+        }
+        out_fp = f;
+        out_buf = buf;
+        out_path = path;
+        out_bytes = bytes;
+        out_index = seg;
         return true;
     }
 
@@ -332,24 +424,33 @@ struct MutationAuditWal {
     bool enable(std::string_view persist_dir, std::vector<AuditWalRecord>* out_replay = nullptr,
                 std::size_t max_replay = 64) noexcept {
         std::lock_guard<std::mutex> lock(mtx);
-        close_unlocked();
-        dir.assign(persist_dir);
-        enabled = false;
-        pruned_upto_ = 0;
-        if (dir.empty()) {
+        // Issue #4641: the live segment survives a failed enable. The new
+        // segment is opened FIRST and only a successful open closes the live
+        // segment and swaps the state in. The old close-first order returned
+        // false with the WAL already closed, so a directory that could not be
+        // created dropped the audit trail silently (the WAL-off !enabled
+        // short-circuit then swallowed the appends with no append_fail
+        // accounting).
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const std::string new_dir(persist_dir);
+        if (new_dir.empty()) {
+            // Legacy empty-dir contract: no directory means no WAL.
+            close_unlocked();
+            dir.clear();
+            enabled = false;
+            pruned_upto_ = 0;
             g_audit_wal_metrics().audit_wal_enabled.store(0, std::memory_order_relaxed);
             return false;
         }
         // Discover highest segment index for append continuity.
-        namespace fs = std::filesystem;
-        std::error_code ec;
         std::uint32_t max_seg = 0;
         bool any = false;
         // Issue #4520: collected indices double as the enable-time upgrade
         // prune list (exact, hole-tolerant) — no extra directory pass.
         std::vector<std::uint32_t> seg_indices;
-        if (fs::exists(dir, ec)) {
-            for (auto& ent : fs::directory_iterator(dir, ec)) {
+        if (fs::exists(new_dir, ec)) {
+            for (auto& ent : fs::directory_iterator(new_dir, ec)) {
                 if (!ent.is_regular_file(ec))
                     continue;
                 const auto name = ent.path().filename().string();
@@ -368,6 +469,13 @@ struct MutationAuditWal {
                 }
             }
         }
+        // Issue #4641: flush (do NOT close) the live segment before the
+        // replay so a re-enable of the same directory still sees the records
+        // that are still buffered.
+        if (fp) {
+            (void)std::fflush(fp);
+            unflushed = 0;
+        }
         // Replay segments newest→oldest (#4520 bounded startup replay):
         // stop once max_replay records are collected — never read the
         // whole directory.
@@ -377,7 +485,7 @@ struct MutationAuditWal {
             for (std::uint32_t s = max_seg + 1; any && newest_first.size() < max_replay && s > 0;
                  --s) {
                 const auto path =
-                    (fs::path(dir) / ("audit-" + std::to_string(s - 1) + ".wal")).string();
+                    (fs::path(new_dir) / ("audit-" + std::to_string(s - 1) + ".wal")).string();
                 auto part = read_segment_file(path);
                 newest_first.insert(newest_first.end(), part.rbegin(), part.rend());
             }
@@ -391,11 +499,31 @@ struct MutationAuditWal {
                 g_audit_wal_metrics().audit_crash_recovery_success.fetch_add(
                     1, std::memory_order_relaxed);
         }
-        if (!open_segment_unlocked(any ? max_seg : 0)) {
-            g_audit_wal_metrics().audit_wal_enabled.store(0, std::memory_order_relaxed);
+        // Issue #4641: open the NEW segment before the live one is closed.
+        // A failed open leaves the previous WAL enabled, on its previous
+        // directory and still writable.
+        std::FILE* new_fp = nullptr;
+        char* new_buf = nullptr;
+        std::string new_path;
+        std::uint64_t new_bytes = 0;
+        std::uint32_t new_index = 0;
+        if (!open_segment_at(new_dir, any ? max_seg : 0, new_fp, new_buf, new_path, new_bytes,
+                             new_index)) {
+            g_audit_wal_metrics().audit_wal_enabled.store(enabled ? 1 : 0,
+                                                          std::memory_order_relaxed);
             return false;
         }
-        (void)open_typed_segment_unlocked(any ? max_seg : 0);
+        // Commit: close the live segment, install the new one.
+        close_unlocked();
+        dir = new_dir;
+        fp = new_fp;
+        fp_buf_ = new_buf;
+        current_path = new_path;
+        current_bytes = new_bytes;
+        segment_index = new_index;
+        pruned_upto_ = 0;
+        g_audit_wal_metrics().audit_wal_segments.store(new_index + 1, std::memory_order_relaxed);
+        (void)open_typed_segment_unlocked(new_index);
         // Issue #4520: upgrade path — a dir oversized by older versions
         // (retention defaulted to 0) is pruned to the cap on first
         // enable, from the dirent list collected above (exact indices,
