@@ -134,6 +134,14 @@ int run_test_agent_ask() {
         b_spec.attach_mailbox = true;
         b_spec.mailbox_high_water = 16;
         b_spec.keepalive_interval_ms = 0;
+        // The body is empty and never mutates: do NOT soft-register the
+        // orch mutation boundary (#2118). A fiber inside that soft boundary
+        // is not delivery-safe, so the #2312 mailbox gate defers every push
+        // to it with Backpressure - the ask then answers "backpressure"
+        // (or a bogus "timeout" for the silent agent) instead of completing
+        // the round trip. Same knob the #4049 arm in
+        // test_agent_ask_typed_corr.cpp uses.
+        b_spec.mutation_boundary = false;
         b_spec.body = [] {}; // idle fiber; host worker pumps mailbox
         b_handle = spawn_agent_with_mailbox(sched, std::move(b_spec));
         CHECK(b_handle.ok, "AC1: B spawned ok");
@@ -204,6 +212,14 @@ int run_test_agent_ask() {
         b_spec.attach_mailbox = true;
         b_spec.mailbox_high_water = 16;
         b_spec.keepalive_interval_ms = 0;
+        // The body is empty and never mutates: do NOT soft-register the
+        // orch mutation boundary (#2118). A fiber inside that soft boundary
+        // is not delivery-safe, so the #2312 mailbox gate defers every push
+        // to it with Backpressure - the ask then answers "backpressure"
+        // (or a bogus "timeout" for the silent agent) instead of completing
+        // the round trip. Same knob the #4049 arm in
+        // test_agent_ask_typed_corr.cpp uses.
+        b_spec.mutation_boundary = false;
         b_spec.body = [] {};
         b_handle = spawn_agent_with_mailbox(sched, std::move(b_spec));
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -263,6 +279,14 @@ int run_test_agent_ask() {
         b_spec.attach_mailbox = true;
         b_spec.mailbox_high_water = 32;
         b_spec.keepalive_interval_ms = 0;
+        // The body is empty and never mutates: do NOT soft-register the
+        // orch mutation boundary (#2118). A fiber inside that soft boundary
+        // is not delivery-safe, so the #2312 mailbox gate defers every push
+        // to it with Backpressure - the ask then answers "backpressure"
+        // (or a bogus "timeout" for the silent agent) instead of completing
+        // the round trip. Same knob the #4049 arm in
+        // test_agent_ask_typed_corr.cpp uses.
+        b_spec.mutation_boundary = false;
         b_spec.body = [] {};
         b_handle = spawn_agent_with_mailbox(sched, std::move(b_spec));
 
