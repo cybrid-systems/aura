@@ -17,6 +17,11 @@
 //      the child's pointer. The parent stats only a path it has resolved
 //      under the tenant root, an interpreter tree, or /dev/null, and
 //      copies that buffer back.
+//   3. Issue #4643: the jailed exec child must not keep the host stdio.
+//      Landlock does not revoke an fd the child already holds, so the
+//      inherited stdin/stdout/stderr would let one tenant read or write the
+//      shared host stdio of every other tenant. The child points its stdio
+//      at /dev/null after the jail is installed and before execl.
 //
 // No second capability and no new SecurityEvent reason. A kernel without
 // Landlock ABI 1 or without a stat notifier fails closed through the
@@ -379,6 +384,40 @@ namespace tenant_exec_detail {
             ::close(fd);
     }
 
+    // Issue #4643: the exec child inherits the caller stdin/stdout/stderr.
+    //
+    // Landlock does not revoke an fd the child already holds and
+    // close_inherited_fds() only closes from fd 3 up, so fd 0/1/2 survive
+    // into the child. A scanner-clean `cat` then read the HOST stdin and
+    // `echo x >&2` wrote the HOST terminal: one tenant reads or writes the
+    // shared host stdio of every other tenant. The byte scanner never sees
+    // it — the command text itself is clean.
+    //
+    // Point the child stdio at /dev/null. `keep_stdout` leaves fd 1 alone
+    // (command-output keeps its capture pipe there). Every other target fd
+    // is dup2-ed from /dev/null; when /dev/null cannot be opened the fd is
+    // closed instead, so the child sees EBADF and never the host fd (fail
+    // closed). /dev/null is Landlock-allowed (read+write), so the open
+    // succeeds inside the jail.
+    [[nodiscard]] inline bool null_child_stdio(bool keep_stdout) noexcept {
+        int devnull = ::open("/dev/null", O_RDWR | O_CLOEXEC);
+        bool ok = true;
+        const int targets[3] = {STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO};
+        for (const int fd : targets) {
+            if (keep_stdout && fd == STDOUT_FILENO)
+                continue;
+            if (devnull >= 0) {
+                if (::dup2(devnull, fd) < 0)
+                    ok = false;
+            } else if (::close(fd) != 0) {
+                ok = false;
+            }
+        }
+        if (devnull >= 0)
+            ::close(devnull);
+        return ok;
+    }
+
     inline int dup_child_fd(pid_t pid, int fd) noexcept {
         const int pidfd = static_cast<int>(::syscall(SYS_pidfd_open, pid, 0));
         if (pidfd < 0)
@@ -652,6 +691,29 @@ tenant_exec_fs_jail_preflight(const char* jail_root) noexcept {
     scrub_child_env(jail_root);
     close_inherited_fds();
     return true;
+}
+
+// Issue #4643: the jailed exec child must not keep the host stdio.
+// Landlock does not revoke an fd the child already holds, so after the jail
+// is installed the child's fd 0/1/2 still point at the caller's stdin,
+// stdout and stderr — the shared host stdio of every other tenant. Point
+// them at /dev/null AFTER the jail is installed and BEFORE execl.
+//
+// keep-stdout variant (command-output): the capture pipe stays on stdout;
+// stdin and stderr go to /dev/null. A denied or null stdio path means the
+// capture comes back empty and the host stderr is untouched.
+//
+// all variant (shell): the primitive returns the exit code, so stdout and
+// stderr both go to /dev/null — the child never writes the host terminal.
+//
+// Returns false only when a target fd could be neither redirected nor
+// closed; the caller must not exec then.
+[[nodiscard]] inline bool null_child_stdio_keep_stdout() noexcept {
+    return tenant_exec_detail::null_child_stdio(/*keep_stdout=*/true);
+}
+
+[[nodiscard]] inline bool null_child_stdio_all() noexcept {
+    return tenant_exec_detail::null_child_stdio(/*keep_stdout=*/false);
 }
 
 // Parent side of one jailed child. Receives the stat-notifier fd from
