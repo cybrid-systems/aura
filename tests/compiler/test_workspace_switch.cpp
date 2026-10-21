@@ -199,7 +199,7 @@ static void ac4630_workspace_compile_is_not_exponential() {
 // switches while the compiler service re-walked all of it on every switch.
 // A multi-tenant switch loop therefore became quadratic.
 static std::string ac4632_switch_loop_script(int trips) {
-    return std::format(R"(
+    return std::format(R"AURA(
 (set-code "(define ttl (lambda (cat) 0))\n(define admit (lambda (cat src) #t))")
 (eval-current)
 (define w (workspace :create "c1"))
@@ -214,8 +214,8 @@ static std::string ac4632_switch_loop_script(int trips) {
 (define t1 (current-time-ms))
 (display (list "trips" {} "ms" (- t1 t0)))
 (newline)
-)",
-                 trips, trips);
+)AURA",
+                       trips, trips);
 }
 
 static void ac4632_switch_cost_stays_flat() {
