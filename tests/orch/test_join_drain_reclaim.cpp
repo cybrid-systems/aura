@@ -307,6 +307,353 @@ static void ac4002_3_source_cite() {
           "4002 AC3: no docs/design/4002-*");
 }
 
+// Issue #4645: source mailbox detach+reset without close leaves the
+// import-proxy send Ok. Three production reclaim writers drop the source
+// shared_ptr WITHOUT closing the mailbox (abandon_reclaimed Timeout arm,
+// maybe_force_recycle_reclaimed_slot live arm, ~AgentHandle live-Reclaimed
+// arm), so an import proxy that still holds the same mailbox can push into
+// a queue whose only consumer is gone: the source handle retires as
+// slot_is_abandoned_live (the name is unresolved) and the proxy recv is a
+// typed deny (#4026). The owner-drop edge now closes the mailbox, so the
+// later proxy send is PushStatus::Closed (the Aura hash surfaces
+// status=closed with the EXISTING deny-class 'closed'). The Done-path
+// (detach WITHOUT reset) keeps the mailbox open — the liaison send/recv
+// face stays Ok there (#4026 / #4139).
+static void ac4645_1_abandon_closes_source_mailbox_proxy_send_closed() {
+    using aura::orch::AbandonReclaimedOpts;
+    using aura::orch::AbandonReclaimedOutcome;
+    using aura::orch::agent_recv;
+    using aura::orch::agent_recv_result;
+    using aura::orch::agent_send;
+    using aura::orch::AgentHandle;
+    using aura::orch::complete_agent_join_cleanup;
+    using aura::serve::Fiber;
+    using aura::serve::JoinResult;
+    using aura::serve::JoinStatus;
+    using aura::serve::mf_mailbox::MailMessage;
+    using aura::serve::mf_mailbox::MultiFiberMailbox;
+    using aura::serve::mf_mailbox::PushStatus;
+    std::println("\n--- #4645 AC1: abandon closes the source mailbox — proxy send is Closed ---");
+    apply_production_audit_defaults();
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    auto mb = std::make_shared<MultiFiberMailbox>();
+    mb->attach(fiber_owned.get());
+    CHECK(fiber_owned->mailbox() == mb.get(), "4645 AC1: the source fiber is attached");
+
+    // The source handle owns the mailbox and owes Reclaimed cleanup.
+    AgentHandle src;
+    src.ok = true;
+    src.id = fiber_owned->id();
+    src.fiber = fiber_owned.get();
+    src.mailbox = mb;
+    src.reserved_memory_bytes = 4096;
+    src.name = "src-4645-ac1";
+    src.must_wait_reclaimed = true;
+    src.reclaimed_deferred_cleanup = true;
+
+    // The import proxy shares the very same mailbox (agent_import_handoff).
+    AgentHandle proxy;
+    proxy.ok = true;
+    proxy.id = fiber_owned->id();
+    proxy.fiber = fiber_owned.get();
+    proxy.mailbox = mb;
+    proxy.import_proxy = true;
+
+    // Scope boundary: while the source STILL owns the mailbox the liaison
+    // send/recv face is Ok (#4026 / #4139 unchanged).
+    MailMessage liaison;
+    liaison.payload = "4645-liaison-before-abandon";
+    CHECK(agent_send(proxy, std::move(liaison)) == PushStatus::Ok,
+          "4645 AC1: proxy send Ok while the source owns the mailbox");
+    auto got = agent_recv(src, /*wait=*/false, /*timeout_ms=*/0);
+    CHECK(got.has_value() && got->payload == "4645-liaison-before-abandon",
+          "4645 AC1: the source still owns the queue (liaison)");
+
+    // The owner drops the mailbox (abandon_reclaimed Timeout arm).
+    AbandonReclaimedOpts opts;
+    opts.max_second_wait_ms = 1;
+    auto ar = src.abandon_reclaimed(opts);
+    CHECK(ar.outcome == AbandonReclaimedOutcome::Abandoned, "4645 AC1: abandon → Abandoned");
+    CHECK(!src.mailbox, "4645 AC1: the source dropped the mailbox shared_ptr");
+    CHECK(src.name.empty(), "4645 AC1: the source name is cleared");
+    CHECK(mb->closed(), "4645 AC1: the shared mailbox is CLOSED on the owner drop");
+    CHECK(fiber_owned->mailbox() == nullptr, "4645 AC1: the source fiber detached");
+
+    // The proxy send is now Closed (the deny-class 'closed' face).
+    MailMessage after;
+    after.payload = "4645-after-abandon";
+    CHECK(agent_send(proxy, std::move(after)) == PushStatus::Closed,
+          "4645 AC1: proxy send is Closed after the owner drop");
+
+    // The proxy recv stays recv-proxy-denied and pops nothing (#4026 intact).
+    const auto denied0 =
+        g_orch_module_stats.recv_proxy_denied_total.load(std::memory_order_relaxed);
+    const auto rec = agent_recv_result(proxy, /*wait=*/false, /*timeout_ms=*/0);
+    CHECK(std::string_view(rec.status) == "recv-proxy-denied",
+          "4645 AC1: proxy recv stays recv-proxy-denied");
+    CHECK(!rec.ok && !rec.message.has_value(), "4645 AC1: typed deny, no payload");
+    CHECK(g_orch_module_stats.recv_proxy_denied_total.load(std::memory_order_relaxed) ==
+              denied0 + 1,
+          "4645 AC1: recv_proxy_denied_total +1");
+
+    // The source slot retires as abandoned-live → the name is unresolved.
+    CHECK(aura::orch::slot_is_abandoned_live(src),
+          "4645 AC1: the source slot is abandoned-live after the owner drop");
+
+    // Scope boundary (Done-path): complete_agent_join_cleanup detaches but
+    // does NOT reset the mailbox — the source still owns it there, so the
+    // liaison send face must stay Ok (this issue is the owner-drop window).
+    {
+        auto done_fiber = std::make_unique<Fiber>([] {});
+        auto done_mb = std::make_shared<MultiFiberMailbox>();
+        done_mb->attach(done_fiber.get());
+        AgentHandle done_src;
+        done_src.ok = true;
+        done_src.id = done_fiber->id();
+        done_src.fiber = done_fiber.get();
+        done_src.mailbox = done_mb;
+        AgentHandle done_proxy;
+        done_proxy.ok = true;
+        done_proxy.id = done_fiber->id();
+        done_proxy.fiber = done_fiber.get();
+        done_proxy.mailbox = done_mb;
+        done_proxy.import_proxy = true;
+        JoinResult ok_jr;
+        ok_jr.status = JoinStatus::Ok;
+        complete_agent_join_cleanup(done_src, ok_jr);
+        CHECK(done_src.mailbox != nullptr,
+              "4645 AC1: the Done-path keeps the mailbox on the handle");
+        CHECK(!done_mb->closed(), "4645 AC1: the Done-path does NOT close the mailbox");
+        MailMessage done_msg;
+        done_msg.payload = "4645-done-path-liaison";
+        CHECK(agent_send(done_proxy, std::move(done_msg)) == PushStatus::Ok,
+              "4645 AC1: the Done-path liaison send stays Ok");
+    }
+    apply_dev_audit_defaults();
+}
+
+// Issue #4645 AC2: the source name stays unresolved — the name-table
+// resolve (resolve_aura_agent → AgentNameTable::find) retires the
+// abandoned-live slot after the owner drop, so the old name never answers
+// a send/join again.
+static void ac4645_2_name_table_resolve_retires_abandoned_source() {
+    using aura::compiler::AgentNameTable;
+    using aura::orch::AbandonReclaimedOpts;
+    using aura::orch::AbandonReclaimedOutcome;
+    using aura::orch::AgentHandle;
+    using aura::serve::Fiber;
+    using aura::serve::mf_mailbox::MultiFiberMailbox;
+    std::println("\n--- #4645 AC2: the source name stays unresolved after the owner drop ---");
+    apply_production_audit_defaults();
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    auto mb = std::make_shared<MultiFiberMailbox>();
+    mb->attach(fiber_owned.get());
+    AgentHandle src;
+    src.ok = true;
+    src.id = fiber_owned->id();
+    src.fiber = fiber_owned.get();
+    src.mailbox = mb;
+    src.reserved_memory_bytes = 4096;
+    src.name = "src-4645-ac2";
+    src.must_wait_reclaimed = true;
+    src.reclaimed_deferred_cleanup = true;
+
+    AgentNameTable tbl;
+    auto* slot = tbl.put(std::move(src));
+    CHECK(slot != nullptr, "4645 AC2: the name-table accepted the pending slot");
+    CHECK(tbl.find("src-4645-ac2") != nullptr,
+          "4645 AC2: the Reclaimed-pending name still resolves");
+    CHECK(!mb->closed(), "4645 AC2: the mailbox is open while the source owns it");
+
+    AbandonReclaimedOpts opts;
+    opts.max_second_wait_ms = 1;
+    auto ar = aura::orch::abandon_reclaimed(*slot);
+    CHECK(ar.outcome == AbandonReclaimedOutcome::Abandoned, "4645 AC2: abandon → Abandoned");
+    CHECK(mb->closed(), "4645 AC2: the owner drop closed the shared mailbox");
+    CHECK(tbl.find("src-4645-ac2") == nullptr,
+          "4645 AC2: the resolve retires the abandoned-live slot (name unresolved)");
+    apply_dev_audit_defaults();
+}
+
+// Issue #4645 AC3: the live-Reclaimed ~AgentHandle arm is the second
+// owner-drop writer — an import proxy that is still in the importer
+// name-table gets Closed after the source handle dies.
+static void ac4645_3_live_dtor_closes_source_mailbox() {
+    using aura::orch::agent_send;
+    using aura::orch::AgentHandle;
+    using aura::serve::Fiber;
+    using aura::serve::mf_mailbox::MailMessage;
+    using aura::serve::mf_mailbox::MultiFiberMailbox;
+    using aura::serve::mf_mailbox::PushStatus;
+    std::println("\n--- #4645 AC3: the live-Reclaimed ~AgentHandle arm closes the mailbox ---");
+    apply_production_audit_defaults();
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    auto mb = std::make_shared<MultiFiberMailbox>();
+    mb->attach(fiber_owned.get());
+
+    // The import proxy outlives the source handle (it is still in the
+    // importer name-table when the source handle dies).
+    AgentHandle proxy;
+    proxy.ok = true;
+    proxy.id = fiber_owned->id();
+    proxy.fiber = fiber_owned.get();
+    proxy.mailbox = mb;
+    proxy.import_proxy = true;
+
+    {
+        AgentHandle src;
+        src.ok = true;
+        src.id = fiber_owned->id();
+        src.fiber = fiber_owned.get();
+        src.mailbox = mb;
+        src.reserved_memory_bytes = 4096;
+        src.name = "src-4645-ac3";
+        src.reclaimed_deferred_cleanup = true; // live Reclaimed
+        CHECK(!mb->closed(), "4645 AC3: the mailbox is open while the source owns it");
+        MailMessage before;
+        before.payload = "4645-before-dtor";
+        CHECK(agent_send(proxy, std::move(before)) == PushStatus::Ok,
+              "4645 AC3: proxy send Ok while the source owns the mailbox");
+    } // ~AgentHandle → the live-Reclaimed arm closes the mailbox
+
+    CHECK(mb->closed(), "4645 AC3: the live-Reclaimed dtor closed the shared mailbox");
+    CHECK(fiber_owned->mailbox() == nullptr, "4645 AC3: the source fiber detached");
+    MailMessage after;
+    after.payload = "4645-after-dtor";
+    CHECK(agent_send(proxy, std::move(after)) == PushStatus::Closed,
+          "4645 AC3: proxy send is Closed after ~AgentHandle");
+    apply_dev_audit_defaults();
+}
+
+// Issue #4645 AC4: the Soft / Off face is unchanged — abandon stays
+// Invalid (nothing is owed), the live-Reclaimed dtor arm is
+// production-gated, and the #4026 proxy-send-Ok face stays green.
+static void ac4645_4_soft_face_unchanged() {
+    using aura::orch::AbandonReclaimedOpts;
+    using aura::orch::AbandonReclaimedOutcome;
+    using aura::orch::agent_send;
+    using aura::orch::AgentHandle;
+    using aura::serve::Fiber;
+    using aura::serve::mf_mailbox::MailMessage;
+    using aura::serve::mf_mailbox::MultiFiberMailbox;
+    using aura::serve::mf_mailbox::PushStatus;
+    std::println("\n--- #4645 AC4: Soft / Off face unchanged (Invalid abandon, no close) ---");
+    apply_dev_audit_defaults();
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    auto mb = std::make_shared<MultiFiberMailbox>();
+    mb->attach(fiber_owned.get());
+
+    AgentHandle proxy;
+    proxy.ok = true;
+    proxy.id = fiber_owned->id();
+    proxy.fiber = fiber_owned.get();
+    proxy.mailbox = mb;
+    proxy.import_proxy = true;
+
+    AgentHandle src;
+    src.ok = true;
+    src.id = fiber_owned->id();
+    src.fiber = fiber_owned.get();
+    src.mailbox = mb;
+    src.reserved_memory_bytes = 4096;
+    src.name = "soft-4645";
+    // Soft never arms must_wait_reclaimed → nothing is owed → Invalid.
+    AbandonReclaimedOpts opts;
+    opts.max_second_wait_ms = 1;
+    auto ar = src.abandon_reclaimed(opts);
+    CHECK(ar.outcome == AbandonReclaimedOutcome::Invalid, "4645 AC4: Soft abandon stays Invalid");
+    CHECK(src.mailbox != nullptr, "4645 AC4: Soft keeps the mailbox on the handle");
+    CHECK(!mb->closed(), "4645 AC4: Soft does NOT close the mailbox");
+    MailMessage m;
+    m.payload = "4645-soft-liaison";
+    CHECK(agent_send(proxy, std::move(m)) == PushStatus::Ok,
+          "4645 AC4: the #4026 proxy-send-Ok face stays green");
+
+    // The live-Reclaimed dtor arm is production-gated → Soft does not close.
+    {
+        AgentHandle soft_dtor;
+        soft_dtor.ok = true;
+        soft_dtor.id = fiber_owned->id();
+        soft_dtor.fiber = fiber_owned.get();
+        soft_dtor.mailbox = mb;
+        soft_dtor.reserved_memory_bytes = 4096;
+        soft_dtor.name = "soft-4645-dtor";
+        soft_dtor.reclaimed_deferred_cleanup = true;
+    }
+    CHECK(!mb->closed(), "4645 AC4: the Soft live-Reclaimed dtor does not close the mailbox");
+    CHECK(fiber_owned->mailbox() == mb.get(),
+          "4645 AC4: the Soft live-Reclaimed dtor does not detach either");
+}
+
+// Issue #4645 AC5: source-cite — the three production owner-drop writers
+// close the mailbox before the reset; the Done-path does not; no new
+// counter, no new query key, the existing deny-class 'closed' is reused.
+static void ac4645_5_source_cite_three_writers_no_invent() {
+    std::println("\n--- #4645 AC5: source-cite — three owner-drop writers close before reset ---");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(spawn.find("Issue #4645") != std::string::npos, "4645 AC5: agent_spawn.h cites #4645");
+    CHECK(mb.find("Issue #4645") != std::string::npos,
+          "4645 AC5: multi_fiber_mailbox.h cites #4645");
+    const auto helper =
+        spawn.find("inline void close_owner_dropped_mailbox(AgentHandle& h) noexcept {");
+    CHECK(helper != std::string::npos, "4645 AC5: the owner-drop close helper exists");
+    if (helper != std::string::npos) {
+        const auto body = spawn.substr(helper, 500);
+        CHECK(body.find("h.mailbox->close();") != std::string::npos,
+              "4645 AC5: the helper closes the mailbox");
+        CHECK(body.find("h.mailbox.reset();") != std::string::npos,
+              "4645 AC5: the helper resets the source shared_ptr");
+    }
+    // Exactly one helper + the three production owner-drop call sites.
+    std::size_t sites = 0;
+    for (auto pos = spawn.find("close_owner_dropped_mailbox("); pos != std::string::npos;
+         pos = spawn.find("close_owner_dropped_mailbox(", pos + 1))
+        ++sites;
+    CHECK(sites == 4, "4645 AC5: 1 helper + 3 production owner-drop call sites");
+    // Each production writer routes through the helper.
+    const auto rec =
+        spawn.find("inline bool maybe_force_recycle_reclaimed_slot(AgentHandle& h) noexcept {");
+    CHECK(rec != std::string::npos, "4645 AC5: maybe_force_recycle_reclaimed_slot present");
+    if (rec != std::string::npos)
+        CHECK(spawn.substr(rec, 3200).find("close_owner_dropped_mailbox(h)") != std::string::npos,
+              "4645 AC5: the force-recycle live arm closes before the reset");
+    const auto dtor =
+        spawn.find("inline void AgentHandle::finish_reclaimed_cleanup_on_dtor() noexcept {");
+    CHECK(dtor != std::string::npos, "4645 AC5: finish_reclaimed_cleanup_on_dtor present");
+    if (dtor != std::string::npos)
+        CHECK(spawn.substr(dtor, 3200).find("close_owner_dropped_mailbox(*this)") !=
+                  std::string::npos,
+              "4645 AC5: the live-Reclaimed dtor arm closes before the reset");
+    const auto ab =
+        spawn.find("abandon_reclaimed(AgentHandle& h, AbandonReclaimedOpts opts = {}) noexcept {");
+    CHECK(ab != std::string::npos, "4645 AC5: abandon_reclaimed present");
+    if (ab != std::string::npos)
+        CHECK(spawn.substr(ab, 3200).find("close_owner_dropped_mailbox(h)") != std::string::npos,
+              "4645 AC5: the abandon Timeout arm closes before the reset");
+    // The Done-path (detach WITHOUT reset) must NOT close.
+    const auto cj = spawn.find(
+        "inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) noexcept {");
+    CHECK(cj != std::string::npos, "4645 AC5: the Done-path cleanup present");
+    if (cj != std::string::npos)
+        CHECK(spawn.substr(cj, 3000).find("close_owner_dropped_mailbox") == std::string::npos,
+              "4645 AC5: the Done-path keeps the mailbox open (no close)");
+    // No new counter, no new query key, the existing deny-class is reused.
+    CHECK(spawn.find("query:4645") == std::string::npos, "4645 AC5: no new query key");
+    CHECK(spawn.find("4645_total") == std::string::npos, "4645 AC5: no new counter");
+    CHECK(spawn.find("AgentDenyClass::Closed") != std::string::npos,
+          "4645 AC5: the existing deny-class 'closed' is reused");
+    CHECK(prim.find("AgentDenyClass::Closed") != std::string::npos,
+          "4645 AC5: the Aura send face maps Closed → deny-class closed");
+    CHECK(read_file("tests/orch/test_issue_4645.cpp").empty(), "4645 AC5: no test_issue_4645.cpp");
+    CHECK(read_file("docs/design/4645-owner-drop-mailbox-close.md").empty(),
+          "4645 AC5: no docs/design/4645-*");
+}
+
 // Issue #3905: orphan hard-reap must not free Fiber while a
 // Reclaimed-pending name-table / AgentHandle still holds fiber*
 // (complement of #3880 — handle drops mailbox while Fiber live).
@@ -10567,6 +10914,13 @@ int run_test_join_drain_reclaim() {
     ac4299_4_soft_zero_and_source_cite();
     std::println("\n=== Issue #4326: ~AgentHandle live-Reclaimed oneshot transfer ===");
     ac4326_1_dtor_live_reclaimed_transfers_oneshot();
+    std::println(
+        "\n=== Issue #4645: owner-drop mailbox close — the import-proxy send is Closed ===");
+    ac4645_1_abandon_closes_source_mailbox_proxy_send_closed();
+    ac4645_2_name_table_resolve_retires_abandoned_source();
+    ac4645_3_live_dtor_closes_source_mailbox();
+    ac4645_4_soft_face_unchanged();
+    ac4645_5_source_cite_three_writers_no_invent();
     // #3797-wave CI: restore the WAL-off face for later batch members.
     if (wal_member_pinned)
         aura::core::audit_wal::g_mutation_audit_wal().disable();
