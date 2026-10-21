@@ -1705,6 +1705,170 @@ static void ac4643_2_primitives_wire_the_null_stdio() {
         invent.open("../tests/core/test_issue_4643.cpp");
     CHECK(!invent.good(), "4643: no tests/core/test_issue_4643.cpp");
 }
+
+// Issue #4644 AC1: the process fd table is shared across tenants, so a
+// listener belongs to the tenant that minted it. A foreign tenant must not
+// drain that listener, must not learn its port, and must not make the
+// accept-timeout variant poll it. The #4561 owner map (minted_fd_tenant_allows)
+// is the gate; #4644 applies it to the tcp prims that had no owner check.
+static void ac4644_1_foreign_listener_is_not_drained() {
+    std::println(
+        "\n--- #4644 AC1: a foreign listener is never drained and never leaks its port ---");
+    reset_all();
+    using aura::compiler::types::is_int;
+    using aura::compiler::types::is_void;
+    using aura::compiler::types::make_int;
+
+    CompilerService cs_a;
+    CompilerService cs_b;
+    auto& ev_a = cs_a.evaluator();
+    auto& ev_b = cs_b.evaluator();
+    (void)ev_a.ensure_std_host_prims("std/socket");
+    (void)ev_b.ensure_std_host_prims("std/socket");
+    auto listen_a = ev_a.primitives().lookup("tcp-listen");
+    auto port_a = ev_a.primitives().lookup("tcp-local-port");
+    auto accept_a = ev_a.primitives().lookup("tcp-accept");
+    auto accept_b = ev_b.primitives().lookup("tcp-accept");
+    auto timeout_b = ev_b.primitives().lookup("tcp-accept-timeout");
+    auto port_b = ev_b.primitives().lookup("tcp-local-port");
+    CHECK(listen_a && port_a && accept_a && accept_b && timeout_b && port_b,
+          "4644: socket prims installed");
+
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    ::setenv("AURA_MULTI_TENANT", "1", 1);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    ev_a.set_effect_sandbox_mode(1);
+    ev_b.set_effect_sandbox_mode(1);
+    ev_a.set_capability_tenant_id(7);
+    ev_b.set_capability_tenant_id(42);
+
+    auto& ring = g_security_event_ring();
+    auto saw_op = [&](std::uint64_t se_base, std::string_view op) {
+        bool saw = false;
+        for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (e.seq != s)
+                continue;
+            if (static_cast<int>(e.kind) != static_cast<int>(SecurityEventKind::IsolationDeny))
+                continue;
+            if (std::string_view(e.op) != op)
+                continue;
+            saw = true;
+            CHECK(e.tenant_id == 42, "4644: IsolationDeny tenant is the caller");
+            CHECK(e.denied, "4644: IsolationDeny row is denied");
+        }
+        return saw;
+    };
+
+    int lfd = -1;
+    int cfd = -1;
+    int raw = -1;
+    if (listen_a && port_a && accept_a && accept_b && timeout_b && port_b) {
+        const auto listened = (*listen_a)({make_int(0)});
+        CHECK(is_int(listened) && as_int(listened) >= 0, "4644: owner tcp-listen mints a listener");
+        if (is_int(listened) && as_int(listened) >= 0)
+            lfd = static_cast<int>(as_int(listened));
+
+        // The owner sees its own port; the foreign tenant must not.
+        const auto own_port = lfd >= 0 ? (*port_a)({make_int(lfd)}) : make_int(-1);
+        CHECK(is_int(own_port) && as_int(own_port) > 0,
+              "4644: owner tcp-local-port sees the listener port");
+
+        if (is_int(own_port) && as_int(own_port) > 0) {
+            // A peer connects so the listener has a pending connection.
+            raw = ::socket(AF_INET, SOCK_STREAM, 0);
+            sockaddr_in addr{};
+            addr.sin_family = AF_INET;
+            addr.sin_port = htons(static_cast<std::uint16_t>(as_int(own_port)));
+            addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            CHECK(raw >= 0 && ::connect(raw, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0,
+                  "4644: loopback peer connected");
+        }
+
+        // The foreign tenant asks to accept on a listener it does not own.
+        if (lfd >= 0) {
+            const auto se_accept = ring.seq.load(std::memory_order_acquire);
+            const auto foreign_accept = (*accept_b)({make_int(lfd)});
+            CHECK(is_void(foreign_accept), "4644: foreign tcp-accept returns void (no client fd)");
+            CHECK(saw_op(se_accept, "tcp-accept"), "4644: foreign tcp-accept emits IsolationDeny");
+
+            // The owner still accepts: the foreign attempt drained nothing.
+            const auto accepted = (*accept_a)({make_int(lfd)});
+            CHECK(is_int(accepted) && as_int(accepted) >= 0,
+                  "4644: owner tcp-accept still gets the pending connection");
+            if (is_int(accepted) && as_int(accepted) >= 0)
+                cfd = static_cast<int>(as_int(accepted));
+
+            // The foreign tenant must not learn the bound port.
+            const auto se_port = ring.seq.load(std::memory_order_acquire);
+            const auto foreign_port = (*port_b)({make_int(lfd)});
+            CHECK(is_void(foreign_port),
+                  "4644: foreign tcp-local-port returns void (no port leak)");
+            CHECK(saw_op(se_port, "tcp-local-port"),
+                  "4644: foreign tcp-local-port emits IsolationDeny");
+
+            // The accept-timeout variant is gated the same way, before ::poll.
+            const auto se_timeout = ring.seq.load(std::memory_order_acquire);
+            const auto foreign_timeout = (*timeout_b)({make_int(lfd), make_int(0)});
+            CHECK(is_void(foreign_timeout), "4644: foreign tcp-accept-timeout returns void");
+            CHECK(saw_op(se_timeout, "tcp-accept-timeout"),
+                  "4644: foreign tcp-accept-timeout emits IsolationDeny");
+        }
+    }
+
+    if (cfd >= 0)
+        ::close(cfd);
+    if (raw >= 0)
+        ::close(raw);
+    if (lfd >= 0)
+        ::close(lfd);
+
+    ::unsetenv("AURA_MULTI_TENANT");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    reset_all();
+}
+
+// Issue #4644 AC2: the owner gate reaches every affected prim and no unrelated
+// gate is reopened. sys-write is source-checked because reaching ::write needs
+// the Write capability granted for the caller, which the owner path does not
+// carry; the tcp prims are covered behaviorally above.
+static void ac4644_2_owner_gate_reaches_every_affected_prim() {
+    std::println("\n--- #4644 AC2: the owner gate reaches every affected prim ---");
+    reset_all();
+    const auto io = read_file("src/compiler/evaluator_primitives_io.cpp");
+    CHECK(!io.empty(), "4644: evaluator_primitives_io.cpp is readable");
+
+    // sys-write: the owner gate runs before ::write.
+    const auto sw = io.find("defer_std_host_prim(\"sys-write\"");
+    const auto sw_owner = io.find("minted_fd_tenant_allows(ev, fd, \"sys-write\")", sw);
+    const auto sw_write = io.find("::write(fd,", sw);
+    CHECK(sw != std::string::npos && sw_owner != std::string::npos &&
+              sw_write != std::string::npos && sw_owner < sw_write,
+          "4644: sys-write owner check is before ::write");
+
+    // The pre-existing #4561 owner gates stay in place.
+    CHECK(io.find("minted_fd_tenant_allows(ev, fd, \"tcp-send\")") != std::string::npos,
+          "4644: tcp-send keeps its owner gate");
+    CHECK(io.find("minted_fd_tenant_allows(ev, fd, \"tcp-recv\")") != std::string::npos,
+          "4644: tcp-recv keeps its owner gate");
+    CHECK(io.find("minted_fd_tenant_allows(ev, fd, \"tcp-close\")") != std::string::npos,
+          "4644: tcp-close keeps its owner gate");
+    CHECK(io.find("minted_fd_tenant_allows(ev, fd, \"sys-read\")") != std::string::npos,
+          "4644: sys-read keeps its owner gate");
+
+    // No unrelated gate is reopened: the #3802 tenant path check and the
+    // #4559 string-slot fence stay in the sys-write path.
+    CHECK(io.find("check_tenant_host_path") != std::string::npos,
+          "4644: the #3802 tenant path check stays");
+    CHECK(io.find("inrange_string_tenant_allows") != std::string::npos,
+          "4644: the #4559 string-slot fence stays");
+
+    // No new query key and no new Effect bit.
+    CHECK(io.find("query:4644") == std::string::npos, "4644: no query:4644 key");
+
+    reset_all();
+}
+
 int main() {
     reset_all();
 
@@ -8713,6 +8877,9 @@ int main() {
     // ── Issue #4643: the jailed exec child inherited the host stdio ──
     ac4643_1_jailed_child_stdio_is_null();
     ac4643_2_primitives_wire_the_null_stdio();
+    // ── Issue #4644: the fd owner map gates the tcp prims and sys-write ──
+    ac4644_1_foreign_listener_is_not_drained();
+    ac4644_2_owner_gate_reaches_every_affected_prim();
 
     reset_all();
     std::println("\n=== test_tenant_isolation_enforcement: {} passed, {} failed ===", g_passed,
