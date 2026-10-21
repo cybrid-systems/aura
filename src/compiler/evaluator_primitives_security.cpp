@@ -6250,8 +6250,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         "query:evolution-audit-decision", [&ev](const auto& args) -> EvalValue {
             using aura::compiler::typed_audit::AuditOutcome;
             using aura::compiler::typed_audit::AuditStrategy;
-            using aura::compiler::typed_audit::commit_readiness;
-            using aura::compiler::typed_audit::commit_readiness_live_policy;
+            using aura::compiler::typed_audit::LastProofFace;
+            using aura::compiler::typed_audit::last_proof_face_v_read;
             using aura::compiler::typed_audit::g_last_stamped_audit_mid;
             using aura::compiler::typed_audit::g_tls_boundary_audit_mid;
             using aura::compiler::typed_audit::g_tls_boundary_audit_noted;
@@ -6448,7 +6448,29 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 forensic_source = 3;
             }
 
-            const auto cr = commit_readiness(commit_readiness_live_policy());
+            // Issue #4647: observe-only fold - publish the LAST STAMPED
+            // proof face (published at commit by publish_last_proof_face +
+            // the #4534 scalar stamps). The previous body called the live
+            // commit mutator (commit_readiness /
+            // commit_readiness_live_policy) - a MUTATOR behind an
+            // "observe-only=1" facade:
+            //   * commit_readiness_live_policy always calls
+            //     aura_force_residual_castop_undermark_into_cone -> the
+            //     #3347 remirror dirties the type-union-IR cone (added>0)
+            //     or latches note_pending_full_solve_residual(hard=true)
+            //     (#4154), and bumps the DeadCoercion decision-invalidate
+            //     gen through note_residual_castop_undermark_pending.
+            //   * commit_readiness on a latched truncate / outside-drop /
+            //     occurrence / refined face calls
+            //     aura_typed_audit_try_occurrence_hard_face_full_solve_recover
+            //     -> ConstraintSystem::solve + truncation clear + face
+            //     consume, and bumps the recover-attempt / recover-fail /
+            //     reject totals on EVERY poll.
+            // The commit already stamped the face - the fold only READS it.
+            // No remirror, no full solve, no face consume, no counter bump.
+            // The #3347 commit-time remirror on the live readiness surface
+            // (query:type-linear-commit-health) is unchanged.
+            const LastProofFace proof_face = last_proof_face_v_read();
 
             ReloadRecoveryPlaybookResult pb{};
             aura_hot_update_reload_recovery_playbook_get(&pb);
@@ -6748,8 +6770,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         std::memory_order_relaxed)));
             insert_kv("schema-3838", ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
             insert_kv("issue-3838", ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
-            insert_kv("commit-would-allow", cr.would_allow_commit ? 1 : 0);
-            insert_kv("commit-force-reason-code", cr.force_reason_code);
+            insert_kv("commit-would-allow", proof_face.would_allow_commit ? 1 : 0);
+            insert_kv("commit-force-reason-code", proof_face.force_reason_code);
             insert_kv("playbook-action", static_cast<std::int64_t>(pb.action));
             insert_kv("playbook-wired", pb.playbook_wired);
             insert_kv("densify-ok", densify.would_allow_mutate ? 1 : 0);
@@ -6823,7 +6845,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 nin.schedule_would_deny =
                     aura::orch::g_orch_security_schedule_counters.last_would_allow.load(
                         std::memory_order_relaxed) == 0;
-                nin.commit_would_allow = cr.would_allow_commit;
+                nin.commit_would_allow = proof_face.would_allow_commit;
                 nin.densify_ok = densify.would_allow_mutate;
                 nin.posture_degraded = posture_degraded;
                 nin.playbook_action = static_cast<std::int64_t>(pb.action);

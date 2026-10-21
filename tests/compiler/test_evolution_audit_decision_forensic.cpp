@@ -26,9 +26,18 @@
 
 #include "test_harness.hpp"
 
+#include <cstdint>
 #include <print>
 #include <string>
 #include <string_view>
+
+import std;
+import aura.compiler.service;
+import aura.compiler.value;
+
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
 
 namespace {
 
@@ -44,6 +53,17 @@ static std::string read_file(const char* path) {
         return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     }
     return {};
+}
+
+// Issue #4647: read one int key out of the evolution-audit-decision hash.
+// (hash-ref over the query hash — same shape the other evolution-audit
+// decision tests use.)
+std::int64_t evol_key(CompilerService& cs, std::string_view key) {
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:evolution-audit-decision\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
 }
 
 // AC1: source cite — forensic-source key inserted in handler.
@@ -433,6 +453,165 @@ static void ac14_wiring_non_goals_4240() {
     CHECK(!kv_4240, "no insert_kv row cites 4240 (no new query key)");
 }
 
+// ── Issue #4647: the observe-only fold must not re-enter the commit mutator ──
+//
+// The fold advertises observe-only=1, but the old body called the live
+// commit mutator (commit_readiness / commit_readiness_live_policy):
+//   * commit_readiness_live_policy always calls the #3347 residual CastOp
+//     remirror (dirty-cone marks, #4154 pending-full-solve face,
+//     DeadCoercion decision-invalidate gen);
+//   * commit_readiness on a latched truncate / outside-drop / occurrence /
+//     refined face runs the occurrence hard-face full-solve recover
+//     (ConstraintSystem::solve + truncation clear + face consume) and
+//     bumps the recover-attempt / recover-fail / reject totals on EVERY
+//     poll.
+// The fix publishes the LAST STAMPED proof face instead.
+
+// AC4647-1: production face + a latched occurrence face — the fold must
+// not run the commit mutator. The old body bumped the recover-attempt
+// counter on every poll (commit_readiness_live_policy) and then tried the
+// occurrence hard-face full-solve recover; with no live commit TC the
+// recover fails, so the recover-fail and the outside-drop reject totals
+// bump as well. Observe-only: no counter may move.
+static void ac4647_1_fold_does_not_run_commit_mutator() {
+    std::println("\n--- AC4647-1: observe-only fold does not run the commit mutator ---");
+    namespace ta = aura::compiler::typed_audit;
+    ta::apply_production_audit_defaults();
+    CHECK(ta::production_defaults_active(), "4647 AC1: production face armed");
+    CHECK(ta::get_strategy() == ta::AuditStrategy::Full, "4647 AC1: TypedMutationAudit is Full");
+    CompilerService cs;
+    // Warm-up poll before the face is latched: keeps the snapshot below
+    // free of any eval-side side effect.
+    (void)evol_key(cs, "observe-only");
+    // Latch the outside-drop occurrence face (the latched truncate /
+    // outside-drop / occurrence face the live readiness would recover).
+    ta::publish_cone_outside_goal_drop(1);
+    const auto face0 = ta::cone_outside_goal_drop_total_v_read();
+    CHECK(face0 > 0, "4647 AC1: outside-drop occurrence face latched");
+    const auto attempt0 = ta::occurrence_hard_face_full_solve_recover_total_v_read();
+    const auto fail0 = ta::occurrence_hard_face_recover_fail_total_v_read();
+    const auto ok0 = ta::occurrence_hard_face_recover_success_total_v_read();
+    const auto reject0 = ta::cone_outside_goal_drop_reject_total_v_read();
+    const auto closure0 = ta::cone_truncate_force_closure_attempt_total_v_read();
+    const auto closure_reject0 = ta::cone_truncate_force_closure_reject_total_v_read();
+    // Two polls — the issue repro polls the fold twice.
+    const auto allow1 = evol_key(cs, "commit-would-allow");
+    const auto next1 = evol_key(cs, "suggested-next-code");
+    const auto allow2 = evol_key(cs, "commit-would-allow");
+    const auto next2 = evol_key(cs, "suggested-next-code");
+    CHECK(ta::occurrence_hard_face_full_solve_recover_total_v_read() == attempt0,
+          "4647 AC1: recover-attempt total not bumped by the fold");
+    CHECK(ta::occurrence_hard_face_recover_fail_total_v_read() == fail0,
+          "4647 AC1: recover-fail total not bumped by the fold");
+    CHECK(ta::occurrence_hard_face_recover_success_total_v_read() == ok0,
+          "4647 AC1: recover-success total not bumped by the fold");
+    CHECK(ta::cone_outside_goal_drop_reject_total_v_read() == reject0,
+          "4647 AC1: outside-drop reject total not bumped by the fold");
+    CHECK(ta::cone_truncate_force_closure_attempt_total_v_read() == closure0,
+          "4647 AC1: force-closure attempt total not bumped by the fold");
+    CHECK(ta::cone_truncate_force_closure_reject_total_v_read() == closure_reject0,
+          "4647 AC1: force-closure reject total not bumped by the fold");
+    CHECK(ta::cone_outside_goal_drop_total_v_read() == face0,
+          "4647 AC1: the latched face is not consumed by the fold");
+    CHECK(allow1 >= 0 && allow1 == allow2, "4647 AC1: commit-would-allow stable across polls");
+    CHECK(next1 >= 0 && next1 == next2, "4647 AC1: suggested-next stable across polls");
+    CHECK(evol_key(cs, "observe-only") == 1, "4647 AC1: observe-only stays 1");
+    ta::clear_cone_outside_goal_drop_for_test();
+    ta::apply_dev_audit_defaults();
+}
+
+// AC4647-2: the fold must not latch the #3031 pending-full-solve
+// residual face nor the #3347 residual-CastOp undermark latch — both are
+// written by the live commit mutator the fold used to call.
+static void ac4647_2_fold_latches_no_residual_face() {
+    std::println("\n--- AC4647-2: observe-only fold latches no residual face ---");
+    namespace ta = aura::compiler::typed_audit;
+    ta::apply_production_audit_defaults();
+    CompilerService cs;
+    (void)evol_key(cs, "observe-only");
+    const auto pending0 = ta::pending_full_solve_residual_face_hit() ? 1 : 0;
+    const auto pending_last0 = ta::pending_full_solve_residual_last_v_read();
+    const auto undermark0 = aura_residual_castop_undermark_pending();
+    const auto escalate0 = ta::pending_full_solve_residual_escalate_total_v_read();
+    const auto pending_reject0 = ta::pending_full_solve_residual_reject_total_v_read();
+    (void)evol_key(cs, "commit-would-allow");
+    (void)evol_key(cs, "suggested-next-code");
+    CHECK((ta::pending_full_solve_residual_face_hit() ? 1 : 0) == pending0,
+          "4647 AC2: pending_full_solve_residual face not latched by the fold");
+    CHECK(ta::pending_full_solve_residual_last_v_read() == pending_last0,
+          "4647 AC2: pending_full_solve_residual last value unchanged");
+    CHECK(aura_residual_castop_undermark_pending() == undermark0,
+          "4647 AC2: residual CastOp undermark latch unchanged (#3347 remirror)");
+    CHECK(ta::pending_full_solve_residual_escalate_total_v_read() == escalate0,
+          "4647 AC2: pending escalate total unchanged");
+    CHECK(ta::pending_full_solve_residual_reject_total_v_read() == pending_reject0,
+          "4647 AC2: pending reject total unchanged");
+    ta::apply_dev_audit_defaults();
+}
+
+// AC4647-3: the fold publishes the LAST STAMPED proof face (the face the
+// commit already published), not a freshly computed live decision. A
+// green stamped proof must surface as commit-would-allow=1 and must not
+// flip between polls.
+static void ac4647_3_fold_publishes_stamped_proof_face() {
+    std::println("\n--- AC4647-3: fold publishes the stamped proof face ---");
+    namespace ta = aura::compiler::typed_audit;
+    ta::apply_production_audit_defaults();
+    CompilerService cs;
+    (void)evol_key(cs, "observe-only");
+    // Publish a green proof face — the same publish_last_proof_face the
+    // commit path calls — and stamp its force reason.
+    ta::publish_last_proof_face(true, true);
+    ta::g_last_proof_force_reason_code.store(0, std::memory_order_relaxed);
+    const auto allow = evol_key(cs, "commit-would-allow");
+    const auto reason = evol_key(cs, "commit-force-reason-code");
+    const auto allow2 = evol_key(cs, "commit-would-allow");
+    CHECK(allow == 1, "4647 AC3: commit-would-allow mirrors the stamped proof face");
+    CHECK(allow2 == allow, "4647 AC3: commit-would-allow stable across polls");
+    CHECK(reason == 0, "4647 AC3: commit-force-reason-code mirrors the stamped proof face");
+    // Cleanup: drop the green face so later members see a neutral state.
+    ta::clear_last_proof_face_for_test();
+    ta::g_last_proof_force_reason_code.store(0, std::memory_order_relaxed);
+    ta::apply_dev_audit_defaults();
+}
+
+// AC4647-4: source — the observe-only fold reads the stamped proof face
+// and never calls the live commit mutator. The window check runs on the
+// handler body only (the query is the last registration in the file), and
+// the negative needles carry the call parentheses so the explanatory
+// comment inside the handler (which names the mutators without calling
+// them) does not trip the contract.
+static void ac4647_4_source_no_commit_mutator() {
+    std::println("\n--- AC4647-4: source — fold reads the proof face, no commit mutator ---");
+    auto src = read_file("src/compiler/evaluator_primitives_security.cpp");
+    CHECK(!src.empty(), "evaluator_primitives_security.cpp readable");
+    const auto reg = src.find("\"query:evolution-audit-decision\", [&ev](const auto& args)");
+    CHECK(reg != std::string::npos, "4647 AC4: handler registration found");
+    const auto face = src.find("last_proof_face_v_read()");
+    CHECK(face != std::string::npos, "4647 AC4: the fold reads the last stamped proof face");
+    if (reg != std::string::npos && face != std::string::npos) {
+        CHECK(face > reg, "4647 AC4: the proof-face read sits inside the handler");
+        const auto tail = src.find("} // namespace aura::compiler::primitives_detail", reg);
+        const auto window_end = (tail == std::string::npos) ? src.size() : tail;
+        const std::string window(src, reg, window_end - reg);
+        CHECK(window.find("commit_readiness(") == std::string::npos,
+              "4647 AC4: the fold never calls commit_readiness / commit_readiness_live_policy");
+        CHECK(window.find("aura_force_residual_castop_undermark_into_cone()") == std::string::npos,
+              "4647 AC4: the fold never remirrors residual CastOps (#3347)");
+        CHECK(window.find("using aura::compiler::typed_audit::commit_readiness;") ==
+                  std::string::npos,
+              "4647 AC4: the commit mutator is not even imported into the handler");
+    }
+    auto hdr = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(hdr.find("struct LastProofFace") != std::string::npos,
+          "4647 AC4: LastProofFace snapshot declared");
+    CHECK(hdr.find("last_proof_face_v_read") != std::string::npos,
+          "4647 AC4: last_proof_face_v_read accessor declared");
+    // observe-only stays 1; no new query key.
+    CHECK(src.find("insert_kv(\"observe-only\", 1)") != std::string::npos,
+          "4647 AC4: observe-only stays 1");
+}
+
 } // namespace
 
 int main() {
@@ -450,6 +629,11 @@ int main() {
     ac12_full_scan_exhausted_face_4240();
     ac13_pruned_reason_4240();
     ac14_wiring_non_goals_4240();
+    ac4647_1_fold_does_not_run_commit_mutator();
+    ac4647_2_fold_latches_no_residual_face();
+    ac4647_3_fold_publishes_stamped_proof_face();
+    ac4647_4_source_no_commit_mutator();
+    std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     if (g_failed)
         return 1;
     std::println("evolution-audit-decision forensic-source (#3152): OK ({} passed)", g_passed);
