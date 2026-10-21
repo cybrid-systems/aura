@@ -5630,7 +5630,8 @@ public:
     //   children_[id] = std::move(kids);
     // When a snapshot still aliases storage, cow_* falls back to with_* COW
     // and flatast_locked_move_out_cow_total bumps (#2906 AC3 correctness).
-    void set_child_locked(NodeId id, std::uint32_t idx, NodeId child) pre(id < children_.size()) {
+    void set_child_locked(NodeId id, std::uint32_t idx, NodeId child, bool keep_caller_edge = false)
+        pre(id < children_.size()) {
         contract_assert(id < children_.size());
         auto list = std::move(children_[id]);
         if (idx >= list.size()) {
@@ -5639,8 +5640,17 @@ public:
         }
         const auto old_size = list.size();
         auto old_cid = list[idx];
-        if (old_cid != NULL_NODE && old_cid < parent_.size())
-            parent_[old_cid] = NULL_NODE;
+        if (old_cid != NULL_NODE && old_cid < parent_.size()) {
+            // Issue #4649: a shared child keeps its live reverse link
+            // when that link points at ANOTHER parent — the CALLER
+            // still lists it (a shared subst argument is listed by
+            // the caller AND by the expansion clone; #4309 keeps the
+            // caller's edge). The link is cleared only when it
+            // pointed at this slot's parent (the child is no longer
+            // listed there).
+            if (!keep_caller_edge || parent_[old_cid] == id)
+                parent_[old_cid] = NULL_NODE;
+        }
         const bool exclusive_before = list.is_unique();
         // Issue #3233: stale SafePCVSpan extra ref after Guard generation
         // bump — force in-place exclusive (no full COW). Live pin this
@@ -5787,6 +5797,35 @@ public:
         // Issue #1624: Contracts on public structural mutate entry.
         StructuralMutationGuard guard(this);
         set_child_locked(id, idx, child);
+    }
+
+    // Issue #4649: set_child that keeps the OLD occupant's live reverse
+    // link when that link points at another parent. A shared subst
+    // argument is listed by BOTH the caller and the expansion (the
+    // clone); #4309 keeps the caller's reverse link, so a plain
+    // set_child() drops the caller's edge and leaves the caller
+    // holding a node with no owner.
+    void set_child_keep_caller_edge(NodeId id, std::uint32_t idx, NodeId child)
+        pre(id < children_.size()) {
+        StructuralMutationGuard guard(this);
+        set_child_locked(id, idx, child, /*keep_caller_edge=*/true);
+    }
+
+    // Issue #4649: point a node's reverse parent link at the parent
+    // that actually lists it. The expand rollback restores a shared
+    // child into the expansion slot; the caller's edge (the node that
+    // still lists it) wins — a live parent is not retargeted (#4309).
+    // The structural lock is taken without the generation bump (the
+    // link repair is not a structural change).
+    void restore_parent_link(NodeId child, NodeId parent) {
+        if (child == NULL_NODE || parent == NULL_NODE)
+            return;
+        std::unique_lock<std::shared_mutex> lock(structural_mtx_.get());
+        if (parent_.size() < size())
+            parent_.resize(size(), NULL_NODE);
+        if (child >= parent_.size())
+            return;
+        parent_[child] = parent;
     }
 
     // Insert a child at position idx (0 = first, child_count = append)

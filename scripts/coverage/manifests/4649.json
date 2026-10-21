@@ -1,0 +1,78 @@
+{
+  "issue": 4649,
+  "title": "Issue #4649: expand_inner_macros must not write the CALLER's edge - a shared subst argument is spliced into the expansion node that lists it, the qq-unwrap edge rolls back on deny_all, and a published unwrapped Call carries MacroIntroduced",
+  "ok": "OK #4649 caller edge: the macro-call arm and the qq-unwrap arm splice into the node that actually lists the child (the expansion node), the shared caller argument keeps its parent link / marker / provenance / schema / kMacroExpansion, the qq-unwrap edge rolls back on the deny_all consult (same-flat / name-map-shared / concurrent-top-level), truncate_to is not the only undo below clone_ckpt, and the published unwrapped Call carries MacroIntroduced",
+  "checks": [
+    {
+      "ac": "AC1-macro-call-arm-splices-the-expansion-node",
+      "path": "src/compiler/macro_expansion.cpp",
+      "contains": [
+        "Issue #4649",
+        "expand_inner_macros_walk",
+        "const auto parent_id = parent;",
+        "splice_child_keep_caller_edge",
+        "restore_parent_link"
+      ]
+    },
+    {
+      "ac": "AC2-qq-unwrap-rolls-back-on-deny-all",
+      "path": "src/compiler/macro_expansion.cpp",
+      "contains": [
+        "Issue #4649: the consult widens to deny_all",
+        "inner_expand_production_limit_deny_all()",
+        "splice_child_keep_caller_edge(*flat, parent_id, unwrap_ci, unwrapped, root,",
+        "same-flat-clone-reject",
+        "name-map-shared",
+        "concurrent-top-level-clone"
+      ]
+    },
+    {
+      "ac": "AC3-published-unwrapped-call-carries-macro-introduced",
+      "path": "src/compiler/macro_expansion.cpp",
+      "contains": [
+        "set_marker(call_id, SyntaxMarker::MacroIntroduced)",
+        "unwrap_cons_chain_to_call"
+      ]
+    },
+    {
+      "ac": "AC4-caller-edge-survives-the-splice",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "set_child_keep_caller_edge",
+        "restore_parent_link",
+        "keep_caller_edge",
+        "Issue #4649"
+      ]
+    },
+    {
+      "ac": "AC5-truncate-is-not-the-only-undo",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "restore_caller_slot_before_truncate",
+        "Issue #4649: truncate_to is not the",
+        "Issue #4649"
+      ]
+    },
+    {
+      "ac": "AC6-runtime-caller-edge-and-deny-rollback",
+      "path": "tests/compiler/test_macro_cross_flat_hygiene.cpp",
+      "contains": [
+        "ac4649_expand_keeps_caller_edge",
+        "caller slot still holds the caller arg",
+        "caller parent unchanged",
+        "caller gains no kMacroExpansion",
+        "4649 qq: the published unwrapped Call carries MacroIntroduced",
+        "4649 deny: the unwrap edge is rolled back",
+        "4649 deny: no child slot points into a dropped tail"
+      ]
+    },
+    {
+      "ac": "AC7-no-forbidden-artifacts",
+      "forbid": [
+        "tests/compiler/test_issue_4649.cpp",
+        "tests/issues/test_issue_4649.cpp",
+        "docs/design/4649-expand-caller-edge.md"
+      ]
+    }
+  ]
+}
