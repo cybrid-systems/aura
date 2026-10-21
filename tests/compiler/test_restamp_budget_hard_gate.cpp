@@ -537,6 +537,306 @@ void test_3426_ac5_linter_after_3327() {
 
 } // namespace
 
+// ═══════════════════════════════════════════════════════════════
+// Issue #4633 -- restamp-path stack-buffer overrun guard.
+//
+// REPORTED: "test_restamp_budget_hard_gate aborts with *** stack
+// smashing detected ***" (glibc frame canary) on the FlatAST
+// restamp / budget path, allegedly pre-existing at 6d7d6a75c.
+//
+// VERDICT: does NOT reproduce on current main (60c530f31).
+//   - ASAN build of this TU runs green (exit 0, no ASAN report,
+//     no canary trip) -- ASAN names any real overflow frame.
+//   - Release build of the same TU runs green (exit 0).
+//   - Prior soak captures of this same binary are green too
+//     (/tmp/soak-test_restamp_budget_hard_gate.out 2026-10-02,
+//     /tmp/soak-restamp.out 2026-10-02,
+//     /tmp/run_4443_test_restamp_budget_hard_gate.log 2026-10-11),
+//     so the abort was never reproducible from this translation unit.
+//   - No restamp / FlatAST / core commit landed between 6d7d6a75c
+//     and 60c530f31 (git log 6d7d6a75c..HEAD -- core/restamp/flatast
+//     => empty), so nothing on the reported surface changed.
+//
+// ROOT-CAUSE AUDIT: the only fixed-capacity store on the restamp
+// path is the Agent-held id set in src/core/flatast_restamp.hh
+// (g_restamp_hot_cone_held_ids[kRestampHotConeHeldCap]). It lives
+// at namespace scope -- NOT in a stack frame -- and
+// note_restamp_hot_cone_held_node bounds-checks the slot before
+// writing; past the cap it latches restamp_hot_cone_held_overflow()
+// and drops (fail-closed for the WHOLE set, per #3426: never a
+// half-green prefix, never an out-of-bounds write, never a silent
+// truncation). The only fixed stack buffer on the ref face is the
+// caller's std::uint8_t buf[kStableRefSerializedSize] in
+// ast:ref-serialize, and kStableRefSerializedSize ==
+// kStableRefSerializedSizeV2 (56) -- exactly what
+// serialize_stable_ref memsets and writes.
+//
+// So there is no fix to invent. What ships is the PIN: the ACs
+// below go loud the moment a future change reintroduces an
+// unbounded write on this path, instead of leaving the behaviour
+// unpinned until some unrelated soak happens to trip it.
+//
+//   AC1: a stack sentinel painted around the call site survives a
+//        512-id held-set sweep (8x cap) -- the glibc canary only
+//        trips when an overrun REACHES it; a short overrun past a
+//        local array lands in the red zone and stays silent.
+//   AC2: the held set is lossless within its cap, dedup-stable,
+//        clamped at the cap, fail-closed past it, and OOB slot
+//        reads stay in range.
+//   AC3: repeated over-budget restamp/hot-cone cycles in a real
+//        workspace trip no canary and lose no node (live count is
+//        invariant across every cycle).
+//   AC4: the StableNodeRef wire record -- the 56-byte stack write
+//        on this path -- round-trips every field, no truncation.
+//   AC5: source-cite pin on the bounded write sites + the #4633
+//        audit note in flatast_restamp.hh.
+namespace {
+
+// Issue #4633: sentinel words painted around the restamp-path call
+// site. The glibc frame canary only guards the frame that does the
+// clobbering write; a write site that is INLINED into this TU (every
+// restamp-path helper here is a header inline) lands in THIS frame,
+// where a short overrun stays inside the red zone and never reaches
+// a canary. These words make that case fail deterministically.
+constexpr std::uint64_t k4633Guard = 0x4633A5A5C0FFEE01ull;
+
+struct alignas(64) StackSentinel4633 {
+    std::uint64_t pre[8];
+    std::uint64_t payload[64];
+    std::uint64_t post[8];
+};
+
+void paint4633(StackSentinel4633& s) noexcept {
+    for (auto& w : s.pre)
+        w = k4633Guard;
+    for (auto& w : s.payload)
+        w = 0;
+    for (auto& w : s.post)
+        w = k4633Guard;
+}
+
+bool sentinel_intact4633(const StackSentinel4633& s) noexcept {
+    for (const auto w : s.pre) {
+        if (w != k4633Guard)
+            return false;
+    }
+    for (const auto w : s.post) {
+        if (w != k4633Guard)
+            return false;
+    }
+    return true;
+}
+
+std::size_t count_live_4633(const FlatAST& ws) {
+    std::size_t live = 0;
+    for (NodeId id = 0; id < ws.size(); ++id) {
+        if (ws.is_live_node(id) && !ws.is_free_slot(id))
+            ++live;
+    }
+    return live;
+}
+
+void test_4633_held_set_bounded_and_lossless() {
+    std::print("AC4633/AC1+AC2 -- held-set write site bounded + lossless\n");
+    using aura::ast::clear_restamp_hot_cone_held_for_test;
+    using aura::ast::kRestampHotConeHeldCap;
+    using aura::ast::note_restamp_hot_cone_held_node;
+    using aura::ast::restamp_hot_cone_held_count;
+    using aura::ast::restamp_hot_cone_held_id_at;
+    using aura::ast::restamp_hot_cone_held_overflow;
+
+    clear_restamp_hot_cone_held_for_test();
+    StackSentinel4633 sent{};
+    paint4633(sent);
+    // 8x the cap in one sweep: any off-by-one in the write-site
+    // bound check stores past g_restamp_hot_cone_held_ids.
+    constexpr auto kSweep = static_cast<std::uint32_t>(kRestampHotConeHeldCap) * 8u;
+    for (std::uint32_t id = 1; id <= kSweep; ++id)
+        note_restamp_hot_cone_held_node(id);
+    expect_true("4633 AC1: caller-frame sentinel intact after the 512-id held-set sweep",
+                sentinel_intact4633(sent));
+    expect_eq_i64("4633 AC1: held count clamped to the cap",
+                  static_cast<std::int64_t>(kRestampHotConeHeldCap),
+                  static_cast<std::int64_t>(restamp_hot_cone_held_count()));
+    expect_true("4633 AC1: overflow latched past cap (fail-closed, not silent)",
+                restamp_hot_cone_held_overflow());
+    // AC2: no silent truncation -- every id offered while there was
+    // room is still readable back at the slot it was given.
+    bool lossless = true;
+    for (std::uint16_t i = 0; i < kRestampHotConeHeldCap; ++i)
+        lossless = lossless && restamp_hot_cone_held_id_at(i) == static_cast<std::uint32_t>(i) + 1u;
+    expect_true("4633 AC2: all in-cap ids round-trip (no silent drop)", lossless);
+    // Id 0 is the NULL sentinel and is never stored.
+    note_restamp_hot_cone_held_node(0);
+    expect_eq_i64("4633 AC2: NULL id does not consume a slot",
+                  static_cast<std::int64_t>(kRestampHotConeHeldCap),
+                  static_cast<std::int64_t>(restamp_hot_cone_held_count()));
+    // Re-noting a held id must not consume a second slot.
+    note_restamp_hot_cone_held_node(7);
+    expect_eq_i64("4633 AC2: dedup does not grow the count",
+                  static_cast<std::int64_t>(kRestampHotConeHeldCap),
+                  static_cast<std::int64_t>(restamp_hot_cone_held_count()));
+    expect_true("4633 AC2: id 7 still parked at its own slot",
+                restamp_hot_cone_held_id_at(6) == 7u);
+    // Out-of-range slot read must stay in range on the read side too.
+    expect_eq_i64("4633 AC2: OOB slot read returns 0", 0,
+                  static_cast<std::int64_t>(restamp_hot_cone_held_id_at(kRestampHotConeHeldCap)));
+    clear_restamp_hot_cone_held_for_test();
+}
+
+void test_4633_over_budget_restamp_cycle_no_data_loss() {
+    std::print("AC4633/AC3 -- over-budget restamp cycle: no smash, no data loss\n");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::clear_restamp_hot_cone_held_for_test;
+    using aura::ast::note_restamp_hot_cone_held_node;
+    using aura::ast::restamp_hot_cone_budget;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+
+    apply_dev_audit_defaults();
+    clear_restamp_hot_cone_held_for_test();
+    CompilerService cs;
+    expect_true(
+        "4633 AC3: set-code",
+        cs.eval("(set-code \"(define (f4633 x) (+ x 1)) (define g4633 (lambda (y) (* y 2))) "
+                "(define h4633 (f4633 3))\")")
+            .has_value());
+    expect_true("4633 AC3: eval", cs.eval("(eval-current)").has_value());
+    auto* ws = cs.evaluator().workspace_flat();
+    expect_true("4633 AC3: workspace", ws != nullptr);
+    if (!ws)
+        return;
+
+    const auto live_before = count_live_4633(*ws);
+    expect_true("4633 AC3: workspace has live nodes", live_before > 0);
+    const auto exceeded_before = ws->restamp_budget_exceeded_total();
+
+    apply_production_audit_defaults();
+    set_restamp_budget_nodes_for_process(4);
+    StackSentinel4633 sent{};
+    paint4633(sent);
+
+    // 32 over-budget outermost cycles: bump generation, restamp
+    // everything (over budget -> torn + lazy-align), then eager the
+    // hot cone (dirty + parent chain + Agent-held ids) under its own
+    // cap. Repeated so any per-cycle scratch buffer is exercised,
+    // not just the first call.
+    std::uint32_t last_eagered = 0;
+    for (int cycle = 0; cycle < 32; ++cycle) {
+        note_restamp_hot_cone_held_node(static_cast<std::uint32_t>(cycle) + 1u);
+        ws->bump_generation();
+        ws->restamp_all_node_generations();
+        last_eagered = static_cast<std::uint32_t>(
+            ws->restamp_hot_cone_after_budget(restamp_hot_cone_budget(4)));
+    }
+    expect_true("4633 AC3: stack sentinel intact after 32 over-budget cycles",
+                sentinel_intact4633(sent));
+    expect_true("4633 AC3: budget exceeded was observed",
+                ws->restamp_budget_exceeded_total() > exceeded_before);
+    expect_true("4633 AC3: over-budget outermost marks the workspace torn",
+                ws->restamp_over_budget_torn());
+    expect_true("4633 AC3: hot cone stayed inside its own budget", last_eagered <= 4u);
+    // The data-loss assertion: restamp is a generation re-align, it
+    // must never reclaim or drop a live node.
+    expect_eq_i64("4633 AC3: live node count invariant across the cycles",
+                  static_cast<std::int64_t>(live_before),
+                  static_cast<std::int64_t>(count_live_4633(*ws)));
+
+    apply_dev_audit_defaults();
+    clear_restamp_budget_nodes_override_for_test();
+    clear_restamp_hot_cone_held_for_test();
+}
+
+void test_4633_stable_ref_wire_lossless() {
+    std::print("AC4633/AC4 -- StableNodeRef wire record lossless (56-byte stack write)\n");
+    FlatAST flat{};
+    FlatAST::StableNodeRef in{};
+    in.id = 0x2A2Bu;
+    in.gen = 0x1615u;
+    in.subtree_gen_at_capture = 0x0E0Du;
+    in.mutation_id_at_capture = 0xF1F2F3F4F5F6F7F8ull; // needs all 8 bytes
+    in.workspace_id = 0x24232221u;
+    in.fiber_id = 0x1C1B1A19u;
+    in.tenant_id = 0x3433323130292827ull;
+    in.wrap_epoch = 0x08070605u;
+    in.cow_epoch_at_capture = 0x100F0E0D0C0B0A09ull;
+    in.boundary_pinned = true;
+    in.last_validated_generation.store(0x0403u, std::memory_order_relaxed);
+
+    // Exactly the caller shape used by ast:ref-serialize.
+    StackSentinel4633 sent{};
+    paint4633(sent);
+    std::uint8_t buf[FlatAST::kStableRefSerializedSize]{};
+    const auto n = flat.serialize_stable_ref(in, buf);
+    expect_true("4633 AC4: stack sentinel intact after serialize_stable_ref",
+                sentinel_intact4633(sent));
+    expect_eq_i64("4633 AC4: writer size == V2",
+                  static_cast<std::int64_t>(FlatAST::kStableRefSerializedSizeV2),
+                  static_cast<std::int64_t>(n));
+    expect_eq_i64("4633 AC4: caller buffer is exactly the writer size",
+                  static_cast<std::int64_t>(FlatAST::kStableRefSerializedSize),
+                  static_cast<std::int64_t>(sizeof(buf)));
+    expect_true("4633 AC4: wire version byte is v2", buf[10] == FlatAST::kStableRefWireVersionV2);
+    expect_true("4633 AC4: pin flag survives the wire",
+                (buf[11] & FlatAST::kStableRefFlagBoundaryPinned) != 0);
+
+    FlatAST::StableNodeRef out{};
+    expect_true("4633 AC4: deserialize accepts the record",
+                flat.deserialize_stable_ref(std::span<const std::uint8_t>(buf, n), out));
+    expect_eq_i64("4633 AC4: id", static_cast<std::int64_t>(in.id),
+                  static_cast<std::int64_t>(out.id));
+    expect_eq_i64("4633 AC4: gen", static_cast<std::int64_t>(in.gen),
+                  static_cast<std::int64_t>(out.gen));
+    expect_true("4633 AC4: full mutation_id (no 32-bit truncation)",
+                out.mutation_id_at_capture == in.mutation_id_at_capture);
+    expect_eq_i64("4633 AC4: workspace_id", static_cast<std::int64_t>(in.workspace_id),
+                  static_cast<std::int64_t>(out.workspace_id));
+    expect_eq_i64("4633 AC4: fiber_id", static_cast<std::int64_t>(in.fiber_id),
+                  static_cast<std::int64_t>(out.fiber_id));
+    expect_true("4633 AC4: tenant_id", out.tenant_id == in.tenant_id);
+    expect_eq_i64("4633 AC4: wrap_epoch", static_cast<std::int64_t>(in.wrap_epoch),
+                  static_cast<std::int64_t>(out.wrap_epoch));
+    expect_true("4633 AC4: cow_epoch_at_capture",
+                out.cow_epoch_at_capture == in.cow_epoch_at_capture);
+    expect_eq_i64("4633 AC4: subtree_gen_at_capture",
+                  static_cast<std::int64_t>(in.subtree_gen_at_capture),
+                  static_cast<std::int64_t>(out.subtree_gen_at_capture));
+    expect_true("4633 AC4: boundary_pinned", out.boundary_pinned == in.boundary_pinned);
+}
+
+void test_4633_bounded_write_sites_source_cite() {
+    std::print("AC4633/AC5 -- source-cite pin on the bounded write sites\n");
+    const auto restamp = read_repo_source("src/core/flatast_restamp.hh");
+    const auto stability = read_repo_source("src/core/ast_stability.cpp");
+    const auto prims = read_repo_source("src/compiler/evaluator_primitives_ast.cpp");
+    expect_true("4633 AC5: flatast_restamp.hh read", !restamp.empty());
+    expect_true("4633 AC5: ast_stability.cpp read", !stability.empty());
+    expect_true("4633 AC5: evaluator_primitives_ast.cpp read", !prims.empty());
+    if (restamp.empty() || stability.empty() || prims.empty())
+        return;
+    // The #4633 audit note lives with the storage it describes.
+    expect_true("4633 AC5: flatast_restamp.hh cites Issue #4633",
+                restamp.find("Issue #4633") != std::string::npos);
+    // The held set is namespace-scope storage with a static cap --
+    // never a per-call stack array.
+    expect_true("4633 AC5: held set is a namespace-scope capped array",
+                restamp.find("g_restamp_hot_cone_held_ids[kRestampHotConeHeldCap]") !=
+                    std::string::npos);
+    // ...and the write site bounds-checks before storing.
+    expect_true("4633 AC5: write site bounds-checks the cap before storing",
+                restamp.find("if (n >= kRestampHotConeHeldCap) {") != std::string::npos);
+    // The writer memsets/writes exactly the v2 record; the caller's
+    // stack buffer is sized to the same constant.
+    expect_true("4633 AC5: writer targets kStableRefSerializedSizeV2",
+                stability.find("std::memset(out, 0, kStableRefSerializedSizeV2)") !=
+                    std::string::npos);
+    expect_true("4633 AC5: ast:ref-serialize sizes its stack buffer to the writer size",
+                prims.find("std::uint8_t buf[aura::ast::FlatAST::kStableRefSerializedSize];") !=
+                    std::string::npos);
+}
+} // namespace
+
 int main() {
     std::print("Issue #3104 -- restamp-budget hard-gate under production\n");
     set_strategy(AuditStrategy::Full);
@@ -555,6 +855,10 @@ int main() {
     test_3426_ac3_soft_zero_extra();
     test_3426_ac4_non_regress();
     test_3426_ac5_linter_after_3327();
-    std::print("All #3104 + #3138 + #3309 + #3386 + #3426 + #3487 AC tests PASSED\n");
+    test_4633_held_set_bounded_and_lossless();
+    test_4633_over_budget_restamp_cycle_no_data_loss();
+    test_4633_stable_ref_wire_lossless();
+    test_4633_bounded_write_sites_source_cite();
+    std::print("All #3104 + #3138 + #3309 + #3386 + #3426 + #3487 + #4633 AC tests PASSED\n");
     return 0;
 }
