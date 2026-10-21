@@ -1555,6 +1555,229 @@ int run_orch_steal_boundary_1641() {
 } // namespace aura_jit_run_orch_steal_boundary_1641
 // ─── end test_orchestration_steal_boundary.cpp ───
 
+// ─── Issue #4648: a define hot-update must retire a nested lambda's
+// ScalarFn. The nested lambda is compiled under its own symbol name
+// ("__lambda__#<id>") — neither the define nor define#... — so the
+// by-name walk and the #4405 func-id walk both miss it, and the live
+// closure is unnamed: nothing MustDeopts it. The held closure kept
+// running the pre-mutate ScalarFn after the enclosing define's
+// production hot update. The JIT publishes the (creator, callee) edge
+// at the MakeClosure site, so the define that creates a closure owns
+// the closure's body: the define drop now retires that slot and
+// MustDeopts the closures that index it.
+namespace aura_jit_run_hot_update_nested_lambda_4648 {
+
+// C-linkage runtime bridges (the module interface does not export them).
+extern "C" void aura_note_ir_func_owner(std::int64_t func_id, const char* owner_name);
+extern "C" void aura_note_ir_func_define(std::int64_t func_id, const char* name);
+extern "C" void aura_register_fn_named(const char* name, std::int64_t func_id,
+                                       std::int64_t (*fn)(std::int64_t*, std::uint32_t),
+                                       std::int32_t local_count, std::int32_t arg_count,
+                                       std::int32_t env_count);
+extern "C" std::int64_t aura_jit_fn_ptr_for_test(std::int64_t func_id);
+extern "C" void aura_drop_jit_fn_native_for_define(const char* name);
+
+namespace {
+    std::atomic<int> g_ac4648_nested_hits{0};
+    std::atomic<int> g_ac4648_other_hits{0};
+
+    // The pre-mutate nested-lambda body. Any hit after the define's
+    // hot update is the bug.
+    std::int64_t ac4648_nested_scalar(std::int64_t* locals, std::uint32_t argc) {
+        (void)locals;
+        (void)argc;
+        g_ac4648_nested_hits.fetch_add(1, std::memory_order_relaxed);
+        return 464801;
+    }
+    // An unrelated define's nested lambda — the negative control.
+    std::int64_t ac4648_other_scalar(std::int64_t* locals, std::uint32_t argc) {
+        (void)locals;
+        (void)argc;
+        g_ac4648_other_hits.fetch_add(1, std::memory_order_relaxed);
+        return 464802;
+    }
+
+    std::string read_source_4648(const char* path) {
+        for (const auto& p :
+             {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+            std::ifstream in(p);
+            if (!in)
+                continue;
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        }
+        return {};
+    }
+} // namespace
+
+// AC1: the owner edge is published by the JIT and consumed by the
+// runtime's define drop.
+bool ac4648_owner_edge_wired() {
+    std::println("\n--- 4648 AC1 (ac4648_owner_edge_wired): the JIT publishes the "
+                 "closure-body owner edge ---");
+    const auto jit = read_source_4648("src/compiler/aura_jit.cpp");
+    const auto rt = read_source_4648("src/compiler/aura_jit_runtime.cpp");
+    CHECK(jit.find("Issue #4648") != std::string::npos, "4648 AC1: aura_jit.cpp cites #4648");
+    CHECK(jit.find("aura_note_ir_func_owner(static_cast<int64_t>(inst.ops[1]), fn.name)") !=
+              std::string::npos,
+          "4648 AC1: the MakeClosure site publishes the (callee, creator) edge");
+    CHECK(rt.find("Issue #4648") != std::string::npos,
+          "4648 AC1: aura_jit_runtime.cpp cites #4648");
+    CHECK(rt.find("g_ir_closure_creators") != std::string::npos,
+          "4648 AC1: the runtime keeps the creator edge map");
+    CHECK(rt.find("collect_nested_lambda_func_ids_locked") != std::string::npos,
+          "4648 AC1: the drop walk collects the nested lambda func_ids");
+    return true;
+}
+
+// AC2: the define drop retires the nested lambda's slot and MustDeopts
+// the held closure — the pre-mutate ScalarFn is not entered.
+bool ac4648_nested_lambda_leaves_native() {
+    std::println("\n--- 4648 AC2 (ac4648_nested_lambda_leaves_native): the define drop "
+                 "retires the __lambda__#<id> slot ---");
+    constexpr std::int64_t kNested = 480;
+    constexpr std::int64_t kOther = 481;
+    // The JIT published the owner edge at the MakeClosure site: the
+    // enclosing define owns the nested lambda's body.
+    aura_note_ir_func_owner(kNested, "ac4648_define");
+    aura_note_ir_func_owner(kOther, "ac4648_other");
+    // Production publish order (mirror of register_fn_func): the named
+    // publish first, then the func_id -> name binding.
+    aura_register_fn_named("__lambda__#480", kNested, ac4648_nested_scalar, 1, 0, 0);
+    aura_note_ir_func_define(kNested, "__lambda__#480");
+    aura_register_fn_named("__lambda__#481", kOther, ac4648_other_scalar, 1, 0, 0);
+    aura_note_ir_func_define(kOther, "__lambda__#481");
+    const auto cid = aura_alloc_closure(kNested);
+    const auto oid = aura_alloc_closure(kOther);
+    CHECK(cid >= 0 && oid >= 0, "4648 AC2: nested-lambda closures allocated");
+    std::int64_t args[1] = {0};
+    const auto pre = aura_closure_call(cid, args, 0);
+    const auto pre_other = aura_closure_call(oid, args, 0);
+    CHECK(pre == 464801, "4648 AC2: the held closure runs the native body before the update");
+    CHECK(pre_other == 464802, "4648 AC2: the peer closure runs its native body before the update");
+    const auto hits0 = g_ac4648_nested_hits.load(std::memory_order_relaxed);
+    const auto pending0 = aura_jit_deopt_pending_count();
+    const auto table0 = aura_aot_func_table_epoch();
+    // The production hot update of the enclosing define.
+    aura_drop_jit_fn_native_for_define("ac4648_define");
+    CHECK(aura_jit_fn_ptr_for_test(kNested) == 0,
+          "4648 AC2: the __lambda__#<id> slot is dropped with the define");
+    CHECK(aura_closure_get_must_deopt(cid) == 1,
+          "4648 AC2: the held closure is MustDeopt'ed by the define drop");
+    CHECK(aura_jit_fn_ptr_for_test(kOther) != 0,
+          "4648 AC2: another define's nested lambda slot stays installed");
+    CHECK(aura_closure_get_must_deopt(oid) == 0,
+          "4648 AC2: another define's nested lambda closure is not MustDeopt'ed");
+    CHECK(aura_jit_deopt_pending_count() == pending0,
+          "4648 AC2: the drop does not raise deopt_pending_count");
+    CHECK(aura_aot_func_table_epoch() == table0,
+          "4648 AC2: the drop does not bump the table epoch");
+    const auto post = aura_closure_call(cid, args, 0);
+    CHECK(post != 464801, "4648 AC2: the held closure does not run the stale ScalarFn");
+    CHECK(g_ac4648_nested_hits.load(std::memory_order_relaxed) == hits0,
+          "4648 AC2: the stale ScalarFn is not entered at all");
+    CHECK(aura_closure_call(oid, args, 0) == 464802,
+          "4648 AC2: the peer closure still enters native");
+    aura_free_closure(cid);
+    aura_free_closure(oid);
+    return true;
+}
+
+// AC3: the production face (Restricted sandbox default, production
+// security defaults) — the CompilerService hot update retires the
+// nested lambda too.
+bool ac4648_production_invalidate_retires_nested() {
+    std::println("\n--- 4648 AC3 (ac4648_production_invalidate_retires_nested): the "
+                 "production hot update retires the nested lambda ---");
+    // A primary-range func_id (the dispatch's primary slot table);
+    // the overflow range is the AOT constructor path, not this issue.
+    constexpr std::int64_t kNested = 484;
+    std::int64_t args[1] = {0};
+    std::int64_t cid = -1;
+    {
+        // The warm call runs in the dev face: the production face
+        // refuses an unnamed synthetic closure before the native (the
+        // pure-anon fail-closed shape), so the reachability probe has
+        // to happen while the closure is still warm.
+        aura_note_ir_func_owner(kNested, "ac4648_prod");
+        aura_register_fn_named("__lambda__#484", kNested, ac4648_nested_scalar, 1, 0, 0);
+        aura_note_ir_func_define(kNested, "__lambda__#484");
+        cid = aura_alloc_closure(kNested);
+        CHECK(cid >= 0, "4648 AC3: nested-lambda closure allocated");
+        const auto pre = aura_closure_call(cid, args, 0);
+        CHECK(pre == 464801, "4648 AC3: the held closure runs the native body before the update");
+    }
+    const auto hits0 = g_ac4648_nested_hits.load(std::memory_order_relaxed);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    {
+        // Owner-scoped production face (the #4405 shape): the facade
+        // takes ownership of the define's dirty cone.
+        aura::compiler::CompilerService cs_a;
+        aura::compiler::CompilerService cs_b;
+        void* owner = &cs_a.evaluator();
+        aura_aot_set_reemit_owner_eval(owner);
+        aura_aot_set_register_owner_eval(owner);
+        cs_a.public_invalidate_function("ac4648_prod");
+    }
+    CHECK(aura_jit_fn_ptr_for_test(kNested) == 0,
+          "4648 AC3: the production invalidate drops the nested lambda slot");
+    CHECK(aura_closure_get_must_deopt(cid) == 1,
+          "4648 AC3: the production invalidate MustDeopts the held closure");
+    const auto post = aura_closure_call(cid, args, 0);
+    CHECK(post != 464801,
+          "4648 AC3: the held closure leaves native after the production hot update");
+    CHECK(g_ac4648_nested_hits.load(std::memory_order_relaxed) == hits0,
+          "4648 AC3: the stale ScalarFn is not entered after the hot update");
+    aura_free_closure(cid);
+    aura_aot_set_reemit_owner_eval(nullptr);
+    aura_aot_set_register_owner_eval(nullptr);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    return true;
+}
+
+// AC4: the define's own name / name# drop is unchanged (the #4521 /
+// #4577 / #4578 contract) — the nested-lambda edge does not widen it.
+bool ac4648_define_own_drop_unchanged() {
+    std::println("\n--- 4648 AC4 (ac4648_define_own_drop_unchanged): the define's own "
+                 "name / name# drop is unchanged ---");
+    constexpr std::int64_t kOwn = 482;
+    constexpr std::int64_t kBundle = 483;
+    aura_register_fn_named("ac4648_own", kOwn, ac4648_nested_scalar, 1, 0, 0);
+    aura_note_ir_func_define(kOwn, "ac4648_own");
+    aura_register_fn_named("ac4648_own#0", kBundle, ac4648_other_scalar, 1, 0, 0);
+    aura_note_ir_func_define(kBundle, "ac4648_own#0");
+    const auto cid = aura_alloc_closure(kOwn);
+    const auto bid = aura_alloc_closure(kBundle);
+    CHECK(cid >= 0 && bid >= 0, "4648 AC4: define-owned closures allocated");
+    std::int64_t args[1] = {0};
+    aura_closure_call(cid, args, 0);
+    aura_closure_call(bid, args, 0);
+    aura_drop_jit_fn_native_for_define("ac4648_own");
+    CHECK(aura_jit_fn_ptr_for_test(kOwn) == 0, "4648 AC4: the define's own slot is dropped");
+    CHECK(aura_jit_fn_ptr_for_test(kBundle) == 0, "4648 AC4: the name# bundle slot is dropped");
+    CHECK(aura_closure_get_must_deopt(cid) == 1,
+          "4648 AC4: the define's own closure is MustDeopt'ed");
+    CHECK(aura_closure_get_must_deopt(bid) == 1,
+          "4648 AC4: the name# bundle closure is MustDeopt'ed");
+    aura_free_closure(cid);
+    aura_free_closure(bid);
+    return true;
+}
+
+int run_hot_update_nested_lambda_4648() {
+    std::println("\n=== Issue #4648: define hot-update retires a nested lambda's ScalarFn ===");
+    ac4648_owner_edge_wired();
+    ac4648_nested_lambda_leaves_native();
+    ac4648_production_invalidate_retires_nested();
+    ac4648_define_own_drop_unchanged();
+    std::println("\n=== Results: {} passed, {} failed ===", ::aura::test::g_passed,
+                 ::aura::test::g_failed);
+    return ::aura::test::g_failed == 0 ? 0 : 1;
+}
+
+} // namespace aura_jit_run_hot_update_nested_lambda_4648
+// ─── end issue #4648 nested-lambda hot-update ───
+
 int main() {
     std::println("\n######## run_aot_hot_update_inc_1640 ########");
     if (int rc = aura_jit_run_aot_hot_update_inc_1640::run_aot_hot_update_inc_1640(); rc != 0) {
@@ -1581,6 +1804,12 @@ int main() {
     std::println("\n######## run_orch_steal_boundary_1641 ########");
     if (int rc = aura_jit_run_orch_steal_boundary_1641::run_orch_steal_boundary_1641(); rc != 0) {
         std::println("run_orch_steal_boundary_1641 FAILED rc={}", rc);
+        return rc;
+    }
+    std::println("\n######## run_hot_update_nested_lambda_4648 ########");
+    if (int rc = aura_jit_run_hot_update_nested_lambda_4648::run_hot_update_nested_lambda_4648();
+        rc != 0) {
+        std::println("run_hot_update_nested_lambda_4648 FAILED rc={}", rc);
         return rc;
     }
     if (::aura::test::g_failed)

@@ -97,6 +97,12 @@ extern "C" uint32_t aura_jit_fn_provenance(int64_t func_id);
 extern "C" void aura_jit_pin_linear_root(std::uint64_t obj_id) noexcept;
 extern "C" void aura_jit_unpin_linear_root(std::uint64_t obj_id) noexcept;
 
+// Issue #4648: closure body owner edge — defined in aura_jit_runtime.cpp.
+// The JIT publishes (callee func_id, creator name) at every MakeClosure
+// site so the runtime's define drop can retire a nested lambda's
+// ScalarFn slot and MustDeopt the closures that index it.
+extern "C" void aura_note_ir_func_owner(int64_t func_id, const char* owner_name);
+
 namespace aura::jit {
 
 // PrimId values (must match ir.ixx PrimId enum order)
@@ -3172,6 +3178,18 @@ struct LLVMBuilder {
                 if (metrics)
                     metrics->critical_opcode_lowered_total.fetch_add(1, std::memory_order_relaxed);
                 auto result_slot = inst.ops[0];
+                // Issue #4648: this body allocates the closure, so it owns
+                // the closure's body (the callee func_id). Publish the
+                // edge: the runtime's define drop retires the nested
+                // lambda's ScalarFn slot and MustDeopts the closures
+                // that index it. Without the edge the nested lambda's
+                // symbol name ("__lambda__#<id>") is neither the define
+                // nor define#..., so the by-name walk and the #4405
+                // func-id walk miss it and the held closure keeps
+                // running the pre-mutate ScalarFn after the define's
+                // hot update.
+                if (fn.name && fn.name[0])
+                    aura_note_ir_func_owner(static_cast<int64_t>(inst.ops[1]), fn.name);
                 // Check escape analysis: non-escaping closures use arena allocation
                 if (fn.escape_map && result_slot < fn.local_count && !fn.escape_map[result_slot]) {
                     // NON_ESCAPING: arena-allocated closure
