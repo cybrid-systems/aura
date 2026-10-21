@@ -333,8 +333,19 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
         bool staged = false;
         if (a.size() >= 1 && is_string(a[0])) {
             auto mi = as_string_idx(a[0]);
-            if (mi < ev.string_heap_.size() && ev.string_heap_[mi] == "staged") {
-                staged = true;
+            if (mi < ev.string_heap_.size()) {
+                // Issue #4642: the operand is read to compare against the
+                // constant "staged" - a one-bit oracle on another
+                // principal's stamped string. In-range before the compare.
+                if (!ev.inrange_string_tenant_allows(
+                        mi,
+                        static_cast<std::uint16_t>(aura::compiler::security::kEffectWrite |
+                                                   aura::compiler::security::kEffectExec),
+                        "git-diff"))
+                    return make_void();
+                if (ev.string_heap_[mi] == "staged") {
+                    staged = true;
+                }
             }
         }
         // Issue #4381: tenant FS jail — same fence family as git-status
@@ -444,6 +455,15 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
         auto mi = as_string_idx(a[0]);
         if (mi >= ev.string_heap_.size())
             return make_int(-1);
+        // Issue #4642: the commit message leaves the heap into argv (or the
+        // libgit2 commit body). Write|Exec is what the dispatch already
+        // required - in-range before the copy, no second require_effect.
+        if (!ev.inrange_string_tenant_allows(
+                mi,
+                static_cast<std::uint16_t>(aura::compiler::security::kEffectWrite |
+                                           aura::compiler::security::kEffectExec),
+                "git-commit"))
+            return make_int(-1);
         const std::string& msg = ev.string_heap_[mi];
         int rc = -1;
         if (!jail_root.empty())
@@ -551,6 +571,15 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
                 return make_int(-1);
             auto si = as_string_idx(v);
             if (si >= ev.string_heap_.size())
+                return make_int(-1);
+            // Issue #4642: the path bytes leave the heap into the git add
+            // argv. Write|Exec is the dispatch effect - in-range before the
+            // copy (the tenant host-path jail below is a separate fence).
+            if (!ev.inrange_string_tenant_allows(
+                    si,
+                    static_cast<std::uint16_t>(aura::compiler::security::kEffectWrite |
+                                               aura::compiler::security::kEffectExec),
+                    "git-stage"))
                 return make_int(-1);
             std::string p(ev.string_heap_[si]);
             if (!jail_root.empty()) {
@@ -741,7 +770,17 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                                   "capability denied: io-read required");
             is_error(denied))
             return denied;
-        auto name = ev.string_heap_[types::as_string_idx(a[0])];
+        // Issue #4642: the env name leaves the heap into ::getenv. The
+        // io-read fence above is a capability check, not a tenant check -
+        // in-range before the copy (the dispatch effect stays kEffectNone).
+        // The io error shape stays reserved for the io-read denial; a stamp
+        // mismatch is an IsolationDeny and the env value is unread.
+        const auto nidx = types::as_string_idx(a[0]);
+        if (nidx >= ev.string_heap_.size())
+            return make_void();
+        if (!ev.inrange_string_tenant_allows(nidx, aura::compiler::security::kEffectNone, "getenv"))
+            return make_void();
+        auto name = ev.string_heap_[nidx];
         auto* val = ::getenv(name.c_str());
         // Issue #4494: unset → #f (R7RS get-environment-variable), so the
         // (or (getenv "X") default) idiom falls back. Void was truthy.
@@ -1022,7 +1061,16 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
     ev.defer_std_host_prim("tcp-connect", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0]) || !types::is_int(a[1]))
             return make_void();
-        auto host = ev.string_heap_[types::as_string_idx(a[0])];
+        // Issue #4642: the host bytes leave the heap into getaddrinfo (DNS
+        // + connect). Network is the dispatch effect - in-range before the
+        // copy, no second require_effect.
+        const auto hidx = types::as_string_idx(a[0]);
+        if (hidx >= ev.string_heap_.size())
+            return make_void();
+        if (!ev.inrange_string_tenant_allows(hidx, aura::compiler::security::kEffectNetwork,
+                                             "tcp-connect"))
+            return make_void();
+        auto host = ev.string_heap_[hidx];
         auto port_str = std::to_string(types::as_int(a[1]));
         struct addrinfo hints{}, *res;
         hints.ai_family = AF_UNSPEC;

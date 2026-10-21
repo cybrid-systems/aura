@@ -3138,6 +3138,389 @@ int run_test_require_effect_on_ref_stale_3773() {
     return aura::test::g_failed ? 1 : 0;
 }
 
+// ── Issue #4642 ─────────────────────────────────────────────────────────────
+// eval / git-diff / git-commit / git-stage / getenv / tcp-connect indexed
+// string_heap_ and used the bytes with no in-range tenant check, so another
+// principal's stamped string left the heap: eval parsed it and bound its
+// top-level define into the shared top env, git-commit / git-stage copied it
+// into a forked git argv, tcp-connect resolved it in DNS, getenv handed it to
+// ::getenv. Every other sink already calls the #4428 helper (the #4559
+// wave); these six never did. Each site now calls
+// inrange_string_tenant_allows BEFORE the copy - on a mismatch the helper
+// has already emitted the IsolationDeny and the site returns its own
+// failure shape without parsing / forking / resolving / reading.
+
+namespace {
+
+constexpr std::uint16_t k4642None = aura::compiler::security::kEffectNone;
+constexpr std::uint16_t k4642Read = aura::compiler::security::kEffectRead;
+constexpr std::uint16_t k4642Network = aura::compiler::security::kEffectNetwork;
+constexpr std::uint16_t k4642WriteExec = static_cast<std::uint16_t>(
+    aura::compiler::security::kEffectWrite | aura::compiler::security::kEffectExec);
+
+// Mint a tenant-stamped string slot (the #4428 owner record = tenant + 1).
+static std::uint64_t mint_stamped_4642(Evaluator& ev, std::uint64_t tenant,
+                                       const std::string& text) {
+    Evaluator::TenantScope scope(ev, tenant);
+    return static_cast<std::uint64_t>(ev.push_string_heap(text));
+}
+
+// The reason of the first IsolationDeny row carrying the given op since
+// seq0 (empty when no such row was emitted).
+static std::string isolation_deny_reason_4642(std::uint64_t seq0, std::string_view op) {
+    const auto& ring = g_security_event_ring();
+    const auto seq = ring.seq.load(std::memory_order_acquire);
+    for (std::uint64_t s = seq0; s < seq; ++s) {
+        const auto& e = ring.ring[s % ring.ring.size()];
+        if (e.seq != s)
+            continue;
+        if (static_cast<int>(e.kind) !=
+            static_cast<int>(::aura::core::security_event::SecurityEventKind::IsolationDeny))
+            continue;
+        if (std::string_view(e.op) != op)
+            continue;
+        return std::string(e.reason);
+    }
+    return {};
+}
+
+// A row the in-range fence produced. The tenant exec jail (#4381) emits
+// its own IsolationDeny row with the tenant-path-escape reason, so the
+// fence rows are the ones stamped with an isolation-deny reason.
+static bool fence_row_4642(std::uint64_t seq0, std::string_view op) {
+    const auto reason = isolation_deny_reason_4642(seq0, op);
+    return reason.rfind("isolation-deny:", 0) == 0;
+}
+
+// The in-range fence must sit between the site entry and the copy of the
+// bytes out of string_heap_.
+static bool fence_precedes_copy_4642(const std::string& src, std::string_view site,
+                                     std::string_view copy) {
+    const auto site_pos = src.find(site);
+    if (site_pos == std::string::npos)
+        return false;
+    const auto fence_pos = src.find("inrange_string_tenant_allows", site_pos);
+    if (fence_pos == std::string::npos)
+        return false;
+    const auto copy_pos = src.find(copy, site_pos);
+    if (copy_pos == std::string::npos)
+        return false;
+    return fence_pos < copy_pos;
+}
+
+// How many times does the needle appear between the two markers?
+static std::size_t count_between_4642(const std::string& src, std::string_view needle,
+                                      std::string_view from, std::string_view to) {
+    const auto a = src.find(from);
+    if (a == std::string::npos)
+        return 0;
+    const auto b = src.find(to, a);
+    const auto end = (b == std::string::npos) ? src.size() : b;
+    std::size_t n = 0;
+    std::size_t pos = a;
+    while (pos < end) {
+        const auto hit = src.find(needle, pos);
+        if (hit == std::string::npos || hit >= end)
+            break;
+        ++n;
+        pos = hit + needle.size();
+    }
+    return n;
+}
+
+} // namespace
+
+// AC1: the #4428 in-range fence denies a foreign stamp at every one of the
+// six ops and the IsolationDeny rows carry those ops (#4559 helper shape).
+static void ac4642_1_fence_denies_foreign_stamp_at_every_op() {
+    std::println("\n--- #4642 AC1: the in-range fence denies the foreign stamp ---");
+    reset_all();
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1); // Restricted + MT -> production face
+    const auto sidx = mint_stamped_4642(ev, 7, "tenant-7 secret");
+    CHECK(ev.string_slot_tenant_record_for_test(sidx) == 8,
+          "AC1: the slot carries tenant 7's owner record (tenant+1)");
+    const auto seq0 = current_seq();
+    {
+        Evaluator::TenantScope t9(ev, 9);
+        CHECK(!ev.inrange_string_tenant_allows(sidx, k4642None, "eval"),
+              "AC1: the eval op denies the foreign stamp");
+        CHECK(!ev.inrange_string_tenant_allows(sidx, k4642WriteExec, "git-diff"),
+              "AC1: the git-diff op denies the foreign stamp");
+        CHECK(!ev.inrange_string_tenant_allows(sidx, k4642WriteExec, "git-commit"),
+              "AC1: the git-commit op denies the foreign stamp");
+        CHECK(!ev.inrange_string_tenant_allows(sidx, k4642WriteExec, "git-stage"),
+              "AC1: the git-stage op denies the foreign stamp");
+        CHECK(!ev.inrange_string_tenant_allows(sidx, k4642None, "getenv"),
+              "AC1: the getenv op denies the foreign stamp");
+        CHECK(!ev.inrange_string_tenant_allows(sidx, k4642Network, "tcp-connect"),
+              "AC1: the tcp-connect op denies the foreign stamp");
+    }
+    CHECK(fence_row_4642(seq0, "eval"), "AC1: an eval IsolationDeny row was emitted");
+    CHECK(fence_row_4642(seq0, "tcp-connect"), "AC1: a tcp-connect IsolationDeny row was emitted");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+// AC2: eval must not parse and must not eval_flat - the top env stays
+// unchanged and the call returns a primitive error.
+static void ac4642_2_eval_denies_foreign_stamp() {
+    std::println("\n--- #4642 AC2: eval does not parse a foreign program ---");
+    reset_all();
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1); // Restricted
+    const auto sidx = mint_stamped_4642(ev, 7, "(define leaked-4642 1)");
+    const auto eval_prim = ev.primitives().lookup("eval");
+    CHECK(eval_prim.has_value(), "AC2: eval is registered");
+    const auto binds_before = ev.top_env().bindings().size();
+    const auto seq0 = current_seq();
+    if (eval_prim) {
+        Evaluator::TenantScope t9(ev, 9);
+        const auto r = (*eval_prim)({aura::compiler::types::make_string(sidx)});
+        CHECK(aura::compiler::types::is_error(r),
+              "AC2: eval returns a primitive error (no parse, no eval_flat)");
+    }
+    CHECK(fence_row_4642(seq0, "eval"), "AC2: eval emits the IsolationDeny row");
+    CHECK(ev.top_env().bindings().size() == binds_before,
+          "AC2: the top env is unchanged (the foreign define never bound)");
+    bool leaked = false;
+    for (const auto& b : ev.top_env().bindings()) {
+        if (b.first == "leaked-4642")
+            leaked = true;
+    }
+    CHECK(!leaked, "AC2: the foreign define name is absent from the top env");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+// AC3: getenv must not call ::getenv on a foreign stamped name - the env
+// value stays unread and the io error shape stays reserved for io-read.
+static void ac4642_3_getenv_denies_foreign_stamp() {
+    std::println("\n--- #4642 AC3: getenv does not read a foreign env name ---");
+    reset_all();
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1); // Restricted
+    const auto sidx = mint_stamped_4642(ev, 7, "PATH");
+    const auto getenv_prim = ev.primitives().lookup("getenv");
+    CHECK(getenv_prim.has_value(), "AC3: getenv is registered");
+    const auto seq0 = current_seq();
+    bool io_read_held = false;
+    if (getenv_prim) {
+        Evaluator::TenantScope t9(ev, 9);
+        // The io-read fence runs first: hand tenant 9 the Read grant so the
+        // in-range fence (not the capability gate) is what denies.
+        const auto me = current_mutation_epoch();
+        ev.grant_effect_capability(9, "io-read-4642-ac3", k4642Read, me == 0 ? 1 : me);
+        io_read_held = ev.has_capability(aura::compiler::security::kCapIoRead);
+        const auto r = (*getenv_prim)({aura::compiler::types::make_string(sidx)});
+        CHECK(!aura::compiler::types::is_string(r),
+              "AC3: getenv returns no env value for the foreign name");
+    }
+    if (io_read_held) {
+        CHECK(fence_row_4642(seq0, "getenv"),
+              "AC3: getenv emits the IsolationDeny row (the env value is unread)");
+    } else {
+        std::println("  SKIP: 4642 AC3 getenv fence row (io-read grant did not land)");
+    }
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+// AC4: tcp-connect must not getaddrinfo and must not socket on a foreign
+// stamped host.
+static void ac4642_4_tcp_connect_denies_foreign_stamp() {
+    std::println("\n--- #4642 AC4: tcp-connect does not resolve a foreign host ---");
+    reset_all();
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    (void)ev.ensure_std_host_prims("std/net"); // install the deferred tcp prims
+    ev.set_effect_sandbox_mode(1);             // Restricted
+    const auto sidx = mint_stamped_4642(ev, 7, "tenant-7.example.invalid");
+    const auto connect_prim = ev.primitives().lookup("tcp-connect");
+    CHECK(connect_prim.has_value(), "AC4: tcp-connect is registered");
+    const auto seq0 = current_seq();
+    if (connect_prim) {
+        Evaluator::TenantScope t9(ev, 9);
+        const auto r = (*connect_prim)(
+            {aura::compiler::types::make_string(sidx), aura::compiler::types::make_int(80)});
+        CHECK(!aura::compiler::types::is_int(r),
+              "AC4: tcp-connect returns void (no getaddrinfo, no socket)");
+    }
+    CHECK(fence_row_4642(seq0, "tcp-connect"), "AC4: tcp-connect emits the IsolationDeny row");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+// AC5: git-diff compares its operand against the constant "staged" - the
+// one-bit oracle on a foreign stamped operand is closed.
+static void ac4642_5_git_diff_oracle_denies_foreign_stamp() {
+    std::println("\n--- #4642 AC5: git-diff does not compare a foreign operand ---");
+    reset_all();
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    (void)ev.ensure_std_host_prims("std/git"); // install the deferred git prims
+    ev.set_effect_sandbox_mode(1);             // Restricted
+    const auto sidx = mint_stamped_4642(ev, 7, "staged");
+    const auto diff_prim = ev.primitives().lookup("git-diff");
+    CHECK(diff_prim.has_value(), "AC5: git-diff is registered");
+    const auto seq0 = current_seq();
+    if (diff_prim) {
+        Evaluator::TenantScope t9(ev, 9);
+        const auto r = (*diff_prim)({aura::compiler::types::make_string(sidx)});
+        CHECK(!aura::compiler::types::is_string(r),
+              "AC5: git-diff returns void (the staged oracle is closed)");
+    }
+    CHECK(fence_row_4642(seq0, "git-diff"), "AC5: git-diff emits the IsolationDeny row");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+// AC6: git-commit / git-stage must not fork with a foreign stamped
+// message / path. The tenant exec jail (#4381) runs before the copy, so on
+// a host without the Landlock jail the jail denies first - both paths are
+// fail-closed and neither reaches git.
+static void ac4642_6_git_commit_and_stage_deny_foreign_stamp() {
+    std::println("\n--- #4642 AC6: git-commit / git-stage do not fork ---");
+    reset_all();
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    (void)ev.ensure_std_host_prims("std/git"); // install the deferred git prims
+    // git-commit's dispatch already paid Write|Exec. That grant is a
+    // high-risk effect, so it is landed while the sandbox is still Off (the
+    // production high-risk grant path needs an explicit TenantAdmin); the
+    // Restricted face is armed right after.
+    ev.set_capability_tenant_id(9);
+    {
+        const auto me = current_mutation_epoch();
+        ev.grant_effect_capability(9, "git-4642-ac6",
+                                   static_cast<std::uint16_t>(k4642WriteExec | k4642Network),
+                                   me == 0 ? 1 : me);
+    }
+    ev.set_effect_sandbox_mode(1); // Restricted
+    const auto msg_idx = mint_stamped_4642(ev, 7, "tenant-7 commit message");
+    const auto path_idx = mint_stamped_4642(ev, 7, "tenant-7-file.txt");
+    const auto commit_prim = ev.primitives().lookup("git-commit");
+    const auto stage_prim = ev.primitives().lookup("git-stage");
+    CHECK(commit_prim.has_value(), "AC6: git-commit is registered");
+    CHECK(stage_prim.has_value(), "AC6: git-stage is registered");
+    const auto seq0 = current_seq();
+    if (commit_prim) {
+        Evaluator::TenantScope t9(ev, 9);
+        const auto r = (*commit_prim)({aura::compiler::types::make_string(msg_idx)});
+        CHECK(aura::compiler::types::is_int(r), "AC6: git-commit returns the exit-code int");
+        if (aura::compiler::types::is_int(r))
+            CHECK(aura::compiler::types::as_int(r) == -1,
+                  "AC6: git-commit returns the failure int (-1) - no fork");
+    }
+    if (stage_prim) {
+        Evaluator::TenantScope t9(ev, 9);
+        const auto r = (*stage_prim)({aura::compiler::types::make_string(path_idx)});
+        CHECK(aura::compiler::types::is_int(r), "AC6: git-stage returns the exit-code int");
+        if (aura::compiler::types::is_int(r))
+            CHECK(aura::compiler::types::as_int(r) == -1,
+                  "AC6: git-stage returns the failure int (-1) - no fork");
+    }
+    if (fence_row_4642(seq0, "git-commit"))
+        CHECK(true, "AC6: git-commit denied by the in-range fence");
+    else
+        std::println("  SKIP: 4642 AC6 git-commit fence row (the tenant exec jail denied first)");
+    if (fence_row_4642(seq0, "git-stage"))
+        CHECK(true, "AC6: git-stage denied by the in-range fence");
+    else
+        std::println("  SKIP: 4642 AC6 git-stage fence row (the tenant exec jail denied first)");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+// AC7: no over-deny - the owner keeps its own string, a Soft / Off face
+// stays permissive, a single-tenant Restricted face stays permissive and an
+// out-of-range (short stamp array) index stays on the historical allow path.
+static void ac4642_7_owner_and_legacy_faces_stay_allow() {
+    std::println("\n--- #4642 AC7: owner and legacy faces stay allow ---");
+    reset_all();
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1); // Restricted
+    const auto sidx = mint_stamped_4642(ev, 7, "tenant-7 secret");
+    {
+        Evaluator::TenantScope t7(ev, 7);
+        CHECK(ev.inrange_string_tenant_allows(sidx, k4642None, "eval"),
+              "AC7: the owner keeps its own stamped string");
+    }
+    {
+        Evaluator::TenantScope t9(ev, 9);
+        CHECK(ev.inrange_string_tenant_allows(sidx + 4096, k4642None, "eval"),
+              "AC7: a short stamp array (out-of-range slot) stays allow");
+    }
+    // Soft / Off face: the fence never arms.
+    ev.set_effect_sandbox_mode(0);
+    {
+        Evaluator::TenantScope t9(ev, 9);
+        CHECK(ev.inrange_string_tenant_allows(sidx, k4642None, "eval"),
+              "AC7: Soft / Off stays allow (the fence is not armed)");
+    }
+    // Single-tenant Restricted: no multi-tenant face, so the fence is off.
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    ev.set_effect_sandbox_mode(1);
+    {
+        Evaluator::TenantScope t9(ev, 9);
+        CHECK(ev.inrange_string_tenant_allows(sidx, k4642None, "eval"),
+              "AC7: single-tenant Restricted stays allow (no multi-tenant face)");
+    }
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+// AC8: source-cite - the fence call precedes the copy at all six sites,
+// no new Effect bit and no second require_effect.
+static void ac4642_8_source_cite_and_no_invent() {
+    std::println("\n--- #4642 AC8: source-cite + no invent ---");
+    const auto io = read_file("src/compiler/evaluator_primitives_io.cpp");
+    const auto ev_src = read_file("src/compiler/evaluator_primitives_eval.cpp");
+    CHECK(!io.empty() && !ev_src.empty(), "AC8: the two production files are readable");
+    CHECK(fence_precedes_copy_4642(ev_src, "add(\"eval\"", "auto code = ev.string_heap_[sidx];"),
+          "AC8: eval calls the in-range fence before the copy");
+    CHECK(fence_precedes_copy_4642(io, "defer_std_host_prim(\"git-diff\"",
+                                   "if (ev.string_heap_[mi] == \"staged\")"),
+          "AC8: git-diff calls the in-range fence before the staged compare");
+    CHECK(fence_precedes_copy_4642(io, "defer_std_host_prim(\"git-commit\"",
+                                   "const std::string& msg = ev.string_heap_[mi];"),
+          "AC8: git-commit calls the in-range fence before the copy");
+    CHECK(fence_precedes_copy_4642(io, "defer_std_host_prim(\"git-stage\"",
+                                   "std::string p(ev.string_heap_[si]);"),
+          "AC8: git-stage calls the in-range fence before the copy");
+    CHECK(fence_precedes_copy_4642(io, "add(\"getenv\"", "auto name = ev.string_heap_[nidx];"),
+          "AC8: getenv calls the in-range fence before the copy");
+    CHECK(fence_precedes_copy_4642(io, "defer_std_host_prim(\"tcp-connect\"",
+                                   "auto host = ev.string_heap_[hidx];"),
+          "AC8: tcp-connect calls the in-range fence before the copy");
+    // No new Effect bit: eval keeps the kEffectNone dispatch face.
+    CHECK(
+        ev_src.find("inrange_string_tenant_allows(sidx, aura::compiler::security::kEffectNone,") !=
+            std::string::npos,
+        "AC8: eval keeps the kEffectNone dispatch face (the stamp is the gate)");
+    // No second require_effect: git-commit keeps exactly one, git-stage none.
+    CHECK(count_between_4642(io, "ev.require_effect(", "defer_std_host_prim(\"git-commit\"",
+                             "defer_std_host_prim(\"git-stage\"") == 1,
+          "AC8: git-commit keeps exactly one require_effect (no second one)");
+    CHECK(count_between_4642(io, "ev.require_effect(", "defer_std_host_prim(\"git-stage\"",
+                             "defer_std_host_prim(\"git-") == 0,
+          "AC8: git-stage adds no require_effect");
+    // The helper is the existing #4428 one - no new gate was invented.
+    CHECK(read_file("src/compiler/evaluator.ixx").find("inrange_string_tenant_allows") !=
+              std::string::npos,
+          "AC8: the helper is declared in evaluator.ixx");
+    CHECK(read_file("src/compiler/evaluator_security.cpp").find("inrange_string_tenant_allows") !=
+              std::string::npos,
+          "AC8: the helper is implemented in evaluator_security.cpp");
+}
+
 int run_test_require_effect_three_arg_default() {
     std::println("=== Issue #3526: 3-arg require_effect default ref_tenant=0 ===");
     ac3526_1_linter_flags_three_arg_probe();
@@ -3146,6 +3529,18 @@ int run_test_require_effect_three_arg_default() {
     ac3526_4_occupancy_three_arg_denies();
     ac3526_5_soft_off_three_arg_allows();
     ac3526_6_source_cite_and_no_invent();
+    std::println(
+        "\n=== Issue #4642: cross-tenant string sinks that skipped the in-range fence ===");
+    ac4642_1_fence_denies_foreign_stamp_at_every_op();
+    ac4642_2_eval_denies_foreign_stamp();
+    ac4642_3_getenv_denies_foreign_stamp();
+    ac4642_4_tcp_connect_denies_foreign_stamp();
+    ac4642_5_git_diff_oracle_denies_foreign_stamp();
+    ac4642_6_git_commit_and_stage_deny_foreign_stamp();
+    ac4642_7_owner_and_legacy_faces_stay_allow();
+    ac4642_8_source_cite_and_no_invent();
+    // Leave the shared process face as the batch found it.
+    reset_all();
     return aura::test::g_failed ? 1 : 0;
 }
 
