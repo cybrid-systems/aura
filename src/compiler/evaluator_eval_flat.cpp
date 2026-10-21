@@ -88,6 +88,41 @@ as_expansion_registry(
 }
 
 using aura::compiler::pure::is_truthy;
+
+// Issue #4649: truncate_to is not the only undo for a child slot BELOW
+// the clone floor. truncate_to(clone_ckpt) drops the tail; a slot the
+// CALLER owns (below the floor) that the expand rewrote keeps an id
+// from the dropped tail — a dead id in the caller's tree. The expand
+// rolls its own edges back, but the caller-owned slot is restored
+// here: the entry root goes back into its slot.
+// Called BEFORE the truncate: the slot still holds a live id from the
+// tail the truncate drops, not yet a dead one.
+static void restore_caller_slot_before_truncate(aura::ast::FlatAST& flat,
+                                                aura::ast::NodeId entry_root, std::size_t floor) {
+    using aura::ast::NodeId;
+    if (entry_root == aura::ast::NULL_NODE || entry_root >= flat.size())
+        return;
+    if (static_cast<std::size_t>(entry_root) >= floor)
+        return; // the entry root goes with the dropped tail
+    const auto pid = flat.parent_of(entry_root);
+    if (pid == aura::ast::NULL_NODE || pid >= flat.size())
+        return;
+    auto pv = flat.get(pid);
+    std::vector<NodeId> kids(pv.children.begin(), pv.children.end());
+    for (std::uint32_t ci = 0; ci < kids.size(); ++ci) {
+        if (kids[ci] == entry_root)
+            return; // the caller slot still holds the entry root
+        if (kids[ci] != aura::ast::NULL_NODE && static_cast<std::size_t>(kids[ci]) >= floor) {
+            // The expand spliced over the caller's slot with a node
+            // from the tail the truncate drops — put the entry root
+            // back (the caller's edge survives the deny).
+            flat.set_child(pid, ci, entry_root);
+            flat.restore_parent_link(entry_root, pid);
+            return;
+        }
+    }
+}
+
 using types::EvalValue;
 // Issue #918 Phase 1: explicit using-declarations (no `using namespace`).
 using types::as_bool;
@@ -6758,6 +6793,10 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 // `macros_`, recursively expand it. Bounded by
                                 // a depth limit (10) to prevent infinite loops
                                 // (e.g., macro X calls macro X).
+                                // Issue #4649: the expand's entry root — the
+                                // caller-owned slot it may have rewritten
+                                // is restored before the deny truncate.
+                                const auto expand_entry = expanded;
                                 expanded = expand_inner_macros(f, p, expanded, /*depth=*/0,
                                                                /*max_depth=*/10,
                                                                as_expansion_registry(macros_));
@@ -6772,6 +6811,13 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 // (one sandbox load, no truncate).
                                 if (aura::core::sandbox::is_sandbox_active() &&
                                     macro_exp::inner_expand_production_limit_deny_all()) {
+                                    // Issue #4649: truncate_to is not the
+                                    // only undo — a caller-owned slot
+                                    // BELOW clone_ckpt that the expand
+                                    // rewrote keeps a tail id (dead after
+                                    // the truncate). Restore it first.
+                                    restore_caller_slot_before_truncate(*f, expand_entry,
+                                                                        clone_ckpt);
                                     f->truncate_to(clone_ckpt);
                                     // Same module read as the NULL arm —
                                     // the extern "C" string is a weak stub
@@ -10005,6 +10051,9 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
                 flat.truncate_to(clone_ckpt);
             return false;
         }
+        // Issue #4649: the expand's entry root — the caller-owned slot
+        // it may have rewritten is restored before the deny truncate.
+        const auto expand_entry = expanded;
         expanded =
             expand_inner_macros(&flat, &pool, expanded, 0, 10, as_expansion_registry(macros_));
         // Issue #3753: expand_inner_macros on production deny returns the
@@ -10024,6 +10073,11 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
         if (aura::core::sandbox::is_sandbox_active() &&
             (inner_expand_production_limit_deny() ||
              macro_exp::inner_expand_production_limit_deny_all())) {
+            // Issue #4649: truncate_to is not the only undo — a
+            // caller-owned slot BELOW clone_ckpt that the expand
+            // rewrote keeps a tail id (dead after the truncate).
+            // Restore it first.
+            restore_caller_slot_before_truncate(flat, expand_entry, clone_ckpt);
             flat.truncate_to(clone_ckpt);
             return false;
         }
