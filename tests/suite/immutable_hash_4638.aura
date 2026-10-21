@@ -1,0 +1,31 @@
+;; expect: #t 0 1 2 10 20 () 1 1 99 1
+; Issue #4638 -- native persistent map (immutable hash, 32-way HAMT).
+; Every write returns a NEW map and leaves the argument untouched; a
+; version is just a root index, so forking a checkpoint is O(1).
+(require "std/hash" all:)
+
+(define m0 (immutable-hash))
+(display (immutable-hash? m0)) (display " ")
+(display (ihash-count m0)) (display " ")
+
+(define m1 (ihash-set m0 1 10))
+(display (ihash-count m1)) (display " ")
+
+(define m2 (ihash-set m1 2 20))
+(display (ihash-count m2)) (display " ")
+
+(display (ihash-ref m2 1 0)) (display " ")
+(display (ihash-ref m2 2 0)) (display " ")
+
+; m0 is still empty: the insert shared nothing into it.
+(display (ihash-ref m0 1 ())) (display " ")
+
+; m1 still has exactly one entry after m2 was derived from it.
+(display (ihash-count m1)) (display " ")
+
+; Removal returns a new map; m2 is unchanged.
+(display (ihash-count (ihash-remove m2 1))) (display " ")
+
+; Replacing an existing key does not grow the map.
+(display (ihash-ref (ihash-set m1 1 99) 1 0)) (display " ")
+(display (ihash-count m1))

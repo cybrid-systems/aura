@@ -278,6 +278,17 @@ export inline std::uint64_t as_vector_idx(const EvalValue& v) noexcept {
     return ref_index(v.val);
 }
 
+export inline EvalValue make_imm_hash(std::uint64_t idx) noexcept {
+    return EvalValue(make_ref(RefImmHash, idx));
+}
+export inline bool is_imm_hash(const EvalValue& v) noexcept {
+    return is_ref(v.val) && ref_type(v.val) == RefImmHash;
+}
+export inline std::uint64_t as_imm_hash_idx(const EvalValue& v) noexcept {
+    AURA_HOT_CONTRACT(is_imm_hash(v));
+    return ref_index(v.val);
+}
+
 export inline EvalValue make_hash(std::uint64_t idx) noexcept {
     return EvalValue(make_ref(RefHash, idx));
 }
@@ -410,6 +421,8 @@ export inline std::string format_value(const EvalValue& v) {
         return "#<vector " + std::to_string(as_vector_idx(v)) + ">";
     if (is_hash(v))
         return "#<hash " + std::to_string(as_hash_idx(v)) + ">";
+    if (is_imm_hash(v))
+        return "#<immutable-hash " + std::to_string(as_imm_hash_idx(v)) + ">";
     if (is_primitive(v))
         return "#<primitive " + std::to_string(as_primitive_slot(v)) + ">";
     if (is_module(v))
