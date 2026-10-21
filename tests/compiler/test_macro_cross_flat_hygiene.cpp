@@ -20,6 +20,7 @@
 //   AC7: source cite (8 gate / wire-up sites)
 
 #include "test_harness.hpp"
+#include "compiler/grant_test_support.hh"
 #include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
 #include "core/sandbox.hh"
@@ -74,6 +75,7 @@ using aura::test::g_passed;
 // the macro_expansion.cpp definitions. The helpers are defined in
 // `src/compiler/macro_expansion.cpp` and exposed via the C-linkage
 // declaration at the bottom of the extern "C" block.
+extern "C" std::uint64_t aura_fiber_current_id();
 extern "C" std::uint64_t
 aura_test_cross_flat_expand_consistency(void* target_flat, void* target_pool, void* source_flat,
                                         void* source_pool, std::uint32_t new_root) noexcept;
@@ -714,6 +716,236 @@ static void ac4309_cross_flat_keeps_caller_arg() {
     CHECK(src.schema_cache(body) == 42u && src.provenance(body) == 91u, "4309: source untouched");
 }
 
+// Issue #4649: the expand must not write the CALLER's edge.
+//
+// A shared subst argument (the caller's own node) is listed by BOTH the
+// caller and the expansion clone. #4309 keeps the caller's live reverse
+// link (a live parent is not retargeted), so parent_of(shared) is the
+// CALLER — not the node that lists the child inside the expansion. A
+// splice that used parent_of() landed in the CALLER's slot: the
+// caller's syntax moved during the expand. The splice target is the
+// node that actually lists the child (the expansion node), and the
+// caller's edge (parent link / marker / provenance / schema /
+// kMacroExpansion) stays as it was after #4309.
+static void ac4649_expand_keeps_caller_edge() {
+    std::println("\n--- #4649: the expand keeps the caller's edge (shared subst argument) ---");
+    constexpr auto kExp = static_cast<std::uint8_t>(FlatAST::MacroDirtyReason::kMacroExpansion);
+    using aura::compiler::macro_exp::expand_inner_macros;
+    using aura::compiler::macro_exp::kHygieneLimitReasonSameFlatReject;
+    using aura::compiler::macro_exp::MacroExpansionDef;
+    using aura::compiler::macro_exp::note_hygiene_last_limit_reason_for_fiber;
+    using Registry = std::unordered_map<std::string, MacroExpansionDef,
+                                        aura::core::TransparentStringHash, std::equal_to<>>;
+    using SubstMap = std::unordered_map<std::string, aura::ast::NodeId,
+                                        aura::core::TransparentStringHash, std::equal_to<>>;
+    using NameMap = std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                                       std::equal_to<>>;
+
+    // bar's body: (* x 2) — the expansion of (bar <n>).
+    FlatAST bar_flat;
+    StringPool bar_pool;
+    auto x = bar_pool.intern("x");
+    auto star = bar_flat.add_variable(bar_pool.intern("*"));
+    auto xv = bar_flat.add_variable(x);
+    auto two = bar_flat.add_literal(2);
+    const std::array<aura::ast::NodeId, 2> bar_body_args{xv, two};
+    auto bar_body = bar_flat.add_call(star, std::span<const aura::ast::NodeId>{bar_body_args});
+    Registry macros;
+    macros.emplace("bar", MacroExpansionDef{{"x"}, false, &bar_flat, &bar_pool, bar_body});
+
+    // The macro body: (f y) — y is the shared subst argument.
+    FlatAST body_flat;
+    StringPool body_pool;
+    auto y = body_pool.intern("y");
+    auto fv = body_flat.add_variable(body_pool.intern("f"));
+    auto yv = body_flat.add_variable(y);
+    const std::array<aura::ast::NodeId, 1> body_args{yv};
+    auto body = body_flat.add_call(fv, std::span<const aura::ast::NodeId>{body_args});
+
+    auto grant_self_evo = []() {
+        using aura::core::capability::Effect;
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::MacroSelfEvoPolicy;
+        MacroSelfEvoPolicy pol;
+        pol.max_expansion_passes = 32;
+        pol.max_depth = 256;
+        pol.allow_rest_hygiene = true;
+        pol.allow_concurrent_fiber = true;
+        (void)g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                            aura_test_grant_prov());
+        (void)g_capability_registry().grant_macro_self_evo(0, pol, aura_test_grant_prov());
+    };
+
+    // The shared argument: (bar 1) — a macro call in the caller's syntax.
+    auto make_shared_call_arg = [](FlatAST& flat, StringPool& pool) {
+        auto bar_var = flat.add_variable(pool.intern("bar"));
+        auto one = flat.add_literal(1);
+        const std::array<aura::ast::NodeId, 1> bar_args{one};
+        return flat.add_call(bar_var, std::span<const aura::ast::NodeId>{bar_args});
+    };
+    // The shared argument: the qq cons shape (cons (quote bar) (cons 42 (quote ()))).
+    auto make_shared_qq_arg = [](FlatAST& flat, StringPool& pool) {
+        auto quote_nil = flat.add_quote(NULL_NODE);
+        auto cons_var = flat.add_variable(pool.intern("cons"));
+        auto macro_var = flat.add_variable(pool.intern("bar"));
+        auto quoted_macro = flat.add_quote(macro_var);
+        auto forty_two = flat.add_literal(42);
+        const std::array<aura::ast::NodeId, 2> inner_args{forty_two, quote_nil};
+        auto inner_cons = flat.add_call(cons_var, std::span<const aura::ast::NodeId>{inner_args});
+        const std::array<aura::ast::NodeId, 2> outer_args{quoted_macro, inner_cons};
+        return flat.add_call(cons_var, std::span<const aura::ast::NodeId>{outer_args});
+    };
+
+    // Does `parent` still list `child` in one of its slots?
+    auto lists_child = [](const FlatAST& flat, aura::ast::NodeId parent, aura::ast::NodeId child) {
+        if (parent == NULL_NODE || parent >= flat.size())
+            return false;
+        auto v = flat.get(parent);
+        for (const auto cid : v.children) {
+            if (cid == child)
+                return true;
+        }
+        return false;
+    };
+    // The caller's node that still lists the shared argument.
+    auto hold_shared = [](FlatAST& flat, StringPool& pool, aura::ast::NodeId arg) {
+        const std::array<aura::ast::NodeId, 1> held{arg};
+        return flat.add_call(flat.add_variable(pool.intern("hold")),
+                             std::span<const aura::ast::NodeId>{held});
+    };
+
+    const auto fid = static_cast<std::uint32_t>(aura_fiber_current_id());
+    for (int mode = 0; mode < 2; ++mode) {
+        const bool production = mode == 1;
+        // A stale reason from an earlier member would refuse the splice
+        // (the production face consults deny_all) — clear the fiber slot.
+        note_hygiene_last_limit_reason_for_fiber(fid, 0);
+        if (production) {
+            grant_self_evo();
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        } else {
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        }
+        for (int shape = 0; shape < 2; ++shape) {
+            const bool qq = shape == 1;
+            const std::string tag = qq ? "qq" : "call";
+            FlatAST flat;
+            StringPool pool;
+            auto arg = qq ? make_shared_qq_arg(flat, pool) : make_shared_call_arg(flat, pool);
+            flat.set_provenance(arg, 4649);
+            flat.set_schema_cache(arg, 77);
+            auto hold = hold_shared(flat, pool, arg);
+            flat.root = hold;
+            CHECK(flat.parent_of(arg) == hold, "4649: caller parent is hold");
+            CHECK(!flat.is_macro_introduced(arg), "4649: caller arg starts User");
+
+            SubstMap subst;
+            subst["y"] = arg;
+            NameMap nm;
+            auto cloned = clone_macro_body(flat, pool, body_flat, body_pool, body, &subst, &nm,
+                                           SyntaxMarker::MacroIntroduced);
+            CHECK(cloned != NULL_NODE, "4649: clone ok");
+            if (cloned == NULL_NODE)
+                continue;
+            auto cv = flat.get(cloned);
+            CHECK(cv.children.size() >= 2 && cv.child(1) == arg,
+                  "4649: subst child is the caller arg");
+
+            (void)expand_inner_macros(&flat, &pool, cloned, /*depth=*/0, /*max_depth=*/10, macros);
+
+            // The caller's edge is untouched.
+            CHECK(lists_child(flat, hold, arg),
+                  "4649 " + tag + ": caller slot still holds the caller arg");
+            CHECK(flat.parent_of(arg) == hold, "4649 " + tag + ": caller parent unchanged");
+            CHECK(!flat.is_macro_introduced(arg), "4649 " + tag + ": caller arg stays User");
+            CHECK(flat.provenance(arg) == 4649u, "4649 " + tag + ": caller provenance unchanged");
+            CHECK(flat.schema_cache(arg) == 77u, "4649 " + tag + ": caller schema unchanged");
+            CHECK((flat.macro_dirty(arg) & kExp) == 0,
+                  "4649 " + tag + ": caller gains no kMacroExpansion");
+            // The expansion landed in the clone, not in the caller's slot.
+            auto cv2 = flat.get(cloned);
+            CHECK(cv2.child(1) != arg, "4649 " + tag + ": the clone lists the expansion");
+            // ... and it IS bar's expansion ((* n 2)) — not the unwrapped call.
+            bool holds_bar_expansion = false;
+            if (cv2.child(1) != NULL_NODE && cv2.child(1) < flat.size()) {
+                auto ev = flat.get(cv2.child(1));
+                if (ev.tag == NodeTag::Call && !ev.children.empty()) {
+                    auto head = flat.get(ev.child(0));
+                    if (head.tag == NodeTag::Variable &&
+                        std::string(pool.resolve(head.sym_id)) == "*")
+                        holds_bar_expansion = true;
+                }
+            }
+            CHECK(holds_bar_expansion, "4649 " + tag + ": the clone holds bar's expansion");
+            if (qq) {
+                // The published (unwrapped) Call carries MacroIntroduced.
+                aura::ast::NodeId published = NULL_NODE;
+                for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                    if (!flat.is_live_node(id))
+                        continue;
+                    auto v = flat.get(id);
+                    if (v.tag != NodeTag::Call || v.children.empty())
+                        continue;
+                    auto head = flat.get(v.child(0));
+                    if (head.tag != NodeTag::Variable)
+                        continue;
+                    if (std::string(pool.resolve(head.sym_id)) == "bar") {
+                        published = id;
+                        break;
+                    }
+                }
+                CHECK(published != NULL_NODE, "4649 qq: the unwrapped Call is in the flat");
+                if (published != NULL_NODE)
+                    CHECK(flat.is_macro_introduced(published),
+                          "4649 qq: the published unwrapped Call carries MacroIntroduced");
+            }
+        }
+    }
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+
+    // Issue #4649: the concurrent-deny face (same-flat / name-map-shared /
+    // concurrent-top-level). The qq-unwrap edge must be rolled back with
+    // the same deny_all consult the child walk uses — truncate_to alone
+    // does not restore a child slot below the clone floor.
+    {
+        grant_self_evo();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        note_hygiene_last_limit_reason_for_fiber(fid, 0);
+        FlatAST flat;
+        StringPool pool;
+        auto arg = make_shared_qq_arg(flat, pool);
+        auto hold = hold_shared(flat, pool, arg);
+        flat.root = hold;
+        SubstMap subst;
+        subst["y"] = arg;
+        NameMap nm;
+        auto cloned = clone_macro_body(flat, pool, body_flat, body_pool, body, &subst, &nm,
+                                       SyntaxMarker::MacroIntroduced);
+        CHECK(cloned != NULL_NODE, "4649 deny: clone ok");
+        note_hygiene_last_limit_reason_for_fiber(fid, kHygieneLimitReasonSameFlatReject);
+        (void)expand_inner_macros(&flat, &pool, cloned, /*depth=*/0, /*max_depth=*/10, macros);
+        // The unwrap edge is rolled back: the clone lists the cons chain
+        // again and no slot points into a dropped tail.
+        auto cv = flat.get(cloned);
+        CHECK(cv.child(1) == arg, "4649 deny: the unwrap edge is rolled back");
+        CHECK(lists_child(flat, hold, arg), "4649 deny: the caller slot is untouched");
+        CHECK(flat.parent_of(arg) == hold, "4649 deny: the caller parent is unchanged");
+        bool no_dangling = true;
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            if (!flat.is_live_node(id))
+                continue;
+            auto v = flat.get(id);
+            for (const auto cid : v.children) {
+                if (cid != NULL_NODE && cid >= flat.size())
+                    no_dangling = false;
+            }
+        }
+        CHECK(no_dangling, "4649 deny: no child slot points into a dropped tail");
+        note_hygiene_last_limit_reason_for_fiber(fid, 0);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    }
+}
+
 int run_test_macro_cross_flat_hygiene() {
     std::println("=== Issue #2235 — cross-flat macro clone hygiene gate ===");
     ac_cross_flat_baseline();
@@ -733,6 +965,7 @@ int run_test_macro_cross_flat_hygiene() {
     ac4249_sandbox_active_homology();
     ac4293_zero_surfaces_reason();
     ac4309_cross_flat_keeps_caller_arg();
+    ac4649_expand_keeps_caller_edge();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

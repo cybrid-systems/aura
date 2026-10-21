@@ -3392,7 +3392,14 @@ namespace detail {
         // Build Call(<quoted_name>, args...)
         auto macro_var = flat->add_variable(pool->intern(quoted_name));
         flat->set_marker(macro_var, SyntaxMarker::MacroIntroduced);
-        return flat->add_call(macro_var, args);
+        auto call_id = flat->add_call(macro_var, args);
+        // Issue #4649: the PUBLISHED Call carries MacroIntroduced too.
+        // The head stamp alone left the Call looking like User syntax
+        // (a mutate of that Call id saw User) — the unwrapped call is
+        // macro-introduced, its arguments are the caller's nodes and
+        // stay User.
+        flat->set_marker(call_id, SyntaxMarker::MacroIntroduced);
+        return call_id;
     }
 
 } // namespace detail
@@ -3478,12 +3485,26 @@ extern "C" void aura_test_call_stamp_rest_param_hygiene(void* target_flat, void*
                              static_cast<aura::ast::NodeId>(list_root));
 }
 
-aura::ast::NodeId expand_inner_macros(
-    aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura::ast::NodeId root, int depth,
-    int max_depth,
+// Issue #4649: splice one child slot without moving the CALLER's edge.
+// `new_child` replaces `old_child` in the slot; the CALLER keeps its live
+// reverse link on either occupant.
+static void splice_child_keep_caller_edge(aura::ast::FlatAST& flat, aura::ast::NodeId parent_id,
+                                          std::uint32_t idx, aura::ast::NodeId new_child,
+                                          aura::ast::NodeId old_child, aura::ast::NodeId caller);
+
+// Issue #4649: the expand walk carries the STRUCTURAL parent of the
+// node being expanded — the node that actually lists it in the tree
+// being walked. parent_of() is NOT that node for a shared subst
+// argument (#4309 keeps the CALLER's live reverse link), so a splice
+// that used parent_of() wrote the caller's edge and moved the
+// caller's syntax during the expand.
+static aura::ast::NodeId expand_inner_macros_walk(
+    aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura::ast::NodeId root,
+    aura::ast::NodeId parent, int depth, int max_depth,
     const std::unordered_map<std::string, MacroExpansionDef, aura::core::TransparentStringHash,
                              std::equal_to<>>& macros) {
     using namespace aura::ast;
+    // Issue #2809: this walk keeps the targeted restamp_after_qq_unwrap.
     if (root == NULL_NODE)
         return root;
     // Issue #3470: Restricted/Strict refuse qq-unwrap half-writes.
@@ -3508,7 +3529,9 @@ aura::ast::NodeId expand_inner_macros(
         unwrapped != NULL_NODE) {
         // Substitute the unwrapped Call for the original cons chain
         // at the parent's child slot, then recurse.
-        auto parent_id = flat->parent_of(root);
+        // Issue #4649: the slot is the one that lists the cons chain.
+        const auto parent_id = parent;
+        const auto caller_edge = flat->parent_of(root);
         std::uint32_t unwrap_ci = 0;
         bool rewrote = false;
         if (parent_id != NULL_NODE) {
@@ -3517,9 +3540,10 @@ aura::ast::NodeId expand_inner_macros(
                                                            parent_v.children.end());
             for (std::uint32_t ci = 0; ci < parent_children.size(); ++ci) {
                 if (parent_children[ci] == root) {
-                    flat->set_child(parent_id, ci, unwrapped);
-                    restamp_after_qq_unwrap(*flat, parent_id, ci, unwrapped); // #2809
                     unwrap_ci = ci;
+                    splice_child_keep_caller_edge(*flat, parent_id, unwrap_ci, unwrapped, root,
+                                                  caller_edge);
+                    restamp_after_qq_unwrap(*flat, parent_id, unwrap_ci, unwrapped); // #2809
                     rewrote = true;
                     break;
                 }
@@ -3527,20 +3551,27 @@ aura::ast::NodeId expand_inner_macros(
         }
         // Recurse into the unwrapped Call (which is now a real
         // macro call site).
-        auto next = expand_inner_macros(flat, pool, unwrapped, depth, max_depth, macros);
+        auto next =
+            expand_inner_macros_walk(flat, pool, unwrapped, parent_id, depth, max_depth, macros);
         // Issue #3470: production rolls back the unwrap edge if inner
         // expand hit depth/pass/steal/capability deny. clone / expand_all
         // own the checkpoint — try_restore only (no second install).
-        // Belt set_child restores the pre-unwrap NodeId when no Evaluator
-        // is wired (standalone FlatAST). Soft/Off keeps the rewrite.
-        if (production_surface && inner_expand_production_limit_deny()) {
+        // Soft/Off keeps the rewrite.
+        if (production_surface && inner_expand_production_limit_deny_all()) {
+            // Issue #4649: the consult widens to deny_all — a nested clone
+            // that refused (same-flat 8 / name-map-shared 9 /
+            // concurrent-top-level 10) rolls the unwrap edge back.
             // Issue #4077: do not set-code a Guard-owned checkpoint.
             // Issue #4292: owned frame calls
             // aura_evaluator_try_restore_macro_expand_checkpoint.
             if (expand_inner_checkpoint_owned())
                 restore_owned_inner_expand_checkpoint();
-            if (rewrote)
+            if (rewrote) {
+                // #3470 belt restore: the pre-unwrap NodeId goes back into
+                // the slot; #4649 puts the caller's live reverse link back.
                 flat->set_child(parent_id, unwrap_ci, root);
+                flat->restore_parent_link(root, caller_edge);
+            }
             return root;
         }
         // Clone/expand may set_child again; restamp parent + result so
@@ -3619,6 +3650,18 @@ aura::ast::NodeId expand_inner_macros(
                     const auto clone_ckpt = rest_spine_pending ? rest_spine_ckpt : flat->size();
                     const std::size_t clone_floor =
                         rest_spine_pending ? rest_spine_ckpt : static_cast<std::size_t>(-1);
+                    // Issue #4649: the splice target is the node that
+                    // ACTUALLY lists the macro call in the tree being
+                    // walked (the walk's structural parent). For a
+                    // shared subst argument parent_of(root) is the
+                    // CALLER — the old target wrote the caller's edge
+                    // and moved the caller's syntax during the expand.
+                    const auto parent_id = parent;
+                    // Issue #4649: the caller's edge for the shared
+                    // node — the old occupant keeps it when the slot is
+                    // rewritten (set_child clears the old occupant's
+                    // reverse link).
+                    const auto caller_edge = flat->parent_of(root);
                     // clang-format off
                     auto cloned =
                         clone_macro_body(*flat, *pool, *md.flat, *src_pool, md.body_id, &subst,
@@ -3638,7 +3681,8 @@ aura::ast::NodeId expand_inner_macros(
                         return root;
                     }
                     // Recursively expand inner macros in the cloned body
-                    cloned = expand_inner_macros(flat, pool, cloned, depth + 1, max_depth, macros);
+                    cloned = expand_inner_macros_walk(flat, pool, cloned, parent_id, depth + 1,
+                                                      max_depth, macros);
                     // Issue #3684: production refuses to splice a
                     // half-expanded clone — if the recursive inner expand
                     // hit a deny, try_restore the expand checkpoint and
@@ -3664,14 +3708,14 @@ aura::ast::NodeId expand_inner_macros(
                         return root;
                     }
                     // Rewrite the parent's child to use the cloned body
-                    auto parent_id = flat->parent_of(root);
                     if (parent_id != NULL_NODE) {
                         auto parent_v = flat->get(parent_id);
                         std::vector<aura::ast::NodeId> parent_children(parent_v.children.begin(),
                                                                        parent_v.children.end());
                         for (std::uint32_t ci = 0; ci < parent_children.size(); ++ci) {
                             if (parent_children[ci] == root) {
-                                flat->set_child(parent_id, ci, cloned);
+                                splice_child_keep_caller_edge(*flat, parent_id, ci, cloned, root,
+                                                              caller_edge);
                                 // Issue #2019: set_child bumps generation_;
                                 // restamp MacroIntroduced so cloned body
                                 // matches surrounding AST gen.
@@ -3716,7 +3760,11 @@ aura::ast::NodeId expand_inner_macros(
     // historical partial expand (contract; #3062/#4078).
     const std::size_t child_ckpt = flat->size();
     for (auto child : child_ids) {
-        (void)expand_inner_macros(flat, pool, child, depth + 1, max_depth, macros);
+        // Issue #4649: the walk threads the STRUCTURAL parent — the
+        // node that actually lists this child. parent_of(child) is
+        // the CALLER for a shared subst argument, so a nested splice
+        // that used it wrote the caller's edge.
+        (void)expand_inner_macros_walk(flat, pool, child, root, depth + 1, max_depth, macros);
         // Issue #4511: this consult widens from inner_expand_production_limit_deny
         // to deny_all so sibling-refuse codes 8/9/10 (same-flat /
         // name-map-shared / concurrent-top-level, stamped by the next
@@ -3749,6 +3797,53 @@ aura::ast::NodeId expand_inner_macros(
     }
     return root;
 }
+// Issue #4649: the exported entry point. The entry root's parent is
+// the node that lists it (parent_of); every nested frame inherits the
+// structural parent from the walk, so a nested splice never reaches
+// the caller's edge.
+aura::ast::NodeId expand_inner_macros(
+    aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura::ast::NodeId root, int depth,
+    int max_depth,
+    const std::unordered_map<std::string, MacroExpansionDef, aura::core::TransparentStringHash,
+                             std::equal_to<>>& macros) {
+    const auto parent = (flat == nullptr || root == aura::ast::NULL_NODE) ? aura::ast::NULL_NODE
+                                                                          : flat->parent_of(root);
+    return expand_inner_macros_walk(flat, pool, root, parent, depth, max_depth, macros);
+}
+
+// Issue #4649: splice one child slot without moving the CALLER's edge.
+// `old_child` is the slot's current occupant; `caller` is the node that
+// still lists it (a shared subst argument — #4309 keeps the caller's
+// live reverse link, so parent_of(old_child) is the CALLER and not the
+// node that lists the child inside the expansion). The old occupant
+// keeps that link (a plain set_child would clear it) and the new
+// occupant keeps it too when the caller still lists it (the rollback
+// restores the original child into the slot).
+static void splice_child_keep_caller_edge(aura::ast::FlatAST& flat, aura::ast::NodeId parent_id,
+                                          std::uint32_t idx, aura::ast::NodeId new_child,
+                                          aura::ast::NodeId old_child, aura::ast::NodeId caller) {
+    using namespace aura::ast;
+    if (parent_id == NULL_NODE)
+        return;
+    const auto old_link = flat.parent_of(old_child);
+    flat.set_child_keep_caller_edge(parent_id, idx, new_child);
+    if (caller == NULL_NODE || caller == parent_id || caller >= flat.size())
+        return;
+    const auto cv = flat.get(caller);
+    bool caller_lists_old = false;
+    bool caller_lists_new = false;
+    for (const auto cid : cv.children) {
+        if (cid == old_child)
+            caller_lists_old = true;
+        if (cid == new_child)
+            caller_lists_new = true;
+    }
+    if (caller_lists_old && old_link != parent_id)
+        flat.restore_parent_link(old_child, caller);
+    if (caller_lists_new)
+        flat.restore_parent_link(new_child, caller);
+}
+
 aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                    aura::ast::NodeId root, int max_passes) {
     using namespace aura::ast;
