@@ -1,0 +1,53 @@
+{
+  "issue": 4647,
+  "title": "Issue #4647: query:evolution-audit-decision re-enters commit_readiness and remirrors CastOps - the observe-only fold must publish the last stamped proof face",
+  "ok": "OK #4647 observe-only fold: the evolution-audit-decision handler reads the last stamped proof face (g_last_proof_would_allow_commit / last_proof_force_reason_code / proof outcome) and never calls the live commit mutator (commit_readiness / commit_readiness_live_policy) - no remirror, no full solve, no face consume, no reject-counter bump",
+  "checks": [
+    {
+      "ac": "AC1-fold-reads-stamped-face",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "Issue #4647",
+        "last_proof_face_v_read",
+        "proof_face.would_allow_commit",
+        "proof_face.force_reason_code",
+        "commit-would-allow",
+        "commit-force-reason-code"
+      ]
+    },
+    {
+      "ac": "AC2-header-proof-face-snapshot",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "Issue #4647",
+        "struct LastProofFace",
+        "last_proof_face_v_read",
+        "g_last_proof_would_allow_commit",
+        "last_proof_force_reason_code_v_read",
+        "last_type_linear_proof_outcome_v_read"
+      ]
+    },
+    {
+      "ac": "AC3-runtime-observability",
+      "path": "tests/compiler/test_evolution_audit_decision_forensic.cpp",
+      "contains": [
+        "ac4647_1_fold_does_not_run_commit_mutator",
+        "ac4647_2_fold_latches_no_residual_face",
+        "ac4647_3_fold_publishes_stamped_proof_face",
+        "ac4647_4_source_no_commit_mutator",
+        "occurrence_hard_face_full_solve_recover_total_v_read",
+        "occurrence_hard_face_recover_fail_total_v_read",
+        "cone_outside_goal_drop_reject_total_v_read",
+        "pending_full_solve_residual_face_hit",
+        "publish_last_proof_face"
+      ]
+    },
+    {
+      "ac": "AC4-non-goals",
+      "forbid": [
+        "tests/compiler/test_issue_4647.cpp",
+        "docs/design/4647-evolution-audit-decision-fold.md"
+      ]
+    }
+  ]
+}
