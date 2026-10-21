@@ -1,0 +1,44 @@
+{
+  "issue": 4648,
+  "title": "Issue #4648: a define hot-update must retire a nested lambda's ScalarFn - the __lambda__#<id> slot survives the define drop, so the held closure keeps running the pre-mutate body",
+  "ok": "OK #4648 nested lambda: the JIT publishes the (creator, callee) edge at the MakeClosure site and the define drop retires the nested lambda's slot and MustDeopts the closures that index it",
+  "checks": [
+    {
+      "ac": "AC1-jit-owner-edge",
+      "path": "src/compiler/aura_jit.cpp",
+      "contains": [
+        "Issue #4648",
+        "aura_note_ir_func_owner(static_cast<int64_t>(inst.ops[1]), fn.name)"
+      ]
+    },
+    {
+      "ac": "AC2-runtime-drop",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "Issue #4648",
+        "g_ir_closure_creators",
+        "collect_nested_lambda_func_ids_locked",
+        "aura_note_ir_func_owner"
+      ]
+    },
+    {
+      "ac": "AC3-tests",
+      "path": "tests/compiler/test_jit_aot_hot_update_unit_batch.cpp",
+      "contains": [
+        "4648 AC1",
+        "4648 AC2",
+        "4648 AC3",
+        "4648 AC4",
+        "ac4648_nested_lambda_leaves_native",
+        "ac4648_production_invalidate_retires_nested"
+      ]
+    },
+    {
+      "ac": "AC4-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_4648.cpp",
+        "docs/design/4648-nested-lambda-hot-update.md"
+      ]
+    }
+  ]
+}
