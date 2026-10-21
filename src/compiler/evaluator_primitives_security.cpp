@@ -4719,6 +4719,24 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #1567: (security:set-audit-persist-dir! path-or-empty)
     // Empty string disables WAL. Non-empty enables + replays.
+    //
+    // Issue #4641: on the production face (Restricted / Strict) this
+    // primitive is a PRIVILEGED operation. The WAL pair is process-wide and
+    // apply_production_security_defaults force-enables it, so an
+    // unprivileged caller that reached disable_mutation_audit_wal() turned
+    // posture_wal_off_restricted_live true — every later
+    // admit_security_schedule then denied the whole process with
+    // posture-degraded, and the mutation WAL silently stopped recording
+    // (the WAL-off !enabled short-circuit, no append_fail accounting). A
+    // non-empty path could also retarget the process WAL to any host
+    // directory. The gate refuses BEFORE any disable / close_unlocked /
+    // create_directories / replay:
+    //   - no explicit TenantAdmin -> audit-persist-dir-needs-tenant-admin
+    //   - empty path                -> not a production disable
+    //   - path outside the caller tenant root -> the existing
+    //                                       tenant-path-escape IsolationDeny
+    //                                       (zero retarget)
+    // Soft / Off keeps today's empty-string disable.
     add("security:set-audit-persist-dir!", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
@@ -4726,6 +4744,74 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         if (sidx >= ev.string_heap_.size())
             return make_bool(false);
         const auto& path = ev.string_heap_[sidx];
+        // Issue #4641: production face = the authority triple (bool sandbox OR
+        // effect mode != 0) — the same predicate the sibling
+        // security:grant-effect! / security:set-effect-sandbox-mode! gates
+        // read, so a drifted bool cannot reopen the WAL switch.
+        const bool production_face = ev.sandbox_mode() || ev.effect_sandbox_mode() != 0;
+        if (production_face) {
+            // Issue #4641: explicit TenantAdmin only (the unlocked wildcard
+            // string face cannot authorize a process-wide WAL retarget).
+            // Locked read — same shape as security:grant-effect! (#3362).
+            bool is_tenant_admin = false;
+            {
+                auto& reg = aura::core::capability::g_capability_registry();
+                std::lock_guard<std::mutex> lock(reg.mtx);
+                using aura::compiler::security::kEffectTenantAdmin;
+                is_tenant_admin =
+                    !reg.holds_wildcard_only_locked(ev.capability_tenant_id()) &&
+                    (static_cast<std::uint16_t>(reg.effects_effective_for_locked(
+                         ev.capability_tenant_id(), typed_audit::join_audit_and_se_mid(0))) &
+                     static_cast<std::uint16_t>(kEffectTenantAdmin)) != 0;
+            }
+            if (!is_tenant_admin) {
+                ev.bump_capability_denial();
+                using ::aura::core::security_event::SecurityEventKind;
+                using ::aura::core::security_event_wal::emit_security_event_durable;
+                const auto epoch = ::aura::core::current_mutation_epoch();
+                const auto mid = typed_audit::join_audit_and_se_mid(0);
+                const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
+                emit_security_event_durable(SecurityEventKind::EffectDeny,
+                                            ev.capability_tenant_id(), mid, epoch,
+                                            /*effect_bits=*/0,
+                                            /*cap_name=*/"security:set-audit-persist-dir!",
+                                            "audit-persist-dir-needs-tenant-admin",
+                                            /*denied=*/true, fid);
+                return make_bool(false);
+            }
+            // Issue #4641: empty is not a production disable — the WAL pair is
+            // force-enabled under Restricted / Strict and turning it off is a
+            // posture breach, not a tenant-scoped request.
+            if (path.empty()) {
+                ev.bump_capability_denial();
+                using ::aura::core::security_event::SecurityEventKind;
+                using ::aura::core::security_event_wal::emit_security_event_durable;
+                const auto epoch = ::aura::core::current_mutation_epoch();
+                const auto mid = typed_audit::join_audit_and_se_mid(0);
+                const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
+                emit_security_event_durable(SecurityEventKind::EffectDeny,
+                                            ev.capability_tenant_id(), mid, epoch,
+                                            /*effect_bits=*/0,
+                                            /*cap_name=*/"security:set-audit-persist-dir!",
+                                            "audit-persist-dir-empty-not-allowed",
+                                            /*denied=*/true, fid);
+                return make_bool(false);
+            }
+            // Issue #4641: the path string is a tenant-scoped read — the
+            // cross-tenant string-slot guard (#4428) runs before the path is
+            // copied into the WAL switch.
+            if (!ev.inrange_string_tenant_allows(sidx, /*required_effects=*/0,
+                                                 "security:set-audit-persist-dir!"))
+                return make_bool(false);
+            // Issue #4641: the WAL directory is a host path — reuse the
+            // existing tenant host-path gate (#3802). The deny keeps the
+            // IsolationDeny tenant-path-escape row and leaves the live WAL
+            // directory untouched (zero retarget).
+            std::string resolved;
+            if (!ev.check_tenant_host_path(path, resolved, "security:set-audit-persist-dir!"))
+                return make_bool(false);
+            return make_bool(ev.enable_mutation_audit_wal(resolved));
+        }
         if (path.empty()) {
             ev.disable_mutation_audit_wal();
             return make_bool(true);
