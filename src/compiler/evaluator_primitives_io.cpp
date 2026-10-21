@@ -1153,10 +1153,13 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // (tcp-local-port sock) → port | ()  — getsockname for ephemeral listeners.
     ev.defer_std_host_prim("tcp-local-port", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        (void)ev;
         if (a.empty() || !types::is_int(a[0]))
             return make_void();
         auto fd = static_cast<int>(types::as_int(a[0]));
+        // Issue #4644: the bound port of a listener is tenant state. Probe it
+        // only when this tenant owns the fd; a foreign listener stays opaque.
+        if (!minted_fd_tenant_allows(ev, fd, "tcp-local-port"))
+            return make_void();
         sockaddr_in addr{};
         socklen_t len = sizeof(addr);
         if (::getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &len) < 0)
@@ -1169,6 +1172,11 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         if (a.empty() || !types::is_int(a[0]))
             return make_void();
         auto lfd = static_cast<int>(types::as_int(a[0]));
+        // Issue #4644: refuse a foreign listener before ::accept so another
+        // tenant's listen queue is never drained and the accepted client fd
+        // is never stamped to this tenant.
+        if (!minted_fd_tenant_allows(ev, lfd, "tcp-accept"))
+            return make_void();
         sockaddr_in peer{};
         socklen_t plen = sizeof(peer);
         int cfd = ::accept(lfd, reinterpret_cast<sockaddr*>(&peer), &plen);
@@ -1194,6 +1202,9 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             sec = 0;
         if (sec > 3600)
             sec = 3600;
+        // Issue #4644: refuse a foreign listener before ::poll + ::accept.
+        if (!minted_fd_tenant_allows(ev, lfd, "tcp-accept-timeout"))
+            return make_void();
         struct pollfd pfd = {lfd, POLLIN, 0};
         int pr = ::poll(&pfd, 1, static_cast<int>(sec * 1000));
         if (pr <= 0)
@@ -1374,11 +1385,15 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         if (!ev.inrange_string_tenant_allows(sidx, aura::compiler::security::kEffectWrite,
                                              "sys-write"))
             return make_int(-1);
+        // Issue #4644: the fd owner map gates the write itself; the #3802
+        // path check below only sees paths under a tenant base.
+        if (!minted_fd_tenant_allows(ev, fd, "sys-write"))
+            return make_int(-1);
         // Issue #3802: under Restricted+MT / Strict, if /proc/self/fd/N
         // resolves to a path under the tenant FS base, refuse cross-tenant
         // targets (sys-open remaps path args; this closes inherited fds into
         // another tenant prefix). Non-FS fds (pipe:/socket:/anon) and paths
-        // outside the tenant base (tty, legacy) stay allowed.
+        // outside the tenant base (tty, legacy) go through the owner map.
         {
             using aura::compiler::security::path_is_under_root;
             using aura::compiler::security::tenant_host_path_policy_active;
