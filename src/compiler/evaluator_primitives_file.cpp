@@ -445,6 +445,15 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
             if (!jail_root.empty() && !::aura::compiler::security::apply_tenant_exec_fs_jail(
                                           jail_root.c_str(), jail_sv[1]))
                 ::_exit(127);
+            // Issue #4643: the jail does not revoke an fd the child already
+            // holds, so the exec child kept the caller's stdin/stdout/
+            // stderr — the shared host stdio of every other tenant. A
+            // scanner-clean `cat` read the host stdin and `echo x >&2` wrote
+            // the host terminal. `shell` returns the exit code, so the child
+            // must not read the host stdin nor write the host terminal: point
+            // all three at /dev/null after the jail, before exec.
+            if (!jail_root.empty() && !::aura::compiler::security::null_child_stdio_all())
+                ::_exit(127);
             ::execl("/bin/sh", "sh", "-c", ev.string_heap_[idx].c_str(),
                     static_cast<char*>(nullptr));
             ::_exit(127);
@@ -535,6 +544,14 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
                 // Issue #4413: Landlock + stat emulation after the stdout pipe.
                 if (!jail_root.empty() && !::aura::compiler::security::apply_tenant_exec_fs_jail(
                                               jail_root.c_str(), jail_sv[1]))
+                    ::_exit(127);
+                // Issue #4643: the capture pipe stays on stdout; stdin and
+                // stderr go to /dev/null. The jail does not revoke an fd the
+                // child already holds, so a scanner-clean `cat` read the
+                // host stdin and the child wrote the host stderr — the
+                // shared host stdio of every other tenant.
+                if (!jail_root.empty() &&
+                    !::aura::compiler::security::null_child_stdio_keep_stdout())
                     ::_exit(127);
                 ::execl("/bin/sh", "sh", "-c", cmd.c_str(), static_cast<char*>(nullptr));
                 ::_exit(127);
