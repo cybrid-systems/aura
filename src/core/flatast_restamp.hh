@@ -243,6 +243,31 @@ inline void set_restamp_budget_nodes_for_process(std::uint32_t n) noexcept {
 // Process-visible last Agent-held node ids (QueryResult matches + last
 // successful query:*-stable / stamp export + pinned StableNodeRef dump).
 // Deduped, capped; excess is fail-closed by the hot-cone budget (AC2).
+//
+// Issue #4633 — restamp-path stack-buffer overrun audit. A report claimed
+// test_restamp_budget_hard_gate aborted with "*** stack smashing detected ***"
+// on the FlatAST restamp / budget path. It does NOT reproduce on main
+// (ASAN + release builds of that TU are both green; the prior soak captures
+// of the same binary are green too), and this block is where such an
+// overrun would have had to live. It does not, and the reason is structural:
+//
+//   - The set is NAMESPACE-SCOPE storage, not a per-call stack array, so
+//     there is no frame for it to smash.
+//   - note_restamp_hot_cone_held_node bounds-checks the slot BEFORE the
+//     store (n >= cap latches the overflow flag and returns). At the cap it
+//     drops the surplus and fail-closes the whole set rather than writing a
+//     half-green prefix (#3426) — a deliberate latch, never an OOB write and
+//     never a silent truncation that would still look export-clean.
+//   - The slot readers (restamp_hot_cone_held_id_at /
+//     restamp_hot_cone_held_count) clamp the same way on the read side.
+//
+// The only fixed stack buffer on the ref face is the caller's
+// std::uint8_t buf[kStableRefSerializedSize] in ast:ref-serialize
+// (src/compiler/evaluator_primitives_ast.cpp), and
+// kStableRefSerializedSize == kStableRefSerializedSizeV2 (56) — exactly the
+// span serialize_stable_ref memsets and writes. No right-sizing needed;
+// both constants are pinned by tests/compiler/test_restamp_budget_hard_gate.cpp
+// (AC4633/AC4 + AC5).
 inline std::uint32_t g_restamp_hot_cone_held_ids[kRestampHotConeHeldCap]{};
 inline std::atomic<std::uint16_t> g_restamp_hot_cone_held_count{0};
 inline std::atomic<std::uint8_t> g_restamp_hot_cone_held_overflow{0};

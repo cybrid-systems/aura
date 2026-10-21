@@ -1,0 +1,80 @@
+;; expect: OK-4633 restamp-path stack-safety + no data loss
+;; Issue #4633 — regression guard for the reported "test_restamp_budget_hard_gate:
+;; *** stack smashing detected ***" abort on the FlatAST restamp / budget path.
+;;
+;; The abort does NOT reproduce on main (ASAN and release builds of that TU are
+;; both green, and the earlier soak captures of the same binary are green), and
+;; the fixed-capacity store on the restamp path is namespace-scope + cap-bounded
+;; rather than a stack frame (see the Issue #4633 audit note in
+;; src/core/flatast_restamp.hh). Nothing to right-size; this file pins the
+;; behaviour end-to-end at the Agent surface so a future unbounded write on the
+;; path fails loudly instead of waiting for the next soak to trip it.
+;;
+;; AC1  a restamp cycle grows the tree without dropping or reclaiming a node,
+;;      and every definition the cycle built still resolves afterwards
+;;      (restamp re-aligns generations; it must never lose data).
+;; AC2  the restamp budget surface stays readable and stays at the Soft default
+;;      (unlimited => never over budget, never silently degraded).
+;; AC3  the StableNodeRef wire record -- the one 56-byte fixed stack write on the
+;;      ref face -- round-trips every field with no truncation and no loss.
+(require "std/ast" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1))
+             (display "  FAIL: ") (display msg) (newline))))
+
+; ── AC1: repeated restamp cycles lose nothing ───────────────────────────────
+; set-code replaces the whole source, so each cycle is evaluated on its own;
+; what must survive the restamp is the TREE the cycle just built.
+(set-code "(define (f4633 x) (+ x 1))")
+(eval-current)
+(define n1 (ast:node-count))
+(assert! (> n1 0) "AC1: first eval-current built nodes")
+(assert! (= (f4633 3) 4) "AC1: cycle-1 definition resolves")
+
+(set-code "(define (g4633 x) (* x 2)) (define h4633 9)")
+(eval-current)
+(define n2 (ast:node-count))
+(assert! (> n2 n1) "AC1: second restamp cycle grew the tree, losing nothing")
+(assert! (= (g4633 4) 8) "AC1: cycle-2 definition resolves after the restamp")
+(assert! (= h4633 9) "AC1: cycle-2 value binding resolves after the restamp")
+
+; ── AC2: restamp budget surface readable, Soft/unlimited default ───────────
+(define h (engine:metrics "query:mutation-boundary-hold-stats"))
+(assert! (= (hash-ref h "restamp-budget") 0)
+         "AC2: restamp budget key readable and unlimited (0) by default")
+(assert! (= (hash-ref h "restamp-budget-exceeded-total") 0)
+         "AC2: no over-budget restamp under the default Soft/unlimited budget")
+(assert! (= (hash-ref h "restamp-last-budget-exceeded") 0)
+         "AC2: last restamp stayed inside budget")
+(assert! (= (hash-ref h "restamp-budget-query-epoch-stale-total") 0)
+         "AC2: QueryEpoch never forced stale without a budget exceed")
+
+; ── AC3: StableNodeRef wire round-trip is lossless ──────────────────────────
+; ast:ref-serialize writes the 56-byte v2 record into a fixed-size stack
+; buffer; a short/over-sized buffer here corrupts the caller's frame, and a
+; narrow field set here silently drops provenance.
+(define blob (ast:ref-serialize 42 9 123456789 3))
+(define back (ast:ref-deserialize blob))
+(assert! (= (car (car back)) 42) "AC3: ref id round-trips")
+(assert! (= (cdr (car back)) 9) "AC3: ref gen round-trips")
+(assert! (= (car (cdr back)) 123456789) "AC3: mutation_id round-trips untruncated")
+(assert! (= (cdr (cdr back)) 3) "AC3: workspace_id round-trips")
+
+; a second, different record must not be contaminated by the first
+(define blob2 (ast:ref-serialize 7 1 987654321 99))
+(define back2 (ast:ref-deserialize blob2))
+(assert! (= (car (car back2)) 7) "AC3: second record id round-trips")
+(assert! (= (car (cdr back2)) 987654321) "AC3: second record mutation_id round-trips")
+(assert! (= (cdr (car back2)) 1) "AC3: second record gen round-trips")
+
+; the tree is still whole after all of the above
+(assert! (= (ast:node-count) n2) "AC3: node count unchanged by the wire round-trips")
+(assert! (= (g4633 5) 10) "AC3: definitions still callable after the round-trips")
+
+(if (= *fails* 0)
+    (begin (display "OK-4633 restamp-path stack-safety + no data loss\n"))
+    (begin (display "FAIL-4633 restamp path\n") (exit 1)))
