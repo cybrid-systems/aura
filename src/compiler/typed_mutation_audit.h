@@ -2380,6 +2380,45 @@ inline constexpr uint8_t kTypeLinearProofOutcomeQuiet = 0;
 inline constexpr uint8_t kTypeLinearProofOutcomeStamped = 1;
 inline constexpr uint8_t kTypeLinearProofOutcomeReject = 2;
 
+// Issue #4647: the last stamped proof face as ONE snapshot.
+// The observe-only evolution-audit-decision fold (#3114) publishes this
+// instead of re-running the live commit mutator (commit_readiness /
+// commit_readiness_live_policy): that path remirrors residual CastOps
+// into the type-union-IR cone (#3347), can latch the #3031 pending
+// full-solve face and drives the occurrence hard-face full-solve recover
+// (ConstraintSystem::solve + truncation clear + face consume) - a mutate
+// behind an "observe-only=1" facade. The commit already stamped the
+// proof face (publish_last_proof_face + the #4534 scalar stamps), so an
+// observe-only fold only READS it. Pure loads: no remirror, no full
+// solve, no face consume, no counter bump.
+struct LastProofFace {
+    bool would_allow_commit = false;
+    std::int64_t force_reason_code = 0;
+    // 0 = Quiet (no proof stamped / hygiene strip), 1 = Stamped,
+    // 2 = Reject (abort / force-rollback cleared the green face).
+    std::uint8_t outcome = kTypeLinearProofOutcomeQuiet;
+};
+
+// Issue #4647: read-only snapshot of the stamped proof face.
+[[nodiscard]] inline LastProofFace last_proof_face_v_read() noexcept {
+    LastProofFace f;
+    // publish_last_proof_face stores the face with release ordering.
+    f.would_allow_commit = g_last_proof_would_allow_commit.load(std::memory_order_acquire) != 0;
+    f.force_reason_code = last_proof_force_reason_code_v_read();
+    f.outcome = last_type_linear_proof_outcome_v_read();
+    // A Reject outcome never carries a green face: the abort /
+    // force-rollback path cleared it before stamping the reject. Keep the
+    // deny explicit so a stale green can never leak out of the fold.
+    if (f.outcome == kTypeLinearProofOutcomeReject)
+        f.would_allow_commit = false;
+    // The explicit-outcome proof builder defaults its force reason to the
+    // (uint32)-1 sentinel ("no explicit reason recorded"). Normalize it
+    // to 0 so the fold never publishes a 4-billion reason code.
+    if (f.force_reason_code < 0 || f.force_reason_code > 64)
+        f.force_reason_code = 0;
+    return f;
+}
+
 // Issue #2981: same-transaction TypeLinearCommitProof bind. Production/Full
 // + #2704 hard face + empty CS goals → proof must not be green (prefer
 // CS occurrence_goals_size / fingerprint over gauge). Soft: observe only.
