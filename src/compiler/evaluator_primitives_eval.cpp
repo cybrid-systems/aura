@@ -667,6 +667,18 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         const auto sidx = types::as_string_idx(a[0]);
         if (sidx >= ev.string_heap_.size())
             return make_void();
+        // Issue #4642: the program bytes leave the heap into the parser and
+        // then into the shared top env (a top-level define binds globally).
+        // The dispatch effect stays kEffectNone - the tenant stamp is the
+        // gate. In-range BEFORE the copy: on a mismatch the helper already
+        // emitted the IsolationDeny, so do not parse and do not eval_flat.
+        // The primitive-error shape is the site's failure shape for a
+        // refused program (the merr pair keeps the kind+message pair).
+        if (!ev.inrange_string_tenant_allows(sidx, aura::compiler::security::kEffectNone, "eval"))
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "eval: cross-tenant string denied by "
+                                        "WorkspaceIsolationPolicy",
+                                        ev.primitive_error_counter_ptr());
         auto code = ev.string_heap_[sidx];
         // Issue #4359: a stack flat dies when eval returns, and the
         // closure still holds that pointer. Callers then hang or abort.
