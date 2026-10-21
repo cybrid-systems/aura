@@ -1,4 +1,4 @@
-;; expect: ab (3 . 4) (3 . 0) (1 3) 3 4 1 #t #f 0 30 3675 5997000 0 0 0 11 7 (3 . 0)
+;; expect: ab (3 . 4) (3 . 0) (1 3) 3 4 1 #t #f #t #f (1) (() 0) 0 30 3675 5997000 0 0 0 11 7 (3 . 0)
 ; Issue #4635 -- cdr / hash value printing parity.
 ;
 ; Bug 1 (cdr-string, jit-soundness-4567 corpus): the top-level value
@@ -32,6 +32,15 @@
 (display (length (cdr-of (cons 1 (cons 3 4))))) (display " ")
 (display (pair? (cdr-of (cons 1 (cons 3 4))))) (display " ")
 (display (null? (cdr-of (cons 1 (cons 3 0))))) (display " ")
+
+; ── the empty-list LITERAL is void, not fixnum 0 ──
+; The parser stores `()` as LiteralInt 0 (the nil sentinel); after the
+; formatter stops reading a fixnum-0 cdr as end-of-list, a bare `()` in
+; expression position must still evaluate to the empty list, never 0.
+(display (null? ())) (display " ")
+(display (eq? () 0)) (display " ")
+(display (cons 1 ())) (display " ")
+(display (list () 0)) (display " ")
 
 ; ── hash-kv: the corpus loop (n = 1 / 5 / 50 / 2000) ──
 (define (kv n)

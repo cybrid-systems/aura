@@ -396,10 +396,12 @@ NodeId parse_let_values(ParserState& s);
 
 NodeId parse_list(ParserState& s) {
     auto tok = s.lex.peek(); // '(' or first token
-    // () → null sentinel (0)
+    // () → null sentinel (0), marked so eval/lowering can still tell the
+    // empty list from the number 0 (issue #4635 follow-up).
     if (s.lex.peek().kind == TokenKind::RParen) {
         s.lex.consume();
         auto id = s.flat.add_literal(0);
+        s.flat.set_marker(id, aura::ast::SyntaxMarker::EmptyList);
         s.flat.set_loc(id, tok.line, tok.column);
         return id;
     }

@@ -218,6 +218,8 @@ namespace detail {
                 case NodeTag::LiteralInt: {
                     if (flat.marker(id) == SyntaxMarker::BoolLiteral)
                         append(v.int_value ? "#t" : "#f");
+                    else if (flat.marker(id) == SyntaxMarker::EmptyList)
+                        append("()"); // issue #4635 follow-up: nil literal, not 0
                     else
                         append_int(v.int_value);
                     return;
