@@ -3454,6 +3454,30 @@ inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) no
     return h.ok && h.fiber && !h.fiber->is_done();
 }
 
+// Issue #4645: owner-drop close. Three production reclaim writers detach
+// the source fiber and then drop the source shared_ptr WITHOUT closing the
+// mailbox: abandon_reclaimed (Timeout arm), maybe_force_recycle_reclaimed_
+// slot (live arm) and the live-Reclaimed ~AgentHandle cleanup arm. The
+// mailbox OBJECT survives — an import proxy still
+// holds the very same shared_ptr — so a later proxy agent_send /
+// agent_ask still pushes Ok into a queue that has no consumer left: the
+// source handle is gone (the name retires as slot_is_abandoned_live) and
+// the proxy recv is a typed deny (#4026). Close the mailbox on the
+// owner-drop edge so that later push is PushStatus::Closed — the Aura
+// hash surfaces status=closed with the EXISTING deny-class 'closed' and
+// the queued messages are dropped by the existing close() contract
+// (#2972). Only the three owner-drop writers call this: the Done-path
+// (detach WITHOUT reset) keeps the mailbox open because the source still
+// owns it, so the liaison send/recv face stays Ok (#4026 / #4139).
+inline void close_owner_dropped_mailbox(AgentHandle& h) noexcept {
+    if (!h.mailbox)
+        return;
+    // Issue #4002: a production close detaches live attachers so
+    // Fiber::mailbox_ cannot dangle after the owner drops the mailbox.
+    h.mailbox->close();
+    h.mailbox.reset();
+}
+
 // Issue #3644: second recycle for Reclaimed slots that survived the
 // #3564 quota-only arm. Runs on the same resolution planes (name-table
 // find / put walk, Scope find) with an ordering contract, not a flag:
@@ -3519,7 +3543,9 @@ inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) no
     }
     if (h.mailbox && h.fiber)
         h.mailbox->detach(h.fiber);
-    h.mailbox.reset();
+    // Issue #4645: the owner drops the mailbox here — close it first so a
+    // stale import proxy cannot push into a queue that has no consumer.
+    close_owner_dropped_mailbox(h);
     h.release_reservation_if_any();
     h.name.clear();
     h.must_wait_reclaimed = false;
@@ -3580,7 +3606,9 @@ inline void AgentHandle::finish_reclaimed_cleanup_on_dtor() noexcept {
         if (mailbox && fiber) {
             mailbox->detach(fiber);
         }
-        mailbox.reset();
+        // Issue #4645: owner-drop close — the live Reclaimed dtor arm drops
+        // the source shared_ptr, so close the mailbox before the reset.
+        close_owner_dropped_mailbox(*this);
     }
     release_reservation_if_any();
     must_wait_reclaimed = false;
@@ -4237,7 +4265,9 @@ abandon_reclaimed(AgentHandle& h, AbandonReclaimedOpts opts = {}) noexcept {
         h.mailbox->detach(h.fiber);
         out.mailbox_detached = true;
     }
-    h.mailbox.reset();
+    // Issue #4645: the owner drops the mailbox here — close it first so a
+    // stale import proxy cannot push into a queue that has no consumer.
+    close_owner_dropped_mailbox(h);
     h.release_reservation_if_any();
     out.reservation_released = true;
     h.name.clear();

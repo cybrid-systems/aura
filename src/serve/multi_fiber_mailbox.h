@@ -1512,6 +1512,15 @@ public:
         attachers_.clear();
     }
 
+    // Issue #4645: close() is also the owner-drop edge of the orch
+    // reclaim writers (abandon_reclaimed / maybe_force_recycle_reclaimed_
+    // slot / ~AgentHandle live-Reclaimed arm): they close() the mailbox
+    // before they reset() the source shared_ptr, so a stale import proxy
+    // that still holds the same mailbox gets PushStatus::Closed instead
+    // of pushing into a queue whose only consumer is gone. The Done-path
+    // (detach WITHOUT reset) never closes — the source still owns the
+    // mailbox there and the liaison send/recv face stays Ok
+    // (#4026 / #4139).
     void close() noexcept {
         // Issue #2972 AC2: drop queued messages and zero inflight so
         // close cannot leave a permanent credit-full mailbox.

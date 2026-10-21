@@ -1,0 +1,46 @@
+{
+  "issue": 4645,
+  "title": "Issue #4645: the owner-drop reclaim writers close the source mailbox, so a stale import proxy cannot push into a queue whose only consumer is gone",
+  "ok": "OK #4645 owner-drop close: abandon_reclaimed / maybe_force_recycle_reclaimed_slot / the live-Reclaimed ~AgentHandle arm close the source mailbox before the reset, so the later import-proxy send is Closed (existing deny-class 'closed')",
+  "checks": [
+    {
+      "ac": "AC1-owner-drop-close",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "Issue #4645",
+        "close_owner_dropped_mailbox",
+        "h.mailbox->close();",
+        "h.mailbox.reset();"
+      ]
+    },
+    {
+      "ac": "AC2-mailbox-close-contract",
+      "path": "src/serve/multi_fiber_mailbox.h",
+      "contains": [
+        "Issue #4645",
+        "void close() noexcept",
+        "PushStatus::Closed"
+      ]
+    },
+    {
+      "ac": "AC3-runtime-acs",
+      "path": "tests/orch/test_join_drain_reclaim.cpp",
+      "contains": [
+        "ac4645_1_abandon_closes_source_mailbox_proxy_send_closed",
+        "ac4645_2_name_table_resolve_retires_abandoned_source",
+        "ac4645_3_live_dtor_closes_source_mailbox",
+        "ac4645_4_soft_face_unchanged",
+        "ac4645_5_source_cite_three_writers_no_invent",
+        "4645 AC1: proxy send is Closed after the owner drop"
+      ]
+    },
+    {
+      "ac": "AC4-no-invent",
+      "forbid": [
+        "tests/orch/test_issue_4645.cpp",
+        "tests/issues/test_issue_4645.cpp",
+        "docs/design/4645-owner-drop-mailbox-close.md"
+      ]
+    }
+  ]
+}
