@@ -5518,6 +5518,35 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
         }
         return closure_id; /* match IRInterpreter: return callee_val for non-callable */
     }
+    // Issue #4636: the native-dispatch cycle guard. A JIT'd frame calls a
+    // callee word that is NOT a closure -- the lowering's historical
+    // "unresolved reference" encoding 0, a fixnum, any other non-closure
+    // value -- and the word happens to name a LIVE closure slot (slot 0
+    // is the first closure the process allocates). The dispatch then
+    // invokes that closure, whose body calls the same word again, and the
+    // cycle never terminates: unbounded native recursion, stack overflow,
+    // SIGSEGV. This is the closure-0 -> top-level -> prologue cycle.
+    //
+    // The guard is an exact cycle predicate, not a depth counter: the
+    // callee is refused only when it names the closure that is ALREADY
+    // the innermost native activation on this thread (g_native_self_id,
+    // published around the native invoke by #4601). Re-entering the
+    // innermost activation IS the cycle; the first (legitimate) call into
+    // it is untouched, and a mutual recursion (f -> g -> f) never
+    // re-enters the innermost activation, so it is not refused. A direct
+    // self-recursion never reaches the dispatch at all -- the JIT lowers
+    // it to the direct native self-call (#4601's l1_self_call).
+    //
+    // Refuse with the established leave-native shape (the #4084 prologue
+    // sentinel + fixnum 0, the freed-closure arm's shape): the JIT'd
+    // frame unwinds, the driver re-runs the restored IR in the
+    // interpreter, and the interpreter raises the canonical
+    // "cannot call: <name>" diagnostic for the non-callable -- the same
+    // diagnostic, location and exit status as eval.
+    if (closure_id == g_native_self_id) {
+        aura_unlock_workspace_read();
+        return closure_dispatch_leave_native();
+    }
     // Issue #1361 / #3021: refuse to call a freed closure (apply/use-site
     // protocol — same skip as scan_skip_freed; no Guard on Soft).
     {

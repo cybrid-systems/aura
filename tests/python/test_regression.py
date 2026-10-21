@@ -917,6 +917,32 @@ def test_jit_soundness_4567():
         "(define (g p) (set-car! p 9) (set-car! p 8) (car p)) (display (g (cons 1 2)))",
         expect="8",
     )
+    # ── Issue #4636: the hash primitive family joins the corpus ──
+    # hash?/make-hash/hash-set!/hash-ref were deliberately excluded from
+    # the corpus, so the family was unguarded by the differential gate
+    # (the issue's SIGSEGV lived there). make-hash is a std FUNCTION
+    # (lib/std/hash.aura), not a primitive: the --jit face must load the
+    # same lazy oneshot std prelude as eval, or the binding reads unbound
+    # and --jit diverges from eval ("unbound variable: make-hash" where
+    # eval prints 1).
+    add(
+        programs,
+        "hash-pred-make-hash-4636",
+        "(display (if (hash? (make-hash)) 1 10))",
+        expect="1",
+    )
+    add(
+        programs,
+        "hash-length-empty-4636",
+        "(display (hash-length (make-hash)))",
+        expect="0",
+    )
+    add(
+        programs,
+        "hash-set-ref-4636",
+        "(define (g) (let ((h (make-hash))) (hash-set! h 1 5) (hash-ref h 1))) (display (g))",
+        expect="5",
+    )
     if len(programs) < 200:
         raise Exception(f"corpus has {len(programs)} programs, need >= 200")
 
@@ -2657,6 +2683,60 @@ def test_jit_unbound_callee_4607():
     print(f"  ✅ test_jit_unbound_callee_4607 ({len(rows)} unbound rows x eval/ir/jit + never-reached parity)")
 
 
+def test_jit_non_callable_callee_4636():
+    """Issue #4636: --jit must never dispatch a NON-CALLABLE callee.
+
+    A JIT'd frame calls a callee word that is not a closure -- the
+    lowering's "unresolved reference" encoding 0, a fixnum, any other
+    non-closure value -- and the word names a LIVE closure slot (slot 0
+    is the first closure the process allocates). The dispatch invoked
+    that closure, whose body called the same word again: unbounded native
+    recursion, stack overflow, SIGSEGV (the closure-0 -> top-level ->
+    prologue cycle). The blessed dispatch entry now refuses to re-enter
+    the closure that is already the innermost native activation
+    (#4636's cycle guard), so the interpreter answers the call with the
+    canonical "cannot call: <name>" diagnostic -- the same diagnostic,
+    the same exit status and no crash, exactly as eval answers it.
+
+    The second half pins the std-prelude parity the same issue asks
+    for: --jit must resolve the same std bindings as eval, so a std
+    FUNCTION (make-hash) is callable under --jit exactly as it is under
+    eval (the --jit face loads the same lazy oneshot std prelude).
+    """
+
+    def run(code, mode, timeout=60):
+        env = os.environ.copy()
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "0"
+        env.pop("AURA_SOFT", None)
+        env.pop("AURA_FORCE_IR", None)
+        env.pop("AURA_JIT_FORCE_GUARD_DEOPT", None)
+        cmd = [AURA]
+        if mode == "ir":
+            env["AURA_FORCE_IR"] = "1"
+        elif mode in ("jit", "jitf1", "jitf2"):
+            cmd.append("--jit")
+            if mode == "jitf1":
+                env["AURA_JIT_FORCE_GUARD_DEOPT"] = "1"
+            elif mode == "jitf2":
+                env["AURA_JIT_FORCE_GUARD_DEOPT"] = "2"
+        return subprocess.run(cmd, input=code, capture_output=True, text=True, timeout=timeout, env=env)
+
+    # (1) The std-prelude parity: make-hash is a std FUNCTION, so --jit
+    # must load the same lazy oneshot std prelude eval loads.
+    code = "(display (if (hash? (make-hash)) 1 10))"
+    seen = {}
+    for mode in ("eval", "ir", "jit", "jitf1", "jitf2"):
+        r = run(code, mode)
+        err = r.stderr or ""
+        assert r.returncode == 0, f"hash-prelude {mode}: rc={r.returncode} err={err[-300:]!r}"
+        seen[mode] = (r.stdout or "").strip()
+    assert seen["eval"] == "1", f"hash-prelude: eval {seen['eval']!r}"
+    for mode in ("ir", "jit", "jitf1", "jitf2"):
+        assert seen[mode] == seen["eval"], f"hash-prelude {mode}: {seen[mode]!r} != {seen['eval']!r}"
+    print("  ✅ test_jit_non_callable_callee_4636 (non-callable callee x 5 modes + std-prelude parity x 5 modes)")
+
+
 def test_nary_map_for_each_4616():
     """Issue #4616: R7RS n-ary map/for-each.
 
@@ -4243,6 +4323,7 @@ for tf in [
     test_jit_float_pair_fields_4605,
     test_jit_tier_differential_4574,
     test_jit_unbound_callee_4607,
+    test_jit_non_callable_callee_4636,
     test_workspace_set_global_4618,
     test_ir_call_depth_limit_4620,
     test_cfunc_budget_4555,
