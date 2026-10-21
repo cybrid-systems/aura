@@ -214,7 +214,41 @@ inline void note_wal_append_fail() noexcept {
     c.combined_fail_total.fetch_add(1, std::memory_order_relaxed);
 }
 
+// Issue #4646: streak hold. A security-event WAL append miss inside one
+// call must not be masked by the paired mutation-WAL success in the SAME
+// call: the success would zero the consecutive counter before the caller
+// has taken its deny decision, so the #3211 SLO never observes the miss.
+// The evaluator holds the streak across the mutation append and releases
+// it after the decision. While held, note_wal_append_ok() keeps the
+// consecutive-fail counter instead of clearing it.
+inline std::atomic<int>& wal_append_fail_streak_hold() noexcept {
+    static std::atomic<int> v{0};
+    return v;
+}
+
+inline void hold_wal_append_fail_streak() noexcept {
+    wal_append_fail_streak_hold().fetch_add(1, std::memory_order_relaxed);
+}
+
+inline void release_wal_append_fail_streak() noexcept {
+    auto& hold = wal_append_fail_streak_hold();
+    int v = hold.load(std::memory_order_relaxed);
+    while (v > 0) {
+        if (hold.compare_exchange_weak(v, v - 1, std::memory_order_relaxed))
+            return;
+    }
+}
+
+[[nodiscard]] inline bool wal_append_fail_streak_held() noexcept {
+    return wal_append_fail_streak_hold().load(std::memory_order_relaxed) > 0;
+}
+
 inline void note_wal_append_ok() noexcept {
+    // Issue #4646: a held streak survives this success — the caller has
+    // not taken its deny decision yet, and the miss that raised the streak
+    // must stay visible to the #3211 SLO.
+    if (wal_append_fail_streak_held())
+        return;
     g_wal_append_fail_slo_counters.consecutive.store(0, std::memory_order_relaxed);
 }
 
@@ -263,6 +297,7 @@ inline void reset_wal_append_fail_slo_for_test() noexcept {
     c.last_would_arm_degraded.store(0, std::memory_order_relaxed);
     c.last_force_reason_code.store(0, std::memory_order_relaxed);
     c.inject_fail_remaining.store(0, std::memory_order_relaxed);
+    wal_append_fail_streak_hold().store(0, std::memory_order_relaxed); // #4646
     set_wal_fail_closed_defaulted_by_force_wal(false);
     force_wal_enable_failed_flag().store(0, std::memory_order_relaxed);
     force_wal_enable_failed_observed_flag().store(0, std::memory_order_relaxed);

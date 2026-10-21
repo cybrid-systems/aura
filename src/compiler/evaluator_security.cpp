@@ -675,9 +675,36 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     // Issue #2388: CapabilityRegistry::record_audit dual-writes SecurityEvent
     // + WAL (single path). fiber-grant-mismatch reason is stamped there via
     // hard-deny counter delta (#2151). Do not append SE again below.
+    // Issue #4646: that dual-write persists the security event FIRST. An
+    // ENABLED SecurityEventWal append miss there loses the durable audit row
+    // for THIS mutate (the in-memory ring still has it). Snapshot the
+    // per-thread miss counter around the capability check so a miss inside it
+    // belongs to this call and not to an earlier one.
+    const auto se_wal_miss_before = ::aura::core::security_event_wal::se_wal_append_miss_count();
+    // Issue #4646: the process-wide append-fail counter is the
+    // cross-TU-safe companion of the per-thread counter (the header
+    // inline counter is one instance per link, but the metric is the
+    // surface the query/read paths already share).
+    const auto se_fail_before =
+        ::aura::core::security_event_wal::g_security_event_wal_metrics()
+            .security_event_wal_append_fail_total.load(std::memory_order_relaxed);
     const bool ok = aura::core::capability::check_and_record_effect(
         static_cast<Effect>(required_effect_bits), static_cast<Effect>(actual_effect_bits), prov,
         tenant, op, wildcard, sb_active);
+    const bool se_wal_miss =
+        ::aura::core::security_event_wal::se_wal_append_miss_count() != se_wal_miss_before ||
+        ::aura::core::security_event_wal::g_security_event_wal_metrics()
+                .security_event_wal_append_fail_total.load(std::memory_order_relaxed) !=
+            se_fail_before;
+    // Issue #4646: hold the #3211 SLO streak across the paired mutation-WAL
+    // append below. Its success must not clear the streak the security-event
+    // miss just raised, not even for the microseconds before the deny
+    // decision is taken. Soft / WAL-off / AURA_WAL_APPEND_FAIL_OPEN never
+    // hold (their behaviour is unchanged).
+    const bool se_miss_fail_closed =
+        se_wal_miss && ::aura::core::wal_slo::wal_append_fail_closed_active();
+    if (se_miss_fail_closed)
+        ::aura::core::wal_slo::hold_wal_append_fail_streak();
 
     // Mirror into mutation audit ring for unified Agent visibility.
     const auto seq = mutation_audit_seq_.fetch_add(1, std::memory_order_relaxed);
@@ -773,8 +800,51 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
                                                            static_cast<std::uint32_t>(target_node),
                                                            slot.fiber_id, tenant_id); // Issue #3903
         }
+        // Issue #4646: release the security-event miss streak hold taken
+        // above (the mutation miss is the reported reason for this deny).
+        if (se_miss_fail_closed)
+            ::aura::core::wal_slo::release_wal_append_fail_streak();
         return false;
     }
+
+    // Issue #4646: an ENABLED security-event WAL append miss is the same
+    // class of miss as a mutation-WAL miss for THIS mutate — the durable
+    // security-event row is gone, so under fail-closed the mutate is
+    // denied BEFORE the body runs (add_mutate calls require_effect before
+    // the body / Guard write). The compensating EffectDeny carries its
+    // own reason so forensics can tell a security-event-WAL miss from a
+    // mutation-WAL miss. The mutation-WAL branch above wins when BOTH
+    // missed (same deny, the older reason). Soft / WAL-off /
+    // AURA_WAL_APPEND_FAIL_OPEN keep the #3056 fail-open behaviour — the
+    // miss is observed, the mutate is not denied.
+    if (ok && se_miss_fail_closed) {
+        slot.effect_denied = true;
+        // #3801: deny SEs join the mid SSOT (never a bare caller mid — a
+        // mid=0 row would also trip the #3532 canonical-reason rewrite).
+        (void)::aura::core::security_event_wal::emit_security_event_durable(
+            ::aura::core::security_event::SecurityEventKind::EffectDeny, tenant_id,
+            production_deny_se_mid(prov.mutation_id), slot.epoch, actual_effect_bits, op,
+            "security_event_wal_append_miss", /*denied=*/true,
+            static_cast<std::int64_t>(prov.fiber_id));
+        // Issue #3879: the early return skips the Typed correlate — stamp a
+        // denied typed row for the same mid so Agents join tenant+fiber+mid
+        // without a hole.
+        {
+            const auto mid = provenance_mutation_id != 0
+                                 ? provenance_mutation_id
+                                 : (prov.epoch != 0 ? prov.epoch : static_cast<std::uint64_t>(1));
+            typed_audit::capture_security_correlated_audit(mid, op, prov.epoch, /*denied=*/true,
+                                                           static_cast<std::uint32_t>(target_node),
+                                                           slot.fiber_id, tenant_id); // Issue #3903
+        }
+        // Release the streak hold AFTER the decision: the streak the
+        // security-event miss raised stays visible to the #3211 SLO (a
+        // later WAL success may clear it, as usual).
+        ::aura::core::wal_slo::release_wal_append_fail_streak();
+        return false;
+    }
+    if (se_miss_fail_closed)
+        ::aura::core::wal_slo::release_wal_append_fail_streak();
 
     if (!ok) {
         bump_capability_denial();
