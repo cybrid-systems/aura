@@ -2970,6 +2970,13 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
                 m->linear_join_enforcement_total.fetch_add(1, std::memory_order_relaxed);
             }
+            // Issue #4650: the LCP deny invalidates the type-linear green face
+            // written earlier in this function (the steal-complete proof).
+            // Drop it so IR/JIT cannot ride it. The drop leaves the outcome
+            // Quiet - no process-global Reject (#3510: a Reject is negative
+            // authority for the depth==0 gate and would refuse every later
+            // warm eval in the same batch process).
+            typed_audit::drop_type_linear_green_face_quiet();
             return;
         }
     }

@@ -1723,6 +1723,17 @@ inline std::atomic<std::uint8_t> g_remount_last_zero_strip_face{0};
 [[nodiscard]] inline std::uint8_t remount_last_zero_strip_face_v_read() noexcept {
     return g_remount_last_zero_strip_face.load(std::memory_order_relaxed);
 }
+// Issue #4650: the strip latch is a DENY until a live commit_readiness allow
+// retires it through commit_deferred_outermost_green_proof (#4011 / #4081).
+// While it is set, an explicit-outcome stamp (steal-complete / densify
+// Phase-5) must not re-green the stripped face: publish_last_proof_face(true,
+// true) clears the latch AND rebinds the green gen, so a later IR/JIT entry
+// would ride the stripped face (commit_readiness_live_policy no longer
+// observes the latch). Soft / Off never latch the strip (observe only), so
+// the predicate is gated on the production hard face.
+[[nodiscard]] inline bool remount_last_zero_strip_latched() noexcept {
+    return production_hard_face_active() && remount_last_zero_strip_face_v_read() != 0;
+}
 inline constexpr std::int64_t kRemountLastZeroForceReasonCode = 17;
 // Issue #2610: auto_partial-from-cone force reason (the #3347 remirror
 // armed the pending latch; cleared only by the next infer_flat_partial).
@@ -2365,9 +2376,6 @@ type_linear_proof_reject_after_rebind_fail_total_v_read() noexcept {
 [[nodiscard]] inline std::uint8_t last_type_linear_proof_outcome_v_read() noexcept {
     return g_last_type_linear_proof_outcome.load(std::memory_order_relaxed);
 }
-inline void publish_type_linear_proof_outcome(uint8_t outcome) noexcept {
-    g_last_type_linear_proof_outcome.store(outcome, std::memory_order_relaxed);
-}
 inline void clear_type_linear_proof_outcome_for_test() noexcept {
     g_last_type_linear_proof_outcome.store(0, std::memory_order_relaxed);
 }
@@ -2379,6 +2387,40 @@ inline void reset_type_linear_proof_same_transaction_counters_for_test() noexcep
 inline constexpr uint8_t kTypeLinearProofOutcomeQuiet = 0;
 inline constexpr uint8_t kTypeLinearProofOutcomeStamped = 1;
 inline constexpr uint8_t kTypeLinearProofOutcomeReject = 2;
+
+// Issue #4650: one-shot veto. Set by
+// build_type_linear_commit_proof_from_live_with_outcome when the
+// remount-last-zero strip latch refused the green publish. The caller reacts
+// to the refused proof by publishing a process-global Reject; that Reject is
+// background-hygiene residue and must not refuse every later depth==0 warm
+// eval in the same batch process (#3510). The next outcome publish on this
+// thread consumes the veto and keeps the outcome Quiet - the live
+// commit_readiness deny (force_reason 17) carries the denial.
+inline thread_local std::uint8_t g_tls_remount_latched_green_veto{0};
+
+inline void publish_type_linear_proof_outcome(uint8_t outcome) noexcept {
+    if (g_tls_remount_latched_green_veto != 0) {
+        g_tls_remount_latched_green_veto = 0;
+        outcome = kTypeLinearProofOutcomeQuiet;
+    }
+    g_last_type_linear_proof_outcome.store(outcome, std::memory_order_relaxed);
+}
+
+// Issue #4650: drop the type-linear green face WITHOUT publishing a
+// process-global Reject. A Reject is negative authority for the #3510
+// depth==0 gate: it would refuse every later warm eval in the same batch
+// process. Advances the invalidate gen so the drop sticks for IR/JIT entry
+// (#3379 gen arm) and Move/Drop elision, clears the stamped epoch and quiets
+// the outcome. Used by the #3308 join LCP-deny return: a type-linear green
+// face written earlier in the same function must not survive the deny.
+inline void drop_type_linear_green_face_quiet() noexcept {
+    g_rehydrate_miss_invalidate_gen.fetch_add(1, std::memory_order_release);
+    g_last_proof_would_allow_commit.store(0, std::memory_order_relaxed);
+    g_last_proof_linear_ok.store(0, std::memory_order_relaxed);
+    g_last_proof_stamper_eval.store(0, std::memory_order_relaxed);
+    g_last_type_linear_commit_proof_stamp.store(0, std::memory_order_relaxed);
+    g_last_type_linear_proof_outcome.store(kTypeLinearProofOutcomeQuiet, std::memory_order_relaxed);
+}
 
 // Issue #4647: the last stamped proof face as ONE snapshot.
 // The observe-only evolution-audit-decision fold (#3114) publishes this
@@ -2952,6 +2994,7 @@ inline constexpr int kQuietPendingGreenRideIssue = 3983;
         }
         return true; // Quiet warm eval / engine:metrics
     }
+    // Issue #4650: the strip latch folds into the live policy (force_reason 17).
     // Issue #3359: re-sample mid-abort outstanding before granting
     // IR/JIT entry at depth > 0 (stale CastOp must not ship).
     if (abort_or_mid_abort_blocks_elision()) {
@@ -3915,6 +3958,45 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outco
     p.linear_ok = explicit_linear_ok;
     p.occurrence_consistent = explicit_linear_ok;
     p.defuse_or_epoch_stamp = current_epoch_or_defuse;
+    // Issue #4650: the remount-last-zero strip latch vetoes a green
+    // explicit-outcome stamp (steal-complete / densify Phase-5). While the
+    // latch is set the stripped face must stay stripped:
+    // publish_last_proof_face(true,true) clears the latch AND rebinds the
+    // green gen, so a later IR/JIT entry could ride the stripped face
+    // (commit_readiness_live_policy no longer observes the latch). Refuse
+    // the green BEFORE any stamp side effect - no epoch stamp, no counter,
+    // no process-global Reject - and keep the latch set. The only retire is
+    // commit_deferred_outermost_green_proof (a live commit_readiness allow,
+    // #4011 / #4081).
+    if (remount_last_zero_strip_latched() && explicit_would_allow_commit) {
+        p.would_allow_commit = false;
+        p.linear_ok = false;
+        p.occurrence_consistent = false;
+        p.force_reason_code = static_cast<std::uint32_t>(kRemountLastZeroForceReasonCode);
+        p.schema = kTypeLinearCommitProofIssue;
+        // Drop the face (would_allow/linear_ok=0, stamper unbound). A
+        // (false,false) publish does NOT clear the latch (only a (true,true)
+        // publish does) and does NOT rebind the green bind gen.
+        publish_last_proof_face(false, false);
+        // No proof was published: leave the stamped epoch at 0 and the outcome
+        // Quiet so the depth==0 warm path does not read a leftover
+        // "stamp + would_allow==0" as negative authority (#3510).
+        g_last_type_linear_commit_proof_stamp.store(0, std::memory_order_relaxed);
+        g_last_type_linear_proof_outcome.store(kTypeLinearProofOutcomeQuiet,
+                                               std::memory_order_relaxed);
+        // The caller reacts to the refused proof with its own outcome
+        // publish; arm the one-shot veto so that publish stays Quiet.
+        g_tls_remount_latched_green_veto = 1;
+        // The #4534 scalar stamps: force_reason_code 17 is the Agent-visible
+        // denial reason for the latched strip.
+        g_last_proof_readiness_bp.store(p.readiness_bp, std::memory_order_relaxed);
+        g_last_proof_force_reason_code.store(static_cast<std::int64_t>(p.force_reason_code),
+                                             std::memory_order_relaxed);
+        g_last_proof_occurrence_consistent.store(p.occurrence_consistent ? 1 : 0,
+                                                 std::memory_order_relaxed);
+        g_tls_stamp_last_look_tc = nullptr;
+        return p;
+    }
     p.linear_root_count =
         static_cast<std::uint64_t>(aura::compiler::linear_or_dirty_roots_count_for_rebind());
     auto truth =
@@ -5901,6 +5983,8 @@ inline void snapshot_global(std::uint64_t& considered, std::uint64_t& skipped,
 inline void reset_for_test() noexcept {
     clear_boundary_deny_op();
     drop_deferred_outermost_green_proof();
+    // Issue #4650: drop a pending remount-last-zero green veto.
+    g_tls_remount_latched_green_veto = 0;
     g_inject_linear_synth_after_persist_for_test.store(0, std::memory_order_relaxed);
     g_inject_post_persist_amend_append_fail_for_test.store(0, std::memory_order_relaxed);
     reset_outermost_persist_reject_needs_restore_for_test();
