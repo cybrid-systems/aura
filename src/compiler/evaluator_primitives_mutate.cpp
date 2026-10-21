@@ -1076,6 +1076,25 @@ namespace {
         return false;
     }
 
+    // Issue #4540: a mutate:rebind whose post-mutate typecheck rejects is rolled
+    // back - RebindAfterRejected re-binds top_env from the RESTORED tree - but the
+    // OUTERMOST Guard still exits through its success path. The rebind body's
+    // local ok=false never reaches add_mutate's wrapper_ok, so
+    // exit_mutation_boundary runs push_post_mutate_incremental_cascade, which
+    // re-lowers the dependent cone from function_sources_ - a table the rollback
+    // does NOT restore - and re-binds every caller of the rebind target onto a
+    // fresh IR closure whose call to that target still names the IR closure id
+    // the rejected rebind dropped. Each such caller then dies with
+    // "eval_flat: invalid closure". Nothing was committed, so there is nothing
+    // to cascade. Arm this while the rollback is pending; the boundary exit
+    // consumes it (success -> push_post_mutate_incremental_cascade, failure ->
+    // clear_cascade_bfs_invalidate), so it can never leak into a later, committed
+    // mutation.
+    [[nodiscard]] bool& rebind_rollback_cascade_pending() noexcept {
+        static thread_local bool pending = false;
+        return pending;
+    }
+
 } // namespace
 
 void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev,
@@ -3872,6 +3891,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 if (failed) {
                     ev.rebind_workspace_defines_after_rollback();
                     ev.defines_bound_flat_ = ev.workspace_flat_;
+                    // Issue #4540: the rollback above is what puts the
+                    // RESTORED bodies back in top_env. Arm the cascade
+                    // suppression so the outermost Guard exit cannot
+                    // re-lower this define's callers from the un-rolled-back
+                    // function_sources_ and strand them on the dropped IR
+                    // closure id of the rebind target.
+                    rebind_rollback_cascade_pending() = true;
                 }
             }
         } rebind_after_rejected{ev};
@@ -11025,6 +11051,10 @@ void Evaluator::drain_cascade_bfs_invalidate() noexcept {
 }
 
 void Evaluator::clear_cascade_bfs_invalidate() noexcept {
+    // Issue #4540: the failure exit is the other consumer of the armed
+    // rollback suppression. Clearing here - not only when the batch itself
+    // is non-empty - keeps it from ever reaching a later committed mutation.
+    primitives_detail::rebind_rollback_cascade_pending() = false;
     if (pending_cascade_bfs_invalidate_.empty())
         return;
     const auto n = static_cast<std::uint64_t>(pending_cascade_bfs_invalidate_.size());
@@ -11049,6 +11079,15 @@ void Evaluator::clear_cascade_bfs_invalidate() noexcept {
 void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_begin) noexcept {
     if (!workspace_flat_ || !workspace_pool_)
         return;
+    // Issue #4540: this is the exit-side consumer of a rolled-back rebind.
+    // The rollback restored the tree, so there is no committed change to
+    // cascade; drop the pending batch too so no later drain re-lowers from
+    // the un-rolled-back function_sources_.
+    if (primitives_detail::rebind_rollback_cascade_pending()) {
+        primitives_detail::rebind_rollback_cascade_pending() = false;
+        clear_cascade_bfs_invalidate();
+        return;
+    }
     // Issue #4357: nested eval_flat and the outer rebind guard both exit
     // through here. The second copy repeats mark + relower. One arm, one
     // cascade. set-body does not arm the flag.
