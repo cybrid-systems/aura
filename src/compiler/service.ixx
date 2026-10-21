@@ -5695,6 +5695,35 @@ public:
             for (auto& soa_fn : soa_mod.functions)
                 soa_fn.mark_all_blocks_dirty();
             (void)force_soa_instruction_dirty_sync();
+            // Issue #4653: a wholesale block dirty mark must also cascade
+            // the AoS instruction-dirty mask.  A fail-closed arm that
+            // clears want_partial marks every block dirty, but the mask
+            // used to keep the slots that were clean before the mark at
+            // idf == 0.  The per-fn peel keeps the OLD instruction of a
+            // clean slot, so a same-shape edit (same block count, same
+            // per-block instruction count, different constant) promoted
+            // the pre-edit IR.  Cascade the mask over the live layout so
+            // no slot stays clean behind a wholesale mark.
+            mark_all_instruction_dirty_for_current_layout_();
+        }
+
+        // Issue #4653: mark every live instruction slot dirty for the
+        // CURRENT irs layout.  mark_all_instruction_dirty() only flips the
+        // bits the mask already holds, so a layout change (a grown or
+        // shrunk function) left the trailing slots clean.  Rebuild the mask
+        // against the live layout (one row per irs function, one bit per
+        // instruction) and set every bit, so a wholesale dirty mark can
+        // never leave an idf == 0 slot behind.
+        void mark_all_instruction_dirty_for_current_layout_() {
+            if (instruction_dirty_per_func_.size() < irs.size())
+                instruction_dirty_per_func_.resize(irs.size());
+            for (std::size_t fi = 0; fi < irs.size(); ++fi) {
+                std::size_t total = 0;
+                for (const auto& b : irs[fi].blocks)
+                    total += b.instructions.size();
+                auto& idf = instruction_dirty_per_func_[fi];
+                idf.assign(total, std::uint8_t{1});
+            }
         }
 
         // Issue #2034 / #2139: mirror AoS block_dirty_per_func_ into SoA
@@ -10132,6 +10161,31 @@ public:
                 metrics_.relower_per_function_called_count.load(std::memory_order_relaxed);
             const auto blocks_before =
                 metrics_.incremental_relower_blocks_total.load(std::memory_order_relaxed);
+            // Issue #4653: refusal-aware per-fn commit arm.  Reaching the
+            // else arm below means SOME reason cleared want_partial for
+            // this define: the #4422 impact refusal, the zero block mask
+            // (#3484), the unknown callee cone (#3656), the shape flip
+            // (#3986), the persist attribution fail-closed (#3618), the
+            // map prepare / storm gates (#2190), the dual-graph parity
+            // fail-closed, or the re-arm observations (#3168 / #3257 /
+            // #3283 / #3348).  Only the #4422 impact refusal used to set
+            // impact_refused_partial, so every other reason still ran the
+            // per-fn commit arm.  The per-fn peel keeps the OLD
+            // instruction of a clean (idf == 0) slot, so a same-shape edit
+            // promoted the pre-edit IR (dirty = false,
+            // content_stored_this_epoch = true, live restamp) and
+            // lookup_define_v2 served the stale bundle.  On the
+            // production face EVERY want_partial == false reason must
+            // refuse the per-fn commit arm, exactly like the #4422 impact
+            // refusal: the full arm runs, or the entry stays dirty until
+            // a whole-function store lands.  Soft / Off keep the previous
+            // behaviour (the impact refusal is the only refusal there).
+            const bool production_face_4653 =
+                aura::compiler::typed_audit::production_defaults_active() ||
+                aura::compiler::typed_audit::get_strategy() ==
+                    aura::compiler::typed_audit::AuditStrategy::Full;
+            const bool commit_per_fn_partial_4653 =
+                !production_face_4653 && !impact_refused_partial;
             // Prefer partial path when gate says so (or dirty_n==0 edge).
             if (want_partial || dirty_n == 0) {
                 if (relower_define_blocks(name, canonical, *ws_flat, *ws_pool, expanded)) {
@@ -10175,7 +10229,7 @@ public:
                 note_relower_fallback(metrics_, RelowerFallbackReason::Threshold);
                 metrics_.incremental_full_fallback_total.fetch_add(1, std::memory_order_relaxed);
                 if (relower_define_blocks(name, canonical, *ws_flat, *ws_pool, expanded,
-                                          /*commit_per_fn_partial=*/!impact_refused_partial)) {
+                                          /*commit_per_fn_partial=*/commit_per_fn_partial_4653)) {
                     ++ok;
                     // Issue #4172: post-peel residual verification before
                     // JIT lower. Full peel re-runs the DeadCoercion fold
