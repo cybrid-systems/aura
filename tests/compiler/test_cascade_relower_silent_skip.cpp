@@ -1429,6 +1429,126 @@ int run_test_cascade_relower_silent_skip() {
         }
     }
 
+    // ── Issue #4653: every want_partial == false reason must refuse the
+    // per-fn commit arm on the production face ─────────────────────────
+    // A workspace replace (set-code) marks every cached entry wholesale
+    // dirty (mark_all_blocks_dirty).  The AoS instruction mask used to
+    // stay clean (idf == 0) for those blocks, so the per-fn peel kept the
+    // OLD instruction of a same-shape edit (same block count, same
+    // per-block instruction count, different constant) and the per-fn
+    // success arm promoted that stale content (dirty = false,
+    // content_stored_this_epoch = true, live restamp) -> lookup_define_v2
+    // served pre-edit IR.
+    {
+        std::println("\n--- #4653: production fail-closed must not promote stale IR ---");
+        // Issue #4653 setup: the seed and the same-shape workspace replace
+        // run on the dev face — a cold production evaluator refuses the
+        // workspace swap (the #4311 member caches on the dev face for the
+        // same reason).  The production face is armed for the FAIL-CLOSED
+        // part: the refusal decision the rows below assert is the
+        // production-face one (production_defaults_active /
+        // AuditStrategy::Full).
+        apply_dev_audit_defaults();
+        CompilerService cs;
+        // The workspace replace must use the CALL form (set-code "..."):
+        // the bare symbol form never reaches the primitive, so no
+        // workspace was installed and no v2 bundle was ever materialised.
+        CHECK(cs.eval(R"aura((set-code "(define f4653 (lambda (x) (+ x 1)))"))aura").has_value(),
+              "4653 AC1: seed define");
+        CHECK(cs.eval("(eval-current)").has_value(), "4653 AC1: eval-current");
+        const auto* seeded = cs.get_define_v2("f4653");
+        CHECK(seeded != nullptr && !seeded->irs.empty(), "4653 AC1: v2 entry cached");
+        CHECK(seeded != nullptr && seeded->irs.size() == 1, "4653 AC1: single-function bundle");
+        CHECK(seeded != nullptr && seeded->content_stored_this_epoch,
+              "4653 AC1: content stored for this epoch");
+        CHECK(seeded != nullptr && seeded->dirty_block_count() == 0,
+              "4653 AC1: stored entry has no dirty block");
+        // Same-shape workspace edit: (+ x 1) -> (+ x 2).  Same block count,
+        // same per-block instruction count, different constant.  The
+        // replace marks every cached entry wholesale dirty — the shape the
+        // fail-closed arms use.
+        CHECK(cs.eval(R"aura((set-code "(define f4653 (lambda (x) (+ x 2)))"))aura").has_value(),
+              "4653 AC3: same-shape edit");
+        // The production face is armed from here on: the fail-closed
+        // refusal + the peel that follows are the production-face ones.
+        apply_production_audit_defaults();
+        // AC2: a wholesale block dirty mark (the fail-closed shape every
+        // want_partial == false reason uses) must cascade the AoS
+        // instruction-dirty mask.  A clean (idf == 0) slot is what the
+        // per-fn peel keeps as the OLD instruction of a same-shape edit.
+        // mark_block_dirty_v2 with an out-of-range block takes the
+        // conservative "mark the whole entry dirty" branch - the same
+        // mark_all_blocks_dirty the fail-closed paths use.
+        CHECK(cs.mark_block_dirty_v2("f4653", 99, 99), "4653 AC2: wholesale dirty mark");
+        const auto* marked = cs.get_define_v2("f4653");
+        CHECK(marked != nullptr && marked->dirty, "4653 AC2: entry dirty after the mark");
+        CHECK(marked != nullptr && marked->dirty_block_count() > 0,
+              "4653 AC2: blocks dirty after the mark");
+        bool clean_instr_slot = false;
+        if (marked != nullptr) {
+            for (const auto& idf : marked->instruction_dirty_per_func_) {
+                for (auto b : idf) {
+                    if (b == 0)
+                        clean_instr_slot = true;
+                }
+            }
+        }
+        CHECK(!clean_instr_slot,
+              "4653 AC2: mark_all_blocks_dirty cascades the instruction-dirty mask");
+
+        // #3760 / #3656: an empty source_to_ir_map is an unknown callee cone.
+        // The cone consult runs BEFORE the impact consult, so the fail-closed
+        // clears want_partial WITHOUT the #4422 impact refusal - the exact
+        // refusal shape #4653 is about.
+        CHECK(cs.public_clear_source_to_ir_map_keep_irs_for_test("f4653"),
+              "4653 AC1: empty source_to_ir_map (unknown cone)");
+        auto* m = metrics_of(cs);
+        CHECK(m != nullptr, "4653 AC1: metrics");
+        const auto full0 = m->relower_full_called_count.load(std::memory_order_relaxed);
+        const auto per0 = m->relower_per_function_called_count.load(std::memory_order_relaxed);
+        const auto impact0 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+        // Drive the workspace peel (the same helper the #3484 / #3986
+        // members use).  The empty source_to_ir_map is the unknown cone →
+        // want_partial == false WITHOUT the #4422 impact refusal — the
+        // exact refusal shape #4653 is about.
+        (void)cs.public_relower_dirty_defines_from_workspace();
+        // AC1: the fail-closed reason must refuse the per-fn commit arm on the
+        // production face - the full arm runs instead.
+        CHECK(m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed) > impact0,
+              "4653 AC1: fail-closed full recorded");
+        CHECK(m->relower_full_called_count.load(std::memory_order_relaxed) > full0,
+              "4653 AC1: the full arm ran");
+        CHECK(m->relower_per_function_called_count.load(std::memory_order_relaxed) == per0,
+              "4653 AC1: the per-fn commit arm was refused");
+        // AC3: the new constant must be in the IR, or the entry must stay
+        // dirty (lookup == 1).  A clean hit on the pre-edit IR is the #4653
+        // defect.
+        const auto* after = cs.get_define_v2("f4653");
+        CHECK(after != nullptr, "4653 AC3: entry after the peel");
+        bool new_const = false;
+        bool old_const = false;
+        if (after != nullptr) {
+            for (const auto& fn : after->irs) {
+                for (const auto& b : fn.blocks) {
+                    for (const auto& ins : b.instructions) {
+                        if (ins.opcode != aura::ir::IROpcode::ConstI64)
+                            continue;
+                        if (ins.operands[1] == 2)
+                            new_const = true;
+                        if (ins.operands[1] == 1)
+                            old_const = true;
+                    }
+                }
+            }
+        }
+        const int look = after != nullptr ? cs.lookup_define_v2("f4653", after->source_hash) : 2;
+        std::println("  4653: new_const={} old_const={} lookup={}", new_const, old_const, look);
+        CHECK(new_const || look == 1,
+              "4653 AC3: the same-shape edit is not served from the stale IR");
+        apply_dev_audit_defaults();
+    }
+
+
     std::println("\n=== #2813/#3484 cascade relower silent skip: {} passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
