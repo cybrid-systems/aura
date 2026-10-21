@@ -1,0 +1,44 @@
+{
+  "issue": 4653,
+  "title": "Issue #4653: the workspace peel's full arm must refuse the per-fn commit for EVERY want_partial == false reason on the production face",
+  "ok": "OK #4653 partial-refusal commit: the workspace peel full arm passes a refusal-aware commit_per_fn_partial on the production face (not only the #4422 impact refusal), a wholesale block dirty mark cascades the AoS instruction-dirty mask so a same-shape edit cannot keep stale instruction slots, and the runtime test drives the unknown-callee-cone fail-closed",
+  "checks": [
+    {
+      "ac": "AC1-refusal-aware-commit-arg",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "Issue #4653",
+        "commit_per_fn_partial_4653",
+        "production_face_4653",
+        "impact_refused_partial"
+      ]
+    },
+    {
+      "ac": "AC2-instruction-mask-cascade",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "mark_all_instruction_dirty_for_current_layout_",
+        "Issue #4653: a wholesale block dirty mark"
+      ]
+    },
+    {
+      "ac": "AC3-runtime-test",
+      "path": "tests/compiler/test_cascade_relower_silent_skip.cpp",
+      "contains": [
+        "Issue #4653",
+        "4653 AC1",
+        "4653 AC2",
+        "4653 AC3"
+      ]
+    },
+    {
+      "ac": "AC4-no-invent",
+      "forbid": [
+        "tests/compiler/test_issue_4653.cpp",
+        "tests/issues/test_issue_4653.cpp",
+        "docs/design/4653-partial-refusal-commit.md",
+        "docs/design/4653-partial-refusal.md"
+      ]
+    }
+  ]
+}
