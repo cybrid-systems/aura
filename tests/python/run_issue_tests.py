@@ -202,12 +202,22 @@ def _last_bundle_member(stdout: str) -> str | None:
 
 
 def _isolate_member_fail_lines(stdout: str) -> list[str]:
-    """Orch batch isolate deaths: FAIL member X (isolated signal=N|timeout SIGKILL)."""
+    """Orch batch isolate deaths: FAIL member X (isolated signal=N|timeout SIGKILL).
+
+    Batch drivers spell a member death two ways - "signal=11" (orch
+    agent batch) and "signal 11" (mailbox/fiber, cascade impact) - and the
+    timeout arm as "timeout SIGKILL" or "timeout signal=14". Match every
+    spelling so a member death is always visible in the CI report and always
+    classified as a load flake by _transient_issue_fail.
+    """
     import re
 
     out: list[str] = []
     for line in stdout.splitlines():
-        m = re.search(r"FAIL member \S+ \(isolated (?:signal=\d+|timeout SIGKILL|rc=\d+)\)", line)
+        m = re.search(
+            r"FAIL member \S+ \(isolated (?:signal[ =]\d+|timeout (?:SIGKILL|signal[ =]\d+)|rc=\d+)\)",
+            line,
+        )
         if m:
             out.append(m.group(0))
     return out
@@ -579,11 +589,18 @@ def _transient_issue_fail(rc: int, err: str) -> bool:
     """Load/link flakes worth a serial retry. rc=1 AC failures are not."""
     if rc in _CRASH_RCS or rc in (127, 124):
         return True
-    return bool(err) and (
+    if not err:
+        return False
+    import re
+
+    return bool(
         "undefined symbol" in err
         or "symbol lookup error" in err
-        or "isolated signal=" in err
-        or "isolated timeout SIGKILL" in err
+        # A member killed by a signal (SIGSEGV under parallel load) or by
+        # the per-member alarm is a load flake worth one serial retry. The
+        # batch drivers spell these two ways ("signal=11" vs
+        # "signal 11"), so match both.
+        or re.search(r"isolated (?:signal[ =]\d+|timeout (?:SIGKILL|signal[ =]\d+))", err)
     )
 
 
