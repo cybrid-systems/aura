@@ -4549,6 +4549,24 @@ static std::unordered_map<std::string, JitFnEntry, aura::core::TransparentString
 // query key, not a metrics field.
 static std::unordered_map<int64_t, std::string> g_ir_func_define_names;
 
+// Issue #4648: (creator name -> closure body func_ids) edges published
+// by the JIT at every MakeClosure site (aura_note_ir_func_owner). The
+// creator is the compiled function whose body allocates the closure, so
+// it OWNS the closure's body. A nested lambda is compiled under its own
+// symbol name ("__lambda__#<id>") -- neither the define nor define#...
+// -- so the by-name walk and the #4405 func-id walk cannot see it, and
+// the live closure is unnamed: nothing MustDeopts it and the held
+// closure keeps running the pre-mutate ScalarFn after the define's
+// hot update. The edge lets the define drop retire the nested lambda's
+// ScalarFn slot and MustDeopt the closures that index it. Not a closure
+// table, not a query key, not a metrics field.
+static std::unordered_map<std::string, std::vector<int64_t>> g_ir_closure_creators;
+static std::mutex g_ir_closure_creators_mtx;
+// Bounded: the func_ids are module-relative, so a long-lived process
+// that compiles many programs under the same creator name would
+// otherwise grow this map without limit. Oldest edge first.
+static constexpr std::size_t kMaxClosureCreatorEdges = 32;
+
 // Issue #4387: constructor registrations observed while an AOT reload is
 // staging. Published into the live tables only on commit. Rollback clears
 // this vector and does not write g_jit_fns. Replaced pointers are the
@@ -4856,6 +4874,29 @@ void aura_note_ir_func_define(int64_t func_id, const char* name) {
     aura_unlock_workspace_write();
 }
 
+// Issue #4648: bind a closure body func_id to the function that
+// creates the closure -- the owner of that body. The JIT publishes the
+// edge at the MakeClosure site: the compiled function's name is the
+// define name for a define's body, so dropping that define retires the
+// nested lambda's ScalarFn slot and MustDeopts the closures that index
+// it. The nested lambda's own symbol name ("__lambda__#<id>") is
+// neither the define nor define#..., so the by-name walk and the
+// #4405 func-id walk both miss it. Does not raise deopt_pending_count
+// and does not bump table / C-bridge / defuse.
+extern "C" void aura_note_ir_func_owner(int64_t func_id, const char* owner_name) {
+    if (func_id < 0 || owner_name == nullptr || owner_name[0] == '\0')
+        return;
+    std::lock_guard<std::mutex> lock(g_ir_closure_creators_mtx);
+    auto& callees = g_ir_closure_creators[std::string(owner_name)];
+    for (int64_t fid : callees) {
+        if (fid == func_id)
+            return;
+    }
+    if (callees.size() >= kMaxClosureCreatorEdges)
+        callees.erase(callees.begin());
+    callees.push_back(func_id);
+}
+
 // Issue #4521: locked body of the #4418 note; defined next to the
 // register publish that now calls it in-lock. Caller holds the
 // g_closure_table_mtx unique.
@@ -5121,6 +5162,46 @@ static bool jit_key_matches_define(std::string_view key, std::string_view name) 
     return key.size() == name.size() || key[name.size()] == '#';
 }
 
+// Issue #4648: the func_ids of the nested lambdas a define owns. The
+// JIT publishes the (creator, callee) edge at every MakeClosure site
+// (aura_note_ir_func_owner), so the define whose body creates a closure
+// owns the closure's body. Level 1: the creators whose name is the
+// define (or define#...). Level 2+: the creators named by a retired
+// nested lambda's own symbol name -- the binding the #4405 walk reads
+// (and erases) below.
+static std::vector<int64_t> collect_nested_lambda_func_ids_locked(std::string_view name) {
+    std::vector<int64_t> out;
+    std::unordered_set<int64_t> seen_ids;
+    {
+        std::lock_guard<std::mutex> lock(g_ir_closure_creators_mtx);
+        for (const auto& [creator, callees] : g_ir_closure_creators) {
+            if (!jit_key_matches_define(creator, name))
+                continue;
+            for (int64_t fid : callees) {
+                if (seen_ids.insert(fid).second)
+                    out.push_back(fid);
+            }
+        }
+    }
+    // Transitive: a nested lambda's own nested lambdas are created by
+    // the nested lambda, whose symbol name is the binding the #4405
+    // walk reads. out grows while it is walked (BFS).
+    for (std::size_t i = 0; i < out.size(); ++i) {
+        const auto bind = g_ir_func_define_names.find(out[i]);
+        if (bind == g_ir_func_define_names.end() || bind->second.empty())
+            continue;
+        std::lock_guard<std::mutex> lock(g_ir_closure_creators_mtx);
+        const auto cit = g_ir_closure_creators.find(bind->second);
+        if (cit == g_ir_closure_creators.end())
+            continue;
+        for (int64_t fid : cit->second) {
+            if (seen_ids.insert(fid).second)
+                out.push_back(fid);
+        }
+    }
+    return out;
+}
+
 // Issue #4083: partial relower removes the ORC tracker, so deopt_pending
 // cannot stick and the closure fast path would keep calling the old
 // ScalarFn. Drop name / name# rows, primary and overflow slots that hold
@@ -5205,6 +5286,28 @@ static void drop_jit_fn_native_for_define_locked(std::string_view name) {
     std::vector<int64_t> func_only_ids;
     for (const auto& [fid, def] : g_ir_func_define_names) {
         if (jit_key_matches_define(def, name))
+            func_only_ids.push_back(fid);
+    }
+    // Issue #4648: the nested lambdas this define owns. A nested
+    // lambda's body is compiled under its own symbol name
+    // ("__lambda__#<id>"), so the by-name walk above (define /
+    // define#...) and this func-id walk (the binding is the lambda's
+    // own name) both miss it, and the live closure is unnamed -- the
+    // name walk does not MustDeopt it. The JIT publishes the
+    // (creator, callee) edge at the MakeClosure site, so the define
+    // whose body creates the closure owns the closure's body: merge
+    // those func_ids here and the block below drops their ScalarFn
+    // slot, erases their binding and MustDeopts the closures that
+    // index them. The define's own name / name# drop is unchanged.
+    for (int64_t fid : collect_nested_lambda_func_ids_locked(name)) {
+        bool dup = false;
+        for (int64_t have : func_only_ids) {
+            if (have == fid) {
+                dup = true;
+                break;
+            }
+        }
+        if (!dup)
             func_only_ids.push_back(fid);
     }
     for (int64_t fid : func_only_ids) {
