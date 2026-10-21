@@ -1229,7 +1229,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 // denied paths always hit the mutation audit ring + sandbox metrics
                 // (legacy string gate alone used to skip them).
                 // Best-effort target_node from first int / StableNodeRef arg.
+                // Issue #4654: node id 0 is a real node (NULL_NODE is ~0u).
+                // "No concrete target" is tracked explicitly below.
                 aura::ast::NodeId target_node = 0;
+                bool has_target = false;
                 std::uint64_t ref_tenant = 0;
                 // Issue #3993: keep packed/hash captured gen/wrap/cow so
                 // require_effect_on_ref does not brace-init gen=0 (false
@@ -1248,8 +1251,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                             (ev.effect_sandbox_mode() == 1 &&
                              (aura::core::provenance::hard_capture_tenant_active() ||
                               aura::core::provenance::multi_tenant_env_active()));
-                        if (!consult_bare)
+                        if (!consult_bare) {
                             target_node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+                            // Issue #4654: a bare int is not an identity operand
+                            // (#3395) - keep "int 0 = no concrete target".
+                            has_target = target_node != 0;
+                        }
                     } else if (is_pair(a[0])) {
                         // Issue #3640: single spine — the isolation gate MUST
                         // parse packed StableNodeRefs through the same
@@ -1263,6 +1270,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         // falls through to the #3395 bare-int/v1 reject.
                         if (auto packed = unpack_stable_ref_arg(a[0])) {
                             target_node = static_cast<aura::ast::NodeId>(packed->id);
+                            // Issue #4654: packed ref id 0 is a real node.
+                            has_target = true;
                             ref_tenant = packed->tenant_id;
                             arg_ref = *packed;
                         }
@@ -1290,6 +1299,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                 if (hr.kind != HashNodeKind::Ok)
                                     return mev(hr.err_kind, hr.err_msg);
                                 target_node = hr.node;
+                                // Issue #4654: a QueryResult match id 0 is a real
+                                // node - gate it like any other id.
+                                has_target = true;
                                 ref_tenant = hr.tenant_id;
                                 StableNodeRef href{};
                                 href.id = hr.node;
@@ -1316,7 +1328,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 const bool strict_iso =
                     (ev.effect_sandbox_mode() == 2) || aura::core::sandbox::is_strict();
                 const bool restricted_iso = ev.effect_sandbox_mode() == 1;
-                if (ref_tenant == 0 && target_node != 0 && (strict_iso || restricted_iso)) {
+                if (ref_tenant == 0 && has_target && (strict_iso || restricted_iso)) {
                     const auto self = ev.capability_tenant_id();
                     if (self != 0 &&
                         (strict_iso || aura::core::provenance::hard_capture_tenant_active() ||
@@ -1377,7 +1389,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
                 // Issue #2942: pick mandated entry by target shape.
                 bool effect_ok = false;
-                if (target_node != 0) {
+                // Issue #4654: gate node id 0 like any other id.
+                if (has_target) {
                     if (ref_tenant != 0) {
                         // Foreign or arg-stamped tenant — do not re-stamp principal.
                         // Issue #3993: packed/hash keep captured gen/wrap/cow

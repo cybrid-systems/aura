@@ -3441,24 +3441,47 @@ static void ac3451_3_outermost_clears_new_capture_fresh() {
         }
     }
     CHECK(live != aura::ast::NULL_NODE, "3451 AC3: live node");
-    auto qr = make_pre_nested_schema2_qr(*flat, live);
     bool ok = true;
+    aura::core::QueryResult qr{};
     {
         Evaluator::MutationBoundaryGuard outer(ev, &ok);
         {
             Evaluator::MutationBoundaryGuard inner(ev, &ok);
             const auto extra = flat->add_literal(34513);
             flat->insert_child(live, 0, extra);
+            // Issue #4654: node id 0 is a REAL node (NULL_NODE is ~0u, not
+            // 0), so a schema-2 match whose id is 0 now takes the same
+            // per-match generation compare as every other id. The
+            // outermost boundary restamp moves EVERY live node's node_gen_
+            // to the current table generation, so the QR captured for
+            // `live` (id 0 in this workspace) before the nested window is
+            // stale afterwards for EVERY id - it only stayed Fresh
+            // because id 0 used to skip the occupancy block. The #3660
+            // contract under test is that the table Mutation epoch does
+            // NOT invalidate a per-match QR, so hold the QR for a node
+            // BORN at the current table generation: it is live, it sits
+            // outside the mutated cone, and its per-match generation does
+            // not move across the outermost restamp.
+            const auto born = flat->add_literal(34514);
+            qr = make_pre_nested_schema2_qr(*flat, born);
         }
         CHECK(flat->nested_authority_gap(), "3451 AC3: gap while nested window open");
     }
     CHECK(!flat->nested_authority_gap(), "3451 AC3: outermost clears gap");
+    // The table Mutation epoch moves AFTER the capture while the per-match
+    // generation stays put - exactly the #3660 face (per-match occupancy,
+    // not the table epoch).
+    aura::core::bump_mutation_epoch();
     const auto old_held = aura::compiler::query_result_decode::query_result_is_fresh_with_refs(
         qr, *flat, /*tenant=*/0, /*fiber=*/0);
     // Issue #3660: with_refs is per-match occupancy/wrap, not table
-    // Mutation epoch. After outermost the gap is cleared and `live`
-    // is still occupied, so the held QR is Fresh. QueryEpoch poison
+    // Mutation epoch. After outermost the gap is cleared and the held
+    // node is still occupied, so the held QR is Fresh. QueryEpoch poison
     // during the nested window remains AC1 (gap) + last_query_epoch.
+    // Issue #4654: the held node is the one born at the current table
+    // generation (see above); the node the nested window mutated had its
+    // per-match generation moved, so its own QR is stale by the same rule
+    // every other id follows.
     CHECK(old_held == aura::core::QueryResultFreshness::Fresh,
           "3451 AC3: still-live occupancy Fresh after outermost (#3660)");
     const auto recap =
