@@ -291,6 +291,239 @@ void ac4446_rotate_open_fail_accounts() {
     reset_all();
 }
 
+
+// Issue #4641: security:set-audit-persist-dir! is a PRIVILEGED operation on
+// the production face (Restricted / Strict). Unguarded, the primitive reached
+// disable_mutation_audit_wal() / enable_mutation_audit_wal() with no
+// capability: the empty path flipped posture_wal_off_restricted_live (every
+// later admit_security_schedule then denied the whole process with
+// posture-degraded and the mutation WAL silently stopped recording through
+// the WAL-off !enabled short-circuit), and a non-empty path retargeted the
+// process WAL to any host directory. The gate refuses BEFORE any disable /
+// close_unlocked / create_directories / replay.
+//
+// Arming: ev.set_effect_sandbox_mode(1) = Restricted, (2) = Strict. The
+// TenantAdmin row is seeded while the face is Off (the production path
+// force-promotes a high-risk grant to single_use + session_bound and the
+// same-tenant high-risk fence needs an admin the caller does not hold yet)
+// and the face is armed afterwards — the #4012 pattern.
+void ac4641_audit_persist_dir_production_gate() {
+    using aura::compiler::security::kEffectTenantAdmin;
+    using aura::core::audit_wal::g_mutation_audit_wal;
+    using aura::core::security_event_wal::g_security_event_wal;
+
+    const auto base = fs::temp_directory_path() / "aura-audit-wal-4641";
+    std::error_code ec;
+    fs::remove_all(base, ec);
+    fs::create_directories(base, ec);
+    const auto live_dir = (base / "live").string();
+    const auto other_dir = (base / "other").string();
+    fs::create_directories(live_dir, ec);
+    fs::create_directories(other_dir, ec);
+    // Tenant root base for the host-path gate (#3802).
+    const auto tenant_base = (base / "tenants").string();
+    fs::create_directories(tenant_base, ec);
+    ::setenv("AURA_TENANT_FS_ROOT", tenant_base.c_str(), 1);
+    const auto tenant_root = (fs::path(tenant_base) / "t-4642").string();
+
+    auto se_reason_seen = [&](std::string_view want, std::uint64_t from_seq) {
+        const auto& ring = g_security_event_ring();
+        const auto seq_end = ring.seq.load(std::memory_order_acquire);
+        for (std::uint64_t s = from_seq; s < seq_end && s < from_seq + 4096; ++s) {
+            const auto& e = ring.ring[s % kSecurityEventRingSize];
+            if (e.seq != s)
+                continue;
+            if (std::string_view(e.reason) == want)
+                return true;
+        }
+        return false;
+    };
+    auto se_seq = []() { return g_security_event_ring().seq.load(std::memory_order_acquire); };
+
+    std::println("\n--- #4641: set-audit-persist-dir! is privileged on the production face ---");
+
+    // ── AC4: Soft / Off keeps today's empty-string disable ──
+    {
+        std::println("--- #4641 AC4: Soft / Off keeps today's empty-string disable ---");
+        reset_all();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(0); // Off — the unarmed face
+        auto r = cs.eval(std::format("(security:set-audit-persist-dir! \"{}\")", live_dir));
+        CHECK(r && is_bool(*r) && as_bool(*r), "4641 AC4: Soft enables the WAL");
+        CHECK(ev.mutation_audit_wal_enabled(), "4641 AC4: Soft WAL enabled");
+        auto d = cs.eval("(security:set-audit-persist-dir! \"\")");
+        CHECK(d && is_bool(*d) && as_bool(*d), "4641 AC4: Soft empty string still disables");
+        CHECK(!ev.mutation_audit_wal_enabled(), "4641 AC4: Soft WAL disabled by the empty string");
+    }
+
+    // ── AC1: no TenantAdmin → refuse, nothing changes ──
+    {
+        std::println("--- #4641 AC1: no TenantAdmin refuses on the production face ---");
+        reset_all();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_capability_tenant_id(4641);
+        ev.set_effect_sandbox_mode(1); // Restricted
+        CHECK(ev.effect_sandbox_mode() == 1, "4641 AC1: Restricted armed");
+        CHECK(ev.enable_mutation_audit_wal(live_dir), "4641 AC1: WAL pair enabled");
+        CHECK(ev.mutation_audit_wal_enabled() && ev.security_event_wal_enabled(),
+              "4641 AC1: both WALs live");
+        const auto dir_before = g_mutation_audit_wal().directory();
+        const auto seq0 = se_seq();
+        auto r = cs.eval("(security:set-audit-persist-dir! \"\")");
+        CHECK(r && is_bool(*r) && !as_bool(*r), "4641 AC1: the empty path is refused");
+        CHECK(ev.mutation_audit_wal_enabled() && ev.security_event_wal_enabled(),
+              "4641 AC1: both WAL enabled flags unchanged");
+        CHECK(g_mutation_audit_wal().directory() == dir_before,
+              "4641 AC1: the WAL directory is unchanged");
+        CHECK(se_reason_seen("audit-persist-dir-needs-tenant-admin", seq0),
+              "4641 AC1: SE reason audit-persist-dir-needs-tenant-admin");
+        // Same gate for a non-empty path — no capability, no retarget.
+        const auto seq1 = se_seq();
+        auto r2 = cs.eval(std::format("(security:set-audit-persist-dir! \"{}\")", other_dir));
+        CHECK(r2 && is_bool(*r2) && !as_bool(*r2),
+              "4641 AC1: a path without TenantAdmin is refused");
+        CHECK(ev.mutation_audit_wal_enabled() && ev.security_event_wal_enabled(),
+              "4641 AC1: WAL flags unchanged after the path arm");
+        CHECK(g_mutation_audit_wal().directory() == dir_before, "4641 AC1: zero retarget");
+        CHECK(se_reason_seen("audit-persist-dir-needs-tenant-admin", seq1),
+              "4641 AC1: the path arm emits the same stable reason");
+    }
+
+    // ── AC4: empty string is not a production disable (even for an admin) ──
+    {
+        std::println("--- #4641 AC4: the empty string is not a production disable ---");
+        reset_all();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_capability_tenant_id(4642);
+        ev.set_effect_sandbox_mode(0); // Off: seed the TenantAdmin row
+        ev.grant_effect_capability(4642, "tenant-admin-4641", kEffectTenantAdmin, 0);
+        ev.set_effect_sandbox_mode(1); // Restricted: arm the production face
+        CHECK(ev.enable_mutation_audit_wal(live_dir), "4641 AC4: WAL pair enabled");
+        const auto dir_before = g_mutation_audit_wal().directory();
+        const auto seq0 = se_seq();
+        auto r = cs.eval("(security:set-audit-persist-dir! \"\")");
+        CHECK(r && is_bool(*r) && !as_bool(*r),
+              "4641 AC4: the empty string is refused for an admin too");
+        CHECK(ev.mutation_audit_wal_enabled(), "4641 AC4: the mutation WAL is still enabled");
+        CHECK(ev.security_event_wal_enabled(), "4641 AC4: the SE WAL is still enabled");
+        CHECK(g_mutation_audit_wal().directory() == dir_before,
+              "4641 AC4: the WAL directory is unchanged");
+        CHECK(se_reason_seen("audit-persist-dir-empty-not-allowed", seq0),
+              "4641 AC4: SE reason audit-persist-dir-empty-not-allowed");
+    }
+
+    // ── AC2: a path outside the caller tenant root → tenant-path-escape ──
+    {
+        std::println("--- #4641 AC2: a path outside the tenant root is tenant-path-escape ---");
+        reset_all();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_capability_tenant_id(4642);
+        ev.set_effect_sandbox_mode(0);
+        ev.grant_effect_capability(4642, "tenant-admin-4641", kEffectTenantAdmin, 0);
+        ev.set_effect_sandbox_mode(2); // Strict: the host-path policy arms
+        CHECK(ev.enable_mutation_audit_wal(live_dir), "4641 AC2: WAL pair enabled");
+        const auto dir_before = g_mutation_audit_wal().directory();
+        const auto seq0 = se_seq();
+        const auto escape = (base / "not-a-tenant-root").string();
+        fs::create_directories(escape, ec);
+        auto r = cs.eval(std::format("(security:set-audit-persist-dir! \"{}\")", escape));
+        CHECK(r && is_bool(*r) && !as_bool(*r), "4641 AC2: the escape path is refused");
+        CHECK(ev.last_mutate_error().find("tenant-path-escape") != std::string::npos,
+              "4641 AC2: the deny reason is tenant-path-escape");
+        CHECK(ev.mutation_audit_wal_enabled() && ev.security_event_wal_enabled(),
+              "4641 AC2: WAL flags unchanged");
+        CHECK(g_mutation_audit_wal().directory() == dir_before, "4641 AC2: zero retarget");
+        CHECK(se_reason_seen("tenant-path-escape", seq0),
+              "4641 AC2: the IsolationDeny SE reason is tenant-path-escape");
+    }
+
+    // ── AC2: an admin path inside the tenant root still works ──
+    {
+        std::println("--- #4641 AC2: an admin path inside the tenant root still works ---");
+        reset_all();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_capability_tenant_id(4642);
+        ev.set_effect_sandbox_mode(0);
+        ev.grant_effect_capability(4642, "tenant-admin-4641", kEffectTenantAdmin, 0);
+        ev.set_effect_sandbox_mode(2);
+        const auto inside = tenant_root + "/wal";
+        auto r = cs.eval(std::format("(security:set-audit-persist-dir! \"{}\")", inside));
+        CHECK(r && is_bool(*r) && as_bool(*r),
+              "4641 AC2: an admin path inside the tenant root is allowed");
+        CHECK(ev.mutation_audit_wal_enabled(), "4641 AC2: the WAL is enabled");
+        CHECK(g_mutation_audit_wal().directory() == inside,
+              "4641 AC2: the WAL retargeted to the tenant root");
+    }
+
+    // ── AC5: a failed open leaves the previous WAL enabled ──
+    {
+        std::println("--- #4641 AC5: a failed open leaves the previous WAL enabled ---");
+        reset_all();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        CHECK(ev.enable_mutation_audit_wal(live_dir), "4641 AC5: WAL pair enabled");
+        const auto dir_before = g_mutation_audit_wal().directory();
+        // A directory that cannot be created: the parent is a regular file.
+        const auto blocker = base / "blocker";
+        {
+            std::ofstream f(blocker);
+            f << "x";
+        }
+        const auto bad = (blocker / "wal").string();
+        CHECK(!ev.enable_mutation_audit_wal(bad), "4641 AC5: the bad enable fails");
+        CHECK(ev.mutation_audit_wal_enabled(),
+              "4641 AC5: the mutation WAL is still enabled after the failed open");
+        CHECK(ev.security_event_wal_enabled(),
+              "4641 AC5: the SE WAL is still enabled after the failed open");
+        CHECK(g_mutation_audit_wal().directory() == dir_before,
+              "4641 AC5: the WAL directory is unchanged");
+        (void)ev.emit_mutation_audit(1, 0, "test:4641-alive", 1);
+        CHECK(snapshot_audit_wal_stats().persisted > 0,
+              "4641 AC5: the live segment still persists records");
+    }
+
+    // ── AC6: source cites — stable reason, no new query key / Effect bit ──
+    {
+        std::println("--- #4641 AC6: source cites the stable reason, no new surface ---");
+        const auto prim = read_repo_file("src/compiler/evaluator_primitives_security.cpp");
+        const auto wal = read_repo_file("src/core/mutation_audit_wal.hh");
+        CHECK(prim.find("Issue #4641") != std::string::npos, "4641 AC6: the prim cites the issue");
+        CHECK(prim.find("audit-persist-dir-needs-tenant-admin") != std::string::npos,
+              "4641 AC6: the prim carries the stable reason");
+        CHECK(prim.find("query:4641") == std::string::npos, "4641 AC6: no new query key");
+        CHECK(prim.find("kEffectAuditPersist") == std::string::npos, "4641 AC6: no new Effect bit");
+        CHECK(wal.find("Issue #4641") != std::string::npos, "4641 AC6: the WAL cites the issue");
+        CHECK(wal.find("open_segment_at") != std::string::npos,
+              "4641 AC6: the WAL opens the new segment before the swap");
+        CHECK(wal.find("close_unlocked();\n        dir.assign(persist_dir);") == std::string::npos,
+              "4641 AC6: the close-first enable is gone");
+        // The gate must refuse BEFORE any disable / enable of the WAL pair.
+        const auto p_prim = prim.find("security:set-audit-persist-dir!");
+        CHECK(p_prim != std::string::npos, "4641 AC6: the prim is present");
+        const auto win = prim.substr(p_prim, 8000);
+        const auto at_reason = win.find("audit-persist-dir-needs-tenant-admin");
+        const auto at_disable = win.find("ev.disable_mutation_audit_wal();");
+        const auto at_enable = win.find("ev.enable_mutation_audit_wal(");
+        CHECK(at_reason != std::string::npos && at_disable != std::string::npos &&
+                  at_enable != std::string::npos && at_reason < at_disable && at_reason < at_enable,
+              "4641 AC6: the gate refuses before any disable / enable");
+    }
+
+    // ── restore the process face ──
+    {
+        CompilerService cs;
+        cs.evaluator().set_effect_sandbox_mode(0);
+    }
+    ::unsetenv("AURA_TENANT_FS_ROOT");
+    fs::remove_all(base, ec);
+    reset_all();
+}
+
 } // namespace
 
 int main() {
@@ -706,6 +939,8 @@ int main() {
     }
 
     ac4446_rotate_open_fail_accounts();
+
+    ac4641_audit_persist_dir_production_gate();
 
     // Cleanup temp
     std::error_code ec;
