@@ -1,0 +1,44 @@
+{
+  "issue": 4650,
+  "title": "Issue #4650: a latched remount-last-zero strip must not be retired by an explicit-outcome stamp - the steal-complete / densify Phase-5 green publish clears the latch and rebinds the green gen, so a later IR/JIT entry rides the stripped face",
+  "ok": "OK #4650 remount-last-zero strip: while the strip latch is set the explicit-outcome builder publishes no green and keeps the latch, the join LCP-deny return drops the type-linear green face written earlier in the same function, and the outcome stays Quiet (no process-global Reject)",
+  "checks": [
+    {
+      "ac": "AC1-latch-vetoes-green-publish",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "Issue #4650",
+        "remount_last_zero_strip_latched",
+        "drop_type_linear_green_face_quiet",
+        "g_tls_remount_latched_green_veto",
+        "kRemountLastZeroForceReasonCode"
+      ]
+    },
+    {
+      "ac": "AC2-join-lcp-deny-drops-green",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "Issue #4650",
+        "drop_type_linear_green_face_quiet"
+      ]
+    },
+    {
+      "ac": "AC3-runtime-contract",
+      "path": "tests/compiler/test_type_linear_commit_health.cpp",
+      "contains": [
+        "ac4650_1_latched_stamp_cannot_regreen",
+        "ac4650_2_latch_retire_is_deferred_green_only",
+        "ac4650_3_soft_no_veto",
+        "ac4650_4_join_lcp_deny_drops_green",
+        "ac4650_5_source_cite"
+      ]
+    },
+    {
+      "ac": "AC4-non-goals",
+      "forbid": [
+        "tests/compiler/test_issue_4650.cpp",
+        "docs/design/4650-remount-strip-green-veto.md"
+      ]
+    }
+  ]
+}
