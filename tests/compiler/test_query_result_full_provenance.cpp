@@ -4544,18 +4544,36 @@ void test_ac4425_captured_cow_zero_later_layer() {
     expect_true("4425: child id", wid && is_int(*wid) && as_int(*wid) > 0);
     const std::string sw = "(workspace :switch " + std::to_string(as_int(*wid)) + ")";
     expect_true("4425: switch child", cs.eval(sw).has_value());
-    auto shared = cs.eval("(query :node lit4425)");
+    // Issue #4654: node id 0 is a REAL node (NULL_NODE is ~0u, not 0), so a
+    // schema-2 match whose id is 0 now takes the same per-match generation
+    // compare as any other id (it used to skip the whole occupancy block).
+    // (workspace :create) runs the #1405 drift stamp (bump_generation +
+    // restamp_all_node_generations), so node_gen_ moves for EVERY id: the
+    // root-layer capture of slot 0 is stale in the child layer exactly
+    // like the Define (id 1). The #4425 cow-0 birth contract is about a
+    // hash captured in the CHILD layer (cow epoch 0 at capture) whose
+    // first mutate clones the layer and paints a non-zero cow epoch, so
+    // re-capture it there and keep every row below asserting exactly what
+    // it always asserted.
+    expect_true("4425: re-capture find in the child layer",
+                cs.eval("(define qr4425c (query :find \"x4425\"))").has_value());
+    expect_true("4425: re-capture children in the child layer",
+                cs.eval("(define lit4425c (query :children qr4425c))").has_value());
+    auto ccow = cs.eval("(hash-ref lit4425c \"cow-epoch-at-capture\")");
+    expect_true("4425: child-layer capture has cow epoch 0",
+                ccow && is_int(*ccow) && as_int(*ccow) == 0);
+    auto shared = cs.eval("(query :node lit4425c)");
     expect_true("4425: shared child still reads 1",
                 shared.has_value() && !is_stale_ref_pair(shared, cs.evaluator()) &&
                     list_value(shared, cs.evaluator()) == 1);
-    auto mu = cs.eval("(mutate:replace-value lit4425 2 \"t\")");
+    auto mu = cs.eval("(mutate:replace-value lit4425c 2 \"t\")");
     const auto mu_kind = error_kind(mu, cs.evaluator());
     expect_true("4425: replace-value refuses the birth hash",
                 mu_kind == "stale-ref" || mu_kind == "persist-reject");
     auto* child = cs.evaluator().workspace_flat();
     expect_true("4425: child flat", child != nullptr);
     expect_true("4425: child cow advanced", child->workspace_cow_epoch() != 0);
-    auto child_node = cs.eval("(query :node lit4425)");
+    auto child_node = cs.eval("(query :node lit4425c)");
     expect_true("4425: child query:node is stale-ref",
                 is_stale_ref_pair(child_node, cs.evaluator()));
     expect_true("4425: child query:node is not literal 2",
@@ -4566,7 +4584,7 @@ void test_ac4425_captured_cow_zero_later_layer() {
     expect_true("4425: root flat again", back != nullptr);
     expect_eq_i64("4425: root cow still 0", 0,
                   static_cast<std::int64_t>(back->workspace_cow_epoch()));
-    auto again = cs.eval("(query :node lit4425)");
+    auto again = cs.eval("(query :node lit4425c)");
     expect_true("4425: root query:node still returns", again.has_value());
     expect_true("4425: root query:node still fresh", !is_stale_ref_pair(again, cs.evaluator()));
     const auto again_val = list_value(again, cs.evaluator());
@@ -4591,6 +4609,192 @@ void test_ac4425_captured_cow_zero_later_layer() {
                   }()));
     expect_true("4425 cite: no test_issue_4425.cpp",
                 !std::ifstream("tests/compiler/test_issue_4425.cpp").good());
+}
+
+// ── Issue #4654 ────────────────────────────────────────────────────────
+// Node id 0 is a REAL node. FlatAST::add_node returns tag_.size() when
+// the free list is empty, so the first node a program allocates is id 0
+// (parse_expr adds the literal before add_define). NULL_NODE is ~0u,
+// NOT 0.
+//
+// The schema-2 freshness face used to guard its occupancy block with
+// `m.node_id != 0`, so a match whose id was 0 skipped is_live_node /
+// leftover-unless-eager / node_gen_for / wrap entirely: after a later
+// generation change the same match still resolved Fresh and the write
+// path took it as the current occupant. The mutate wrapper used
+// `target_node != 0` as its "no concrete target" sentinel, so the same
+// match id 0 took the documented no-target 2-arg require_effect path
+// (no occupancy / isolation consult at all).
+//
+//   AC1 (unit): a schema-2 match whose id is 0 and whose captured
+//        generation is real is Fresh while that generation holds and
+//        StaleByEpoch once the generation moves — the same verdict a
+//        match on any other id gets.
+//   AC2 (runtime): the production query:* -> mutate:* -> query:* loop on
+//        a node-0 match goes stale — result-fresh? is #f, query:node and
+//        query:as-stable-ref are stale-ref, and a second mutate through
+//        the same hash is refused without a second write.
+//   AC3 (source-cite): both #4654 sites keep an explicit "no target"
+//        predicate — never the id-0 sentinel.
+
+void test_ac4654_1_node_zero_match_same_occupancy_checks() {
+    std::print("AC4654/AC1 -- node id 0 takes the same occupancy checks\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::core::QueryResultFreshness;
+    apply_dev_audit_defaults();
+    admit_clean_mutate_for_test();
+    CompilerService cs;
+    expect_true("4654 AC1: set-code", cs.eval("(set-code \"(define x4654 1)\")").has_value());
+    expect_true("4654 AC1: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    auto* flat = cs.evaluator().workspace_flat();
+    expect_true("4654 AC1: workspace", flat != nullptr);
+    if (!flat) {
+        apply_dev_audit_defaults();
+        return;
+    }
+    expect_true("4654 AC1: node 0 is live", flat->is_live_node(0));
+    const auto gen0 = flat->node_gen_for(0);
+    expect_true("4654 AC1: node 0 carries a real generation", gen0 != 0);
+    aura::core::QueryResult qr{};
+    expect_true("4654 AC1: push node-0 match",
+                qr.push_match_full(/*node_id=*/0, gen0, flat->wrap_epoch(),
+                                   flat->workspace_cow_epoch(), /*tenant_id=*/0,
+                                   /*fiber_id=*/0, /*mutation_id_at_capture=*/0,
+                                   /*boundary_pinned=*/0));
+    qr.matches[0].reserved = aura::core::kQueryResultMatchSchema2Prod;
+    auto fresh_of = [&] {
+        return aura::compiler::query_result_decode::query_result_is_fresh_with_refs(
+            qr, *flat, /*tenant=*/0, /*fiber=*/0);
+    };
+    expect_true("4654 AC1: node-0 match is Fresh at capture",
+                fresh_of() == QueryResultFreshness::Fresh);
+    // Move the live generation: slot 0 no longer carries the captured
+    // node_gen_ (the same shape a post-mutate restamp produces).
+    flat->bump_generation();
+    flat->restamp_all_node_generations();
+    if (flat->node_gen_for(0) == gen0) {
+        // Pathological alignment — move once more.
+        flat->bump_generation();
+        flat->restamp_all_node_generations();
+    }
+    expect_true("4654 AC1: slot 0 restamped to the new generation", flat->node_gen_for(0) != gen0);
+    expect_true("4654 AC1: node-0 match is StaleByEpoch after the advance",
+                fresh_of() == QueryResultFreshness::StaleByEpoch);
+    apply_dev_audit_defaults();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+}
+
+void test_ac4654_2_prod_node_zero_query_mutate_loop_goes_stale() {
+    std::print("AC4654/AC2 -- production node-0 query -> mutate -> query loop goes stale\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    admit_clean_mutate_for_test();
+    CompilerService cs;
+    expect_true("4654 AC2: set-code", cs.eval("(set-code \"(define x4654 1)\")").has_value());
+    expect_true("4654 AC2: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    // Production face: sandbox Restricted (default; Strict only when
+    // explicitly selected). Single tenant, so the kernel's own workspace
+    // mutate is admitted without a separate Mutate grant (#4322).
+    cs.evaluator().set_effect_sandbox_mode(1);
+    auto* flat = cs.evaluator().workspace_flat();
+    expect_true("4654 AC2: workspace", flat != nullptr);
+    if (!flat) {
+        apply_dev_audit_defaults();
+        return;
+    }
+    // The Define's value child is the literal allocated BEFORE add_define,
+    // so it is node id 0 — a real node, not "no node".
+    expect_true("4654 AC2: slot 0 is the literal",
+                flat->get(0).tag == aura::ast::NodeTag::LiteralInt);
+    expect_eq_i64("4654 AC2: slot 0 literal starts at 1", 1,
+                  static_cast<std::int64_t>(flat->get(0).int_value));
+    expect_true("4654 AC2: bind find",
+                cs.eval("(define qr4654 (query :find \"x4654\"))").has_value());
+    expect_true("4654 AC2: bind children",
+                cs.eval("(define lit4654 (query :children qr4654))").has_value());
+    auto kids = cs.eval("lit4654");
+    expect_true("4654 AC2: children is a schema-2 hash", kids && is_hash(*kids));
+    auto nkids = cs.eval("(length (hash-ref lit4654 \"matches\"))");
+    expect_true("4654 AC2: literal is one match", nkids && is_int(*nkids) && as_int(*nkids) == 1);
+    auto idv = cs.eval("(car (car (hash-ref lit4654 \"matches\")))");
+    expect_true("4654 AC2: the exported match id is node 0",
+                idv && is_int(*idv) && as_int(*idv) == 0);
+    auto is_stale_ref_pair = [](const auto& v, auto& ev) {
+        using aura::compiler::types::as_pair_idx;
+        using aura::compiler::types::as_string_idx;
+        using aura::compiler::types::is_pair;
+        using aura::compiler::types::is_string;
+        if (!v || !is_pair(*v))
+            return false;
+        const auto p = static_cast<std::size_t>(as_pair_idx(*v));
+        if (p >= ev.pairs().size() || !is_string(ev.pairs()[p].car))
+            return false;
+        const auto si = static_cast<std::size_t>(as_string_idx(ev.pairs()[p].car));
+        return si < ev.string_heap().size() && ev.string_heap()[si] == "stale-ref";
+    };
+    // The write through the node-0 hash is the FIRST mutate: the match is
+    // still fresh, so it lands.
+    const auto gen_before = flat->generation();
+    auto mut = cs.eval("(mutate:tweak-literal lit4654 1)");
+    expect_true("4654 AC2: first mutate returns", mut.has_value());
+    expect_true("4654 AC2: first mutate is not stale-ref", !is_stale_ref_pair(mut, cs.evaluator()));
+    expect_eq_i64("4654 AC2: first mutate wrote slot 0", 2,
+                  static_cast<std::int64_t>(flat->get(0).int_value));
+    // Move the workspace generation: (workspace :create) runs the #1405
+    // drift stamp (bump_generation + restamp_all_node_generations), so
+    // node_gen_ moves for EVERY id - the Define (id 1) included. Node 0
+    // must now be stale exactly like any other id.
+    expect_true("4654 AC2: create a child workspace layer",
+                cs.eval("(workspace :create \"c4654\")").has_value());
+    expect_true("4654 AC2: the workspace generation moved", flat->generation() != gen_before);
+    auto fresh = cs.eval("(query:result-fresh? lit4654)");
+    expect_true("4654 AC2: result-fresh? is #f after the drift",
+                fresh && is_bool(*fresh) && !as_bool(*fresh));
+    auto node = cs.eval("(query :node lit4654)");
+    expect_true("4654 AC2: query:node is stale-ref", is_stale_ref_pair(node, cs.evaluator()));
+    auto sref = cs.eval("(query:as-stable-ref lit4654)");
+    expect_true("4654 AC2: query:as-stable-ref is stale-ref",
+                is_stale_ref_pair(sref, cs.evaluator()));
+    // A second mutate through the same (now stale) hash must be refused
+    // and must not write again.
+    auto mut2 = cs.eval("(mutate:tweak-literal lit4654 1)");
+    expect_true("4654 AC2: second mutate is stale-ref", is_stale_ref_pair(mut2, cs.evaluator()));
+    expect_eq_i64("4654 AC2: refused second mutate did not write", 2,
+                  static_cast<std::int64_t>(flat->get(0).int_value));
+    apply_dev_audit_defaults();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+}
+
+void test_ac4654_3_source_cite() {
+    std::print("AC4654/AC3 -- source-cite: explicit no-target predicate, no id-0 sentinel\n");
+    std::ifstream f_dec("src/compiler/query_result_decode.hh");
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::string dec((std::istreambuf_iterator<char>(f_dec)), std::istreambuf_iterator<char>());
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    expect_true("4654 AC3: decode header readable", !dec.empty());
+    expect_true("4654 AC3: mutate TU readable", !mut.empty());
+    expect_true("4654 AC3: decode cites #4654", dec.find("Issue #4654") != std::string::npos);
+    expect_true("4654 AC3: mutate TU cites #4654", mut.find("Issue #4654") != std::string::npos);
+    // The occupancy block must be guarded by the no-node sentinel
+    // (NULL_NODE == ~0u), never by the id-0 sentinel.
+    expect_true("4654 AC3: occupancy block guarded by the no-node sentinel",
+                dec.find("m.node_id != static_cast<std::uint32_t>(aura::ast::NULL_NODE)") !=
+                    std::string::npos);
+    expect_true("4654 AC3: the id-0 occupancy guard is gone",
+                dec.find("if (m.node_id != 0)") == std::string::npos);
+    // The mutate wrapper must track "has a concrete target" explicitly.
+    expect_true("4654 AC3: mutate wrapper keeps an explicit has_target",
+                mut.find("has_target") != std::string::npos);
+    expect_true("4654 AC3: the id-0 target gate is gone",
+                mut.find("if (target_node != 0)") == std::string::npos);
+    expect_true("4654 AC3: no test_issue_4654.cpp",
+                !std::ifstream("tests/compiler/test_issue_4654.cpp").good());
+    expect_true("4654 AC3: no docs/design/4654-*",
+                !std::ifstream("docs/design/4654-node-zero-occupancy.md").good());
 }
 
 int main() {
@@ -4756,6 +4960,12 @@ int main() {
     test_ac4315_2_soft_rebirth_has_no_install_fence();
     test_ac4315_3_source_cite();
     test_ac4425_captured_cow_zero_later_layer();
+    // Issue #4654: node id 0 is a real node (NULL_NODE is ~0u, not 0).
+    // End-of-dispatch zone — fresh CompilerService per probe (same
+    // #4162 / #4164 isolation rationale).
+    test_ac4654_1_node_zero_match_same_occupancy_checks();
+    test_ac4654_2_prod_node_zero_query_mutate_loop_goes_stale();
+    test_ac4654_3_source_cite();
     std::print("All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 + #3424 + "
                "#3449 + #3660 + #3695 + #3696 + #3766 + #3767 + #3827 + #3895 + #3896 + "
                "#3990 + #3991 + #3993 + #4088 + #4112 + #4113 AC tests PASSED\n");
