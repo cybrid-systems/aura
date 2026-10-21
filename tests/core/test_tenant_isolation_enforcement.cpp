@@ -1469,6 +1469,242 @@ static void ac4414_module_reader_host_path() {
     reset_all();
 }
 
+// ── Issue #4643: the jailed exec child inherited the host stdio ──
+// Landlock does not revoke an fd the child already holds and
+// close_inherited_fds() (src/compiler/tenant_exec_fs_jail.hh) only closes
+// from fd 3 up, so the exec child of `shell` / `command-output` kept the
+// caller stdin/stdout/stderr. A scanner-clean `cat` read the HOST stdin
+// and `echo x >&2` wrote the HOST terminal — the shared host stdio of every
+// other tenant. The byte scanner never sees it: the command text is clean.
+// The child now points its stdio at /dev/null after the jail is installed
+// and before execl.
+
+// Issue #4643: what the host saw after one jailed exec child ran.
+struct Aura4643HostStdio {
+    std::string stdin_left;  // bytes still unread in the host stdin pipe
+    std::string stdout_seen; // bytes the child wrote to the host stdout
+    std::string stderr_seen; // bytes the child wrote to the host stderr
+    std::string capture;     // bytes the child wrote to the capture pipe
+    int exit_code = -1;
+    bool spawned = false;
+};
+
+// Issue #4643: run one jailed exec child with the host stdin/stdout/
+// stderr replaced by pipes and report what the host saw.
+//
+// `capture_on_stdout` mirrors the primitive wiring: command-output keeps its
+// capture pipe on stdout, shell leaves stdout on the host terminal.
+// `wire_null_stdio` is the #4643 fix under test: with it off the child
+// keeps the inherited host stdio (the pre-fix hole), with it on the child
+// points stdin (and stderr, and stdout for shell) at /dev/null.
+static Aura4643HostStdio run_4643_jailed_child(const std::string& root, const char* cmd,
+                                               bool capture_on_stdout, bool wire_null_stdio) {
+    Aura4643HostStdio out;
+    int in_pipe[2] = {-1, -1};
+    int out_pipe[2] = {-1, -1};
+    int err_pipe[2] = {-1, -1};
+    int cap_pipe[2] = {-1, -1};
+    int sv[2] = {-1, -1};
+    if (::pipe(in_pipe) != 0 || ::pipe(out_pipe) != 0 || ::pipe(err_pipe) != 0 ||
+        ::pipe(cap_pipe) != 0 || ::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv) != 0)
+        return out;
+    // The host stdin payload is written before the fork and the write end is
+    // closed, so a child that reads stdin sees the payload and then EOF. A
+    // child that does not read leaves the payload in the pipe for the host.
+    const char payload[] = "aura-4643-host-stdin\n";
+    if (::write(in_pipe[1], payload, sizeof payload - 1) !=
+        static_cast<ssize_t>(sizeof payload - 1))
+        return out;
+    ::close(in_pipe[1]);
+    const pid_t pid = ::fork();
+    if (pid < 0)
+        return out;
+    if (pid == 0) {
+        ::close(sv[0]);
+        ::close(out_pipe[0]);
+        ::close(err_pipe[0]);
+        ::close(cap_pipe[0]);
+        if (::dup2(in_pipe[0], STDIN_FILENO) < 0)
+            ::_exit(127);
+        if (::dup2(err_pipe[1], STDERR_FILENO) < 0)
+            ::_exit(127);
+        if (capture_on_stdout) {
+            if (::dup2(cap_pipe[1], STDOUT_FILENO) < 0)
+                ::_exit(127);
+        } else {
+            if (::dup2(out_pipe[1], STDOUT_FILENO) < 0)
+                ::_exit(127);
+        }
+        ::close(in_pipe[0]);
+        ::close(out_pipe[1]);
+        ::close(err_pipe[1]);
+        ::close(cap_pipe[1]);
+        if (::chdir(root.c_str()) != 0)
+            ::_exit(127);
+        if (!aura::compiler::security::apply_tenant_exec_fs_jail(root.c_str(), sv[1]))
+            ::_exit(127);
+        if (wire_null_stdio) {
+            const bool wired = capture_on_stdout
+                                   ? aura::compiler::security::null_child_stdio_keep_stdout()
+                                   : aura::compiler::security::null_child_stdio_all();
+            if (!wired)
+                ::_exit(127);
+        }
+        ::execl("/bin/sh", "sh", "-c", cmd, static_cast<char*>(nullptr));
+        ::_exit(127);
+    }
+    out.spawned = true;
+    // in_pipe[0] stays open in the parent: it is the host stdin read end,
+    // and whatever the child did NOT read is still in the pipe.
+    ::close(out_pipe[1]);
+    ::close(err_pipe[1]);
+    ::close(cap_pipe[1]);
+    ::close(sv[1]);
+    // The reap owns the stat-notifier fd and the capture read.
+    out.exit_code = aura::compiler::security::tenant_exec_jail_reap(
+        pid, sv[0], capture_on_stdout ? cap_pipe[0] : -1,
+        capture_on_stdout ? &out.capture : nullptr, root.c_str());
+    if (!capture_on_stdout)
+        ::close(cap_pipe[0]);
+    // What the host saw on its own stdout/stderr, and what is left of the
+    // host stdin.
+    char buf[4096];
+    for (ssize_t n; (n = ::read(out_pipe[0], buf, sizeof buf)) > 0;)
+        out.stdout_seen.append(buf, static_cast<std::size_t>(n));
+    ::close(out_pipe[0]);
+    for (ssize_t n; (n = ::read(err_pipe[0], buf, sizeof buf)) > 0;)
+        out.stderr_seen.append(buf, static_cast<std::size_t>(n));
+    ::close(err_pipe[0]);
+    for (ssize_t n; (n = ::read(in_pipe[0], buf, sizeof buf)) > 0;)
+        out.stdin_left.append(buf, static_cast<std::size_t>(n));
+    ::close(in_pipe[0]);
+    return out;
+}
+
+// Issue #4643 AC1: the jailed exec child must not reach the host stdio.
+static void ac4643_1_jailed_child_stdio_is_null() {
+    std::println(
+        "\n--- #4643: the jailed exec child reads no host stdin and writes no host terminal ---");
+    reset_all();
+    const bool jail_ok = aura::compiler::security::tenant_exec_fs_jail_available();
+    const std::string base = std::string("/tmp/aura-4643-") + std::to_string(::getpid());
+    ::mkdir(base.c_str(), 0700);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    ::setenv("AURA_MULTI_TENANT", "1", 1);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+    using aura::compiler::security::tenant_host_root_for;
+    const auto root = tenant_host_root_for(9);
+    ::mkdir(root.c_str(), 0700);
+
+    if (jail_ok) {
+        // Control — the jailed child WITHOUT the null-stdio wiring keeps the
+        // host stdio. This is the pre-fix hole: the host stdin is consumed
+        // and the host stdout/stderr are written by a scanner-clean command.
+        const auto ctrl_shell = run_4643_jailed_child(root, "cat; echo out; echo x >&2",
+                                                      /*capture_on_stdout=*/false,
+                                                      /*wire_null_stdio=*/false);
+        CHECK(ctrl_shell.spawned, "4643: control shell child spawned");
+        CHECK(ctrl_shell.stdin_left.empty(), "4643: control child consumed the host stdin");
+        CHECK(ctrl_shell.stdout_seen.find("out") != std::string::npos,
+              "4643: control child wrote the host stdout");
+        CHECK(ctrl_shell.stderr_seen.find("x") != std::string::npos,
+              "4643: control child wrote the host stderr");
+        const auto ctrl_co = run_4643_jailed_child(root, "cat",
+                                                   /*capture_on_stdout=*/true,
+                                                   /*wire_null_stdio=*/false);
+        CHECK(ctrl_co.spawned, "4643: control command-output child spawned");
+        CHECK(ctrl_co.capture.find("aura-4643-host-stdin") != std::string::npos,
+              "4643: control command-output captured the host stdin");
+
+        // shell shape — stdin, stdout and stderr all point at /dev/null.
+        const auto sh = run_4643_jailed_child(root, "cat; echo out; echo x >&2",
+                                              /*capture_on_stdout=*/false,
+                                              /*wire_null_stdio=*/true);
+        CHECK(sh.spawned, "4643: jailed shell child spawned");
+        CHECK(sh.stdin_left == "aura-4643-host-stdin\n",
+              "4643: jailed shell child did not consume the host stdin");
+        CHECK(sh.stdout_seen.empty(), "4643: jailed shell child wrote nothing to the host stdout");
+        CHECK(sh.stderr_seen.empty(), "4643: jailed shell child wrote nothing to the host stderr");
+
+        // command-output shape — the capture pipe stays on stdout, stdin and
+        // stderr go to /dev/null, so `cat` captures nothing.
+        const auto co = run_4643_jailed_child(root, "cat",
+                                              /*capture_on_stdout=*/true,
+                                              /*wire_null_stdio=*/true);
+        CHECK(co.spawned, "4643: jailed command-output child spawned");
+        CHECK(co.capture.empty(),
+              "4643: jailed command-output capture is empty (cat read /dev/null)");
+        CHECK(co.stdin_left == "aura-4643-host-stdin\n",
+              "4643: jailed command-output child did not consume the host stdin");
+        CHECK(co.stderr_seen.empty(),
+              "4643: jailed command-output child wrote nothing to the host stderr");
+    } else {
+        // No Landlock / stat notifier: the exec face denies before fork, so
+        // there is no jailed child to inspect here (#4413 fail-closed row).
+        CHECK(true, "4643: no exec fs jail on this kernel — runtime AC skipped");
+    }
+
+    ::unsetenv("AURA_TENANT_FS_ROOT");
+    ::unsetenv("AURA_MULTI_TENANT");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    ::unlink((root + "/wrote.txt").c_str());
+    ::rmdir(root.c_str());
+    ::rmdir(base.c_str());
+    reset_all();
+}
+
+// Issue #4643 AC2: the two primitives wire the null stdio after the jail
+// and before execl, and no second capability model / query key appears.
+static void ac4643_2_primitives_wire_the_null_stdio() {
+    std::println("\n--- #4643: shell and command-output wire the null stdio after the jail ---");
+    const auto filep = read_file("src/compiler/evaluator_primitives_file.cpp");
+    const auto jail = read_file("src/compiler/tenant_exec_fs_jail.hh");
+    const auto shell_at = filep.find("defer_std_host_prim(\"shell\"");
+    const auto co_at = filep.find("\"command-output\"");
+    CHECK(shell_at != std::string::npos && co_at != std::string::npos && shell_at < co_at,
+          "4643: shell and command-output bodies located");
+    if (shell_at != std::string::npos && co_at > shell_at) {
+        const auto shell = filep.substr(shell_at, co_at - shell_at);
+        const auto apply_at = shell.find("apply_tenant_exec_fs_jail");
+        const auto null_at = shell.find("null_child_stdio_all");
+        const auto exec_at = shell.find("::execl(");
+        CHECK(apply_at != std::string::npos && null_at != std::string::npos &&
+                  exec_at != std::string::npos && apply_at < null_at && null_at < exec_at,
+              "4643: shell nulls its stdio after the jail and before execl");
+        CHECK(shell.find("null_child_stdio_keep_stdout") == std::string::npos,
+              "4643: shell does not keep the host stdout");
+    }
+    const auto dl_at = filep.find("\"directory-list\"");
+    if (co_at != std::string::npos && dl_at != std::string::npos && dl_at > co_at) {
+        const auto body = filep.substr(co_at, dl_at - co_at);
+        const auto apply_at = body.find("apply_tenant_exec_fs_jail");
+        const auto null_at = body.find("null_child_stdio_keep_stdout");
+        const auto exec_at = body.find("::execl(");
+        CHECK(apply_at != std::string::npos && null_at != std::string::npos &&
+                  exec_at != std::string::npos && apply_at < null_at && null_at < exec_at,
+              "4643: command-output nulls stdin/stderr after the jail and before execl");
+        CHECK(body.find("null_child_stdio_all") == std::string::npos,
+              "4643: command-output keeps the capture pipe on stdout");
+    }
+    CHECK(jail.find("null_child_stdio") != std::string::npos,
+          "4643: the exec jail header owns the null-stdio helper");
+    CHECK(jail.find("\"/dev/null\"") != std::string::npos,
+          "4643: the null-stdio helper opens /dev/null");
+    CHECK(jail.find("SYS_close_range, 3u, ~0u, 0u") != std::string::npos,
+          "4643: close_inherited_fds still closes from fd 3 (0/1/2 survive)");
+    CHECK(jail.find("add_landlock_file(ruleset, \"/dev/null\", null_rw)") != std::string::npos,
+          "4643: /dev/null stays Landlock-allowed inside the jail");
+    CHECK(filep.find("query:4643") == std::string::npos &&
+              jail.find("query:4643") == std::string::npos,
+          "4643: no new query key");
+    CHECK(filep.find("kEffectExec") != std::string::npos,
+          "4643: the exec effect face is unchanged (no new effect bit)");
+    std::ifstream invent("tests/core/test_issue_4643.cpp");
+    if (!invent.good())
+        invent.open("../tests/core/test_issue_4643.cpp");
+    CHECK(!invent.good(), "4643: no tests/core/test_issue_4643.cpp");
+}
 int main() {
     reset_all();
 
@@ -8474,6 +8710,9 @@ int main() {
     ac4165_agent_fiber_isolation();
     ac4413_exec_fs_jail();
     ac4414_module_reader_host_path();
+    // ── Issue #4643: the jailed exec child inherited the host stdio ──
+    ac4643_1_jailed_child_stdio_is_null();
+    ac4643_2_primitives_wire_the_null_stdio();
 
     reset_all();
     std::println("\n=== test_tenant_isolation_enforcement: {} passed, {} failed ===", g_passed,
