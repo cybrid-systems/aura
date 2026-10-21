@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**467** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**475** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -11,7 +11,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 55 primitives (12%)
-- **core**: 377 primitives (81%)
+- **core**: 385 primitives (81%)
 - **internal-observable**: 34 primitives (7%)
 - **convenience**: 1 primitives (0%)
 
@@ -140,7 +140,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `c-struct-set!` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (273)
+## Core builtins (281)
 
 - `%base64-decode` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -260,6 +260,14 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `hash-set!` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash-values` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash?` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `ihash-count` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `ihash-has-key?` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `ihash-keys` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `ihash-ref` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `ihash-remove` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `ihash-set` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `immutable-hash` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `immutable-hash?` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `import` *[core]* — `src/compiler/evaluator_primitives_module.cpp`
 - `inexact` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `inexact->exact` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -673,7 +681,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (377)
+### Core builtins (must remain primitive) (385)
 
 - `%base64-decode` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` — `src/compiler/evaluator_primitives_char.cpp`
@@ -826,6 +834,14 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `hygiene:allow-macro-mutate?` — `src/compiler/evaluator_primitives_compile.cpp`
 - `hygiene:protected?` — `src/compiler/evaluator_primitives_compile.cpp`
 - `hygiene:set-allow-macro-mutate!` — `src/compiler/evaluator_primitives_compile.cpp`
+- `ihash-count` — `src/compiler/evaluator_primitives_vector.cpp`
+- `ihash-has-key?` — `src/compiler/evaluator_primitives_vector.cpp`
+- `ihash-keys` — `src/compiler/evaluator_primitives_vector.cpp`
+- `ihash-ref` — `src/compiler/evaluator_primitives_vector.cpp`
+- `ihash-remove` — `src/compiler/evaluator_primitives_vector.cpp`
+- `ihash-set` — `src/compiler/evaluator_primitives_vector.cpp`
+- `immutable-hash` — `src/compiler/evaluator_primitives_vector.cpp`
+- `immutable-hash?` — `src/compiler/evaluator_primitives_vector.cpp`
 - `import` — `src/compiler/evaluator_primitives_module.cpp`
 - `inexact` — `src/compiler/evaluator_primitives_math.cpp`
 - `inexact->exact` — `src/compiler/evaluator_primitives_math.cpp`

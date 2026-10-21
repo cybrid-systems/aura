@@ -238,6 +238,9 @@ inline constexpr RefType RefError = 8;
 inline constexpr RefType RefOpaque = 9;
 inline constexpr RefType RefLinear = 10;
 inline constexpr RefType RefKeyword = 11;
+// Issue #4638: native persistent map (HAMT) — a map index into the
+// immutable-hash arena. Appended, never reordered: ids 0..11 are ABI.
+inline constexpr RefType RefImmHash = 12;
 // Compile-time guard: the slot count is part of the ABI. If you add
 // a new RefType, the 4-bit allocation is already maxed out (16 entries);
 // switch to 8-bit type tag in both this header and lib/runtime.c.

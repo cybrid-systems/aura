@@ -30,6 +30,7 @@ using types::as_cell_id;
 using types::as_closure_id;
 using types::as_float;
 using types::as_hash_idx;
+using types::as_imm_hash_idx;
 using types::as_int;
 using types::as_pair_idx;
 using types::as_primitive_slot;
@@ -42,6 +43,7 @@ using types::is_closure;
 using types::is_error;
 using types::is_float;
 using types::is_hash;
+using types::is_imm_hash;
 using types::is_int;
 using types::is_pair;
 using types::is_primitive;
@@ -54,6 +56,7 @@ using types::make_closure;
 using types::make_error;
 using types::make_float;
 using types::make_hash;
+using types::make_imm_hash;
 using types::make_int;
 using types::make_pair;
 using types::make_primitive;
@@ -313,6 +316,270 @@ namespace {
                 return static_cast<std::size_t>(idx);
         }
         return kNoHashSlot;
+    }
+
+    // ── Issue #4638: native persistent map (32-way bitmap HAMT) ─────
+    // Nodes live in an append-only arena and are NEVER mutated: a write
+    // builds a new path and shares every untouched subtree, so a version
+    // is just a root index and forking a checkpoint is O(1).
+    struct ImmNode {
+        enum Kind : std::uint8_t { Leaf = 0, Branch = 1, Collision = 2 };
+        std::uint8_t kind = Leaf;
+        std::uint32_t bitmap = 0;
+        std::uint32_t count = 0;
+        std::uint64_t hash = 0;
+        EvalValue key{};
+        EvalValue value{};
+        std::vector<std::uint32_t> children;
+    };
+
+    struct ImmMapHead {
+        std::uint32_t root = 0;
+        std::uint32_t count = 0;
+        std::uint64_t stamp = 0;
+    };
+
+    struct ImmHashArena {
+        std::mutex mtx;
+        std::vector<ImmNode> nodes;
+        std::vector<ImmMapHead> maps;
+
+        ImmHashArena() {
+            nodes.push_back(ImmNode{}); // 0 = null
+            maps.push_back(ImmMapHead{});
+        }
+        [[nodiscard]] std::uint32_t new_map(std::uint64_t stamp) {
+            maps.push_back(ImmMapHead{0, 0, stamp});
+            return static_cast<std::uint32_t>(maps.size() - 1);
+        }
+        [[nodiscard]] std::uint32_t add_node(const ImmNode& n) {
+            nodes.push_back(n);
+            return static_cast<std::uint32_t>(nodes.size() - 1);
+        }
+        [[nodiscard]] std::uint32_t leaf(std::uint64_t h, const EvalValue& k, const EvalValue& v) {
+            ImmNode n;
+            n.kind = ImmNode::Leaf;
+            n.hash = h;
+            n.count = 1;
+            n.key = k;
+            n.value = v;
+            return add_node(n);
+        }
+        [[nodiscard]] std::uint32_t branch(std::uint32_t bitmap, std::vector<std::uint32_t> kids,
+                                           std::uint32_t count) {
+            ImmNode n;
+            n.kind = ImmNode::Branch;
+            n.bitmap = bitmap;
+            n.count = count;
+            n.children = std::move(kids);
+            return add_node(n);
+        }
+        [[nodiscard]] std::uint32_t collision(std::uint64_t h, std::vector<std::uint32_t> kids,
+                                              std::uint32_t count) {
+            ImmNode n;
+            n.kind = ImmNode::Collision;
+            n.hash = h;
+            n.count = count;
+            n.children = std::move(kids);
+            return add_node(n);
+        }
+    };
+
+    inline ImmHashArena& imm_arena() {
+        static ImmHashArena arena;
+        return arena;
+    }
+
+    [[nodiscard]] inline bool imm_key_eq(const EvalValue& a, const EvalValue& b,
+                                         const std::pmr::vector<std::string>& sh) {
+        if (a.val == b.val)
+            return true;
+        if (is_string(a) && is_string(b)) {
+            const auto ia = as_string_idx(a);
+            const auto ib = as_string_idx(b);
+            if (ia < sh.size() && ib < sh.size())
+                return sh[ia] == sh[ib];
+        }
+        return false;
+    }
+
+    constexpr int kImmBits = 5;
+    constexpr std::uint64_t kImmMask = 31;
+
+    [[nodiscard]] std::uint32_t imm_merge(ImmHashArena& ar, std::uint64_t ha, std::uint32_t a,
+                                          std::uint64_t hb, std::uint32_t b, int shift) {
+        const auto ia = static_cast<unsigned>((ha >> shift) & kImmMask);
+        const auto ib = static_cast<unsigned>((hb >> shift) & kImmMask);
+        if (ia == ib) {
+            if (shift + kImmBits >= 64)
+                return ar.collision(ha, {a, b}, 2);
+            const auto child = imm_merge(ar, ha, a, hb, b, shift + kImmBits);
+            return ar.branch(static_cast<std::uint32_t>(1u << ia), {child}, 2);
+        }
+        const auto bit = static_cast<std::uint32_t>((1u << ia) | (1u << ib));
+        std::vector<std::uint32_t> kids;
+        kids.reserve(2);
+        if (ia < ib) {
+            kids.push_back(a);
+            kids.push_back(b);
+        } else {
+            kids.push_back(b);
+            kids.push_back(a);
+        }
+        return ar.branch(bit, std::move(kids), 2);
+    }
+
+    [[nodiscard]] std::uint32_t imm_insert(ImmHashArena& ar, std::uint32_t node, std::uint64_t h,
+                                           int shift, const EvalValue& k, const EvalValue& v,
+                                           bool& added, const std::pmr::vector<std::string>& sh) {
+        if (node == 0) {
+            added = true;
+            return ar.leaf(h, k, v);
+        }
+        const ImmNode n = ar.nodes[node]; // by value: the arena may reallocate
+        if (n.kind == ImmNode::Leaf) {
+            if (n.hash == h && imm_key_eq(n.key, k, sh)) {
+                added = false;
+                return ar.leaf(h, k, v);
+            }
+            added = true;
+            const auto fresh = ar.leaf(h, k, v);
+            if (n.hash == h)
+                return ar.collision(h, {node, fresh}, 2);
+            return imm_merge(ar, n.hash, node, h, fresh, shift);
+        }
+        if (n.kind == ImmNode::Collision) {
+            std::vector<std::uint32_t> kids = n.children;
+            for (std::size_t i = 0; i < kids.size(); ++i) {
+                const ImmNode c = ar.nodes[kids[i]];
+                if (imm_key_eq(c.key, k, sh)) {
+                    added = false;
+                    kids[i] = ar.leaf(h, k, v);
+                    return ar.collision(h, std::move(kids), n.count);
+                }
+            }
+            added = true;
+            kids.push_back(ar.leaf(h, k, v));
+            return ar.collision(h, std::move(kids), n.count + 1);
+        }
+        const auto idx = static_cast<unsigned>((h >> shift) & kImmMask);
+        const auto bit = static_cast<std::uint32_t>(1u << idx);
+        const auto slot =
+            static_cast<std::size_t>(std::popcount(static_cast<unsigned>(n.bitmap & (bit - 1))));
+        std::vector<std::uint32_t> kids = n.children;
+        if ((n.bitmap & bit) == 0) {
+            kids.insert(kids.begin() + static_cast<std::ptrdiff_t>(slot), ar.leaf(h, k, v));
+            added = true;
+            return ar.branch(static_cast<std::uint32_t>(n.bitmap | bit), std::move(kids),
+                             n.count + 1);
+        }
+        bool sub_added = false;
+        kids[slot] = imm_insert(ar, kids[slot], h, shift + kImmBits, k, v, sub_added, sh);
+        added = sub_added;
+        return ar.branch(n.bitmap, std::move(kids), sub_added ? n.count + 1 : n.count);
+    }
+
+    [[nodiscard]] std::uint32_t imm_erase(ImmHashArena& ar, std::uint32_t node, std::uint64_t h,
+                                          int shift, const EvalValue& k, bool& removed,
+                                          const std::pmr::vector<std::string>& sh) {
+        if (node == 0)
+            return 0;
+        const ImmNode n = ar.nodes[node];
+        if (n.kind == ImmNode::Leaf) {
+            if (n.hash == h && imm_key_eq(n.key, k, sh)) {
+                removed = true;
+                return 0;
+            }
+            return node;
+        }
+        if (n.kind == ImmNode::Collision) {
+            std::vector<std::uint32_t> kids;
+            for (auto cid : n.children) {
+                const ImmNode c = ar.nodes[cid];
+                if (!removed && c.hash == h && imm_key_eq(c.key, k, sh)) {
+                    removed = true;
+                    continue;
+                }
+                kids.push_back(cid);
+            }
+            if (!removed)
+                return node;
+            if (kids.empty())
+                return 0;
+            if (kids.size() == 1)
+                return kids[0];
+            return ar.collision(h, std::move(kids), static_cast<std::uint32_t>(kids.size()));
+        }
+        const auto idx = static_cast<unsigned>((h >> shift) & kImmMask);
+        const auto bit = static_cast<std::uint32_t>(1u << idx);
+        if ((n.bitmap & bit) == 0)
+            return node;
+        const auto slot =
+            static_cast<std::size_t>(std::popcount(static_cast<unsigned>(n.bitmap & (bit - 1))));
+        std::vector<std::uint32_t> kids = n.children;
+        bool sub_removed = false;
+        const auto child = imm_erase(ar, kids[slot], h, shift + kImmBits, k, sub_removed, sh);
+        if (!sub_removed)
+            return node;
+        removed = true;
+        if (child == 0) {
+            kids.erase(kids.begin() + static_cast<std::ptrdiff_t>(slot));
+            if (kids.empty())
+                return 0;
+            if (kids.size() == 1)
+                return kids[0];
+            return ar.branch(static_cast<std::uint32_t>(n.bitmap & ~bit), std::move(kids),
+                             n.count - 1);
+        }
+        kids[slot] = child;
+        return ar.branch(n.bitmap, std::move(kids), n.count - 1);
+    }
+
+    [[nodiscard]] bool imm_lookup(ImmHashArena& ar, std::uint32_t node, std::uint64_t h,
+                                  const EvalValue& k, const std::pmr::vector<std::string>& sh,
+                                  EvalValue& out) {
+        int shift = 0;
+        while (node != 0) {
+            const ImmNode n = ar.nodes[node];
+            if (n.kind == ImmNode::Leaf) {
+                if (n.hash == h && imm_key_eq(n.key, k, sh)) {
+                    out = n.value;
+                    return true;
+                }
+                return false;
+            }
+            if (n.kind == ImmNode::Collision) {
+                for (auto cid : n.children) {
+                    const ImmNode c = ar.nodes[cid];
+                    if (c.hash == h && imm_key_eq(c.key, k, sh)) {
+                        out = c.value;
+                        return true;
+                    }
+                }
+                return false;
+            }
+            const auto idx = static_cast<unsigned>((h >> shift) & kImmMask);
+            const auto bit = static_cast<std::uint32_t>(1u << idx);
+            if ((n.bitmap & bit) == 0)
+                return false;
+            const auto slot = static_cast<std::size_t>(
+                std::popcount(static_cast<unsigned>(n.bitmap & (bit - 1))));
+            node = n.children[slot];
+            shift += kImmBits;
+        }
+        return false;
+    }
+
+    void imm_collect(ImmHashArena& ar, std::uint32_t node, std::vector<EvalValue>& out) {
+        if (node == 0)
+            return;
+        const ImmNode n = ar.nodes[node];
+        if (n.kind == ImmNode::Leaf) {
+            out.push_back(n.key);
+            return;
+        }
+        for (auto cid : n.children)
+            imm_collect(ar, cid, out);
     }
 
 } // namespace
@@ -1035,6 +1302,132 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             return make_bool(is_hash(a[0]));
         },
         pure_general(1, "(any) -> bool", "True if value is a hash."));
+
+    register_prim(
+        add, ev, "immutable-hash",
+        [](std::span<const EvalValue>) {
+            auto& ar = imm_arena();
+            std::lock_guard lk(ar.mtx);
+            return make_imm_hash(ar.new_map(0));
+        },
+        pure_general(0, "() -> immutable-hash", "Empty persistent map."));
+    register_prim(
+        add, ev, "immutable-hash?",
+        [](std::span<const EvalValue> a) { return make_bool(!a.empty() && is_imm_hash(a[0])); },
+        pure_general(1, "(any) -> bool", "True if the value is a persistent map."));
+    register_prim(
+        add, ev, "ihash-set",
+        [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
+            if (a.size() < 3 || !is_imm_hash(a[0]))
+                return make_primitive_error(string_heap, error_values,
+                                            "ihash-set: not an immutable hash",
+                                            primitive_error_counter);
+            auto& ar = imm_arena();
+            std::lock_guard lk(ar.mtx);
+            const auto mi = as_imm_hash_idx(a[0]);
+            if (mi == 0 || mi >= ar.maps.size())
+                return make_primitive_error(string_heap, error_values,
+                                            "ihash-set: stale map handle", primitive_error_counter);
+            const auto head = ar.maps[mi];
+            bool added = false;
+            const auto h = eval_hash_key_hash(a[1], string_heap);
+            const auto root = imm_insert(ar, head.root, h, 0, a[1], a[2], added, string_heap);
+            ar.maps.push_back(ImmMapHead{root, head.count + (added ? 1u : 0u), head.stamp});
+            return make_imm_hash(static_cast<std::uint64_t>(ar.maps.size() - 1));
+        },
+        pure_general(3, "(immutable-hash any any) -> immutable-hash",
+                     "Persistent insert: returns a new map, shares untouched nodes."));
+    register_prim(
+        add, ev, "ihash-remove",
+        [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
+            if (a.size() < 2 || !is_imm_hash(a[0]))
+                return make_primitive_error(string_heap, error_values,
+                                            "ihash-remove: not an immutable hash",
+                                            primitive_error_counter);
+            auto& ar = imm_arena();
+            std::lock_guard lk(ar.mtx);
+            const auto mi = as_imm_hash_idx(a[0]);
+            if (mi == 0 || mi >= ar.maps.size())
+                return make_primitive_error(string_heap, error_values,
+                                            "ihash-remove: stale map handle",
+                                            primitive_error_counter);
+            const auto head = ar.maps[mi];
+            bool removed = false;
+            const auto h = eval_hash_key_hash(a[1], string_heap);
+            const auto root = imm_erase(ar, head.root, h, 0, a[1], removed, string_heap);
+            ar.maps.push_back(ImmMapHead{
+                root, removed && head.count > 0 ? head.count - 1 : head.count, head.stamp});
+            return make_imm_hash(static_cast<std::uint64_t>(ar.maps.size() - 1));
+        },
+        pure_general(2, "(immutable-hash any) -> immutable-hash",
+                     "Persistent remove: returns a new map, shares untouched nodes."));
+    register_prim(
+        add, ev, "ihash-ref",
+        [&string_heap](std::span<const EvalValue> a) {
+            if (a.size() < 2 || !is_imm_hash(a[0]))
+                return a.size() >= 3 ? a[2] : make_void();
+            auto& ar = imm_arena();
+            std::lock_guard lk(ar.mtx);
+            const auto mi = as_imm_hash_idx(a[0]);
+            if (mi == 0 || mi >= ar.maps.size())
+                return a.size() >= 3 ? a[2] : make_void();
+            const auto head = ar.maps[mi];
+            EvalValue out{};
+            const auto h = eval_hash_key_hash(a[1], string_heap);
+            if (imm_lookup(ar, head.root, h, a[1], string_heap, out))
+                return out;
+            return a.size() >= 3 ? a[2] : make_void();
+        },
+        pure_general(2, "(immutable-hash any [any]) -> any", "Persistent lookup."));
+    register_prim(
+        add, ev, "ihash-has-key?",
+        [&string_heap](std::span<const EvalValue> a) {
+            if (a.size() < 2 || !is_imm_hash(a[0]))
+                return make_bool(false);
+            auto& ar = imm_arena();
+            std::lock_guard lk(ar.mtx);
+            const auto mi = as_imm_hash_idx(a[0]);
+            if (mi == 0 || mi >= ar.maps.size())
+                return make_bool(false);
+            EvalValue out{};
+            const auto h = eval_hash_key_hash(a[1], string_heap);
+            return make_bool(imm_lookup(ar, ar.maps[mi].root, h, a[1], string_heap, out));
+        },
+        pure_general(2, "(immutable-hash any) -> bool", "True if the key is present."));
+    register_prim(
+        add, ev, "ihash-count",
+        [](std::span<const EvalValue> a) {
+            if (a.empty() || !is_imm_hash(a[0]))
+                return make_int(0);
+            auto& ar = imm_arena();
+            std::lock_guard lk(ar.mtx);
+            const auto mi = as_imm_hash_idx(a[0]);
+            if (mi == 0 || mi >= ar.maps.size())
+                return make_int(0);
+            return make_int(static_cast<std::int64_t>(ar.maps[mi].count));
+        },
+        pure_general(1, "(immutable-hash) -> int", "Number of entries (O(1))."));
+    register_prim(
+        add, ev, "ihash-keys",
+        [&pairs](std::span<const EvalValue> a) {
+            if (a.empty() || !is_imm_hash(a[0]))
+                return make_void();
+            auto& ar = imm_arena();
+            std::lock_guard lk(ar.mtx);
+            const auto mi = as_imm_hash_idx(a[0]);
+            if (mi == 0 || mi >= ar.maps.size())
+                return make_void();
+            std::vector<EvalValue> keys;
+            imm_collect(ar, ar.maps[mi].root, keys);
+            EvalValue result = make_void();
+            for (auto it = keys.rbegin(); it != keys.rend(); ++it) {
+                auto pid = pairs.size();
+                pairs.push_back({*it, result});
+                result = make_pair(pid);
+            }
+            return result;
+        },
+        pure_general(1, "(immutable-hash) -> list", "Keys of a persistent map."));
 
     // Issue #278 follow-up #3: (hash->alist hash) — return the
     // hash as a list of (key . value) pairs in arbitrary order.
