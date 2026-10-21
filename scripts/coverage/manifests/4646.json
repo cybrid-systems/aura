@@ -1,0 +1,59 @@
+{
+  "issue": 4646,
+  "title": "Issue #4646: an enabled security-event WAL append miss denies the mutate (fail-closed) and the SLO streak survives the paired mutation success",
+  "ok": "OK #4646: the enabled security-event WAL append miss denies the mutate with the security_event_wal_append_miss reason and the #3211 streak survives the paired mutation success",
+  "checks": [
+    {
+      "ac": "AC1-se-wal-miss-detect",
+      "path": "src/core/security_event_wal.hh",
+      "contains": [
+        "Issue#4646",
+        "se_wal_append_miss_counter",
+        "note_se_wal_append_miss",
+        "se_wal_append_miss_count"
+      ]
+    },
+    {
+      "ac": "AC2-slo-streak-hold",
+      "path": "src/core/wal_append_fail_slo.h",
+      "contains": [
+        "Issue#4646",
+        "hold_wal_append_fail_streak",
+        "release_wal_append_fail_streak",
+        "wal_append_fail_streak_held"
+      ]
+    },
+    {
+      "ac": "AC3-evaluator-deny",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "Issue#4646",
+        "security_event_wal_append_miss",
+        "se_wal_append_miss_count",
+        "hold_wal_append_fail_streak",
+        "release_wal_append_fail_streak"
+      ]
+    },
+    {
+      "ac": "AC4-tests",
+      "path": "tests/compiler/test_mutation_audit_wal.cpp",
+      "contains": [
+        "ac4646_se_wal_append_miss_denies_mutate",
+        "4646AC1:thesecurity-eventWALmissdeniesthemutate",
+        "4646AC1:compensatingEffectDeny",
+        "4646AC1:thecapabilitycheckALLOWED",
+        "4646AC2:themutation-WALreason",
+        "4646AC3:theSLOstreak",
+        "4646AC4:FAIL_OPEN",
+        "4646AC5:nonewquerykey"
+      ]
+    },
+    {
+      "ac": "AC5-no-new-surface",
+      "forbid": [
+        "tests/compiler/test_issue_4646.cpp",
+        "docs/design/4646-se-wal-append-miss.md"
+      ]
+    }
+  ]
+}

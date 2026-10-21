@@ -885,6 +885,27 @@ inline bool persist_security_event(SecurityEventKind kind, std::uint64_t tenant_
     return g_security_event_wal().append(rec);
 }
 
+// Issue #4646: per-thread count of ENABLED security-event WAL append
+// misses. The capability dual-write (record_audit) persists the security
+// event FIRST; when that append misses, the durable trail no longer
+// matches the in-memory ring (the ring keeps the row, the segment does
+// not). The evaluator snapshots the counter around the capability check so
+// a miss inside it is attributable to THAT call and not to an earlier one.
+// WAL-off never counts: persist_security_event short-circuits before the
+// append, so the #3056 fail-open silence is unchanged.
+inline std::uint64_t& se_wal_append_miss_counter() noexcept {
+    static thread_local std::uint64_t n = 0;
+    return n;
+}
+
+inline void note_se_wal_append_miss() noexcept {
+    ++se_wal_append_miss_counter();
+}
+
+[[nodiscard]] inline std::uint64_t se_wal_append_miss_count() noexcept {
+    return se_wal_append_miss_counter();
+}
+
 // Issue #2388: single dual-write entry for private capability / isolation
 // audit rings → SecurityEvent ring + optional WAL. Prefer this over
 // separate append + persist at each call site so Agents get one durable
@@ -920,6 +941,16 @@ inline void emit_security_event_durable(SecurityEventKind kind, std::uint64_t te
     const bool persisted =
         persist_security_event(kind, tenant_id, mutation_id, epoch, effect_bits, op, use_reason,
                                denied, fiber_id, security_event_wal_now_ms(), ring_seq);
+    // Issue #4646: an ENABLED security-event WAL append miss lost the
+    // durable audit row for this event (the in-memory ring still has it).
+    // Record the miss so the evaluator can treat it like a mutation-WAL
+    // miss for the same mutate (fail-closed deny with a compensating
+    // EffectDeny) and can keep the #3211 SLO streak alive across the
+    // paired mutation-WAL success. WAL-off stays #3056 fail-open:
+    // persist_security_event short-circuits before the append, so
+    // nothing is recorded and the mutate is not denied.
+    if (!persisted && g_security_event_wal().is_enabled())
+        note_se_wal_append_miss();
     // Issue #3965: production force_wal + SE sidecar off (enable-fail)
     // still fail-closes IsolationDeny/EffectDeny onto the overflow ring
     // so wrap of the 1024 SE ring is not the only trail. fwrite-miss

@@ -7,9 +7,13 @@
 
 #include "compiler/security_capabilities.h"
 #include "compiler/typed_mutation_audit.h"
+#include "core/capability_model.hh"
 #include "core/mutation_audit_wal.hh"
+#include "core/sandbox.hh"
 #include "core/security_event.hh"
 #include "core/security_event_wal.hh"
+#include "core/wal_append_fail_slo.h"
+#include "core/workspace_epoch.hh"
 
 #include <chrono>
 #include <cstdint>
@@ -526,6 +530,342 @@ void ac4641_audit_persist_dir_production_gate() {
 
 } // namespace
 
+// Issue #4646: an ENABLED SecurityEventWal append miss must deny the
+// mutate (fail-closed) with a compensating EffectDeny whose reason is
+// the security-event-WAL-append-miss reason — and the #3211 SLO streak
+// must survive the paired mutation-WAL success in the same call.
+//
+// Precondition (per the issue): production_defaults_active +
+// wal_append_fail_closed_active (NOT AURA_WAL_APPEND_FAIL_OPEN) with the
+// SecurityEventWal already enabled on a live segment. The capability
+// dual-write persists the security event FIRST, so a single injected
+// miss lands on the security-event append while the paired mutation
+// append succeeds — the exact shape that used to return the capability
+// allow (the mutate body committed) and zero the SLO streak.
+//
+// The ACs assert the EXACT deny reason and the compensating row so a
+// vacuous deny through another capability path (via-wildcard-denied)
+// cannot pass, and they read the mutation-audit ring slot to show the
+// mutate did not commit.
+void ac4646_se_wal_append_miss_denies_mutate() {
+    using aura::core::capability::Effect;
+    using aura::core::capability::g_capability_registry;
+    using aura::core::capability::make_grant_provenance;
+    using aura::core::capability::reset_capability_effects_for_test;
+    using aura::core::security_event::forensic_effect_verdict_for_mid;
+    using aura::core::security_event::ForensicEffectVerdict;
+    using aura::core::security_event::SecurityEventKind;
+    using aura::core::security_event_wal::g_security_event_wal;
+    using aura::core::security_event_wal::wal_overflow_ring_clear_for_test;
+    using aura::core::security_event_wal::wal_overflow_ring_depth;
+    namespace slo = aura::core::wal_slo;
+
+    struct RowCounts {
+        int allow = 0;
+        int deny = 0;
+    };
+    // Count the security-event rows of one op (optionally one reason)
+    // emitted after from_seq.
+    const auto count_rows = [&](std::string_view op, std::string_view reason,
+                                std::uint64_t from_seq) {
+        RowCounts c;
+        const auto& ring = g_security_event_ring();
+        const auto seq_end = ring.seq.load(std::memory_order_acquire);
+        for (std::uint64_t s = from_seq; s < seq_end && s < from_seq + 4096; ++s) {
+            const auto& e = ring.ring[s % kSecurityEventRingSize];
+            if (e.seq != s)
+                continue;
+            if (std::string_view(e.op) != op)
+                continue;
+            if (!reason.empty() && std::string_view(e.reason) != reason)
+                continue;
+            if (e.kind == SecurityEventKind::EffectAllow)
+                ++c.allow;
+            else if (e.kind == SecurityEventKind::EffectDeny)
+                ++c.deny;
+        }
+        return c;
+    };
+
+    std::println("\n--- #4646: an enabled security-event WAL append miss denies the mutate ---");
+
+    const auto dir = fs::temp_directory_path() / "aura-audit-wal-4646";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+
+    // The composite join pin is a process TLS: a stale pin from an
+    // earlier member would hijack the mid this AC resolves (the #3856
+    // member pins 0x3856). Clear it so the Mutation epoch is the join key.
+    aura::compiler::typed_audit::g_tls_composite_batch_join_mid = 0;
+
+    const auto prev_mode =
+        aura::core::sandbox::g_sandbox_mode_atomic().load(std::memory_order_acquire);
+    const auto restore_mode = [&]() noexcept {
+        aura::core::sandbox::set_mode(static_cast<aura::core::sandbox::SandboxMode>(prev_mode));
+    };
+
+    // ── AC1: fail-closed + enabled SE WAL + SE append miss → deny ──────
+    {
+        std::println("--- #4646 AC1: an enabled security-event WAL miss denies the mutate ---");
+        reset_all();
+        slo::reset_wal_append_fail_slo_for_test();
+        reset_capability_effects_for_test();
+        wal_overflow_ring_clear_for_test();
+        // Arm the production face deterministically: Off first (so the
+        // force_wal step does not enable a default WAL dir), then the
+        // production audit defaults + the explicit fail-closed arm.
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        apply_production_audit_defaults();
+        slo::set_wal_fail_closed_defaulted_by_force_wal(true);
+        CHECK(slo::wal_append_fail_closed_active(), "4646 AC1: fail-closed armed");
+
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1); // Restricted
+        ev.set_capability_tenant_id(7);
+
+        // Deterministic mid: the Mutation epoch is the join key, so reset
+        // it and bump a known value (the grant binds to it).
+        aura::core::reset_mutation_epoch_for_test();
+        aura::core::bump_mutation_epoch(0x4646);
+        const auto mid = aura::core::current_mutation_epoch();
+        CHECK(mid == 0x4646, "4646 AC1: deterministic mutation epoch");
+
+        // Grant while the face is Off (production fences Mutate grants
+        // behind TenantAdmin), then arm Restricted.
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        const auto gprov = make_grant_provenance(mid, /*force_mutation_bind=*/true, 0, 0);
+        CHECK(g_capability_registry().grant(7, "mut-4646", Effect::Mutate, gprov),
+              "4646 AC1: Mutate grant (tenant 7)");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+
+        // Both WALs live with a real segment (force_wal pairs them).
+        CHECK(ev.enable_mutation_audit_wal(dir.string()), "4646 AC1: WAL pair enabled");
+        CHECK(ev.security_event_wal_enabled() && ev.mutation_audit_wal_enabled(),
+              "4646 AC1: both WALs live");
+        CHECK(g_security_event_wal().is_enabled(), "4646 AC1: the security-event WAL is enabled");
+
+        // The security-event row is the FIRST durable write of the call,
+        // so the single injected miss lands there; the paired mutation
+        // append succeeds (the streak-clearing shape of the hole).
+        slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(1,
+                                                                        std::memory_order_relaxed);
+        // The boundary / composite join TLS is per-TU under module linkage
+        // (#3640): a stale note from an earlier member would hijack the mid
+        // this call resolves, and the capability check would then deny
+        // through the wildcard path (a vacuous deny). Clear it LIBRARY-side
+        // (#3646 shim) so the Mutation epoch is the join key again.
+        ev.clear_boundary_audit_mid_for_test();
+        const auto seq0 = g_security_event_ring().seq.load(std::memory_order_acquire);
+        const auto audit_seq = ev.mutation_audit_seq();
+        const auto allowed = ev.require_effect(kEffectMutate, "test:4646-ac1", 0);
+        CHECK(!allowed, "4646 AC1: the security-event WAL miss denies the mutate");
+        CHECK(slo::g_wal_append_fail_slo_counters.inject_fail_remaining.load(
+                  std::memory_order_relaxed) == 0,
+              "4646 AC1: the inject was consumed by the security-event append");
+
+        const auto se_rows = count_rows("test:4646-ac1", "security_event_wal_append_miss", seq0);
+        CHECK(se_rows.deny >= 1,
+              "4646 AC1: compensating EffectDeny (security-event-WAL-append-miss reason)");
+        CHECK(se_rows.allow == 0, "4646 AC1: the compensator is not misfiled as an Allow");
+        const auto op_rows = count_rows("test:4646-ac1", "", seq0);
+        CHECK(op_rows.allow >= 1, "4646 AC1: the capability check ALLOWED (not a wildcard deny)");
+        CHECK(op_rows.deny == 1, "4646 AC1: exactly one deny row — the compensator");
+        const auto wildcard_rows = count_rows("test:4646-ac1", "via-wildcard-denied", seq0);
+        CHECK(wildcard_rows.deny == 0, "4646 AC1: the deny is not a via-wildcard capability deny");
+        const auto mut_rows = count_rows("test:4646-ac1", "mutation_wal_append_miss", seq0);
+        CHECK(mut_rows.deny == 0, "4646 AC2: the deny reason is not the mutation-WAL reason");
+
+        // The verdict that gates the body is Deny (last-SE-wins).
+        CHECK(forensic_effect_verdict_for_mid(mid) == ForensicEffectVerdict::Deny,
+              "4646 AC1: the forensic verdict for the mid is Deny");
+
+        // The mutate did not commit: the audit row for this call is
+        // rewritten to denied by the compensation.
+        const auto& entry = ev.mutation_audit_entry_at(audit_seq);
+        CHECK(entry.effect_denied, "4646 AC1: the mutation-audit row is denied");
+        CHECK(std::string_view(entry.op) == "test:4646-ac1",
+              "4646 AC1: the mutation-audit row is this mutate");
+
+        // The #3211 streak survives the paired mutation-WAL success.
+        const auto consecutive =
+            slo::g_wal_append_fail_slo_counters.consecutive.load(std::memory_order_relaxed);
+        CHECK(consecutive >= 1, "4646 AC3: the SLO streak survives the paired mutation success");
+        CHECK(!slo::wal_append_fail_streak_held(),
+              "4646 AC3: the streak hold is released after the decision");
+        CHECK(wal_overflow_ring_depth() >= 1,
+              "4646 AC1: the lost security-event row is on the overflow ring");
+    }
+
+    // ── AC2: both WALs miss → the mutation-WAL reason still wins ───────
+    {
+        std::println("--- #4646 AC2: a mutation-WAL miss keeps its own reason ---");
+        reset_all();
+        slo::reset_wal_append_fail_slo_for_test();
+        reset_capability_effects_for_test();
+        wal_overflow_ring_clear_for_test();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        apply_production_audit_defaults();
+        slo::set_wal_fail_closed_defaulted_by_force_wal(true);
+
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        aura::core::reset_mutation_epoch_for_test();
+        aura::core::bump_mutation_epoch(0x4647);
+        const auto mid = aura::core::current_mutation_epoch();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        const auto gprov = make_grant_provenance(mid, /*force_mutation_bind=*/true, 0, 0);
+        CHECK(g_capability_registry().grant(7, "mut-4647", Effect::Mutate, gprov),
+              "4646 AC2: Mutate grant (tenant 7)");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        CHECK(ev.enable_mutation_audit_wal(dir.string()), "4646 AC2: WAL pair enabled");
+
+        // Two misses: the security-event append takes the first, the
+        // mutation append the second. The #3639 branch reports the
+        // mutation-WAL reason (unchanged) — the SE reason stays reserved
+        // for a security-event-only miss.
+        slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(2,
+                                                                        std::memory_order_relaxed);
+        // Clear the per-TU boundary / composite join TLS library-side (#3646).
+        ev.clear_boundary_audit_mid_for_test();
+        const auto seq0 = g_security_event_ring().seq.load(std::memory_order_acquire);
+        const auto allowed = ev.require_effect(kEffectMutate, "test:4646-ac2", 0);
+        CHECK(!allowed, "4646 AC2: the mutate is denied");
+        const auto mut_rows = count_rows("test:4646-ac2", "mutation_wal_append_miss", seq0);
+        CHECK(mut_rows.deny >= 1, "4646 AC2: the mutation-WAL reason is reported");
+        const auto se_rows = count_rows("test:4646-ac2", "security_event_wal_append_miss", seq0);
+        CHECK(se_rows.deny == 0, "4646 AC2: no second (security-event) deny row");
+    }
+
+    // ── AC3: WAL-off keeps the #3056 fail-open silence ──────────────────
+    {
+        std::println("--- #4646 AC3: WAL-off stays fail-open ---");
+        reset_all();
+        slo::reset_wal_append_fail_slo_for_test();
+        reset_capability_effects_for_test();
+        wal_overflow_ring_clear_for_test();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        apply_production_audit_defaults();
+        slo::set_wal_fail_closed_defaulted_by_force_wal(true);
+
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        aura::core::reset_mutation_epoch_for_test();
+        aura::core::bump_mutation_epoch(0x4648);
+        const auto mid = aura::core::current_mutation_epoch();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        const auto gprov = make_grant_provenance(mid, /*force_mutation_bind=*/true, 0, 0);
+        CHECK(g_capability_registry().grant(7, "mut-4648", Effect::Mutate, gprov),
+              "4646 AC3: Mutate grant (tenant 7)");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        // WAL-off: no security-event row is persisted, so there is no
+        // security-event append miss to act on (#3056 fail-open).
+        ev.disable_mutation_audit_wal();
+        CHECK(!ev.mutation_audit_wal_enabled(), "4646 AC3: the mutation WAL is off");
+        CHECK(!ev.security_event_wal_enabled(), "4646 AC3: the security-event WAL is off");
+
+        slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(1,
+                                                                        std::memory_order_relaxed);
+        // Clear the per-TU boundary / composite join TLS library-side (#3646).
+        ev.clear_boundary_audit_mid_for_test();
+        const auto seq0 = g_security_event_ring().seq.load(std::memory_order_acquire);
+        const auto allowed = ev.require_effect(kEffectMutate, "test:4646-ac3", 0);
+        CHECK(allowed, "4646 AC3: WAL-off stays fail-open (the mutate is allowed)");
+        const auto se_rows = count_rows("test:4646-ac3", "security_event_wal_append_miss", seq0);
+        CHECK(se_rows.deny == 0, "4646 AC3: no security-event-WAL deny row when the WAL is off");
+        CHECK(wal_overflow_ring_depth() == 0, "4646 AC3: WAL-off pushes no overflow row");
+    }
+
+    // ── AC4: AURA_WAL_APPEND_FAIL_OPEN keeps the fail-open behaviour ────
+    {
+        std::println("--- #4646 AC4: AURA_WAL_APPEND_FAIL_OPEN stays fail-open ---");
+        reset_all();
+        slo::reset_wal_append_fail_slo_for_test();
+        reset_capability_effects_for_test();
+        wal_overflow_ring_clear_for_test();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        apply_production_audit_defaults();
+        slo::set_wal_fail_closed_defaulted_by_force_wal(true);
+        ::setenv("AURA_WAL_APPEND_FAIL_OPEN", "1", 1);
+        CHECK(!slo::wal_append_fail_closed_active(), "4646 AC4: FAIL_OPEN opts out");
+
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        aura::core::reset_mutation_epoch_for_test();
+        aura::core::bump_mutation_epoch(0x4649);
+        const auto mid = aura::core::current_mutation_epoch();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        const auto gprov = make_grant_provenance(mid, /*force_mutation_bind=*/true, 0, 0);
+        CHECK(g_capability_registry().grant(7, "mut-4649", Effect::Mutate, gprov),
+              "4646 AC4: Mutate grant (tenant 7)");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        CHECK(ev.enable_mutation_audit_wal(dir.string()), "4646 AC4: WAL pair enabled");
+
+        slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(1,
+                                                                        std::memory_order_relaxed);
+        // Clear the per-TU boundary / composite join TLS library-side (#3646).
+        ev.clear_boundary_audit_mid_for_test();
+        const auto seq0 = g_security_event_ring().seq.load(std::memory_order_acquire);
+        const auto allowed = ev.require_effect(kEffectMutate, "test:4646-ac4", 0);
+        CHECK(allowed, "4646 AC4: FAIL_OPEN keeps the mutate allowed");
+        const auto se_rows = count_rows("test:4646-ac4", "security_event_wal_append_miss", seq0);
+        CHECK(se_rows.deny == 0, "4646 AC4: no security-event-WAL deny row under FAIL_OPEN");
+        const auto consecutive =
+            slo::g_wal_append_fail_slo_counters.consecutive.load(std::memory_order_relaxed);
+        CHECK(consecutive == 0, "4646 AC4: FAIL_OPEN keeps the old streak behaviour");
+        ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+    }
+
+    // ── AC5: source cites + no new query key ───────────────────────────
+    {
+        std::println("--- #4646 AC5: source cites ---");
+        const auto se_src = read_repo_file("src/core/security_event_wal.hh");
+        const auto slo_src = read_repo_file("src/core/wal_append_fail_slo.h");
+        const auto ev_src = read_repo_file("src/compiler/evaluator_security.cpp");
+        CHECK(se_src.find("Issue #4646") != std::string::npos, "4646 AC5: SE WAL cites #4646");
+        CHECK(se_src.find("se_wal_append_miss_count") != std::string::npos,
+              "4646 AC5: the SE WAL miss counter is present");
+        CHECK(se_src.find("note_se_wal_append_miss") != std::string::npos,
+              "4646 AC5: the SE WAL miss note is present");
+        CHECK(slo_src.find("Issue #4646") != std::string::npos, "4646 AC5: the SLO cites #4646");
+        CHECK(slo_src.find("hold_wal_append_fail_streak") != std::string::npos,
+              "4646 AC5: the streak hold is present");
+        CHECK(slo_src.find("wal_append_fail_streak_held") != std::string::npos,
+              "4646 AC5: the streak hold is honoured by note_wal_append_ok");
+        CHECK(ev_src.find("security_event_wal_append_miss") != std::string::npos,
+              "4646 AC5: the deny reason is stable");
+        CHECK(ev_src.find("se_wal_append_miss_count") != std::string::npos,
+              "4646 AC5: the evaluator reads the SE miss counter");
+        CHECK(ev_src.find("query:4646") == std::string::npos, "4646 AC5: no new query key");
+        CHECK(se_src.find("query:4646") == std::string::npos,
+              "4646 AC5: no new query key (SE WAL)");
+        CHECK(read_repo_file("tests/compiler/test_issue_4646.cpp").empty(),
+              "4646 AC5: no test_issue file");
+        CHECK(read_repo_file("docs/design/4646-se-wal-append-miss.md").empty(),
+              "4646 AC5: no design doc");
+    }
+
+    // Cleanup: restore the faces the other members of this binary share.
+    ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+    restore_mode();
+    aura::core::reset_mutation_epoch_for_test();
+    apply_dev_audit_defaults();
+    slo::set_wal_fail_closed_defaulted_by_force_wal(false);
+    reset_capability_effects_for_test();
+    slo::reset_wal_append_fail_slo_for_test();
+    wal_overflow_ring_clear_for_test();
+    reset_all();
+    std::error_code cec;
+    fs::remove_all(dir, cec);
+}
+
 int main() {
     reset_all();
     const auto dir = make_tmpdir();
@@ -942,6 +1282,8 @@ int main() {
 
     ac4641_audit_persist_dir_production_gate();
 
+    ac4646_se_wal_append_miss_denies_mutate();
+
     // Cleanup temp
     std::error_code ec;
     fs::remove_all(dir, ec);
@@ -952,5 +1294,6 @@ int main() {
     reset_all();
 
     std::println("\n=== test_mutation_audit_wal: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
