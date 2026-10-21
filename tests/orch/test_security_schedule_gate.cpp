@@ -1419,6 +1419,16 @@ int run_test_security_schedule_gate() {
         // decides on the mailbox-hold-slo face - the face this member
         // pins.
         clear_commit_readiness_faces();
+        // Issue #4639: the parallel-intend eval runs BEFORE the
+        // try_acquire probes. An open mutation boundary turns the
+        // commit-readiness consult into a live-TC read (another face),
+        // so the admit would be decided there instead of on the scope
+        // this member pins.
+        auto intend = cs.eval(R"((parallel-intend (vector)))");
+        // Issue #4639: a real value, not an error value - a schedule-gate
+        // denial must not pass as "evaluated".
+        CHECK(intend.has_value() && !aura::compiler::types::is_error(*intend),
+              "3938: B parallel-intend evaluated");
         bool guard_ok = true;
         auto gr = Ev::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &guard_ok);
         if (!gr.has_value()) {
@@ -1440,11 +1450,6 @@ int run_test_security_schedule_gate() {
         const auto rej_b = aura::orch::admit_security_schedule(in_b);
         CHECK(!rej_b.has_value() || rej_b->find("mailbox-hold-slo") == std::string::npos,
               "3938: B live schedule-gate is not mailbox-hold-slo");
-        auto intend = cs.eval(R"((parallel-intend (vector)))");
-        // Issue #4639: a real value, not an error value - a schedule-gate
-        // denial must not pass as "evaluated".
-        CHECK(intend.has_value() && !aura::compiler::types::is_error(*intend),
-              "3938: B parallel-intend evaluated");
         g_current_fiber = prev_fiber;
         if (h.ok)
             (void)join_agent(h, JoinPolicy{.primary_ms = 500, .drain_ms = 100});
