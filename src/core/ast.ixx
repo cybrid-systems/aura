@@ -142,6 +142,11 @@ export enum class SyntaxMarker : std::uint8_t {
     User = 0,
     MacroIntroduced = 1,
     BoolLiteral = 2, // #t / #f
+    // Issue #4635 follow-up: a bare `()` in expression position. The
+    // parser stores it as LiteralInt 0 (the nil sentinel); without this
+    // marker the evaluator/lowering cannot tell the empty list from the
+    // number zero and compiled code returned fixnum 0 for `()`.
+    EmptyList = 3, // () — the empty-list literal
 };
 
 

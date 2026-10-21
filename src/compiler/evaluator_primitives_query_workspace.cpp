@@ -2303,6 +2303,9 @@ void register_workspace_query_primitives(
                                 case aura::ast::SyntaxMarker::BoolLiteral:
                                     mname = "BoolLiteral";
                                     break;
+                                case aura::ast::SyntaxMarker::EmptyList:
+                                    mname = "EmptyList";
+                                    break;
                             }
                             if (!mname || p.value != mname) {
                                 match = false;
@@ -2438,6 +2441,9 @@ void register_workspace_query_primitives(
             case aura::ast::SyntaxMarker::BoolLiteral:
                 name = "BoolLiteral";
                 break;
+            case aura::ast::SyntaxMarker::EmptyList:
+                name = "EmptyList";
+                break;
         }
         auto idx = ws.string_heap.mint(name);
         return make_string(idx);
@@ -2477,6 +2483,9 @@ void register_workspace_query_primitives(
                     break;
                 case aura::ast::SyntaxMarker::BoolLiteral:
                     marker_name = "BoolLiteral";
+                    break;
+                case aura::ast::SyntaxMarker::EmptyList:
+                    marker_name = "EmptyList";
                     break;
             }
 

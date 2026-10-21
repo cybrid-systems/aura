@@ -1925,6 +1925,9 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             // marker; quoted data must keep them booleans.
             if (v.marker == ast::SyntaxMarker::BoolLiteral)
                 return types::make_bool(v.int_value != 0);
+            // Issue #4635 follow-up: `()` is the empty list, not fixnum 0.
+            if (v.marker == ast::SyntaxMarker::EmptyList)
+                return make_void();
             return make_int_or_promote(v.int_value);
         case ast::NodeTag::LiteralFloat:
             return make_float(v.float_value);
@@ -2177,7 +2180,11 @@ ast::NodeId Evaluator::data_to_flat(const types::EvalValue& data, aura::ast::Fla
         return id;
     }
     if (is_void(data)) {
-        return flat.add_literal(0); // () sentinel
+        // Issue #4635 follow-up: keep the empty-list marker so a re-parse /
+        // unparse round trip still yields void and not fixnum 0.
+        auto nil_id = flat.add_literal(0); // () sentinel
+        flat.set_marker(nil_id, ast::SyntaxMarker::EmptyList);
+        return nil_id;
     }
     if (is_string(data)) {
         auto idx = as_string_idx(data);
@@ -5759,6 +5766,9 @@ std::optional<EvalResult> Evaluator::try_eval_flat_hot(aura::ast::FlatAST& flat,
     if (tag == aura::ast::NodeTag::LiteralInt) {
         if (flat.marker(id) == aura::ast::SyntaxMarker::BoolLiteral)
             return EvalResult(make_bool(flat.int_val(id) != 0));
+        // Issue #4635 follow-up: a bare `()` literal is void, not fixnum 0.
+        if (flat.marker(id) == aura::ast::SyntaxMarker::EmptyList)
+            return EvalResult(make_void());
         return EvalResult(make_int_or_promote(flat.int_val(id)));
     }
     if (tag == aura::ast::NodeTag::Variable) {
@@ -6275,6 +6285,9 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     // #t/#f have BoolLiteral marker — convert to Bool at runtime
                     if (v.marker == aura::ast::SyntaxMarker::BoolLiteral)
                         return make_bool(v.int_value != 0);
+                    // Issue #4635 follow-up: `()` is the empty list, not fixnum 0.
+                    if (v.marker == aura::ast::SyntaxMarker::EmptyList)
+                        return make_void();
                     return make_int_or_promote(v.int_value);
                 case aura::ast::NodeTag::LiteralFloat: {
                     // Issue #4524: intern the boxed literal per node

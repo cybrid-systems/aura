@@ -312,6 +312,10 @@ static std::uint32_t lower_flat_expr(
             if (marker == aura::ast::SyntaxMarker::BoolLiteral) {
                 // Bool literals (#t/#f) should produce make_bool, not make_int
                 state.emit(IROpcode::ConstBool, slot, v.int_value != 0 ? 1 : 0);
+            } else if (marker == aura::ast::SyntaxMarker::EmptyList) {
+                // Issue #4635 follow-up: a bare `()` is the empty list
+                // (make_void), never fixnum 0 — same rule as (list) below.
+                state.emit(IROpcode::ConstVoid, slot);
             } else {
                 emit_int_const(state, slot, v.int_value);
             }
@@ -2541,6 +2545,10 @@ std::string unparse_node(const FlatAST& flat, const StringPool& pool, NodeId id,
             // Printing #t/#f as 1/0 makes the IR closure return an integer.
             if (flat.marker(id) == SyntaxMarker::BoolLiteral)
                 return v.int_value ? "#t" : "#f";
+            // Issue #4635 follow-up: `()` must re-parse as the empty list, not
+            // as the number 0 (closure-bridge / pre-cache re-parse path).
+            if (flat.marker(id) == SyntaxMarker::EmptyList)
+                return "()";
             return std::to_string(v.int_value);
 
         case NodeTag::LiteralFloat: {

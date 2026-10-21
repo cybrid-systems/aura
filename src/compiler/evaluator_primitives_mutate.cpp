@@ -2577,6 +2577,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                             case aura::ast::SyntaxMarker::BoolLiteral:
                                 mname = "BoolLiteral";
                                 break;
+                            case aura::ast::SyntaxMarker::EmptyList:
+                                mname = "EmptyList";
+                                break;
                         }
                         if (!mname || p.value != mname) {
                             match = false;
@@ -3101,6 +3104,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                 break;
                             case aura::ast::SyntaxMarker::BoolLiteral:
                                 mname = "BoolLiteral";
+                                break;
+                            case aura::ast::SyntaxMarker::EmptyList:
+                                mname = "EmptyList";
                                 break;
                         }
                         if (!mname || p.value != mname) {
