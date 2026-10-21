@@ -2208,6 +2208,31 @@ int main(int argc, char* argv[]) {
         } else {
             std::getline(std::cin, input);
         }
+        // Issue #4636: the --jit oneshot face must resolve the SAME std
+        // bindings as the eval face (-e / file / pipe / --load): the lazy
+        // oneshot std prelude auto-loads the std modules the program
+        // references. make-hash / foldr / assoc / ... are std FUNCTIONS,
+        // not primitives, so without the prelude every std binding reads
+        // unbound under --jit while eval answers it: the JIT refuses the
+        // program (#4607's unresolved-name refuse) and the tree walker
+        // raises "unbound variable: make-hash" where eval prints 1.
+        // Load the same prelude the other oneshot entries load. The
+        // export-cell sync (sync_soft_export_cells_for_ir) is
+        // deliberately NOT done here: it would make the JIT resolve a std
+        // function to a tree-walker closure word, which the JIT's raw
+        // closure-id calling convention cannot dispatch. The #4607
+        // refuse sends the program to the tree walker, which resolves the
+        // std binding the same way eval does.
+        {
+            std::string prelude = build_lazy_oneshot_std_prelude(input);
+            if (!prelude.empty()) {
+                if (auto pre = cs.eval(prelude); !pre) {
+                    std::println(std::cerr, "error: Soft oneshot std prelude failed: {}",
+                                 pre.error().format_with_source(prelude));
+                    return 1;
+                }
+            }
+        }
 
 // Quick test: compile empty function and call it
 #ifdef AURA_HAVE_LLVM

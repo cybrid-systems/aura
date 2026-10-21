@@ -217,7 +217,10 @@ static void ac4_source_cite() {
         // Issue #4606: the RefPrimitive-callee refuse arm (ahead of the
         // legacy callee_val echo) moved the MustDeopt sites past 6500 —
         // same rule, window follows the function; assertions unchanged.
-        const auto body = rt.substr(call, 8500);
+        // Issue #4636: the native-dispatch cycle guard (the refuse for a
+        // callee that re-enters the innermost native activation, also
+        // ahead of the consume block) moved them further — same rule.
+        const auto body = rt.substr(call, 12000);
         CHECK(body.find("Issue #2472") != std::string::npos, "AC4: #2472 in MustDeopt path");
         CHECK(body.find("g_closure_freed") != std::string::npos,
               "AC4: freed re-check in MustDeopt exclusive");
@@ -511,6 +514,45 @@ static void ac4606_gate_wiring() {
 
 } // namespace
 
+// ── #4636 AC1: the native-dispatch cycle guard ──
+// The blessed dispatch entry must refuse a callee that re-enters the
+// closure which is ALREADY the innermost native activation on this
+// thread: that re-entry IS the closure-0 -> top-level -> prologue cycle
+// (the compiled code calls closure 0, whose body calls the same word
+// again, forever). The guard is an exact cycle predicate (not a depth
+// counter) and it uses the established leave-native shape (the #4084
+// prologue sentinel + fixnum 0), so the interpreter answers the call
+// instead of the process dying. The armed-sentinel EFFECT is pinned
+// end-to-end by the jit-soundness-4567 corpus (tests/python/
+// test_regression.py): the --jit rows match eval only when the sentinel
+// path works.
+static void ac4636_cycle_guard() {
+    std::println("--- #4636 AC1: source cites the native-dispatch cycle guard ---");
+    auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(!rt.empty(), "ac4636_1_read: aura_jit_runtime.cpp readable");
+    const auto entry = rt.find("int64_t aura_closure_dispatch_native_checked(");
+    CHECK(entry != std::string::npos, "ac4636_1_entry: blessed dispatch entry present");
+    if (entry != std::string::npos) {
+        const auto body = rt.substr(entry, 4000);
+        const auto cite = body.find("Issue #4636");
+        CHECK(cite != std::string::npos, "ac4636_1_cite: #4636 guard inside the entry");
+        CHECK(body.find("g_native_self_id") != std::string::npos,
+              "ac4636_1_self: the innermost native activation is the cycle predicate");
+        CHECK(body.find("closure_id == g_native_self_id") != std::string::npos,
+              "ac4636_1_pred: the callee is compared with the innermost activation");
+        CHECK(body.find("closure_dispatch_leave_native()") != std::string::npos,
+              "ac4636_1_shape: leave-native refuse (#4451 / #4084 parity)");
+        // The guard sits in the in-range path: after the legacy echo
+        // return (the out-of-range arm) and before the freed-closure arm.
+        const auto echo = body.find("return closure_id; /* match IRInterpreter");
+        const auto freed = body.find("Issue #1361 / #3021: refuse to call a freed closure");
+        CHECK(echo != std::string::npos && cite != std::string::npos && cite > echo,
+              "ac4636_1_order: the guard follows the out-of-range echo arm");
+        CHECK(freed != std::string::npos && cite < freed,
+              "ac4636_1_order2: the guard precedes the freed-closure arm");
+    }
+}
+
 int run_test_closure_call_must_deopt_toctou() {
     std::println("=== Issue #2472: aura_closure_call MustDeopt TOCTOU ===");
     ac3_baseline_force_deopt();
@@ -527,6 +569,7 @@ int run_test_closure_call_must_deopt_toctou() {
     ac4606_prim_word_refuse();
     ac4606_source_cite();
     ac4606_gate_wiring();
+    ac4636_cycle_guard();
     std::println("\n=== #2472 + #3635 + #4606 results: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;

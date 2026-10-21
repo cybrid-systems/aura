@@ -280,7 +280,10 @@ int run_test_must_deopt_before_next_call() {
             // Issue #4606: the RefPrimitive-callee refuse arm (ahead of the
             // legacy callee_val echo) moved the clear sites past 8000 —
             // same rule, window follows the function; assertions unchanged.
-            const auto body = rt.substr(call, 10000);
+            // Issue #4636: the native-dispatch cycle guard (the refuse for a
+            // callee that re-enters the innermost native activation, also
+            // ahead of the consume block) moved them further — same rule.
+            const auto body = rt.substr(call, 12500);
             CHECK(body.find("g_closure_must_deopt[cid] = 0") != std::string::npos,
                   "3247 AC2: call path still clears under exclusive");
             CHECK(body.find("g_closure_bridge_epochs[cid] = 0") != std::string::npos,

@@ -64,7 +64,7 @@ def main() -> int:
 
     # Issue #3635: the call-time transaction lives in the blessed entry
     # (aura_closure_call is a thin forward to it).
-    # Window 10000: the #3323 sticky overflow fence was inserted ahead of the
+    # Window 12500: the #3323 sticky overflow fence was inserted ahead of the
     # #2128 consume block (fence must precede consume so the overflow stamp
     # stays observable); grow the window with the function, assertions
     # unchanged. #3948 refuse + #3972 this-window remap arm grew it again.
@@ -72,8 +72,11 @@ def main() -> int:
     # bridge_epochs store past 7000 — same rule, window follows the function.
     # #4606's RefPrimitive-callee refuse arm (ahead of the legacy
     # callee_val echo) moved the consume block past 8000 — same rule.
+    # #4636's native-dispatch cycle guard (the refuse for a callee that
+    # re-enters the innermost native activation, also ahead of the consume
+    # block) moved it further — same rule, window follows the function.
     call = rt.find("int64_t aura_closure_dispatch_native_checked(")
-    body = rt[call : call + 10000] if call >= 0 else ""
+    body = rt[call : call + 12500] if call >= 0 else ""
     must("g_closure_must_deopt[cid] = 0", "AC2 call still clears", body)
     must("g_closure_bridge_epochs[cid] = 0", "AC2 poison epoch", body)
     must("Issue #2472", "AC2 identity recheck", body)
