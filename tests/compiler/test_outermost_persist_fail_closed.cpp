@@ -22,6 +22,7 @@
 #include "compiler/messaging_bridge.h"
 #include "core/flatast_restamp.hh"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -30,6 +31,7 @@
 #include <print>
 #include <string>
 #include <string_view>
+#include <vector>
 
 import std;
 import aura.core.ast;
@@ -49,6 +51,7 @@ using aura::compiler::TypeChecker;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::typed_audit::AuditStrategy;
+using aura::compiler::typed_audit::aura_outermost_success_persist_occurrence;
 using aura::compiler::typed_audit::get_strategy;
 using aura::compiler::typed_audit::ir_typed_entry_commit_readiness_ok;
 using aura::compiler::typed_audit::jit_execute_commit_readiness_blocked;
@@ -756,6 +759,333 @@ static void ac4540_overhead_probe() {
     }
     apply_dev_audit_defaults();
     reset_for_test();
+}
+
+// ── Issue #4666: the #3376 fail-closed persist-reject exits must run the
+// #3102 coercion / type-cone rewind ────────────────────────────────────
+//
+// The reject exits clear the Occurrence buffer / TypeLinearCommitProof /
+// export authority and then call note_3440_restore(). That note restores
+// the AST dual-topology (#3687 restore_checkpoint_topology_for_persist_/
+// reject) and therefore sets cp.topology_restored -- so the later
+// outermost !success abort path SKIPS its whole
+// `if (!cp.topology_restored)` block, which is where the #3102 rewind
+// lives. Without the rewind the type cone / coercion decision faces keep
+// the rejected mutation's state: a half-rolled-back coercion state.
+
+// Live workspace nodes that are NOT in the current type cone. The rewind
+// truncates the cone to the boundary-entry size, so the test needs cone
+// entries the truncation actually drops.
+static std::vector<aura::ast::NodeId> cone_outside_nodes(aura::ast::FlatAST& flat,
+                                                         std::size_t want) {
+    const auto& cone = aura::compiler::dirty::last_type_cone_ast();
+    std::vector<aura::ast::NodeId> out;
+    for (aura::ast::NodeId id = 1; id < flat.size() && out.size() < want; ++id) {
+        if (!flat.is_live_node(id))
+            continue;
+        if (std::find(cone.begin(), cone.end(), id) == cone.end())
+            out.push_back(id);
+    }
+    return out;
+}
+
+// Grow the type cone by two fresh nodes inside the boundary: one is the
+// "coerced" node (the per-boundary tracker holds it, like
+// apply_coercion_map does), one is a plain cone entry the rewind drops.
+static void ac4666_grow_cone(aura::ast::FlatAST& flat, std::vector<aura::ast::NodeId>& outside) {
+    outside = cone_outside_nodes(flat, 2);
+    if (outside.size() < 2) {
+        // Fallback: fresh nodes created inside the boundary (their ids
+        // cannot be in the cone).
+        outside.clear();
+        outside.push_back(flat.add_literal(901));
+        outside.push_back(flat.add_literal(902));
+    }
+    aura::compiler::coerced_nodes_tracker_push(outside[0]);
+    const std::array<aura::ast::NodeId, 1> c1{outside[0]};
+    const std::array<aura::ast::NodeId, 1> c2{outside[1]};
+    (void)aura::compiler::dirty::force_dead_coercion_elim_into_cone(c1);
+    (void)aura::compiler::dirty::force_dead_coercion_elim_into_cone(c2);
+}
+
+// Plant the commit TypeChecker + occurrence goals so the persist helper
+// has live goals to compare against (#4105 test hook).
+static bool ac4666_plant_commit_goals(Evaluator& ev) {
+    const std::array<std::uint32_t, 1> preds{4666u};
+    const auto planted = ev.plant_commit_occurrence_preds_for_test(preds);
+    return planted > 0 && ev.commit_type_checker_handle() != nullptr;
+}
+
+// Issue #4666 AC1: a persist-reject early exit rewinds the #3102
+// coercion / type-cone state (the cone goes back to the boundary-entry
+// size, the coerced node is force-dirtied back in, the DeadCoercion
+// decision face is invalidated and the coercion commit_readiness face
+// is cleared). Before the fix the cone kept the rejected mutation's
+// entries -- a half-rolled-back coercion state.
+static void ac4666_reject_rewinds_type_cone() {
+    std::println("\n--- #4666 AC1: persist reject rewinds the #3102 type cone ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    aura::compiler::dirty::reset_dead_coercion_decision_invalidate_for_test();
+    aura::compiler::clear_coercion_map_abort_rewind_for_test();
+    typed_audit::reset_coercion_commit_readiness_cleared_on_abort_for_test();
+    CHECK(production_hard_face_active(), "4666 AC1: the production hard face is active");
+
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (+ 1 2))\")").has_value(), "4666 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4666 AC1: eval");
+    (void)cs.eval("(typecheck-current)");
+    (void)cs.evaluator().ensure_typechecker();
+    (void)cs.evaluator().run_post_mutate_typecheck_no_lock();
+    auto* ev = &cs.evaluator();
+    auto* ws = ev->workspace_flat();
+    CHECK(ws != nullptr, "4666 AC1: workspace");
+    CHECK(ac4666_plant_commit_goals(*ev), "4666 AC1: commit type checker + goals planted");
+    if (!ws || !ev->commit_type_checker_handle())
+        return;
+
+    const auto cone0 = aura::compiler::dirty::last_type_cone_ast().size();
+    const auto gen0 = aura::compiler::dirty::dead_coercion_decision_invalidate_gen();
+    const auto rewind0 = aura::compiler::g_coercion_map_abort_rewind_total.load();
+    const auto ready0 = typed_audit::coercion_commit_readiness_cleared_on_abort_total_v_read();
+
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(*ev, &ok);
+        std::vector<aura::ast::NodeId> outside;
+        ac4666_grow_cone(*ws, outside);
+        const auto cone_in = aura::compiler::dirty::last_type_cone_ast().size();
+        CHECK(cone_in == cone0 + 2, "4666 AC1: the type cone grew inside the boundary");
+        CHECK(aura::compiler::coerced_nodes_tracker_size() == 1,
+              "4666 AC1: the coerced node sits in the per-boundary tracker");
+        // Force the fail-closed persist reject: a staged fingerprint that
+        // does not match the live goals trips the #3819 mismatch exit.
+        ev->stage_expected_occurrence_snapshot_fp(0x4666'BEEF'0001ULL);
+        aura_outermost_success_persist_occurrence(ev, 4666);
+        CHECK(last_type_linear_proof_outcome_v_read() == kTypeLinearProofOutcomeReject,
+              "4666 AC1: the persist helper rejected");
+        const auto cone_out = aura::compiler::dirty::last_type_cone_ast().size();
+        CHECK(cone_out == cone0 + 1,
+              "4666 AC1: the reject rewound the cone to the boundary-entry size "
+              "(+ the force-dirtied coerced node)");
+        CHECK(aura::compiler::coerced_nodes_tracker_size() == 0,
+              "4666 AC1: the rewind drained the coerced-node tracker");
+        CHECK(aura::compiler::dirty::dead_coercion_decision_invalidate_gen() > gen0,
+              "4666 AC1: the DeadCoercion decision invalidate gen advanced");
+        CHECK(aura::compiler::g_coercion_map_abort_rewind_total.load() > rewind0,
+              "4666 AC1: the production rewind counter advanced");
+        CHECK(typed_audit::coercion_commit_readiness_cleared_on_abort_total_v_read() > ready0,
+              "4666 AC1: the coercion commit_readiness face was cleared");
+    }
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+// Issue #4666 AC2: a node the rejected mutation coerced is force-dirtied
+// back into the type cone, so the next mutation re-derives it from live
+// type instead of riding the rejected coercion.
+static void ac4666_coerced_node_rederives_from_live_type() {
+    std::println("\n--- #4666 AC2: the coerced node re-derives from live type ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    aura::compiler::clear_coercion_map_abort_rewind_for_test();
+
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define g (+ 1 2))\")").has_value(), "4666 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4666 AC2: eval");
+    (void)cs.eval("(typecheck-current)");
+    (void)cs.evaluator().ensure_typechecker();
+    (void)cs.evaluator().run_post_mutate_typecheck_no_lock();
+    auto* ev = &cs.evaluator();
+    auto* ws = ev->workspace_flat();
+    CHECK(ws != nullptr, "4666 AC2: workspace");
+    CHECK(ac4666_plant_commit_goals(*ev), "4666 AC2: commit type checker + goals planted");
+    if (!ws || !ev->commit_type_checker_handle())
+        return;
+
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(*ev, &ok);
+        std::vector<aura::ast::NodeId> outside;
+        ac4666_grow_cone(*ws, outside);
+        const auto coerced_node = outside[0];
+        ev->stage_expected_occurrence_snapshot_fp(0x4666'BEEF'0002ULL);
+        aura_outermost_success_persist_occurrence(ev, 4666);
+        const auto& cone = aura::compiler::dirty::last_type_cone_ast();
+        CHECK(std::find(cone.begin(), cone.end(), coerced_node) != cone.end(),
+              "4666 AC2: the coerced node is force-dirty in the cone after the "
+              "reject (re-derives from live type)");
+        CHECK(aura::compiler::coerced_nodes_tracker_size() == 0,
+              "4666 AC2: the rejected coercion is not carried over");
+    }
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+// Issue #4666 AC3: the abort path is unchanged -- the abort restore still
+// rewinds the cone (the helper is a sibling of that path, not a
+// replacement for it).
+static void ac4666_abort_path_still_rewinds() {
+    std::println("\n--- #4666 AC3: the abort path still rewinds the cone ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    aura::compiler::clear_coercion_map_abort_rewind_for_test();
+    aura::compiler::dirty::reset_dead_coercion_decision_invalidate_for_test();
+
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define h (+ 1 2))\")").has_value(), "4666 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4666 AC3: eval");
+    (void)cs.eval("(typecheck-current)");
+    (void)cs.evaluator().ensure_typechecker();
+    (void)cs.evaluator().run_post_mutate_typecheck_no_lock();
+    auto* ev = &cs.evaluator();
+    auto* ws = ev->workspace_flat();
+    CHECK(ws != nullptr, "4666 AC3: workspace");
+    if (!ws)
+        return;
+
+    const auto cone0 = aura::compiler::dirty::last_type_cone_ast().size();
+    const auto rewind0 = aura::compiler::g_coercion_map_abort_rewind_total.load();
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(*ev, &ok);
+        std::vector<aura::ast::NodeId> outside;
+        ac4666_grow_cone(*ws, outside);
+        CHECK(aura::compiler::dirty::last_type_cone_ast().size() == cone0 + 2,
+              "4666 AC3: the type cone grew inside the boundary");
+        CHECK(aura::compiler::coerced_nodes_tracker_size() == 1,
+              "4666 AC3: the coerced node sits in the per-boundary tracker");
+        ok = false; // outermost abort -> the #3102 abort rewind runs
+    }
+    const auto cone_after = aura::compiler::dirty::last_type_cone_ast().size();
+    CHECK(cone_after == cone0,
+          "4666 AC3: the abort path still rewound the cone to the boundary-entry size");
+    CHECK(aura::compiler::g_coercion_map_abort_rewind_total.load() > rewind0,
+          "4666 AC3: the abort path still bumps the production rewind counter");
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+// Issue #4666 AC4: Soft / Off unchanged -- the rewind stays production /
+// Full gated exactly like #3102 (Soft observes, never truncates).
+static void ac4666_soft_unchanged() {
+    std::println("\n--- #4666 AC4: Soft / Off unchanged ---");
+    reset_for_test();
+    apply_dev_audit_defaults();
+    aura::compiler::clear_coercion_map_abort_rewind_for_test();
+    CHECK(!production_hard_face_active(), "4666 AC4: Soft hard face inactive");
+    CHECK(get_strategy() != AuditStrategy::Full, "4666 AC4: Soft strategy is not Full");
+
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define k (+ 1 2))\")").has_value(), "4666 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4666 AC4: eval");
+    (void)cs.eval("(typecheck-current)");
+    (void)cs.evaluator().ensure_typechecker();
+    (void)cs.evaluator().run_post_mutate_typecheck_no_lock();
+    auto* ev = &cs.evaluator();
+    auto* ws = ev->workspace_flat();
+    CHECK(ws != nullptr, "4666 AC4: workspace");
+    CHECK(ac4666_plant_commit_goals(*ev), "4666 AC4: commit type checker + goals planted");
+    if (!ws || !ev->commit_type_checker_handle())
+        return;
+
+    const auto rewind0 = aura::compiler::g_coercion_map_abort_rewind_total.load();
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(*ev, &ok);
+        std::vector<aura::ast::NodeId> outside;
+        ac4666_grow_cone(*ws, outside);
+        const auto cone_in = aura::compiler::dirty::last_type_cone_ast().size();
+        ev->stage_expected_occurrence_snapshot_fp(0x4666'BEEF'0003ULL);
+        aura_outermost_success_persist_occurrence(ev, 4666);
+        const auto cone_out = aura::compiler::dirty::last_type_cone_ast().size();
+        CHECK(cone_out == cone_in,
+              "4666 AC4: Soft does not truncate the type cone (no structural write)");
+        CHECK(aura::compiler::g_coercion_map_abort_rewind_total.load() == rewind0,
+              "4666 AC4: Soft does not bump the production rewind counter");
+    }
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+// Issue #4666 source cites: the helper carries the #3102 sequence, every
+// fail-closed reject exit calls it before the restore, and the #3102
+// abort sites are untouched.
+static void ac4666_source_cites() {
+    std::println("\n--- #4666 AC-src: helper + reject-exit wiring ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto fn_pos = emb.find("extern \"C\" void aura_outermost_success_persist_occurrence(");
+    CHECK(fn_pos != std::string::npos, "4666 AC-src: persist helper present");
+    const auto emb_after = (fn_pos == std::string::npos) ? std::string{} : emb.substr(fn_pos);
+
+    const auto helper_pos = emb.find("static void rollback_type_state_after_reject(");
+    CHECK(helper_pos != std::string::npos, "4666 AC-src: rollback_type_state_after_reject present");
+    const auto win = brace_block_after(emb, helper_pos);
+    CHECK(!win.empty(), "4666 AC-src: helper body (brace-matched)");
+    CHECK(contains(win, "truncate_type_cone_to_size"), "4666 AC-src: cone truncation");
+    CHECK(contains(win, "coerced_nodes_tracker_take"), "4666 AC-src: coerced-node take");
+    CHECK(contains(win, "force_dead_coercion_elim_into_cone"), "4666 AC-src: force-dirty");
+    CHECK(contains(win, "bump_dead_coercion_decision_invalidate"),
+          "4666 AC-src: DeadCoercion decision face");
+    CHECK(contains(win, "clear_coercion_commit_readiness_on_abort"),
+          "4666 AC-src: coercion commit_readiness face");
+    CHECK(contains(win, "production_defaults_active()"), "4666 AC-src: production gate");
+    CHECK(contains(win, "g_coercion_map_abort_rewind_observe_total"),
+          "4666 AC-src: Soft observe branch");
+    CHECK(contains(emb, "Issue #4666"), "4666 AC-src: issue cite");
+
+    const auto count = [](const std::string& s, const char* needle) -> std::size_t {
+        std::size_t c = 0, pos = 0;
+        while ((pos = s.find(needle, pos)) != std::string::npos) {
+            ++c;
+            pos += std::strlen(needle);
+        }
+        return c;
+    };
+    const std::size_t n = count(emb_after, "rollback_type_state_after_reject(ev);");
+    CHECK(n >= 10, "4666 AC-src: every fail-closed reject exit calls the rewind helper");
+    // The rewind runs BEFORE note_3440_restore() in every arm (the restore
+    // takes the coerced-node tracker).
+    {
+        std::vector<std::size_t> calls;
+        std::vector<std::size_t> notes;
+        std::size_t pos = 0;
+        while ((pos = emb_after.find("rollback_type_state_after_reject(ev);", pos)) !=
+               std::string::npos) {
+            calls.push_back(pos);
+            pos += 1;
+        }
+        pos = 0;
+        while ((pos = emb_after.find("note_3440_restore();", pos)) != std::string::npos) {
+            notes.push_back(pos);
+            pos += 1;
+        }
+        CHECK(calls.size() == notes.size(),
+              "4666 AC-src: one rewind call per note_3440_restore() arm");
+        bool ordered = calls.size() == notes.size();
+        for (std::size_t i = 0; i < calls.size() && ordered; ++i)
+            ordered = calls[i] < notes[i];
+        CHECK(ordered, "4666 AC-src: the rewind runs before note_3440_restore()");
+    }
+    // #3102 abort contract unchanged: the abort sites keep their sequence.
+    CHECK(contains(emb, "// Issue #3102: AC1+AC2+AC3+AC4 — CoercionMap abort rewind."),
+          "4666 AC-src: the #3102 abort site is untouched");
+    CHECK(count(emb, "truncate_type_cone_to_size") >= 4,
+          "4666 AC-src: the three #3102 abort sites + the new helper truncate the cone");
+    CHECK(count(emb, "typed_audit::clear_coercion_commit_readiness_on_abort") >= 4,
+          "4666 AC-src: the abort sites keep their commit_readiness clear");
+    // #3376 fail-closed contract unchanged.
+    CHECK(count(emb_after, "clear_occurrence_persist_buffer(tc)") >= 6,
+          "4666 AC-src: the #3376 buffer clears are unchanged");
+    CHECK(count(emb_after, "clear_type_linear_commit_proof_on_abort") >= 6,
+          "4666 AC-src: the #3376 proof clears are unchanged");
+    // No invented files.
+    CHECK(read_file("tests/compiler/test_issue_4666.cpp").empty(),
+          "4666 AC-src: no test_issue_4666.cpp per #81967");
+    CHECK(read_file("tests/issues/test_issue_4666.cpp").empty(),
+          "4666 AC-src: no tests/issues/test_issue_4666.cpp per #81967");
+    CHECK(read_file("docs/design/4666-persist-reject-type-cone-rewind.md").empty(),
+          "4666 AC-src: no docs/design/4666-* per #1655");
 }
 
 int run_test_outermost_persist_fail_closed() {
@@ -1736,6 +2066,14 @@ int run_test_outermost_persist_fail_closed() {
     ac4540_render_rebind_type_error();
     ac4540_source_cites();
     ac4540_overhead_probe();
+
+    // Issue #4666: persist-reject early exits run the #3102 coercion /
+    // type-cone rewind (half-rolled-back coercion state).
+    ac4666_reject_rewinds_type_cone();
+    ac4666_coerced_node_rederives_from_live_type();
+    ac4666_abort_path_still_rewinds();
+    ac4666_soft_unchanged();
+    ac4666_source_cites();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
