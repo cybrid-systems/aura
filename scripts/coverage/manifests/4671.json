@@ -1,0 +1,71 @@
+{
+  "issue": 4671,
+  "title": "JIT CastOp / Apply re-sample the typed-entry readiness per op (dual of #4667)",
+  "checks": [
+    {
+      "ac": "AC1-bridge",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": [
+        "Issue #4671",
+        "aura_jit_linear_per_op_typed_entry_readiness_ok",
+        "typed_audit::linear_per_op_typed_entry_readiness_ok()",
+        "g_linear_fast_path_elide_blocked_production_total"
+      ]
+    },
+    {
+      "ac": "AC1-stub",
+      "path": "src/compiler/aura_jit_bridge_stub.cpp",
+      "contains": [
+        "Issue #4671",
+        "aura_jit_linear_per_op_typed_entry_readiness_ok",
+        "__attribute__((weak))",
+        "stub_production_defaults_active()"
+      ]
+    },
+    {
+      "ac": "AC1-header",
+      "path": "src/compiler/aura_jit_bridge.h",
+      "contains": [
+        "Issue #4671",
+        "int aura_jit_linear_per_op_typed_entry_readiness_ok(void);"
+      ]
+    },
+    {
+      "ac": "AC1-jit",
+      "path": "src/compiler/aura_jit.cpp",
+      "contains": [
+        "Issue #4671",
+        "fn_linear_per_op_typed_entry_readiness_ok",
+        "emit_per_op_readiness_gate",
+        "aura_jit_linear_per_op_typed_entry_readiness_ok"
+      ]
+    },
+    {
+      "ac": "AC2-one-readiness-model",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "kPerOpTypedEntryReadinessIssue = 4667",
+        "linear_per_op_typed_entry_readiness_ok",
+        "ir_typed_entry_commit_readiness_ok()"
+      ]
+    },
+    {
+      "ac": "AC-test",
+      "path": "tests/compiler/test_ir_typed_entry_proof_authority.cpp",
+      "contains": [
+        "ac4671_jit_per_op_readiness_source_cite",
+        "ac4671_jit_per_op_readiness_runtime",
+        "ac4671_soft_zero_cost",
+        "Issue #4671"
+      ]
+    },
+    {
+      "ac": "AC-no-issue-dir",
+      "forbid": [
+        "tests/issues/test_issue_4671.cpp",
+        "tests/compiler/test_issue_4671.cpp",
+        "docs/design/4671-per-op-readiness.md"
+      ]
+    }
+  ]
+}

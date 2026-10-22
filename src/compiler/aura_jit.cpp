@@ -1405,6 +1405,15 @@ struct LLVMBuilder {
     // Issue #3224: production IR/JIT entry under active mutation +
     // !would_allow_commit deopts (Borrow/MutBorrow/Apply half-green).
     llvm::Function* fn_ir_typed_entry_commit_readiness_ok = nullptr;
+    // Issue #4671: JIT-side per-op typed-entry readiness re-sample (dual
+    // of the interpreter arm in #4667). Thin wrapper around
+    // typed_audit::linear_per_op_typed_entry_readiness_ok - the SAME
+    // shared sample the IR interpreter consults, so the JIT and the
+    // interpreter share one readiness face (no second model, no new
+    // counter: a refusal bumps the existing
+    // g_linear_fast_path_elide_blocked_production_total inside the
+    // shared helper).
+    llvm::Function* fn_linear_per_op_typed_entry_readiness_ok = nullptr;
     // Issue #1537: Apply-prologue dual-epoch helpers.
     llvm::Function* fn_get_current_bridge_epoch = nullptr;
     llvm::Function* fn_is_fn_epoch_stale = nullptr;
@@ -1567,6 +1576,11 @@ struct LLVMBuilder {
         fn_ir_typed_entry_commit_readiness_ok = llvm::Function::Create(
             llvm::FunctionType::get(i32_ty, false), llvm::Function::ExternalLinkage,
             "aura_jit_ir_typed_entry_commit_readiness_ok", mod);
+        // Issue #4671: i32 aura_jit_linear_per_op_typed_entry_readiness_ok(void)
+        // - the per-op sample the CastOp / Apply op sites consult.
+        fn_linear_per_op_typed_entry_readiness_ok = llvm::Function::Create(
+            llvm::FunctionType::get(i32_ty, false), llvm::Function::ExternalLinkage,
+            "aura_jit_linear_per_op_typed_entry_readiness_ok", mod);
 
         // Issue #1540: i32 aura_jit_linear_post_mutate_enforce(i32 env_id)
         fn_linear_post_mutate_enforce = llvm::Function::Create(
@@ -2341,6 +2355,70 @@ struct LLVMBuilder {
             irb->SetInsertPoint(bb_deopt);
             irb->CreateRet(c64(0));
             irb->SetInsertPoint(bb_cont);
+        };
+        // Issue #4671: per-op typed-entry readiness re-sample (dual of the
+        // interpreter arm shipped in #4667).
+        //
+        // The #3224 typed-entry grant is ENTRY-ONLY: a JIT-compiled
+        // function enters with a valid readiness grant, but a concurrent
+        // densify/steal can flip commit_readiness while the same body
+        // still runs. The interpreter re-samples the SAME readiness face
+        // per op (Borrow / MutBorrow / CastOp / Apply); the JIT had NO
+        // per-op consult, so a compiled CastOp (any linearity) or a
+        // NON-linear Apply rode the entry-era grant into the provenance
+        // path.
+        //
+        // One readiness model, no new counter: the consult calls the
+        // shared aura_jit_linear_per_op_typed_entry_readiness_ok, which
+        // delegates to typed_audit::linear_per_op_typed_entry_readiness_ok
+        // -> the SAME ir_typed_entry_commit_readiness_ok face the entry
+        // gate uses and bumps the existing
+        // g_linear_fast_path_elide_blocked_production_total on a refusal
+        // - exactly what the interpreter does. Soft / Off: zero-cost (the
+        // shared face short-circuits on the production_defaults load).
+        //
+        // On refusal the op body is NOT lowered: the native frame deopts
+        // to the interpreter, which re-runs the op through the same face
+        // and refuses with commit-readiness-refused - the compiled and the
+        // interpreted path now agree.
+        auto emit_per_op_readiness_gate = [&](std::uint32_t block, std::uint32_t instr) {
+            if (!fn_linear_per_op_typed_entry_readiness_ok)
+                return;
+            auto* ok_i =
+                irb->CreateCall(llvm::FunctionCallee(fn_linear_per_op_typed_entry_readiness_ok),
+                                llvm::ArrayRef<llvm::Value*>{});
+            auto* zero32 = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+            auto* blocked = irb->CreateICmpEQ(ok_i, zero32);
+            auto* parent = irb->GetInsertBlock()->getParent();
+            auto* bb_ok = llvm::BasicBlock::Create(ctx, "per_op_readiness_ok", parent);
+            auto* bb_refuse = llvm::BasicBlock::Create(ctx, "per_op_readiness_refuse", parent);
+            irb->CreateCondBr(blocked, bb_refuse, bb_ok);
+            irb->SetInsertPoint(bb_refuse);
+            if (frame_deopt_ok) {
+                // Issue #4600 section 1/2: resume the IR interpreter at
+                // this instruction - it re-runs the op through the same
+                // readiness face and refuses (commit-readiness-refused).
+                emit_frame_deopt_exit(fn, block, instr, /*from_entry=*/false);
+            } else {
+                // No frame-deopt host (AOT / anon fns / hidden pcell-spair
+                // state): the #4084 sentinel protocol - the host falls
+                // back to the interpreter for the whole call.
+                if (fn_deopt_inc)
+                    irb->CreateCall(llvm::FunctionCallee(fn_deopt_inc));
+                const char* gname = (fn.name && fn.name[0]) ? fn.name : "<anon>";
+                auto* name_gv = irb->CreateGlobalString(gname, "per_op_readiness_fn_name");
+                auto* name_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+                    name_gv->getValueType(), name_gv,
+                    llvm::ArrayRef<llvm::Constant*>{zero32, zero32});
+                if (fn_deopt_to_interpreter) {
+                    auto* deopt_ret = irb->CreateCall(llvm::FunctionCallee(fn_deopt_to_interpreter),
+                                                      llvm::ArrayRef<llvm::Value*>{name_ptr});
+                    irb->CreateRet(deopt_ret);
+                } else {
+                    irb->CreateRet(c64(0));
+                }
+            }
+            irb->SetInsertPoint(bb_ok);
         };
         // Issue #4522: unboxed float arith over float-known locals. When
         // both operand slots carry SHAPE_FLOAT profile feedback, lower
@@ -3280,6 +3358,10 @@ struct LLVMBuilder {
                 LinearEpochFence fb{};
                 if (lin)
                     fb = begin_linear_epoch_fence();
+                // Issue #4671: the NON-linear path consults the per-op
+                // readiness sample (the linear path has it already).
+                if (!lin)
+                    emit_per_op_readiness_gate(cur_block, cur_instr);
                 if (metrics) {
                     metrics->critical_opcode_lowered_total.fetch_add(1, std::memory_order_relaxed);
                     metrics->apply_site_epoch_probe_total.fetch_add(1, std::memory_order_relaxed);
@@ -4277,6 +4359,20 @@ struct LLVMBuilder {
             // CastOp: runtime type check
             case OpCastOp: {
                 // ops[0] = result_slot, ops[1] = value_slot, ops[2] = type_tag
+                // Issue #4671: per-op typed-entry readiness re-sample. The
+                // #3224 entry grant is entry-only: a mid-function
+                // densify/steal invalidates it, so a CastOp that runs
+                // after the flip must not ride the entry-era grant. The
+                // consult precedes BOTH the narrow_evidence fast-forward
+                // and the runtime type check, so no CastOp path escapes
+                // it. Same face as the entry gate + the Move/Drop face;
+                // the refusal bumps the existing
+                // g_linear_fast_path_elide_blocked_production_total (no
+                // new counter). Soft / Off: zero-cost. On refusal the
+                // cast is not lowered - the native frame deopts to the
+                // interpreter, which re-runs the CastOp through the same
+                // face and refuses with commit-readiness-refused.
+                emit_per_op_readiness_gate(cur_block, cur_instr);
                 // Issue #538: narrow_evidence-proved identity — forward
                 // without runtime cast (DCE may have missed this on
                 // incremental paths).
@@ -5465,6 +5561,11 @@ struct AuraJIT::Impl {
         // Issue #3224: production IR/JIT typed-entry commit_readiness gate.
         reg("aura_jit_ir_typed_entry_commit_readiness_ok",
             (void*)aura_jit_ir_typed_entry_commit_readiness_ok);
+        // Issue #4671: register the JIT per-op typed-entry readiness
+        // sample so the CastOp / non-linear Apply op sites can consult
+        // it (the same shared sample the interpreter uses in #4667).
+        reg("aura_jit_linear_per_op_typed_entry_readiness_ok",
+            (void*)aura_jit_linear_per_op_typed_entry_readiness_ok);
         reg("aura_jit_linear_post_mutate_enforce", (void*)aura_jit_linear_post_mutate_enforce);
         reg("aura_jit_get_current_bridge_epoch", (void*)aura_jit_get_current_bridge_epoch);
         reg("aura_jit_is_fn_epoch_stale", (void*)aura_jit_is_fn_epoch_stale);
