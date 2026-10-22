@@ -1097,6 +1097,58 @@ namespace {
 
 } // namespace
 
+// ── Issue #4665: the mutate:* hygiene-gate INVENTORY ────────────────────────
+//
+// ONE reviewable file for the MacroIntroduced default-deny face of every
+// mutate:* prim registered in this translation unit.
+//
+// Why: the default-deny gate (#3191 / #3344 / #3542) lives INSIDE each
+// mutate:* body, so a NEW prim that forgets the helper compiles, registers,
+// and passes its own suite. The regression class (#3815 / #4406 / #4248 /
+// #4435 / #3889) was closed one point fix at a time because the
+// REGISTRATION POINT could not tell a gated prim from an ungated one.
+//
+// Issue #4665 closes that hole at the registration point:
+//   * Required - the body calls a MacroIntroduced hygiene helper
+//     (reject_structural_macro_hygiene /
+//     enforce_macro_hygiene_mutate_hotpath / hygiene_protected_error /
+//     record_hygiene_violation_attempt). The static gate
+//     scripts/coverage/checks/check_mutate_hygiene_gate_4665.py
+//     cross-checks every Required row against its body.
+//   * Exempt - the prim does not rewrite live MacroIntroduced state. The
+//     reason is MANDATORY: it is the review record.
+//
+// A mutate:* registration with NO row is refused: add_mutate installs a deny
+// stub that names the offending prim (fail-closed at registration), so an
+// ungated prim can never become callable by accident.
+//
+// Scope: the mutate:* prims registered in this file. mutate:validate-
+// reflected is registered in evaluator_primitives_query_tail.cpp (a
+// read-only validator, no AST write) and is out of this inventory.
+enum class MutateHygienePolicy : std::uint8_t { Required, Exempt };
+
+struct MutateHygieneRow {
+    const char* name;
+    MutateHygienePolicy policy;
+    const char* reason; // mandatory for Exempt, empty for Required
+};
+
+// Issue #4665: the registration point's lookup. A name with no row is NOT
+// gated - it is refused (see the add_mutate fail-closed arm). The table and
+// the definition live at the END of this file: the inventory lists every
+// mutate:* name, and the registration sites must stay the FIRST occurrence of
+// a prim name in the file (the per-call-site source-cite gates anchor their
+// windows on the registration).
+[[nodiscard]] inline const MutateHygieneRow*
+lookup_mutate_hygiene_policy(std::string_view name) noexcept;
+
+// Issue #4665: the registration-time gate. Returns the prim's policy row, or
+// nullptr when the registration is REFUSED (no inventory row / no reason). A
+// refused prim is registered as a deny stub that names the offending prim, so
+// an ungated prim can never become callable by accident.
+const MutateHygieneRow* mutate_hygiene_gate_allow(PrimRegistrar add, Evaluator& ev,
+                                                  MakeErrorVal mev, const std::string& name);
+
 void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev,
                                 std::function<void()> destroy_defuse_index) {
 
@@ -1212,6 +1264,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // naked-mutate. Nested body try_acquire is already no-op on
     // workspace_mtx_. #2986/#3197 post-check stays as a belt.
     auto add_mutate = [&](std::string name, auto fn, bool guard_exempt = false) {
+        // Issue #4665: registration-time hygiene gate. A mutate:* prim with no
+        // inventory row is refused (the deny stub names the offending prim).
+        const MutateHygieneRow* hyg_row = mutate_hygiene_gate_allow(add, ev, mev, name);
+        if (hyg_row == nullptr)
+            return;
         // Capture concrete op name for check_and_record_effect / isolation.
         auto op_name = std::make_shared<std::string>(std::move(name));
         add(*op_name,
@@ -1711,6 +1768,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         meta.requires_mutation_guard = !guard_exempt;
         if (guard_exempt)
             meta.doc = "GUARD_EXEMPT: metadata/policy mutate:* (#2986)";
+        // Issue #4665: the registration point records the hygiene gate policy
+        // so a gated prim and an exempt prim are distinguishable from the
+        // registry (PrimMeta.doc), not only from the body source.
+        if (hyg_row->policy == MutateHygienePolicy::Exempt)
+            meta.doc += std::string(" | HYGIENE_POLICY_EXEMPT (#4665): ") + hyg_row->reason;
+        else
+            meta.doc +=
+                " | HYGIENE_POLICY_REQUIRED (#4665): MacroIntroduced hygiene helper in body";
         ev.primitives().set_meta_for_name(*op_name, std::move(meta));
     };
 
@@ -1770,6 +1835,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         ex.effect_enforced_in_body = true;
         ex.doc =
             "GUARD_EXEMPT metadata + #4037 TenantAdmin identity write (in-body, non-zero only)";
+        // Issue #4665: the exempt metadata prim carries its inventory reason in
+        // the registry, so the registration point can tell it apart from a
+        // gated structural prim. The reason lives in ONE place (the inventory).
+        if (const auto* fp_hyg = lookup_mutate_hygiene_policy("mutate:set-agent-fingerprint"))
+            ex.doc += std::string(" | HYGIENE_POLICY_EXEMPT (#4665): ") + fp_hyg->reason;
         ev.primitives().set_meta_for_name("mutate:set-agent-fingerprint", std::move(ex));
     }
 
@@ -10933,6 +11003,107 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             }
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
+}
+
+// ── Issue #4665: the mutate:* hygiene-gate INVENTORY (the table) ────────────
+//
+// ONE reviewable policy table for the MacroIntroduced default-deny face of
+// every mutate:* prim registered in this translation unit. It lives AFTER the
+// registrations on purpose: the registration site must stay the FIRST
+// occurrence of a prim name in the file, because the per-call-site source-cite
+// gates (#2794 / #2796 / #2797 / #3040 / #3074 / #3115 / #3480 / #3828 /
+// #3858 / #4652) anchor their windows on the registration.
+//
+//   Required - the body calls a MacroIntroduced hygiene helper
+//     (reject_structural_macro_hygiene /
+//     enforce_macro_hygiene_mutate_hotpath / hygiene_protected_error /
+//     record_hygiene_violation_attempt). The static gate
+//     scripts/coverage/checks/check_mutate_hygiene_gate_4665.py
+//     cross-checks every Required row against its body.
+//   Exempt   - the prim does not rewrite live MacroIntroduced state. The
+//     reason is MANDATORY: it is the review record.
+//
+// A mutate:* registration with NO row is refused at the registration point:
+// add_mutate installs a deny stub that names the offending prim.
+inline constexpr MutateHygieneRow kMutateHygieneInventory[] = {
+    {"mutate:replace-type", MutateHygienePolicy::Required, ""},
+    {"mutate:replace-value", MutateHygienePolicy::Required, ""},
+    {"mutate:record-patch", MutateHygienePolicy::Required, ""},
+    {"mutate:query-and-replace", MutateHygienePolicy::Required, ""},
+    {"mutate:query-and-replace-batch", MutateHygienePolicy::Required, ""},
+    {"mutate:rebind", MutateHygienePolicy::Required, ""},
+    {"mutate:set-body", MutateHygienePolicy::Required, ""},
+    {"mutate:remove-node", MutateHygienePolicy::Required, ""},
+    {"mutate:insert-child", MutateHygienePolicy::Required, ""},
+    {"mutate:tweak-literal", MutateHygienePolicy::Required, ""},
+    {"mutate:replace-pattern", MutateHygienePolicy::Required, ""},
+    {"mutate:replace-subtree", MutateHygienePolicy::Required, ""},
+    {"mutate:atomic-batch", MutateHygienePolicy::Required, ""},
+    {"mutate:splice", MutateHygienePolicy::Required, ""},
+    {"mutate:wrap", MutateHygienePolicy::Required, ""},
+    {"mutate:refactor/extract", MutateHygienePolicy::Required, ""},
+    {"mutate:rename-symbol", MutateHygienePolicy::Required, ""},
+    {"mutate:move-node", MutateHygienePolicy::Required, ""},
+    {"mutate:extract-function", MutateHygienePolicy::Required, ""},
+    {"mutate:inline-call", MutateHygienePolicy::Required, ""},
+    {"mutate:from-verification-feedback", MutateHygienePolicy::Required, ""},
+    {"mutate:check-stable-ref", MutateHygienePolicy::Exempt,
+     "read-only stable-ref probe; no AST write (#2986)"},
+    {"mutate:set-stale-ref-policy", MutateHygienePolicy::Exempt,
+     "policy setter; no AST write (#2986)"},
+    {"mutate:rollback-macro-introduced", MutateHygienePolicy::Exempt,
+     "IS the MacroIntroduced unstamp surface; deny would make rollback unreachable (#3344)"},
+    {"mutate:set-pattern-index-policy", MutateHygienePolicy::Exempt,
+     "policy setter; no AST write (#2986)"},
+    {"mutate:request-gc-safepoint", MutateHygienePolicy::Exempt,
+     "safepoint request; no AST write (#2986)"},
+    {"mutate:save-hygiene-checkpoint", MutateHygienePolicy::Exempt,
+     "metadata snapshot only; no AST write (#2986)"},
+    {"mutate:restore-hygiene-checkpoint", MutateHygienePolicy::Exempt,
+     "restores checkpointed marker/provenance columns; not a structural rewrite (#3344)"},
+    {"mutate:set-agent-fingerprint", MutateHygienePolicy::Exempt,
+     "metadata-only agent identity stamp; no AST write (#2986/#4037)"},
+};
+
+// Issue #4665: the registration point's lookup (defined after the table).
+[[nodiscard]] inline const MutateHygieneRow*
+lookup_mutate_hygiene_policy(std::string_view name) noexcept {
+    for (const auto& row : kMutateHygieneInventory) {
+        if (name == row.name)
+            return &row;
+    }
+    return nullptr;
+}
+
+// Issue #4665: the registration-time gate (defined after the table).
+// Returns the policy row of a registered prim, or nullptr when the
+// registration is REFUSED. Fail-closed: a mutate:* prim with no inventory row
+// (or an Exempt row with no reason) is NOT registered as a callable prim - a
+// deny stub takes its place and the error names the offending prim.
+const MutateHygieneRow* mutate_hygiene_gate_allow(PrimRegistrar add, Evaluator& ev,
+                                                  MakeErrorVal mev, const std::string& name) {
+    const MutateHygieneRow* row = nullptr;
+    if (name.rfind("mutate:", 0) == 0)
+        row = lookup_mutate_hygiene_policy(name);
+    if (row != nullptr && (row->policy != MutateHygienePolicy::Exempt || row->reason[0] != '\0'))
+        return row;
+
+    const std::string denied_name = name;
+    add(denied_name, [mev, denied_name](std::span<const EvalValue>) -> EvalValue {
+        return mev("hygiene-gate-undeclared",
+                   denied_name + ": mutate:* prim has no hygiene gate policy row (#4665) - add a "
+                                 "Required or Exempt(reason) row to kMutateHygieneInventory");
+    });
+    ::aura::compiler::PrimMeta denied_meta{};
+    denied_meta.pure = false;
+    denied_meta.required_effects = ::aura::compiler::security::kEffectMutate;
+    denied_meta.effect_enforced_in_body = true;
+    denied_meta.security_level = ::aura::compiler::kPrimSecSandboxed;
+    denied_meta.safety_flags = ::aura::compiler::kPrimSafetyMutates;
+    denied_meta.category = "security-gated";
+    denied_meta.doc = "HYGIENE_GATE_UNDECLARED (#4665): registration refused";
+    ev.primitives().set_meta_for_name(denied_name, std::move(denied_meta));
+    return nullptr;
 }
 
 } // namespace aura::compiler::primitives_detail
