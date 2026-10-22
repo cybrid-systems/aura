@@ -2578,11 +2578,20 @@ static void ac3239_6_linter_no_docs() {
 // so a benign reformat does not fail this source-cite scan (sibling of
 // check_add_mutate_acquire_before_body_3423 / check_add_mutate_read_only_fence_3450).
 static std::size_t find_mutate_registration(const std::string& mut, const std::string& prim) {
+    // Issue #4665: the mutate:* hygiene-gate INVENTORY lists every prim name
+    // (it is the registration point's policy table). Skip that block so this
+    // helper still finds the REGISTRATION, not an inventory row.
+    const auto inv_begin = mut.find("kMutateHygieneInventory[] = {");
+    const std::size_t inv_end = inv_begin == std::string::npos ? 0 : mut.find("\n};", inv_begin);
+    const auto in_inventory = [&](std::size_t p) {
+        return inv_begin != std::string::npos && p >= inv_begin &&
+               (inv_end == std::string::npos || p < inv_end);
+    };
     auto pos = mut.find(std::string("add_mutate(\"") + prim + "\"");
-    if (pos != std::string::npos)
+    if (pos != std::string::npos && !in_inventory(pos))
         return pos;
     pos = mut.find(std::string("{\"") + prim + "\",");
-    if (pos != std::string::npos)
+    if (pos != std::string::npos && !in_inventory(pos))
         return pos;
     const std::string head = "add_mutate(";
     const std::string needle = std::string("\"") + prim + "\"";
@@ -8268,6 +8277,267 @@ static void ac4652_3_bad_template_fails_boundary() {
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 }
 
+// ── Issue #4665: registration-time mutate:* hygiene gate inventory ──────────
+//
+// The MacroIntroduced default-deny face lives INSIDE each mutate:* body, so a
+// NEW prim that forgets the helper used to compile, register, and pass its own
+// suite: the regression class (#3815 / #4406 / #4248 / #4435 / #3889) was
+// closed one point fix at a time because the REGISTRATION POINT could not tell
+// a gated prim from an ungated one.
+//
+// #4665 closes that hole at the registration point:
+//   * kMutateHygieneInventory (src/compiler/evaluator_primitives_mutate.cpp)
+//     is the single reviewable policy table;
+//   * add_mutate refuses a mutate:* prim with no row (the deny stub names the
+//     offending prim) and stamps the policy into PrimMeta.doc;
+//   * scripts/coverage/checks/check_mutate_hygiene_gate_4665.py cross-checks
+//     every row against its body and names the offending prim on failure.
+
+static std::string gate_script_4665() {
+    for (const auto& p :
+         {std::string("scripts/coverage/checks/check_mutate_hygiene_gate_4665.py"),
+          std::string("../scripts/coverage/checks/check_mutate_hygiene_gate_4665.py"),
+          std::string("../../scripts/coverage/checks/check_mutate_hygiene_gate_4665.py")}) {
+        std::ifstream in(p);
+        if (in)
+            return p;
+    }
+    return {};
+}
+
+static void ac4665_1_registration_gate_catches_ungated_prim() {
+    std::println("\n--- #4665 AC1: a throwaway ungated prim is caught and named ---");
+    const auto script = gate_script_4665();
+    CHECK(!script.empty(), "4665 AC1: gate script found");
+    if (script.empty())
+        return;
+
+    // The real registration source passes the gate.
+    const int ok_rc =
+        std::system(("python3 " + script + " > /tmp/aura_4665_gate_ok.log 2>&1").c_str());
+    CHECK(ok_rc == 0, "4665 AC1: the real mutate registration source passes the gate");
+
+    // A throwaway prim registered WITHOUT the hygiene helper fails the gate,
+    // and the failure message NAMES the offending prim.
+    {
+        std::ofstream bad("/tmp/aura_4665_probe_ungated.cpp");
+        bad << R"PROBE(// Issue #4665 probe: a throwaway mutate prim registered WITHOUT the
+// MacroIntroduced hygiene helper - the exact regression class.
+enum class MutateHygienePolicy : std::uint8_t { Required, Exempt };
+struct MutateHygieneRow { const char* name; MutateHygienePolicy policy; const char* reason; };
+inline constexpr MutateHygieneRow kMutateHygieneInventory[] = {
+    {"mutate:probe-gated", MutateHygienePolicy::Required, ""},
+    {"mutate:throwaway-4665", MutateHygienePolicy::Required, ""},
+};
+void probe_register() {
+    auto add_mutate = [&](std::string name, auto fn) {
+        const auto* row = lookup_mutate_hygiene_policy(name);
+        if (!row) {
+            // hygiene-gate-undeclared
+        }
+        // HYGIENE_POLICY_REQUIRED HYGIENE_POLICY_EXEMPT
+        mutate_hygiene_gate_allow(name);
+    };
+    add_mutate("mutate:probe-gated", [&](const auto& a) -> int {
+        if (auto err = reject_structural_macro_hygiene(a))
+            return err;
+        return 0;
+    });
+    add_mutate("mutate:throwaway-4665", [&](const auto& a) -> int {
+        return 0;
+    });
+}
+)PROBE";
+    }
+    const int bad_rc = std::system(
+        ("python3 " + script +
+         " --probe-file /tmp/aura_4665_probe_ungated.cpp > /tmp/aura_4665_gate_ungated.log 2>&1")
+            .c_str());
+    CHECK(bad_rc != 0, "4665 AC1: the gate fails on the throwaway prim");
+    const auto bad_log = read_file("/tmp/aura_4665_gate_ungated.log");
+    CHECK(bad_log.find("mutate:throwaway-4665") != std::string::npos,
+          "4665 AC1: the failure message names the offending prim");
+
+    // A throwaway prim with NO inventory row fails the gate and is named too -
+    // that is the registration-time half of the same contract.
+    {
+        std::ofstream bad("/tmp/aura_4665_probe_undeclared.cpp");
+        bad << R"PROBE(// Issue #4665 probe: a throwaway mutate prim with NO inventory row.
+enum class MutateHygienePolicy : std::uint8_t { Required, Exempt };
+struct MutateHygieneRow { const char* name; MutateHygienePolicy policy; const char* reason; };
+inline constexpr MutateHygieneRow kMutateHygieneInventory[] = {
+    {"mutate:probe-gated", MutateHygienePolicy::Required, ""},
+};
+void probe_register() {
+    auto add_mutate = [&](std::string name, auto fn) {
+        const auto* row = lookup_mutate_hygiene_policy(name);
+        if (!row) {
+            // hygiene-gate-undeclared
+        }
+        // HYGIENE_POLICY_REQUIRED HYGIENE_POLICY_EXEMPT
+        mutate_hygiene_gate_allow(name);
+    };
+    add_mutate("mutate:probe-gated", [&](const auto& a) -> int {
+        if (auto err = reject_structural_macro_hygiene(a))
+            return err;
+        return 0;
+    });
+    add_mutate("mutate:throwaway-4665", [&](const auto& a) -> int {
+        return 0;
+    });
+}
+)PROBE";
+    }
+    const int bad2_rc = std::system(("python3 " + script +
+                                     " --probe-file /tmp/aura_4665_probe_undeclared.cpp > "
+                                     "/tmp/aura_4665_gate_undeclared.log 2>&1")
+                                        .c_str());
+    CHECK(bad2_rc != 0, "4665 AC1: the gate fails on an undeclared prim");
+    const auto bad2_log = read_file("/tmp/aura_4665_gate_undeclared.log");
+    CHECK(bad2_log.find("mutate:throwaway-4665") != std::string::npos,
+          "4665 AC1: the undeclared prim is named");
+
+    // The gate's own self-test stays clean.
+    const int st_rc = std::system(
+        ("python3 " + script + " --self-test > /tmp/aura_4665_gate_selftest.log 2>&1").c_str());
+    CHECK(st_rc == 0, "4665 AC1: gate self-test clean");
+}
+
+static void ac4665_2_exempt_inventory_records_reason() {
+    std::println("\n--- #4665 AC2: exempt metadata prims pass via the inventory, reason kept ---");
+    CompilerService cs;
+    const auto& prims = cs.evaluator().primitives();
+
+    // The registration point records the policy, so a gated prim and an exempt
+    // prim are distinguishable from the registry - not only from the body.
+    const auto gated_slot = prims.slot_for_name("mutate:replace-type");
+    CHECK(gated_slot < prims.slot_count(), "4665 AC2: mutate:replace-type is registered");
+    if (gated_slot < prims.slot_count()) {
+        const auto& doc = prims.meta_for_slot(gated_slot).doc;
+        CHECK(doc.find("HYGIENE_POLICY_REQUIRED (#4665)") != std::string::npos,
+              "4665 AC2: a gated prim records the Required policy");
+    }
+    const auto exempt_slot = prims.slot_for_name("mutate:set-agent-fingerprint");
+    CHECK(exempt_slot < prims.slot_count(), "4665 AC2: mutate:set-agent-fingerprint is registered");
+    if (exempt_slot < prims.slot_count()) {
+        const auto& doc = prims.meta_for_slot(exempt_slot).doc;
+        CHECK(doc.find("HYGIENE_POLICY_EXEMPT (#4665)") != std::string::npos,
+              "4665 AC2: the exempt metadata prim records the Exempt policy");
+        CHECK(doc.find("metadata-only agent identity stamp") != std::string::npos,
+              "4665 AC2: the exempt metadata prim records its reason");
+    }
+
+    // Every other exempt inventory row records a reason too.
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    for (const auto& prim :
+         {std::string("mutate:check-stable-ref"), std::string("mutate:set-stale-ref-policy"),
+          std::string("mutate:set-pattern-index-policy"),
+          std::string("mutate:request-gc-safepoint"), std::string("mutate:save-hygiene-checkpoint"),
+          std::string("mutate:restore-hygiene-checkpoint"),
+          std::string("mutate:rollback-macro-introduced")}) {
+        const auto pos = mut.find("\"" + prim + "\", MutateHygienePolicy::Exempt");
+        CHECK(pos != std::string::npos, "4665 AC2: " + prim + " is an Exempt inventory row");
+        if (pos == std::string::npos)
+            continue;
+        const auto row = mut.substr(pos, 260);
+        const auto ex = row.find("Exempt,");
+        CHECK(ex != std::string::npos, "4665 AC2: " + prim + " row carries its policy");
+        if (ex == std::string::npos)
+            continue;
+        const auto tail = row.substr(ex + 7);
+        const auto q1 = tail.find('"');
+        const auto q2 = q1 == std::string::npos ? std::string::npos : tail.find('"', q1 + 1);
+        CHECK(q1 != std::string::npos && q2 != std::string::npos && q2 > q1 + 1,
+              "4665 AC2: " + prim + " records a reason");
+    }
+}
+
+static void ac4665_3_closed_point_fixes_stay_green() {
+    std::println("\n--- #4665 AC3: the closed point fixes stay green ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1))) (define g (lambda () (f 2)))\")")
+              .has_value(),
+          "4665 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4665 AC3: eval-current");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "4665 AC3: workspace");
+    if (!ws) {
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        return;
+    }
+    for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && ws->tag(id) == aura::ast::NodeTag::Define)
+            CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", id)).has_value(),
+                  "4665 AC3: stamp Define MacroIntroduced");
+    }
+    // #4406: set-body must still default-refuse a MacroIntroduced parent.
+    auto sb = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 2))\")");
+    CHECK(sb.has_value() && merr_kind_3027(cs, *sb) == "hygiene-protected",
+          "4665 AC3: set-body still default-refuses (hygiene-protected)");
+    // A structural prim from the closed set still default-refuses.
+    const auto parented = first_parented(ws);
+    if (parented != aura::ast::NULL_NODE) {
+        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", parented)).has_value(),
+              "4665 AC3: stamp parented");
+        auto rm = cs.eval(std::format("(mutate:remove-node {})", parented));
+        CHECK(rm.has_value() && merr_kind_3027(cs, *rm) == "hygiene-protected",
+              "4665 AC3: remove-node still default-refuses (hygiene-protected)");
+    }
+    // The exempt metadata prim still works (the inventory did not gate it).
+    auto fp = cs.eval("(mutate:set-agent-fingerprint 0)");
+    CHECK(fp.has_value() && !is_error(*fp), "4665 AC3: the exempt metadata prim still works");
+    // The closed point fixes' prims stay Required in the single inventory.
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    for (const auto& prim : {std::string("mutate:move-node"), std::string("mutate:set-body"),
+                             std::string("mutate:rebind"), std::string("mutate:atomic-batch"),
+                             std::string("mutate:from-verification-feedback")}) {
+        CHECK(mut.find("\"" + prim + "\", MutateHygienePolicy::Required") != std::string::npos,
+              "4665 AC3: " + prim + " stays Required in the inventory");
+    }
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac4665_4_inventory_is_one_file() {
+    std::println("\n--- #4665 AC4: the inventory is reviewable in ONE file ---");
+    std::string src_dir;
+    for (const auto& p : {std::string("src"), std::string("../src"), std::string("../../src")}) {
+        std::error_code ec;
+        if (std::filesystem::exists(p + "/compiler", ec)) {
+            src_dir = p;
+            break;
+        }
+    }
+    CHECK(!src_dir.empty(), "4665 AC4: src/ located");
+    if (src_dir.empty())
+        return;
+    std::vector<std::string> hits;
+    std::error_code ec;
+    for (std::filesystem::recursive_directory_iterator it(src_dir, ec), end; it != end;
+         it.increment(ec)) {
+        if (ec)
+            break;
+        if (!it->is_regular_file(ec))
+            continue;
+        const auto ext = it->path().extension().string();
+        if (ext != ".cpp" && ext != ".cc" && ext != ".cxx" && ext != ".h" && ext != ".hh" &&
+            ext != ".hpp" && ext != ".ixx")
+            continue;
+        std::ifstream in(it->path());
+        if (!in)
+            continue;
+        const std::string body((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        if (body.find("kMutateHygieneInventory") != std::string::npos)
+            hits.push_back(it->path().string());
+    }
+    CHECK(hits.size() == 1, "4665 AC4: the inventory lives in exactly ONE file");
+    if (hits.size() == 1)
+        CHECK(hits[0].find("evaluator_primitives_mutate.cpp") != std::string::npos,
+              "4665 AC4: the one inventory file is the mutate registration point");
+}
+
 int main() {
     std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858 + #2863 + #2864 + "
                  "#2961 + #3000 + #3027 + #3037 + #3076 + #3121) ===");
@@ -8543,6 +8813,11 @@ int main() {
     ac4652_1_rejected_parse_frees_orphans();
     ac4652_2_production_boundary_aborts();
     ac4652_3_bad_template_fails_boundary();
+    std::println("\n=== Issue #4665: registration-time mutate:* hygiene gate inventory ===");
+    ac4665_1_registration_gate_catches_ungated_prim();
+    ac4665_2_exempt_inventory_records_reason();
+    ac4665_3_closed_point_fixes_stay_green();
+    ac4665_4_inventory_is_one_file();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
