@@ -4044,6 +4044,28 @@ extern "C" int aura_jit_linear_move_drop_elision_ok(void) {
 extern "C" int aura_jit_ir_typed_entry_commit_readiness_ok(void) {
     return aura::compiler::typed_audit::ir_typed_entry_commit_readiness_ok() ? 1 : 0;
 }
+
+// Issue #4671: JIT-side per-op typed-entry readiness re-sample (dual of
+// the interpreter arm shipped in #4667).
+//
+// The #3224 typed-entry grant is ENTRY-ONLY: a JIT-compiled function
+// enters with a valid readiness grant, but a concurrent densify/steal
+// can flip commit_readiness while the same body still runs. The
+// interpreter re-samples the SAME readiness face per op (Borrow /
+// MutBorrow / CastOp / Apply); the JIT had no per-op consult, so a
+// compiled CastOp (any linearity) or a NON-linear Apply rode the
+// entry-era grant into the provenance path.
+//
+// One readiness model, no new counter: this calls the shared
+// typed_audit::linear_per_op_typed_entry_readiness_ok, which delegates
+// to the SAME ir_typed_entry_commit_readiness_ok face the entry gate
+// uses and bumps the existing g_linear_fast_path_elide_blocked_
+// production_total on a refusal - exactly what the interpreter does.
+// Soft / Off: zero-cost (the shared face short-circuits on the
+// production_defaults load).
+extern "C" int aura_jit_linear_per_op_typed_entry_readiness_ok(void) {
+    return aura::compiler::typed_audit::linear_per_op_typed_entry_readiness_ok() ? 1 : 0;
+}
 // Issue #3419: ABI identity lives in evaluator_fiber_mutation.cpp
 // (aura_abi_strong_ir_typed_entry_v) — same home as #3343 probe-linear
 // so light-link test batches that compile this wrapper via

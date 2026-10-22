@@ -1093,6 +1093,20 @@ int aura_jit_linear_move_drop_elision_ok(void);
 // typed_audit::ir_typed_entry_commit_readiness_ok. Returns 1 if OK, 0
 // if refuse (caller deopts). Soft/Off: 1 (predicate short-circuits).
 int aura_jit_ir_typed_entry_commit_readiness_ok(void);
+// Issue #4671: JIT-side per-op typed-entry readiness re-sample (dual of
+// the interpreter arm shipped in #4667). The #3224 typed-entry grant is
+// ENTRY-ONLY: a JIT-compiled function can ride the entry-era readiness
+// grant into a CastOp (any linearity) or a non-linear Apply after a
+// concurrent densify/steal flipped commit_readiness. The interpreter
+// re-samples the SAME readiness face per op; this wrapper gives the JIT
+// the same sample. Thin wrapper around
+// typed_audit::linear_per_op_typed_entry_readiness_ok - one readiness
+// model, no new counter: a refusal bumps the existing
+// g_linear_fast_path_elide_blocked_production_total inside the shared
+// helper (same as the interpreter and the Move/Drop face). Returns 1 if
+// OK, 0 if refuse (caller deopts to the interpreter). Soft/Off: 1 (the
+// shared face short-circuits).
+int aura_jit_linear_per_op_typed_entry_readiness_ok(void);
 // Host/test: set EnvFrame context for the is_env_frame_stale half of the
 // dual check (env_id + frame_version captured when the linear value was
 // created). Pass env_id == UINT32_MAX to clear / disable env half.
