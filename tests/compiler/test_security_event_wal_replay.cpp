@@ -156,6 +156,14 @@ std::uint64_t now_ms() noexcept {
                                           .count());
 }
 
+std::int64_t href_evol_int(CompilerService& cs, std::uint64_t mid, std::string_view key) {
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:evolution-audit-decision\" {}) \"{}\")", mid, key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
 std::string href_evol_reason(CompilerService& cs, std::uint64_t mid) {
     auto r = cs.eval(std::format(
         "(hash-ref (engine:metrics \"query:evolution-audit-decision\" {}) \"last-se-reason\")",
@@ -1386,6 +1394,126 @@ int run_test_security_event_wal_replay() {
         fs::remove_all(dir_4520c);
         ::unsetenv("AURA_WAL_MAX_SEGMENTS");
         reset_all();
+    }
+
+    // ── #4660: replay-window truncation marker (additive observability) ──
+    // Post-restart forensics must be able to tell "ring-miss = the replay
+    // window truncated" apart from "no such record". enable() records the
+    // cap-hit-with-older-records fact; the stats surfaces expose it as
+    // wal-replay-window-truncated (posture) / se-replay-window-truncated
+    // (audit-wal-stats) + schema-4660/issue-4660 companions. No existing
+    // key renamed; replay policy / ring size / retention unchanged.
+    {
+        namespace se_wal_ns = aura::core::security_event_wal;
+        std::println("\n--- #4660 AC1: >1024 records across segments → truncated=1 ---");
+        reset_all();
+        const auto dir_4660a = fresh_wal_dir("4660-trunc-segs");
+        CHECK(ev.enable_security_event_wal(dir_4660a.string()), "4660 AC1: enable SE WAL");
+        // ~256 records per segment → 5 segments for 1280 records; default
+        // retention (16 segments) keeps all of them, so the replay cap
+        // (1024) stops the scan with the oldest segment still unread.
+        g_security_event_wal().set_rotate_bytes(sizeof(se_wal_ns::SecurityEventWalRecord) * 256);
+        const auto ts_4660 = now_ms();
+        for (std::uint64_t i = 0; i < kSecurityEventRingSize + 256; ++i) {
+            CHECK(se_wal_ns::persist_security_event(
+                      SecurityEventKind::EffectDeny, 7, 4660000 + i, 21, kEffectMutate, "test:4660",
+                      "ac1-trunc-deny", /*denied=*/true, /*fiber=*/i + 1, ts_4660),
+                  std::format("4660 AC1: persist #{}", i));
+        }
+        CHECK(count_wal_prefix(dir_4660a, "security-event-") >= 5,
+              "4660 AC1: records span multiple segments");
+        ev.disable_security_event_wal();
+        reset_security_event_ring_for_test();
+        CHECK(ev.enable_security_event_wal(dir_4660a.string()), "4660 AC1: re-enable (replay)");
+        auto& ring_4660 = g_security_event_ring();
+        const auto seq_4660 = ring_4660.seq.load(std::memory_order_relaxed);
+        CHECK(seq_4660 == kSecurityEventRingSize, "4660 AC1: replay capped at ring size");
+        CHECK(snapshot_security_event_wal_stats().replay_truncated == 1,
+              "4660 AC1: snapshot replay_truncated=1 (segments unread)");
+        CHECK(href_posture(cs, "wal-replay-window-truncated") == 1,
+              "4660 AC1: wal-replay-window-truncated=1 via query:security-posture");
+        CHECK(href_posture(cs, "schema-4660") == 4660 && href_posture(cs, "issue-4660") == 4660,
+              "4660 AC1: schema/issue companions on posture");
+        CHECK(href_wal_stats(cs, "se-replay-window-truncated") == 1,
+              "4660 AC1: se-replay-window-truncated=1 via query:audit-wal-stats");
+        CHECK(href_wal_stats(cs, "schema-4660") == 4660 && href_wal_stats(cs, "issue-4660") == 4660,
+              "4660 AC1: schema/issue companions on audit-wal-stats");
+        // The oldest written mid is outside the replayed window (ring-miss),
+        // and with the WAL enabled the decision fold suggests the durable
+        // path (forensic-source=3) instead of a silent miss.
+        bool oldest_in_ring_4660 = false;
+        for (std::uint64_t s2 = 0; s2 < seq_4660; ++s2) {
+            if (ring_4660.ring[s2 % kSecurityEventRingSize].mutation_id == 4660000)
+                oldest_in_ring_4660 = true;
+        }
+        CHECK(!oldest_in_ring_4660, "4660 AC1: oldest mid fell out of the replay window");
+        CHECK(href_evol_int(cs, 4660000, "se-mid-miss") == 1,
+              "4660 AC1: old mid reports se-mid-miss=1");
+        CHECK(href_evol_int(cs, 4660000, "forensic-source") == 3,
+              "4660 AC1: durable path suggested (forensic-source=3)");
+        ev.disable_security_event_wal();
+        g_security_event_wal().set_rotate_bytes(se_wal_ns::kDefaultRotateBytes);
+        fs::remove_all(dir_4660a);
+        reset_all();
+
+        std::println("\n--- #4660 AC2: <1024 records → truncated=0 ---");
+        const auto dir_4660b = fresh_wal_dir("4660-full");
+        CHECK(ev.enable_security_event_wal(dir_4660b.string()), "4660 AC2: enable SE WAL");
+        for (std::uint64_t i = 0; i < 5; ++i) {
+            CHECK(se_wal_ns::persist_security_event(SecurityEventKind::EffectDeny, 7, 4669000 + i,
+                                                    21, kEffectMutate, "test:4660", "ac2-full-deny",
+                                                    /*denied=*/true, /*fiber=*/i + 1, ts_4660),
+                  std::format("4660 AC2: persist #{}", i));
+        }
+        ev.disable_security_event_wal();
+        reset_security_event_ring_for_test();
+        CHECK(ev.enable_security_event_wal(dir_4660b.string()), "4660 AC2: re-enable (replay)");
+        CHECK(g_security_event_ring().seq.load(std::memory_order_relaxed) == 5,
+              "4660 AC2: all 5 records replayed");
+        CHECK(snapshot_security_event_wal_stats().replay_truncated == 0,
+              "4660 AC2: snapshot replay_truncated=0 under the cap");
+        CHECK(href_posture(cs, "wal-replay-window-truncated") == 0,
+              "4660 AC2: wal-replay-window-truncated=0");
+        CHECK(href_wal_stats(cs, "se-replay-window-truncated") == 0,
+              "4660 AC2: se-replay-window-truncated=0");
+        ev.disable_security_event_wal();
+        fs::remove_all(dir_4660b);
+        reset_all();
+
+        std::println("\n--- #4660 AC3: single-segment cap drop → truncated=1 ---");
+        // Default rotate (1 MiB) keeps every record in one segment; the cap
+        // resize drops the oldest tail inside that segment — the window
+        // still did not reach the oldest record on disk.
+        const auto dir_4660c = fresh_wal_dir("4660-trunc-seg0");
+        CHECK(ev.enable_security_event_wal(dir_4660c.string()), "4660 AC3: enable SE WAL");
+        for (std::uint64_t i = 0; i < kSecurityEventRingSize + 8; ++i) {
+            (void)se_wal_ns::persist_security_event(SecurityEventKind::EffectDeny, 7, 4670000 + i,
+                                                    21, kEffectMutate, "test:4660",
+                                                    "ac3-resize-deny", /*denied=*/true,
+                                                    /*fiber=*/i + 1, ts_4660);
+        }
+        CHECK(count_wal_prefix(dir_4660c, "security-event-") == 1,
+              "4660 AC3: records stayed in one segment");
+        ev.disable_security_event_wal();
+        reset_security_event_ring_for_test();
+        CHECK(ev.enable_security_event_wal(dir_4660c.string()), "4660 AC3: re-enable (replay)");
+        CHECK(g_security_event_ring().seq.load(std::memory_order_relaxed) == kSecurityEventRingSize,
+              "4660 AC3: replay capped at ring size");
+        CHECK(snapshot_security_event_wal_stats().replay_truncated == 1,
+              "4660 AC3: snapshot replay_truncated=1 (records dropped by resize)");
+        ev.disable_security_event_wal();
+        fs::remove_all(dir_4660c);
+        reset_all();
+
+        std::println("\n--- #4660 AC4: Soft / WAL-off → marker 0, no rename ---");
+        CHECK(snapshot_security_event_wal_stats().replay_truncated == 0,
+              "4660 AC4: WAL-off replay_truncated stays 0");
+        CHECK(href_posture(cs, "wal-replay-window-truncated") == 0,
+              "4660 AC4: wal-replay-window-truncated=0 with WAL off");
+        CHECK(href_posture(cs, "wal-replay-count") >= 0,
+              "4660 AC4: wal-replay-count key unchanged (no rename)");
+        CHECK(href_wal_stats(cs, "replay-count") >= 0,
+              "4660 AC4: replay-count key unchanged (no rename)");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

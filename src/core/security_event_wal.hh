@@ -236,6 +236,13 @@ struct SecurityEventWalMetrics {
     // Issue #3338: segments unlinked under AURA_WAL_MAX_SEGMENTS.
     // Appended at struct END (#2906). Soft / unset retention never bump.
     std::atomic<std::uint64_t> security_event_wal_segment_prune_total{0};
+    // Issue #4660: 1 when the last enable() replay stopped at max_replay
+    // while older records were still on disk (unread segments or records
+    // dropped from the last-read segment); 0 on a full replay. Post-restart
+    // forensics reads this to tell "ring-miss = window truncated, use the
+    // durable WAL path" apart from "no such record". Appended at struct END
+    // (#2906). Stored by enable(); Soft / WAL-off never sets it.
+    std::atomic<std::uint64_t> security_event_wal_replay_truncated{0};
 };
 
 inline SecurityEventWalMetrics& g_security_event_wal_metrics() noexcept {
@@ -426,12 +433,29 @@ struct SecurityEventWal {
             // legacy default dir with 6655 segments (~6.5 GB) spun
             // restricted startup on `(display "hi")` past timeout 15.
             std::vector<SecurityEventWalRecord> newest_first;
-            for (std::uint32_t s = max_seg + 1; any && newest_first.size() < max_replay && s > 0;
-                 --s) {
+            // Issue #4660: the loop index is hoisted so the post-loop value
+            // marks the first UNREAD segment: after the scan stops, indices
+            // s-1 .. 0 were never read (s==0 means every segment was read).
+            std::uint32_t s = max_seg + 1;
+            for (; any && newest_first.size() < max_replay && s > 0; --s) {
                 const auto path =
                     (fs::path(dir) / ("security-event-" + std::to_string(s - 1) + ".wal")).string();
                 auto part = read_segment_file(path);
                 newest_first.insert(newest_first.end(), part.rbegin(), part.rend());
+            }
+            // Issue #4660: replay-window truncation marker. The window did
+            // not reach the oldest record on disk when the cap dropped
+            // records from the last-read segment, or when the scan hit
+            // max_replay with an existing segment still unread (seg_indices
+            // is the exact dirent list, so retention holes do not count).
+            bool replay_truncated = newest_first.size() > max_replay;
+            if (!replay_truncated && newest_first.size() >= max_replay) {
+                for (const auto n : seg_indices) {
+                    if (n < s) {
+                        replay_truncated = true;
+                        break;
+                    }
+                }
             }
             if (newest_first.size() > max_replay)
                 newest_first.resize(max_replay);
@@ -439,6 +463,8 @@ struct SecurityEventWal {
             *out_replay = std::move(newest_first);
             g_security_event_wal_metrics().security_event_wal_replay_count.fetch_add(
                 1, std::memory_order_relaxed);
+            g_security_event_wal_metrics().security_event_wal_replay_truncated.store(
+                replay_truncated ? 1 : 0, std::memory_order_relaxed);
             if (!out_replay->empty())
                 g_security_event_wal_metrics().security_event_crash_recovery_success.fetch_add(
                     1, std::memory_order_relaxed);
@@ -672,6 +698,7 @@ struct SecurityEventWal {
         m.security_event_wal_enabled.store(0, std::memory_order_relaxed);
         m.security_event_wal_segments.store(0, std::memory_order_relaxed);
         m.security_event_wal_segment_prune_total.store(0, std::memory_order_relaxed);
+        m.security_event_wal_replay_truncated.store(0, std::memory_order_relaxed);
         ::aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
         last_seq_persisted = 0;
         segment_index = 0;
@@ -983,6 +1010,8 @@ struct SecurityEventWalStatsSnapshot {
     int issue = kSecurityEventWalIssue;
     // Issue #3338: prune count (struct end).
     std::uint64_t segment_prune_total = 0;
+    // Issue #4660: replay-window truncation marker (struct end, #2906).
+    std::uint64_t replay_truncated = 0;
 };
 
 
@@ -1002,6 +1031,7 @@ struct SecurityEventWalStatsSnapshot {
         kSecurityEventWalPhase,
         kSecurityEventWalIssue,
         m.security_event_wal_segment_prune_total.load(std::memory_order_relaxed),
+        m.security_event_wal_replay_truncated.load(std::memory_order_relaxed),
     };
 }
 

@@ -4908,6 +4908,14 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("wal-append-fail-slo-wired", 1);
                 insert_kv("schema-3056", kWalAppendFailSloIssue);
                 insert_kv("issue-3056", kWalAppendFailSloIssue);
+                // Issue #4660: additive SE WAL replay-window truncation
+                // marker (0/1, struct end). The "se-" prefix distinguishes
+                // it from this surface's mutation-WAL replay-count; no
+                // existing key renamed. Soft / WAL-off reads 0.
+                insert_kv("se-replay-window-truncated",
+                          static_cast<std::int64_t>(se.replay_truncated));
+                insert_kv("schema-4660", 4660);
+                insert_kv("issue-4660", 4660);
                 // Issue #3109: production WAL append fail-closed option. Additive
                 // query keys (don't change existing key semantics). Soft/Off /
                 // no-env: wal-fail-closed-active=0, wal-overflow-ring-depth=0.
@@ -6025,6 +6033,13 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     "mutation-wal-paired",
                     static_cast<std::int64_t>(
                         (wal_snap.enabled != 0 && g_mutation_audit_wal().is_enabled()) ? 1 : 0));
+                // Issue #4660: additive replay-window truncation marker on
+                // the SE WAL key family (wal-replay-count and every other
+                // existing key keep their meaning). 0/1; Soft / WAL-off 0.
+                insert_kv("wal-replay-window-truncated",
+                          static_cast<std::int64_t>(wal_snap.replay_truncated));
+                insert_kv("schema-4660", 4660);
+                insert_kv("issue-4660", 4660);
                 const char* sb = std::getenv("AURA_SANDBOX");
                 const bool sandbox_off = sb && sb[0] && (sb[0] == 'o' || sb[0] == 'O') &&
                                          (sb[1] == 'f' || sb[1] == 'F' || sb[1] == '\0');
