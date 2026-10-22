@@ -1,0 +1,80 @@
+{
+  "issue": 4665,
+  "title": "mutate:* hygiene gate is enforced at the registration point (one reviewable inventory)",
+  "checks": [
+    {
+      "ac": "AC1-src-registration-time-gate",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "Issue #4665",
+        "kMutateHygieneInventory",
+        "lookup_mutate_hygiene_policy",
+        "hygiene-gate-undeclared",
+        "HYGIENE_POLICY_REQUIRED (#4665)",
+        "HYGIENE_POLICY_EXEMPT (#4665)",
+        "MutateHygienePolicy::Required",
+        "MutateHygienePolicy::Exempt",
+        "mutate:replace-type",
+        "mutate:atomic-batch",
+        "mutate:from-verification-feedback"
+      ]
+    },
+    {
+      "ac": "AC2-src-exempt-inventory-reason",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "mutate:set-agent-fingerprint",
+        "mutate:check-stable-ref",
+        "mutate:set-stale-ref-policy",
+        "mutate:set-pattern-index-policy",
+        "mutate:request-gc-safepoint",
+        "mutate:save-hygiene-checkpoint",
+        "mutate:restore-hygiene-checkpoint",
+        "mutate:rollback-macro-introduced",
+        "metadata-only agent identity stamp; no AST write (#2986/#4037)",
+        "read-only stable-ref probe; no AST write (#2986)"
+      ]
+    },
+    {
+      "ac": "AC1-ac-gate-script",
+      "path": "scripts/coverage/checks/check_mutate_hygiene_gate_4665.py",
+      "contains": [
+        "Issue #4665",
+        "ROW_RE",
+        "ADD_MUTATE_RE",
+        "RAW_ADD_RE",
+        "re.search",
+        "re.compile",
+        "--probe-file",
+        "--self-test",
+        "kMutateHygieneInventory",
+        "names the offending prim"
+      ]
+    },
+    {
+      "ac": "AC3-test-runtime",
+      "path": "tests/compiler/test_hygiene_mutate_closed_loop.cpp",
+      "contains": [
+        "Issue #4665",
+        "ac4665_1_registration_gate_catches_ungated_prim",
+        "ac4665_2_exempt_inventory_records_reason",
+        "ac4665_3_closed_point_fixes_stay_green",
+        "ac4665_4_inventory_is_one_file",
+        "4665 AC1: the failure message names the offending prim",
+        "4665 AC1: the undeclared prim is named",
+        "4665 AC2: the exempt metadata prim records its reason",
+        "4665 AC3: set-body still default-refuses (hygiene-protected)",
+        "4665 AC3: the exempt metadata prim still works",
+        "4665 AC4: the inventory lives in exactly ONE file"
+      ]
+    },
+    {
+      "ac": "AC4-no-issue-dir",
+      "forbid": [
+        "tests/issues/test_issue_4665.cpp",
+        "tests/compiler/test_issue_4665.cpp",
+        "docs/design/4665-mutate-hygiene-gate.md"
+      ]
+    }
+  ]
+}
