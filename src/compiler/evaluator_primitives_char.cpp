@@ -160,6 +160,9 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         for (auto it = cps.rbegin(); it != cps.rend(); ++it) {
             auto pid = ev.pairs_.size();
             ev.pairs_.push_back({make_int(*it), result});
+            // Issue #4656: every pair mint on the production face carries an
+            // owner stamp, so a foreign tenant cannot read this fresh list.
+            ev.note_inrange_pair_mint(pid);
             result = make_pair(pid);
         }
         return result;
