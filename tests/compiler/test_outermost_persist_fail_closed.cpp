@@ -1202,10 +1202,16 @@ static void ac4672_capture_precedes_the_exit_call() {
     CHECK(capture != std::string::npos && drain != std::string::npos && capture < drain,
           "4672 AC2: the capture runs BEFORE the drain (the drain clears the vector)");
     // The capture is gated on !success -- the success path still discards.
+    // POSITIONAL, not a substring hunt: find the gate that guards the
+    // capture and require it to sit BEFORE the capture statement. A window
+    // that merely CONTAINS "if (!success)" says nothing about which side
+    // of the capture the gate is on.
     if (capture != std::string::npos) {
-        const auto cap_head = emb.substr(capture > 300 ? capture - 300 : 0, 300);
-        CHECK(cap_head.find("if (!success)") != std::string::npos,
-              "4672 AC2: the capture is gated on !success");
+        const auto gate = emb.rfind("if (!success)", capture);
+        const bool gate_guards_capture =
+            gate != std::string::npos && gate < capture && (capture - gate) <= 300;
+        CHECK(gate_guards_capture,
+              "4672 AC2: the capture is gated on !success (the gate precedes the capture)");
     }
     // The #3102 abort rewind consumes the capture and keeps its own ACs.
     const auto rewind = emb.find("// Issue #3102: AC1+AC2+AC3+AC4 — CoercionMap abort rewind.");
@@ -1338,6 +1344,7 @@ static void ac4672_reject_path_does_not_double_take() {
     reset_for_test();
     apply_production_audit_defaults();
     aura::compiler::clear_coercion_map_abort_rewind_for_test();
+    CHECK(production_hard_face_active(), "4672 AC5: the production hard face is active");
 
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define p (+ 1 2))\")").has_value(), "4672 AC5: set-code");
