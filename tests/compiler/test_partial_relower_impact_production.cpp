@@ -261,7 +261,18 @@ static void ac4422_unknown_impact_skips_per_fn_commit() {
     }
     CHECK(svc.find("commit_per_fn_partial && allow_partial_peel") != std::string::npos,
           "4422: per-fn arm is gated after impact refused");
-    CHECK(svc.find("commit_per_fn_partial=*/!impact_refused_partial") != std::string::npos,
+    // Issue #4653 made the full arm's argument refusal-aware: the sweep now
+    // passes commit_per_fn_partial_4653, defined as
+    // !production_face_4653 && !impact_refused_partial. The #4422 contract
+    // (no per-fn commit after the impact helper refuses) holds inside the
+    // gate, so assert the gate and its #4422 term instead of the pre-#4653
+    // literal argument.
+    CHECK(svc.find("commit_per_fn_partial=*/commit_per_fn_partial_4653") != std::string::npos,
+          "4422: sweep else passes the refusal-aware gate");
+    const auto gate_def = svc.find("const bool commit_per_fn_partial_4653");
+    CHECK(gate_def != std::string::npos &&
+              svc.find("!impact_refused_partial", gate_def) != std::string::npos &&
+              svc.find("!impact_refused_partial", gate_def) < gate_def + 256,
           "4422: sweep else does not commit per-fn after the helper refuses");
     CHECK(svc.find("query:4422") == std::string::npos, "4422: no new query key");
     CHECK(read_file("tests/compiler/test_issue_4422.cpp").empty(), "4422: no test_issue");
