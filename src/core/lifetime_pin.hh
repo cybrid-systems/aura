@@ -194,6 +194,12 @@ struct LifetimePinStats {
     // against the expected coverage gate.
     std::uint64_t general_object_pin_auto_wire_total = 0; // #2709 default-on wire calls
     std::uint64_t general_object_pin_exempt_total = 0;    // #2709 EXEMPT site hits (reason-tagged)
+    // Issue #4663: interior-address pin remaps. remap_pins_pointing_to
+    // range-matches [old_ptr, old_ptr + old_size) when the arena passes the
+    // moved object's size; each interior rebase bumps this so dashboards
+    // can flag interior pins (the pin contract expects base-address pins;
+    // a nonzero count signals interior pinning in production).
+    std::uint64_t interior_remaps = 0; // #4663 range-remap interior rebase
 };
 
 inline LifetimePinStats g_lifetime_pin_stats{};
@@ -785,12 +791,23 @@ invalidate_pins_not_in_new_addrs(std::uint64_t arena_id,
 // densify wire-up). O(pin_count); only called on Moving densify success
 // path (AC3 zero-cost guarantee holds for Soft/Force / no-compact).
 // Returns (remapped_count, miss_count) where miss_count is 0 or 1.
+//
+// Issue #4663: old_size (default 0) arms the range face. A pin whose ptr
+// is strictly inside [old_ptr, old_ptr + old_size) is an INTERIOR pin on
+// the moved object; pre-#4663 the exact-base match skipped it and the
+// #4020 miss arm did not count it (nonmatch), so it survived Moving
+// pointing at the recycled block (UAF on deref). With old_size > 0 the
+// walk rebases it by its offset (ptr - old_ptr) onto the new block and
+// bumps interior_remaps. Base-address pins keep the exact-match remap
+// (zero-cost, byte-identical behavior); old_size == 0 keeps the legacy
+// exact-match-only walk for every existing caller.
 struct RemapResult {
     std::size_t remapped = 0;
     std::size_t misses = 0;
 };
 inline RemapResult remap_pins_pointing_to(void* old_ptr, void* new_ptr, std::uint64_t new_gen = 0,
-                                          std::uint64_t arena_id_filter = 0) noexcept {
+                                          std::uint64_t arena_id_filter = 0,
+                                          std::size_t old_size = 0) noexcept {
     RemapResult out{};
     if (!old_ptr || !new_ptr)
         return out;
@@ -806,8 +823,22 @@ inline RemapResult remap_pins_pointing_to(void* old_ptr, void* new_ptr, std::uin
                 continue;
             if (arena_id_filter != 0 && p->arena_id() != arena_id_filter)
                 continue;
-            if (p->ptr() != old_ptr)
-                continue; // nonmatch pin — not an orphan miss (#4020)
+            if (p->ptr() != old_ptr) {
+                // Issue #4663: range face — rebase an interior pin by its
+                // offset when the caller armed the walk with the moved
+                // object's size. One-past-end and outside addresses stay
+                // nonmatch pins (#4020: not orphan misses).
+                if (old_size == 0)
+                    continue; // nonmatch pin — not an orphan miss (#4020)
+                const auto pin_addr = reinterpret_cast<std::uintptr_t>(p->ptr());
+                const auto base_addr = reinterpret_cast<std::uintptr_t>(old_ptr);
+                if (pin_addr <= base_addr || pin_addr >= base_addr + old_size)
+                    continue; // outside the moved range — nonmatch (#4020)
+                p->remap(reinterpret_cast<char*>(new_ptr) + (pin_addr - base_addr), new_gen);
+                ++out.remapped;
+                ++g_lifetime_pin_stats.interior_remaps; // #4663 observability
+                continue;
+            }
             p->remap(new_ptr, new_gen);
             ++out.remapped;
         }
@@ -827,6 +858,11 @@ inline std::uint64_t lifetime_pin_remap_total() noexcept {
 }
 inline std::uint64_t lifetime_pin_remap_miss_total() noexcept {
     return g_lifetime_pin_stats.remap_misses;
+}
+// Issue #4663: # interior-address pins rebased by the range-remap walk
+// (old_size > 0 arms the range face; base-address remaps do not count).
+inline std::uint64_t lifetime_pin_interior_remap_total() noexcept {
+    return g_lifetime_pin_stats.interior_remaps;
 }
 
 // Issue #2266: # Moving compact runs where verify_pins_under_moving_compact

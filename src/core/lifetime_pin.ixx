@@ -91,6 +91,7 @@ using ::aura::core::lifetime::PinRegistryShard;
 using ::aura::core::lifetime::invalidate_all_pins_for_arena;
 using ::aura::core::lifetime::invalidate_pins_not_in_new_addrs;
 using ::aura::core::lifetime::lifetime_pin_contract_fail_total;
+using ::aura::core::lifetime::lifetime_pin_interior_remap_total;
 using ::aura::core::lifetime::lifetime_pin_remap_miss_total;
 using ::aura::core::lifetime::lifetime_pin_remap_total;
 using ::aura::core::lifetime::remap_pins_pointing_to;
