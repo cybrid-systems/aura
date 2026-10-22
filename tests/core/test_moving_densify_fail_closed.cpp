@@ -508,6 +508,29 @@ struct MovingFlagGuard {
     }
 };
 
+// Issue #4662: a hookless arena that moved objects must not publish a
+// green Moving window. The Evaluator binds the real rewriter
+// (evaluator.ixx set_default_live_container_rewrite_hook) and clears it
+// in ~Evaluator; a raw / non-Evaluator host arena runs hookless, so the
+// no-hook edge fail-closes on move instead of claiming rewrite success.
+static bool trivial_live_container_rewrite_4662(void*, void*) noexcept {
+    return true;
+}
+
+// Raw-arena stand-in for the Evaluator binding: a hook that reports the
+// live-container rewrite done. Green-window ACs bind this to exercise
+// the hook-installed face production runs under.
+struct LiveRewriteHookGuard4662 {
+    ASTArena& arena;
+    explicit LiveRewriteHookGuard4662(ASTArena& a) noexcept
+        : arena(a) {
+        arena.set_live_container_rewrite_hook(&trivial_live_container_rewrite_4662, nullptr);
+    }
+    ~LiveRewriteHookGuard4662() { arena.set_live_container_rewrite_hook(nullptr, nullptr); }
+    LiveRewriteHookGuard4662(const LiveRewriteHookGuard4662&) = delete;
+    LiveRewriteHookGuard4662& operator=(const LiveRewriteHookGuard4662&) = delete;
+};
+
 // AC1: registered void** slot remapped after Moving densify.
 static void ac2837_1_slot_remapped() {
     std::println("\n--- #2837 AC1: external-root slot remapped after densify ---");
@@ -1286,6 +1309,8 @@ static void ac2971_3_slot_covered_allows_densify() {
     const auto block0 =
         aura::core::lifetime::general_object_pin_pre_move_unpinned_block_total_v_read();
     ASTArena arena(64 * 1024);
+    // Issue #4662: hook-installed (Evaluator) face — covered window stays green.
+    LiveRewriteHookGuard4662 hook(arena);
     void* s0 = nullptr;
     void* s1 = nullptr;
     void* s2 = nullptr;
@@ -1463,6 +1488,8 @@ static void ac2973_3_slot_covered_passes() {
     aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
     const auto rej0 = aura::core::densify_consistency::moving_pre_densify_reject_total_v_read();
     ASTArena arena(64 * 1024);
+    // Issue #4662: hook-installed (Evaluator) face — covered window stays green.
+    LiveRewriteHookGuard4662 hook(arena);
     auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
     auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
     auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
@@ -1620,6 +1647,8 @@ static void ac3017_3_mutate_densify_soak() {
     const auto not_cover0 =
         aura::core::densify_consistency::moving_value_only_not_cover_total_v_read();
     ASTArena arena(64 * 1024);
+    // Issue #4662: hook-installed (Evaluator) face — covered window stays green.
+    LiveRewriteHookGuard4662 hook(arena);
     auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
     auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
     auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
@@ -1658,6 +1687,8 @@ static void ac3017_4_sticky_recover_after_inject() {
     aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
     aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
     ASTArena arena(64 * 1024);
+    // Issue #4662: hook-installed (Evaluator) face for the recovery window.
+    LiveRewriteHookGuard4662 hook(arena);
     auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
     auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
     auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
@@ -1815,6 +1846,8 @@ static void ac3053_4_mutate_densify_allocate_soak() {
     aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
     aura::core::lifetime::clear_general_object_pin_required_breach();
     ASTArena arena(64 * 1024);
+    // Issue #4662: hook-installed (Evaluator) face — covered window stays green.
+    LiveRewriteHookGuard4662 hook(arena);
     void* s0 = nullptr;
     void* s1 = nullptr;
     auto* p0 = arena.create_with_cover<Pod16>(&s0, nullptr, 1, 2, 3, 4);
@@ -1908,6 +1941,8 @@ static void ac3214_2_nonsmall_slot_cover_allows() {
     aura::core::lifetime::clear_general_object_pin_required_breach();
     aura::core::lifetime::reset_general_object_pin_pre_move_block_for_test();
     ASTArena arena(64 * 1024);
+    // Issue #4662: hook-installed (Evaluator) face — covered window stays green.
+    LiveRewriteHookGuard4662 hook(arena);
     void* extra = nullptr;
     extra = arena.try_allocate(kAc3214NonsmallBytes, &extra, nullptr);
     CHECK(extra, "AC2: covered non-small allocate");
@@ -1997,6 +2032,8 @@ static void ac3326_2_create_with_cover_no_uncovered_sticky() {
     const auto uncovered0 = aura::ast::g_intermediate_create_uncovered_under_required_total.load(
         std::memory_order_relaxed);
     ASTArena arena(64 * 1024);
+    // Issue #4662: hook-installed (Evaluator) face — covered window stays green.
+    LiveRewriteHookGuard4662 hook(arena);
     void* slot = nullptr;
     auto* p0 = arena.create_with_cover<Pod16>(&slot, nullptr, 1, 2, 3, 4);
     CHECK(p0 != nullptr, "3326 AC2: create_with_cover succeeded");
@@ -2269,6 +2306,8 @@ static void ac3055_1_slot_covered_no_canary_holds() {
     aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
     aura::core::densify_consistency::reset_moving_post_moving_stale_for_test();
     ASTArena arena(64 * 1024);
+    // Issue #4662: hook-installed (Evaluator) face — covered window stays green.
+    LiveRewriteHookGuard4662 hook(arena);
     auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
     auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
     void* s0 = p0;
@@ -2387,6 +2426,8 @@ static void ac3057_1_ffi_alias_slot_remaps() {
     RequiredPinGuard off(0);
     aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
     ASTArena arena(64 * 1024);
+    // Issue #4662: hook-installed (Evaluator) face — covered window stays green.
+    LiveRewriteHookGuard4662 hook(arena);
     auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
     auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
     void* s0 = p0;
@@ -2719,6 +2760,8 @@ static void ac3210_2_healthy_window_stale_zero() {
     aura::core::densify_consistency::reset_moving_post_moving_stale_for_test();
     aura::ast::reset_temporary_moving_live_ptrs_for_test();
     ASTArena arena(64 * 1024);
+    // Issue #4662: hook-installed (Evaluator) face — covered window stays green.
+    LiveRewriteHookGuard4662 hook(arena);
     auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
     auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
     void* s0 = p0;
@@ -2755,6 +2798,8 @@ static void ac3210_3_elevate_temp_to_slot() {
     arena.register_external_root_slot_for_densify(&s1);
     void* temp = p0; // stable stack void** — elevate to slot, not canary
     arena.register_external_root_slot_for_densify(&temp);
+    // Issue #4662: hook-installed (Evaluator) face — covered window stays green.
+    LiveRewriteHookGuard4662 hook(arena);
     const auto r = arena.live_compact(LiveCompactMode::Moving);
     CHECK(r.post_moving_stale_count == 0, "AC2: slotted temp is not a stale canary");
     if (r.objects_moved > 0) {
@@ -3278,6 +3323,8 @@ static void ac3443_2_opaque_heap_slot_still_green() {
     aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
     aura::core::densify_consistency::reset_moving_post_moving_stale_for_test();
     ASTArena arena(64 * 1024);
+    // Issue #4662: hook-installed (Evaluator) face — covered window stays green.
+    LiveRewriteHookGuard4662 hook(arena);
     void* s0 = nullptr;
     void* s1 = nullptr;
     auto* p0 = arena.create_with_cover<Pod16>(&s0, nullptr, 1, 2, 3, 4);
@@ -3385,6 +3432,8 @@ static void ac3473_1_helper_registers_non_opaque_heap_slot() {
     reset_ffi_opaque_alias_slot_cover_for_test();
     aura::ast::reset_temporary_moving_live_ptrs_for_test();
     ASTArena arena(64 * 1024);
+    // Issue #4662: hook-installed (Evaluator) face — covered window stays green.
+    LiveRewriteHookGuard4662 hook(arena);
     void* s0 = nullptr;
     void* s1 = nullptr;
     auto* p0 = arena.create_with_cover<Pod16>(&s0, nullptr, 1, 2, 3, 4);
@@ -3536,6 +3585,8 @@ static void ac3435_3_success_remap_only_moved() {
     aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
     aura::ast::reset_relocate_alloc_fail_inject_for_test();
     ASTArena arena(64 * 1024);
+    // Issue #4662: hook-installed (Evaluator) face — covered window stays green.
+    LiveRewriteHookGuard4662 hook(arena);
     auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
     auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
     auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
@@ -3689,6 +3740,8 @@ static void ac3600_1_mixed_size_green_window() {
     aura::ast::reset_relocate_alloc_fail_inject_for_test();
     {
         ASTArena arena(64 * 1024);
+        // Issue #4662: hook-installed (Evaluator) face — covered window stays green.
+        LiveRewriteHookGuard4662 hook(arena);
         auto* s0 = arena.create<Pod16>(1, 2, 3, 4);
         auto* s1 = arena.create<Pod16>(5, 6, 7, 8);
         auto* l0 = arena.create<PodLarge3600>(7);
@@ -3752,6 +3805,8 @@ static void ac3600_3_soft_mixed_no_sticky() {
     aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
     aura::ast::reset_relocate_alloc_fail_inject_for_test();
     ASTArena arena(64 * 1024);
+    // Issue #4662: hook-installed (Evaluator) face — covered window stays green.
+    LiveRewriteHookGuard4662 hook(arena);
     // Two smalls so freelist LIFO swaps their slots (a single pending
     // reallocates its own slot -> objects_moved == 0).
     auto* s0 = arena.create<Pod16>(1, 2, 3, 4);
@@ -3830,6 +3885,8 @@ static void ac3533_3_chaos_create_densify() {
     MovingFlagGuard mv(1);
     aura::core::lifetime::clear_general_object_pin_required_breach();
     ASTArena arena;
+    // Issue #4662: hook-installed (Evaluator) face — covered window stays green.
+    LiveRewriteHookGuard4662 hook(arena);
     std::vector<void*> opaque_heap;
     opaque_heap.reserve(1000);
     bool covered = true;
@@ -4192,6 +4249,8 @@ static void ac3633_3_covered_window_stays_green() {
     aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
     aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
     ASTArena arena(64 * 1024);
+    // Issue #4662: hook-installed (Evaluator) face — covered window stays green.
+    LiveRewriteHookGuard4662 hook(arena);
     auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
     auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
     auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
@@ -5382,6 +5441,8 @@ static void ac3647_2_slot_rewrite_green_and_value_only_red() {
     aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
     {
         ASTArena arena(64 * 1024);
+        // Issue #4662: hook-installed (Evaluator) face — covered window stays green.
+        LiveRewriteHookGuard4662 hook(arena);
         auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
         auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
         // Stack-allocated body mirrors the real Closure storage premise:
@@ -5513,6 +5574,8 @@ static void ac3647_5_soak_windows_and_wiring() {
     aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
     {
         ASTArena arena(64 * 1024);
+        // Issue #4662: hook-installed (Evaluator) face — covered windows stay green.
+        LiveRewriteHookGuard4662 hook(arena);
         auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
         auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
         ClosureBodySlots3647 body;
@@ -7203,6 +7266,8 @@ static void ac4243_2_no_pin_window_green() {
     aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
     aura::ast::reset_relocate_alloc_fail_inject_for_test();
     ASTArena arena(64 * 1024);
+    // Issue #4662: hook-installed (Evaluator) face — covered window stays green.
+    LiveRewriteHookGuard4662 hook(arena);
     auto* p0 = arena.create<Pod16>(7, 8, 9, 10);
     auto* p1 = arena.create<Pod16>(17, 18, 19, 20);
     auto* p2 = arena.create<Pod16>(27, 28, 29, 30);
@@ -7999,6 +8064,8 @@ static void ac4415_peer_misses_recycled_slot() {
     std::println("\n--- #4415: peer allocate_raw does not take a slot under recycle ---");
     ProdFace4415 face(true);
     ASTArena arena(64 * 1024);
+    // Issue #4662: hook-installed (Evaluator) face — covered window stays green.
+    LiveRewriteHookGuard4662 hook(arena);
     void* s0 = nullptr;
     void* s1 = nullptr;
     auto* p0 = arena.create_with_cover<Pod16>(&s0, nullptr, 1, 2, 3, 4);
@@ -8514,6 +8581,118 @@ static void ac4416_source_cite() {
     CHECK(read_file("docs/design/4416-c-struct-canary.md").empty(), "4416: no docs/design/4416-*");
 }
 
+// AC1: no hook + Moving that moves objects → pin contract fails, remap
+// incomplete, window refuses the next mutate. Same outcome after a
+// bind-then-clear (the ~Evaluator teardown face).
+static void ac4662_1_no_hook_fail_closed() {
+    std::println("\n--- #4662 AC1: no-hook Moving that moves objects fail-closes ---");
+    MovingFlagGuard on(1);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed); // Soft
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_relocate_alloc_fail_inject_for_test();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    CHECK(p0 && p1 && p2, "4662 AC1: create ok");
+    // Slot cover so payload reads follow the move — raw p0/p1/p2 are
+    // densify-old after the window (the exact UAF shape the pin contract
+    // guards); the flags are this AC's subject.
+    void* h0 = p0;
+    void* h1 = p1;
+    void* h2 = p2;
+    arena.register_external_root_slot_for_densify(&h0);
+    arena.register_external_root_slot_for_densify(&h1);
+    arena.register_external_root_slot_for_densify(&h2);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved > 0, "4662 AC1: objects_moved > 0");
+    CHECK(r.pin_contract_held == false, "4662 AC1: pin_contract_held=false (no-hook fail-closed)");
+    CHECK(r.moving_incomplete_remap, "4662 AC1: moving_incomplete_remap=true");
+    CHECK(!aura::core::moving_densify_health::window_would_allow_mutate(
+              true, r.pin_contract_held, r.moving_incomplete_remap, r.untracked_kept_count, 0),
+          "4662 AC1: window_would_allow_mutate false (next mutate refused)");
+    CHECK(static_cast<Pod16*>(h0)->a == 1 && static_cast<Pod16*>(h1)->a == 5 &&
+              static_cast<Pod16*>(h2)->a == 9,
+          "4662 AC1: slot-covered payloads intact through the fail-closed window");
+
+    // Teardown face: bind then clear (mirrors ~Evaluator), same outcome.
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_relocate_alloc_fail_inject_for_test();
+    ASTArena arena2(64 * 1024);
+    arena2.set_live_container_rewrite_hook(&trivial_live_container_rewrite_4662, nullptr);
+    arena2.set_live_container_rewrite_hook(nullptr, nullptr);
+    auto* q0 = arena2.create<Pod16>(1, 2, 3, 4);
+    auto* q1 = arena2.create<Pod16>(5, 6, 7, 8);
+    void* g0 = q0;
+    void* g1 = q1;
+    arena2.register_external_root_slot_for_densify(&g0);
+    arena2.register_external_root_slot_for_densify(&g1);
+    const auto r2 = arena2.live_compact(LiveCompactMode::Moving);
+    CHECK(r2.objects_moved > 0, "4662 AC1: cleared-hook window moves");
+    CHECK(r2.pin_contract_held == false && r2.moving_incomplete_remap,
+          "4662 AC1: cleared hook fail-closes the moved window");
+    CHECK(static_cast<Pod16*>(g0)->a == 1 && static_cast<Pod16*>(g1)->a == 5,
+          "4662 AC1: cleared-hook slot payloads intact");
+}
+
+// AC2: hook installed (the normal-Evaluator face) → moved window stays
+// green, exactly as before the fix.
+static void ac4662_2_hook_installed_green() {
+    std::println("\n--- #4662 AC2: hook installed keeps the moved window green ---");
+    MovingFlagGuard on(1);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_relocate_alloc_fail_inject_for_test();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    CHECK(p0 && p1 && p2, "4662 AC2: create ok");
+    LiveRewriteHookGuard4662 hook(arena);
+    // Issue #3633: moved referents need cover for the moved-vs-covered
+    // reconciliation — production windows carry it (opaque_heap_ slots /
+    // pins / RootRemap), so bind slots here alongside the hook.
+    void* h0 = p0;
+    void* h1 = p1;
+    void* h2 = p2;
+    arena.register_external_root_slot_for_densify(&h0);
+    arena.register_external_root_slot_for_densify(&h1);
+    arena.register_external_root_slot_for_densify(&h2);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved > 0, "4662 AC2: objects_moved > 0");
+    CHECK(r.pin_contract_held, "4662 AC2: hook success keeps pin_contract_held");
+    CHECK(!r.moving_incomplete_remap, "4662 AC2: no incomplete remap with hook");
+    CHECK(aura::core::moving_densify_health::window_would_allow_mutate(
+              true, r.pin_contract_held, r.moving_incomplete_remap, r.untracked_kept_count, 0),
+          "4662 AC2: window green with hook installed");
+    CHECK(static_cast<Pod16*>(h0)->a == 1 && static_cast<Pod16*>(h1)->a == 5 &&
+              static_cast<Pod16*>(h2)->a == 9,
+          "4662 AC2: payloads intact at the new addresses");
+}
+
+// AC3: Off window and no-move window unchanged (invoke is not consulted
+// when objects_moved == 0).
+static void ac4662_3_off_and_no_move_unchanged() {
+    std::println("\n--- #4662 AC3: Off / no-move windows unchanged ---");
+    MovingFlagGuard off(0);
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved == 0, "4662 AC3: Off window does not move");
+    CHECK(r.pin_contract_held, "4662 AC3: vacuous pin contract under Off");
+    CHECK(!r.moving_incomplete_remap, "4662 AC3: no incomplete remap under Off");
+    MovingFlagGuard on(1);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    ASTArena empty(64 * 1024);
+    const auto r2 = empty.live_compact(LiveCompactMode::Moving);
+    CHECK(r2.objects_moved == 0, "4662 AC3: empty arena does not move");
+    CHECK(r2.pin_contract_held, "4662 AC3: no-move window stays green");
+    CHECK(!r2.moving_incomplete_remap, "4662 AC3: no-move no incomplete");
+    (void)p0;
+    (void)p1;
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -8906,6 +9085,8 @@ int run_test_moving_densify_fail_closed() {
             reset_ffi_opaque_alias_slot_cover_for_test();
             aura::ast::reset_temporary_moving_live_ptrs_for_test();
             ASTArena arena(64 * 1024);
+            // Issue #4662: hook-installed (Evaluator) face — covered stays green.
+            LiveRewriteHookGuard4662 hook(arena);
             auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
             auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
             void* s0 = p0;
@@ -9412,6 +9593,11 @@ int run_test_moving_densify_fail_closed() {
     ac4396_heap_rewritten_before_commit();
     ac4396_inflight_refcount();
     ac4396_source_cite();
+
+    std::println("\n=== Issue #4662: hookless Moving window fail-closes on move ===");
+    ac4662_1_no_hook_fail_closed();
+    ac4662_2_hook_installed_green();
+    ac4662_3_off_and_no_move_unchanged();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     ac3894_phase5_lock_held_densify();
