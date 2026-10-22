@@ -211,6 +211,25 @@ static bool linear_state_allows_op(std::uint8_t state, LinearOpKind op) noexcept
     return true;
 }
 
+// Issue #4667: per-op readiness re-sample for the linear ops the
+// Move/Drop face does not cover.
+//
+// The #3224 grant is ENTRY-ONLY: an IR/JIT function enters with a
+// valid readiness grant, but a concurrent densify/steal can flip
+// readiness while the same function body still runs. Move/Drop
+// re-sample the live commit_readiness face (#3130 / #3186);
+// Borrow / MutBorrow / CastOp / Apply did not - they rode the
+// entry-era grant into the provenance path.
+//
+// This is the SAME readiness face the entry gate uses (no second
+// readiness model): the refusal bumps the existing
+// g_linear_fast_path_elide_blocked_production_total inside the shared
+// helper - no new counter. Soft / Off: zero-cost (one
+// production_defaults load inside the shared helper).
+static bool ir_per_op_typed_entry_readiness_ok() noexcept {
+    return aura::compiler::typed_audit::linear_per_op_typed_entry_readiness_ok();
+}
+
 // Issue #1515 / #2026 / Issue #2103: pure state-machine gate + provenance
 // consistency.
 // Caller records metrics once per op path (either state reject, or heap
@@ -229,6 +248,18 @@ static bool enforce_linear_ownership_state(std::uint8_t state, LinearOpKind op,
                                            Evaluator* ev = nullptr) noexcept {
     if (!linear_state_allows_op(state, op))
         return false;
+    // Issue #4667: per-op readiness re-sample for Borrow / MutBorrow -
+    // the ops the Move/Drop face does not cover. A mid-function
+    // densify/steal invalidates the entry-era grant, so the op is
+    // denied via the readiness path (the provenance path is NOT
+    // consulted). Same counter as the Move/Drop face
+    // (g_linear_fast_path_elide_blocked_production_total, no new
+    // counter). Soft / Off: zero-cost (one production_defaults load).
+    if ((op == LinearOpKind::Borrow || op == LinearOpKind::MutBorrow) &&
+        !ir_per_op_typed_entry_readiness_ok()) {
+        std::println(std::cerr, "error: linear op refused - commit-readiness-refused");
+        return false;
+    }
     // Issue #2026: Moved is never a valid live state for any op (double-drop
     // / use-after-move). Owned/Borrow gates are op-specific above.
     if (state == 0)
@@ -1651,6 +1682,22 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     break;
 
                 case IROpcode::CastOp: {
+                    // Issue #4667: per-op readiness re-sample. The #3224
+                    // entry grant is entry-only: a mid-function
+                    // densify/steal invalidates it, so a CastOp that
+                    // runs after the flip is denied via the readiness
+                    // path instead of riding the entry-era grant. Same
+                    // face as the entry gate + the Move/Drop face; the
+                    // refusal bumps the existing
+                    // g_linear_fast_path_elide_blocked_production_total
+                    // (no new counter). Soft / Off: zero-cost.
+                    if (!ir_per_op_typed_entry_readiness_ok()) {
+                        if (context_.metrics)
+                            context_.metrics->linear_post_mutate_force_rollback_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        return std::unexpected(
+                            Diagnostic{ErrorKind::TypeError, "commit-readiness-refused"});
+                    }
                     // CastOp: result_slot=ops[0], value_slot=ops[1], type_tag=ops[2]
                     // ops[3] = blame_loc packed (line<<16)|col (or 0)
                     // instr.type_id = blame_node (AST NodeId for error reporting)
@@ -2413,6 +2460,22 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
 
                 case IROpcode::Apply: {
+                    // Issue #4667: per-op readiness re-sample. The #3224
+                    // entry grant is entry-only: a mid-function
+                    // densify/steal invalidates it, so an Apply that
+                    // runs after the flip is denied via the readiness
+                    // path instead of riding the entry-era grant. Same
+                    // face as the entry gate + the Move/Drop face; the
+                    // refusal bumps the existing
+                    // g_linear_fast_path_elide_blocked_production_total
+                    // (no new counter). Soft / Off: zero-cost.
+                    if (!ir_per_op_typed_entry_readiness_ok()) {
+                        if (context_.metrics)
+                            context_.metrics->linear_post_mutate_force_rollback_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        return std::unexpected(
+                            Diagnostic{ErrorKind::TypeError, "commit-readiness-refused"});
+                    }
                     // Issue #252: IR path closure dispatch counter
                     // (same as IROpcode::Call above)
                     if (context_.metrics) {
@@ -2656,7 +2719,11 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // Runtime check: use-after-move detection
                     auto val = locals[ops[1]];
                     if (!state_ok) {
-                        std::println(std::cerr, "error: borrow of Moved/MutBorrowed linear state");
+                        // Issue #4667: the refusal can come from the
+                        // linear state machine OR from the per-op
+                        // readiness re-sample (commit-readiness-refused).
+                        std::println(std::cerr,
+                                     "error: borrow denied (linear state / commit-readiness)");
                         capture_linear_runtime_violation(metrics_, 0, IROpcode::BorrowOp, 0,
                                                          instr.linear_ownership_state, 1);
                         record_linear_runtime_safety(metrics_, true);
@@ -2706,7 +2773,11 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // Mutable borrow: treat as move (exclusive access)
                     auto val = locals[ops[1]];
                     if (!state_ok) {
-                        std::println(std::cerr, "error: mut-borrow of non-Owned linear state");
+                        // Issue #4667: the refusal can come from the
+                        // linear state machine OR from the per-op
+                        // readiness re-sample (commit-readiness-refused).
+                        std::println(std::cerr,
+                                     "error: mut-borrow denied (linear state / commit-readiness)");
                         capture_linear_runtime_violation(metrics_, 0, IROpcode::MutBorrowOp, 0,
                                                          instr.linear_ownership_state, 1);
                         record_linear_runtime_safety(metrics_, true);

@@ -43,11 +43,24 @@ using aura::compiler::CompilerService;
 namespace typed_audit = aura::compiler::typed_audit;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
+using aura::compiler::typed_audit::clear_cone_outside_goal_drop_for_test;
+using aura::compiler::typed_audit::clear_occurrence_empty_after_fence_for_test;
+using aura::compiler::typed_audit::clear_partial_cone_truncate_for_test;
+using aura::compiler::typed_audit::clear_refined_consistency_drift_for_test;
+using aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test;
+using aura::compiler::typed_audit::clear_type_linear_proof_outcome_for_test;
+using aura::compiler::typed_audit::g_linear_ir_fastpath_boundary_depth_override;
+using aura::compiler::typed_audit::ir_typed_entry_commit_readiness_ok;
 using aura::compiler::typed_audit::jit_execute_commit_readiness_blocked;
+using aura::compiler::typed_audit::kTypeLinearProofOutcomeQuiet;
 using aura::compiler::typed_audit::kTypeLinearProofOutcomeReject;
+using aura::compiler::typed_audit::kTypeLinearProofOutcomeStamped;
+using aura::compiler::typed_audit::linear_fast_path_elide_blocked_production_total_v_read;
+using aura::compiler::typed_audit::linear_per_op_typed_entry_readiness_ok;
 using aura::compiler::typed_audit::publish_last_proof_face;
 using aura::compiler::typed_audit::publish_type_linear_proof_outcome;
 using aura::compiler::typed_audit::reset_for_test;
+using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
 using aura::compiler::typed_audit::stamp_type_linear_commit_proof;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -61,6 +74,162 @@ static std::string read_file(const char* path) {
         return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     }
     return {};
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Issue #4667: the IR/JIT typed-entry readiness grant (#3224) is
+// ENTRY-ONLY. Move/Drop re-sample the live commit_readiness face
+// (#3130 / #3186); Borrow / MutBorrow / CastOp / Apply did not, so
+// they rode the entry-era grant after a mid-function densify/steal.
+//
+//   AC1: a readiness flip between entry and the op denies the op via
+//        the readiness path (NOT the provenance path) and bumps the
+//        existing linear_fast_path_elide_blocked_production_total
+//        counter (same behavior as the Move/Drop face).
+//   AC2: an entry-clean function is unchanged (no deny, no counter).
+//   AC3: the entry contract itself is unchanged (#3224 / #3414 /
+//        #3416 / #3419 stay green).
+//   AC4: Soft / Off is zero-cost (one production_defaults load).
+// ═══════════════════════════════════════════════════════════════════
+static void ac4667_per_op_readiness_resample() {
+    std::println("\n--- #4667: per-op readiness re-sample denies after a mid-function flip ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    aura_typed_audit_clear_readiness_evaluator();
+    clear_type_linear_proof_outcome_for_test();
+    clear_type_linear_commit_proof_for_test();
+    clear_cone_outside_goal_drop_for_test();
+    clear_occurrence_empty_after_fence_for_test();
+    clear_partial_cone_truncate_for_test();
+    clear_refined_consistency_drift_for_test();
+    reset_pending_full_solve_residual_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+
+    // Entry grant: a green face owned by this thread (#3416 identity).
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    auto* eval_a = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xA4667));
+    aura_typed_audit_note_readiness_evaluator(eval_a);
+    publish_last_proof_face(true, true);
+
+    // ── AC2: an entry-clean function is unchanged ──
+    CHECK(ir_typed_entry_commit_readiness_ok(), "4667 AC2: entry-clean grant (no deny)");
+    const auto clean = linear_fast_path_elide_blocked_production_total_v_read();
+    CHECK(linear_per_op_typed_entry_readiness_ok(), "4667 AC2: entry-clean per-op sample allows");
+    CHECK(linear_fast_path_elide_blocked_production_total_v_read() == clean,
+          "4667 AC2: entry-clean adds no counter bump");
+
+    // ── AC1: mid-function flip (a concurrent densify/steal invalidates
+    // the entry-era grant) → the op is denied via the readiness path
+    // and the existing counter bumps (Move/Drop face parity). ──
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+    const auto flip = linear_fast_path_elide_blocked_production_total_v_read();
+    CHECK(!linear_per_op_typed_entry_readiness_ok(),
+          "4667 AC1: per-op sample denies after the readiness flip");
+    CHECK(linear_fast_path_elide_blocked_production_total_v_read() == flip + 1,
+          "4667 AC1: the existing readiness counter bumps once on the refusal");
+    CHECK(!ir_typed_entry_commit_readiness_ok(),
+          "4667 AC1: the entry face refuses the same flip (one readiness model)");
+
+    // A green face restores the per-op grant (the deny is the flip, not
+    // a sticky latch).
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    CHECK(linear_per_op_typed_entry_readiness_ok(), "4667 AC1: green face restores the grant");
+
+    aura_typed_audit_clear_readiness_evaluator();
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+    apply_dev_audit_defaults();
+}
+
+static void ac4667_op_wiring_source_cite() {
+    std::println("\n--- #4667: per-op readiness wiring (source-cite) ---");
+    auto h = read_file("src/compiler/typed_mutation_audit.h");
+    auto ir = read_file("src/compiler/ir_executor_impl.cpp");
+    CHECK(!h.empty() && !ir.empty(), "4667 AC1: sources readable");
+
+    // The shared helper sits next to the entry gate and reuses it (no
+    // second readiness model, no new counter).
+    const auto helper_pos = h.find("inline bool linear_per_op_typed_entry_readiness_ok() noexcept");
+    CHECK(helper_pos != std::string::npos, "4667 AC1: per-op readiness helper exists");
+    if (helper_pos != std::string::npos) {
+        const std::string win = h.substr(helper_pos, 600);
+        CHECK(win.find("ir_typed_entry_commit_readiness_ok()") != std::string::npos,
+              "4667 AC1: helper reuses the entry readiness face (no second model)");
+        CHECK(
+            win.find("std::atomic") == std::string::npos,
+            "4667 AC1: no new counter (reuses g_linear_fast_path_elide_blocked_production_total)");
+    }
+    CHECK(h.find("kPerOpTypedEntryReadinessIssue = 4667") != std::string::npos,
+          "4667 AC1: issue stamp in the audit header");
+
+    // enforce_linear_ownership_state consults the readiness sample for
+    // Borrow / MutBorrow and denies BEFORE the provenance path.
+    const auto fn_pos = ir.find("static bool enforce_linear_ownership_state(");
+    CHECK(fn_pos != std::string::npos, "4667 AC1: enforce_linear_ownership_state present");
+    if (fn_pos != std::string::npos) {
+        const std::string win = ir.substr(fn_pos, 2600);
+        const auto probe = win.find("ir_per_op_typed_entry_readiness_ok()");
+        const auto borrow = win.find("LinearOpKind::Borrow");
+        const auto mutborrow = win.find("LinearOpKind::MutBorrow");
+        const auto provenance = win.find("validate_linear_provenance");
+        CHECK(probe != std::string::npos, "4667 AC1: enforce consults the per-op readiness sample");
+        CHECK(borrow != std::string::npos && mutborrow != std::string::npos,
+              "4667 AC1: Borrow / MutBorrow consult the per-op readiness sample");
+        CHECK(probe != std::string::npos && provenance != std::string::npos && probe < provenance,
+              "4667 AC1: the readiness deny precedes the provenance path");
+        CHECK(win.find("linear_move_drop_elision_ok()") != std::string::npos,
+              "4667 AC3: the Move/Drop elision face is unchanged");
+    }
+
+    // CastOp / Apply consult the same sample.
+    const auto cast_pos = ir.find("case IROpcode::CastOp: {");
+    CHECK(cast_pos != std::string::npos, "4667 AC1: CastOp site present");
+    if (cast_pos != std::string::npos) {
+        const std::string win = ir.substr(cast_pos, 1400);
+        CHECK(win.find("ir_per_op_typed_entry_readiness_ok()") != std::string::npos,
+              "4667 AC1: CastOp consults the per-op readiness sample");
+    }
+    const auto apply_pos = ir.find("case IROpcode::Apply: {");
+    CHECK(apply_pos != std::string::npos, "4667 AC1: Apply site present");
+    if (apply_pos != std::string::npos) {
+        const std::string win = ir.substr(apply_pos, 1400);
+        CHECK(win.find("ir_per_op_typed_entry_readiness_ok()") != std::string::npos,
+              "4667 AC1: Apply consults the per-op readiness sample");
+    }
+
+    // AC4: the shared face keeps the one-load Soft/Off guard.
+    const auto entry_pos = h.find("inline bool ir_typed_entry_commit_readiness_ok() noexcept");
+    CHECK(entry_pos != std::string::npos, "4667 AC4: entry readiness helper present");
+    if (entry_pos != std::string::npos) {
+        const std::string win = h.substr(entry_pos, 400);
+        CHECK(win.find("production_defaults_active()") != std::string::npos,
+              "4667 AC4: shared face keeps the one-load Soft/Off guard");
+    }
+
+    // AC3: the entry contract itself is unchanged.
+    CHECK(h.find("kIrTypedEntryCommitReadinessIssue = 3224") != std::string::npos,
+          "4667 AC3: #3224 entry gate unchanged");
+    CHECK(h.find("kNoTlsLivePolicyDefaultSolvedIssue = 3414") != std::string::npos,
+          "4667 AC3: #3414 entry contract unchanged");
+    CHECK(h.find("kLastProofEvalIdentityIssue = 3416") != std::string::npos,
+          "4667 AC3: #3416 entry contract unchanged");
+    CHECK(h.find("kJitTypedEntryEveryFunctionIssue = 3419") != std::string::npos,
+          "4667 AC3: #3419 entry contract unchanged");
+}
+
+static void ac4667_soft_zero_cost() {
+    std::println("\n--- #4667: Soft / Off is zero-cost ---");
+    apply_dev_audit_defaults();
+    // A negative face must not refuse under Soft / Off (the shared face
+    // short-circuits on the production_defaults load).
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+    publish_last_proof_face(false, false);
+    const auto before = linear_fast_path_elide_blocked_production_total_v_read();
+    CHECK(linear_per_op_typed_entry_readiness_ok(), "4667 AC4: Soft/Off allows (zero-cost)");
+    CHECK(linear_fast_path_elide_blocked_production_total_v_read() == before,
+          "4667 AC4: Soft/Off adds no counter bump");
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeQuiet);
+    apply_dev_audit_defaults();
 }
 
 } // namespace
@@ -257,7 +426,11 @@ int run_test_ir_typed_entry_proof_authority() {
         const auto cite = ixx.find("Issue #3758: same execute catalog as IRInterpreter::execute");
         CHECK(cite != std::string::npos, "3758: try_jit_execute present");
         if (cite != std::string::npos) {
-            const auto win = ixx.substr(cite, 1200);
+            // The #3758 site grew (the #4388 cache-hit re-sample landed
+            // between the gate and the ScalarFn call), so the window has
+            // to cover the call site too - the ordering assertion below
+            // is unchanged.
+            const auto win = ixx.substr(cite, 2000);
             const auto gate = win.find("jit_execute_commit_readiness_blocked()");
             const auto call = win.find("reinterpret_cast<aura::jit::ScalarFn>(fn_ptr)");
             CHECK(gate != std::string::npos && call != std::string::npos && gate < call,
@@ -316,7 +489,15 @@ int run_test_ir_typed_entry_proof_authority() {
         CHECK(read_file("tests/compiler/test_issue_3759.cpp").empty(), "3759: no invent");
     }
 
+    std::println("\n=== Issue #4667: per-op typed-entry readiness re-sample ===");
+    ac4667_per_op_readiness_resample();
+    ac4667_op_wiring_source_cite();
+    ac4667_soft_zero_cost();
+    apply_dev_audit_defaults();
+    reset_for_test();
+
     std::println("\n=== Issue #3305 done ===");
+    std::println("=== #4667: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
