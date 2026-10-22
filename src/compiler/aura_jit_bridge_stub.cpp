@@ -460,6 +460,17 @@ extern "C" __attribute__((weak)) int aura_jit_ir_typed_entry_commit_readiness_ok
         return 0;
     return 1;
 }
+// Issue #4671: light-link stub for the JIT per-op typed-entry readiness
+// sample (dual of the interpreter arm in #4667). Same #3343 polarity as
+// the entry stub above: production defaults must refuse (the CastOp /
+// non-linear Apply deopts to the interpreter), Soft / Off must allow
+// (zero-cost).
+extern "C" __attribute__((weak)) int aura_jit_linear_per_op_typed_entry_readiness_ok(void) {
+    // Issue #3343: production weak stub must refuse / deopt.
+    if (stub_production_defaults_active())
+        return 0;
+    return 1;
+}
 // Issue #3419: do NOT define aura_abi_strong_ir_typed_entry_v here.
 // Light-link puts this TU in a separate DSO searched before
 // aura_test_objects; a weak marker in that DSO wins over the strong

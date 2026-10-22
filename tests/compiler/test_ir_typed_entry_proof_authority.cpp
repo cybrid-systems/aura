@@ -232,6 +232,197 @@ static void ac4667_soft_zero_cost() {
     apply_dev_audit_defaults();
 }
 
+
+// ===========================================================================
+// Issue #4671: the JIT side of the #4667 per-op typed-entry readiness
+// re-sample.
+//
+// #4667 gave the IR interpreter a per-op readiness re-sample (Borrow /
+// MutBorrow / CastOp / Apply). The JIT had NO per-op consult: a compiled
+// CastOp (any linearity) or a NON-linear Apply rode the entry-era #3224
+// grant into the provenance path, so the same source behaved differently
+// compiled vs interpreted.
+//
+//   AC1: the JIT per-op bridge exists (strong symbol + weak stub + ORC
+//        registration) and the CastOp / Apply op sites consult it
+//        (window-scoped find checks - not substring-only).
+//   AC2: the JIT per-op sample delegates to
+//        linear_per_op_typed_entry_readiness_ok (the #4667 helper) - one
+//        readiness model, no new counter.
+//   AC3: runtime - a readiness flip denies the shared per-op sample and
+//        bumps the existing linear_fast_path_elide_blocked_production_
+//        total counter exactly once (interpreter parity).
+//   AC4: Soft / Off is zero-cost (allows, no counter bump).
+//   AC5: the entry contract (#3224 / #3414 / #3416 / #3419) and the
+//        Move/Drop elision face (#3130 / #3186) are unchanged.
+// ===========================================================================
+static void ac4671_jit_per_op_readiness_source_cite() {
+    std::println("\n--- #4671: JIT per-op readiness wiring (source-cite) ---");
+    auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
+    auto stub = read_file("src/compiler/aura_jit_bridge_stub.cpp");
+    auto jit = read_file("src/compiler/aura_jit.cpp");
+    auto audit = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(!bridge.empty() && !stub.empty() && !jit.empty() && !audit.empty(),
+          "4671 AC1: sources readable");
+
+    // -- AC1 / AC2: the strong bridge symbol ------------------------------
+    const auto bridge_pos =
+        bridge.find("Issue #4671: JIT-side per-op typed-entry readiness re-sample");
+    CHECK(bridge_pos != std::string::npos, "4671 AC1: the bridge cites #4671");
+    if (bridge_pos != std::string::npos) {
+        const std::string win = bridge.substr(bridge_pos, 1600);
+        CHECK(win.find("aura_jit_linear_per_op_typed_entry_readiness_ok(void) {") !=
+                  std::string::npos,
+              "4671 AC1: the JIT per-op bridge symbol exists");
+        // AC2: the SAME #4667 helper - one readiness model, no new counter.
+        CHECK(win.find("linear_per_op_typed_entry_readiness_ok()") != std::string::npos,
+              "4671 AC2: the bridge delegates to the #4667 per-op helper");
+        CHECK(win.find("std::atomic") == std::string::npos,
+              "4671 AC2: the bridge adds no new counter");
+    }
+
+    // -- AC1: the matching weak stub keeps the #3343 polarity --------------
+    const auto stub_pos = stub.find("Issue #4671: light-link stub");
+    CHECK(stub_pos != std::string::npos, "4671 AC1: the weak stub cites #4671");
+    if (stub_pos != std::string::npos) {
+        const std::string win = stub.substr(stub_pos, 700);
+        CHECK(win.find("aura_jit_linear_per_op_typed_entry_readiness_ok(void)") !=
+                  std::string::npos,
+              "4671 AC1: the weak stub defines the per-op symbol");
+        CHECK(win.find("__attribute__((weak))") != std::string::npos,
+              "4671 AC1: the stub is weak (light-link profile)");
+        CHECK(win.find("stub_production_defaults_active()") != std::string::npos,
+              "4671 AC1: the stub probes the production-defaults face");
+        CHECK(win.find("return 0;") != std::string::npos,
+              "4671 AC1: production refuses through the stub (#3343 polarity)");
+        CHECK(win.find("return 1;") != std::string::npos,
+              "4671 AC1: Soft / Off allows through the stub (#3343 polarity)");
+    }
+
+    // -- AC1: the ORC registration ---------------------------------------
+    const auto reg_pos = jit.find("reg(\"aura_jit_linear_per_op_typed_entry_readiness_ok\"");
+    CHECK(reg_pos != std::string::npos, "4671 AC1: the JIT registers the per-op symbol");
+    if (reg_pos != std::string::npos) {
+        const std::string win = jit.substr(reg_pos, 400);
+        CHECK(win.find("(void*)aura_jit_linear_per_op_typed_entry_readiness_ok") !=
+                  std::string::npos,
+              "4671 AC1: the registration points at the bridge symbol");
+    }
+
+    // -- AC1: the CastOp site consults it BEFORE both cast paths ----------
+    const auto cast_pos = jit.find("case OpCastOp: {");
+    CHECK(cast_pos != std::string::npos, "4671 AC1: the JIT CastOp site exists");
+    if (cast_pos != std::string::npos) {
+        const std::string win = jit.substr(cast_pos, 2200);
+        const auto gate = win.find("emit_per_op_readiness_gate");
+        const auto narrow = win.find("inst.narrow_evidence");
+        const auto cast_call = win.find("fn_cast_op");
+        CHECK(gate != std::string::npos, "4671 AC1: the CastOp site consults the per-op sample");
+        CHECK(gate != std::string::npos && narrow != std::string::npos && gate < narrow,
+              "4671 AC1: the CastOp consult precedes the narrow-evidence fast-forward");
+        CHECK(gate != std::string::npos && cast_call != std::string::npos && gate < cast_call,
+              "4671 AC1: the CastOp consult precedes the runtime type check");
+    }
+
+    // -- AC1: the Apply site consults it on the NON-linear path -----------
+    const auto apply_pos = jit.find("case OpApply: {");
+    CHECK(apply_pos != std::string::npos, "4671 AC1: the JIT Apply site exists");
+    if (apply_pos != std::string::npos) {
+        const std::string win = jit.substr(apply_pos, 1400);
+        const auto gate = win.find("emit_per_op_readiness_gate");
+        const auto nonlin = win.find("if (!lin)");
+        CHECK(gate != std::string::npos, "4671 AC1: the Apply site consults the per-op sample");
+        CHECK(nonlin != std::string::npos && gate != std::string::npos && nonlin < gate,
+              "4671 AC1: the Apply consult is on the non-linear path");
+        CHECK(win.find("begin_linear_epoch_fence()") != std::string::npos,
+              "4671 AC1: the linear Apply path still uses the #3759 fence");
+    }
+
+    // -- AC5: the entry contract + the Move/Drop face are unchanged -------
+    CHECK(audit.find("kIrTypedEntryCommitReadinessIssue = 3224") != std::string::npos,
+          "4671 AC5: #3224 entry gate unchanged");
+    CHECK(audit.find("kNoTlsLivePolicyDefaultSolvedIssue = 3414") != std::string::npos,
+          "4671 AC5: #3414 entry contract unchanged");
+    CHECK(audit.find("kLastProofEvalIdentityIssue = 3416") != std::string::npos,
+          "4671 AC5: #3416 entry contract unchanged");
+    CHECK(audit.find("kJitTypedEntryEveryFunctionIssue = 3419") != std::string::npos,
+          "4671 AC5: #3419 entry contract unchanged");
+    CHECK(audit.find("kPerOpTypedEntryReadinessIssue = 4667") != std::string::npos,
+          "4671 AC5: the #4667 per-op helper is still the shared sample");
+    CHECK(audit.find("linear_move_drop_elision_ok") != std::string::npos,
+          "4671 AC5: the Move/Drop elision face (#3130 / #3186) is unchanged");
+    CHECK(bridge.find("aura_jit_linear_move_drop_elision_ok") != std::string::npos,
+          "4671 AC5: the JIT Move/Drop elision bridge is unchanged");
+    CHECK(jit.find("aura_jit_ir_typed_entry_commit_readiness_ok") != std::string::npos,
+          "4671 AC5: the JIT entry-readiness registration is unchanged");
+}
+
+static void ac4671_jit_per_op_readiness_runtime() {
+    std::println("\n--- #4671: the JIT per-op sample is the #4667 readiness face ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    aura_typed_audit_clear_readiness_evaluator();
+    clear_type_linear_proof_outcome_for_test();
+    clear_type_linear_commit_proof_for_test();
+    clear_cone_outside_goal_drop_for_test();
+    clear_occurrence_empty_after_fence_for_test();
+    clear_partial_cone_truncate_for_test();
+    clear_refined_consistency_drift_for_test();
+    reset_pending_full_solve_residual_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+
+    // Entry grant: a green face owned by this thread (#3416 identity).
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    auto* eval_a = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xA4671));
+    aura_typed_audit_note_readiness_evaluator(eval_a);
+    publish_last_proof_face(true, true);
+
+    // -- AC3: an entry-clean grant still allows the per-op sample ---------
+    CHECK(linear_per_op_typed_entry_readiness_ok(),
+          "4671 AC3: the shared per-op sample allows an entry-clean grant");
+    const auto clean = linear_fast_path_elide_blocked_production_total_v_read();
+    CHECK(linear_per_op_typed_entry_readiness_ok(),
+          "4671 AC3: the shared per-op sample is stable on a green grant");
+    CHECK(linear_fast_path_elide_blocked_production_total_v_read() == clean,
+          "4671 AC3: an entry-clean grant adds no counter bump");
+
+    // -- AC3: a mid-function flip denies the SAME sample the JIT consults
+    //    and bumps the existing counter exactly once (interpreter parity).
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+    const auto flip = linear_fast_path_elide_blocked_production_total_v_read();
+    CHECK(!linear_per_op_typed_entry_readiness_ok(),
+          "4671 AC3: the shared per-op sample denies after the readiness flip");
+    CHECK(linear_fast_path_elide_blocked_production_total_v_read() == flip + 1,
+          "4671 AC3: the existing readiness counter bumps once (no new counter)");
+    CHECK(!ir_typed_entry_commit_readiness_ok(),
+          "4671 AC3: the entry face refuses the same flip (one readiness model)");
+
+    // A green face restores the per-op grant (the deny is the flip, not
+    // a sticky latch).
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    CHECK(linear_per_op_typed_entry_readiness_ok(),
+          "4671 AC3: a green face restores the per-op grant");
+
+    aura_typed_audit_clear_readiness_evaluator();
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+    apply_dev_audit_defaults();
+}
+
+static void ac4671_soft_zero_cost() {
+    std::println("\n--- #4671: Soft / Off is zero-cost ---");
+    apply_dev_audit_defaults();
+    // A negative face must not refuse under Soft / Off (the shared face
+    // short-circuits on the production_defaults load).
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+    publish_last_proof_face(false, false);
+    const auto before = linear_fast_path_elide_blocked_production_total_v_read();
+    CHECK(linear_per_op_typed_entry_readiness_ok(), "4671 AC4: Soft/Off allows (zero-cost)");
+    CHECK(linear_fast_path_elide_blocked_production_total_v_read() == before,
+          "4671 AC4: Soft/Off adds no counter bump");
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeQuiet);
+    apply_dev_audit_defaults();
+}
 } // namespace
 
 int run_test_ir_typed_entry_proof_authority() {
@@ -496,8 +687,17 @@ int run_test_ir_typed_entry_proof_authority() {
     apply_dev_audit_defaults();
     reset_for_test();
 
+    std::println("\n=== Issue #4671: JIT per-op typed-entry readiness re-sample ===");
+    ac4671_jit_per_op_readiness_source_cite();
+    ac4671_jit_per_op_readiness_runtime();
+    ac4671_soft_zero_cost();
+    apply_dev_audit_defaults();
+    reset_for_test();
+
     std::println("\n=== Issue #3305 done ===");
     std::println("=== #4667: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("=== #4671: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
