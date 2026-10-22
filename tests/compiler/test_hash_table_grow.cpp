@@ -409,18 +409,41 @@ static void ac4614_hash_cow() {
     CHECK(clone_len && is_int(*clone_len) && as_int(*clone_len) == 2,
           "4614 AC4: the clone took the entry");
 }
-// The best of three runs: the minimum is the least noise-contaminated
+// The best of five runs: the minimum is the least noise-contaminated
 // estimate when the machine is busy (the relative contract does not care,
 // but the absolute <= 10 us AC does).
 static double ac4614_min_us(CompilerService& cs, const char* expr) {
     double best = -1.0;
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 5; ++i) {
         auto r = cs.eval(expr);
         if (!r || !is_float(*r))
             continue;
         const double v = as_float(*r);
         if (best < 0.0 || v < best)
             best = v;
+    }
+    return best;
+}
+
+// Issue #4614 AC5 / CI flake: the two absolute timings are sampled in
+// separate expressions, so a scheduler stall during the native run (but not
+// during the make-vector run) inflated the ratio on a shared runner. Sample
+// the pair adjacently and keep the minimum ratio: machine load cancels out
+// and the 2x contract stays strict.
+static double ac4614_min_ratio(CompilerService& cs, const char* num_expr, const char* den_expr) {
+    double best = -1.0;
+    for (int i = 0; i < 5; ++i) {
+        auto num = cs.eval(num_expr);
+        auto den = cs.eval(den_expr);
+        if (!num || !den || !is_float(*num) || !is_float(*den))
+            continue;
+        const double av = as_float(*num);
+        const double bv = as_float(*den);
+        if (av <= 0.0 || bv <= 0.0)
+            continue;
+        const double ratio = av / bv;
+        if (best < 0.0 || ratio < best)
+            best = ratio;
     }
     return best;
 }
@@ -442,7 +465,12 @@ static void ac4614_vector_copy_timing() {
                  n_us, o_us, m_us, AURA_4614_OPTIMIZED_BUILD ? "yes" : "no");
     CHECK(n_us * 20.0 <= o_us,
           "4614 AC5: the native vector-copy is at least 20x faster than the interpreted loop");
-    CHECK(n_us <= 2.0 * m_us,
+    // Paired ratio: the separate absolute samples can be skewed by a
+    // scheduler stall on a shared runner, so the 2x AC is checked on a
+    // pair sampled back to back (min of five).
+    const double ratio = ac4614_min_ratio(cs, k4614NativeCopyExpr, k4614MakeVectorExpr);
+    CHECK(ratio > 0.0, "4614 AC5: native/make-vector ratio measured");
+    CHECK(ratio <= 2.0,
           "4614 AC5: the native vector-copy costs at most 2x a bare 64-slot make-vector");
 #if AURA_4614_OPTIMIZED_BUILD
     CHECK(n_us <= 10.0, "4614 AC5: a 64-slot vector-copy takes <= 10 us");
