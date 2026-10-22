@@ -527,6 +527,16 @@ int run_test_fiber_native_keepalive() {
         for (int i = 0; i < 200 && h.liveness->emitted.load() < 1; ++i)
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         CHECK(h.liveness->emitted.load() >= 1, "3954: helper emitted");
+        // De-race (CI red 2026-10-22, run 39734211332): the body entry stamps
+        // body_progress_us when the body fiber first runs. Under load that
+        // stamp can land after the freeze below, re-freshing the clock so the
+        // watch returns Alive instead of Stalled. Wait for the entry stamp
+        // before freezing (same pattern as the ProgressClock AC below).
+        for (int i = 0;
+             i < 500 && h.liveness->body_progress_us.load(std::memory_order_acquire) == 0; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        CHECK(h.liveness->body_progress_us.load(std::memory_order_acquire) != 0,
+              "3954: body entry stamped before clock freeze");
         h.liveness->body_progress_us.store(1, std::memory_order_release);
         const auto n0 = h.mailbox ? h.mailbox->size() : 0;
         auto wr = watch_agent_liveness(h, /*stall_timeout_ms=*/20, /*cancel_on_stall=*/true);
