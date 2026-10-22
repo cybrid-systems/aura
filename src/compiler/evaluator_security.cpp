@@ -2527,11 +2527,22 @@ bool Evaluator::inrange_slot_tenant_allows(std::size_t idx, bool vector_heap,
     // non-zero tenant can still car its own unstamped lists. A real mint
     // stores tenant+1, so a tenant-0 cons is owner 0 and refuses a non-zero
     // caller — the same fail-closed shape as an unstamped g_pair_slots entry.
-    if (idx >= stamps.size())
-        return true;
-    const auto rec = stamps[idx];
-    if (rec == 0)
-        return true;
+    // Issue #4656: rec == 0 (or a short array) means 'this slot never went
+    // through cons/list/vector mint — owner unknown', not 'historical
+    // internal pair'. On the production face an unknown owner fails closed
+    // for every non-kernel principal; tenant 0 is the kernel principal and
+    // keeps the documented single-tenant posture. A real mint stores
+    // tenant+1, so rec == 0 can only mean 'unstamped', never tenant 0.
+    const auto rec = (idx < stamps.size()) ? stamps[idx] : 0;
+    if (rec == 0) {
+        if (capability_tenant_id_ == 0)
+            return true;
+        // Ride the existing IsolationDeny path: ref_tenant 0 selects the
+        // unstamped-ref reason (one record_audit, no new metric key).
+        (void)check_workspace_isolation(capability_tenant_id_, /*ref_tenant=*/0, required_effects,
+                                        op);
+        return false;
+    }
     const auto owner = rec - 1;
     if (owner == capability_tenant_id_)
         return true;
