@@ -3616,10 +3616,21 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                              static_cast<unsigned long long>(unstampped),
                                              static_cast<unsigned long long>(root));
                 (void)rn;
+                // Issue #4664: fill the row's real identity so the audit is
+                // joinable to the mutation that cleared the marker. The row
+                // used to hard-code tenant=0 / mid=0, and mid=0 is the
+                // canonical mid-fallback-refused value - so an Agent asking
+                // "which action unstamped this macro subtree?" read the row
+                // as a refuse/no-action row instead of the rollback. tenant
+                // = the live capability tenant, mid = the join SSOT
+                // (typed_audit::join_audit_and_se_mid(0)) - the same key the
+                // sibling deny paths use. denied=false, the reason text, the
+                // event kind and the counter (rollback_strict_audited_total)
+                // stay byte-identical; WHEN the audit fires is unchanged.
                 append_security_event(
                     g_security_event_ring(), SecurityEventKind::MacroHygieneRollbackOnStrict,
-                    /*tenant=*/0,
-                    /*mutation_id=*/0,
+                    /*tenant=*/ev.capability_tenant_id(),
+                    /*mutation_id=*/typed_audit::join_audit_and_se_mid(0),
                     /*epoch=*/aura::core::current_mutation_epoch(),
                     /*effect_bits=*/aura::compiler::security::kEffectMutate,
                     /*op=*/"mutate:rollback-macro-introduced",

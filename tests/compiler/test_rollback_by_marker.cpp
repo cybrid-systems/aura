@@ -21,11 +21,24 @@
 
 #include "test_harness.hpp"
 #include "compiler/aura_jit_bridge.h"
+// Issue #4664: the strict rollback audit row is asserted against the
+// shared SecurityEvent ring (tenant / join mid / denied / reason) and
+// the workspace epoch join key.
+#include "core/security_event.hh"
+#include "core/workspace_epoch.hh"
+// Issue #4664: the rollback row's effect bits (kEffectMutate) are asserted
+// unchanged alongside the tenant / mid fill.
+#include "compiler/security_capabilities.h"
 
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <format>
 #include <print>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
 
 import std;
 import aura.compiler.evaluator;
@@ -214,6 +227,227 @@ static void ac_source_cite() {
     CHECK(true, "AC6: source-cite (12+ gate / wire-up sites)");
 }
 
+// ── Issue #4664: the strict rollback audit row must carry the real ──
+// tenant + join mid. The row hard-coded tenant=0 / mid=0, and mid=0 is
+// the canonical mid-fallback-refused value, so the row read as a refuse /
+// no-action row instead of the rollback. The fix fills tenant =
+// capability_tenant_id() and mid = typed_audit::join_audit_and_se_mid(0);
+// WHEN the audit fires, the kind, the reason text and the reused
+// rollback_strict_audited_total counter are unchanged.
+
+// Newest MacroHygieneRollbackOnStrict row in the shared ring (nullptr if none).
+static const aura::core::security_event::SecurityEvent* find_rollback_row_4664() {
+    using aura::core::security_event::g_security_event_ring;
+    using aura::core::security_event::kSecurityEventRingSize;
+    using aura::core::security_event::SecurityEventKind;
+    auto& ring = g_security_event_ring();
+    const auto cur = ring.seq.load(std::memory_order_acquire);
+    const auto end = cur > kSecurityEventRingSize ? cur - kSecurityEventRingSize : 0;
+    for (auto s = cur; s > end; --s) {
+        const auto& e = ring.ring[(s - 1) % kSecurityEventRingSize];
+        if (e.kind == SecurityEventKind::MacroHygieneRollbackOnStrict)
+            return &e;
+    }
+    return nullptr;
+}
+
+// Agent-facing SE surface lines for one (tenant, fiber, mid) - the
+// #3603 audit-replay decode shape: a pair list whose cars are the lines.
+static std::vector<std::string> audit_lines_4664(aura::compiler::CompilerService& cs,
+                                                 std::uint64_t tenant, std::uint64_t fiber,
+                                                 std::uint64_t mid) {
+    using aura::compiler::types::as_pair_idx;
+    using aura::compiler::types::as_string_idx;
+    using aura::compiler::types::is_pair;
+    using aura::compiler::types::is_string;
+    std::vector<std::string> out;
+    auto q = cs.eval(
+        std::format("(engine:metrics \"query:security-audit\" 10 {} {} 0 {})", tenant, fiber, mid));
+    if (!q)
+        return out;
+    auto& ev = cs.evaluator();
+    const auto pairs = ev.pairs();
+    const auto heap = ev.string_heap();
+    auto cur = *q;
+    int guard = 0;
+    while (is_pair(cur) && guard++ < 64) {
+        const auto idx = as_pair_idx(cur);
+        if (static_cast<std::size_t>(idx) >= pairs.size())
+            break;
+        if (is_string(pairs[idx].car)) {
+            const auto sidx = as_string_idx(pairs[idx].car);
+            if (static_cast<std::size_t>(sidx) < heap.size())
+                out.emplace_back(heap[sidx]);
+        }
+        cur = pairs[idx].cdr;
+    }
+    return out;
+}
+
+// Stamp a MacroIntroduced marker on a live define so the rollback has a
+// real subtree to clear. Returns the node id (or -1 on failure).
+static std::int64_t stamp_macro_introduced_4664(aura::compiler::CompilerService& cs) {
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    if (!cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value())
+        return -1;
+    if (!cs.eval("(eval-current)").has_value())
+        return -1;
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    if (!find_f || !is_int(*find_f))
+        return -1;
+    const auto id = as_int(*find_f);
+    if (!cs.eval(std::format("(syntax:set-marker {} 1)", id)).has_value())
+        return -1;
+    return id;
+}
+
+// AC4664-1: a strict-mode rollback over a MacroIntroduced subtree emits the
+// MacroHygieneRollbackOnStrict row with tenant == the capability tenant and
+// a NON-ZERO join mid, joinable to the mutation that cleared the marker.
+static void ac4664_rollback_row_carries_tenant_and_mid() {
+    std::println("\n--- AC4664-1: rollback audit row carries tenant + join mid ---");
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    RollbackAuditGuard rg;
+    reset_security_event_ring_for_test();
+    aura_test_set_macro_expand_sandbox_strict(1);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(7);
+    ev.set_effect_sandbox_mode(0); // Soft/Off: no MacroSelfEvo gate (#3650)
+    const auto id = stamp_macro_introduced_4664(cs);
+    CHECK(id >= 0, "4664 AC1: MacroIntroduced subtree staged");
+    const auto rb = cs.eval(std::format("(mutate:rollback-macro-introduced {})", id));
+    CHECK(rb.has_value(), "4664 AC1: rollback returns");
+    const auto* row = find_rollback_row_4664();
+    CHECK(row != nullptr, "4664 AC1: MacroHygieneRollbackOnStrict row present");
+    if (row) {
+        CHECK(row->tenant_id == ev.capability_tenant_id(),
+              "4664 AC1: row tenant is the capability tenant");
+        CHECK(row->mutation_id != 0, "4664 AC1: row mid is non-zero (joinable)");
+        // The mid is the join key of the mutation that cleared the marker:
+        // the evaluator publishes it at the outermost boundary exit.
+        CHECK(ev.has_last_completed_audit_mid(),
+              "4664 AC1: evaluator published the completed action mid");
+        CHECK(row->mutation_id == ev.last_completed_audit_mid(),
+              "4664 AC1: row mid joins to the mutation that cleared the marker");
+        // Issue verification step: query the SE surface BY the mutation mid.
+        const auto lines = audit_lines_4664(cs, row->tenant_id, row->fiber_id, row->mutation_id);
+        bool found_rollback = false;
+        for (const auto& ln : lines) {
+            if (ln.find("kind=MacroHygieneRollbackOnStrict") == std::string::npos)
+                continue;
+            if (ln.find(std::format("mutation_id={} ", row->mutation_id)) == std::string::npos)
+                continue;
+            if (ln.find(std::format("tenant={} ", row->tenant_id)) == std::string::npos)
+                continue;
+            found_rollback = true;
+        }
+        CHECK(found_rollback, "4664 AC1: SE surface finds the rollback row by mid + tenant");
+    }
+}
+
+// AC4664-2: the row stays permissive (denied=false) with the unchanged
+// kind / op / reason text, and the audit reuses rollback_strict_audited_total.
+static void ac4664_row_stays_permissive_with_same_shape() {
+    std::println("\n--- AC4664-2: row stays permissive, kind/reason/counter unchanged ---");
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    RollbackAuditGuard rg;
+    reset_security_event_ring_for_test();
+    aura_test_set_macro_expand_sandbox_strict(1);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(7);
+    ev.set_effect_sandbox_mode(0);
+    const auto id = stamp_macro_introduced_4664(cs);
+    CHECK(id >= 0, "4664 AC2: MacroIntroduced subtree staged");
+    const auto strict_before =
+        static_cast<std::int64_t>(aura_rollback_strict_audited_total_v_read());
+    const auto rb = cs.eval(std::format("(mutate:rollback-macro-introduced {})", id));
+    CHECK(rb.has_value(), "4664 AC2: rollback returns");
+    const auto strict_after =
+        static_cast<std::int64_t>(aura_rollback_strict_audited_total_v_read());
+    CHECK(strict_after == strict_before + 1,
+          "4664 AC2: rollback_strict_audited_total reused (bumped once)");
+    const auto* row = find_rollback_row_4664();
+    CHECK(row != nullptr, "4664 AC2: MacroHygieneRollbackOnStrict row present");
+    if (row) {
+        CHECK(!row->denied, "4664 AC2: row stays permissive (denied=false)");
+        CHECK(std::string_view(row->op) == "mutate:rollback-macro-introduced",
+              "4664 AC2: op unchanged");
+        CHECK(std::string_view(row->reason).starts_with("rollback unstampped="),
+              "4664 AC2: reason text unchanged");
+        CHECK(row->effect_bits == aura::compiler::security::kEffectMutate,
+              "4664 AC2: effect bits unchanged");
+    }
+}
+
+// AC4664-3: Soft/Off (macro-expand strict flag off) → no audit arm at all.
+static void ac4664_soft_off_has_no_audit_arm() {
+    std::println("\n--- AC4664-3: Soft/Off keeps the no-audit arm ---");
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    RollbackAuditGuard rg;
+    reset_security_event_ring_for_test();
+    aura_test_set_macro_expand_sandbox_strict(0);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(7);
+    ev.set_effect_sandbox_mode(0);
+    const auto id = stamp_macro_introduced_4664(cs);
+    CHECK(id >= 0, "4664 AC3: MacroIntroduced subtree staged");
+    const auto strict_before =
+        static_cast<std::int64_t>(aura_rollback_strict_audited_total_v_read());
+    const auto rb = cs.eval(std::format("(mutate:rollback-macro-introduced {})", id));
+    CHECK(rb.has_value(), "4664 AC3: rollback returns");
+    const auto strict_after =
+        static_cast<std::int64_t>(aura_rollback_strict_audited_total_v_read());
+    CHECK(strict_after == strict_before, "4664 AC3: no strict-audit counter bump");
+    CHECK(find_rollback_row_4664() == nullptr, "4664 AC3: no MacroHygieneRollbackOnStrict row");
+}
+
+// AC4664-4: the mid-fallback-refused shape (mid=0 / InvariantFail /
+// "mid-fallback-refused") stays distinguishable from the rollback row.
+static void ac4664_refuse_row_stays_distinguishable() {
+    std::println("\n--- AC4664-4: mid-fallback-refused shape stays distinguishable ---");
+    using aura::core::security_event::g_security_event_ring;
+    using aura::core::security_event::kSecurityEventRingSize;
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    using aura::core::security_event::SecurityEventKind;
+    RollbackAuditGuard rg;
+    reset_security_event_ring_for_test();
+    aura_test_set_macro_expand_sandbox_strict(1);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(7);
+    ev.set_effect_sandbox_mode(0);
+    const auto id = stamp_macro_introduced_4664(cs);
+    CHECK(id >= 0, "4664 AC4: MacroIntroduced subtree staged");
+    const auto rb = cs.eval(std::format("(mutate:rollback-macro-introduced {})", id));
+    CHECK(rb.has_value(), "4664 AC4: rollback returns");
+    const auto* row = find_rollback_row_4664();
+    CHECK(row != nullptr, "4664 AC4: MacroHygieneRollbackOnStrict row present");
+    if (row) {
+        CHECK(row->kind == SecurityEventKind::MacroHygieneRollbackOnStrict,
+              "4664 AC4: kind is the rollback kind (not InvariantFail)");
+        CHECK(std::string_view(row->reason) != "mid-fallback-refused",
+              "4664 AC4: reason is not the refuse reason");
+        CHECK(row->mutation_id != 0, "4664 AC4: row no longer looks like a mid=0 refuse row");
+    }
+    // No refuse row shares this row's identity.
+    auto& ring = g_security_event_ring();
+    const auto cur = ring.seq.load(std::memory_order_acquire);
+    const auto end = cur > kSecurityEventRingSize ? cur - kSecurityEventRingSize : 0;
+    bool refuse_shape_present = false;
+    for (auto s = cur; s > end; --s) {
+        const auto& e = ring.ring[(s - 1) % kSecurityEventRingSize];
+        if (e.kind == SecurityEventKind::InvariantFail &&
+            std::string_view(e.reason) == "mid-fallback-refused" && e.mutation_id == 0)
+            refuse_shape_present = true;
+    }
+    CHECK(!refuse_shape_present,
+          "4664 AC4: no mid-fallback-refused (mid=0) row on the rollback path");
+}
+
 } // namespace
 
 int run_test_rollback_by_marker() {
@@ -224,6 +458,13 @@ int run_test_rollback_by_marker() {
     ac_strict_sandbox_emits_audit();
     ac_existing_query_surface_back_compat();
     ac_source_cite();
+    std::println("\n=== Issue #4664 — strict rollback audit row identity ===");
+    ac4664_rollback_row_carries_tenant_and_mid();
+    ac4664_row_stays_permissive_with_same_shape();
+    ac4664_soft_off_has_no_audit_arm();
+    ac4664_refuse_row_stays_distinguishable();
+    // Leave the shared ring as we found it (process-global rows).
+    aura::core::security_event::reset_security_event_ring_for_test();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
