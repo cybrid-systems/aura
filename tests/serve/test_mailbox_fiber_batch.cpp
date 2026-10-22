@@ -35,9 +35,13 @@ static int isolate(const char* name, int (*fn)()) {
     if (pid == 0) {
         // Issue #3568: line-buffer isolate child; alarm so a hang cannot
         // take the 600s binary timeout (join-drain historically hung).
+        // Issue #4659 round: the member grew past 40 issues with real-fiber
+        // ACs and now measures ~200s wall on a 2-worker box — 120s alarmed
+        // healthy members under ordinary load. 240s still bounds a hang at
+        // half the binary timeout.
         setvbuf(stdout, nullptr, _IOLBF, 0);
         setvbuf(stderr, nullptr, _IOLBF, 0);
-        ::alarm(120);
+        ::alarm(240);
         const int rc = fn();
         std::fflush(stdout);
         std::fflush(stderr);

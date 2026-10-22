@@ -11,7 +11,8 @@
 #       counter once.
 #  AC2: reclaimed_retry_budget_ms reuses the #2227 shape
 #       min(drain_ms * 8, kJoinDrainResidualHardMsDefault); no new env /
-#       query key.
+#       query key. Updated in place for #4659: the zero-drain floor makes
+#       the shape min(max(drain_ms, 1) * 8, ...) — same pin, new literal.
 #  AC3: join_agent + join_agents production arms route through the wrapper
 #       (no direct wait_reclaimed_body / inline host_forget bump left in
 #       the #3110 arms); drain=0 cancel-only stays one-shot. #3631:
@@ -69,8 +70,9 @@ REQUIRED: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "src/orch/agent_spawn.h",
-        r"std::min\(drain_ms \* 8, kJoinDrainResidualHardMsDefault\)",
-        "3595 AC2: budget reuses the #2227 min(drain*8, hard) shape",
+        r"std::min\(std::max\(drain_ms, std::uint64_t\{1\}\) \* 8, kJoinDrainResidualHardMsDefault\)",
+        "3595 AC2: budget reuses the #2227 min(drain*8, hard) shape "
+        "(pin updated in place for the #4659 zero-drain floor: max(drain_ms, 1))",
     ),
     # AC3: C++ join surfaces route the production arm through the wrapper.
     (

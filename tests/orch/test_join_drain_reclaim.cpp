@@ -2469,9 +2469,11 @@ static void ac3595_5_source_and_no_invent() {
     CHECK(spawn.find("Issue #3595") != std::string::npos, "3595 AC5: agent_spawn.h cites #3595");
     CHECK(spawn.find("reclaimed_retry_budget_ms(std::uint64_t drain_ms)") != std::string::npos,
           "3595 AC5: budget helper present");
-    CHECK(spawn.find("std::min(drain_ms * 8, kJoinDrainResidualHardMsDefault)") !=
-              std::string::npos,
-          "3595 AC5: budget reuses the #2227 shape");
+    // #4659: pin updated in place — the zero-drain floor wraps the same
+    // #2227 shape in max(drain_ms, 1).
+    CHECK(spawn.find("std::min(std::max(drain_ms, std::uint64_t{1}) * 8, "
+                     "kJoinDrainResidualHardMsDefault)") != std::string::npos,
+          "3595 AC5: budget reuses the #2227 shape (#4659 floor pin)");
     // One SSOT: the retry loop wraps ensure_reclaimed_cleanup and never
     // auto-abandons (#3334 stays host-opt-in).
     const auto w0 = spawn.find("std::uint64_t retry_budget_ms =");
@@ -5839,6 +5841,230 @@ static void ac4658_4_adopt_rejects_and_source_cite() {
           "4658 AC4: no test_issue_4658.cpp per #81967");
     CHECK(read_file("docs/design/4658-scope-adopt.md").empty(),
           "4658 AC4: no docs/design/4658-* per #1655");
+}
+
+
+// ── Issue #4659: drain_ms=0 joins get a floor auto-wait budget ──────────
+// reclaimed_retry_budget_ms(0) was 0 → the join_agents shared residual
+// pass (#3631) broke out at its first deadline check without polling, so
+// a Reclaimed body exiting just after the join kept must_wait_reclaimed
+// (slot waited for the Scope sweep / ~AgentHandle). The #4659 floor
+// max(drain_ms, 1) gives drain=0 an 8ms bounded window; drain>0 keeps
+// drain*8 (#3595) and the 30s cap stays (#2227).
+
+static void ac4659_1_zero_drain_batch_floor_cleans_late_exit() {
+    using aura::orch::AgentSpec;
+    using aura::orch::spawn_agent_with_mailbox;
+    using aura::serve::SchedRunner;
+    using aura::serve::Scheduler;
+    std::println("\n--- #4659 AC1: drain=0 batch — body exits 1ms into the floor window ---");
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    std::string prev_sb_s = prev_sb ? prev_sb : "";
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    apply_production_audit_defaults();
+    {
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        AgentSpec spec;
+        spec.name = "4659-zero-drain";
+        spec.attach_mailbox = true;
+        // Body exits ~1ms after the shared residual pass begins. The pass
+        // bumps wait_reclaimed_total once at entry (first bump after the
+        // body's snapshot — the primary join / cancel-drain / per-handle
+        // phase do not touch it), so the bump is a deterministic "the
+        // window is open now" signal. HARD spin on the atomic: a sleep
+        // poll hits timer slack (ms-scale oversleep) and can notice the
+        // bump past the 8ms window; the spin reacts within ns. Bounded by
+        // the 2s guard — fail via CHECKs, never hang the member.
+        spec.body = [] {
+            const auto arm =
+                g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_acquire);
+            const auto t0 = std::chrono::steady_clock::now();
+            while (g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_acquire) ==
+                   arm) {
+                if (std::chrono::steady_clock::now() - t0 > std::chrono::seconds(2))
+                    break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        };
+        auto h = spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(h.ok && h.fiber, "4659 AC1: spawn ok");
+        std::vector<aura::orch::AgentHandle> hs;
+        hs.push_back(std::move(h));
+        const auto clean0 =
+            g_orch_module_stats.wait_reclaimed_cleanup_total.load(std::memory_order_relaxed);
+        const auto forget0 =
+            g_orch_module_stats.host_forget_reclaimed_risk_total.load(std::memory_order_relaxed);
+        JoinPolicy policy;
+        policy.primary_ms = 50;
+        policy.drain_ms = 0; // cancel-only join — the zero budget face
+        const auto jr = join_agents(std::span<aura::orch::AgentHandle>(hs), policy);
+        CHECK(jr.status != JoinStatus::Ok, "4659 AC1: aggregate non-Ok (body live at join)");
+        // The floor window cleaned the slot without a manual ensure:
+        CHECK(!hs[0].must_wait_reclaimed, "4659 AC1: must_wait cleared by the floor window");
+        CHECK(hs[0].reserved_memory_bytes == 0, "4659 AC1: reservation released");
+        CHECK(!hs[0].reclaimed_deferred_cleanup, "4659 AC1: deferred cleanup completed");
+        CHECK(g_orch_module_stats.wait_reclaimed_cleanup_total.load(std::memory_order_relaxed) ==
+                  clean0 + 1,
+              "4659 AC1: wait_reclaimed_cleanup_total bumped once");
+        CHECK(g_orch_module_stats.host_forget_reclaimed_risk_total.load(
+                  std::memory_order_relaxed) == forget0,
+              "4659 AC1: no host_forget expiry bump (cleaned, not expired)");
+        // Reap the reclaim-orphan on a short deadline so the scheduler
+        // loop reaches all_idle at block exit (the #2227 default hard
+        // deadline is 30s — per-AC ~SchedRunner would otherwise block
+        // ~30s and trip the member alarm).
+        if (hs[0].fiber) {
+            if (auto* s = hs[0].fiber->owner_sched()) {
+                s->note_orphan_fiber(hs[0].fiber, /*hard_deadline_ms=*/50);
+                std::this_thread::sleep_for(std::chrono::milliseconds(60));
+                (void)s->reap_orphans_now();
+            }
+            hs[0].fiber = nullptr; // reaped — the husk must not touch it
+        }
+    }
+    apply_dev_audit_defaults();
+    if (!prev_sb_s.empty())
+        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_SANDBOX");
+}
+
+static void ac4659_2_budget_formula_floor() {
+    std::println("\n--- #4659 AC2: budget formula — floor 8ms, drain*8 shape, 30s cap ---");
+    CHECK(aura::orch::reclaimed_retry_budget_ms(0) == 8, "4659 AC2: drain=0 → 8ms floor");
+    CHECK(aura::orch::reclaimed_retry_budget_ms(1) == 8, "4659 AC2: drain=1 → 8ms");
+    CHECK(aura::orch::reclaimed_retry_budget_ms(7) == 56, "4659 AC2: drain=7 → 56ms");
+    CHECK(aura::orch::reclaimed_retry_budget_ms(2000) == 16000,
+          "4659 AC2: drain=2000 → 16s (#3595 unchanged)");
+    CHECK(aura::orch::reclaimed_retry_budget_ms(3750) == 30000, "4659 AC2: drain=3750 → cap");
+    CHECK(aura::orch::reclaimed_retry_budget_ms(4000) == 30000, "4659 AC2: cap clamps (#2227)");
+    CHECK(aura::orch::reclaimed_retry_budget_ms(1000000) == 30000,
+          "4659 AC2: huge drain clamps at 30s");
+}
+
+static void ac4659_3_drain_2000_window_unchanged() {
+    using aura::orch::AgentSpec;
+    using aura::orch::spawn_agent_with_mailbox;
+    using aura::serve::SchedRunner;
+    using aura::serve::Scheduler;
+    std::println("\n--- #4659 AC3: drain=2000 — 16s bounded window unchanged ---");
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    std::string prev_sb_s = prev_sb ? prev_sb : "";
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    apply_production_audit_defaults();
+    {
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        AgentSpec spec;
+        spec.name = "4659-drain2000";
+        spec.attach_mailbox = true;
+        spec.body = [] { std::this_thread::sleep_for(std::chrono::milliseconds(60)); };
+        auto h = spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(h.ok && h.fiber, "4659 AC3: spawn ok");
+        std::vector<aura::orch::AgentHandle> hs;
+        hs.push_back(std::move(h));
+        JoinPolicy policy;
+        policy.primary_ms = 20;
+        policy.drain_ms = 2000; // the default drain → drain*8 = 16s window
+        const auto jr = join_agents(std::span<aura::orch::AgentHandle>(hs), policy);
+        CHECK(jr.status != JoinStatus::Ok, "4659 AC3: aggregate non-Ok at primary timeout");
+        // Body exits at ~60ms, inside the 16s window → cleaned either way;
+        // this pins the #2227/#3595 shape the floor must not perturb.
+        CHECK(!hs[0].must_wait_reclaimed, "4659 AC3: must_wait cleared inside 16s window");
+        CHECK(hs[0].reserved_memory_bytes == 0, "4659 AC3: reservation released");
+        CHECK(!hs[0].reclaimed_deferred_cleanup, "4659 AC3: deferred cleanup completed");
+        if (hs[0].fiber) {
+            if (auto* s = hs[0].fiber->owner_sched()) {
+                s->note_orphan_fiber(hs[0].fiber, /*hard_deadline_ms=*/50);
+                std::this_thread::sleep_for(std::chrono::milliseconds(60));
+                (void)s->reap_orphans_now();
+            }
+            hs[0].fiber = nullptr; // reaped — the husk must not touch it
+        }
+    }
+    apply_dev_audit_defaults();
+    if (!prev_sb_s.empty())
+        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_SANDBOX");
+}
+
+static void ac4659_4_single_join_one_shot_window_unchanged() {
+    using aura::orch::AgentSpec;
+    using aura::orch::spawn_agent_with_mailbox;
+    using aura::serve::SchedRunner;
+    using aura::serve::Scheduler;
+    std::println("\n--- #4659 AC4: single join_agent drain=0 — one 50ms ensure arm, then SSOT ---");
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    std::string prev_sb_s = prev_sb ? prev_sb : "";
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    apply_production_audit_defaults();
+    {
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        AgentSpec spec;
+        spec.name = "4659-single";
+        spec.attach_mailbox = true;
+        // Self-exiting body (AC3 shape — proven teardown): live through
+        // the join + the one-shot auto-wait window, exits at ~120ms.
+        spec.body = [] { std::this_thread::sleep_for(std::chrono::milliseconds(120)); };
+        auto h = spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(h.ok && h.fiber, "4659 AC4: spawn ok");
+        JoinPolicy policy;
+        policy.primary_ms = 50;
+        policy.drain_ms = 0;
+        const auto jr = join_agent(h, policy);
+        CHECK(jr.status != JoinStatus::Ok, "4659 AC4: join non-Ok while body live");
+        // The floor does not extend the single-handle window: each SSOT
+        // poll waits up to 50ms, so an 8ms budget is spent after the
+        // first arm — must_wait stays (same face as before the floor).
+        CHECK(h.must_wait_reclaimed, "4659 AC4: must_wait armed after the one-shot window");
+        CHECK(h.reserved_memory_bytes != 0, "4659 AC4: reservation still owed (#2661)");
+        // The ensure SSOT releases once the body exits (unchanged plane).
+        for (int i = 0; i < 100 && h.fiber && !h.fiber->is_done(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        const auto wr = ensure_reclaimed_cleanup(h);
+        CHECK(wr.status == JoinStatus::Ok || !h.must_wait_reclaimed,
+              "4659 AC4: ensure SSOT released the slot");
+        CHECK(h.reserved_memory_bytes == 0, "4659 AC4: reservation released by ensure");
+        if (h.fiber) {
+            if (auto* s = h.fiber->owner_sched()) {
+                s->note_orphan_fiber(h.fiber, /*hard_deadline_ms=*/50);
+                std::this_thread::sleep_for(std::chrono::milliseconds(60));
+                (void)s->reap_orphans_now();
+            }
+            h.fiber = nullptr; // reaped — the husk must not touch it
+        }
+    }
+    apply_dev_audit_defaults();
+    if (!prev_sb_s.empty())
+        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_SANDBOX");
+}
+
+// AC5 (Soft/Off zero-extra-wait on the drain=0 batch) is covered by the
+// pre-existing ac3433_4 batch AC — same face (dev audit + sandbox=off,
+// residual set empty, no wait_reclaimed bump) — and lives in this same
+// suite, so no separate Soft AC is added here.
+
+static void ac4659_6_source_cite() {
+    std::println("\n--- #4659 AC6: source-cite + no invent ---");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    const auto test_self = read_file("tests/orch/test_join_drain_reclaim.cpp");
+    CHECK(spawn.find("std::max(drain_ms, std::uint64_t{1}) * 8") != std::string::npos,
+          "4659 AC6: floor formula present");
+    CHECK(spawn.find("Issue #4659") != std::string::npos, "4659 AC6: stamp");
+    CHECK(spawn.find("kJoinDrainResidualHardMsDefault") != std::string::npos,
+          "4659 AC6: 30s cap reused (#2227)");
+    CHECK(test_self.find("ac4659_1_zero_drain_batch_floor_cleans_late_exit") != std::string::npos,
+          "4659 AC6: AC1 fn cited");
+    CHECK(read_file("tests/orch/test_issue_4659.cpp").empty() &&
+              read_file("tests/issues/test_issue_4659.cpp").empty(),
+          "4659 AC6: no test_issue_4659.cpp per #81967");
+    CHECK(read_file("docs/design/4659-drain-zero-floor.md").empty(),
+          "4659 AC6: no docs/design/4659-* per #1655");
 }
 
 
@@ -11141,6 +11367,12 @@ int run_test_join_drain_reclaim() {
     ac4658_2_bare_spawn_no_adopt_contract_unchanged();
     ac4658_3_soft_face_zero_cost_adopt_opt_in();
     ac4658_4_adopt_rejects_and_source_cite();
+    std::println("\n=== Issue #4659: drain_ms=0 joins get a floor auto-wait budget ===");
+    ac4659_1_zero_drain_batch_floor_cleans_late_exit();
+    ac4659_2_budget_formula_floor();
+    ac4659_3_drain_2000_window_unchanged();
+    ac4659_4_single_join_one_shot_window_unchanged();
+    ac4659_6_source_cite();
     // #3797-wave CI: restore the WAL-off face for later batch members.
     if (wal_member_pinned)
         aura::core::audit_wal::g_mutation_audit_wal().disable();

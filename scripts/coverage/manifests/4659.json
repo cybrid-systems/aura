@@ -1,0 +1,43 @@
+{
+  "issue": 4659,
+  "title": "drain_ms=0 joins get a floor auto-wait budget (max(drain_ms, 1) * 8)",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "Issue #4659",
+        "std::max(drain_ms, std::uint64_t{1}) * 8",
+        "kJoinDrainResidualHardMsDefault",
+        "wr.status == serve::JoinStatus::Invalid || elapsed_ms >= retry_budget_ms"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "scripts/check_join_reclaim_retry_3595.py",
+      "contains": [
+        "#4659 zero-drain floor",
+        "3595 AC2: budget reuses the #2227 min(drain*8, hard) shape "
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/orch/test_join_drain_reclaim.cpp",
+      "contains": [
+        "ac4659_1_zero_drain_batch_floor_cleans_late_exit",
+        "ac4659_2_budget_formula_floor",
+        "ac4659_3_drain_2000_window_unchanged",
+        "ac4659_4_single_join_one_shot_window_unchanged",
+        "ac4659_6_source_cite"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/orch/test_issue_4659.cpp",
+        "tests/issues/test_issue_4659.cpp",
+        "docs/design/4659-drain-zero-floor.md"
+      ]
+    }
+  ]
+}

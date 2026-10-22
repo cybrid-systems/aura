@@ -216,12 +216,16 @@ inline constexpr std::uint64_t kJoinDrainResidualHardMsDefault = 30000;
 // Issue #3595: production reclaimed-cleanup retry budget for the join
 // surface — the same #2227 shape as the reaper hard deadline: the
 // caller's drain window scaled 8x, capped at
-// kJoinDrainResidualHardMsDefault. drain_ms=0 (cancel-only join) -> 0 ->
-// the auto-wait stays one-shot; the default JoinPolicy drain (2000) ->
-// a 16s bounded retry window. No new env / query key.
+// kJoinDrainResidualHardMsDefault. Issue #4659: drain_ms=0 (cancel-only
+// join) gets the max(drain_ms, 1) floor — an 8ms bounded window instead
+// of a zero deadline, so the join_agents shared residual pass (#3631)
+// still polls at its 200us cadence and cleans a Reclaimed body that
+// exits just after the old zero-budget instant break. drain>0 keeps
+// drain*8 (#3595); the 30s cap is unchanged (#2227). No new env /
+// query key.
 [[nodiscard]] inline constexpr std::uint64_t
 reclaimed_retry_budget_ms(std::uint64_t drain_ms) noexcept {
-    return std::min(drain_ms * 8, kJoinDrainResidualHardMsDefault);
+    return std::min(std::max(drain_ms, std::uint64_t{1}) * 8, kJoinDrainResidualHardMsDefault);
 }
 // Issue #2228 / #2535: mailbox-backpressure admit threshold default.
 // spawn_agent_with_mailbox soft-rejects new agents (with attach_mailbox)
@@ -4038,7 +4042,13 @@ handoff_source_gone(const std::shared_ptr<std::atomic<bool>>& live) noexcept {
             static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                            std::chrono::steady_clock::now() - t0)
                                            .count());
-        if (elapsed_ms >= retry_budget_ms) {
+        // Issue #4659: an Invalid SSOT poll (nothing waitable after the
+        // flag armed — fiber gone or done-not-counted) returns at zero
+        // wait_us; with a nonzero floor budget the elapsed check could
+        // never fire and the loop would spin at zero elapsed forever.
+        // Route it through the same expiry arm — the host_forget face is
+        // unchanged from the drain=0 one-shot this floor replaces.
+        if (wr.status == serve::JoinStatus::Invalid || elapsed_ms >= retry_budget_ms) {
             // Body still live after the bounded window — host-visible
             // signal unchanged (cleanup-pending #3272); reuse #3220 risk.
             g_orch_module_stats.host_forget_reclaimed_risk_total.fetch_add(
@@ -4548,9 +4558,12 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
         // here (AC3 zero cost). Timeout preserves #2661 no-early-free.
         // Issue #3595: one SSOT with the Aura prims — the bounded retry
         // wrapper (ensure_reclaimed_cleanup loop, budget =
-        // reclaimed_retry_budget_ms(drain_ms); drain=0 cancel-only stays
-        // one-shot) now owns the flag writes (#3146) and the #3220
-        // host_forget bump.
+        // reclaimed_retry_budget_ms(drain_ms)) now owns the flag writes
+        // (#3146) and the #3220 host_forget bump. Issue #4659: drain=0
+        // gets the 8ms floor; each SSOT poll still waits up to 50ms, so
+        // this single-handle window stays one ensure arm — the floor's
+        // real window is the join_agents shared pass (#3631), whose
+        // 200us cadence makes small budgets effective.
         // Issue #3953: 2nd+ join_agent on a stuck name uses the 50ms
         // ensure budget, not drain×8.
         const auto budget = wait_already_consumed ? kProductionWaitReclaimedMsDefault
