@@ -1,0 +1,55 @@
+{
+  "issue": 4664,
+  "title": "strict rollback audit row carries the real capability tenant + join mid (not tenant=0/mid=0)",
+  "checks": [
+    {
+      "ac": "AC1-src-tenant-mid-fill",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "Issue #4664",
+        "/*tenant=*/ev.capability_tenant_id(),",
+        "/*mutation_id=*/typed_audit::join_audit_and_se_mid(0),",
+        "SecurityEventKind::MacroHygieneRollbackOnStrict",
+        "/*op=*/\"mutate:rollback-macro-introduced\",",
+        "/*denied=*/false,",
+        "rollback unstampped=%llu root=%llu strict-mode",
+        "aura_rollback_strict_audited_total_bump();"
+      ]
+    },
+    {
+      "ac": "AC2-src-no-new-counter",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "aura_macro_expand_sandbox_strict_v_read() != 0 && unstampped > 0",
+        "aura_rollback_strict_audited_total_bump();"
+      ]
+    },
+    {
+      "ac": "AC3-test-runtime",
+      "path": "tests/compiler/test_rollback_by_marker.cpp",
+      "contains": [
+        "Issue #4664",
+        "ac4664_rollback_row_carries_tenant_and_mid",
+        "ac4664_row_stays_permissive_with_same_shape",
+        "ac4664_soft_off_has_no_audit_arm",
+        "ac4664_refuse_row_stays_distinguishable",
+        "4664 AC1: row tenant is the capability tenant",
+        "4664 AC1: row mid is non-zero (joinable)",
+        "4664 AC1: row mid joins to the mutation that cleared the marker",
+        "4664 AC1: SE surface finds the rollback row by mid + tenant",
+        "4664 AC2: row stays permissive (denied=false)",
+        "4664 AC2: rollback_strict_audited_total reused (bumped once)",
+        "4664 AC3: no MacroHygieneRollbackOnStrict row",
+        "4664 AC4: row no longer looks like a mid=0 refuse row"
+      ]
+    },
+    {
+      "ac": "AC4-no-issue-dir",
+      "forbid": [
+        "tests/issues/test_issue_4664.cpp",
+        "tests/compiler/test_issue_4664.cpp",
+        "docs/design/4664-rollback-audit-identity.md"
+      ]
+    }
+  ]
+}
