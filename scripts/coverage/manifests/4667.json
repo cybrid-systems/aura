@@ -1,0 +1,47 @@
+{
+  "issue": 4667,
+  "title": "IR typed-entry readiness is entry-only - Borrow/MutBorrow/CastOp/Apply do not re-sample after a mid-function densify/steal",
+  "checks": [
+    {
+      "ac": "AC1-audit",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "kPerOpTypedEntryReadinessIssue = 4667",
+        "linear_per_op_typed_entry_readiness_ok",
+        "ir_typed_entry_commit_readiness_ok()",
+        "g_linear_fast_path_elide_blocked_production_total"
+      ]
+    },
+    {
+      "ac": "AC1-executor",
+      "path": "src/compiler/ir_executor_impl.cpp",
+      "contains": [
+        "Issue #4667",
+        "ir_per_op_typed_entry_readiness_ok",
+        "LinearOpKind::Borrow",
+        "LinearOpKind::MutBorrow",
+        "case IROpcode::CastOp:",
+        "case IROpcode::Apply:",
+        "commit-readiness-refused"
+      ]
+    },
+    {
+      "ac": "AC-test",
+      "path": "tests/compiler/test_ir_typed_entry_proof_authority.cpp",
+      "contains": [
+        "ac4667_per_op_readiness_resample",
+        "ac4667_op_wiring_source_cite",
+        "ac4667_soft_zero_cost",
+        "Issue #4667"
+      ]
+    },
+    {
+      "ac": "AC-no-issue-dir",
+      "forbid": [
+        "tests/issues/test_issue_4667.cpp",
+        "tests/compiler/test_issue_4667.cpp",
+        "docs/design/4667-per-op-readiness.md"
+      ]
+    }
+  ]
+}
