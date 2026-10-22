@@ -1,7 +1,7 @@
 # Legacy test inventory
 
 **Issue:** [#1957](https://github.com/cybrid-systems/aura/issues/1957)
-**Generated:** 2026-10-21 by `scripts/tools/inventory_legacy_tests.py`
+**Generated:** 2026-10-22 by `scripts/tools/inventory_legacy_tests.py`
 **Status:** living document — re-run the script after consolidations.
 
 ## Purpose
@@ -1339,7 +1339,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_incremental_facade_dirty_names_snapshot.cpp` (—) [domain_suite, theme_compiler] — Fix contract (AC1–AC6 from the issue body):
 - `tests/compiler/test_incremental_typed_selfmod_dirty_narrowing.cpp` (—) [domain_suite, theme_compiler] — test_incremental_typed_selfmod_dirty_narrowing.cpp — Merged #509/#518/#526/#536/#537/#550 +
 - `tests/compiler/test_invalidate_cascade_order.cpp` (—) [domain_suite, theme_compiler] — test_invalidate_cascade_order.cpp — Issue #1378:
-- `tests/compiler/test_ir_typed_entry_proof_authority.cpp` (—) [domain_suite, theme_compiler] — Fix contract (AC1–AC6 from the issue body):
+- `tests/compiler/test_ir_typed_entry_proof_authority.cpp` (—) [large, domain_suite, theme_compiler] — Fix contract (AC1–AC6 from the issue body):
 - `tests/serve/test_is_stealable_snapshot_gate.cpp` (—) [domain_suite, theme_serve] — AC1: is_stealable() false when depth>0 or held under MutationBoundary
 - `tests/compiler/test_isolation_audit_mid.cpp` (—) [domain_suite, theme_compiler] — AC1: Isolation deny SecurityEvent.mutation_id is Mutation epoch space,
 - `tests/compiler/test_issue_3095.cpp` (#3095) [domain_suite, theme_compiler] — AC1: After dual-topology abort, the helper is invoked; on a

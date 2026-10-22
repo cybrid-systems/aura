@@ -3044,6 +3044,29 @@ inline constexpr int kQuietPendingGreenRideIssue = 3983;
     return false;
 }
 
+// Issue #4667: per-op readiness re-sample for the linear ops the
+// Move/Drop face does not cover.
+//
+// The #3224 grant is ENTRY-ONLY: an IR/JIT function enters with a
+// valid readiness grant, but a concurrent densify/steal can flip
+// readiness while the same function body still runs. Move/Drop
+// re-sample the live commit_readiness face (#3130 / #3186);
+// Borrow / MutBorrow / CastOp / Apply did not - they rode the
+// entry-era grant into the provenance path.
+//
+// This helper re-samples the SAME readiness face the entry gate uses
+// (ir_typed_entry_commit_readiness_ok) - no second readiness model and
+// no new counter: a refusal bumps the existing
+// g_linear_fast_path_elide_blocked_production_total inside the shared
+// helper, exactly like the Move/Drop face. Production / Full: the op
+// is denied via the readiness path (the provenance path is not
+// consulted). Soft / Off: zero-cost (one production_defaults load
+// inside the shared helper).
+inline constexpr int kPerOpTypedEntryReadinessIssue = 4667;
+[[nodiscard]] inline bool linear_per_op_typed_entry_readiness_ok() noexcept {
+    return ir_typed_entry_commit_readiness_ok();
+}
+
 // Issue #3758: execute-catalog consult before ScalarFn (try_jit_execute /
 // exec_jit). Same restore-override dance as IRInterpreter::
 // ir_typed_entry_blocked_result so a unit-test override==0 cannot refuse
