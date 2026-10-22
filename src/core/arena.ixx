@@ -2699,6 +2699,10 @@ public:
         // #3469 last_object_remap_ tombstone table into these paths.
         // resolve_object_remap / densify-stale refuse keep the full map.
         std::unordered_map<void*, void*> this_window_remap;
+        // Issue #4663: old → moved-size side table arming the pin remap
+        // walk's interior range face. Missing entry → 0 → exact-match-only
+        // walk for that pair (legacy face).
+        std::unordered_map<void*, std::size_t> this_window_remap_size;
 
         // Soft-gate the auto path during render / active MutationBoundary
         // so fiber yield / Guard pins stay coherent.
@@ -2974,12 +2978,23 @@ public:
             // entries only — tombstones are other keys). Soft / no-move:
             // leave this_window_remap empty (zero rewrite work).
             this_window_remap.clear();
+            this_window_remap_size.clear();
             if (result.objects_moved > 0 && !last_moving_relocated_old_.empty()) {
                 this_window_remap.reserve(last_moving_relocated_old_.size());
+                this_window_remap_size.reserve(last_moving_relocated_old_.size());
                 for (void* old_ptr : last_moving_relocated_old_) {
                     auto it = last_object_remap_.find(old_ptr);
-                    if (it != last_object_remap_.end() && it->second)
+                    if (it != last_object_remap_.end() && it->second) {
                         this_window_remap.emplace(old_ptr, it->second);
+                        // Issue #4663: moved size resolves via dtor_index_ on
+                        // the NEW address (post-relocate DtorEntry keys are
+                        // the moved identities). 0 → exact-match-only walk.
+                        std::size_t moved_size = 0;
+                        if (const auto idx_it = dtor_index_.find(it->second);
+                            idx_it != dtor_index_.end())
+                            moved_size = dtors_[idx_it->second].size;
+                        this_window_remap_size.emplace(old_ptr, moved_size);
+                    }
                 }
             }
 
@@ -3232,8 +3247,15 @@ public:
             // not be rewritten via a prior-window tombstone.
             if (result.moved_live_objects && !this_window_remap.empty()) {
                 for (const auto& [old_ptr, new_ptr] : this_window_remap) {
+                    // Issue #4663: pass the moved object's size so the walk
+                    // range-matches interior pins (base <= ptr < base + size)
+                    // and rebases them onto the new block.
+                    std::size_t moved_size = 0;
+                    if (const auto sz_it = this_window_remap_size.find(old_ptr);
+                        sz_it != this_window_remap_size.end())
+                        moved_size = sz_it->second;
                     const auto rr = aura::core::lifetime::remap_pins_pointing_to(
-                        old_ptr, new_ptr, result.new_gen, arena_id_);
+                        old_ptr, new_ptr, result.new_gen, arena_id_, moved_size);
                     remapped_pins += rr.remapped;
                     // Issue #3633: a pin actually remapped onto this old
                     // address = the object had pin cover (dedup key = old addr).

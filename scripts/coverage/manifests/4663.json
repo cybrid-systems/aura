@@ -1,0 +1,40 @@
+{
+  "issue": 4663,
+  "title": "pin range remap: interior LifetimePin/GeneralObjectPin rebased under Moving densify",
+  "checks": [
+    {
+      "ac": "AC-src-pin-range-face",
+      "path": "src/core/lifetime_pin.hh",
+      "contains": [
+        "std::size_t old_size = 0",
+        "Issue #4663",
+        "std::uint64_t interior_remaps = 0",
+        "lifetime_pin_interior_remap_total"
+      ]
+    },
+    {
+      "ac": "AC-src-arena-wireup",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "this_window_remap_size",
+        "Issue #4663"
+      ]
+    },
+    {
+      "ac": "AC-test-runtime",
+      "path": "tests/core/test_moving_compact.cpp",
+      "contains": [
+        "ac4663_interior_pin_range_remap",
+        "4663 AC1: pin rebased to new_base + offset",
+        "Issue #4663"
+      ]
+    },
+    {
+      "ac": "AC-no-issue-dir",
+      "forbid": [
+        "tests/issues/test_issue_4663.cpp",
+        "docs/design/4663-pin-range-remap.md"
+      ]
+    }
+  ]
+}
