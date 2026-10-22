@@ -1673,12 +1673,15 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     if (stack.empty()) {
         aura_typed_audit_clear_readiness_evaluator();
     }
-    // Issue #3102: AC5 — boundary exit (success or abort) decays the TLS
-    // depth. For abort, coerced_nodes_tracker_take() at the abort site
-    // already emptied the vector; this call just drops the depth so the
-    // outermost exit clears the tracker. For success, the vector is
-    // discarded (boundary succeeded → no dirty re-mark). Nested boundaries
-    // decrement by 1; the outermost exit (depth 1→0) clears.
+    // Issue #3102: AC5 — the boundary exit decays the TLS depth (nested
+    // exits decrement by 1; the outermost exit 1→0 clears the tracker).
+    // Issue #4672: that clear made the #3102 AC2 abort take always empty
+    // (the outermost abort force-dirtied NOTHING). Capture the tracker
+    // BEFORE the drain; the abort rewind consumes the capture. Success:
+    // no capture — the vector is discarded exactly as before.
+    std::vector<aura::compiler::dirty::NodeId> coerced_nodes_at_exit;
+    if (!success)
+        coerced_nodes_at_exit = aura::compiler::coerced_nodes_tracker_take();
     aura::compiler::coerced_nodes_tracker_exit_boundary();
     // Issue #2920 SSOT: FlatAST is authoritative after structural mutate.
     // Invalidate set-code text cache when this flat actually mutated so
@@ -1723,6 +1726,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             typed_audit::clear_type_linear_commit_proof_on_abort();
             typed_audit::clear_coercion_commit_readiness_on_abort();
             dual_clear_coercion_state_on_abort();
+            // #4672: the tracker was captured above — this take is empty.
             (void)aura::compiler::coerced_nodes_tracker_take(); // discard
             aura::compiler::dirty::bump_dead_coercion_decision_invalidate();
             aura_clear_occurrence_persist_buffer(this);
@@ -1848,7 +1852,14 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             // AC1: truncate the type cone to entry size.
             aura::compiler::dirty::truncate_type_cone_to_size(cp.coercion_cone_size_at_entry);
             // AC2: force-dirty coerced nodes for the next incremental typecheck.
-            auto coerced = aura::compiler::coerced_nodes_tracker_take();
+            // #4672: the tracker was drained by the exit call above (the
+            // outermost exit CLEARS it), so this take used to be empty and
+            // the force-dirty step was a no-op. Consume the capture taken
+            // BEFORE that drain, plus a node coerced after it.
+            auto coerced = std::move(coerced_nodes_at_exit);
+            auto late_coerced = aura::compiler::coerced_nodes_tracker_take();
+            if (!late_coerced.empty())
+                coerced.insert(coerced.end(), late_coerced.begin(), late_coerced.end());
             if (!coerced.empty()) {
                 const auto added =
                     aura::compiler::dirty::force_dead_coercion_elim_into_cone(coerced);
@@ -1878,6 +1889,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         } else {
             aura::compiler::g_coercion_map_abort_rewind_observe_total.fetch_add(
                 1, std::memory_order_relaxed);
+            // #4672: the capture is dropped — Soft / Off stays observe-only.
+            coerced_nodes_at_exit.clear();
             (void)aura::compiler::coerced_nodes_tracker_take(); // discard
             // Issue #3158: Soft / Off path — observe counter only, no
             // structural write. Per AC3 zero-cost contract: Soft bumps
