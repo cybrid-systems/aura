@@ -535,6 +535,61 @@ static void aura_persist_reject_undo(aura::compiler::Evaluator* ev,
     aura::compiler::typed_audit::undo_apply_coercion_map_recent(ev, mutation_id);
 }
 
+// Issue #4666: the #3102 CoercionMap / DeadCoercion / type-cone rewind,
+// factored into one helper so the #3376 fail-closed persist-reject exits
+// run it as well.
+//
+// Why the reject path needs it: a persist-reject exit clears the
+// Occurrence buffer / TypeLinearCommitProof / export authority and then
+// calls note_3440_restore(). That note restores the AST dual-topology
+// (#3687 restore_checkpoint_topology_for_persist_reject) and therefore
+// sets cp.topology_restored -- so the later outermost !success abort
+// path SKIPS its whole `if (!cp.topology_restored)` block, which is
+// where the #3102 rewind lives (truncate_type_cone_to_size + force-dirty
+// of the coerced nodes + DeadCoercion decision invalidate gen + coercion
+// commit_readiness clear). The AST is rolled back but the type cone /
+// coercion decision faces keep the rejected mutation's state -- a
+// half-rolled-back type state.
+//
+// The sequence below is the abort path's sequence: same order, same
+// helpers, same production/Full gate + Soft observe branch. It runs
+// BEFORE the buffer / proof / export clears and before
+// note_3440_restore() so the coerced-node tracker is still populated
+// when the force-dirty step runs (the reject undo takes it right
+// after). Production/Full only; Soft / Off unchanged (observe only).
+static void rollback_type_state_after_reject(aura::compiler::Evaluator* ev) noexcept {
+    if (!ev)
+        return;
+    auto& stk = ev->active_mutation_stack();
+    if (stk.empty())
+        return;
+    const auto entry_size = stk.back().coercion_cone_size_at_entry;
+    if (aura::compiler::typed_audit::production_defaults_active() ||
+        aura::compiler::typed_audit::get_strategy() ==
+            aura::compiler::typed_audit::AuditStrategy::Full) {
+        // AC1: truncate the type cone back to the boundary-entry size.
+        aura::compiler::dirty::truncate_type_cone_to_size(entry_size);
+        // AC2: force-dirty the nodes coerced in this window so the next
+        // incremental typecheck re-derives them from live type.
+        auto coerced = aura::compiler::coerced_nodes_tracker_take();
+        if (!coerced.empty()) {
+            const auto added = aura::compiler::dirty::force_dead_coercion_elim_into_cone(coerced);
+            aura::compiler::g_coercion_map_abort_forced_dirty_total.fetch_add(
+                added, std::memory_order_relaxed);
+        }
+        // AC3: bump the DeadCoercion decision invalidate gen (drops stale IR).
+        aura::compiler::dirty::bump_dead_coercion_decision_invalidate();
+        // AC4: clear the coercion commit_readiness face (sibling of the
+        // TypeLinearCommitProof clear).
+        aura::compiler::typed_audit::clear_coercion_commit_readiness_on_abort();
+        aura::compiler::g_coercion_map_abort_rewind_total.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        aura::compiler::g_coercion_map_abort_rewind_observe_total.fetch_add(
+            1, std::memory_order_relaxed);
+        (void)aura::compiler::coerced_nodes_tracker_take(); // discard
+    }
+}
+
 // Issue #2641 / #2938: C ABI for outermost-success OccurrenceGoal persist
 // (tests + dtor). Soft / env=0 / no type-checker / empty goals → zero cost
 // inside maybe_persist_occurrence_snapshot. Issue #2938: successful commit
@@ -580,6 +635,8 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
         if (hard && (live_truth.fingerprint_overflow ||
                      live_truth.live_goal_count >
                          aura::compiler::typed_audit::kProofGoalFingerprintMaxGoals)) {
+            // Issue #4666: #3102 coercion / type-cone rewind on the reject path.
+            rollback_type_state_after_reject(ev);
             (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
             ev->bump_occurrence_persist_fingerprint_mismatch();
             (void)
@@ -605,6 +662,8 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
                               aura::compiler::typed_audit::AuditStrategy::Full;
         const auto expected = ev->expected_occurrence_snapshot_fp();
         if (hard && expected == 0 && live_truth.live_goal_count > 0) {
+            // Issue #4666: #3102 coercion / type-cone rewind on the reject path.
+            rollback_type_state_after_reject(ev);
             (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
             ev->bump_occurrence_persist_fingerprint_mismatch();
             (void)
@@ -639,6 +698,8 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
         if (aura::compiler::typed_audit::production_hard_face_active() &&
             live_truth.live_goal_count > 0 &&
             aura::compiler::typed_audit::last_proof_goal_fingerprint_v_read() == 0) {
+            // Issue #4666: #3102 coercion / type-cone rewind on the reject path.
+            rollback_type_state_after_reject(ev);
             (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
             aura::compiler::typed_audit::bump_occurrence_persist_reject_expected_fp_zero_total();
             (void)
@@ -660,6 +721,8 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     if (aura::compiler::typed_audit::production_hard_face_active() &&
         ev->expected_occurrence_snapshot_fp() != 0 &&
         live_fp != ev->expected_occurrence_snapshot_fp()) {
+        // Issue #4666: #3102 coercion / type-cone rewind on the reject path.
+        rollback_type_state_after_reject(ev);
         // Mismatch -> treat as abort: clear persist + bump mismatch counter.
         (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
         ev->bump_occurrence_persist_fingerprint_mismatch();
@@ -690,6 +753,8 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     {
         const auto join_mid = aura::compiler::typed_audit::join_audit_and_se_mid(0);
         if (aura::compiler::typed_audit::mid_abort_authority_outstanding(join_mid)) {
+            // Issue #4666: #3102 coercion / type-cone rewind on the reject path.
+            rollback_type_state_after_reject(ev);
             (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
             ev->bump_occurrence_persist_fingerprint_mismatch();
             (void)
@@ -736,6 +801,8 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
                               aura::compiler::typed_audit::get_strategy() ==
                                   aura::compiler::typed_audit::AuditStrategy::Full;
             if (hard) {
+                // Issue #4666: #3102 coercion / type-cone rewind on the reject path.
+                rollback_type_state_after_reject(ev);
                 // Hard-reject: stamp reject proof with force_reason 16 (sibling
                 // #3031 face_name "pending_full_solve_residual"). Clear the
                 // persist buffer + bump fingerprint mismatch counter (treat as
@@ -790,6 +857,8 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
                           aura::compiler::typed_audit::get_strategy() ==
                               aura::compiler::typed_audit::AuditStrategy::Full;
         if (hard) {
+            // Issue #4666: #3102 coercion / type-cone rewind on the reject path.
+            rollback_type_state_after_reject(ev);
             ev->clear_type_export_authority();
             (void)
                 aura::compiler::typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
@@ -822,6 +891,8 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
         if (!aura::compiler::recheck_all_live_adt_exhaust_before_proof(
                 flat, pool, ev->type_registry_ptr(), &tc->constraint_system(),
                 ev->compiler_metrics())) {
+            // Issue #4666: #3102 coercion / type-cone rewind on the reject path.
+            rollback_type_state_after_reject(ev);
             ev->clear_type_export_authority();
             (void)
                 aura::compiler::typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
@@ -875,6 +946,8 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     // Live-policy would_allow_commit=false is NOT last-look: recover
     // (#3376 ensure_occurrence_commit_or_recover) must still run.
     if (aura::compiler::typed_audit::stamp_last_look_rejected()) {
+        // Issue #4666: #3102 coercion / type-cone rewind on the reject path.
+        rollback_type_state_after_reject(ev);
         aura::compiler::typed_audit::drop_deferred_outermost_green_proof();
         ev->clear_type_export_authority();
         aura::compiler::typed_audit::publish_type_linear_proof_outcome(
@@ -896,6 +969,8 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     // the generic stamp — the face code 10/11/15 lives in the
     // publish_occurrence_commit_health bitmask for Agent observability.
     if (!tc->ensure_occurrence_commit_or_recover()) {
+        // Issue #4666: #3102 coercion / type-cone rewind on the reject path.
+        rollback_type_state_after_reject(ev);
         aura::compiler::typed_audit::drop_deferred_outermost_green_proof();
         ev->clear_type_export_authority();
         (void)aura::compiler::typed_audit::build_type_linear_commit_proof_from_live_with_outcome(

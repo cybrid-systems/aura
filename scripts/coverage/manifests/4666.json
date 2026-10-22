@@ -1,0 +1,48 @@
+{
+  "issue": 4666,
+  "title": "persist-reject early exits run the #3102 coercion/type-cone rewind (no half-rolled-back coercion state)",
+  "checks": [
+    {
+      "ac": "AC-src",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "static void rollback_type_state_after_reject(aura::compiler::Evaluator* ev) noexcept",
+        "aura::compiler::dirty::truncate_type_cone_to_size(entry_size)",
+        "aura::compiler::coerced_nodes_tracker_take()",
+        "aura::compiler::dirty::force_dead_coercion_elim_into_cone(coerced)",
+        "aura::compiler::dirty::bump_dead_coercion_decision_invalidate()",
+        "aura::compiler::typed_audit::clear_coercion_commit_readiness_on_abort()",
+        "aura::compiler::g_coercion_map_abort_rewind_observe_total",
+        "Issue #4666"
+      ]
+    },
+    {
+      "ac": "AC-reject-exits",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "rollback_type_state_after_reject(ev);",
+        "note_3440_restore();"
+      ]
+    },
+    {
+      "ac": "AC-test",
+      "path": "tests/compiler/test_outermost_persist_fail_closed.cpp",
+      "contains": [
+        "ac4666_reject_rewinds_type_cone",
+        "ac4666_coerced_node_rederives_from_live_type",
+        "ac4666_abort_path_still_rewinds",
+        "ac4666_soft_unchanged",
+        "ac4666_source_cites",
+        "Issue #4666"
+      ]
+    },
+    {
+      "ac": "AC-no-issue-dir",
+      "forbid": [
+        "tests/issues/test_issue_4666.cpp",
+        "tests/compiler/test_issue_4666.cpp",
+        "docs/design/4666-persist-reject-type-cone-rewind.md"
+      ]
+    }
+  ]
+}
