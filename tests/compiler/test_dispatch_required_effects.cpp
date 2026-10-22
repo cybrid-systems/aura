@@ -4173,6 +4173,41 @@ int run_test_dispatch_required_effects() {
                                              RenderFfiAbi::BatchArgs, args, tok_deny);
         CHECK(r_d == -1, "#3524 AC: require_effect false → skip");
 
+        // ── #4655: the token is tenant-scoped, not just fiber-scoped ──
+        std::println("\n--- #4655: render token tenant binding ---");
+        using aura::compiler::ffi_hot::render_effect_token_allows;
+        reset_ffi_hot_path_for_test();
+        test_set_render_effect_fiber_id(7);
+        const auto tok_t1 = mint_render_effect_token(true, /*mid=*/1, /*tenant=*/1);
+        CHECK(tok_t1 != 0, "#4655 AC: mint under tenant 1 yields token");
+        CHECK(render_effect_token_allows(tok_t1, 1),
+              "#4655 AC: same tenant + same fiber + same mid allows");
+        CHECK(!render_effect_token_allows(tok_t1, 2),
+              "#4655 AC: nested TenantScope swap denies the live token");
+        // A same-fiber dispatch under the second principal is skipped.
+        const auto r_t2 = path.dispatch_batch(h, reinterpret_cast<void*>(+dummy),
+                                              RenderFfiAbi::BatchArgs, args, tok_t1,
+                                              /*caller_tenant=*/2);
+        CHECK(r_t2 == -1, "#4655 AC: tenant-swapped dispatch skips invoke");
+        auto snap_t2 = snapshot_ffi_hot_path();
+        CHECK(snap_t2.effect_denied_render_total >= 1,
+              "#4655 AC: tenant mismatch bumps effect_denied_render_total");
+        CHECK(snap_t2.invoke_total == 0, "#4655 AC: tenant mismatch does not invoke");
+        // Same tenant still invokes.
+        const auto r_t1 = path.dispatch_batch(h, reinterpret_cast<void*>(+dummy),
+                                              RenderFfiAbi::BatchArgs, args, tok_t1,
+                                              /*caller_tenant=*/1);
+        CHECK(r_t1 == 42, "#4655 AC: same-tenant dispatch still invokes");
+        // Soft/Off stand-in (tenant 0) keeps the historical allow shape.
+        reset_ffi_hot_path_for_test();
+        const auto tok_soft = mint_render_effect_token(true, /*mid=*/1, /*tenant=*/0);
+        CHECK(render_effect_token_allows(tok_soft, 0),
+              "#4655 AC: tenant-0 Soft/Off token still allows");
+        CHECK(!render_effect_token_allows(tok_soft, 3),
+              "#4655 AC: tenant-0 token never authorises a non-zero tenant");
+        test_clear_render_effect_fiber_id();
+        reset_ffi_hot_path_for_test();
+
         const auto script = read_file("scripts/coverage/checks/check_side_effect_security.py");
         CHECK(script.find("3524") != std::string::npos, "#3524: linter cites issue");
         CHECK(script.find("aura_jit_bridge.cpp") != std::string::npos,
