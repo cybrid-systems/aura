@@ -1,0 +1,43 @@
+{
+  "issue": 4652,
+  "title": "a rejected mutate:query-and-replace fails the Guard and frees the parse orphans",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "Issue #4652",
+        "free_repl_parse_orphans",
+        "free_orphan_nodes_from",
+        "ok = false;"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_hygiene_mutate_closed_loop.cpp",
+      "contains": [
+        "Issue #4652",
+        "ac4652_1_rejected_parse_frees_orphans",
+        "ac4652_2_production_boundary_aborts",
+        "ac4652_3_bad_template_fails_boundary"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "scripts/coverage/checks/check_query_and_replace_guard_fail_4652.py",
+      "contains": [
+        "Issue #4652",
+        "4652 AC1: every reject return in the body fails the nested Guard",
+        "4652 AC2: the post-parse rejects free the parse appends"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_4652.cpp",
+        "tests/issues/test_issue_4652.cpp",
+        "docs/design/4652-query-and-replace-guard.md"
+      ]
+    }
+  ]
+}
