@@ -6316,19 +6316,26 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #3738: explicit 0 is a legal join key (refuse class,
             // same as query:security-audit #3462).
             // Issue #4302: omitted arg joins THIS evaluator's last completed
-            // action mid, including sticky 0. Process-global last_stamped
-            // is only the fallback before any outermost exit. join==0 with
-            // that slot valid is a real same-mid filter, not "any row".
+            // action mid, including sticky 0. join==0 with that slot valid
+            // is a real same-mid filter, not "any row".
+            // Issue #4661: before any completion the default join uses the
+            // mid the in-flight action used — the boundary-noted mid when
+            // one is noted (the proof_mid expression), else last_stamped.
             const bool filt_mid = !args.empty() && is_int(args[0]);
             const bool completed_valid = ev.has_last_completed_audit_mid();
             const std::uint64_t want_mid =
                 filt_mid ? static_cast<std::uint64_t>(as_int(args[0]))
-                         : (completed_valid ? ev.last_completed_audit_mid() : last_stamped);
+                         : (completed_valid ? ev.last_completed_audit_mid() : proof_mid);
             const std::uint64_t join_mid = want_mid;
             // #3284 pins the prefix `filt_mid || join_mid != 0`. Completed
             // mid 0 (#4302) still filters; it is an extra term, not a
             // replacement of that pin.
-            const bool se_filter_by_mid = filt_mid || join_mid != 0 || completed_valid;
+            // #4661: the no-arg pre-completion default filters too — the
+            // join is the boundary mid / last_stamped, or 0 refusing every
+            // non-0 row when no mid source exists at all (se-mid-miss=1
+            // instead of folding an arbitrary M-mid reason beside join 0).
+            const bool no_arg = !filt_mid && !completed_valid; // #4661
+            const bool se_filter_by_mid = filt_mid || join_mid != 0 || completed_valid || no_arg;
 
             std::int64_t last_se_denied = 0;
             std::int64_t last_se_reason_code = 0; // 0=none; else SecurityEventKind+1

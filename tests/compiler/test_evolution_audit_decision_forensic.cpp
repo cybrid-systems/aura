@@ -31,6 +31,10 @@
 #include <string>
 #include <string_view>
 
+#include "compiler/typed_mutation_audit.h"
+#include "core/security_event.hh"
+#include "core/workspace_epoch.hh"
+
 import std;
 import aura.compiler.service;
 import aura.compiler.value;
@@ -612,6 +616,80 @@ static void ac4647_4_source_no_commit_mutator() {
           "4647 AC4: observe-only stays 1");
 }
 
+// ── Issue #4661: the no-arg default join must never fold an arbitrary ──
+// M-mid SE reason beside join-mid 0. Before any completed audited action
+// the default join is the boundary-noted mid when one is noted (the same
+// mid the in-flight action used — the proof_mid expression), else
+// last_stamped; when no mid source exists at all the join stays 0 but the
+// SE walk refuses every non-0 row (se-mid-miss=1, SE fields empty).
+// #4302's sticky-0 face is untouched: a completed mid 0 still filters.
+
+// AC4661-1 (runtime, production face): deny SE with mid M inside a
+// boundary, no completed outermost exit — the no-arg query joins mid M,
+// never 0.
+static void ac4661_boundary_mid_join() {
+    std::println("\n--- AC4661-1: in-boundary deny SE joins the boundary mid ---");
+    namespace ta = aura::compiler::typed_audit;
+    using aura::core::security_event::append_security_event;
+    using aura::core::security_event::g_security_event_ring;
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    using aura::core::security_event::SecurityEventKind;
+    ta::apply_production_audit_defaults();
+    reset_security_event_ring_for_test();
+    ta::clear_boundary_audit_mid();
+    ta::g_last_stamped_audit_mid.store(0, std::memory_order_relaxed);
+    if (aura::core::current_mutation_epoch() == 0)
+        aura::core::bump_mutation_epoch(1); // keep the query resolve off the mid-fallback row
+    constexpr std::uint64_t kMid = 0x4661;
+    append_security_event(g_security_event_ring(), SecurityEventKind::EffectDeny, 7, kMid, kMid, 8,
+                          "test:4661-deny", "capability-denied", /*denied=*/true, 0);
+    CompilerService cs; // fresh evaluator: no completed audit mid yet
+    CHECK(!cs.evaluator().has_last_completed_audit_mid(),
+          "4661 AC1: fresh evaluator has no completed audit mid");
+    ta::note_boundary_audit_mid(kMid);
+    CHECK(evol_key(cs, "last-audit-mid") == static_cast<std::int64_t>(kMid),
+          "4661 AC1: no-arg join is the boundary mid, not 0");
+    CHECK(evol_key(cs, "se-mid-miss") == 0, "4661 AC1: same-mid deny row joins");
+    CHECK(evol_key(cs, "last-se-denied") == 1, "4661 AC1: deny bit comes from mid M");
+    CHECK(evol_key(cs, "last-se-reason-code") ==
+              static_cast<std::int64_t>(SecurityEventKind::EffectDeny) + 1,
+          "4661 AC1: reason code comes from the same-mid row");
+    ta::clear_boundary_audit_mid();
+    reset_security_event_ring_for_test();
+    ta::apply_dev_audit_defaults();
+}
+
+// AC4661-2 (runtime, production face): no mid source at all — no boundary
+// note, no completed mid, last_stamped 0 — while an unrelated M-mid deny
+// row sits in the ring: the no-arg query keeps join 0 and publishes
+// se-mid-miss=1 with empty SE fields (never the M-mid reason).
+static void ac4661_no_mid_source_refuses() {
+    std::println("\n--- AC4661-2: no mid source refuses the M-mid row ---");
+    namespace ta = aura::compiler::typed_audit;
+    using aura::core::security_event::append_security_event;
+    using aura::core::security_event::g_security_event_ring;
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    using aura::core::security_event::SecurityEventKind;
+    ta::apply_production_audit_defaults();
+    reset_security_event_ring_for_test();
+    ta::clear_boundary_audit_mid();
+    ta::g_last_stamped_audit_mid.store(0, std::memory_order_relaxed);
+    if (aura::core::current_mutation_epoch() == 0)
+        aura::core::bump_mutation_epoch(1);
+    constexpr std::uint64_t kOther = 0x4662;
+    append_security_event(g_security_event_ring(), SecurityEventKind::EffectDeny, 7, kOther, kOther,
+                          8, "test:4662-deny", "capability-denied", /*denied=*/true, 0);
+    CompilerService cs;
+    CHECK(!cs.evaluator().has_last_completed_audit_mid(),
+          "4661 AC2: no completed audit mid on this face");
+    CHECK(evol_key(cs, "last-audit-mid") == 0, "4661 AC2: no mid source joins 0");
+    CHECK(evol_key(cs, "se-mid-miss") == 1, "4661 AC2: M-mid row refused beside join 0");
+    CHECK(evol_key(cs, "last-se-denied") == 0, "4661 AC2: no cross-mid deny folds");
+    CHECK(evol_key(cs, "last-se-reason-code") == 0, "4661 AC2: SE reason stays empty");
+    reset_security_event_ring_for_test();
+    ta::apply_dev_audit_defaults();
+}
+
 } // namespace
 
 int main() {
@@ -633,6 +711,8 @@ int main() {
     ac4647_2_fold_latches_no_residual_face();
     ac4647_3_fold_publishes_stamped_proof_face();
     ac4647_4_source_no_commit_mutator();
+    ac4661_boundary_mid_join();
+    ac4661_no_mid_source_refuses();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     if (g_failed)
         return 1;

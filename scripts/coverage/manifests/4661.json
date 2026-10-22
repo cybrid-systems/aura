@@ -1,0 +1,32 @@
+{
+  "issue": 4661,
+  "title": "evolution-audit-decision default join: boundary-mid fold + no-source refuse (se-mid-miss)",
+  "checks": [
+    {
+      "ac": "AC-src",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "completed_valid ? ev.last_completed_audit_mid() : proof_mid",
+        "no_arg = !filt_mid && !completed_valid",
+        "se_filter_by_mid = filt_mid || join_mid != 0 || completed_valid || no_arg",
+        "Issue #4661"
+      ]
+    },
+    {
+      "ac": "AC-test",
+      "path": "tests/compiler/test_evolution_audit_decision_forensic.cpp",
+      "contains": [
+        "ac4661_boundary_mid_join",
+        "ac4661_no_mid_source_refuses",
+        "Issue #4661"
+      ]
+    },
+    {
+      "ac": "AC-no-issue-dir",
+      "forbid": [
+        "tests/issues/test_issue_4661.cpp",
+        "docs/design/4661-default-join.md"
+      ]
+    }
+  ]
+}
