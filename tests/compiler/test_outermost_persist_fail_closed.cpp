@@ -958,7 +958,10 @@ static void ac4666_abort_path_still_rewinds() {
         ok = false; // outermost abort -> the #3102 abort rewind runs
     }
     const auto cone_after = aura::compiler::dirty::last_type_cone_ast().size();
-    CHECK(cone_after == cone0,
+    // Issue #4672: the abort rewind now ALSO force-dirties the coerced node
+    // (the #3102 AC2 step), so the cone is the boundary-entry size PLUS the
+    // force-dirtied node -- the same shape the #4666 reject path produces.
+    CHECK(cone_after == cone0 + 1,
           "4666 AC3: the abort path still rewound the cone to the boundary-entry size");
     CHECK(aura::compiler::g_coercion_map_abort_rewind_total.load() > rewind0,
           "4666 AC3: the abort path still bumps the production rewind counter");
@@ -1086,6 +1089,292 @@ static void ac4666_source_cites() {
           "4666 AC-src: no tests/issues/test_issue_4666.cpp per #81967");
     CHECK(read_file("docs/design/4666-persist-reject-type-cone-rewind.md").empty(),
           "4666 AC-src: no docs/design/4666-* per #1655");
+}
+
+// ── Issue #4672: the outermost abort must force-dirty the coerced nodes ───
+//
+// #3102's abort rewind truncates the type cone back to the boundary-entry
+// size (AC1) and force-dirties the nodes that were coercion-eliminated
+// inside the aborted window (AC2). Until #4672 the AC2 step was a NO-OP at
+// the OUTERMOST boundary: exit_mutation_boundary() called
+// coerced_nodes_tracker_exit_boundary() (which CLEARS the tracker when the
+// depth reaches 0) BEFORE the abort site took it, so the take always
+// returned empty and the coerced nodes kept their stale coercion elision.
+//
+// The fix captures the tracker BEFORE the exit call drains it and feeds the
+// capture to the abort rewind. The depth semantics are unchanged: the exit
+// call still runs at the same point, so the SUCCESS path still discards the
+// vector and the tracker depth still decays one notch per boundary.
+
+// A live node that is NOT in the process-global type cone. The cone is
+// global and keeps stale ids from earlier suites, so a node picked by id
+// can already sit in it -- the force-dirty step would then be a no-op and
+// the AC would not measure anything.
+static aura::ast::NodeId ac4672_node_outside_cone(aura::ast::FlatAST& flat) {
+    const auto& cone = aura::compiler::dirty::last_type_cone_ast();
+    for (aura::ast::NodeId id = 1; id < flat.size(); ++id) {
+        if (!flat.is_live_node(id))
+            continue;
+        if (std::find(cone.begin(), cone.end(), id) == cone.end())
+            return id;
+    }
+    for (int salt = 0; salt < 64; ++salt) {
+        const auto fresh = flat.add_literal(0x4672'0000 + salt);
+        const auto& cone2 = aura::compiler::dirty::last_type_cone_ast();
+        if (std::find(cone2.begin(), cone2.end(), fresh) == cone2.end())
+            return fresh;
+    }
+    return aura::ast::NULL_NODE;
+}
+
+// Issue #4672 AC1: an outermost abort that coercion-eliminated a node
+// inside the window force-dirties that node -- the forced-dirty counter
+// advances and the node is back in the type cone, so the next incremental
+// typecheck re-derives it from live type.
+static void ac4672_outermost_abort_force_dirties_coerced_nodes() {
+    std::println("\n--- #4672 AC1: the outermost abort force-dirties the coerced nodes ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    aura::compiler::clear_coercion_map_abort_rewind_for_test();
+    aura::compiler::dirty::reset_dead_coercion_decision_invalidate_for_test();
+    CHECK(production_hard_face_active(), "4672 AC1: the production hard face is active");
+
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define j (+ 1 2))\")").has_value(), "4672 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4672 AC1: eval");
+    (void)cs.eval("(typecheck-current)");
+    (void)cs.evaluator().ensure_typechecker();
+    (void)cs.evaluator().run_post_mutate_typecheck_no_lock();
+    auto* ev = &cs.evaluator();
+    auto* ws = ev->workspace_flat();
+    CHECK(ws != nullptr, "4672 AC1: workspace");
+    if (!ws)
+        return;
+
+    const auto forced0 = aura::compiler::g_coercion_map_abort_forced_dirty_total.load();
+    const auto rewind0 = aura::compiler::g_coercion_map_abort_rewind_total.load();
+    aura::ast::NodeId coerced_node = aura::ast::NULL_NODE;
+    std::size_t cone_in = 0;
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(*ev, &ok);
+        cone_in = aura::compiler::dirty::last_type_cone_ast().size();
+        coerced_node = ac4672_node_outside_cone(*ws);
+        CHECK(coerced_node != aura::ast::NULL_NODE, "4672 AC1: a live node outside the type cone");
+        aura::compiler::coerced_nodes_tracker_push(coerced_node);
+        CHECK(aura::compiler::coerced_nodes_tracker_size() == 1,
+              "4672 AC1: the coerced node sits in the per-boundary tracker");
+        ok = false; // outermost abort -> the #3102 abort rewind runs
+    }
+    const auto forced1 = aura::compiler::g_coercion_map_abort_forced_dirty_total.load();
+    const auto cone_out = aura::compiler::dirty::last_type_cone_ast().size();
+    std::println("  4672 AC1: forced-dirty counter {} -> {} (node {}, cone {} -> {})", forced0,
+                 forced1, coerced_node, cone_in, cone_out);
+    CHECK(aura::compiler::g_coercion_map_abort_rewind_total.load() > rewind0,
+          "4672 AC1: the abort rewind ran");
+    // The force-dirty step (#3102 AC2) actually fired this time.
+    CHECK(forced1 > forced0, "4672 AC1: the outermost abort force-dirtied the coerced node");
+    const auto& cone = aura::compiler::dirty::last_type_cone_ast();
+    CHECK(std::find(cone.begin(), cone.end(), coerced_node) != cone.end(),
+          "4672 AC1: the coerced node is force-dirty in the cone (re-derives from live type)");
+    CHECK(cone_out == cone_in + 1,
+          "4672 AC1: the cone is the boundary-entry size plus the force-dirtied node");
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+// Issue #4672 AC2: the abort rewind consumes a vector captured BEFORE
+// coerced_nodes_tracker_exit_boundary() drains the tracker. The checks are
+// window-scoped (find + ordered positions), not substring-only.
+static void ac4672_capture_precedes_the_exit_call() {
+    std::println("\n--- #4672 AC2: the capture precedes the tracker drain ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(!emb.empty(), "4672 AC2: the boundary source is readable");
+    if (emb.empty())
+        return;
+    // The capture site (the take that snapshots the tracker).
+    const auto capture =
+        emb.find("coerced_nodes_at_exit = aura::compiler::coerced_nodes_tracker_take();");
+    // The drain site (the exit call that clears the vector at depth 0).
+    const auto drain = emb.find("aura::compiler::coerced_nodes_tracker_exit_boundary();");
+    CHECK(capture != std::string::npos, "4672 AC2: the tracker capture is present");
+    CHECK(drain != std::string::npos, "4672 AC2: the tracker drain is present");
+    CHECK(capture != std::string::npos && drain != std::string::npos && capture < drain,
+          "4672 AC2: the capture runs BEFORE the drain (the drain clears the vector)");
+    // The capture is gated on !success -- the success path still discards.
+    if (capture != std::string::npos) {
+        const auto cap_head = emb.substr(capture > 300 ? capture - 300 : 0, 300);
+        CHECK(cap_head.find("if (!success)") != std::string::npos,
+              "4672 AC2: the capture is gated on !success");
+    }
+    // The #3102 abort rewind consumes the capture and keeps its own ACs.
+    const auto rewind = emb.find("// Issue #3102: AC1+AC2+AC3+AC4 — CoercionMap abort rewind.");
+    CHECK(rewind != std::string::npos, "4672 AC2: the #3102 abort rewind block is present");
+    if (rewind != std::string::npos) {
+        const auto win = emb.substr(rewind, 2200);
+        CHECK(win.find("std::move(coerced_nodes_at_exit)") != std::string::npos,
+              "4672 AC2: the abort rewind consumes the captured vector");
+        CHECK(win.find("force_dead_coercion_elim_into_cone(coerced)") != std::string::npos,
+              "4672 AC2: the force-dirty step still runs");
+        CHECK(win.find("truncate_type_cone_to_size(cp.coercion_cone_size_at_entry)") !=
+                  std::string::npos,
+              "4672 AC2: the cone truncation (AC1) is unchanged");
+        CHECK(win.find("bump_dead_coercion_decision_invalidate") != std::string::npos,
+              "4672 AC2: the decision-invalidate bump (AC3) is unchanged");
+        CHECK(win.find("clear_coercion_commit_readiness_on_abort") != std::string::npos,
+              "4672 AC2: the commit_readiness clear (AC4) is unchanged");
+    }
+    // The other two #3102 abort sites still take the tracker themselves.
+    const char* site_anchors[2] = {
+        "// Issue #3030: invariant force-rollback clears proof face.",
+        "// Issue #3030: Strict reflect-validate rollback clears proof face."};
+    for (const char* anchor : site_anchors) {
+        const auto at = emb.find(anchor);
+        CHECK(at != std::string::npos,
+              "4672 AC2: the untouched #3102 abort site anchor is present");
+        if (at == std::string::npos)
+            continue;
+        const auto win = emb.substr(at, 1500);
+        CHECK(win.find("auto coerced = aura::compiler::coerced_nodes_tracker_take();") !=
+                  std::string::npos,
+              "4672 AC2: the untouched #3102 abort site keeps its own take");
+    }
+    // No invented files.
+    CHECK(read_file("tests/compiler/test_issue_4672.cpp").empty(),
+          "4672 AC2: no test_issue_4672.cpp per #81967");
+    CHECK(read_file("tests/issues/test_issue_4672.cpp").empty(),
+          "4672 AC2: no tests/issues/test_issue_4672.cpp per #81967");
+    CHECK(read_file("docs/design/4672-outermost-abort-forced-dirty.md").empty(),
+          "4672 AC2: no docs/design/4672-* per #1655");
+}
+
+// Issue #4672 AC3: the success path is unchanged -- the tracker is still
+// discarded (no forced-dirty, no counter bump).
+static void ac4672_success_path_still_discards_the_tracker() {
+    std::println("\n--- #4672 AC3: the success path still discards the tracker ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    aura::compiler::clear_coercion_map_abort_rewind_for_test();
+
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define m (+ 1 2))\")").has_value(), "4672 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4672 AC3: eval");
+    (void)cs.eval("(typecheck-current)");
+    (void)cs.evaluator().ensure_typechecker();
+    (void)cs.evaluator().run_post_mutate_typecheck_no_lock();
+    auto* ev = &cs.evaluator();
+    auto* ws = ev->workspace_flat();
+    CHECK(ws != nullptr, "4672 AC3: workspace");
+    if (!ws)
+        return;
+
+    const auto forced0 = aura::compiler::g_coercion_map_abort_forced_dirty_total.load();
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(*ev, &ok);
+        const auto node = ac4672_node_outside_cone(*ws);
+        aura::compiler::coerced_nodes_tracker_push(node);
+        CHECK(aura::compiler::coerced_nodes_tracker_size() == 1,
+              "4672 AC3: the coerced node sits in the per-boundary tracker");
+    }
+    // The tracker is discarded on success (the exit call clears it).
+    CHECK(aura::compiler::coerced_nodes_tracker_size() == 0,
+          "4672 AC3: the success path discards the tracker");
+    CHECK(aura::compiler::g_coercion_map_abort_forced_dirty_total.load() == forced0,
+          "4672 AC3: the success path does not force-dirty");
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+// Issue #4672 AC4: Soft / Off stays observe-only -- no forced-dirty, no
+// production counter bump, the observe counter moves instead.
+static void ac4672_soft_stays_observe_only() {
+    std::println("\n--- #4672 AC4: Soft / Off stays observe-only ---");
+    reset_for_test();
+    apply_dev_audit_defaults();
+    aura::compiler::clear_coercion_map_abort_rewind_for_test();
+    CHECK(!production_hard_face_active(), "4672 AC4: Soft hard face inactive");
+    CHECK(get_strategy() != AuditStrategy::Full, "4672 AC4: Soft strategy is not Full");
+
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define n (+ 1 2))\")").has_value(), "4672 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4672 AC4: eval");
+    (void)cs.eval("(typecheck-current)");
+    (void)cs.evaluator().ensure_typechecker();
+    (void)cs.evaluator().run_post_mutate_typecheck_no_lock();
+    auto* ev = &cs.evaluator();
+    auto* ws = ev->workspace_flat();
+    CHECK(ws != nullptr, "4672 AC4: workspace");
+    if (!ws)
+        return;
+
+    const auto forced0 = aura::compiler::g_coercion_map_abort_forced_dirty_total.load();
+    const auto rewind0 = aura::compiler::g_coercion_map_abort_rewind_total.load();
+    const auto observe0 = aura::compiler::g_coercion_map_abort_rewind_observe_total.load();
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(*ev, &ok);
+        const auto node = ac4672_node_outside_cone(*ws);
+        aura::compiler::coerced_nodes_tracker_push(node);
+        CHECK(aura::compiler::coerced_nodes_tracker_size() == 1,
+              "4672 AC4: the coerced node sits in the per-boundary tracker");
+        ok = false; // outermost abort
+    }
+    CHECK(aura::compiler::g_coercion_map_abort_forced_dirty_total.load() == forced0,
+          "4672 AC4: Soft does not force-dirty");
+    CHECK(aura::compiler::g_coercion_map_abort_rewind_total.load() == rewind0,
+          "4672 AC4: Soft does not bump the production rewind counter");
+    CHECK(aura::compiler::g_coercion_map_abort_rewind_observe_total.load() > observe0,
+          "4672 AC4: Soft bumps the observe counter");
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+// Issue #4672 AC5: the #4666 reject path still force-dirties the coerced
+// node, and the reject path + the abort path do not double-take: the
+// counter advances exactly once.
+static void ac4672_reject_path_does_not_double_take() {
+    std::println("\n--- #4672 AC5: the reject path and the abort path do not double-take ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    aura::compiler::clear_coercion_map_abort_rewind_for_test();
+
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define p (+ 1 2))\")").has_value(), "4672 AC5: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4672 AC5: eval");
+    (void)cs.eval("(typecheck-current)");
+    (void)cs.evaluator().ensure_typechecker();
+    (void)cs.evaluator().run_post_mutate_typecheck_no_lock();
+    auto* ev = &cs.evaluator();
+    auto* ws = ev->workspace_flat();
+    CHECK(ws != nullptr, "4672 AC5: workspace");
+    CHECK(ac4666_plant_commit_goals(*ev), "4672 AC5: commit type checker + goals planted");
+    if (!ws || !ev->commit_type_checker_handle())
+        return;
+
+    const auto forced0 = aura::compiler::g_coercion_map_abort_forced_dirty_total.load();
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(*ev, &ok);
+        const auto node = ac4672_node_outside_cone(*ws);
+        aura::compiler::coerced_nodes_tracker_push(node);
+        // Force the fail-closed persist reject: the #4666 rewind runs and
+        // takes the coerced-node tracker.
+        ev->stage_expected_occurrence_snapshot_fp(0x4672'BEEF'0001ULL);
+        aura_outermost_success_persist_occurrence(ev, 4672);
+        CHECK(last_type_linear_proof_outcome_v_read() == kTypeLinearProofOutcomeReject,
+              "4672 AC5: the persist helper rejected");
+        CHECK(aura::compiler::coerced_nodes_tracker_size() == 0,
+              "4672 AC5: the reject rewind drained the tracker");
+        ok = false; // the boundary then aborts -> the abort rewind runs too
+    }
+    const auto forced1 = aura::compiler::g_coercion_map_abort_forced_dirty_total.load();
+    std::println("  4672 AC5: forced-dirty counter {} -> {}", forced0, forced1);
+    // The reject rewind force-dirtied the coerced node ONCE; the abort
+    // rewind found an empty tracker (the two paths do not double-take).
+    CHECK(forced1 == forced0 + 1, "4672 AC5: the coerced node was force-dirtied exactly once");
+    apply_dev_audit_defaults();
+    reset_for_test();
 }
 
 int run_test_outermost_persist_fail_closed() {
@@ -2074,6 +2363,14 @@ int run_test_outermost_persist_fail_closed() {
     ac4666_abort_path_still_rewinds();
     ac4666_soft_unchanged();
     ac4666_source_cites();
+
+    // Issue #4672: the outermost abort must force-dirty the coerced nodes
+    // (the tracker is captured before the exit call drains it).
+    ac4672_outermost_abort_force_dirties_coerced_nodes();
+    ac4672_capture_precedes_the_exit_call();
+    ac4672_success_path_still_discards_the_tracker();
+    ac4672_soft_stays_observe_only();
+    ac4672_reject_path_does_not_double_take();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
