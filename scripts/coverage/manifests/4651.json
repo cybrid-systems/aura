@@ -1,0 +1,43 @@
+{
+  "issue": 4651,
+  "title": "a schema-2 QueryResult match whose generation stamp was dropped to 0 must not resolve as Fresh on the hard face",
+  "ok": "OK #4651: the production (hard) face rejects a generation-0 match as StaleByEpoch and the hash Ok arm validates the stamped generation before it hands the node back",
+  "checks": [
+    {
+      "ac": "AC1-hard-face-rejects-a-generation-zero-match",
+      "path": "src/compiler/query_result_decode.hh",
+      "contains": [
+        "Issue #4651",
+        "if (m.generation == 0)",
+        "flat.node_gen_for(nid) != m.generation"
+      ]
+    },
+    {
+      "ac": "AC2-hash-ok-arm-validates-the-stamped-generation",
+      "path": "src/compiler/evaluator_primitives_query_workspace.cpp",
+      "contains": [
+        "Issue #4651",
+        "ensure_valid_or_refresh(ref, /*auto_refresh=*/false)",
+        "ref.gen = hr.generation;"
+      ]
+    },
+    {
+      "ac": "AC3-runtime-and-source-cite-tests",
+      "path": "tests/compiler/test_query_result_full_provenance.cpp",
+      "contains": [
+        "Issue #4651",
+        "test_ac4651_1_generation_zero_match_is_stale",
+        "test_ac4651_2_prod_held_hash_generation_zero_goes_stale",
+        "test_ac4651_3_source_cite"
+      ]
+    },
+    {
+      "ac": "AC4-no-forbidden-artifacts",
+      "forbid": [
+        "tests/compiler/test_issue_4651.cpp",
+        "tests/issues/test_issue_4651.cpp",
+        "docs/design/4651-generation-zero-match.md"
+      ]
+    }
+  ]
+}

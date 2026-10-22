@@ -112,6 +112,20 @@ query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::a
                 // slot with a different occupant must not resolve as success.
                 if (m.generation != 0 && flat.node_gen_for(nid) != m.generation)
                     return aura::core::QueryResultFreshness::StaleByEpoch;
+                // Issue #4651: a match that carries a node but NO generation
+                // stamp cannot be proven fresh. The gen-0 exemption above let
+                // a held schema-2 hash whose match generation was dropped to 0
+                // (a bare-int match element, or a pair cdr of 0) resolve as
+                // Fresh while the live slot's generation had already moved -
+                // the query read (query:children / query:children-stable)
+                // then walked the CURRENT occupant of the id. A live slot
+                // always carries a non-zero node_gen_ (FlatAST::is_live_node),
+                // so generation 0 is never a provable capture on the hard
+                // face: node_id != NULL_NODE && generation == 0 is
+                // StaleByEpoch. Soft / Off keep the historical shape (a
+                // dropped stamp is not a hard-face failure there).
+                if (m.generation == 0)
+                    return aura::core::QueryResultFreshness::StaleByEpoch;
                 // Issue #3990: production schema-2 always compares wrap,
                 // including captured 0 vs live 65536 (same as is_valid).
                 if (m.wrap_epoch != live_wrap)
@@ -153,6 +167,11 @@ struct HashNodeResolve {
     std::uint32_t wrap_epoch = 0;
     std::uint64_t cow_epoch_at_capture = 0;
     std::uint32_t fiber_id = 0;
+    // Issue #4651: the set-code install id at capture (#4315). The Ok arm
+    // builds a StableNodeRef from this resolve and runs it through
+    // ensure_valid_or_refresh, whose install fence rejects a ref whose
+    // install_id_at_capture does not match the live flat.
+    std::uint32_t install_id_at_capture = 0;
     const char* err_kind = "bad-arg";
     std::string err_msg;
 };
@@ -364,6 +383,9 @@ resolve_query_result_match(types::EvalValue arg, const StringHeap& heap, const P
     r.wrap_epoch = qr.matches[pick].wrap_epoch;
     r.cow_epoch_at_capture = qr.matches[pick].cow_epoch_at_capture;
     r.fiber_id = qr.matches[pick].fiber_id;
+    // Issue #4651: carry the install id (#4315) so the Ok-arm provenance
+    // ensure compares the same fence the freshness gate compares.
+    r.install_id_at_capture = qr.epoch.workspace_id;
     return r;
 }
 

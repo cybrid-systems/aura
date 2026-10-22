@@ -620,6 +620,31 @@ void register_workspace_query_primitives(
                 static_cast<std::uint64_t>(ev.agent_scoped_fiber_id()), op,
                 parse_query_result_match_index(a, ws.keyword_table));
             if (hr.kind == HashNodeKind::Ok) {
+                // Issue #4651: the hash Ok arm validates the stamped
+                // generation before it hands the node back. The freshness
+                // gate above (query_result_is_fresh_with_refs) is the
+                // per-match occupancy SSOT; this is the same
+                // ensure_valid_or_refresh gate the packed v2 path uses, with
+                // auto_refresh=false (a stale generation is stale-ref, never
+                // an occupancy remake onto the current occupant - #3661).
+                // The ref is built from the MATCH stamps (id / gen / wrap /
+                // cow / tenant / fiber / install), so the ensure compares the
+                // captured occupant, not a freshly minted layout.
+                if (aura::compiler::typed_audit::production_defaults_active()) {
+                    StableNodeRef ref{};
+                    ref.id = hr.node;
+                    ref.gen = hr.generation;
+                    ref.wrap_epoch = hr.wrap_epoch;
+                    ref.cow_epoch_at_capture = hr.cow_epoch_at_capture;
+                    ref.tenant_id = hr.tenant_id;
+                    ref.fiber_id = hr.fiber_id;
+                    ref.install_id_at_capture = hr.install_id_at_capture;
+                    if (!ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/false).has_value()) {
+                        *ok = false;
+                        return mev("stale-ref",
+                                   std::string(op) + ": QueryResult match generation is stale");
+                    }
+                }
                 out_node = hr.node;
                 return make_void();
             }

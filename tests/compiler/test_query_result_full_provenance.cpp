@@ -4797,6 +4797,204 @@ void test_ac4654_3_source_cite() {
                 !std::ifstream("docs/design/4654-node-zero-occupancy.md").good());
 }
 
+// ── Issue #4651 ────────────────────────────────────────────────────────
+// A schema-2 QueryResult match whose generation stamp was dropped to 0
+// must not resolve as Fresh on the production (hard) face.
+//
+// The hard face compared the slot generation only when 'm.generation != 0',
+// so a held schema-2 hash whose match generation was 0 (a bare-int match
+// element, or a pair cdr of 0) resolved as Fresh while the live slot's
+// generation had already moved — the query read (query:children /
+// query:children-stable) then walked the current occupant of the id.
+// resolve_query_node_arg's hash Ok arm also handed the node back without
+// the ensure_valid_or_refresh gate the packed v2 path uses.
+//
+//   AC1 (unit): on the hard face a schema-2 match that carries a node but
+//        no generation stamp is StaleByEpoch; the same match with the real
+//        captured generation stays Fresh while that generation holds.
+//   AC2 (runtime): the production query:* -> mutate -> query loop over a
+//        held hash whose match generation was dropped to 0 goes stale —
+//        query:result-fresh? is #f and query:children /
+//        query:children-stable are stale-ref (the read never walks the
+//        current occupant).
+//   AC3 (source-cite): the hard face rejects the generation-0 match and
+//        the hash Ok arm validates the stamped generation.
+
+// Issue #4651: the error kind of a refused hash operand (stale-ref).
+template <typename V, typename E> static bool a4651_is_stale_ref(const V& v, const E& ev) {
+    using aura::compiler::types::as_pair_idx;
+    using aura::compiler::types::as_string_idx;
+    using aura::compiler::types::is_pair;
+    using aura::compiler::types::is_string;
+    if (!v || !is_pair(*v))
+        return false;
+    const auto p = static_cast<std::size_t>(as_pair_idx(*v));
+    if (p >= ev.pairs().size() || !is_string(ev.pairs()[p].car))
+        return false;
+    const auto si = static_cast<std::size_t>(as_string_idx(ev.pairs()[p].car));
+    return si < ev.string_heap().size() && ev.string_heap()[si] == "stale-ref";
+}
+
+void test_ac4651_1_generation_zero_match_is_stale() {
+    std::print("AC4651/AC1 -- a generation-0 match is StaleByEpoch on the hard face\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::core::QueryResultFreshness;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("4651 AC1: set-code", cs.eval("(set-code \"(define x4651 1)\")").has_value());
+    expect_true("4651 AC1: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    auto* flat = cs.evaluator().workspace_flat();
+    expect_true("4651 AC1: workspace", flat != nullptr);
+    if (!flat) {
+        apply_dev_audit_defaults();
+        return;
+    }
+    expect_true("4651 AC1: node 0 is live", flat->is_live_node(0));
+    const auto gen0 = flat->node_gen_for(0);
+    expect_true("4651 AC1: node 0 carries a real generation", gen0 != 0);
+    const auto wrap = flat->wrap_epoch();
+    const auto cow = flat->workspace_cow_epoch();
+    auto fresh_of = [&](std::uint16_t gen) {
+        aura::core::QueryResult qr{};
+        if (!qr.push_match_full(/*node_id=*/0, gen, wrap, cow, /*tenant_id=*/0,
+                                /*fiber_id=*/0, /*mutation_id_at_capture=*/0,
+                                /*boundary_pinned=*/0))
+            return aura::core::QueryResultFreshness::SoftOnlyNoProvenance;
+        qr.matches[0].reserved = aura::core::kQueryResultMatchSchema2Prod;
+        qr.epoch.workspace_id = flat->install_id();
+        return aura::compiler::query_result_decode::query_result_is_fresh_with_refs(
+            qr, *flat, /*tenant=*/0, /*fiber=*/0);
+    };
+    expect_true("4651 AC1: the captured generation is Fresh",
+                fresh_of(gen0) == QueryResultFreshness::Fresh);
+    expect_true("4651 AC1: a dropped (zero) generation is StaleByEpoch",
+                fresh_of(0) == QueryResultFreshness::StaleByEpoch);
+    // Moving the slot generation must not resurrect the dropped stamp.
+    flat->bump_generation();
+    flat->restamp_all_node_generations();
+    expect_true("4651 AC1: the slot generation moved", flat->node_gen_for(0) != gen0);
+    expect_true("4651 AC1: a dropped generation stays StaleByEpoch",
+                fresh_of(0) == QueryResultFreshness::StaleByEpoch);
+    apply_dev_audit_defaults();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+}
+
+void test_ac4651_2_prod_held_hash_generation_zero_goes_stale() {
+    std::print("AC4651/AC2 -- production held hash with a dropped generation goes stale\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    admit_clean_mutate_for_test();
+    CompilerService cs;
+    expect_true("4651 AC2: set-code",
+                cs.eval("(set-code \"(define x4651 (lambda () 1))\")").has_value());
+    expect_true("4651 AC2: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    cs.evaluator().set_effect_sandbox_mode(1);
+    auto* flat = cs.evaluator().workspace_flat();
+    expect_true("4651 AC2: workspace", flat != nullptr);
+    if (!flat) {
+        apply_dev_audit_defaults();
+        return;
+    }
+    expect_true("4651 AC2: bind find",
+                cs.eval("(define qr4651 (query :find \"x4651\"))").has_value());
+    auto idv = cs.eval("(car (car (hash-ref qr4651 \"matches\")))");
+    auto genv = cs.eval("(car (cdr (car (hash-ref qr4651 \"matches\"))))");
+    expect_true("4651 AC2: the exported match carries a real generation",
+                genv && is_int(*genv) && as_int(*genv) != 0);
+    if (!idv || !is_int(*idv) || !genv || !is_int(*genv)) {
+        apply_dev_audit_defaults();
+        return;
+    }
+    const auto nid = static_cast<aura::ast::NodeId>(as_int(*idv));
+    const auto captured_gen = static_cast<std::uint16_t>(as_int(*genv));
+    expect_true("4651 AC2: the exported generation is the slot generation",
+                flat->node_gen_for(nid) == captured_gen);
+    // The live hash is fresh before the drift.
+    auto fr0 = cs.eval("(query:result-fresh? qr4651)");
+    expect_true("4651 AC2: the live hash is #t", fr0 && is_bool(*fr0) && as_bool(*fr0));
+    // Rebuild the SAME hash with the match generation dropped to 0 (the
+    // window: a bare-int match element, or a pair cdr of 0).
+    expect_true("4651 AC2: copy the hash",
+                cs.eval("(define tampered4651 (hash-copy qr4651))").has_value());
+    expect_true("4651 AC2: drop the match generation",
+                cs.eval("(hash-set! tampered4651 \"matches\" (list (cons "
+                        "(car (car (hash-ref qr4651 \"matches\"))) 0)))")
+                    .has_value());
+    // Move the slot generation: the drift stamp restamps EVERY node gen.
+    const auto gen_before = flat->generation();
+    flat->bump_generation();
+    flat->restamp_all_node_generations();
+    expect_true("4651 AC2: the workspace generation moved", flat->generation() != gen_before);
+    expect_true("4651 AC2: the slot generation moved", flat->node_gen_for(nid) != captured_gen);
+    const auto gen_after_drift = flat->generation();
+    // The held hash with the real captured generation is stale (the
+    // existing per-match occupancy behavior).
+    auto fr = cs.eval("(query:result-fresh? qr4651)");
+    expect_true("4651 AC2: the captured generation is stale after the drift",
+                fr && is_bool(*fr) && !as_bool(*fr));
+    // The held hash whose match generation was dropped to 0 must be stale
+    // too — it cannot prove the slot still holds the captured occupant.
+    auto frt = cs.eval("(query:result-fresh? tampered4651)");
+    expect_true("4651 AC2: result-fresh? is #f for the dropped generation",
+                frt && is_bool(*frt) && !as_bool(*frt));
+    // The read must not walk the current occupant.
+    auto kids = cs.eval("(query :children tampered4651)");
+    expect_true("4651 AC2: query:children is stale-ref", a4651_is_stale_ref(kids, cs.evaluator()));
+    auto kids_stable = cs.eval("(query :children-stable tampered4651)");
+    expect_true("4651 AC2: query:children-stable is stale-ref",
+                a4651_is_stale_ref(kids_stable, cs.evaluator()));
+    auto node = cs.eval("(query :node tampered4651)");
+    expect_true("4651 AC2: query:node is stale-ref", a4651_is_stale_ref(node, cs.evaluator()));
+    // The refused reads did not touch the workspace.
+    expect_true("4651 AC2: the refused reads did not move the generation",
+                flat->generation() == gen_after_drift);
+    apply_dev_audit_defaults();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+}
+
+void test_ac4651_3_source_cite() {
+    std::print("AC4651/AC3 -- source-cite: gen-0 reject + Ok-arm generation gate\n");
+    std::ifstream f_dec("src/compiler/query_result_decode.hh");
+    std::ifstream f_qws("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::string dec((std::istreambuf_iterator<char>(f_dec)), std::istreambuf_iterator<char>());
+    std::string qws((std::istreambuf_iterator<char>(f_qws)), std::istreambuf_iterator<char>());
+    expect_true("4651 AC3: decode header readable", !dec.empty());
+    expect_true("4651 AC3: query workspace TU readable", !qws.empty());
+    expect_true("4651 AC3: decode cites #4651", dec.find("Issue #4651") != std::string::npos);
+    expect_true("4651 AC3: query TU cites #4651", qws.find("Issue #4651") != std::string::npos);
+    // The hard face rejects a match that carries a node without a
+    // generation stamp (the gen-0 exemption is gone).
+    expect_true("4651 AC3: the hard face rejects a zero generation",
+                dec.find("if (m.generation == 0)") != std::string::npos);
+    // The occupancy block keeps the no-node sentinel guard (id 0 is a real
+    // node since #4654) and the per-match slot-generation compare.
+    expect_true("4651 AC3: the occupancy block keeps the no-node sentinel",
+                dec.find("m.node_id != static_cast<std::uint32_t>(aura::ast::NULL_NODE)") !=
+                    std::string::npos);
+    expect_true("4651 AC3: the id-0 occupancy guard is gone",
+                dec.find("if (m.node_id != 0)") == std::string::npos);
+    expect_true("4651 AC3: the slot generation compare stays",
+                dec.find("flat.node_gen_for(nid) != m.generation") != std::string::npos);
+    // The hash Ok arm gates the node on the stamped generation.
+    const auto ok_at = qws.find("if (hr.kind == HashNodeKind::Ok) {");
+    expect_true("4651 AC3: the hash Ok arm exists", ok_at != std::string::npos);
+    const auto win = ok_at == std::string::npos ? std::string{} : qws.substr(ok_at, 1500);
+    expect_true("4651 AC3: the Ok arm validates the stamped generation",
+                win.find("ensure_valid_or_refresh") != std::string::npos);
+    expect_true("4651 AC3: the Ok arm never auto-refreshes the stamp",
+                win.find("auto_refresh=*/false") != std::string::npos);
+    expect_true("4651 AC3: the Ok arm checks the stamped generation",
+                win.find("ref.gen = hr.generation;") != std::string::npos);
+    expect_true("4651 AC3: no test_issue_4651.cpp",
+                !std::ifstream("tests/compiler/test_issue_4651.cpp").good());
+    expect_true("4651 AC3: no docs/design/4651-*",
+                !std::ifstream("docs/design/4651-generation-zero-match.md").good());
+}
+
 int main() {
     std::print("Issue #3103 + #3137 + #3231 -- QueryResult full-provenance path (schema-2)\n");
     set_strategy(AuditStrategy::Full);
@@ -4966,6 +5164,9 @@ int main() {
     test_ac4654_1_node_zero_match_same_occupancy_checks();
     test_ac4654_2_prod_node_zero_query_mutate_loop_goes_stale();
     test_ac4654_3_source_cite();
+    test_ac4651_1_generation_zero_match_is_stale();
+    test_ac4651_2_prod_held_hash_generation_zero_goes_stale();
+    test_ac4651_3_source_cite();
     std::print("All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 + #3424 + "
                "#3449 + #3660 + #3695 + #3696 + #3766 + #3767 + #3827 + #3895 + #3896 + "
                "#3990 + #3991 + #3993 + #4088 + #4112 + #4113 AC tests PASSED\n");
