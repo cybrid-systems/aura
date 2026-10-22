@@ -1,0 +1,38 @@
+{
+  "issue": 4672,
+  "title": "the outermost abort force-dirties the coerced nodes - the tracker is captured before the exit call drains it (#3102 AC2)",
+  "checks": [
+    {
+      "ac": "AC-src-capture",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #4672",
+        "coerced_nodes_at_exit",
+        "std::move(coerced_nodes_at_exit)",
+        "coerced_nodes_tracker_exit_boundary()",
+        "force_dead_coercion_elim_into_cone(coerced)",
+        "g_coercion_map_abort_forced_dirty_total"
+      ]
+    },
+    {
+      "ac": "AC-test",
+      "path": "tests/compiler/test_outermost_persist_fail_closed.cpp",
+      "contains": [
+        "ac4672_outermost_abort_force_dirties_coerced_nodes",
+        "ac4672_capture_precedes_the_exit_call",
+        "ac4672_success_path_still_discards_the_tracker",
+        "ac4672_soft_stays_observe_only",
+        "ac4672_reject_path_does_not_double_take",
+        "Issue #4672"
+      ]
+    },
+    {
+      "ac": "AC-no-issue-dir",
+      "forbid": [
+        "tests/issues/test_issue_4672.cpp",
+        "tests/compiler/test_issue_4672.cpp",
+        "docs/design/4672-outermost-abort-forced-dirty.md"
+      ]
+    }
+  ]
+}
