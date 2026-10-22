@@ -1,0 +1,44 @@
+{
+  "issue": 4658,
+  "title": "production AgentScope adopt so bare handles are covered by the Scope-local reclaimed sweep",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_scope.h",
+      "contains": [
+        "Issue #4658",
+        "bool adopt(AgentHandle& h)",
+        "specs_.push_back(AgentSpec{})",
+        "not restartable (#3250 plane)"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "Issue #4658 (no-owner edge)",
+        "AgentScope::adopt",
+        "deliberately no process-global registry",
+        "adopt keep today's contract"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/orch/test_join_drain_reclaim.cpp",
+      "contains": [
+        "ac4658_1_bare_spawn_adopt_then_sweep_cleans",
+        "ac4658_2_bare_spawn_no_adopt_contract_unchanged",
+        "ac4658_3_soft_face_zero_cost_adopt_opt_in",
+        "ac4658_4_adopt_rejects_and_source_cite"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/orch/test_issue_4658.cpp",
+        "tests/issues/test_issue_4658.cpp",
+        "docs/design/4658-scope-adopt.md"
+      ]
+    }
+  ]
+}

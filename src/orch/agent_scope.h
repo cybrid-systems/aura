@@ -620,6 +620,51 @@ public:
         return handles_.back().snapshot();
     }
 
+    // Issue #4658: production adopt — an existing Scope takes ownership of
+    // a bare spawn_agent_with_mailbox handle it did not spawn, putting the
+    // slot on the same handles_ plane as spawn so the #3842 Scope-local
+    // Reclaimed-pending drain covers the host-forget edge (a long-lived
+    // host that drops the handle before the slot is drained). Same
+    // boundary as the test-only entry above: no restart fuel (empty spec —
+    // RestartN skips, production degrades to Cancel per #3250), no second
+    // registry, no cross-scope map, no process-global state. On success
+    // the handle is MOVED into handles_ (#4590 ownership plane): the
+    // caller's husk is inert (the move ctor nulls fiber / reservation —
+    // no double release) and row mutation goes through find() /
+    // handles_mut(). The Scope drain / join_all / cancel_all / compact
+    // then treat the adopted row exactly like a scope-spawned one.
+    // Returns false without mutating handles_ on: concurrent hard deny
+    // (#2946), a failed (ok=false) handle (nothing to own), or —
+    // production only, same walk as spawn (#3497/#4393) — a name the
+    // scope already holds pending or live-running. Bare spawns that never
+    // adopt keep today's release contract (~AgentHandle /
+    // ensure_reclaimed_cleanup / #3334 abandon); the no-owner edge is
+    // documented at the spawn boundary in agent_spawn.h. Soft / Off:
+    // adopt is host-opt-in (a vector push) — nothing on the spawn path
+    // probes it, no new atomic, no getenv.
+    bool adopt(AgentHandle& h) {
+        ScopeEnterGuard g(this, "adopt");
+        if (g.denied_hard())
+            return false; // #2946: typed deny — do not push under contention
+        if (!h.ok)
+            return false; // failed spawn stub: no fiber / reservation to own
+        // Production admit walk mirrors spawn (#3497 pending / #4393
+        // live-running): a second row for a name the scope already holds
+        // would steal first-match find. Soft / Off: append-only skip.
+        if (aura::compiler::typed_audit::production_defaults_active() && !h.name.empty()) {
+            for (const auto& hp : handles_) {
+                if (hp.name == h.name && (hp.must_wait_reclaimed || hp.reclaimed_deferred_cleanup ||
+                                          aura::orch::slot_is_live_running(hp)))
+                    return false;
+            }
+        }
+        handles_.push_back(std::move(h));
+        specs_.push_back(AgentSpec{}); // empty spec — not restartable (#3250 plane)
+        restart_counts_.push_back(0);
+        consecutive_stall_counts_.push_back(0);
+        return true;
+    }
+
     // Issue #2537: create a child AgentScope owned by this scope.
     // Shares the parent Scheduler. Child's parent() returns this.
     // Cancel/destroy on the parent propagates to all descendants.

@@ -5627,6 +5627,221 @@ static void ac4326_1_dtor_live_reclaimed_transfers_oneshot() {
 }
 
 
+// ── Issue #4658: production adopt puts a bare spawn on the Scope plane ──
+// A bare spawn_agent_with_mailbox handle has no sweep owner (release is
+// ~AgentHandle / ensure / abandon). AgentScope::adopt moves it onto the
+// handles_ plane so the #3842 Scope-local drain covers the host-forget
+// edge. Soft / Off stay zero-cost: adopt is host-opt-in, the spawn path
+// gains no probe.
+
+static void ac4658_1_bare_spawn_adopt_then_sweep_cleans() {
+    using aura::orch::AgentScope;
+    using aura::orch::AgentSpec;
+    using aura::orch::spawn_agent_with_mailbox;
+    using aura::serve::SchedRunner;
+    using aura::serve::Scheduler;
+    std::println("\n--- #4658 AC1: bare spawn → join Timeout → adopt → sweep cleans ---");
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    std::string prev_sb_s = prev_sb ? prev_sb : "";
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    apply_production_audit_defaults();
+    // Function-scope: the atomic must outlive the scheduler block — the
+    // body closure references it until the scheduler itself dies.
+    std::atomic<bool> stop_4658{false};
+    {
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        AgentSpec spec;
+        spec.name = "4658-adopt";
+        spec.attach_mailbox = true;
+        spec.body = [&] {
+            while (!stop_4658.load(std::memory_order_acquire))
+                aura::orch::fiber_sleep_ms(5);
+        };
+        auto h = spawn_agent_with_mailbox(sched, std::move(spec)); // BARE — no Scope
+        CHECK(h.ok && h.fiber, "4658 AC1: bare spawn ok");
+        JoinPolicy policy;
+        policy.primary_ms = 50;
+        policy.drain_ms = 0;
+        const auto jr = join_agent(h, policy);
+        CHECK(jr.status == JoinStatus::Timeout || jr.status == JoinStatus::Reclaimed,
+              "4658 AC1: join non-Ok while body live");
+        CHECK(h.must_wait_reclaimed, "4658 AC1: production must_wait armed, no owner");
+        CHECK(h.reserved_memory_bytes != 0, "4658 AC1: reservation held pre-adopt");
+        // Adopt into a Scope: the slot moves onto the handles_ plane.
+        AgentScope scope(sched);
+        CHECK(scope.adopt(h), "4658 AC1: adopt accepts a bare handle");
+        CHECK(!h.ok && h.fiber == nullptr, "4658 AC1: caller husk inert after adopt");
+        auto* row = scope.find("4658-adopt");
+        CHECK(row != nullptr, "4658 AC1: scope owns the adopted slot");
+        CHECK(row->must_wait_reclaimed, "4658 AC1: pending flags visible on the row");
+        // Body exits; the SCOPE sweep (not the host) drains the slot.
+        stop_4658.store(true, std::memory_order_release);
+        for (int i = 0; i < 100 && row->fiber && !row->fiber->is_done(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        const auto swept = scope.sweep_reclaimed_pending();
+        CHECK(swept.cleaned == 1, "4658 AC1: sweep cleaned the adopted slot");
+        CHECK(swept.still_pending == 0, "4658 AC1: none still pending");
+        CHECK(scope.find("4658-adopt") == nullptr,
+              "4658 AC1: cleaned husk retired (find not-found)");
+        // Reservation / mailbox / name released → same name admits again.
+        AgentSpec spec2;
+        spec2.name = "4658-adopt";
+        spec2.body = [] {};
+        auto h2 = scope.spawn(std::move(spec2));
+        CHECK(h2.ok, "4658 AC1: name reusable after the sweep");
+    }
+    apply_dev_audit_defaults();
+    if (!prev_sb_s.empty())
+        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_SANDBOX");
+}
+
+static void ac4658_2_bare_spawn_no_adopt_contract_unchanged() {
+    using aura::orch::AgentSpec;
+    using aura::orch::spawn_agent_with_mailbox;
+    using aura::serve::SchedRunner;
+    using aura::serve::Scheduler;
+    std::println("\n--- #4658 AC2: bare spawn without adopt → dtor/ensure plane unchanged ---");
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    std::string prev_sb_s = prev_sb ? prev_sb : "";
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    apply_production_audit_defaults();
+    std::atomic<bool> stop_4658b{false}; // outlives the scheduler block
+    {
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        AgentSpec spec;
+        spec.name = "4658-no-adopt";
+        spec.attach_mailbox = true;
+        spec.body = [&] {
+            while (!stop_4658b.load(std::memory_order_acquire))
+                aura::orch::fiber_sleep_ms(5);
+        };
+        auto h = spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(h.ok && h.fiber, "4658 AC2: bare spawn ok");
+        JoinPolicy policy;
+        policy.primary_ms = 50;
+        policy.drain_ms = 0;
+        const auto jr = join_agent(h, policy);
+        CHECK(jr.status == JoinStatus::Timeout || jr.status == JoinStatus::Reclaimed,
+              "4658 AC2: join non-Ok while body live");
+        // No adopt → no sweep owner: the slot stays owed until the
+        // ~AgentHandle / ensure plane releases it (unchanged contract).
+        CHECK(h.must_wait_reclaimed && h.reserved_memory_bytes != 0,
+              "4658 AC2: slot still owed with no owner");
+        const auto under0 =
+            g_orch_module_stats.reclaimed_dtor_under_account_total.load(std::memory_order_relaxed);
+        h.finish_reclaimed_cleanup_on_dtor(); // the ~AgentHandle release arm
+        CHECK(h.reserved_memory_bytes == 0 && !h.must_wait_reclaimed,
+              "4658 AC2: dtor plane released reservation + flags");
+        CHECK(g_orch_module_stats.reclaimed_dtor_under_account_total.load(
+                  std::memory_order_relaxed) == under0 + 1,
+              "4658 AC2: #3297 under-account face unchanged");
+        stop_4658b.store(true, std::memory_order_release);
+        for (int i = 0; i < 100 && h.fiber && !h.fiber->is_done(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    apply_dev_audit_defaults();
+    if (!prev_sb_s.empty())
+        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_SANDBOX");
+}
+
+static void ac4658_3_soft_face_zero_cost_adopt_opt_in() {
+    using aura::orch::AgentScope;
+    using aura::orch::AgentSpec;
+    using aura::orch::spawn_agent_with_mailbox;
+    using aura::serve::SchedRunner;
+    using aura::serve::Scheduler;
+    std::println("\n--- #4658 AC3: Soft/Off — no spawn probe, adopt opt-in, sweep zeros ---");
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    std::string prev_sb_s = prev_sb ? prev_sb : "";
+    ::setenv("AURA_SANDBOX", "off", 1);
+    apply_dev_audit_defaults();
+    std::atomic<bool> stop_4658c{false}; // outlives the scheduler block
+    {
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        AgentSpec spec;
+        spec.name = "4658-soft";
+        spec.attach_mailbox = true;
+        spec.body = [&] {
+            while (!stop_4658c.load(std::memory_order_acquire))
+                aura::orch::fiber_sleep_ms(5);
+        };
+        const auto spawn_failures0 =
+            g_orch_module_stats.spawn_failures.load(std::memory_order_relaxed);
+        auto h = spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(h.ok && h.fiber, "4658 AC3: Soft bare spawn ok (path unchanged)");
+        CHECK(g_orch_module_stats.spawn_failures.load(std::memory_order_relaxed) == spawn_failures0,
+              "4658 AC3: no new spawn-path probe failure");
+        JoinPolicy policy;
+        policy.primary_ms = 50;
+        policy.drain_ms = 0;
+        (void)join_agent(h, policy);
+        CHECK(!h.must_wait_reclaimed, "4658 AC3: Soft never arms must_wait");
+        AgentScope scope(sched);
+        CHECK(scope.adopt(h), "4658 AC3: adopt is host-opt-in on Soft too");
+        const auto wait0 = g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
+        const auto swept = scope.sweep_reclaimed_pending();
+        CHECK(swept.cleaned == 0 && swept.still_pending == 0 && swept.wait_us == 0,
+              "4658 AC3: Soft sweep returns zeros");
+        CHECK(g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed) == wait0,
+              "4658 AC3: Soft sweep no wait bump");
+        stop_4658c.store(true, std::memory_order_release);
+        for (int i = 0; i < 100; ++i) {
+            auto* row = scope.find("4658-soft");
+            if (!row || !row->fiber || row->fiber->is_done())
+                break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        if (auto* row = scope.find("4658-soft"); row && row->fiber && !row->fiber->is_done()) {
+            row->fiber = nullptr; // #4590: null the ROW fiber so ~AgentScope is safe
+        }
+    }
+    apply_dev_audit_defaults();
+    if (!prev_sb_s.empty())
+        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_SANDBOX");
+}
+
+static void ac4658_4_adopt_rejects_and_source_cite() {
+    using aura::orch::AgentHandle;
+    using aura::orch::AgentScope;
+    using aura::serve::Scheduler;
+    std::println("\n--- #4658 AC4: adopt rejects + source-cite + no invent ---");
+    apply_dev_audit_defaults();
+    {
+        Scheduler sched(1);
+        AgentScope scope(sched);
+        AgentHandle bad; // ok=false — failed spawn stub
+        CHECK(!scope.adopt(bad), "4658 AC4: failed handle not adopted");
+        CHECK(scope.handles().empty(), "4658 AC4: handles_ untouched on reject");
+    }
+    const auto scope_h = read_file("src/orch/agent_scope.h");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    CHECK(scope_h.find("bool adopt(AgentHandle& h)") != std::string::npos,
+          "4658 AC4: production adopt signature present");
+    CHECK(scope_h.find("Issue #4658") != std::string::npos, "4658 AC4: scope stamp");
+    CHECK(spawn.find("Issue #4658 (no-owner edge)") != std::string::npos,
+          "4658 AC4: spawn boundary doc");
+    CHECK(spawn.find("AgentScope::adopt") != std::string::npos,
+          "4658 AC4: boundary names the adopt entry");
+    CHECK(scope_h.find("class AgentRegistry") == std::string::npos &&
+              scope_h.find("struct AgentRegistry") == std::string::npos,
+          "4658 AC4: no registry type symbol");
+    CHECK(read_file("tests/orch/test_issue_4658.cpp").empty() &&
+              read_file("tests/issues/test_issue_4658.cpp").empty(),
+          "4658 AC4: no test_issue_4658.cpp per #81967");
+    CHECK(read_file("docs/design/4658-scope-adopt.md").empty(),
+          "4658 AC4: no docs/design/4658-* per #1655");
+}
+
+
 int run_test_join_drain_reclaim() {
     std::println("=== Issue #2227: hard reclaim path for join drain residual fibers ===");
     CHECK(true, "issue stamp #2227");
@@ -10921,6 +11136,11 @@ int run_test_join_drain_reclaim() {
     ac4645_3_live_dtor_closes_source_mailbox();
     ac4645_4_soft_face_unchanged();
     ac4645_5_source_cite_three_writers_no_invent();
+    std::println("\n=== Issue #4658: production adopt puts a bare spawn on the Scope plane ===");
+    ac4658_1_bare_spawn_adopt_then_sweep_cleans();
+    ac4658_2_bare_spawn_no_adopt_contract_unchanged();
+    ac4658_3_soft_face_zero_cost_adopt_opt_in();
+    ac4658_4_adopt_rejects_and_source_cite();
     // #3797-wave CI: restore the WAL-off face for later batch members.
     if (wal_member_pinned)
         aura::core::audit_wal::g_mutation_audit_wal().disable();

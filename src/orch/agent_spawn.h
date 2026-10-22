@@ -2601,6 +2601,15 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
            " caller=" + std::to_string(caller);
 }
 
+// Issue #4658 (no-owner edge): a bare spawn has no Scope owner — this
+// handle's Reclaimed-pending reservation / mailbox / name slot is
+// released only by ~AgentHandle, ensure_reclaimed_cleanup, or the
+// #3334 abandon. A host that wants the #3842 Scope-local sweep to
+// cover the slot adopts the handle into an existing AgentScope via
+// AgentScope::adopt (same handles_ plane, no restart fuel) — there is
+// deliberately no process-global registry. Bare spawns that never
+// adopt keep today's contract. Soft / Off: unchanged zero-cost —
+// adopt is host-opt-in and this spawn path gains no probe.
 [[nodiscard]] inline AgentHandle spawn_agent_with_mailbox(serve::Scheduler& sched, AgentSpec spec) {
     AgentHandle h;
     h.name = std::move(spec.name);
