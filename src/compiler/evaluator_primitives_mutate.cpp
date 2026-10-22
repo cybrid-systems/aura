@@ -2467,12 +2467,24 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             auto& flat = *ev.workspace_flat_;
             auto& pool = *ev.workspace_pool_;
 
-            if (a.size() < 2 || !is_string(a.back()))
+            // Issue #4652: every reject path in this body fails the nested
+            // Guard (ok = false) BEFORE returning. The nested Guard's abort
+            // path is the sole dual-topology restore; leaving ok true let the
+            // OUTERMOST boundary take the success exit
+            // (unified_restamp_after_boundary(BoundarySuccess) + the persist
+            // helper + drain_cascade_bfs_invalidate) for an edit the Agent saw
+            // as rejected. mutate:replace-pattern (same file) is the in-repo
+            // reference shape.
+            if (a.size() < 2 || !is_string(a.back())) {
+                ok = false;
                 return mev("bad-arg", "last arg must be a template string");
+            }
 
             auto template_idx = as_string_idx(a.back());
-            if (template_idx >= ev.string_heap_.size())
+            if (template_idx >= ev.string_heap_.size()) {
+                ok = false;
                 return mev("bad-arg", "template string index out of range");
+            }
             std::string repl_template = ev.string_heap_[template_idx];
 
             // Optional [ppa-hint] and [summary] before the template.
@@ -2499,22 +2511,32 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             };
             std::vector<Predicate> predicates;
             for (std::size_t ai = 0; ai < pred_end; ++ai) {
-                if (!is_pair(a[ai]))
+                if (!is_pair(a[ai])) {
+                    ok = false;
                     return mev("bad-arg", "each predicate must be a (query:where ...) pair");
+                }
                 auto pair_idx = as_pair_idx(a[ai]);
-                if (pair_idx >= ev.pairs_.size())
+                if (pair_idx >= ev.pairs_.size()) {
+                    ok = false;
                     return mev("bad-arg", "predicate pair index out of range");
+                }
                 auto& p = ev.pairs_[pair_idx];
-                if (!is_keyword(p.car) || !is_string(p.cdr))
+                if (!is_keyword(p.car) || !is_string(p.cdr)) {
+                    ok = false;
                     return mev("bad-arg", "malformed predicate");
+                }
                 auto kidx = as_keyword_idx(p.car);
                 auto sidx = as_string_idx(p.cdr);
-                if (kidx >= ev.keyword_table_.size() || sidx >= ev.string_heap_.size())
+                if (kidx >= ev.keyword_table_.size() || sidx >= ev.string_heap_.size()) {
+                    ok = false;
                     return mev("bad-arg", "predicate field/value out of range");
+                }
                 predicates.push_back({ev.keyword_table_[kidx], ev.string_heap_[sidx]});
             }
-            if (predicates.empty())
+            if (predicates.empty()) {
+                ok = false;
                 return mev("bad-arg", "at least one predicate required");
+            }
 
             // Collect matches. Snapshot flat.size() so set_child during replacement
             // (which grows flat) doesn't extend the match scan. (#110 fix: bug
@@ -2618,6 +2640,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                             break;
                         }
                     } else {
+                        // Issue #4652: a typo in the predicate is a rejected
+                        // edit - fail the nested Guard (see the block above).
+                        ok = false;
                         return mev("unknown-field",
                                    std::string("unknown where field: \"") + p.field + "\"");
                     }
@@ -2801,6 +2826,18 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
                 // Issue #1685 / #1687: re-validate parent/slot after parse.
                 const auto size_before_parse = static_cast<std::size_t>(flat.size());
+                // Issue #4652: the parse appends nodes to the SoA columns
+                // before it can fail (the literal is parsed, then the extra
+                // ")" hard-fails). rollback_atomic_batch restores the METADATA
+                // snapshot only - the appended rows stay live slots, so the
+                // next query:pattern / flat scan could see the unlinked parse
+                // nodes. Free them on every post-parse reject (same shape as
+                // mutate:replace-pattern, #2798).
+                auto free_repl_parse_orphans = [&flat, size_before_parse]() {
+                    if (size_before_parse < flat.size())
+                        (void)flat.free_orphan_nodes_from(
+                            static_cast<aura::ast::NodeId>(size_before_parse));
+                };
                 auto repl_pr = aura::parser::parse_to_flat(filled, flat, pool);
                 if (!repl_pr.success || repl_pr.root == aura::ast::NULL_NODE) {
                     // Issue #1265: parse failure → full atomic rollback.
@@ -2808,8 +2845,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     // correctness: agent must not see silent skips).
                     flat.rollback_since(initial_log_size);
                     flat.rollback_atomic_batch();
+                    free_repl_parse_orphans();
                     if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                         m->query_and_replace_parse_abort.fetch_add(1, std::memory_order_relaxed);
+                    // Issue #4652: the edit was rejected - fail the nested
+                    // Guard so the abort path owns the dual-topology restore
+                    // (the Agent sees this error only AFTER the restore).
+                    ok = false;
                     return mev("parse-failure",
                                "mutate:query-and-replace: template parse failed on a match "
                                "(all-or-nothing; batch rolled back)");
@@ -2819,6 +2861,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     parent_id >= flat.size() || flat.is_free_slot(parent_id)) {
                     flat.rollback_since(initial_log_size);
                     flat.rollback_atomic_batch();
+                    free_repl_parse_orphans();
+                    ok = false;
                     return mev("stale-ref", "mutate:query-and-replace: parent invalid after parse");
                 }
                 {
@@ -2827,6 +2871,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         pv.child(*child_idx_opt) != match_id) {
                         flat.rollback_since(initial_log_size);
                         flat.rollback_atomic_batch();
+                        free_repl_parse_orphans();
+                        ok = false;
                         return mev("stale-ref",
                                    "mutate:query-and-replace: child slot invalid after parse");
                     }

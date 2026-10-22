@@ -8089,6 +8089,185 @@ static void ac4435_rollback_restores_macro_marker() {
     aura_test_reset_macro_hygiene_last_limit_reason_for_test();
 }
 
+// ── Issue #4652 ────────────────────────────────────────────────────────
+// A rejected mutate:query-and-replace must (a) fail the nested Guard, so
+// the abort path owns the dual-topology restore, and (b) free the SoA rows
+// the failed parse appended. rollback_atomic_batch restores the METADATA
+// snapshot only - the appended rows stayed live slots, so the next
+// query:pattern / flat scan could see the unlinked parse nodes. Before the
+// fix the parse-failure / stale-ref / bad-arg returns also left ok = true,
+// so the OUTERMOST boundary took the success exit
+// (unified_restamp_after_boundary(BoundarySuccess) + the persist helper +
+// drain_cascade_bfs_invalidate) for an edit the Agent saw as rejected.
+//
+// mutate:replace-pattern (same source file) is the in-repo reference shape:
+// it frees those appends and sets ok = false on its zero-replace abort.
+
+// The rows the rejected edit appended to the SoA columns.
+static std::vector<aura::ast::NodeId> appended_slots_4652(aura::ast::FlatAST* ws,
+                                                          std::size_t from) {
+    std::vector<aura::ast::NodeId> out;
+    if (!ws)
+        return out;
+    for (std::size_t id = from; id < ws->size(); ++id)
+        out.push_back(static_cast<aura::ast::NodeId>(id));
+    return out;
+}
+
+// The number of live nodes in the flat (a leaked parse orphan would add one).
+static std::size_t live_nodes_4652(aura::ast::FlatAST* ws) {
+    std::size_t n = 0;
+    if (!ws)
+        return 0;
+    for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+        if (ws->is_live_node(id))
+            ++n;
+    }
+    return n;
+}
+
+// The rejected template "1)" parses the literal 1 and then hard-fails on
+// the extra ")" - the literal row stays appended to the SoA columns.
+static void ac4652_1_rejected_parse_frees_orphans() {
+    std::println("\n--- #4652 AC1: a rejected query-and-replace frees the parse orphans ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (f x) (f x))\")").has_value(), "4652 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4652 AC1: eval-current");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "4652 AC1: workspace");
+    if (!ws)
+        return;
+    const auto size_before = ws->size();
+    const auto live_before = live_nodes_4652(ws);
+    const auto freed_before = ws->ghost_orphan_nodes_freed();
+    auto* cm = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    const auto restores_before =
+        cm ? cm->topology_dual_restore_total.load(std::memory_order_relaxed) : 0;
+    auto r = cs.eval("(mutate:query-and-replace (query:where :callee \"f\") \"1)\")");
+    CHECK(r.has_value(), "4652 AC1: the rejected edit returns a value");
+    const auto kind = r ? merr_kind_3027(cs, *r) : std::string("novalue");
+    CHECK(kind == "parse-failure", std::format("4652 AC1: parse-failure (got {})", kind));
+    auto* ws_after = cs.evaluator().workspace_flat();
+    CHECK(ws_after == ws, "4652 AC1: the rejected edit kept the same flat");
+    // The parse appends the literal before it can fail.
+    const auto appended = appended_slots_4652(ws_after, size_before);
+    const auto restores_after =
+        cm ? cm->topology_dual_restore_total.load(std::memory_order_relaxed) : 0;
+    std::println(
+        "  4652 AC1: flat {} -> {}, {} appended row(s), live {} -> {}, dual-restore {} -> {}",
+        size_before, ws_after->size(), appended.size(), live_before, live_nodes_4652(ws_after),
+        restores_before, restores_after);
+    CHECK(!appended.empty(), "4652 AC1: the failed parse appended SoA rows");
+    // The appended rows are reclaimed, not left live for the next scan.
+    CHECK(live_nodes_4652(ws_after) == live_before,
+          "4652 AC1: the rejected edit left no live node behind");
+    CHECK(ws_after->ghost_orphan_nodes_freed() > freed_before,
+          "4652 AC1: the parse orphans were freed");
+    for (auto id : appended) {
+        CHECK(ws_after->is_free_slot(id),
+              std::format("4652 AC1: appended row {} is a free slot (not a live orphan)", id));
+    }
+    // The nested Guard failed, so the abort path owned the dual-topology
+    // restore - the Agent sees the error only AFTER the restore.
+    CHECK(restores_after > restores_before,
+          "4652 AC1: the rejected edit aborted the boundary (dual-topology restore ran)");
+    // The rejected edit left the tree alone: the match is still there.
+    auto hit = cs.eval("(query:filter (query:where :callee \"f\"))");
+    CHECK(hit.has_value(), "4652 AC1: the match is still queryable");
+    apply_dev_audit_defaults();
+}
+
+static void ac4652_2_production_boundary_aborts() {
+    std::println("\n--- #4652 AC2: production - a rejected query-and-replace aborts the "
+                 "boundary ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (f x) (f x))\")").has_value(), "4652 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4652 AC2: eval-current");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "4652 AC2: workspace");
+    if (!ws) {
+        apply_dev_audit_defaults();
+        return;
+    }
+    const auto size_before = ws->size();
+    const auto live_before = live_nodes_4652(ws);
+    const auto freed_before = ws->ghost_orphan_nodes_freed();
+    auto* cm = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    const auto restores_before =
+        cm ? cm->topology_dual_restore_total.load(std::memory_order_relaxed) : 0;
+    auto r = cs.eval("(mutate:query-and-replace (query:where :callee \"f\") \"1)\")");
+    CHECK(r.has_value(), "4652 AC2: the rejected edit returns a value");
+    const auto kind = r ? merr_kind_3027(cs, *r) : std::string("novalue");
+    // The nested Guard failed, so the outermost boundary aborts - the tree is
+    // NOT persisted as a success (no success restamp / persist / drain).
+    CHECK(kind == "persist-reject",
+          std::format("4652 AC2: the outermost boundary aborted (got {})", kind));
+    auto* ws_after = cs.evaluator().workspace_flat();
+    CHECK(ws_after == ws, "4652 AC2: the rejected edit kept the same flat");
+    const auto restores_after =
+        cm ? cm->topology_dual_restore_total.load(std::memory_order_relaxed) : 0;
+    std::println("  4652 AC2: flat {} -> {}, live {} -> {}, dual-restore {} -> {}", size_before,
+                 ws_after->size(), live_before, live_nodes_4652(ws_after), restores_before,
+                 restores_after);
+    CHECK(live_nodes_4652(ws_after) == live_before,
+          "4652 AC2: the rejected edit left no live node behind");
+    CHECK(ws_after->ghost_orphan_nodes_freed() > freed_before,
+          "4652 AC2: the parse orphans were freed");
+    for (auto id : appended_slots_4652(ws_after, size_before)) {
+        CHECK(ws_after->is_free_slot(id), "4652 AC2: the appended row is a free slot");
+    }
+    CHECK(restores_after > restores_before,
+          "4652 AC2: the rejected edit aborted the boundary (dual-topology restore ran)");
+    apply_dev_audit_defaults();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac4652_3_bad_template_fails_boundary() {
+    std::println("\n--- #4652 AC3: a bad template / predicate fails the boundary ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    // Soft: the Agent still gets the bad-arg diagnostic.
+    apply_dev_audit_defaults();
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define (f x) (f x))\")").has_value(), "4652 AC3: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4652 AC3: eval-current");
+        auto* cm = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
+        const auto restores_before =
+            cm ? cm->topology_dual_restore_total.load(std::memory_order_relaxed) : 0;
+        auto r = cs.eval("(mutate:query-and-replace (query:where :callee \"f\"))");
+        CHECK(r.has_value(), "4652 AC3: the rejected call returns a value");
+        const auto kind = r ? merr_kind_3027(cs, *r) : std::string("novalue");
+        CHECK(kind == "bad-arg", std::format("4652 AC3: bad-arg (got {})", kind));
+        const auto restores_after =
+            cm ? cm->topology_dual_restore_total.load(std::memory_order_relaxed) : 0;
+        CHECK(restores_after > restores_before,
+              "4652 AC3: the rejected call aborted the boundary (dual-topology restore ran)");
+    }
+    // Production: the same typo aborts the outermost boundary instead of
+    // taking the success restamp for a rejected edit.
+    apply_production_audit_defaults();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define (f x) (f x))\")").has_value(), "4652 AC3: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "4652 AC3: eval-current");
+        auto r = cs.eval("(mutate:query-and-replace (query:where :callee \"f\"))");
+        CHECK(r.has_value(), "4652 AC3: the rejected call returns a value");
+        const auto kind = r ? merr_kind_3027(cs, *r) : std::string("novalue");
+        CHECK(kind == "persist-reject",
+              std::format("4652 AC3: the outermost boundary aborted (got {})", kind));
+    }
+    apply_dev_audit_defaults();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
 int main() {
     std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858 + #2863 + #2864 + "
                  "#2961 + #3000 + #3027 + #3037 + #3076 + #3121) ===");
@@ -8359,6 +8538,11 @@ int main() {
     ac4434_unlink_macro_child_default_reject();
     std::println("\n=== Issue #4435: rollback-latest keeps MacroIntroduced ===");
     ac4435_rollback_restores_macro_marker();
+    std::println("\n=== Issue #4652: rejected query-and-replace fails the boundary + frees "
+                 "the parse orphans ===");
+    ac4652_1_rejected_parse_frees_orphans();
+    ac4652_2_production_boundary_aborts();
+    ac4652_3_bad_template_fails_boundary();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
