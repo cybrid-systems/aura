@@ -1,5 +1,10 @@
-// wal_append_fail_slo.h — Issue #3056: production WAL append_fail
-// arms security-posture degraded (fail-open residual).
+// wal_append_fail_slo.h — Issues #3056/#3302/#3639/#4005/#4646: the
+// WAL append-fail decision table is fail-closed on the force_wal face.
+// Contract: default WAL = observe-only posture
+// (fail-open via explicit AURA_WAL_APPEND_FAIL_OPEN only);
+// force_wal = enable/append miss fail-closed (same mutate denied by
+// the #3639 effect gate; next outer mutate denied by the #3211
+// schedule gate); Soft / Off = zero-cost observe-only, never arms.
 //
 // Shared decision for mutation_audit_wal (#1567) and
 // security_event_wal (#2225). After fwrite miss, counters stay
@@ -9,7 +14,7 @@
 // Issue #3639: under production fail-closed the mutation effect gate
 // consumes the append result — a miss denies the SAME mutate
 // (require_effect / check_and_record_effect). Soft / WAL-off keeps the
-// observe-only `(void)append` fail-open.
+// observe-only `(void)append` (never denies, never arms).
 // Issue #3211: security-schedule-gate consumes would_arm_degraded and
 // hard-denies the *next* outermost mutate in production.
 //
