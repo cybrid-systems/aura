@@ -460,6 +460,113 @@ void ac4020_remap_misses_orphan_not_nonmatch() {
           "4020 AC4: no standalone test_issue_4020.cpp (extend existing)");
 }
 
+// Issue #4663: remap_pins_pointing_to range-matches interior pins when the
+// caller arms the walk with the moved object's size (old_size > 0): a pin
+// whose ptr is strictly inside [old_ptr, old_ptr + old_size) is rebased by
+// its offset instead of surviving Moving densify-old (pre-#4663 the exact-
+// base match skipped it and the #4020 orphan arm did not count it — a
+// silent dangling pin). Base-address pins keep the exact-match remap;
+// old_size == 0 (every legacy caller) keeps exact-match-only; #4020 miss
+// accounting is unchanged for out-of-range addresses.
+void ac4663_interior_pin_range_remap() {
+    std::println("\n--- #4663: interior pin range remap ---");
+
+    // Backing stores emulate a moved arena object of sizeof(Pod16) bytes:
+    // old_base is the densify-old identity, new_base the post-Moving one.
+    alignas(alignof(Pod16)) std::byte old_store[sizeof(Pod16) * 2];
+    alignas(alignof(Pod16)) std::byte new_store[sizeof(Pod16) * 2];
+    void* old_base = old_store;
+    void* new_base = new_store;
+    const std::size_t obj_size = sizeof(Pod16);
+    const std::uint64_t arena_id = 47;
+    const auto interior0 = aura::core::lifetime::lifetime_pin_interior_remap_total();
+
+    // AC1: interior pin (base + 8) rebased to new_base + 8 by the range walk.
+    {
+        LifetimePin pin;
+        auto* interior = reinterpret_cast<std::byte*>(old_base) + 8;
+        pin.pin(interior, /*gen=*/1, arena_id);
+        CHECK(pin.pinned() && pin.ptr() == interior, "4663 AC1: interior pin attached");
+        const auto rr = aura::core::lifetime::remap_pins_pointing_to(
+            old_base, new_base, /*new_gen=*/2, arena_id, obj_size);
+        CHECK(rr.remapped == 1, "4663 AC1: interior pin remapped by range walk");
+        CHECK(rr.misses == 0, "4663 AC1: no orphan miss (object had pin cover)");
+        CHECK(pin.ptr() == reinterpret_cast<std::byte*>(new_base) + 8,
+              "4663 AC1: pin rebased to new_base + offset");
+        CHECK(pin.validate(/*cur_gen=*/2, arena_id), "4663 AC1: validate at new gen");
+        CHECK(aura::core::lifetime::lifetime_pin_interior_remap_total() == interior0 + 1,
+              "4663 AC1: interior_remaps counter bumped");
+    }
+
+    // AC2: base-address pin keeps the exact-match remap (unchanged face;
+    // base remap must not count as interior).
+    {
+        LifetimePin pin;
+        pin.pin(old_base, /*gen=*/1, arena_id);
+        const auto rr = aura::core::lifetime::remap_pins_pointing_to(
+            old_base, new_base, /*new_gen=*/2, arena_id, obj_size);
+        CHECK(rr.remapped == 1, "4663 AC2: base pin remapped");
+        CHECK(pin.ptr() == new_base, "4663 AC2: base pin → new_base exactly");
+        CHECK(aura::core::lifetime::lifetime_pin_interior_remap_total() == interior0 + 1,
+              "4663 AC2: base remap does not count as interior");
+    }
+
+    // AC3: old_size == 0 (legacy callers) keeps exact-match-only — interior
+    // pin untouched, #4020 miss accounting unchanged for the filtered arena.
+    {
+        LifetimePin pin;
+        pin.pin(reinterpret_cast<std::byte*>(old_base) + 8, /*gen=*/1, arena_id);
+        const auto rr = aura::core::lifetime::remap_pins_pointing_to(old_base, new_base,
+                                                                     /*new_gen=*/2, arena_id);
+        CHECK(rr.remapped == 0, "4663 AC3: size=0 does not range-match");
+        CHECK(pin.ptr() == reinterpret_cast<std::byte*>(old_base) + 8,
+              "4663 AC3: interior pin untouched by legacy walk");
+        CHECK(rr.misses == 1, "4663 AC3: size=0 miss accounting unchanged (#4020)");
+    }
+
+    // AC4: one-past-end is not interior (strict range) — stays nonmatch with
+    // an honest #4020 orphan miss, not a rebase.
+    {
+        LifetimePin pin;
+        auto* one_past_end = reinterpret_cast<std::byte*>(old_base) + obj_size;
+        pin.pin(one_past_end, /*gen=*/1, arena_id);
+        const auto rr = aura::core::lifetime::remap_pins_pointing_to(
+            old_base, new_base, /*new_gen=*/2, arena_id, obj_size);
+        CHECK(rr.remapped == 0, "4663 AC4: one-past-end is not interior");
+        CHECK(pin.ptr() == one_past_end, "4663 AC4: out-of-range pin untouched");
+        CHECK(rr.misses == 1, "4663 AC4: out-of-range → honest #4020 orphan miss");
+    }
+
+    // AC5: GeneralObjectPin interior pin rebases too (external-consumer pin
+    // face named by the issue).
+    {
+        aura::core::lifetime::GeneralObjectPin gop;
+        CHECK(gop.pin(reinterpret_cast<std::byte*>(old_base) + 8, /*gen=*/1, arena_id),
+              "4663 AC5: GeneralObjectPin interior pin attached");
+        const auto rr = aura::core::lifetime::remap_pins_pointing_to(
+            old_base, new_base, /*new_gen=*/2, arena_id, obj_size);
+        CHECK(rr.remapped == 1, "4663 AC5: GOP interior pin remapped");
+        CHECK(gop.ptr() == reinterpret_cast<std::byte*>(new_base) + 8,
+              "4663 AC5: GOP rebased to new_base + offset");
+        CHECK(gop.validate(/*cur_gen=*/2, arena_id), "4663 AC5: GOP validate at new gen");
+    }
+
+    // AC6: the #2266 verify contract honors a rebased interior pin — after
+    // the range walk the pin no longer names the old block.
+    {
+        LifetimePin pin;
+        pin.pin(reinterpret_cast<std::byte*>(old_base) + 8, /*gen=*/1, arena_id);
+        (void)aura::core::lifetime::remap_pins_pointing_to(old_base, new_base, /*new_gen=*/2,
+                                                           arena_id, obj_size);
+        std::unordered_set<void*> old_addrs;
+        old_addrs.insert(old_base);
+        CHECK(aura::core::lifetime::verify_pins_under_moving_compact(arena_id, old_addrs),
+              "4663 AC6: rebased interior pin passes the #2266 contract");
+        CHECK(pin.ptr() == reinterpret_cast<std::byte*>(new_base) + 8,
+              "4663 AC6: pin still rebased post-verify");
+    }
+}
+
 } // namespace
 
 int run_test_moving_compact() {
@@ -904,8 +1011,9 @@ int run_test_moving_compact() {
     ac2342_5_source_cite();
     ac2375_all_shards_on_arena_zero();
     ac4020_remap_misses_orphan_not_nonmatch();
+    ac4663_interior_pin_range_remap();
 
-    std::println("\n=== #2166 + #2342 + #2375 + #4020: {} passed, {} failed ===", g_passed,
+    std::println("\n=== #2166 + #2342 + #2375 + #4020 + #4663: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed == 0 ? 0 : 1;
 }
