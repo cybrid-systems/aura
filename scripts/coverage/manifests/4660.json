@@ -1,0 +1,51 @@
+{
+  "issue": 4660,
+  "title": "SE ring replay capped at 1024 gains a replay-window truncation marker",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/security_event_wal.hh",
+      "contains": [
+        "Issue #4660",
+        "security_event_wal_replay_truncated{0}",
+        "replay_truncated = newest_first.size() > max_replay",
+        "security_event_wal_replay_truncated.store(",
+        "std::uint64_t replay_truncated = 0;",
+        "m.security_event_wal_replay_truncated.load(std::memory_order_relaxed)"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "Issue #4660",
+        "insert_kv(\"wal-replay-window-truncated\",",
+        "insert_kv(\"se-replay-window-truncated\",",
+        "insert_kv(\"schema-4660\", 4660)",
+        "insert_kv(\"issue-4660\", 4660)"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_security_event_wal_replay.cpp",
+      "contains": [
+        "4660 AC1: snapshot replay_truncated=1 (segments unread)",
+        "4660 AC1: wal-replay-window-truncated=1 via query:security-posture",
+        "4660 AC1: se-replay-window-truncated=1 via query:audit-wal-stats",
+        "4660 AC1: durable path suggested (forensic-source=3)",
+        "4660 AC2: snapshot replay_truncated=0 under the cap",
+        "4660 AC3: snapshot replay_truncated=1 (records dropped by resize)",
+        "4660 AC4: wal-replay-window-truncated=0 with WAL off",
+        "4660 AC4: wal-replay-count key unchanged (no rename)"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_4660.cpp",
+        "tests/issues/test_issue_4660.cpp",
+        "docs/design/4660-replay-window-truncated.md"
+      ]
+    }
+  ]
+}
