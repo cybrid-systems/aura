@@ -685,6 +685,12 @@ int run_test_moving_compact() {
         std::println("\n--- AC_M6 positive: no live pin → Moving densify ok ---");
         MovingFlagGuard on(1);
         ASTArena arena(64 * 1024);
+        // Issue #4662: bind the Evaluator-face rewrite hook — hookless moved
+        // windows fail closed, and this AC's subject is the pin contract.
+        struct Hook4662 {
+            static bool rewrite(void*, void*) noexcept { return true; }
+        };
+        arena.set_live_container_rewrite_hook(&Hook4662::rewrite, nullptr);
         auto* p0 = arena.create<Pod16>(7, 8, 9, 10);
         auto* p1 = arena.create<Pod16>(17, 18, 19, 20);
         auto* p2 = arena.create<Pod16>(27, 28, 29, 30);
@@ -769,6 +775,12 @@ int run_test_moving_compact() {
         reset_linear_roots_for_test();
         MovingFlagGuard on(1);
         ASTArena arena(64 * 1024);
+        // Issue #4662: bind the Evaluator-face rewrite hook — hookless moved
+        // windows fail closed, and this AC's subject is linear-root rewrite.
+        struct Hook4662 {
+            static bool rewrite(void*, void*) noexcept { return true; }
+        };
+        arena.set_live_container_rewrite_hook(&Hook4662::rewrite, nullptr);
         auto* p0 = arena.create<Pod16>(10, 20, 30, 40);
         auto* p1 = arena.create<Pod16>(11, 21, 31, 41);
         auto* p2 = arena.create<Pod16>(12, 22, 32, 42);
