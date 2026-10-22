@@ -573,6 +573,24 @@ static void ac3123_2_untracked_fail_closed_sticky() {
     aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
 }
 
+// Issue #4662: raw-arena stand-in for the Evaluator live-container-rewrite
+// binding (set_default_live_container_rewrite_hook / ~Evaluator clear). A
+// hookless Moving window that moved objects fail-closes, so healthy-window
+// ACs bind this guard to exercise the hook-installed production face.
+static bool trivial_live_container_rewrite_4662(void*, void*) noexcept {
+    return true;
+}
+struct LiveRewriteHookGuard4662 {
+    ASTArena& arena;
+    explicit LiveRewriteHookGuard4662(ASTArena& a) noexcept
+        : arena(a) {
+        arena.set_live_container_rewrite_hook(&trivial_live_container_rewrite_4662, nullptr);
+    }
+    ~LiveRewriteHookGuard4662() { arena.set_live_container_rewrite_hook(nullptr, nullptr); }
+    LiveRewriteHookGuard4662(const LiveRewriteHookGuard4662&) = delete;
+    LiveRewriteHookGuard4662& operator=(const LiveRewriteHookGuard4662&) = delete;
+};
+
 static void ac3123_3_sticky_clears_only_on_healthy() {
     std::println("\n--- #3123 AC3: sticky clears only after healthy Moving window ---");
     MovingFlagGuard3123 on(1);
@@ -616,6 +634,9 @@ static void ac3123_3_sticky_clears_only_on_healthy() {
         arena.register_external_root_slot_for_densify(&e0);
         arena.register_external_root_slot_for_densify(&e1);
         arena.register_external_root_slot_for_densify(&e2);
+        // Issue #4662: hook-installed (Evaluator) face — the covered window
+        // stays green and clears the sticky densify-off.
+        LiveRewriteHookGuard4662 hook(arena);
         const auto r = arena.live_compact(aura::ast::LiveCompactMode::Moving);
         CHECK(!r.moving_blocked_precondition, "AC3: healthy window not blocked");
         CHECK(r.untracked_kept_count == 0, "AC3: zero untracked");

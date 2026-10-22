@@ -2007,7 +2007,11 @@ public:
     }
 
     // Issue #4396: same mutex as the commit hook. Copied under the lock,
-    // invoked outside it. Null → true (no live containers to rewrite).
+    // invoked outside it. Issue #4662: Null → fail-closed on move. The only
+    // caller gates on objects_moved > 0, so a hookless Moving window that
+    // moved objects reports an incomplete remap (pin contract not held)
+    // instead of an unverifiable green: with no hook, the Evaluator-side
+    // opaque_heap_ / modules_ / closure flat+pool were not rewritten.
     void set_live_container_rewrite_hook(LiveContainerRewriteFn fn, void* ctx = nullptr) noexcept {
         std::lock_guard<std::mutex> lock(unstable_remap_commit_mtx_);
         live_container_rewrite_fn_ = fn;
@@ -2021,8 +2025,12 @@ public:
             fn = live_container_rewrite_fn_;
             ctx = live_container_rewrite_ctx_;
         }
+        // Issue #4662: fail closed. No hook means the live containers
+        // outside this arena (opaque_heap_ / modules_ / closure flat+pool)
+        // were not rewritten, so a window that moved objects must not
+        // report rewrite success — the caller marks the remap incomplete.
         if (!fn)
-            return true;
+            return false;
         return fn(ctx, this);
     }
 
@@ -2932,7 +2940,8 @@ public:
                 // Issue #4396: recycle already returned the old block.
                 // Rewrite opaque_heap_ / modules_ / closure flat·pool
                 // before this mutex drops. c-struct does not take it.
-                // No hook → true. The #4386 arm stays armed.
+                // No hook → false (Issue #4662 fail-closed on move). The
+                // #4386 arm stays armed.
                 if (result.objects_moved > 0 && !invoke_live_container_rewrite()) {
                     result.pin_contract_held = false;
                     result.moving_incomplete_remap = true;

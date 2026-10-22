@@ -1,0 +1,32 @@
+{
+  "issue": 4662,
+  "title": "Arena without a live-container-rewrite hook fails closed on move (no unverifiable green Moving window)",
+  "checks": [
+    {
+      "ac": "AC-src-fail-closed",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "Issue #4662: fail closed",
+        "Issue #4662 fail-closed on move",
+        "Issue #4662: Null → fail-closed on move"
+      ]
+    },
+    {
+      "ac": "AC-test",
+      "path": "tests/core/test_moving_densify_fail_closed.cpp",
+      "contains": [
+        "ac4662_1_no_hook_fail_closed",
+        "ac4662_2_hook_installed_green",
+        "ac4662_3_off_and_no_move_unchanged",
+        "Issue #4662"
+      ]
+    },
+    {
+      "ac": "AC-no-invent",
+      "forbid": [
+        "tests/issues/test_issue_4662.cpp",
+        "docs/design/4662-live-rewrite-fail-closed.md"
+      ]
+    }
+  ]
+}
