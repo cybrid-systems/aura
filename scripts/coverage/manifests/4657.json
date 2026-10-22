@@ -1,0 +1,35 @@
+{
+  "issue": 4657,
+  "title": "wal_append_fail_slo.h header states the fail-closed force_wal contract (no blanket fail-open claim)",
+  "ok": "OK #4657: the WAL SLO header contract sentence states default-WAL observe-only (fail-open only via AURA_WAL_APPEND_FAIL_OPEN), force_wal enable/append miss fail-closed, Soft/Off zero-cost",
+  "checks": [
+    {
+      "ac": "AC1-header-contract-sentence",
+      "path": "src/core/wal_append_fail_slo.h",
+      "contains": [
+        "WAL append-fail decision table is fail-closed on the force_wal face",
+        "fail-open via explicit AURA_WAL_APPEND_FAIL_OPEN only",
+        "force_wal = enable/append miss fail-closed",
+        "the #3639 effect gate",
+        "the #3211",
+        "Soft / Off = zero-cost"
+      ]
+    },
+    {
+      "ac": "AC2-decision-table-anchor",
+      "path": "src/core/wal_append_fail_slo.h",
+      "contains": [
+        "force_wal_enable_failed && production → wal-enable-failed (arm)",
+        "soft_mode || !production_defaults",
+        "→ observe only (never arm)"
+      ]
+    },
+    {
+      "ac": "AC3-no-invent",
+      "forbid": [
+        "docs/design/4657-wal-slo-header.md",
+        "tests/issues/test_issue_4657.cpp"
+      ]
+    }
+  ]
+}
