@@ -3002,6 +3002,23 @@ public:
             return {};
         }
     }
+    // Issue #4680: all NodeIds with `tag` (any arity) from the maintained
+    // tag/arity index. O(#matches + #buckets) instead of an O(N) node scan.
+    // Callers must re-validate ids (tag/free-slot) like any index consumer.
+    [[nodiscard]] std::vector<NodeId> collect_by_tag(std::uint32_t tag) const {
+        for (;;) {
+            const_cast<FlatAST*>(this)->ensure_tag_arity_index();
+            std::shared_lock<std::shared_mutex> rlock(tag_arity_index_mtx_.mutable_get());
+            if (tag_arity_index_dirty_.load(std::memory_order_acquire) ||
+                (tag_arity_index_.empty() && size() > 0))
+                continue;
+            std::vector<NodeId> out;
+            for (const auto& [k, ids] : tag_arity_index_)
+                if (k.tag == tag)
+                    out.insert(out.end(), ids.begin(), ids.end());
+            return out;
+        }
+    }
     // Issue #447: query-stats accessors.
     [[nodiscard]] std::uint64_t tag_arity_index_hits() const noexcept {
         return tag_arity_index_hits_.load(std::memory_order_relaxed);
