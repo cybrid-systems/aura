@@ -1,0 +1,38 @@
+{
+  "issue": 4676,
+  "title": "#4671 per-op typed-entry readiness gate has no lib/runtime.c weak stub - standalone --emit-binary fails to link and emits no binary (8 import cases)",
+  "checks": [
+    {
+      "ac": "AC1-stub",
+      "path": "lib/runtime.c",
+      "contains": [
+        "aura_jit_linear_per_op_typed_entry_readiness_ok",
+        "__attribute__((weak))",
+        "Issue #4671",
+        "aura_jit_ir_typed_entry_commit_readiness_ok"
+      ]
+    },
+    {
+      "ac": "AC2-check",
+      "path": "scripts/coverage/checks/check_aot_runtime_weak_stub_4676.py",
+      "contains": [
+        "AC1",
+        "AC2",
+        "AC3",
+        "AC4",
+        "GATE_FAMILY_RE",
+        "_weak_stub_bodies",
+        "--self-test",
+        "#4676"
+      ]
+    },
+    {
+      "ac": "AC-no-issue-dir",
+      "forbid": [
+        "tests/issues/test_issue_4676.cpp",
+        "tests/compiler/test_issue_4676.cpp",
+        "docs/design/4676-aot-runtime-weak-stub.md"
+      ]
+    }
+  ]
+}
