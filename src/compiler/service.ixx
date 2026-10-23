@@ -1509,6 +1509,10 @@ public:
                 return false;
             return entry->dirty;
         });
+        evaluator_.set_slot_edge_skip_fn(
+            [this](const std::string& callee, const std::string& caller) -> bool {
+                return slot_edge_skippable_4681_(callee, caller, /*callee_changed=*/true);
+            });
         evaluator_.set_get_dependents_fn(
             [this](const std::string& name) -> std::vector<std::string> {
                 std::shared_lock dep_read(dep_graph_mtx_);
@@ -2085,6 +2089,7 @@ public:
         ir_define_env_bindings_.clear();
         ir_define_closure_owner_.clear();
         ir_value_cell_bindings_.clear();
+        ir_call_slots_4681_.clear(); // Issue #4681
         ir_disk_snapshots_.clear();
         // Issue #223 + #1258 + #1263: bump mutation_epoch_ so any stale
         // ClosureBridgeData that captured the old epoch is detected
@@ -8695,6 +8700,7 @@ public:
         for (auto& called_name : cache_hits) {
             record_dependency(name, called_name);
         }
+        note_slot_edges_4681_(name);
         return true;
     }
 
@@ -9094,8 +9100,20 @@ public:
                 // owns those; only value defines need cell indices.
                 // Issue #4228: Soft TW Lambda exports are registered below via
                 // top_env Soft-cell walk (not workspace Lambda skip alone).
-                if (ws_flat->get(v.child(0)).tag == aura::ast::NodeTag::Lambda)
+                if (ws_flat->get(v.child(0)).tag == aura::ast::NodeTag::Lambda) {
+                    // Issue #4681: the define's env cell is its call slot.
+                    if (call_slots_enabled_4681_()) {
+                        auto cell = evaluator_.top_env().lookup(name);
+                        if (cell && types::is_cell(*cell) &&
+                            types::as_cell_id(*cell) < evaluator_.cells().size() &&
+                            types::is_closure(evaluator_.cells()[types::as_cell_id(*cell)])) {
+                            ir_call_slots_4681_[name] = types::as_cell_id(*cell);
+                            auto lv = ws_flat->get(v.child(0));
+                            slot_arity_4681_[name] = static_cast<int>(lv.params.size());
+                        }
+                    }
                     continue;
+                }
                 // Issue #4632: lookup_binding is a linear reverse scan over
                 // the env's whole binding vector. A workspace :switch into
                 // a workspace that has had one mutate:rebind re-binds that
@@ -9831,7 +9849,21 @@ public:
             // Issue #4598: compare the interned SymId over the tag / sym
             // columns; get() (children copy) only on the match.
             const auto want_sym = ws_pool->find_by_name(name);
-            const auto ws_n = want_sym ? ws_flat->size() : aura::ast::NodeId{0};
+            // Issue #4681: O(1) memoised sym -> first Define (tag index)
+            // instead of an O(N) node scan per dirty name.
+            if (want_sym && define_lookup_enabled_4681_()) {
+                const auto hit = first_define_for_sym_4681_(*ws_flat, *want_sym);
+                if (hit != aura::ast::NULL_NODE) {
+                    auto v = ws_flat->get(hit);
+                    def_id = hit;
+                    if (!v.children.empty())
+                        lambda_id = v.child(0);
+                }
+            }
+            const auto ws_n =
+                (want_sym && def_id == aura::ast::NULL_NODE && !define_lookup_enabled_4681_())
+                    ? ws_flat->size()
+                    : aura::ast::NodeId{0};
             for (aura::ast::NodeId id = 0; id < ws_n; ++id) {
                 if (ws_flat->tag(id) != aura::ast::NodeTag::Define ||
                     ws_flat->sym_id(id) != *want_sym)
@@ -11247,6 +11279,136 @@ public:
             , context(prim, reg, metrics, eval) {}
     };
 
+    // Issue #4681: memoised SymId -> lowest live Define NodeId, rebuilt from
+    // the maintained tag index when the flat / its mutation log moves.
+    // AURA_DEFINE_LOOKUP_INDEX=0 restores the per-name O(N) scan.
+    static bool define_lookup_enabled_4681_() noexcept {
+        static const bool on = [] {
+            const char* e = std::getenv("AURA_DEFINE_LOOKUP_INDEX");
+            return !(e && e[0] == '0');
+        }();
+        return on;
+    }
+    const void* def_memo_flat_4681_ = nullptr;
+    std::size_t def_memo_log_4681_ = ~std::size_t{0};
+    std::size_t def_memo_size_4681_ = ~std::size_t{0};
+    std::unordered_map<aura::ast::SymId, aura::ast::NodeId> def_memo_4681_;
+    void rebuild_define_memo_4681_(aura::ast::FlatAST& f) {
+        def_memo_4681_.clear();
+        for (auto id : f.collect_by_tag(static_cast<std::uint32_t>(aura::ast::NodeTag::Define))) {
+            if (id >= f.size() || f.is_free_slot(id) || f.tag(id) != aura::ast::NodeTag::Define)
+                continue;
+            const auto sid = f.sym_id(id);
+            auto [it, ins] = def_memo_4681_.emplace(sid, id);
+            if (!ins && id < it->second)
+                it->second = id;
+        }
+        def_memo_flat_4681_ = &f;
+        def_memo_log_4681_ = f.all_mutations().size();
+        def_memo_size_4681_ = f.size();
+    }
+    aura::ast::NodeId first_define_for_sym_4681_(aura::ast::FlatAST& f, aura::ast::SymId sid) {
+        if (def_memo_flat_4681_ != &f || def_memo_log_4681_ != f.all_mutations().size() ||
+            def_memo_size_4681_ != f.size())
+            rebuild_define_memo_4681_(f);
+        auto it = def_memo_4681_.find(sid);
+        if (it == def_memo_4681_.end())
+            return aura::ast::NULL_NODE;
+        const auto id = it->second;
+        if (id < f.size() && !f.is_free_slot(id) && f.tag(id) == aura::ast::NodeTag::Define &&
+            f.sym_id(id) == sid)
+            return id;
+        rebuild_define_memo_4681_(f); // stale hit: rebuild once
+        it = def_memo_4681_.find(sid);
+        return it == def_memo_4681_.end() ? aura::ast::NULL_NODE : it->second;
+    }
+    // Issue #4681: top-level lambda define name -> env cell (its call slot).
+    aura::compiler::CallSlotCells4681 ir_call_slots_4681_;
+    // caller -> callees its last lowering reached through a slot.
+    std::unordered_map<std::string, std::unordered_set<std::string>> slot_edges_4681_;
+    // callee -> lambda arity when its slot was registered.
+    std::unordered_map<std::string, int> slot_arity_4681_;
+    std::vector<std::string> slot_hits_scratch_4681_;
+    std::uint64_t slot_edges_skipped_4681_ = 0;
+    // Called right after a lowering of `caller` that fed value_cells_for_lowering.
+    void note_slot_edges_4681_(const std::string& caller) {
+        if (!call_slots_enabled_4681_())
+            return;
+        auto& set = slot_edges_4681_[caller];
+        set.clear();
+        for (auto& c : slot_hits_scratch_4681_) {
+            if (c == caller)
+                continue;
+            set.insert(c);
+            record_dependency(caller, c);
+        }
+        slot_hits_scratch_4681_.clear();
+    }
+    // Current lambda arity of a workspace define; -1 when unknown / not a lambda.
+    int workspace_lambda_arity_4681_(const std::string& name) {
+        auto* f = evaluator_.workspace_flat();
+        auto* p = evaluator_.workspace_pool();
+        if (!f || !p)
+            return -1;
+        const auto key = f->all_mutations().size();
+        if (arity_memo_flat_4681_ == f && arity_memo_key_4681_ == key &&
+            arity_memo_name_4681_ == name)
+            return arity_memo_val_4681_;
+        const int r = workspace_lambda_arity_scan_4681_(f, p, name);
+        arity_memo_flat_4681_ = f;
+        arity_memo_key_4681_ = key;
+        arity_memo_name_4681_ = name;
+        arity_memo_val_4681_ = r;
+        return r;
+    }
+    const void* arity_memo_flat_4681_ = nullptr;
+    std::size_t arity_memo_key_4681_ = 0;
+    std::string arity_memo_name_4681_;
+    int arity_memo_val_4681_ = -1;
+    static int workspace_lambda_arity_scan_4681_(aura::ast::FlatAST* f, aura::ast::StringPool* p,
+                                                 const std::string& name) {
+        int found = -1;
+        int n = 0;
+        for (auto id : f->collect_by_tag(static_cast<std::uint32_t>(aura::ast::NodeTag::Define))) {
+            if (id >= f->size() || f->is_free_slot(id))
+                continue;
+            auto v = f->get(id);
+            if (v.tag != aura::ast::NodeTag::Define || v.children.empty() ||
+                p->resolve(v.sym_id) != name)
+                continue;
+            ++n;
+            auto lv = f->get(v.child(0));
+            found = lv.tag == aura::ast::NodeTag::Lambda ? static_cast<int>(lv.params.size()) : -1;
+        }
+        return n == 1 ? found : -1; // multi-define: unknown
+    }
+    // Issue #4681: true when `caller` reaches `callee` only through its
+    // call slot and callee's signature (arity) did not change, so the
+    // caller's IR stays valid and the cascade can skip it.
+    bool slot_edge_skippable_4681_(const std::string& callee, const std::string& caller,
+                                   bool callee_changed) {
+        if (!call_slots_enabled_4681_())
+            return false;
+        auto it = slot_edges_4681_.find(caller);
+        if (it == slot_edges_4681_.end() || it->second.count(callee) == 0)
+            return false;
+        if (callee_changed) {
+            auto ait = slot_arity_4681_.find(callee);
+            if (ait == slot_arity_4681_.end() || ait->second < 0)
+                return false;
+            if (workspace_lambda_arity_4681_(callee) != ait->second)
+                return false;
+        }
+        ++slot_edges_skipped_4681_;
+        return true;
+    }
+    static bool call_slots_enabled_4681_() noexcept {
+        static const bool on = [] {
+            const char* e = std::getenv("AURA_CALL_SLOTS");
+            return e && e[0] == '1';
+        }();
+        return on;
+    }
     void install_persistent_define_closure_bridge() {
         evaluator_.set_closure_bridge(
             [this](aura::compiler::ClosureId cid,
@@ -11271,6 +11433,13 @@ public:
     [[nodiscard]] const std::unordered_map<std::string, std::size_t,
                                            aura::core::TransparentStringHash, std::equal_to<>>*
     value_cells_for_lowering() {
+        // Issue #4681: arm call slots for the lowering this feeds.
+        aura::compiler::call_slot_cells_4681() =
+            (call_slots_enabled_4681_() && !ir_call_slots_4681_.empty()) ? &ir_call_slots_4681_
+                                                                         : nullptr;
+        slot_hits_scratch_4681_.clear();
+        aura::compiler::call_slot_hits_4681() =
+            aura::compiler::call_slot_cells_4681() ? &slot_hits_scratch_4681_ : nullptr;
         return ir_value_cell_bindings_.empty() ? nullptr : &ir_value_cell_bindings_;
     }
 
@@ -12654,6 +12823,7 @@ public:
         for (auto& called_name : cache_hits) {
             record_dependency(name_str, called_name);
         }
+        note_slot_edges_4681_(name_str);
 
         if (is_redefine) {
             // Issue #660 follow-up: JIT cache keys are
@@ -17967,6 +18137,7 @@ public:
     bool dirty_batch_finalize_done_ = false;
     bool dirty_batch_linear_scan_done_ = false;    // #4680
     bool dirty_batch_hotswap_audit_done_ = false;  // #4680
+    bool dirty_batch_rate_sampled_ = false;        // #4681
     std::uint64_t dirty_batch_walk_epoch_ = ~0ull; // #4680
     std::uint64_t dirty_batch_coalesced_4678_ = 0;
     static bool dirty_batch_coalesce_enabled_() noexcept {
@@ -17984,6 +18155,7 @@ public:
                 dirty_batch_finalize_done_ = false;
                 dirty_batch_linear_scan_done_ = false;
                 dirty_batch_hotswap_audit_done_ = false;
+                dirty_batch_rate_sampled_ = false;
                 dirty_batch_walk_epoch_ = ~0ull;
             }
         } else if (dirty_batch_depth_ > 0 && --dirty_batch_depth_ == 0) {

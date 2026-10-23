@@ -23,6 +23,15 @@ import aura.compiler.ir_soa;        // #2254 g_soa_only_path_total_atomic etc.
 
 namespace aura::compiler {
 
+const CallSlotCells4681*& call_slot_cells_4681() noexcept {
+    static thread_local const CallSlotCells4681* p = nullptr;
+    return p;
+}
+std::vector<std::string>*& call_slot_hits_4681() noexcept {
+    static thread_local std::vector<std::string>* p = nullptr;
+    return p;
+}
+
 using namespace aura::ir;
 using namespace aura::ast;
 
@@ -396,6 +405,18 @@ static std::uint32_t lower_flat_expr(
                     auto slot = state.alloc_local();
                     state.emit(IROpcode::TopCellLoad, slot,
                                static_cast<std::uint32_t>(vc_it->second));
+                    return slot;
+                }
+            }
+            // Issue #4681: call slot - live read of the define's cell.
+            if (const auto* slots = call_slot_cells_4681()) {
+                auto sit = slots->find(std::string(name));
+                if (sit != slots->end()) {
+                    if (auto* hits = call_slot_hits_4681())
+                        hits->push_back(std::string(name));
+                    auto slot = state.alloc_local();
+                    state.emit(IROpcode::TopCellLoad, slot,
+                               static_cast<std::uint32_t>(sit->second));
                     return slot;
                 }
             }

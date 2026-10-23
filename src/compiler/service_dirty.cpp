@@ -687,6 +687,9 @@ void CompilerService::mark_define_dirty(const std::string& name) {
             called_by_snap = dit->second.called_by;
         }
         for (auto& dependent : called_by_snap) {
+            // Issue #4681: slot caller of a same-arity define stays valid.
+            if (slot_edge_skippable_4681_(cur, dependent, cur == name))
+                continue;
             if (!visited.insert(dependent).second)
                 continue;
             bfs.push(dependent);
@@ -818,7 +821,13 @@ void CompilerService::mark_define_dirty(const std::string& name) {
     aura::compiler::dirty::dirty_cascade_depth_sum.fetch_add(final_depth,
                                                              std::memory_order_relaxed);
     aura::compiler::dirty::dirty_cascade_depth_samples.fetch_add(1, std::memory_order_relaxed);
-    {
+    // Issue #4681: the O(#defines) dirty-rate sample feeds only the #2209
+    // adaptive threshold; take it once per dirty batch, not per name.
+    const bool skip_rate_sample =
+        dirty_batch_depth_ > 0 && dirty_batch_coalesce_enabled_() && dirty_batch_rate_sampled_;
+    if (dirty_batch_depth_ > 0)
+        dirty_batch_rate_sampled_ = true;
+    if (!skip_rate_sample) {
         std::size_t dirty_funcs = 0;
         for (const auto& kv : ir_cache_v2_) {
             if (kv.second.dirty || kv.second.any_block_dirty())
@@ -1182,6 +1191,9 @@ void CompilerService::invalidate_function(const std::string& name) {
                 continue;
 
             for (auto& dependent : it->second.called_by) {
+                // Issue #4681: slot caller of a same-arity define stays valid.
+                if (slot_edge_skippable_4681_(current, dependent, current == name))
+                    continue;
                 if (!visited.insert(dependent).second)
                     continue;
                 dependents.push_back(dependent);
@@ -1886,6 +1898,7 @@ void CompilerService::invalidate_function(const std::string& name) {
         for (auto& called_name : cache_hits) {
             record_dependency(dep_name, called_name);
         }
+        note_slot_edges_4681_(dep_name);
 
         (void)bind_function_define_via_ir(ir_mod, dep_name);
     }

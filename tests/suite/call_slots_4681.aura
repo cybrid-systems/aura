@@ -1,0 +1,68 @@
+; Issue #4681: call slots. Under AURA_CALL_SLOTS=1 callers reach a
+; top-level lambda define through its env cell, so a same-arity rebind
+; skips the caller cascade. Results must match the embed path (flag off).
+(define *fails* 0)
+(define *n* 0)
+(define (check! ok msg)
+  (set! *n* (+ *n* 1))
+  (if (not ok)
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+(set-code "(define k 3)\n(define f (lambda (x) (+ x k)))\n(define g (lambda (x) (* 2 (f x))))\n(define h (lambda (x) (+ (g x) (f x))))\n(define fact (lambda (n) (if (< n 2) 1 (* n (fact (- n 1))))))\n(define ap (lambda (fn x) (fn x)))\n(define viaap (lambda (x) (ap f x)))\n(define usefact (lambda (n) (+ (fact n) (f 0))))")
+(eval-current)
+(check! (= (h 1) 12) "initial h")
+(check! (= (usefact 4) 27) "initial usefact")
+(check! (= (viaap 1) 4) "initial f as value")
+;; same-arity rebinds of a leaf: every transitive caller sees the new body
+(let loop ((i 0))
+  (if (< i 5)
+      (begin
+        (mutate:rebind "f" (string-append "(lambda (x) (+ x " (number->string i) "))") "t")
+        (eval-current)
+        (check! (= (g 1) (* 2 (+ 1 i))) "g after f rebind")
+        (check! (= (h 1) (* 3 (+ 1 i))) "transitive h after f rebind")
+        (check! (= (viaap 2) (+ 2 i)) "f passed as a value")
+        (check! (= (usefact 3) (+ 6 i)) "usefact")
+        (loop (+ i 1)))))
+;; rebinding the middle of a chain
+(mutate:rebind "g" "(lambda (x) (- (f x) 1))" "t")
+(eval-current)
+(check! (= (h 1) (+ (- 5 1) 5)) "h after g rebind")
+;; recursive define rebound (self slot is MakeClosure, not a cell)
+(mutate:rebind "fact" "(lambda (n) (if (< n 2) 2 (* n (fact (- n 1)))))" "t")
+(eval-current)
+(check! (= (usefact 3) (+ 12 4)) "usefact after recursive rebind")
+;; value define read by a lambda define, then lambda rebind again
+(mutate:rebind "f" "(lambda (x) (* x k))" "t")
+(eval-current)
+(check! (= (g 2) (- 6 1)) "g sees value-define k through f")
+;; arity change: the caller re-analysis still rejects it
+(define r (mutate:rebind "f" "(lambda (x y) (+ x y))" "t"))
+(check! (and (pair? r) (eq? (car r) 'mutation-failed)) "arity change rejected")
+(eval-current)
+(check! (= (g 2) 5) "old binding intact after reject")
+;; arity change with callers updated: rebind callers first is rejected too,
+;; so go through a fresh workspace and confirm the slot path re-arms
+(set-code "(define f (lambda (x) (+ x 1)))\n(define c (lambda (x) (f x)))")
+(eval-current)
+(check! (= (c 1) 2) "fresh workspace")
+(mutate:rebind "f" "(lambda (x) (+ x 100))" "t")
+(eval-current)
+(check! (= (c 1) 101) "fresh workspace rebind")
+(eval-current :jit)
+(check! (= (c 1) 101) "after jit eval")
+;; many callers
+(set-code (let loop ((i 0) (acc "(define f (lambda (x) x))\n"))
+  (if (= i 30) acc
+      (loop (+ i 1) (string-append acc "(define c" (number->string i) " (lambda (x) (+ (f x) " (number->string i) ")))\n")))))
+(eval-current)
+(let loop ((i 0))
+  (if (< i 4)
+      (begin
+        (mutate:rebind "f" (string-append "(lambda (x) (* x " (number->string (+ i 2)) "))") "t")
+        (eval-current)
+        (check! (= (c29 1) (+ (+ i 2) 29)) "fan-in c29")
+        (check! (= (c0 3) (* 3 (+ i 2))) "fan-in c0")
+        (loop (+ i 1)))))
+(if (= *fails* 0)
+    (begin (display "OK-4681 ") (display *n*) (display " checks") (newline))
+    (begin (display "FAILED-4681 ") (display *fails*) (newline)))
