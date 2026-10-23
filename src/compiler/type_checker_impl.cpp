@@ -178,7 +178,7 @@ static void bump_linear_occurrence_predicate_safe(void* metrics) {
 
 static bool subtree_has_linear_ops(const FlatAST& flat, NodeId root) {
     std::function<bool(NodeId)> walk = [&](NodeId id) -> bool {
-        if (id == NULL_NODE || id >= flat.size())
+        if (id == NULL_NODE || id >= flat.size() || flat.is_free_slot(id))
             return false;
         const auto v = flat.get(id);
         if (v.tag == NodeTag::Linear || v.tag == NodeTag::Move || v.tag == NodeTag::Borrow ||
@@ -5076,6 +5076,14 @@ void InferenceEngine::add_deferred_coercion(const FlatAST& flat, NodeId parent,
                                             std::uint64_t explicit_source_mutation_id,
                                             std::uint32_t explicit_predicate_cond_node,
                                             std::uint32_t explicit_narrow_evidence) {
+    // Issue #4670: a freed parent or inner is not part of the live program.
+    // Recording it lets apply_coercion_map close a cycle through the
+    // uncleared child vector of the recycled cluster.
+    if (original_child != aura::ast::NULL_NODE && original_child < flat.size() &&
+        flat.is_free_slot(original_child))
+        return;
+    if (parent != aura::ast::NULL_NODE && parent < flat.size() && flat.is_free_slot(parent))
+        return;
     // Issue #1924 / #2512 / #2991: first-class session provenance. Explicit
     // check_flat / synthesize_flat_call args + engine active mid beat TLS
     // and must never be overwritten by log.back() or leftover NarrowingRecords
@@ -5234,7 +5242,7 @@ void InferenceEngine::seed_mutation_touched_roots(const FlatAST& flat, const Str
 }
 
 TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, bool preserve_cs) {
-    if (id == NULL_NODE || id >= flat.size())
+    if (id == NULL_NODE || id >= flat.size() || flat.is_free_slot(id))
         return reg_.dynamic_type();
 
     // Issue #168 Phase 1: epoch gate. If the cache epoch has
@@ -9517,7 +9525,7 @@ static void collect_linear_bindings_under_nodes(const aura::ast::FlatAST& flat,
                                                 const std::vector<aura::ast::NodeId>& nodes,
                                                 std::unordered_set<std::string>& out) {
     std::function<void(aura::ast::NodeId)> walk = [&](aura::ast::NodeId id) {
-        if (id == aura::ast::NULL_NODE || id >= flat.size())
+        if (id == aura::ast::NULL_NODE || id >= flat.size() || flat.is_free_slot(id))
             return;
         auto v = flat.get(id);
         // Pattern 1: syntactic Linear wrapper on Let value.
@@ -10576,7 +10584,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     std::vector<aura::ast::NodeId> boundary_inferred_roots;
     for (std::size_t ai = 0; ai < affected.size(); ++ai) {
         const auto id = affected[ai];
-        if (id == aura::ast::NULL_NODE || id >= flat.size())
+        if (id == aura::ast::NULL_NODE || id >= flat.size() || flat.is_free_slot(id))
             continue;
         // Issue #656: dedupe. If `id` has an ancestor in the affected
         // set, the ancestor's recursive walk will re-check `id` with
@@ -12484,7 +12492,7 @@ std::size_t revalidate_linear_after_coercion(aura::ast::FlatAST& flat, const Str
     std::size_t sites = 0;
 
     auto consider_node = [&](NodeId nid) {
-        if (nid == NULL_NODE || nid >= flat.size())
+        if (nid == NULL_NODE || nid >= flat.size() || flat.is_free_slot(nid))
             return;
         ++sites;
         discover_linear_bindings_in_subtree(flat, pool, nid, linear_bindings);

@@ -4591,7 +4591,12 @@ public:
     bool has_var_annot(NodeId id) const { return id < size() && int_val_[id] != 0; }
     SymId var_annot_sym(NodeId id) const { return static_cast<SymId>(int_val_[id]); }
 
+    // Issue #4670: a recycled slot keeps children_ until the next reuse.
+    // Linking that inner from a freshly popped id closes a cycle when the
+    // dead cluster still names the popped id.
     [[nodiscard]] NodeId add_coercion(NodeId inner, std::uint32_t type_id) {
+        if (inner != NULL_NODE && inner < size() && is_free_slot(inner))
+            return NULL_NODE;
         auto id = add_node(NodeTag::Coercion);
         children_[id] =
             PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
@@ -4600,6 +4605,8 @@ public:
         return id;
     }
     [[nodiscard]] NodeId add_coercion(NodeId inner, std::uint32_t type_tag, std::uint32_t type_id) {
+        if (inner != NULL_NODE && inner < size() && is_free_slot(inner))
+            return NULL_NODE;
         auto id = add_node(NodeTag::Coercion);
         children_[id] =
             PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
