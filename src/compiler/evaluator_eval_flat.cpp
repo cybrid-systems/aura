@@ -5578,7 +5578,14 @@ void Evaluator::remember_resolved_var(aura::ast::NodeId id, aura::ast::SymId sym
                                       const types::EvalValue& bound) {
     // Host only. A fiber must keep Env::lookup's #4595 gate, and the
     // vector is not synchronized.
-    if (aura::serve::g_current_fiber != nullptr || env.parent() != nullptr)
+    // Issue #4669: materialize_call_env sets parent_id and leaves the
+    // parent pointer null, so a call frame used to pass the parent()
+    // guard and look like top_. The stored cell index is keyed by the
+    // capture-snapshot address. That address is reused after the frame
+    // is reclaimed, and the freelist puts a different value (a Bool, in
+    // the it-set counter) in the old index. `(+ j 1)` then reads #f.
+    // Only top_ is stable across calls; a rebind bumps top_bind_gen_.
+    if (aura::serve::g_current_fiber != nullptr || &env != &top_)
         return;
     if (sym == aura::ast::INVALID_SYM)
         return;
@@ -5845,8 +5852,19 @@ std::optional<EvalResult> Evaluator::try_eval_flat_hot(aura::ast::FlatAST& flat,
             return std::nullopt;
         if (e.kind == NameResEntry::Kind::Prim)
             return EvalResult(make_primitive(e.aux));
-        if (e.kind == NameResEntry::Kind::Cell && e.aux < cells_.size() && !is_void(cells_[e.aux]))
-            return EvalResult(cells_[e.aux]);
+        // Issue #4669: do not hand a call frame a cell cached for this
+        // node. parent() is null on those frames (see remember_resolved_var),
+        // so the guard above does not keep them out. The index belongs to
+        // an earlier capture; the freelist reuses it. Locals already
+        // returned above. A free var falls through to chain_read_var and
+        // reads the cell this call actually bound. top_ still caches.
+        if (e.kind == NameResEntry::Kind::Cell) {
+            if (&env != &top_)
+                return std::nullopt;
+            if (e.aux < cells_.size() && !is_void(cells_[e.aux]))
+                return EvalResult(cells_[e.aux]);
+            return std::nullopt;
+        }
         return std::nullopt;
     }
     if (tag != aura::ast::NodeTag::Call)
