@@ -925,8 +925,10 @@ void Evaluator::inject_cross_batch_linear_escape_for_test() noexcept {
     if (fr.bindings_linear_ownership_state_.empty()) {
         fr.bindings_.emplace_back("__escape_test__", make_int(0));
         fr.bindings_linear_ownership_state_.push_back(linear_rt::Moved);
+        linear_rt::note_state_written(); // #4683
     } else {
         fr.bindings_linear_ownership_state_[0] = linear_rt::Moved;
+        linear_rt::note_state_written(); // #4683
     }
 }
 

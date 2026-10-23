@@ -82,7 +82,8 @@ static std::pair<std::uint64_t, std::uint64_t> make_owned_incomplete_linear(Eval
         if (fr) {
             auto& syms = fr->bindings_symid_;
             auto& lin = fr->bindings_linear_ownership_state_;
-            constexpr std::uint8_t kOwned = 1; // linear_rt::Owned
+            aura::compiler::linear_rt::note_state_written(); // #4683 test seam
+            constexpr std::uint8_t kOwned = 1;               // linear_rt::Owned
             constexpr std::uint8_t kUntracked = 0;
             if (syms.empty()) {
                 syms.push_back({static_cast<SymId>(1), make_int(0)});

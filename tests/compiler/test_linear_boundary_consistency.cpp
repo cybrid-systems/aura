@@ -60,7 +60,8 @@ std::pair<std::uint64_t, std::uint64_t> make_moved_linear_closure(Evaluator& ev)
         if (fr) {
             auto& syms = fr->bindings_symid_;
             auto& lin = fr->bindings_linear_ownership_state_;
-            constexpr std::uint8_t kMoved = 4; // linear_rt::Moved
+            aura::compiler::linear_rt::note_state_written(); // #4683 test seam
+            constexpr std::uint8_t kMoved = 4;               // linear_rt::Moved
             constexpr std::uint8_t kUntracked = 0;
             if (syms.empty()) {
                 syms.push_back({static_cast<SymId>(1), make_int(0)});

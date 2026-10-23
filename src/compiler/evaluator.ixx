@@ -1029,6 +1029,29 @@ export namespace linear_rt {
     constexpr std::uint8_t Borrowed = 2;
     constexpr std::uint8_t MutBorrowed = 3;
     constexpr std::uint8_t Moved = 4;
+    // Issue #4683: sticky process-wide "a binding ever carried a tracked
+    // linear ownership state". Every origin write of a non-Untracked state
+    // (EnvFrame/Env bind + set_linear_ownership_state, test seams) notes
+    // it; copies only propagate states that were already noted. While it
+    // is false every binding is Untracked, so the post-mutate linear scans
+    // (live-closure capture scan, enforce_all, GC-root audit, provenance
+    // revalidate) cannot find anything and the linear+GC window skips
+    // them. AURA_LINEAR_AUDIT_ALWAYS=1 forces the scans.
+    inline std::atomic<bool> g_state_ever_written_4683{false};
+    inline void note_state_written(std::uint8_t st) noexcept {
+        if (st != Untracked)
+            g_state_ever_written_4683.store(true, std::memory_order_release);
+    }
+    inline void note_state_written() noexcept {
+        g_state_ever_written_4683.store(true, std::memory_order_release);
+    }
+    inline bool state_ever_written() noexcept {
+        static const bool always = [] {
+            const char* e = std::getenv("AURA_LINEAR_AUDIT_ALWAYS");
+            return e && e[0] == '1';
+        }();
+        return always || g_state_ever_written_4683.load(std::memory_order_acquire);
+    }
 } // namespace linear_rt
 
 // Forward declaration — EnvFrame body follows; resolve result types
