@@ -68,6 +68,22 @@ using aura::compiler::types::is_int;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
+
+// #4681: with AURA_CALL_SLOTS=1 callers load the callee through its top_env
+// cell (TopCellLoad) instead of embedding a copy of the callee IR.
+static bool call_slots_on_4681() {
+    const char* v = std::getenv("AURA_CALL_SLOTS");
+    return v != nullptr && v[0] == '1';
+}
+static bool bundle_has_slot_load_4681(const aura::compiler::CompilerService::IRCacheEntry& e) {
+    for (const auto& fn : e.irs)
+        for (const auto& b : fn.blocks)
+            for (const auto& ins : b.instructions)
+                if (ins.opcode == aura::ir::IROpcode::TopCellLoad)
+                    return true;
+    return false;
+}
+
 static std::string read_file(const char* path) {
     for (const auto& p :
          {std::string(path), std::string("../") + path, std::string("../../") + path}) {
@@ -911,7 +927,9 @@ int run_test_cascade_relower_silent_skip() {
                 return false;
             };
             CHECK(look_after == 0, "4436: sweep stores g as a clean hit");
-            CHECK(bundle_has(*g_after, 2), "4436: stored g embeds the post-mutate callee");
+            CHECK(bundle_has(*g_after, 2) ||
+                      (call_slots_on_4681() && bundle_has_slot_load_4681(*g_after)),
+                  "4436: stored g embeds the post-mutate callee");
         }
         const auto svc = read_file("src/compiler/service.ixx");
         const auto at = svc.find("Issue #4436");
@@ -1224,7 +1242,9 @@ int run_test_cascade_relower_silent_skip() {
                 }
                 return false;
             };
-            CHECK(bundle_has4528(*g_after4528, 1), "4528 AC4: stored g embeds the restored f body");
+            CHECK(bundle_has4528(*g_after4528, 1) ||
+                      (call_slots_on_4681() && bundle_has_slot_load_4681(*g_after4528)),
+                  "4528 AC4: stored g embeds the restored f body");
         }
         apply_dev_audit_defaults();
     }

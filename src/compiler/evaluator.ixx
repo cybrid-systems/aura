@@ -3373,6 +3373,13 @@ public:
     void set_is_define_dirty_fn(std::function<IsDefineDirtyFn> fn) {
         is_define_dirty_fn_ = std::move(fn);
     }
+    // Issue #4681: (callee, caller) -> caller reaches callee only via a
+    // call slot and callee kept its signature; the restamp skips it.
+    using SlotEdgeSkipFn = bool(const std::string&, const std::string&);
+    std::function<SlotEdgeSkipFn> slot_edge_skip_fn_ = nullptr;
+    void set_slot_edge_skip_fn(std::function<SlotEdgeSkipFn> fn) {
+        slot_edge_skip_fn_ = std::move(fn);
+    }
     using GetDependentsFn = std::vector<std::string>(const std::string&);
     std::function<GetDependentsFn> get_dependents_fn_ = nullptr;
     void set_get_dependents_fn(std::function<GetDependentsFn> fn) {

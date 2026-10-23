@@ -11301,6 +11301,9 @@ void Evaluator::drain_cascade_bfs_invalidate() noexcept {
                 }
                 if (also_root)
                     continue;
+                // Issue #4681: slot caller of a same-signature define.
+                if (slot_edge_skip_fn_ && slot_edge_skip_fn_(root, dep))
+                    continue;
                 if (!restamped.insert(dep).second)
                     continue;
                 mark_define_dirty_fn_(dep);
@@ -11362,6 +11365,21 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
         }
         note_rebind_light_cascaded();
     }
+    // Issue #4681: one dirty batch for the whole cascade - the root is
+    // marked before and after the eager relower, and each mark ran the
+    // name-independent epoch bump + O(closures) audits again.
+    struct CascadeDirtyBatch {
+        const std::function<void(bool)>& fn;
+        explicit CascadeDirtyBatch(const std::function<void(bool)>& f)
+            : fn(f) {
+            if (fn)
+                fn(true);
+        }
+        ~CascadeDirtyBatch() {
+            if (fn)
+                fn(false);
+        }
+    } cascade_dirty_batch(dirty_batch_fn_);
     const auto t0 = std::chrono::steady_clock::now();
     auto& flat = *workspace_flat_;
     auto& pool = *workspace_pool_;
