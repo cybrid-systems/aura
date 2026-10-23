@@ -26,6 +26,8 @@
 #include <print>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 import std;
 import aura.core.ast;
@@ -42,6 +44,7 @@ using aura::compiler::clear_coercion_active_mutation_context;
 using aura::compiler::CoercionMap;
 using aura::compiler::CompilerService;
 using aura::compiler::consume_provenance_miss_for_boundary;
+using aura::compiler::DeadCoercionAstStats;
 using aura::compiler::force_audit_on_provenance_miss;
 using aura::compiler::g_coercion_provenance_complete_total;
 using aura::compiler::g_coercion_provenance_miss_reject_total;
@@ -120,6 +123,71 @@ static std::int64_t href(CompilerService& cs, std::string_view key) {
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
+}
+
+// Child edges only. A recycled slot keeps its old vector until reuse, so a
+// coercion that links that slot closes a cycle the linear walk then overflows.
+static bool has_child_cycle(const FlatAST& flat) {
+    const auto n = flat.size();
+    std::vector<std::uint8_t> state(n, 0);
+    std::vector<aura::ast::NodeId> stack;
+    std::vector<std::uint32_t> next_i;
+    for (aura::ast::NodeId start = 0; start < n; ++start) {
+        if (state[start] != 0)
+            continue;
+        stack.push_back(start);
+        next_i.push_back(0);
+        state[start] = 1;
+        while (!stack.empty()) {
+            const auto id = stack.back();
+            const auto view = flat.get(id);
+            std::vector<aura::ast::NodeId> kids(view.children.begin(), view.children.end());
+            if (next_i.back() >= kids.size()) {
+                state[id] = 2;
+                stack.pop_back();
+                next_i.pop_back();
+                continue;
+            }
+            const auto c = kids[next_i.back()++];
+            if (c >= n)
+                continue;
+            if (state[c] == 1)
+                return true;
+            if (state[c] == 0) {
+                state[c] = 1;
+                stack.push_back(c);
+                next_i.push_back(0);
+            }
+        }
+    }
+    return false;
+}
+
+// Live root plus an unreachable cluster: parent → inner → back → slot.
+// slot is allocated last, so recycle's LIFO free list pops it first.
+// back still names slot after the free. Wrapping inner reuses slot and
+// the edge back → slot → inner → back is a cycle.
+static bool prepare_recycled_cluster(FlatAST& flat, StringPool& pool, aura::ast::NodeId& parent,
+                                     aura::ast::NodeId& inner, aura::ast::NodeId& back,
+                                     aura::ast::NodeId& slot) {
+    auto keep = flat.add_literal(1);
+    flat.root = keep;
+    auto pcal = flat.add_literal(2);
+    auto ical = flat.add_literal(3);
+    auto bcal = flat.add_literal(4);
+    auto placeholder = flat.add_literal(5);
+    back = flat.add_call(bcal, std::array<aura::ast::NodeId, 1>{placeholder});
+    inner = flat.add_call(ical, std::array<aura::ast::NodeId, 1>{back});
+    parent = flat.add_call(pcal, std::array<aura::ast::NodeId, 1>{inner});
+    slot = flat.add_variable(pool.intern("recycled-callee"));
+    flat.set_child(back, 1, slot);
+    (void)flat.recycle_dead_nodes();
+    if (!flat.is_free_slot(parent) || !flat.is_free_slot(inner) || !flat.is_free_slot(back) ||
+        !flat.is_free_slot(slot))
+        return false;
+    const auto back_v = flat.get(back);
+    const auto parent_v = flat.get(parent);
+    return back_v.child(1) == slot && parent_v.child(1) == inner && !has_child_cycle(flat);
 }
 
 static void make_coerce_tree(FlatAST& flat, StringPool& pool, aura::ast::NodeId& parent,
@@ -288,6 +356,52 @@ int run_test_coercion_reject_production_defaults() {
         CHECK(pol.find("set_reject_apply_on_provenance_miss") != std::string::npos,
               "policy header");
         CHECK(cm.find("2185") != std::string::npos, "coercion_map cites 2185");
+    }
+
+    // Issue #4670: recycle leaves the dead cluster's child vectors in place.
+    // add_coercion pops the id that vector still names and links it back at
+    // the freed inner. apply_coercion_map must not install that edge.
+    {
+        std::println("\n--- #4670: recycled inner is not wrapped ---");
+        reset_process();
+        set_strategy(AuditStrategy::Off);
+        set_mode(SandboxMode::Off);
+        clear_coercion_active_mutation_context();
+
+        FlatAST direct;
+        StringPool pool;
+        aura::ast::NodeId parent = 0, inner = 0, back = 0, slot = 0;
+        CHECK(prepare_recycled_cluster(direct, pool, parent, inner, back, slot),
+              "#4670: dead cluster kept its child edges");
+        const auto coerced = direct.add_coercion(inner, /*type_tag=*/1, /*type_id=*/99);
+        CHECK(coerced == aura::ast::NULL_NODE, "#4670: add_coercion refuses a free inner");
+        CHECK(direct.is_free_slot(slot), "#4670: named free id was not reused");
+        CHECK(!has_child_cycle(direct), "#4670: direct add_coercion did not close a cycle");
+
+        FlatAST flat;
+        StringPool pool2;
+        CHECK(prepare_recycled_cluster(flat, pool2, parent, inner, back, slot),
+              "#4670: second cluster ready");
+        CoercionMap map;
+        map.add(parent, 1, inner, /*type_tag=*/1, /*type_id=*/99, 0, 0,
+                /*predicate_cond_node=*/11, /*source_mutation_id=*/4670);
+        DeadCoercionAstStats stats;
+        const auto n = apply_coercion_map(flat, map, &stats);
+        CHECK(n == 0, "#4670: apply skips the recycled entry");
+        CHECK(stats.skipped_stale >= 1, "#4670: skip counted as stale");
+        CHECK(flat.is_free_slot(slot), "#4670: apply did not reuse the back edge");
+        CHECK(flat.get(parent).child(1) == inner, "#4670: dead parent slot unchanged");
+        CHECK(!has_child_cycle(flat), "#4670: apply did not close a cycle");
+
+        FlatAST live;
+        StringPool pool3;
+        aura::ast::NodeId live_parent = 0, lit = 0;
+        make_coerce_tree(live, pool3, live_parent, lit);
+        CoercionMap live_map;
+        live_map.add(live_parent, 1, lit, 1, 99, 0, 0, 11, 4670);
+        const auto live_n = apply_coercion_map(live, live_map);
+        CHECK(live_n == 1, "#4670: a live child is still wrapped");
+        CHECK(!has_child_cycle(live), "#4670: live wrap is acyclic");
     }
 
     reset_process();

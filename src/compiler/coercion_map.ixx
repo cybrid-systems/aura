@@ -1134,6 +1134,12 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
                                        aura::compiler::typed_audit::AuditStrategy::Full;
     std::vector<aura::compiler::dirty::NodeId> elim_ast;
 
+    // Issue #4670: recycle_dead_nodes zeros node_gen_ and leaves children_.
+    // Wrapping a freed inner pops an id the dead cluster still names.
+    const auto recycled_slot = [&](aura::ast::NodeId id) noexcept {
+        return id != aura::ast::NULL_NODE && id < flat.size() && flat.is_free_slot(id);
+    };
+
     for (const auto& e_in : map.entries()) {
         CoercionEntry e = e_in;
         // Issue #3318: restamp epoch-stale blame before elide / insert so
@@ -1303,7 +1309,15 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
             // lowering to see it. Insert it as a free node
             // (parented to itself's children — already
             // handled by add_coercion).
+            if (recycled_slot(static_cast<aura::ast::NodeId>(e.original_child))) {
+                ++s.skipped_stale;
+                continue;
+            }
             auto coercion_id = flat.add_coercion(e.original_child, e.type_tag, e.type_id);
+            if (coercion_id == aura::ast::NULL_NODE) {
+                ++s.skipped_stale;
+                continue;
+            }
             flat.set_loc(coercion_id, e.src_line, e.src_col);
             if (e.narrow_evidence != 0)
                 flat.set_float(coercion_id, static_cast<double>(e.narrow_evidence));
@@ -1319,6 +1333,11 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
             continue;
         }
 
+        if (recycled_slot(static_cast<aura::ast::NodeId>(e.parent_id)) ||
+            recycled_slot(static_cast<aura::ast::NodeId>(e.original_child))) {
+            ++s.skipped_stale;
+            continue;
+        }
         auto parent_v = flat.get(e.parent_id);
         if (e.child_index >= parent_v.children.size()) {
             // Stale entry — slot no longer exists. Skip.
@@ -1333,6 +1352,10 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
 
         // Build the CoercionNode wrapping the original child.
         auto coercion_id = flat.add_coercion(e.original_child, e.type_tag, e.type_id);
+        if (coercion_id == aura::ast::NULL_NODE) {
+            ++s.skipped_stale;
+            continue;
+        }
         flat.set_loc(coercion_id, e.src_line, e.src_col);
         // Issue #691 / #1873 / #2024 / #2261: stamp narrowing evidence +
         // recovered predicate (never weak mid as provenance column).
