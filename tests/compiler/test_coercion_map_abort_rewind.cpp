@@ -453,6 +453,7 @@ void test_ac3359_castop_abort_elision_interleave() {
     using aura::compiler::typed_audit::kCastopAbortElisionInterleaveIssue;
     using aura::compiler::typed_audit::kTypeLinearProofOutcomeStamped;
     using aura::compiler::typed_audit::linear_move_drop_elision_ok;
+    using aura::compiler::typed_audit::publish_last_proof_face;
     using aura::compiler::typed_audit::publish_type_linear_proof_outcome;
     using aura::compiler::typed_audit::reset_abort_authority_hold_for_test;
     using aura::compiler::typed_audit::reset_linear_ir_fastpath_counters_for_test;
@@ -481,6 +482,15 @@ void test_ac3359_castop_abort_elision_interleave() {
                 ir_typed_entry_commit_readiness_ok());
     expect_true("3359 AC1: no abort → elision not blocked", !abort_or_mid_abort_blocks_elision());
 
+    // Issue #4673: #3510 computes depth first and does not consult
+    // abort-authority at depth==0 (doing so reopens #3439). Mid-abort
+    // and the odd persist seqlock refuse IR/JIT entry only at depth > 0.
+    // The green face lets that path reach the re-sample instead of
+    // refusing on an empty would_allow.
+    publish_last_proof_face(true, true);
+    g_linear_ir_fastpath_boundary_depth_override = 1;
+    expect_true("3359 AC1: depth>0 allows before abort", ir_typed_entry_commit_readiness_ok());
+
     constexpr std::uint64_t mid = 335901;
     const auto ver = begin_mid_abort_authority(mid);
     expect_true("3359 AC1: begin_mid_abort arms under Full", ver != 0);
@@ -494,6 +504,11 @@ void test_ac3359_castop_abort_elision_interleave() {
     end_mid_abort_authority(mid);
     expect_true("3359 AC1: after end, abort no longer blocks",
                 !abort_or_mid_abort_blocks_elision());
+    // Mid-abort enter zeros would_allow. Restore the green face so the
+    // odd-seqlock check is the depth>0 deny.
+    publish_last_proof_face(true, true);
+    expect_true("3359 AC1: depth>0 allows after mid-abort ends",
+                ir_typed_entry_commit_readiness_ok());
 
     // Densify persist seqlock odd (write in flight) also refuses.
     reset_occurrence_persist_seq_for_test();
