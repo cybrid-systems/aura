@@ -1573,6 +1573,14 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         if (last_eval_current_result_)
             roots.push_back(*last_eval_current_result_);
     }
+    // Issue #4632: a workspace that is not current keeps its define
+    // closures only in the switch snapshot. The shared cells hold the
+    // other workspace. Without this root the reclaim erases them and
+    // the next switch reinstalls a dead closure id.
+    for (const auto& snap : switch_define_snaps_) {
+        for (const auto& e : snap.entries)
+            roots.push_back(e.value);
+    }
 
     const std::size_t n_pairs = pairs_.size();
     const std::size_t n_vecs = vector_heap_.size();
@@ -1921,6 +1929,14 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
                     work.push_back(b.second);
             }
         }
+    }
+    // Issue #4632: inactive workspace define closures live in the
+    // switch snapshot, not in the shared cells. Mark them so a
+    // reclaim between switches does not erase the closure the next
+    // switch will reinstall.
+    for (const auto& snap : switch_define_snaps_) {
+        for (const auto& e : snap.entries)
+            work.push_back(e.value);
     }
 
     auto absorb = [&](std::vector<EnvId>& ids) {

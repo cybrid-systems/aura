@@ -4725,6 +4725,10 @@ public:
             cl.body_id = aura::ast::NULL_NODE;
             ++n;
         });
+        // Issue #4632: the switch snapshot holds closure ids for this
+        // flat. Drop it before the flat is freed so a recycled address
+        // cannot reinstall a closure whose body was just expired.
+        drop_switch_define_snap(doomed);
         return n;
     }
     // Scan live closures for linear captures (EnvFrame SoA state !=
@@ -17864,8 +17868,18 @@ private:
     // Issue #4368: workspace :switch shares top_env. Re-eval the flat just
     // activated. Do not restamp free slots — that resurrects a cycle after
     // restore + delete + create and the walk never returns.
+    // Issue #4632: when this flat was already evaluated and its content
+    // stamp still matches, reinstall the captured cell values instead of
+    // walking the defines again. A stamp miss falls through to the re-eval.
     // Append-only at struct end.
     void rebind_workspace_defines_on_switch() noexcept;
+    // False when this flat has no snapshot, or the snapshot's content
+    // stamp (generation, install id, node count, mutation log, per-define
+    // subtree generation) does not match. Does not allocate.
+    bool try_restore_switch_define_snap();
+    // Forget a flat's snapshot. Also clears defines_bound_flat_ when it
+    // is this object, so a freed flat cannot skip the next re-eval.
+    void drop_switch_define_snap(const aura::ast::FlatAST* flat) noexcept;
     // Issue #4585: the first set-code bump takes the mutation epoch off 0.
     // Closures born while tracking was inactive carry bridge_epoch 0, and
     // is_bridge_stale then treats that birth stamp as an unstamped
@@ -17889,6 +17903,24 @@ private:
     // Drop one (name, principal) pair from the string mirror. Keeps the
     // parallel tenant vector aligned. Missing stamp is not a match.
     void drop_granted_string_for_tenant(std::string_view name, std::uint64_t tenant) noexcept;
+    // Issue #4632: one evaluated define, keyed by the flat it was read
+    // from. `value` is the cell payload (the closure), not the cell
+    // sentinel. Append-only at struct end.
+    struct SwitchDefineSnapEntry {
+        std::string name;
+        aura::ast::NodeId define_id = aura::ast::NULL_NODE;
+        types::EvalValue value{};
+    };
+    struct SwitchDefineSnap {
+        aura::ast::FlatAST* flat = nullptr;
+        std::uint16_t generation = 0;
+        std::uint32_t install_id = 0;
+        std::uint64_t node_count = 0;
+        std::uint64_t mutation_count = 0;
+        std::uint64_t define_gen_fp = 0;
+        std::vector<SwitchDefineSnapEntry> entries;
+    };
+    std::vector<SwitchDefineSnap> switch_define_snaps_;
 };
 
 

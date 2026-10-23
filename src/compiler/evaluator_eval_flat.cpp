@@ -10372,6 +10372,95 @@ void Evaluator::rebind_workspace_defines_after_rollback() noexcept {
     }
 }
 
+namespace {
+
+    std::uint64_t mix_switch_define_fp(std::uint64_t h, std::uint64_t v) noexcept {
+        h ^= v + 0x9E3779B97F4A7C15ULL + (h << 6) + (h >> 2);
+        return h;
+    }
+
+} // namespace
+
+bool Evaluator::try_restore_switch_define_snap() {
+    auto* flat = workspace_flat_;
+    auto* pool = workspace_pool_;
+    if (!flat || !pool)
+        return false;
+    const SwitchDefineSnap* snap = nullptr;
+    for (const auto& s : switch_define_snaps_) {
+        if (s.flat == flat) {
+            snap = &s;
+            break;
+        }
+    }
+    if (!snap)
+        return false;
+    // One mutate:rebind COWs the child onto its own flat. Every later
+    // switch used to re-eval that flat because defines_bound_flat_ only
+    // remembers the last one. The stamp is the content that the captured
+    // closures were built from: a later edit misses and re-evals once.
+    if (snap->generation != flat->generation() || snap->install_id != flat->install_id() ||
+        snap->node_count != static_cast<std::uint64_t>(flat->size()) ||
+        snap->mutation_count != static_cast<std::uint64_t>(flat->mutation_log_size()))
+        return false;
+    std::uint64_t fp = 0;
+    for (const auto& e : snap->entries) {
+        if (e.define_id == aura::ast::NULL_NODE || e.define_id >= flat->size() ||
+            flat->is_free_slot(e.define_id))
+            return false;
+        const auto v = flat->get(e.define_id);
+        if (v.tag != aura::ast::NodeTag::Define || v.sym_id == aura::ast::INVALID_SYM)
+            return false;
+        if (pool->resolve(v.sym_id) != e.name)
+            return false;
+        fp = mix_switch_define_fp(fp, static_cast<std::uint64_t>(e.define_id));
+        fp = mix_switch_define_fp(fp, flat->subtree_generation(e.define_id));
+    }
+    if (fp != snap->define_gen_fp)
+        return false;
+    // Check every cell before writing any, so a miss falls through to
+    // the re-eval with the previous workspace's values still in place.
+    // The ids stay on the stack for the usual handful of defines; a
+    // wide workspace falls through and re-evals rather than allocating
+    // on the switch.
+    constexpr std::size_t kStackCells = 64;
+    if (snap->entries.size() > kStackCells)
+        return false;
+    std::uint64_t cell_ids[kStackCells];
+    auto& tenv = top_env();
+    for (std::size_t i = 0; i < snap->entries.size(); ++i) {
+        auto existing = tenv.lookup(snap->entries[i].name);
+        if (!existing || !is_cell(*existing))
+            return false;
+        const auto ci = as_cell_id(*existing);
+        if (ci >= cells().size())
+            return false;
+        cell_ids[i] = ci;
+    }
+    for (std::size_t i = 0; i < snap->entries.size(); ++i)
+        cells()[cell_ids[i]] = snap->entries[i].value;
+    if (!snap->entries.empty() && sync_workspace_value_cells_fn_)
+        sync_workspace_value_cells_fn_();
+    return true;
+}
+
+void Evaluator::drop_switch_define_snap(const aura::ast::FlatAST* flat) noexcept {
+    if (flat == nullptr)
+        return;
+    std::size_t w = 0;
+    for (std::size_t i = 0; i < switch_define_snaps_.size(); ++i) {
+        if (switch_define_snaps_[i].flat == flat)
+            continue;
+        if (w != i)
+            switch_define_snaps_[w] = std::move(switch_define_snaps_[i]);
+        ++w;
+    }
+    if (w != switch_define_snaps_.size())
+        switch_define_snaps_.resize(w);
+    if (defines_bound_flat_ == flat)
+        defines_bound_flat_ = nullptr;
+}
+
 void Evaluator::rebind_workspace_defines_on_switch() noexcept {
     if (!workspace_flat_ || !workspace_pool_)
         return;
@@ -10381,6 +10470,15 @@ void Evaluator::rebind_workspace_defines_on_switch() noexcept {
     if (root == aura::ast::NULL_NODE || !flat->is_live_node(root))
         return;
     try {
+        // Issue #4632: same flat content as the last switch — put the
+        // captured closures back in the shared cells. No eval, no
+        // set_pool, no new binding.
+        if (try_restore_switch_define_snap())
+            return;
+        // The stamp missed (or this flat has never been evaluated).
+        // Drop the stale row before the walk so a partial eval cannot
+        // leave the old closures installed as if they were current.
+        drop_switch_define_snap(flat);
         last_eval_current_result_.reset();
         // Issue #4368: do not eval_flat the whole root and do not
         // restamp_subtree_generation. After ast:restore + delete + create
@@ -10422,14 +10520,58 @@ void Evaluator::rebind_workspace_defines_on_switch() noexcept {
             }
         } restore_top_pool(top_env());
         bool any = false;
+        bool all_ok = true;
+        std::vector<SwitchDefineSnapEntry> captured;
+        captured.reserve(defines.size());
+        std::uint64_t fp = 0;
         for (auto id : defines) {
             flat->clear_cached_value(id);
             auto result = eval_flat(*flat, *pool, id, top_);
-            if (result)
-                any = true;
+            if (!result) {
+                all_ok = false;
+                continue;
+            }
+            any = true;
+            const auto v = flat->get(id);
+            std::string name(pool->resolve(v.sym_id));
+            auto existing = top_env().lookup(name);
+            if (name.empty() || !existing || !is_cell(*existing)) {
+                all_ok = false;
+                continue;
+            }
+            const auto ci = as_cell_id(*existing);
+            if (ci >= cells().size()) {
+                all_ok = false;
+                continue;
+            }
+            fp = mix_switch_define_fp(fp, static_cast<std::uint64_t>(id));
+            fp = mix_switch_define_fp(fp, flat->subtree_generation(id));
+            captured.push_back(SwitchDefineSnapEntry{std::move(name), id, cells()[ci]});
         }
         if (any && sync_workspace_value_cells_fn_)
             sync_workspace_value_cells_fn_();
+        // Snapshot only a complete eval. A missed define must re-eval
+        // on the next switch instead of reinstalling a partial row.
+        if (all_ok) {
+            SwitchDefineSnap snap;
+            snap.flat = flat;
+            snap.generation = flat->generation();
+            snap.install_id = flat->install_id();
+            snap.node_count = static_cast<std::uint64_t>(flat->size());
+            snap.mutation_count = static_cast<std::uint64_t>(flat->mutation_log_size());
+            snap.define_gen_fp = fp;
+            snap.entries = std::move(captured);
+            bool replaced = false;
+            for (auto& s : switch_define_snaps_) {
+                if (s.flat == flat) {
+                    s = std::move(snap);
+                    replaced = true;
+                    break;
+                }
+            }
+            if (!replaced)
+                switch_define_snaps_.push_back(std::move(snap));
+        }
     } catch (...) {
         // [SILENCE-PRIM-#615] noexcept: a throw here would terminate the
         // switch primitive. Leave the cells unchanged.
