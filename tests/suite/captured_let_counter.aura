@@ -1,0 +1,20 @@
+;; expect: OK-4669 captured counter
+; Issue #4669: a let counter captured by map's lambda must stay the
+; integer this call bound. The tree-walker name cache treated a call
+; frame as top-level (materialize_call_env leaves parent() null) and
+; reused a freed cell index, so later iterations wrote the wrong slot.
+; The broken build prints a non-empty index list and never reaches
+; OK-4669.
+(define (it-set i k v)
+  (let ((j -1))
+    (map (lambda (x) (set! j (+ j 1)) (if (= j k) v x)) i)))
+(define item (list 0 1 2 3 4 5 6 7 8 9 10 11))
+(define (go n bad)
+  (if (= n 0) bad
+      (let ((nw (it-set item 6 n)))
+        (go (- n 1) (if (= (list-ref nw 6) n) bad (cons n bad))))))
+(define missed (go 400 (list)))
+(if (null? missed)
+    (display "OK-4669 captured counter")
+    (begin (display missed) (newline) (exit 1)))
+(newline)
