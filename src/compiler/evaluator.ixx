@@ -3195,6 +3195,7 @@ public:
         return file_resume_form_;
     }
     // Phase 2: EDSL IR cache V2 hooks (set by CompilerService on init)
+    void set_dirty_batch_fn(std::function<void(bool)> fn) { dirty_batch_fn_ = std::move(fn); }
     void set_mark_define_dirty_fn(std::function<void(const std::string&)> fn) {
         mark_define_dirty_fn_ = std::move(fn);
     }
@@ -3260,7 +3261,11 @@ public:
     // need precise BFS invalidate_function are enqueued and drained by
     // drain_cascade_bfs_invalidate() after outermost unlock (mutate_mtx_
     // safe once workspace_mtx_ is released).
-    void push_post_mutate_incremental_cascade(std::uint64_t mutation_log_begin) noexcept;
+    // Issue #4678: defer_relower skips the eager relower_dirty_defines_fn_
+    // (nested boundary — the enclosing boundary's cascade re-lowers).
+    void push_post_mutate_incremental_cascade(std::uint64_t mutation_log_begin,
+                                              bool defer_relower = false) noexcept;
+    std::uint64_t cascade_relower_deferred_4678_ = 0;
     // Issue #2812: enqueue define name for post-Guard BFS invalidate.
     void enqueue_cascade_bfs_invalidate(std::string name) noexcept;
     // Issue #2812: drain pending BFS invalidates (after workspace unlock).
@@ -7331,6 +7336,7 @@ private:
     // define_impact_scope_fn_(node)      → ir_cache_pure impact_scope (#680)
     // update_function_source_fn_(name,src) → function_sources_ SSOT (#2730)
     std::function<void(const std::string&)> mark_define_dirty_fn_ = nullptr;
+    std::function<void(bool)> dirty_batch_fn_ = nullptr; // Issue #4678
     // Issue #3681: clear_ir_define_env_binding for the mutated name only.
     std::function<void(const std::string&)> drop_ir_define_binding_fn_ = nullptr;
     std::function<void()> mark_all_defines_dirty_fn_ = nullptr;

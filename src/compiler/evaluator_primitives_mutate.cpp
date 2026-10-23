@@ -11262,6 +11262,19 @@ void Evaluator::drain_cascade_bfs_invalidate() noexcept {
     // Re-stamp callers only (not the drained roots) after the hard pass,
     // from the pre-teardown snapshot (post-pass lookups read empty).
     if (drained > 0 && mark_define_dirty_fn_) {
+        // Issue #4678: one epoch bump / pre-cascade audit for the batch.
+        struct DirtyBatch {
+            const std::function<void(bool)>& fn;
+            explicit DirtyBatch(const std::function<void(bool)>& f)
+                : fn(f) {
+                if (fn)
+                    fn(true);
+            }
+            ~DirtyBatch() {
+                if (fn)
+                    fn(false);
+            }
+        } dirty_batch(dirty_batch_fn_);
         std::unordered_set<std::string> restamped;
         restamped.reserve(batch_deps.size() * 2);
         for (const auto& [root, deps] : batch_deps) {
@@ -11317,7 +11330,8 @@ void Evaluator::clear_cascade_bfs_invalidate() noexcept {
     return true;
 }
 
-void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_begin) noexcept {
+void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_begin,
+                                                     bool defer_relower) noexcept {
     if (!workspace_flat_ || !workspace_pool_)
         return;
     // Issue #4540: this is the exit-side consumer of a rolled-back rebind.
@@ -11542,7 +11556,9 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
             // caller once after the guard, into the IR interpreter. The eager
             // relower here would do that work a second time. The callback
             // stays wired (#2813); this only skips the duplicate call.
-            if (!rebind_light_path_) {
+            if (defer_relower) {
+                ++cascade_relower_deferred_4678_; // Issue #4678: outer exit re-lowers.
+            } else if (!rebind_light_path_) {
                 relower_dirty_defines_fn_();
                 if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
                     m->cascade_relower_ran_total.fetch_add(1, std::memory_order_relaxed);
