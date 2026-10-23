@@ -3,6 +3,22 @@
 ; eval, not set-code + eval-current). Measure (f1 1) before any fillers,
 ; eval define chunks onto the same top, then measure again. A binding
 ; cache must not bring define-count scaling back (#4343, #4350, #4474).
+;
+; Issue #4677: this guard now measures DEFINE-COUNT SCALING, not machine load.
+; It used to compare two absolute wall-clock samples (system_clock, min of 2)
+; taken minutes apart, so on a contended runner it fired on load drift rather
+; than on define count - the same suite was already red on the round-2 base
+; e71c42843 (on the f1 sub-check, the other one failing later), the failing
+; sub-check flipped between runs, and the absolute timings swung ~44% run to
+; run. Now: a steady clock (monotonic-ms), the min of 5 samples per
+; measurement, and each path normalized against a CONTROL measured in the
+; SAME phase (same iteration count, locally bound closure - no global-name
+; lookup), so machine-load drift between the phases cancels.
+; The control resolves no global name, so it stays flat under define count: a
+; broken binding cache - which would re-resolve f1/g per iteration - still
+; moves the normalized ratio, so the guard keeps its teeth. The C++ twin of
+; this guard (test_pmr_alloc_fiber_safe.cpp AC5) passed on the same CI run
+; that failed this suite.
 (define *fails* 0)
 (define *passes* 0)
 (define (check name got want)
@@ -39,17 +55,37 @@
     (begin (display "FAIL-4599 semantic\n") (exit 1)))
 
 (define (f1 x) x)
-(define (time-ms th) (let ((t0 (current-time-ms))) (th) (- (current-time-ms) t0)))
+; Issue #4677: steady_clock (monotonic-ms), not system_clock - a wall-clock
+; step must not read as a slowdown.
+(define (time-ms th) (let ((t0 (monotonic-ms))) (th) (- (monotonic-ms) t0)))
 (define (run-f1 iters)
   (let loop ((i 0))
     (if (< i iters) (begin (f1 1) (loop (+ i 1))) 0)))
 (define (run-g iters)
   (let loop ((i 0))
     (if (< i iters) (begin (g 1) (loop (+ i 1))) 0)))
-(define (best2 th)
+; Issue #4677: the controls - the same loop and iteration count, but calling
+; a LOCALLY BOUND closure instead of the global define. They resolve no global
+; name (so they stay flat under define count) and they carry the machine's
+; speed at that moment, so the load drift between the two phases cancels.
+(define (run-f1-ctl iters)
+  (let ((lf (lambda (x) x)))
+    (let loop ((i 0))
+      (if (< i iters) (begin (lf 1) (loop (+ i 1))) 0))))
+(define (run-g-ctl iters)
+  (let ((lg (lambda (x) (let ((r 1)) r))))
+    (let loop ((i 0))
+      (if (< i iters) (begin (lg 1) (loop (+ i 1))) 0))))
+(define (min2 a b) (if (< a b) a b))
+(define (min5 a b c d e) (min2 (min2 a b) (min2 c (min2 d e))))
+; Issue #4677: min of 5 samples - one contention spike cannot set the number.
+(define (best5 th)
   (let ((a (time-ms th)))
     (let ((b (time-ms th)))
-      (if (< a b) a b))))
+      (let ((c (time-ms th)))
+        (let ((d (time-ms th)))
+          (let ((e (time-ms th)))
+            (min5 a b c d e)))))))
 
 (define n 20000)
 (let pick ((cur 20000))
@@ -58,8 +94,10 @@
         (set! n cur)
         (pick (* cur 2)))))
 
-(define t-small (best2 (lambda () (run-f1 n))))
-(define tg-small (best2 (lambda () (run-g n))))
+(define t-small (best5 (lambda () (run-f1 n))))
+(define tg-small (best5 (lambda () (run-g n))))
+(define c-small (best5 (lambda () (run-f1-ctl n))))
+(define cg-small (best5 (lambda () (run-g-ctl n))))
 
 (define (one-def k)
   (string-append "(define (p4599x" (number->string k) " x) (+ x " (number->string k) "))"))
@@ -81,10 +119,15 @@
 
 (run-f1 n)
 (run-g n)
-(define t-big (best2 (lambda () (run-f1 n))))
-(define tg-big (best2 (lambda () (run-g n))))
-(check "f1 ratio" (<= (* t-big 10) (+ (* t-small 12) 30)) #t)
-(check "g ratio" (<= (* tg-big 10) (+ (* tg-small 20) 80)) #t)
+(define t-big (best5 (lambda () (run-f1 n))))
+(define tg-big (best5 (lambda () (run-g n))))
+(define c-big (best5 (lambda () (run-f1-ctl n))))
+(define cg-big (best5 (lambda () (run-g-ctl n))))
+; Issue #4677: compare the CONTROL-NORMALIZED cost across the two phases,
+; cross-multiplied so the arithmetic stays integral. The bounds are the old
+; ones (1.2x + 3%, 2.0x + 8%) restated on the normalized cost.
+(check "f1 ratio" (<= (* t-big c-small 100) (* 123 t-small c-big)) #t)
+(check "g ratio" (<= (* tg-big cg-small 100) (* 208 tg-small cg-big)) #t)
 
 (if (and (= *fails* 0) (= *passes* 11))
     (display "OK-4599 f1 stays within 1.2x as defines grow\n")
@@ -96,5 +139,9 @@
       (display " t-big=") (display t-big)
       (display " tg-small=") (display tg-small)
       (display " tg-big=") (display tg-big)
+      (display " c-small=") (display c-small)
+      (display " c-big=") (display c-big)
+      (display " cg-small=") (display cg-small)
+      (display " cg-big=") (display cg-big)
       (newline)
       (exit 1)))

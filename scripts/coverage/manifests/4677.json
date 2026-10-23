@@ -1,0 +1,59 @@
+{
+  "issue": 4677,
+  "title": "the interp_baseline_4599.aura define-count ratio guard compared two absolute wall-clock samples minutes apart, so it fired on CI load drift instead of define-count scaling",
+  "checks": [
+    {
+      "ac": "AC1-steady-clock",
+      "path": "tests/suite/interp_baseline_4599.aura",
+      "contains": [
+        "(define (time-ms th) (let ((t0 (monotonic-ms))) (th) (- (monotonic-ms) t0)))",
+        "Issue #4677: steady_clock (monotonic-ms)"
+      ]
+    },
+    {
+      "ac": "AC2-min-of-5",
+      "path": "tests/suite/interp_baseline_4599.aura",
+      "contains": [
+        "(define (best5 th)",
+        "(define (min5 a b c d e)",
+        "(min5 a b c d e)"
+      ]
+    },
+    {
+      "ac": "AC3-controls",
+      "path": "tests/suite/interp_baseline_4599.aura",
+      "contains": [
+        "(define (run-f1-ctl iters)",
+        "(define (run-g-ctl iters)",
+        "(define c-small (best5 (lambda () (run-f1-ctl n))))",
+        "(define cg-small (best5 (lambda () (run-g-ctl n))))",
+        "(define c-big (best5 (lambda () (run-f1-ctl n))))",
+        "(define cg-big (best5 (lambda () (run-g-ctl n))))"
+      ]
+    },
+    {
+      "ac": "AC4-normalized-bounds",
+      "path": "tests/suite/interp_baseline_4599.aura",
+      "contains": [
+        "(check \"f1 ratio\" (<= (* t-big c-small 100) (* 123 t-small c-big)) #t)",
+        "(check \"g ratio\" (<= (* tg-big cg-small 100) (* 208 tg-small cg-big)) #t)"
+      ]
+    },
+    {
+      "ac": "AC6-expect-and-tally",
+      "path": "tests/suite/interp_baseline_4599.aura",
+      "contains": [
+        ";; expect: OK-4599 f1 stays within 1.2x as defines grow",
+        "(= *passes* 11)"
+      ]
+    },
+    {
+      "ac": "AC-no-issue-dir",
+      "forbid": [
+        "tests/issues/test_issue_4677.cpp",
+        "tests/compiler/test_issue_4677.cpp",
+        "docs/design/4677-interp-baseline-ratio.md"
+      ]
+    }
+  ]
+}
