@@ -5862,6 +5862,15 @@ static void ac4659_1_zero_drain_batch_floor_cleans_late_exit() {
     std::string prev_sb_s = prev_sb ? prev_sb : "";
     ::setenv("AURA_SANDBOX", "restricted", 1);
     apply_production_audit_defaults();
+    // Issue #4659 CI: the body must take its wait_reclaimed_total snapshot
+    // BEFORE the join starts. If the fiber is first scheduled after the
+    // batch pass already bumped the counter (a loaded CI box can delay the
+    // worker past the 50ms primary window), the body arms on the post-bump
+    // value, waits for a second bump that never comes, and the 8ms window
+    // expires with the body still live — the three AC1 CHECKs then fail.
+    // The handshake below pins "armed before join"; it outlives the
+    // scheduler block for the never-started edge.
+    std::atomic<bool> body_armed_4659{false};
     {
         Scheduler sched(2);
         SchedRunner runner(sched);
@@ -5876,19 +5885,31 @@ static void ac4659_1_zero_drain_batch_floor_cleans_late_exit() {
         // poll hits timer slack (ms-scale oversleep) and can notice the
         // bump past the 8ms window; the spin reacts within ns. Bounded by
         // the 2s guard — fail via CHECKs, never hang the member.
-        spec.body = [] {
+        spec.body = [&body_armed_4659] {
             const auto arm =
                 g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_acquire);
+            body_armed_4659.store(true, std::memory_order_release);
             const auto t0 = std::chrono::steady_clock::now();
             while (g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_acquire) ==
                    arm) {
                 if (std::chrono::steady_clock::now() - t0 > std::chrono::seconds(2))
                     break;
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            // Late exit INSIDE the 8ms floor window: busy-wait 1ms on the
+            // clock instead of sleep_for — one missed timer wakeup on a
+            // loaded CI box turns a 1ms sleep into a >8ms overshoot and
+            // misses the window (the #4659 CI red).
+            const auto t1 = std::chrono::steady_clock::now();
+            while (std::chrono::steady_clock::now() - t1 < std::chrono::milliseconds(1)) {
+            }
         };
         auto h = spawn_agent_with_mailbox(sched, std::move(spec));
         CHECK(h.ok && h.fiber, "4659 AC1: spawn ok");
+        // Wait for the body's snapshot before the join owns the 8ms budget.
+        for (int i = 0; i < 5000 && !body_armed_4659.load(std::memory_order_acquire); ++i)
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+        CHECK(body_armed_4659.load(std::memory_order_acquire),
+              "4659 AC1: body armed before the join");
         std::vector<aura::orch::AgentHandle> hs;
         hs.push_back(std::move(h));
         const auto clean0 =
