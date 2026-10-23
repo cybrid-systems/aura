@@ -184,6 +184,8 @@ static void ac5_source_cite() {
           "AC5: hash-set! raises on a corrupt string key");
 }
 
+} // namespace
+
 int main() {
     std::println("=== Issue #4631: the empty string is an ordinary hash key ===");
     ac1_hash_ctor_keeps_empty_key();
@@ -194,5 +196,3 @@ int main() {
     std::println("\n=== #4631: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
-
-} // namespace
