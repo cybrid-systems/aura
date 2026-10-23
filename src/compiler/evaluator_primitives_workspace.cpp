@@ -534,7 +534,9 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         // next eval-current already sees this workspace's procedures.
         // The same flat object again (switch onto a child that still
         // shares it, after restore) must not re-eval: that walk does
-        // not return. A different flat still rebinds.
+        // not return. A different flat reinstalls the define cells
+        // captured last time this flat was evaluated (#4632). The
+        // re-eval runs only when that flat's content stamp moved.
         if (ev.workspace_flat_ != ev.defines_bound_flat_) {
             ev.rebind_workspace_defines_on_switch();
             ev.defines_bound_flat_ = ev.workspace_flat_;

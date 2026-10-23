@@ -9,7 +9,9 @@
 //   AC5: this suite + linter; no docs/design/2785-*; no test_issue_2785.cpp
 //
 //   AC7 (#4632): after ONE mutate:rebind in a child workspace the
-//        per-switch cost stays flat (it used to grow with the switch count)
+//        per-switch cost stays flat (it used to grow with the switch count),
+//        and a switch into that child stays within 3x of a child that was
+//        never rebound.
 //   AC6 (#4630): the workspace compile of a call chain carries ONE IR
 //        function per callee, not 2^depth duplicate copies, and the compile
 //        cost does not double per chain level
@@ -278,6 +280,70 @@ static void ac4632_switch_cost_stays_flat() {
         // loaded machine.
         CHECK(large_per_trip < small_per_trip * 2.5,
               "4632 AC7: the per-switch cost must not grow with the number of switches");
+    }
+    // The reopen: 4000 round trips into a once-rebound child were ~10x a
+    // never-rebound child (the shared flat skips re-eval; the COW flat
+    // re-evaluated every define on every switch). The captured cells make
+    // the two costs meet. 3x is the bar from the reopen, with the best of
+    // three attempts so a loaded machine does not fail a flat run.
+    {
+        constexpr int kTrips = 4000;
+        double best_ratio = 1e300;
+        double shown_never = 0;
+        double shown_once = 0;
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            CompilerService cs;
+            const char* setup = R"AURA(
+(set-code "(define ttl (lambda (cat) 0))\n(define admit (lambda (cat src) #t))")
+(eval-current)
+(define a (workspace :create "never"))
+(define b (workspace :create "once"))
+(workspace :switch b)
+(eval-current)
+(mutate:rebind "ttl" "(lambda (cat) 1)" "r")
+(eval-current)
+(workspace :switch 0)
+(eval-current)
+)AURA";
+            if (!cs.eval(setup).has_value())
+                continue;
+            auto time_switches = [&](const char* id) -> double {
+                const auto script =
+                    std::format("(let loop ((i 0)) (if (< i {}) (begin (workspace :switch {}) "
+                                "(workspace :switch 0) (loop (+ i 1)))))",
+                                kTrips, id);
+                const auto t0 = std::chrono::steady_clock::now();
+                const auto res = cs.eval(script);
+                const auto t1 = std::chrono::steady_clock::now();
+                if (!res.has_value())
+                    return -1.0;
+                return std::chrono::duration<double, std::milli>(t1 - t0).count();
+            };
+            const double never_ms = time_switches("a");
+            const double once_ms = time_switches("b");
+            if (never_ms <= 0.0 || once_ms <= 0.0)
+                continue;
+            if (!cs.eval("(workspace :switch b)").has_value())
+                continue;
+            const auto once_body = cs.eval("(ttl \"cat\")");
+            if (!cs.eval("(workspace :switch a)").has_value())
+                continue;
+            const auto never_body = cs.eval("(ttl \"cat\")");
+            CHECK(once_body.has_value() && is_int(*once_body) && as_int(*once_body) == 1,
+                  "4632 AC7: the once-rebound define still returns its rebound body");
+            CHECK(never_body.has_value() && is_int(*never_body) && as_int(*never_body) == 0,
+                  "4632 AC7: the never-rebound define still returns the original body");
+            const double ratio = once_ms / never_ms;
+            if (ratio < best_ratio) {
+                best_ratio = ratio;
+                shown_never = never_ms;
+                shown_once = once_ms;
+            }
+        }
+        std::println("4632 AC7: {} trips never={:.4} ms once={:.4} ms ratio={:.3}", kTrips,
+                     shown_never, shown_once, best_ratio);
+        CHECK(best_ratio < 3.0,
+              "4632 AC7: a once-rebound switch must stay within 3x of a never-rebound switch");
     }
 }
 
