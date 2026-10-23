@@ -122,6 +122,16 @@ __attribute__((weak)) int aura_jit_linear_move_drop_elision_ok(void) {
 __attribute__((weak)) int aura_jit_ir_typed_entry_commit_readiness_ok(void) {
     return 1;
 }
+// Issue #4671: the per-op typed-entry readiness sample (CastOp /
+// non-linear Apply) is emitted into the AOT IR the same way the entry
+// gate above is. Standalone --emit-binary has no typed-audit state or
+// production profile, so this gate is open (the Soft/Off answer); the
+// host's strong definition (aura_jit_bridge.cpp) overrides this weak
+// one. Without it the standalone AOT link fails with an undefined
+// reference and --emit-binary produces no binary.
+__attribute__((weak)) int aura_jit_linear_per_op_typed_entry_readiness_ok(void) {
+    return 1;
+}
 
 // Issue #4502 step 1: the encoding lives in lib/aura_value_abi.h (single
 // source shared with value_tags.h, the AOT preamble and kernel C code).
