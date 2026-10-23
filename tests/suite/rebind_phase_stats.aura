@@ -1,0 +1,42 @@
+; Rebind phase stats (opt-in, AURA_PHASE_STATS=1). With the env unset the
+; keys are published but stay zero (no timing on the hot path). Also pins
+; rebind/eval correctness across the region-pass skip, keyed constraint
+; sort and the restamp-batch GC window coalescing.
+(define *fails* 0)
+(define *n* 0)
+(define (check! ok msg)
+  (set! *n* (+ *n* 1))
+  (if (not ok)
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+(define names (list "rebind-prim" "parse" "typecheck" "cascade" "cascade-index" "drain"
+                    "invalidate-fn" "restamp" "mark-dirty" "pre-audit" "relower" "passes"
+                    "eval-current"))
+(define (stats) (engine:metrics "query:incremental-relower-stats"))
+(set-code "(define f (lambda (x) (+ x 1)))\n(define c0 (lambda (x) (f x)))\n(define c1 (lambda (x) (c0 x)))\n(define w1 (lambda (x) (* x 2)))")
+(eval-current)
+(let loop ((i 2))
+  (if (< i 6)
+      (begin
+        (mutate:rebind "f" (string-append "(lambda (x) (+ x " (number->string i) "))") "t")
+        (eval-current)
+        (check! (= (c1 10) (+ 10 i)) (string-append "transitive caller after rebind " (number->string i)))
+        (check! (= (w1 3) 6) "unrelated define intact")
+        (loop (+ i 1)))))
+;; a body that itself mutates (Evolution region) still lowers and runs
+(mutate:rebind "w1" "(lambda (x) (if (> x 100) (eval-current) (* x 3)))" "t")
+(eval-current)
+(check! (= (w1 3) 9) "mutating-call body rebinds")
+(define h (stats))
+(check! (hash? h) "stats hash")
+(check! (= (hash-ref h "phase-stats-enabled") (if (equal? (getenv "AURA_PHASE_STATS") "1") 1 0)) "enabled flag tracks env")
+(for-each (lambda (n)
+            (let ((ns (hash-ref h (string-append "phase-" n "-ns")))
+                  (ct (hash-ref h (string-append "phase-" n "-count"))))
+              (check! (and (integer? ns) (integer? ct)) (string-append "keys " n))
+              (if (not (equal? (getenv "AURA_PHASE_STATS") "1"))
+                  (check! (and (= ns 0) (= ct 0)) (string-append "off => zero " n))
+                  (check! (>= ct 0) (string-append "on " n)))))
+          names)
+(if (= *fails* 0)
+    (begin (display "OK-phase ") (display *n*) (display " checks") (newline))
+    (begin (display "FAILED-phase ") (display *fails*) (newline)))

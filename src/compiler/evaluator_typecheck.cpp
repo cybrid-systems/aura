@@ -4,6 +4,7 @@
 module;
 
 #include "observability_metrics.h"
+#include "rebind_phase_stats.h"              // per-phase rebind timing (opt-in)
 #include "typed_mutation_audit.h"            // Issue #1614 / #2145 invariant audit + hard-gate
 #include "security_capabilities.h"           // aura_fiber_current_id
 #include "mutate_type_gate.hh"               // Issue #2219 Soft/Hard post-mutate type gate
@@ -234,6 +235,7 @@ bool Evaluator::run_typecheck_no_lock_bool() {
 }
 
 bool Evaluator::run_post_mutate_typecheck_no_lock() {
+    aura::compiler::phase_stats::Scope phase_typecheck(aura::compiler::phase_stats::Typecheck);
     // Issue #526: post-mutate selective type recheck for Aura
     // mutate primitives (rebind / set-body). When the mutation
     // log has entries, route through infer_flat_partial on the

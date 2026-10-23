@@ -2770,9 +2770,17 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
     // Issue #1528: process high-priority (occurrence / touched)
     // constraints first so fixpoint converges on the local delta.
     if (worklist.size() > 1) {
-        std::stable_sort(worklist.begin(), worklist.end(), [&](std::size_t a, std::size_t b) {
-            return constraint_reverify_priority(a) > constraint_reverify_priority(b);
-        });
+        // Issue #4681: score each constraint once (the comparator used to
+        // recompute priority - hash probes + union-find - O(n log n) times).
+        // Same keys + stable sort -> identical order.
+        std::vector<std::pair<int, std::size_t>> keyed;
+        keyed.reserve(worklist.size());
+        for (auto idx : worklist)
+            keyed.emplace_back(constraint_reverify_priority(idx), idx);
+        std::stable_sort(keyed.begin(), keyed.end(),
+                         [](const auto& a, const auto& b) { return a.first > b.first; });
+        for (std::size_t k = 0; k < keyed.size(); ++k)
+            worklist[k] = keyed[k].second;
     }
 
     // Issue #2107: synthetic TIMEOUT for Agent self-repair tests —
@@ -3144,9 +3152,17 @@ ConstraintSystem::try_instance_repair_before_full(std::vector<Constraint>* unres
         return SolveResult::TIMEOUT;
 
     if (worklist.size() > 1) {
-        std::stable_sort(worklist.begin(), worklist.end(), [&](std::size_t a, std::size_t b) {
-            return constraint_reverify_priority(a) > constraint_reverify_priority(b);
-        });
+        // Issue #4681: score each constraint once (the comparator used to
+        // recompute priority - hash probes + union-find - O(n log n) times).
+        // Same keys + stable sort -> identical order.
+        std::vector<std::pair<int, std::size_t>> keyed;
+        keyed.reserve(worklist.size());
+        for (auto idx : worklist)
+            keyed.emplace_back(constraint_reverify_priority(idx), idx);
+        std::stable_sort(keyed.begin(), keyed.end(),
+                         [](const auto& a, const auto& b) { return a.first > b.first; });
+        for (std::size_t k = 0; k < keyed.size(); ++k)
+            worklist[k] = keyed[k].second;
     }
 
     std::size_t max_passes = solver_budget_.max_delta_passes > 0

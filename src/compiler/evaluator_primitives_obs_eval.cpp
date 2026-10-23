@@ -10,6 +10,7 @@
 // definitions live in src/serve/fiber.cpp at global scope.
 
 module;
+#include "rebind_phase_stats.h" // per-phase rebind timing (opt-in)
 
 #include "runtime_shared.h"
 #include "prim_heap_quota.hh" // Issue #2916
@@ -8089,6 +8090,18 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 // lineage 718 → … → 1639; #2032–#2190 satellites
                 {"schema", make_int(1639)},
             };
+            {
+                namespace ps = aura::compiler::phase_stats;
+                kv.emplace_back("phase-stats-enabled", make_int(ps::enabled() ? 1 : 0));
+                for (unsigned p = 0; p < ps::kCount; ++p) {
+                    kv.emplace_back(std::string("phase-") + ps::kNames[p] + "-ns",
+                                    make_int(static_cast<std::int64_t>(
+                                        ps::g_ns[p].load(std::memory_order_relaxed))));
+                    kv.emplace_back(std::string("phase-") + ps::kNames[p] + "-count",
+                                    make_int(static_cast<std::int64_t>(
+                                        ps::g_count[p].load(std::memory_order_relaxed))));
+                }
+            }
             return build_hash(kv);
         });
 

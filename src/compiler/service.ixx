@@ -1,4 +1,5 @@
 module;
+#include "rebind_phase_stats.h" // per-phase rebind timing (opt-in)
 #include <algorithm>
 #include "core/atomic_fence_port.h"
 #include <atomic>
@@ -1494,8 +1495,10 @@ public:
         // when mutate:* marks defines dirty (stale ir_cache_v2 risk).
         // Consumes body-only dirty bitmask from mark_define_dirty without
         // requiring a set-code pre-cache.
-        evaluator_.set_relower_dirty_defines_fn(
-            [this]() { (void)this->relower_dirty_defines_from_workspace(); });
+        evaluator_.set_relower_dirty_defines_fn([this]() {
+            aura::compiler::phase_stats::Scope phase_relower(aura::compiler::phase_stats::Relower);
+            (void)this->relower_dirty_defines_from_workspace();
+        });
         // Issue #4357: hot workspace lambdas leave the tree walker.
         evaluator_.set_bind_workspace_lambda_via_ir_fn(
             [this](const std::string& name) { this->specialize_workspace_lambdas_via_ir(name); });
@@ -14945,6 +14948,7 @@ private:
     std::size_t run_incremental_dirty_pass_suite_(aura::ir::IRModule& ir_mod,
                                                   const DefineDirtyMaskView* mask_ptr,
                                                   IRModuleV2* soa_mod = nullptr) {
+        aura::compiler::phase_stats::Scope phase_passes(aura::compiler::phase_stats::Passes);
         ComputeKindWrap ck_pass;
         ConstantFoldingWrap cf_pass;
         TypePropagationPass tp_pass;
@@ -16229,6 +16233,14 @@ private:
         metrics_.linear_post_mutate_enforcements_total.fetch_add(1, std::memory_order_relaxed);
         if (lock_order::is_held(lock_order::Level::Mutate))
             metrics_.linear_gc_window_under_mutate_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #4681: name-independent window; one per restamp batch.
+        if (dirty_batch_depth_ > 0 && dirty_batch_coalesce_enabled_()) {
+            if (dirty_batch_finalize_done_) {
+                ++dirty_batch_coalesced_4678_;
+                return;
+            }
+            dirty_batch_finalize_done_ = true;
+        }
 
         // Full scan (not only_if_moved): after invalidate every linear
         // capture must revalidate before apply is allowed again.
@@ -17952,6 +17964,7 @@ public:
     int dirty_batch_depth_ = 0;
     bool dirty_batch_pre_done_ = false;
     bool dirty_batch_epoch_done_ = false;
+    bool dirty_batch_finalize_done_ = false;
     std::uint64_t dirty_batch_coalesced_4678_ = 0;
     static bool dirty_batch_coalesce_enabled_() noexcept {
         static const bool on = [] {
@@ -17965,16 +17978,19 @@ public:
             if (dirty_batch_depth_++ == 0) {
                 dirty_batch_pre_done_ = false;
                 dirty_batch_epoch_done_ = false;
+                dirty_batch_finalize_done_ = false;
             }
         } else if (dirty_batch_depth_ > 0 && --dirty_batch_depth_ == 0) {
             dirty_batch_pre_done_ = false;
             dirty_batch_epoch_done_ = false;
+            dirty_batch_finalize_done_ = false;
         }
     }
     [[nodiscard]] std::uint64_t dirty_batch_coalesced_4678() const noexcept {
         return dirty_batch_coalesced_4678_;
     }
     void prepare_unified_invalidation_pre_cascade_(const std::string& name) {
+        aura::compiler::phase_stats::Scope phase_pre_audit(aura::compiler::phase_stats::PreAudit);
         if (dirty_batch_depth_ > 0 && dirty_batch_coalesce_enabled_()) {
             if (dirty_batch_pre_done_) {
                 on_compiler_invalidate_gc_coordination(name);

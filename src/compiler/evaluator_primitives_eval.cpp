@@ -2,6 +2,7 @@
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
+#include "rebind_phase_stats.h" // per-phase rebind timing (opt-in)
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -1056,6 +1057,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
     // note_eval_current_shared_* / Guard ctor). Prefer outer Guard when
     // evaluating code that itself mutates.
     add(aura::compiler::prim::kEvalCurrent, [&ev, mev](const auto& a) -> EvalValue {
+        aura::compiler::phase_stats::Scope phase_eval_current(
+            aura::compiler::phase_stats::EvalCurrent);
         // Phase 4: (eval-current :jit) — re-parse **authoritative** workspace
         // source (Issue #2920 SSOT). Prefer live unparse (get_workspace_source_fn_
         // / CompilerService); never JIT from pre-mutate workspace_source_text_
