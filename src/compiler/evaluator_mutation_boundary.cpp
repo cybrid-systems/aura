@@ -1595,6 +1595,15 @@ Evaluator::HeapMutateGuardHandle Evaluator::maybe_auto_guard_heap_mutate(bool& o
         raw, [](void* p) noexcept { delete static_cast<MutationBoundaryGuard*>(p); }};
 }
 
+// Issue #4678: opt-out for the nested-boundary re-lower deferral.
+static bool nested_cascade_relower_forced_4678() noexcept {
+    static const bool forced = [] {
+        const char* e = std::getenv("AURA_NESTED_CASCADE_RELOWER");
+        return e && e[0] == '1';
+    }();
+    return forced;
+}
+
 Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     auto& stack = active_mutation_stack();
     if (stack.empty())
@@ -2342,7 +2351,15 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // the outermost production success path (Guard persist-front).
         // This cascade is IR dirty / BFS enqueue only — Phase-5 densify
         // is not a type txn.
-        push_post_mutate_incremental_cascade(cp.mutation_log_size);
+        // Issue #4678: a nested boundary's log range is a suffix of the
+        // enclosing non-soft boundary's, whose own cascade (after the
+        // outermost type txn) re-lowers the same dirty defines again. Defer
+        // the eager re-lower to that outer exit; the dirty marks stay, so
+        // any lookup in between still fails closed to a re-lower.
+        // AURA_NESTED_CASCADE_RELOWER=1 restores the per-boundary re-lower.
+        const bool defer_relower_4678 =
+            nested_boundary && !soft_only_below && !nested_cascade_relower_forced_4678();
+        push_post_mutate_incremental_cascade(cp.mutation_log_size, defer_relower_4678);
         // Issue #2144: selective predicate-memo invalidate + occurrence
         // reanalyze on outermost success exit only (long-lived engine).
         // Nested guards defer to outer; after cascade so dirty bits stamp.

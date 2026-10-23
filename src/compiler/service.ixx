@@ -1398,6 +1398,8 @@ public:
         // needing to import CompilerService (which would be circular).
         evaluator_.set_mark_define_dirty_fn(
             [this](const std::string& name) { this->mark_define_dirty(name); });
+        // Issue #4678: restamp batch bracket (drain_cascade_bfs_invalidate).
+        evaluator_.set_dirty_batch_fn([this](bool begin) { this->set_dirty_batch(begin); });
         // Issue #3681: the id captured before set-body / rebind is the IR
         // define closure. Dropping the owner entry makes dispatch return
         // nullopt; the env refresh below installs a fresh closure.
@@ -17941,7 +17943,46 @@ public:
     // hard invalidate_function — live closures + linear enforce + GC
     // root pin/audit before publishing new epochs (GcCoord PrePin phase).
     // Caller must hold an active gc_coord::Scope (opened at entry).
+    // Issue #4678: a restamp batch (drain_cascade_bfs_invalidate marking
+    // every dependent of a hard-invalidated root) ran the full pre-cascade
+    // audit and the global epoch bump + closure walk once per dependent.
+    // Inside a batch the global halves run once (first name); per-name
+    // work (gc coordination, feedback reset, bridge invalidate) still runs
+    // for every name. AURA_DIRTY_BATCH_COALESCE=0 disables.
+    int dirty_batch_depth_ = 0;
+    bool dirty_batch_pre_done_ = false;
+    bool dirty_batch_epoch_done_ = false;
+    std::uint64_t dirty_batch_coalesced_4678_ = 0;
+    static bool dirty_batch_coalesce_enabled_() noexcept {
+        static const bool on = [] {
+            const char* e = std::getenv("AURA_DIRTY_BATCH_COALESCE");
+            return !(e && e[0] == '0');
+        }();
+        return on;
+    }
+    void set_dirty_batch(bool begin) noexcept {
+        if (begin) {
+            if (dirty_batch_depth_++ == 0) {
+                dirty_batch_pre_done_ = false;
+                dirty_batch_epoch_done_ = false;
+            }
+        } else if (dirty_batch_depth_ > 0 && --dirty_batch_depth_ == 0) {
+            dirty_batch_pre_done_ = false;
+            dirty_batch_epoch_done_ = false;
+        }
+    }
+    [[nodiscard]] std::uint64_t dirty_batch_coalesced_4678() const noexcept {
+        return dirty_batch_coalesced_4678_;
+    }
     void prepare_unified_invalidation_pre_cascade_(const std::string& name) {
+        if (dirty_batch_depth_ > 0 && dirty_batch_coalesce_enabled_()) {
+            if (dirty_batch_pre_done_) {
+                on_compiler_invalidate_gc_coordination(name);
+                ++dirty_batch_coalesced_4678_;
+                return;
+            }
+            dirty_batch_pre_done_ = true;
+        }
         // Issue #2131: PrePin work under active Scope (opened by soft/hard entry).
         (void)evaluator_.scan_live_closures_for_linear_captures(/*mark_invalid=*/true);
         (void)evaluator_.linear_post_mutate_enforce_all();
@@ -17958,6 +17999,18 @@ public:
         // defines (their feedback survives).
         if (!name.empty())
             aura::compiler::feedback::reset_name(name);
+        // Issue #4678: second+ name of a restamp batch - the epoch bump,
+        // closure walk and expire already ran for this batch.
+        if (!name.empty() && dirty_batch_depth_ > 0 && dirty_batch_coalesce_enabled_()) {
+            if (dirty_batch_epoch_done_) {
+                metrics_.unified_invalidation_protocol_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                invalidate_bridge_for(name);
+                ++dirty_batch_coalesced_4678_;
+                return;
+            }
+            dirty_batch_epoch_done_ = true;
+        }
         using aura::compiler::lock_order::Level;
         using aura::compiler::lock_order::OrderedUniqueLock;
         // #4322: skip Mutate when Workspace is already held.

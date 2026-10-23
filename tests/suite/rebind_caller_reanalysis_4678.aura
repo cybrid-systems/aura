@@ -1,0 +1,47 @@
+; Issue #4678: rebinding a callee re-lowers its callers once per mutate
+; (the nested boundary inside mutate:rebind defers to the outer cascade).
+; Callers must see the new body whether the callee's type is unchanged
+; (int -> int) or changes (int -> string / arity change).
+(define *fails* 0)
+(define *n* 0)
+(define (check! ok msg)
+  (set! *n* (+ *n* 1))
+  (if (not ok)
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+(set-code "(define f (lambda (x) (+ x 1)))\n(define c0 (lambda (x) (f x)))\n(define c1 (lambda (x) (+ (f x) (f x))))\n(define c2 (lambda (x) (c1 x)))")
+(eval-current)
+(check! (= (c0 1) 2) "initial c0")
+(check! (= (c2 1) 4) "initial c2")
+;; same type: int -> int
+(let loop ((i 2))
+  (if (< i 6)
+      (begin
+        (mutate:rebind "f" (string-append "(lambda (x) (+ x " (number->string i) "))") "t")
+        (eval-current)
+        (check! (= (c0 1) (+ 1 i)) "same-type c0")
+        (check! (= (c1 1) (* 2 (+ 1 i))) "same-type c1")
+        (check! (= (c2 1) (* 2 (+ 1 i))) "same-type transitive c2")
+        (loop (+ i 1)))))
+;; changed type: int -> string
+(mutate:rebind "f" "(lambda (x) (string-append \"v\" (number->string x)))" "t")
+(eval-current)
+(check! (equal? (c0 7) "v7") "changed-type c0 sees string")
+(mutate:rebind "c1" "(lambda (x) (string-append (f x) (f x)))" "t")
+(eval-current)
+(check! (equal? (c2 3) "v3v3") "changed-type transitive c2")
+;; back to int
+(mutate:rebind "f" "(lambda (x) (* x 10))" "t")
+(eval-current)
+(check! (= (c0 4) 40) "changed-back c0")
+(mutate:rebind "c1" "(lambda (x) (+ (f x) 1))" "t")
+(eval-current)
+(check! (= (c2 4) 41) "changed-back c2")
+;; arity change that breaks a caller: the caller re-analysis must reject
+;; it (type changed -> callers re-checked) and keep the old binding.
+(define r (mutate:rebind "f" "(lambda (x y) (+ x y))" "t"))
+(check! (and (pair? r) (eq? (car r) 'mutation-failed)) "arity change rejected via caller re-check")
+(eval-current)
+(check! (= (c0 4) 40) "old binding intact after reject")
+(if (= *fails* 0)
+    (begin (display "OK-4678 ") (display *n*) (display " checks") (newline))
+    (begin (display "FAILED-4678 ") (display *fails*) (newline)))
