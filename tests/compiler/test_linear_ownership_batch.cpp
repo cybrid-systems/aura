@@ -152,6 +152,7 @@ static std::pair<std::uint64_t, std::uint64_t> make_linear_closure(Evaluator& ev
         if (fr) {
             auto& syms = fr->bindings_symid_;
             auto& lin = fr->bindings_linear_ownership_state_;
+            aura::compiler::linear_rt::note_state_written(); // #4683 test seam
             if (syms.empty()) {
                 syms.push_back({static_cast<SymId>(1), make_int(0)});
                 lin.push_back(linear_state);

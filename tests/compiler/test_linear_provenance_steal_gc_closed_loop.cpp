@@ -158,6 +158,7 @@ static void seed_bridged_moved_closure(Evaluator& ev) {
     if (auto* fr = ev.resolve_env_frame_mut(env_id)) {
         fr->bindings_symid_.push_back({static_cast<SymId>(1), make_int(0)});
         fr->bindings_linear_ownership_state_.push_back(4); // Moved
+        aura::compiler::linear_rt::note_state_written();   // #4683 test seam
         fr->version_ = ev.defuse_version_snapshot();
     }
     Closure cl;

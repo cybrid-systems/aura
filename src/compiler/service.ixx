@@ -74,6 +74,7 @@ import aura.compiler.ast_walkers;
 import aura.core.type;
 import aura.parser.parser;
 import aura.core.mutation;
+import aura.core.lifetime_pin; // Issue #4683: linear_root_snapshot gate
 import aura.compiler.evaluator;
 import aura.compiler.ir;
 import aura.compiler.lowering;
@@ -7363,6 +7364,7 @@ public:
         return on;
     }
     std::atomic<std::uint64_t> metrics_define_root_tag_index_hits_{0};
+    std::uint64_t linear_window_scans_skipped_4683_ = 0;
     std::unordered_map<std::string, aura::ast::NodeId> define_root_cache_;
     const aura::ast::FlatAST* define_root_cache_owner_ = nullptr;
     std::atomic<std::uint64_t> metrics_define_root_cache_hits_{0};
@@ -16468,24 +16470,38 @@ private:
             dirty_batch_finalize_done_ = true;
         }
 
+        // Issue #4683: no binding ever carried a tracked linear state and
+        // no linear root is live -> the scans below cannot find anything;
+        // each walks every closure / EnvFrame (O(W) per rebind). The
+        // epoch bump, root sync and release fence still run.
+        const auto lin_snap_4683 = aura::core::lifetime::linear_root_snapshot();
+        const bool skip_linear_scans_4683 = !linear_rt::state_ever_written() &&
+                                            lin_snap_4683.live_count == 0 &&
+                                            lin_snap_4683.pin_total == 0;
+        if (skip_linear_scans_4683)
+            ++linear_window_scans_skipped_4683_;
         // Full scan (not only_if_moved): after invalidate every linear
         // capture must revalidate before apply is allowed again.
-        (void)evaluator_.scan_live_closures_for_linear_captures(/*mark_invalid=*/true,
-                                                                /*only_if_moved=*/false);
-        (void)evaluator_.linear_post_mutate_enforce_all();
+        if (!skip_linear_scans_4683) {
+            (void)evaluator_.scan_live_closures_for_linear_captures(/*mark_invalid=*/true,
+                                                                    /*only_if_moved=*/false);
+            (void)evaluator_.linear_post_mutate_enforce_all();
+        }
         evaluator_.sync_linear_roots_and_bridge_epoch();
 
         const auto ep = evaluator_.bump_linear_ownership_epoch();
         aura_set_linear_ownership_epoch(ep);
         metrics_.linear_ownership_epoch_bumps_total.fetch_add(1, std::memory_order_relaxed);
 
-        (void)evaluator_.run_linear_gc_root_audit(Evaluator::kLinearGcRootAuditInvalidate);
-        // Issue #2197: post-GC-window linear×type provenance revalidate (R6).
-        // Soft = metric-only incomplete; Strict = hard-fail + force-audit arm.
-        // mark_all_linear=false avoids re-invalidating already-scanned captures
-        // (scan above already mark_invalid=true for all linear).
-        (void)evaluator_.revalidate_linear_type_provenance_after_migration(
-            Evaluator::kLinearGcRootAuditInvalidate, /*mark_all_linear=*/false);
+        if (!skip_linear_scans_4683) {
+            (void)evaluator_.run_linear_gc_root_audit(Evaluator::kLinearGcRootAuditInvalidate);
+            // Issue #2197: post-GC-window linear×type provenance revalidate (R6).
+            // Soft = metric-only incomplete; Strict = hard-fail + force-audit arm.
+            // mark_all_linear=false avoids re-invalidating already-scanned captures
+            // (scan above already mark_invalid=true for all linear).
+            (void)evaluator_.revalidate_linear_type_provenance_after_migration(
+                Evaluator::kLinearGcRootAuditInvalidate, /*mark_all_linear=*/false);
+        }
         // Issue #2131: PostAudit phase — close GcCoordScope if active.
         gc_coord::note_post_audit_if_active();
         // Publish complete linear+GC window to concurrent apply / fiber steal.

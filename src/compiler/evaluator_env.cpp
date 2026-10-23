@@ -731,6 +731,7 @@ void Env::bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v, s
             symid_index_[s] = bindings_symid_.size() - 1;
         }
     }
+    linear_rt::note_state_written(state); // #4683
     bindings_linear_ownership_state_.push_back(state);
     // Mirror into string-keyed bindings_ so Env::lookup(name) finds
     // lambda params bound via apply_closure / Path B. Only when pool_
@@ -792,6 +793,7 @@ void Env::bind_with_linear_state(std::string_view n, types::EvalValue v, std::ui
                 symid_index_[s] = bindings_symid_.size() - 1;
             }
         }
+        linear_rt::note_state_written(state); // #4683
         bindings_linear_ownership_state_.push_back(state);
     }
     // Issue #4599: same top_-only generation bump as bind_symid.
@@ -897,6 +899,7 @@ aura::core::VoidResult Env::set_linear_ownership_state(aura::ast::SymId s, std::
             if (idx >= bindings_linear_ownership_state_.size())
                 bindings_linear_ownership_state_.resize(bindings_symid_.size(),
                                                         linear_rt::Untracked);
+            linear_rt::note_state_written(state); // #4683
             bindings_linear_ownership_state_[idx] = state;
             return {};
         }
@@ -1133,6 +1136,7 @@ void EnvFrame::bind_with_linear_state(const std::string& n, types::EvalValue v,
         // const_cast: pool_ is const*; intern mutates (not thread-safe).
         auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
         bindings_symid_.emplace_back(s, v);
+        linear_rt::note_state_written(state); // #4683
         bindings_linear_ownership_state_.push_back(state);
     }
     // Issue #1903: assert dual-path consistency after every bind.
@@ -1142,6 +1146,7 @@ void EnvFrame::bind_with_linear_state(const std::string& n, types::EvalValue v,
 void EnvFrame::bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v,
                                             std::uint8_t state) {
     bindings_symid_.emplace_back(s, v);
+    linear_rt::note_state_written(state); // #4683
     bindings_linear_ownership_state_.push_back(state);
     if (pool_) {
         std::string_view sv = pool_->resolve(s);
@@ -1229,6 +1234,7 @@ bool EnvFrame::set_linear_ownership_state(aura::ast::SymId s, std::uint8_t state
             if (idx >= bindings_linear_ownership_state_.size())
                 bindings_linear_ownership_state_.resize(bindings_symid_.size(),
                                                         linear_rt::Untracked);
+            linear_rt::note_state_written(state); // #4683
             bindings_linear_ownership_state_[idx] = state;
             return true;
         }
