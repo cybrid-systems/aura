@@ -223,6 +223,23 @@ def _isolate_member_fail_lines(stdout: str) -> list[str]:
     return out
 
 
+def _bundle_member_fail_lines(stdout: str) -> list[str]:
+    """Non-isolate batch members: 'FAIL member X (passed/failed)'.
+
+    A member that runs inline in the driver (no fork/isolate) reports its
+    death without the 'isolated' tag. rc=1 streamed runs used to drop it
+    entirely, so the CI report showed a bare 'rc=1' with no member name.
+    """
+    import re
+
+    out: list[str] = []
+    for line in stdout.splitlines():
+        m = re.search(r"FAIL member \S+ \(\d+/\d+\)", line)
+        if m:
+            out.append(m.group(0))
+    return out
+
+
 def _member_check_fail_lines(stdout: str) -> list[str]:
     """Member CHECK failure labels: 'FAIL: <label> (line N)' — keep the last few.
 
@@ -542,6 +559,24 @@ def _run_one_attempt(bin_name: str, timeout: int) -> tuple[str, int, int, int, s
             err = "no output"
     elif r.returncode != 0 and stderr_tail:
         err = ("\n".join(check_fails) + "\n" if check_fails else "") + stderr_tail
+    elif r.returncode != 0:
+        # rc=1 with no isolate death: a non-isolate member failed (or a bare
+        # CHECK failure). Streamed very-heavy bins return an empty stderr, so
+        # the old stderr-only branch dropped the labels and the CI report
+        # named nothing. Keep them here.
+        import re as _re
+
+        bundle_fails = _bundle_member_fail_lines(r.stdout or "")
+        parts: list[str] = []
+        summary = _re.search(r"^=== \d+ members: \d+ ok, \d+ failed ===$", r.stdout or "", _re.MULTILINE)
+        if bundle_fails:
+            parts.append("; ".join(bundle_fails))
+        if check_fails:
+            parts.append("\n".join(check_fails))
+        if summary:
+            parts.append(summary.group(0))
+        if parts:
+            err = "\n".join(parts)
     return bin_name, passed, failed, r.returncode, err
 
 
