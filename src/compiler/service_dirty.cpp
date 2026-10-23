@@ -6,6 +6,7 @@
 // stays thinner. Declarations remain on CompilerService.
 
 module;
+#include "rebind_phase_stats.h" // per-phase rebind timing (opt-in)
 
 #include "lock_order_audit.h"
 #include "gc_coord_scope.h" // Issue #2131: pin → cascade → audit
@@ -315,6 +316,7 @@ void CompilerService::flush_frame_budget_deferred_() {
 
 // ── mark_define_dirty (#1476 / #1523 / #1627 / #1505 / #2131 / #2137) ─────
 void CompilerService::mark_define_dirty(const std::string& name) {
+    aura::compiler::phase_stats::Scope phase_mark_dirty(aura::compiler::phase_stats::MarkDirty);
     // Issue #2137: outside hotpath, drain deferred cascades first (eventual run).
     if (!aura::core::arena_policy::in_render_hotpath() && !frame_budget::active()) {
         if (frame_budget::deferred_pending() > 0)
@@ -927,6 +929,8 @@ void CompilerService::mark_all_defines_dirty() {
 
 // ── invalidate_function (#59 / #1378 / #1476 / #1627 / #2131) ─────────────
 void CompilerService::invalidate_function(const std::string& name) {
+    aura::compiler::phase_stats::Scope phase_invalidate_fn(
+        aura::compiler::phase_stats::InvalidateFn);
     // Issue #4569: DefineVersion(name) first — release store, before any
     // early return below — so JIT code compiled against the old binding
     // (own body or a captured reference) fails its assumption check even

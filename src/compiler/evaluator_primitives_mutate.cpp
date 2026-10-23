@@ -12,6 +12,7 @@ module;
 #include "security_capabilities.h"
 #include "security_side_effect.hh" // #2057: PrimMeta effect contract + gate pattern
 #include "observability_metrics.h"
+#include "rebind_phase_stats.h"   // per-phase rebind timing (opt-in)
 #include "hash_meta.h"            // FNV constants for stats hash
 #include "typed_mutation_audit.h" // Issue #1589
 #include "compiler/ownership_rebind.h" // Issue #2695: unified OwnershipEnv rebind API post-densify/steal/Agent
@@ -4002,6 +4003,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // failure: guard rolls back the MutationRecord log +
     // panic_checkpoint restores the source).
     add_mutate("mutate:rebind", [&ev, mev, safe_str](const auto& a) -> EvalValue {
+        aura::compiler::phase_stats::Scope phase_rebind_prim(
+            aura::compiler::phase_stats::RebindPrim);
         // Issue #1918: mutate hot path records SoA/column migration progress
         // (workspace FlatAST children + defuse SoA under MutationBoundaryGuard).
         soa_view::record_edsl_mutate_soa_path();
@@ -4286,7 +4289,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 (void)flat.free_orphan_nodes_from(
                     static_cast<aura::ast::NodeId>(size_before_parse));
         };
-        auto pr = aura::parser::parse_to_flat(ev.string_heap_[code_idx], flat, *ev.workspace_pool_);
+        auto pr = [&] {
+            aura::compiler::phase_stats::Scope phase_parse(aura::compiler::phase_stats::Parse);
+            return aura::parser::parse_to_flat(ev.string_heap_[code_idx], flat,
+                                               *ev.workspace_pool_);
+        }();
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             std::string parse_err;
             if (!pr.errors.empty()) {
@@ -11224,6 +11231,7 @@ void Evaluator::enqueue_cascade_bfs_invalidate(std::string name) noexcept {
 }
 
 void Evaluator::drain_cascade_bfs_invalidate() noexcept {
+    aura::compiler::phase_stats::Scope phase_drain(aura::compiler::phase_stats::Drain);
     if (pending_cascade_bfs_invalidate_.empty()) {
         return;
     }
@@ -11275,6 +11283,7 @@ void Evaluator::drain_cascade_bfs_invalidate() noexcept {
                     fn(false);
             }
         } dirty_batch(dirty_batch_fn_);
+        aura::compiler::phase_stats::Scope phase_restamp(aura::compiler::phase_stats::Restamp);
         std::unordered_set<std::string> restamped;
         restamped.reserve(batch_deps.size() * 2);
         for (const auto& [root, deps] : batch_deps) {
@@ -11332,6 +11341,7 @@ void Evaluator::clear_cascade_bfs_invalidate() noexcept {
 
 void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_begin,
                                                      bool defer_relower) noexcept {
+    aura::compiler::phase_stats::Scope phase_cascade(aura::compiler::phase_stats::Cascade);
     if (!workspace_flat_ || !workspace_pool_)
         return;
     // Issue #4540: this is the exit-side consumer of a rolled-back rebind.
@@ -11419,6 +11429,8 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
     std::uint64_t path2_lookups = 0;
     std::uint64_t path2_index_nodes = 0;
     if (!defuse_affected_syms_.empty()) {
+        aura::compiler::phase_stats::Scope phase_cascade_index(
+            aura::compiler::phase_stats::CascadeIndex);
         std::unordered_map<aura::ast::SymId, std::vector<aura::ast::NodeId>> define_by_sym;
         define_by_sym.reserve(std::max<std::size_t>(16, flat.size() / 8));
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {

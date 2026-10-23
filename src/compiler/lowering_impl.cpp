@@ -2251,10 +2251,29 @@ static IRModule lower_to_ir_impl(
         // Issue #896: generation-cached Call set + shared memo for all
         // Define/Lambda probes (O(N) total, reuses cache across re-lowers).
         const auto& mutating_nodes = mutation_calls_cached(flat);
-        std::vector<std::int8_t> mut_memo(flat.size(), static_cast<std::int8_t>(-1));
-        for (aura::ast::NodeId i = 0; i < flat.size(); ++i) {
+        // Issue #4681: this pass only ever *sets* Evolution regions, and
+        // only for subtrees that reach a mutating call. No mutating call →
+        // nothing to do; same FlatAST generation as the last full pass →
+        // already applied. Either way skip the O(N) node walk that every
+        // per-define relower used to pay.
+        struct RegionPassDone {
+            const FlatAST* flat = nullptr;
+            std::uint16_t gen = 0;
+            std::size_t size = 0;
+        };
+        static thread_local RegionPassDone region_done;
+        const bool region_pass_needed =
+            !mutating_nodes.empty() &&
+            !(region_done.flat == &flat && region_done.gen == flat.generation() &&
+              region_done.size == flat.size());
+        std::vector<std::int8_t> mut_memo(region_pass_needed ? flat.size() : 0,
+                                          static_cast<std::int8_t>(-1));
+        for (aura::ast::NodeId i = 0; region_pass_needed && i < flat.size(); ++i) {
             if (i >= flat.size())
                 break;
+            const auto tg = flat.tag(i);
+            if (tg != aura::ast::NodeTag::Define && tg != aura::ast::NodeTag::Lambda)
+                continue;
             auto v = flat.get(i);
             if (v.tag == aura::ast::NodeTag::Define) {
                 auto sym = v.sym_id;
@@ -2274,6 +2293,11 @@ static IRModule lower_to_ir_impl(
                         i, static_cast<std::uint8_t>(aura::ir::Region::Evolution));
                 }
             }
+        }
+        if (region_pass_needed) {
+            region_done.flat = &flat;
+            region_done.gen = flat.generation();
+            region_done.size = flat.size();
         }
     }
     state.primitives = primitives;
