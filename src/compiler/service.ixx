@@ -7286,13 +7286,9 @@ public:
                     if (par == aura::ast::NULL_NODE || par == cur || par >= flat.size() ||
                         flat.is_free_slot(par))
                         break;
-                    bool member = false;
-                    for (auto c : flat.get(par).children)
-                        if (c == cur) {
-                            member = true;
-                            break;
-                        }
-                    if (!member)
+                    // #4682: borrowed span; get(par) copied root's full
+                    // child list (O(W)) on every hop.
+                    if (!define_root_is_child_(flat, par, cur))
                         break;
                     cur = par;
                 }
@@ -7303,11 +7299,70 @@ public:
             }
             define_root_cache_.erase(it);
         }
+        // Issue #4682: a rebind replaces the Define node, so the first
+        // consult after every rebind missed and paid a full-workspace DFS
+        // (find_first_node_with, ~18% of eval-current at W=1000/D=1).
+        // Resolve through the maintained Define tag index instead: if
+        // exactly one live Define of this symbol is reachable from root it
+        // is what the DFS would return. 0 or >1 candidates fall back to the
+        // DFS (pre-order tie-break). AURA_DEFINE_ROOT_TAG_INDEX=0 disables.
+        if (define_root_tag_index_enabled_()) {
+            if (const auto sym = pool.find_by_name(name)) {
+                aura::ast::NodeId only = aura::ast::NULL_NODE;
+                int n = 0;
+                for (auto id :
+                     flat.collect_by_tag(static_cast<std::uint32_t>(aura::ast::NodeTag::Define))) {
+                    if (id >= flat.size() || flat.is_free_slot(id) ||
+                        flat.tag(id) != aura::ast::NodeTag::Define || flat.sym_id(id) != *sym)
+                        continue;
+                    if (!define_root_reachable_(flat, id))
+                        continue;
+                    if (++n > 1)
+                        break;
+                    only = id;
+                }
+                if (n == 1) {
+                    metrics_define_root_tag_index_hits_.fetch_add(1, std::memory_order_relaxed);
+                    define_root_cache_[name] = only;
+                    return only;
+                }
+            }
+        }
         auto found = flat.find_define_by_name(pool, name);
         if (found)
             define_root_cache_[name] = *found;
         return found;
     }
+    static bool define_root_is_child_(const aura::ast::FlatAST& flat, aura::ast::NodeId par,
+                                      aura::ast::NodeId cur) {
+        for (auto c : flat.children(par))
+            if (c == cur)
+                return true;
+        return false;
+    }
+    static bool define_root_reachable_(const aura::ast::FlatAST& flat, aura::ast::NodeId id) {
+        auto cur = id;
+        for (int hop = 0; hop < 64; ++hop) {
+            if (cur == flat.root)
+                return true;
+            const auto par = flat.parent_of(cur);
+            if (par == aura::ast::NULL_NODE || par == cur || par >= flat.size() ||
+                flat.is_free_slot(par))
+                return false;
+            if (!define_root_is_child_(flat, par, cur))
+                return false;
+            cur = par;
+        }
+        return false;
+    }
+    static bool define_root_tag_index_enabled_() noexcept {
+        static const bool on = [] {
+            const char* e = std::getenv("AURA_DEFINE_ROOT_TAG_INDEX");
+            return !(e && e[0] == '0');
+        }();
+        return on;
+    }
+    std::atomic<std::uint64_t> metrics_define_root_tag_index_hits_{0};
     std::unordered_map<std::string, aura::ast::NodeId> define_root_cache_;
     const aura::ast::FlatAST* define_root_cache_owner_ = nullptr;
     std::atomic<std::uint64_t> metrics_define_root_cache_hits_{0};
