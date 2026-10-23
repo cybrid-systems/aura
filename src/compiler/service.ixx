@@ -2810,6 +2810,19 @@ public:
     }
 
     [[nodiscard]] EvalResult eval(std::string_view input) {
+        // Issue #4674: CLI oneshot holds this lock in main (#4356). Tests,
+        // the REPL, and --serve enter eval directly. Thread-fallback
+        // fiber:spawn then runs apply_closure on a std::thread with
+        // g_current_fiber still null, so the worker writes the host name
+        // cache and the sym-intern vectors while this eval is still
+        // walking (spawn returns before fiber:join). That races
+        // std::vector::operator[] in test_misc_issue_fold_batch
+        // (NameResEntry and EvalValue). fiber:join, read-line, and
+        // read-byte drop the lock across their wait. A re-entrant eval,
+        // or a caller that already holds the lock, gets nullptr and does
+        // not lock the non-recursive mutex again. Taken before
+        // eval_mutex_ so the order matches main's oneshot path.
+        aura::messaging::CliMainEvalBodyLock cli_body_lock;
         // Issue #1431 follow-up Race #3 (and Race #4 #5 ...):
         // serialize the entire eval pipeline across threads.
         // Two concurrent eval callers share arena_ (which holds

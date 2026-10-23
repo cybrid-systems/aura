@@ -74,6 +74,17 @@ static void ac2_orch_freevar_survive_rebind() {
     CHECK(eval_ok(cs, "(require \"std/mutate\" all:)"), "require mutate");
     auto pre = cs.eval("(orch:parallel (list (lambda (y) (* y 2))) 5)");
     CHECK(pre.has_value() && is_pair(*pre), "pre orch:parallel");
+    // Issue #4674: the parent eval and the CLI thread-fiber used to share
+    // the unsynchronized name cache and sym-intern vectors. One call
+    // aborts only ~10-17% of runs; repeat the same orch:parallel so a
+    // regression fails this member instead of flaking the batch.
+    int orch_fail = 0;
+    for (int i = 0; i < 32; ++i) {
+        auto again = cs.eval("(orch:parallel (list (lambda (y) (* y 2))) 5)");
+        if (!(again.has_value() && is_pair(*again)))
+            ++orch_fail;
+    }
+    CHECK(orch_fail == 0, "AC2: orch:parallel stable across repeats");
     CHECK(eval_ok(cs, "(set-code \"(define (f x) (+ x 1))\")"), "set-code f");
     CHECK(eval_ok(cs, "(eval-current)"), "eval f");
     CHECK(eval_ok(cs, "(mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"t\")"), "rebind f");
