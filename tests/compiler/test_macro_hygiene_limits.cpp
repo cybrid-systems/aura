@@ -1881,6 +1881,10 @@ static bool eval_error_has(const aura::compiler::EvalResult& r, std::string_view
 // refuse on the inner clone does not eval the outer clone.
 extern "C" int aura_test_claim_same_flat_clone(const void* flat) noexcept;
 extern "C" void aura_test_release_same_flat_clone(const void* flat) noexcept;
+// Issue #4511: deterministic inner-window claim (see eval_flat AC below).
+extern "C" void aura_test_arm_inner_claim(const void* flat) noexcept;
+extern "C" void aura_test_disarm_inner_claim(void) noexcept;
+extern "C" int aura_test_inner_claim_taken(void) noexcept;
 extern "C" void aura_test_set_max_gensym_map_size_for_test(std::uint32_t n) noexcept;
 
 static void ac4101_arm(Evaluator& ev) {
@@ -2440,6 +2444,11 @@ static bool ac4511_one_attempt() {
         watcher_claimed.store(true, std::memory_order_relaxed);
     });
 
+    // Issue #4511: arm the deterministic inner-window claim as a backstop to
+    // the helper thread. The claim must land between the outer clone and the
+    // nested depth-0 clone; on a loaded 4-vCPU runner the thread can miss it
+    // on every retry, which failed the AC on scheduling, not on a splice.
+    aura_test_arm_inner_claim(ws);
     aura::ast::MutationRecord rec{};
     rec.target_node = call_m;
     rec.parent_id = pid;
@@ -2461,12 +2470,14 @@ static bool ac4511_one_attempt() {
         re = cs.evaluator().post_mutation_macro_reexpand(*ws, *pool, rec);
     }
     watcher.join();
+    aura_test_disarm_inner_claim();
+    const bool claimed = watcher_claimed.load() || aura_test_inner_claim_taken() != 0;
     aura_test_release_same_flat_clone(ws);
 
     const auto reason = g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
     if (reason != aura::compiler::macro_exp::kHygieneLimitReasonSameFlatReject)
-        return false; // watcher missed the window — a clean splice is production-correct
-    CHECK(watcher_claimed.load(), "4511: reason 8 implies the second fiber claimed the flat");
+        return false; // claim missed the window — a clean splice is production-correct
+    CHECK(claimed, "4511: reason 8 implies the second fiber claimed the flat");
     CHECK(re == 0, "4511: reexpand returns 0 on same-flat inner refuse");
     CHECK(ws->size() == size0, "4511: clone + splice truncated to the pre-call size");
     CHECK(tree_fp(*ws, root) == fp0, "4511: walk from the original Call sees no spliced clone");
@@ -2485,7 +2496,7 @@ static bool ac4511_one_attempt() {
 static void ac4511_reexpand_same_flat_no_splice() {
     std::println("\n--- #4511 AC1/AC2: same-flat inner clone refuses the reexpand splice ---");
     bool denied = false;
-    for (int attempt = 0; attempt < 8 && !denied; ++attempt)
+    for (int attempt = 0; attempt < 32 && !denied; ++attempt)
         denied = ac4511_one_attempt();
     CHECK(denied, "4511: watcher landed the second-fiber claim and the refuse held");
     aura_test_reset_macro_hygiene_last_limit_reason_full();
