@@ -1,0 +1,51 @@
+; Issue #4598: rebind resolves the define root through a cached
+; name -> NodeId index. The cache must never serve a stale node: repeated
+; rebinds, set-code that moves/replaces the define, snapshot/restore and
+; define removal all have to see the current definition.
+(define *fails* 0)
+(define *n* 0)
+(define (check! ok msg)
+  (set! *n* (+ *n* 1))
+  (if (not ok)
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+
+(set-code "(define w1 (lambda (x) (* x 1)))\n(define f (lambda (x) (+ x 1)))\n(define g (lambda (x) (f x)))\n(define w2 (lambda (x) (* x 2)))")
+(eval-current)
+(check! (= (g 10) 11) "initial")
+(let loop ((i 2))
+  (if (< i 8)
+      (begin
+        (mutate:rebind "f" (string-append "(lambda (x) (+ x " (number->string i) "))") "t")
+        (eval-current)
+        (check! (= (g 10) (+ 10 i)) (string-append "rebind " (number->string i)))
+        (check! (= (f 0) i) (string-append "direct " (number->string i)))
+        (loop (+ i 1)))))
+;; set-code moves f to a different position (new NodeIds).
+(set-code "(define f (lambda (x) (* x 100)))\n(define pad1 (lambda (x) x))\n(define pad2 (lambda (x) x))\n(define g (lambda (x) (f x)))")
+(eval-current)
+(check! (= (g 2) 200) "moved define via set-code")
+(mutate:rebind "f" "(lambda (x) (- x 1))" "t")
+(eval-current)
+(check! (= (g 2) 1) "rebind after move")
+(check! (= (f 10) 9) "direct after move")
+;; replacing set-code removes then reintroduces f.
+(set-code "(define g (lambda (x) (+ x 7)))")
+(eval-current)
+(check! (= (g 1) 8) "f removed")
+(set-code "(define h (lambda (x) x))\n(define f (lambda (x) (* x 3)))\n(define g (lambda (x) (f x)))")
+(eval-current)
+(check! (= (g 3) 9) "f reintroduced")
+(mutate:rebind "f" "(lambda (x) (* x 4))" "t")
+(eval-current)
+(check! (= (g 3) 12) "rebind reintroduced")
+;; rebind of a second name interleaved.
+(mutate:rebind "h" "(lambda (x) (+ x 1000))" "t")
+(eval-current)
+(check! (= (h 1) 1001) "rebind other name")
+(check! (= (g 3) 12) "f untouched by h rebind")
+(mutate:rebind "f" "(lambda (x) (* x 5))" "t")
+(eval-current)
+(check! (= (g 3) 15) "f after h")
+(if (= *fails* 0)
+    (begin (display "OK-4598 ") (display *n*) (display " checks") (newline))
+    (begin (display "FAILED-4598 ") (display *fails*) (newline)))

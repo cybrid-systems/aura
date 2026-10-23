@@ -7246,6 +7246,62 @@ public:
     // get_partial_relower_threshold() instead of mark_all_blocks_dirty.
     // Returns true when impact dirty was applied (caller skips full mark).
     // Free-var nested targeting remains a separate backup after this.
+    // Issue #4598: rebind resolved the define root with a full-workspace
+    // DFS (find_define_by_name) on every impact consult — O(W) per
+    // rebind. Cache name -> NodeId per FlatAST; a hit is trusted only if
+    // it is still a live Define of that symbol whose parent chain reaches
+    // flat.root with child membership at each hop. Otherwise fall back
+    // to the DFS and refill.
+    std::optional<aura::ast::NodeId> cached_define_root_(const aura::ast::FlatAST& flat,
+                                                         const aura::ast::StringPool& pool,
+                                                         const std::string& name) {
+        if (define_root_cache_owner_ != &flat) {
+            define_root_cache_.clear();
+            define_root_cache_owner_ = &flat;
+        }
+        if (auto it = define_root_cache_.find(name); it != define_root_cache_.end()) {
+            const auto id = it->second;
+            const auto sym = pool.find_by_name(name);
+            bool ok = sym && id < flat.size() && !flat.is_free_slot(id) &&
+                      flat.tag(id) == aura::ast::NodeTag::Define && flat.sym_id(id) == *sym;
+            if (ok) {
+                auto cur = id;
+                ok = false;
+                for (int hop = 0; hop < 64; ++hop) {
+                    if (cur == flat.root) {
+                        ok = true;
+                        break;
+                    }
+                    const auto par = flat.parent_of(cur);
+                    if (par == aura::ast::NULL_NODE || par == cur || par >= flat.size() ||
+                        flat.is_free_slot(par))
+                        break;
+                    bool member = false;
+                    for (auto c : flat.get(par).children)
+                        if (c == cur) {
+                            member = true;
+                            break;
+                        }
+                    if (!member)
+                        break;
+                    cur = par;
+                }
+            }
+            if (ok) {
+                metrics_define_root_cache_hits_.fetch_add(1, std::memory_order_relaxed);
+                return id;
+            }
+            define_root_cache_.erase(it);
+        }
+        auto found = flat.find_define_by_name(pool, name);
+        if (found)
+            define_root_cache_[name] = *found;
+        return found;
+    }
+    std::unordered_map<std::string, aura::ast::NodeId> define_root_cache_;
+    const aura::ast::FlatAST* define_root_cache_owner_ = nullptr;
+    std::atomic<std::uint64_t> metrics_define_root_cache_hits_{0};
+
     bool try_apply_impact_minimal_dirty_(IRCacheEntry& entry, const std::string& name,
                                          aura::ast::NodeId root_hint = aura::ast::NULL_NODE) {
         auto* flat = evaluator_.workspace_flat();
@@ -7254,7 +7310,7 @@ public:
             return false;
         aura::ast::NodeId root = root_hint;
         if (root == aura::ast::NULL_NODE || root >= flat->size()) {
-            auto found = flat->find_define_by_name(*pool, name);
+            auto found = cached_define_root_(*flat, *pool, name);
             if (!found)
                 return false;
             root = *found;
@@ -7373,7 +7429,7 @@ public:
             return 0;
         aura::ast::NodeId root = aura::ast::NULL_NODE;
         {
-            auto found = flat->find_define_by_name(*pool, name);
+            auto found = cached_define_root_(*flat, *pool, name);
             if (!found)
                 return 0;
             root = *found;
@@ -9767,16 +9823,17 @@ public:
             // Issue #2730: skip free-list ghosts (same as mutate:rebind find).
             aura::ast::NodeId def_id = aura::ast::NULL_NODE;
             aura::ast::NodeId lambda_id = aura::ast::NULL_NODE;
-            for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
+            // Issue #4598: compare the interned SymId over the tag / sym
+            // columns; get() (children copy) only on the match.
+            const auto want_sym = ws_pool->find_by_name(name);
+            const auto ws_n = want_sym ? ws_flat->size() : aura::ast::NodeId{0};
+            for (aura::ast::NodeId id = 0; id < ws_n; ++id) {
+                if (ws_flat->tag(id) != aura::ast::NodeTag::Define ||
+                    ws_flat->sym_id(id) != *want_sym)
+                    continue;
                 if (ws_flat->is_free_slot(id))
                     continue;
                 auto v = ws_flat->get(id);
-                if (v.tag != aura::ast::NodeTag::Define)
-                    continue;
-                if (v.sym_id == aura::ast::INVALID_SYM)
-                    continue;
-                if (std::string(ws_pool->resolve(v.sym_id)) != name)
-                    continue;
                 def_id = id;
                 if (!v.children.empty())
                     lambda_id = v.child(0);

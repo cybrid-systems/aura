@@ -188,6 +188,24 @@ def build_cases() -> list[Case]:
 
     cases.append(agent("agent-leaf-10", "leaf.aura", leaf_src(10), short=True, timeout=20, tier="ci"))
     cases.append(agent("agent-hot-10", "hot.aura", hot_src(10), short=True, timeout=20, tier="ci"))
+    for _nm, _env, _exp in (
+        ("agent-rebind-w1000", {"BENCH_W": "1000", "BENCH_D": "1"}, "2190"),
+        ("agent-rebind-d100", {"BENCH_W": "10", "BENCH_D": "100"}, "2190"),
+    ):
+        # Issue #4598 / #4678: rebind latency at W=1000 fillers / D=100 callers.
+        cases.append(
+            Case(
+                name=_nm,
+                klass="agent",
+                path="bench/cases/agent/rebind_scale.aura",
+                expect=_exp,
+                short=False,
+                gated=False,
+                timeout_s=120,
+                tier="full",
+                env=_env,
+            )
+        )
     cases.append(
         Case(
             name="agent-rollback",
