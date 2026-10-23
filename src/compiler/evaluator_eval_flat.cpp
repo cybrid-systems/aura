@@ -6318,6 +6318,22 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
             // nullopt falls through. An engaged error is returned as-is.
             if (auto hot = try_eval_flat_hot(*f, *p, current_id, eval_env))
                 return *hot;
+            // Issue #4682: clean cached non-leaf nodes return before
+            // FlatAST::get assembles a NodeView (child PCV + field copies).
+            // eval-current re-walks every top-level form of a W-define
+            // workspace; each clean Define paid a full NodeView assemble
+            // only to hit the cache below. Same predicate, SoA columns.
+            {
+                const auto t0 = f->tag(current_id);
+                if (t0 != aura::ast::NodeTag::LiteralInt &&
+                    t0 != aura::ast::NodeTag::LiteralFloat &&
+                    t0 != aura::ast::NodeTag::LiteralString && t0 != aura::ast::NodeTag::Variable &&
+                    !f->is_dirty(current_id)) {
+                    auto cached = f->get_cached_value(current_id);
+                    if (cached != aura::ast::FlatAST::kNotCached)
+                        return EvalResult(EvalValue(cached));
+                }
+            }
             auto v = f->get(current_id);
 
             // Incremental eval: if node is clean and has a cached result, reuse it.

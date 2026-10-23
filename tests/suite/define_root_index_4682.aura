@@ -1,0 +1,50 @@
+; Issue #4682: define-root resolution through the Define tag index and the
+; eval_flat clean-cache fast path. Every rebind replaces the Define node, so
+; the name->NodeId cache goes stale; the next resolve must still find the
+; live define (tag index, unique reachable match) or fall back to the DFS.
+(define *fails* 0)
+(define *n* 0)
+(define (check! ok msg)
+  (set! *n* (+ *n* 1))
+  (if (not ok)
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+(define (fill k acc)
+  (if (= k 0) acc
+      (fill (- k 1) (string-append acc "(define w" (number->string k) " (lambda (x) (* x " (number->string k) ")))\n"))))
+(set-code (string-append "(define f (lambda (x) (+ x 1)))\n(define g (lambda (x) (f (f x))))\n(define k 7)\n" (fill 50 "")))
+(eval-current)
+(check! (= (g 1) 3) "initial g")
+(check! (= (w50 2) 100) "initial w50")
+;; alternate rebinds of different names: each resolve sees a stale cache
+(let loop ((i 0))
+  (if (< i 6)
+      (begin
+        (mutate:rebind "f" (string-append "(lambda (x) (+ x " (number->string i) "))") "t")
+        (mutate:rebind "w7" (string-append "(lambda (x) (- x " (number->string i) "))") "t")
+        (eval-current)
+        (check! (= (g 1) (+ 1 (* 2 i))) "g after f rebind")
+        (check! (= (w7 10) (- 10 i)) "w7 after rebind")
+        (check! (= (w8 2) 16) "untouched w8 stays cached and correct")
+        (check! (= k 7) "value define untouched")
+        (loop (+ i 1)))))
+;; rebind the same name twice before eval-current
+(mutate:rebind "f" "(lambda (x) (* x 10))" "t")
+(mutate:rebind "f" "(lambda (x) (* x 100))" "t")
+(eval-current)
+(check! (= (g 1) 10000) "double rebind before eval")
+;; a define whose name also appears nested in another define's body
+(set-code "(define h (lambda (x) (let ((f (lambda (y) (* y 3)))) (f x))))\n(define f (lambda (x) (+ x 1)))\n(define u (lambda (x) (+ (h x) (f x))))")
+(eval-current)
+(check! (= (u 1) 5) "initial nested-name")
+(mutate:rebind "f" "(lambda (x) (+ x 5))" "t")
+(eval-current)
+(check! (= (u 1) 9) "top-level f rebound, local f untouched")
+(check! (= (h 2) 6) "h's local f untouched")
+;; IO forms still replay on eval-current after a rebind
+(set-code "(define p (lambda (x) (+ x 1)))\n(display \"\")")
+(eval-current)
+(mutate:rebind "p" "(lambda (x) (+ x 2))" "t")
+(eval-current)
+(check! (= (p 1) 3) "p after rebind with io form present")
+(display "OK-4682 ") (display *n*) (display " checks") (newline)
+(if (> *fails* 0) (begin (display "FAILED ") (display *fails*) (newline) (exit 1)))
