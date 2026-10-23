@@ -1,0 +1,36 @@
+{
+  "issue": 4675,
+  "title": "test_hash_empty_string_key defines int main INSIDE the anonymous namespace - undefined symbol: main stops the whole ninja build",
+  "checks": [
+    {
+      "ac": "AC1-fix",
+      "path": "tests/compiler/test_hash_empty_string_key.cpp",
+      "contains": [
+        "} // namespace",
+        "int main()",
+        "Issue #4631"
+      ]
+    },
+    {
+      "ac": "AC2-check",
+      "path": "scripts/coverage/checks/check_issue_test_main_linkage_4675.py",
+      "contains": [
+        "AC1",
+        "AC2",
+        "AC3",
+        "find_main_in_anon_namespace",
+        "_closes_namespace_before_main",
+        "--self-test",
+        "#4675"
+      ]
+    },
+    {
+      "ac": "AC-no-issue-dir",
+      "forbid": [
+        "tests/issues/test_issue_4675.cpp",
+        "tests/compiler/test_issue_4675.cpp",
+        "docs/design/4675-hash-empty-string-main-linkage.md"
+      ]
+    }
+  ]
+}
