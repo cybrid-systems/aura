@@ -17965,6 +17965,9 @@ public:
     bool dirty_batch_pre_done_ = false;
     bool dirty_batch_epoch_done_ = false;
     bool dirty_batch_finalize_done_ = false;
+    bool dirty_batch_linear_scan_done_ = false;    // #4680
+    bool dirty_batch_hotswap_audit_done_ = false;  // #4680
+    std::uint64_t dirty_batch_walk_epoch_ = ~0ull; // #4680
     std::uint64_t dirty_batch_coalesced_4678_ = 0;
     static bool dirty_batch_coalesce_enabled_() noexcept {
         static const bool on = [] {
@@ -17979,11 +17982,15 @@ public:
                 dirty_batch_pre_done_ = false;
                 dirty_batch_epoch_done_ = false;
                 dirty_batch_finalize_done_ = false;
+                dirty_batch_linear_scan_done_ = false;
+                dirty_batch_hotswap_audit_done_ = false;
+                dirty_batch_walk_epoch_ = ~0ull;
             }
         } else if (dirty_batch_depth_ > 0 && --dirty_batch_depth_ == 0) {
             dirty_batch_pre_done_ = false;
             dirty_batch_epoch_done_ = false;
             dirty_batch_finalize_done_ = false;
+            dirty_batch_linear_scan_done_ = false;
         }
     }
     [[nodiscard]] std::uint64_t dirty_batch_coalesced_4678() const noexcept {
@@ -18794,6 +18801,14 @@ public:
             metrics_.jit_closure_safe_fallbacks_total.fetch_add(marked, std::memory_order_relaxed);
         }
         // Issue #1543 / #2131: JIT hot-swap / batch-deopt under GcCoord Scope.
+        // Issue #4680: name-independent audit; once per dirty batch.
+        if (dirty_batch_depth_ > 0 && dirty_batch_coalesce_enabled_()) {
+            if (dirty_batch_hotswap_audit_done_) {
+                ++dirty_batch_coalesced_4678_;
+                return;
+            }
+            dirty_batch_hotswap_audit_done_ = true;
+        }
         {
             gc_coord::Scope hot_coord(gc_coord::Path::HotSwap);
             hot_coord.enter_cascade();

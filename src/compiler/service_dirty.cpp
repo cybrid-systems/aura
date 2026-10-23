@@ -602,8 +602,15 @@ void CompilerService::mark_define_dirty(const std::string& name) {
         // through stale linear EnvFrame state after dirty mark.
         metrics_.linear_post_mutate_enforcements_total.fetch_add(1, std::memory_order_relaxed);
         metrics_.selfevo_linear_enforce_total.fetch_add(1, std::memory_order_relaxed);
-        (void)evaluator_.scan_live_closures_for_linear_captures(
-            /*mark_invalid=*/true, /*only_if_moved=*/true);
+        // Issue #4680: the scan is global (all live closures) and no
+        // evaluation runs inside a dirty batch, so once per batch suffices.
+        if (!(dirty_batch_depth_ > 0 && dirty_batch_coalesce_enabled_() &&
+              dirty_batch_linear_scan_done_)) {
+            (void)evaluator_.scan_live_closures_for_linear_captures(
+                /*mark_invalid=*/true, /*only_if_moved=*/true);
+            if (dirty_batch_depth_ > 0)
+                dirty_batch_linear_scan_done_ = true;
+        }
         // Issue #1920 / #1046 / #2126: capture dirty tracking — record
         // metric + free-var targeted nested only. Do NOT
         // soa_mod.mark_all_blocks_dirty() here: that wiped body-only /
@@ -1456,8 +1463,17 @@ void CompilerService::invalidate_function(const std::string& name) {
     // Soft path already ran expire via atomic_bump_epochs_and_stamp_bridge;
     // re-run after per-name bridge invalidation so any late-stamped IRClosures
     // that still predate cur_epoch are expired before clear_ir_define_env_binding.
-    notify_walk_active_closures_(bridge_epoch());
-    (void)expire_stale_live_closures_(bridge_epoch());
+    // Issue #4680: inside a dirty batch the epoch is bumped once, so a
+    // repeat walk/expire at the same epoch finds nothing new.
+    if (!(dirty_batch_depth_ > 0 && dirty_batch_coalesce_enabled_() &&
+          dirty_batch_walk_epoch_ == bridge_epoch())) {
+        notify_walk_active_closures_(bridge_epoch());
+        (void)expire_stale_live_closures_(bridge_epoch());
+        if (dirty_batch_depth_ > 0)
+            dirty_batch_walk_epoch_ = bridge_epoch();
+    } else {
+        ++dirty_batch_coalesced_4678_;
+    }
 
     // Issue #741: re-stamp EnvFrame version_ for live tree-walker
     // closures captured from quote/lambda paths in impacted blocks.

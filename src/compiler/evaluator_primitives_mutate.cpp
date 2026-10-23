@@ -11433,16 +11433,33 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
             aura::compiler::phase_stats::CascadeIndex);
         std::unordered_map<aura::ast::SymId, std::vector<aura::ast::NodeId>> define_by_sym;
         define_by_sym.reserve(std::max<std::size_t>(16, flat.size() / 8));
-        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            if (flat.is_free_slot(id))
-                continue;
+        // Issue #4680: seed from the maintained tag index (O(#defines))
+        // instead of an O(N) node scan. AURA_DEFINE_TAG_INDEX=0 restores
+        // the full scan. Ids are re-validated; ascending order is kept.
+        static const bool use_tag_index = [] {
+            const char* e = std::getenv("AURA_DEFINE_TAG_INDEX");
+            return !(e && e[0] == '0');
+        }();
+        auto add_def = [&](aura::ast::NodeId id) {
+            if (id >= flat.size() || flat.is_free_slot(id))
+                return;
+            if (flat.tag(id) != aura::ast::NodeTag::Define)
+                return;
             auto v = flat.get(id);
-            if (v.tag != aura::ast::NodeTag::Define)
-                continue;
             if (v.sym_id == aura::ast::INVALID_SYM)
-                continue;
+                return;
             define_by_sym[v.sym_id].push_back(id);
             ++path2_index_nodes;
+        };
+        if (use_tag_index) {
+            auto ids = flat.collect_by_tag(static_cast<std::uint32_t>(aura::ast::NodeTag::Define));
+            std::sort(ids.begin(), ids.end());
+            ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+            for (auto id : ids)
+                add_def(id);
+        } else {
+            for (aura::ast::NodeId id = 0; id < flat.size(); ++id)
+                add_def(id);
         }
         for (const auto& n : defuse_affected_syms_) {
             if (n.empty())
