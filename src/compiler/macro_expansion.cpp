@@ -1411,6 +1411,26 @@ extern "C" int aura_test_claim_same_flat_clone(const void* flat) noexcept {
 extern "C" void aura_test_release_same_flat_clone(const void* flat) noexcept {
     release_same_flat_clone(static_cast<const aura::ast::FlatAST*>(flat));
 }
+// Issue #4511: deterministic inner-splice refuse seam (test-only).
+// The AC needs the workspace flat claimed between the reexpand's OUTER clone
+// and the nested depth-0 clone that expands the macro body. A helper thread
+// racing that window misses it on a loaded 4-vCPU runner (the outer clone can
+// start and finish between two polls), which failed the AC on scheduling
+// rather than on a splice. Armed once, the claim lands at inner-walk entry —
+// the exact window the thread approximates. Production never arms it.
+static std::atomic<const aura::ast::FlatAST*> g_test_inner_claim_flat{nullptr};
+static std::atomic<int> g_test_inner_claim_taken{0};
+extern "C" void aura_test_arm_inner_claim(const void* flat) noexcept {
+    g_test_inner_claim_taken.store(0, std::memory_order_release);
+    g_test_inner_claim_flat.store(static_cast<const aura::ast::FlatAST*>(flat),
+                                  std::memory_order_release);
+}
+extern "C" void aura_test_disarm_inner_claim(void) noexcept {
+    g_test_inner_claim_flat.store(nullptr, std::memory_order_release);
+}
+extern "C" int aura_test_inner_claim_taken(void) noexcept {
+    return g_test_inner_claim_taken.load(std::memory_order_acquire);
+}
 extern "C" void aura_test_arm_nested_clone_steal_inject(void) noexcept {
     g_arm_nested_steal_inject.store(1, std::memory_order_relaxed);
 }
@@ -3808,6 +3828,17 @@ aura::ast::NodeId expand_inner_macros(
                              std::equal_to<>>& macros) {
     const auto parent = (flat == nullptr || root == aura::ast::NULL_NODE) ? aura::ast::NULL_NODE
                                                                           : flat->parent_of(root);
+    // Issue #4511: test-only inner-window claim (see the arm helper above).
+    // One-shot exchange: armed → claim this flat before the nested clone, so
+    // a same-flat refuse is deterministic instead of scheduler-dependent.
+    if (flat != nullptr) {
+        if (auto* armed = g_test_inner_claim_flat.exchange(nullptr, std::memory_order_acq_rel)) {
+            if (armed == flat) {
+                (void)claim_same_flat_clone(flat);
+                g_test_inner_claim_taken.store(1, std::memory_order_release);
+            }
+        }
+    }
     return expand_inner_macros_walk(flat, pool, root, parent, depth, max_depth, macros);
 }
 
