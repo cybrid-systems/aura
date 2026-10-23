@@ -73,7 +73,7 @@ using aura::test::g_passed;
 // cell (TopCellLoad) instead of embedding a copy of the callee IR.
 static bool call_slots_on_4681() {
     const char* v = std::getenv("AURA_CALL_SLOTS");
-    return v != nullptr && v[0] == '1';
+    return !(v != nullptr && v[0] == '0');
 }
 static bool bundle_has_slot_load_4681(const aura::compiler::CompilerService::IRCacheEntry& e) {
     for (const auto& fn : e.irs)

@@ -11404,8 +11404,9 @@ public:
     }
     static bool call_slots_enabled_4681_() noexcept {
         static const bool on = [] {
+            // Default on since the #4681 flip; AURA_CALL_SLOTS=0 opts out.
             const char* e = std::getenv("AURA_CALL_SLOTS");
-            return e && e[0] == '1';
+            return !(e && e[0] == '0');
         }();
         return on;
     }

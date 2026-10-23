@@ -514,7 +514,7 @@ export aura::ir::IRModule lower_to_ir_with_cache(
 // Issue #657: install/clear lowering observability hooks (bridge epoch +
 // linear metadata flow). Called by CompilerService before lowering.
 export void set_lowering_observability_hooks(LoweringObservabilityHooks hooks) noexcept;
-// Issue #4681: call slots. When set (AURA_CALL_SLOTS=1), a reference to
+// Issue #4681: call slots. When set (default; AURA_CALL_SLOTS=0 disables), a reference to
 // a top-level lambda define found in this map lowers to TopCellLoad of the
 // define's env cell (a live slot) instead of copying the callee bundle.
 // Names lowered that way are appended to call_slot_hits_4681().
