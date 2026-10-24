@@ -6958,9 +6958,9 @@ static bool is_deep_predicate_cond_node(const FlatAST& flat, const StringPool& p
 
 // Issue #689: collect IfExpr nodes whose cond uses deep and/or/not
 // predicates anywhere in `root`'s subtree (mutation-affected paths).
-static void collect_deep_predicate_if_exprs_in_subtree(const FlatAST& flat, const StringPool& pool,
-                                                       NodeId root, std::vector<NodeId>& out,
-                                                       std::unordered_set<NodeId>& seen) {
+static void collect_deep_predicate_if_exprs_in_subtree(
+    const FlatAST& flat, const StringPool& pool, NodeId root, std::vector<NodeId>& out,
+    std::unordered_set<NodeId>& seen, std::vector<std::uint8_t>* visited = nullptr) {
     if (root == NULL_NODE || root >= flat.size())
         return;
     std::vector<NodeId> stack;
@@ -6970,6 +6970,13 @@ static void collect_deep_predicate_if_exprs_in_subtree(const FlatAST& flat, cons
         stack.pop_back();
         if (id == NULL_NODE || id >= flat.size())
             continue;
+        // Issue #4682 step 4: a subtree already walked by an earlier root of
+        // this pass yields nothing new (seen already holds its hits).
+        if (visited) {
+            if ((*visited)[id])
+                continue;
+            (*visited)[id] = 1;
+        }
         // Issue #4682 step 5b: column + span reads (no NodeView assembly).
         const auto kids = flat.children(id);
         if (flat.tag(id) == NodeTag::IfExpr && !kids.empty()) {
@@ -6986,9 +6993,9 @@ static void collect_deep_predicate_if_exprs_in_subtree(const FlatAST& flat, cons
 
 // Issue #518: collect IfExpr nodes in `root`'s subtree that
 // carry kOccurrenceDirty or the occurrence-stale column.
-static void collect_occurrence_dirty_if_exprs_in_subtree(const FlatAST& flat, NodeId root,
-                                                         std::vector<NodeId>& out,
-                                                         std::unordered_set<NodeId>& seen) {
+static void collect_occurrence_dirty_if_exprs_in_subtree(
+    const FlatAST& flat, NodeId root, std::vector<NodeId>& out, std::unordered_set<NodeId>& seen,
+    std::vector<std::uint8_t>* visited = nullptr) {
     if (root == NULL_NODE || root >= flat.size())
         return;
     const std::uint8_t kOccurrenceBit =
@@ -7000,6 +7007,11 @@ static void collect_occurrence_dirty_if_exprs_in_subtree(const FlatAST& flat, No
         stack.pop_back();
         if (id == NULL_NODE || id >= flat.size())
             continue;
+        if (visited) {
+            if ((*visited)[id])
+                continue;
+            (*visited)[id] = 1;
+        }
         // Issue #4682 step 5b: column + span reads (no NodeView assembly).
         const auto kids = flat.children(id);
         if (flat.tag(id) == NodeTag::IfExpr &&
@@ -10200,33 +10212,48 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         }
     }
     std::unordered_set<NodeId> occurrence_seen;
+    // Issue #4682 step 4: one visited bitmap per collector so overlapping
+    // roots (ancestor + descendants, parent_id) walk each node once.
+    // AURA_COLLECT_VISITED_4682=0 = old per-root full walks.
+    static const bool collect_visited_4682 = [] {
+        const char* e = std::getenv("AURA_COLLECT_VISITED_4682");
+        return !(e && e[0] == '0');
+    }();
+    std::vector<std::uint8_t> occ_visited_4682, deep_visited_4682;
+    if (collect_visited_4682) {
+        occ_visited_4682.assign(flat.size(), 0);
+        deep_visited_4682.assign(flat.size(), 0);
+    }
+    auto* occ_v4682 = collect_visited_4682 ? &occ_visited_4682 : nullptr;
+    auto* deep_v4682 = collect_visited_4682 ? &deep_visited_4682 : nullptr;
     occurrence_targets.reserve(affected.size());
     for (auto id : affected)
-        collect_occurrence_dirty_if_exprs_in_subtree(flat, id, occurrence_targets, occurrence_seen);
+        collect_occurrence_dirty_if_exprs_in_subtree(flat, id, occurrence_targets, occurrence_seen,
+                                                     occ_v4682);
     if (rec.target_node != NULL_NODE && rec.target_node < flat.size())
         collect_occurrence_dirty_if_exprs_in_subtree(flat, rec.target_node, occurrence_targets,
-                                                     occurrence_seen);
+                                                     occurrence_seen, occ_v4682);
     if (rec.parent_id != NULL_NODE && rec.parent_id < flat.size())
         collect_occurrence_dirty_if_exprs_in_subtree(flat, rec.parent_id, occurrence_targets,
-                                                     occurrence_seen);
+                                                     occurrence_seen, occ_v4682);
     // Issue #3686: occurrence dirty Ifs under earlier Guard records.
     for (const auto& extra : extra_recs) {
         if (&extra == &rec)
             continue;
         if (extra.target_node != NULL_NODE && extra.target_node < flat.size())
-            collect_occurrence_dirty_if_exprs_in_subtree(flat, extra.target_node,
-                                                         occurrence_targets, occurrence_seen);
+            collect_occurrence_dirty_if_exprs_in_subtree(
+                flat, extra.target_node, occurrence_targets, occurrence_seen, occ_v4682);
         if (extra.parent_id != NULL_NODE && extra.parent_id < flat.size())
             collect_occurrence_dirty_if_exprs_in_subtree(flat, extra.parent_id, occurrence_targets,
-                                                         occurrence_seen);
+                                                         occurrence_seen, occ_v4682);
     }
     // Issue #689: deep and/or/not predicates in mutation-affected subtrees.
     for (auto id : affected)
         collect_deep_predicate_if_exprs_in_subtree(flat, pool, id, occurrence_targets,
-                                                   occurrence_seen);
+                                                   occurrence_seen, deep_v4682);
     if (rec.target_node != NULL_NODE && rec.target_node < flat.size())
         collect_deep_predicate_if_exprs_in_subtree(flat, pool, rec.target_node, occurrence_targets,
-                                                   occurrence_seen);
+                                                   occurrence_seen, deep_v4682);
     // Issue #2283: systematic merge of affected_nodes_for_type for delta-touched
     // TypeIds. Build touched_type_ids from CS touched_roots + occurrence vars +
     // rebinding type change, then call affected_nodes_for_type(tid) for each to
