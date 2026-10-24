@@ -1,0 +1,37 @@
+; Issue #4682 step 6a / #4679: (eval-current :jit) must agree with the
+; tree-walker across rebinds. Run with AURA_EVAL_CURRENT_JIT_INCREMENTAL=1
+; (incremental IR route) and unset (legacy eval_ir route).
+(define *fails* 0)
+(define *n* 0)
+(define (check! ok msg)
+  (set! *n* (+ *n* 1))
+  (if (not ok)
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+(define (both msg)
+  (let ((j (eval-current :jit)) (i (eval-current)))
+    (check! (equal? j i) msg)
+    i))
+(set-code "(define f (lambda (x) (+ x 1)))\n(define fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))))\n(define c0 (lambda (x) (f x)))\n(define c1 (lambda (x) (+ (c0 x) (fib 10))))\n(c1 5)")
+(check! (= (both "initial") (+ 6 55)) "initial value")
+(let loop ((i 2))
+  (if (< i 7)
+      (begin
+        (mutate:rebind "f" (string-append "(lambda (x) (+ x " (number->string i) "))") "t")
+        (check! (= (both (string-append "rebind " (number->string i))) (+ 5 i 55))
+                (string-append "value after rebind " (number->string i)))
+        (loop (+ i 1)))))
+;; caller rebind (signature unchanged)
+(mutate:rebind "c0" "(lambda (x) (* 2 (f x)))" "t")
+(check! (= (both "caller rebind") (+ (* 2 11) 55)) "caller rebind value")
+;; refused tail shape: let in the tail -> tree-walker, still equal
+(set-code "(define g (lambda (x) (* x 3)))\n(let ((y 4)) (g y))")
+(check! (= (both "let tail") 12) "let tail value")
+;; multi-form tail
+(set-code "(define g (lambda (x) (* x 3)))\n(g 1)\n(g 2)")
+(check! (= (both "multi tail") 6) "multi tail value")
+;; macro workspace -> refused
+(set-code "(define-syntax twice (syntax-rules () ((_ e) (begin e e))))\n(define g (lambda (x) (+ x 7)))\n(twice (g 1))")
+(both "macro ws")
+(if (= *fails* 0)
+    (begin (display "OK-jit4679 ") (display *n*) (display " checks") (newline))
+    (begin (display "FAILED-jit4679 ") (display *fails*) (newline)))
