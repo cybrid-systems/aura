@@ -11,6 +11,7 @@ module;
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -2118,6 +2119,45 @@ public:
     // for dirty-node incremental patch (vs full O(N) rebuild).
     static constexpr std::uint64_t kTagArityNodeKeyNone = ~std::uint64_t{0};
     std::pmr::vector<std::uint64_t> tag_arity_node_key_;
+    // Issue #4682 step 2: persistent define index (SymId -> live Define
+    // NodeIds), maintained by the same insert/remove/patch/rebuild hooks
+    // as tag_arity_index_ (guarded by tag_arity_index_mtx_).
+    std::unordered_map<SymId, std::vector<NodeId>> define_index_4682_;
+    std::vector<SymId> define_index_sym_of_4682_; // per id; INVALID_SYM = not indexed
+    void define_index_drop_4682_(NodeId id) noexcept {
+        if (id >= define_index_sym_of_4682_.size())
+            return;
+        const SymId old = define_index_sym_of_4682_[id];
+        if (old == INVALID_SYM)
+            return;
+        define_index_sym_of_4682_[id] = INVALID_SYM;
+        auto it = define_index_4682_.find(old);
+        if (it == define_index_4682_.end())
+            return;
+        auto& v = it->second;
+        for (std::size_t i = 0; i < v.size(); ++i)
+            if (v[i] == id) {
+                v[i] = v.back();
+                v.pop_back();
+                break;
+            }
+        if (v.empty())
+            define_index_4682_.erase(it);
+    }
+    void define_index_sync_4682_(NodeId id) noexcept {
+        const bool live_def = id < size() && !is_free_slot(id) && tag_[id] == NodeTag::Define &&
+                              sym_id_[id] != INVALID_SYM;
+        const SymId want = live_def ? sym_id_[id] : INVALID_SYM;
+        if (id < define_index_sym_of_4682_.size() && define_index_sym_of_4682_[id] == want)
+            return;
+        define_index_drop_4682_(id);
+        if (!live_def)
+            return;
+        if (id >= define_index_sym_of_4682_.size())
+            define_index_sym_of_4682_.resize(static_cast<std::size_t>(id) + 1, INVALID_SYM);
+        define_index_sym_of_4682_[id] = want;
+        define_index_4682_[want].push_back(id);
+    }
     // Issue #1503: when dirty_count * 100 > size * pct, prefer full
     // rebuild over per-dirty patch (default 25%). Agent-tunable.
     std::uint8_t tag_arity_index_full_rebuild_threshold_pct_ = 25;
@@ -2768,12 +2808,14 @@ public:
                 tag_arity_index_.erase(it);
         }
         tag_arity_node_key_[id] = kTagArityNodeKeyNone;
+        define_index_drop_4682_(id);
     }
     void tag_arity_index_insert_id(NodeId id) noexcept {
         if (id >= size())
             return;
         if (is_free_slot(id))
             return;
+        define_index_sync_4682_(id);
         const auto tag = static_cast<std::uint32_t>(tag_[id]);
         const std::size_t ar = children_[id].size();
         const auto packed = pack_tag_arity_node_key(tag, ar);
@@ -2814,9 +2856,15 @@ public:
         auto t0 = std::chrono::steady_clock::now();
         const std::size_t n = size();
         tag_arity_node_key_.assign(n, kTagArityNodeKeyNone);
+        define_index_4682_.clear();
+        define_index_sym_of_4682_.assign(n, INVALID_SYM);
         for (NodeId id = 0; id < n; ++id) {
             if (is_free_slot(id))
                 continue;
+            if (tag_[id] == NodeTag::Define && sym_id_[id] != INVALID_SYM) {
+                define_index_sym_of_4682_[id] = sym_id_[id];
+                define_index_4682_[sym_id_[id]].push_back(id);
+            }
             const auto tag = static_cast<std::uint32_t>(tag_[id]);
             const std::size_t ar = children_[id].size();
             const TagArityKey key{tag, static_cast<std::uint16_t>(ar),
@@ -3018,6 +3066,44 @@ public:
                     out.insert(out.end(), ids.begin(), ids.end());
             return out;
         }
+    }
+    // Issue #4682 step 2: live Define NodeIds named `sid`, ascending, from
+    // the maintained define index: O(#defines with that name), not O(N).
+    // AURA_DEFINE_INDEX_CHECK=1 cross-checks every lookup against a scan
+    // (aborts on mismatch) for the test lanes.
+    [[nodiscard]] std::vector<NodeId> defines_for_sym(SymId sid) const {
+        std::vector<NodeId> out;
+        for (;;) {
+            const_cast<FlatAST*>(this)->ensure_tag_arity_index();
+            std::shared_lock<std::shared_mutex> rlock(tag_arity_index_mtx_.mutable_get());
+            if (tag_arity_index_dirty_.load(std::memory_order_acquire) ||
+                (tag_arity_index_.empty() && size() > 0))
+                continue;
+            auto it = define_index_4682_.find(sid);
+            if (it != define_index_4682_.end())
+                for (auto id : it->second)
+                    if (id < size() && !is_free_slot(id) && tag_[id] == NodeTag::Define &&
+                        sym_id_[id] == sid)
+                        out.push_back(id);
+            break;
+        }
+        std::sort(out.begin(), out.end());
+        static const bool check = [] {
+            const char* e = std::getenv("AURA_DEFINE_INDEX_CHECK");
+            return e && e[0] == '1';
+        }();
+        if (check) {
+            std::vector<NodeId> ref;
+            for (NodeId id = 0, n = static_cast<NodeId>(size()); id < n; ++id)
+                if (!is_free_slot(id) && tag_[id] == NodeTag::Define && sym_id_[id] == sid)
+                    ref.push_back(id);
+            if (ref != out) {
+                std::fprintf(stderr, "AURA_DEFINE_INDEX_CHECK mismatch sym=%u index=%zu scan=%zu\n",
+                             static_cast<unsigned>(sid), out.size(), ref.size());
+                std::abort();
+            }
+        }
+        return out;
     }
     // Issue #447: query-stats accessors.
     [[nodiscard]] std::uint64_t tag_arity_index_hits() const noexcept {
@@ -6864,6 +6950,8 @@ public:
         // it lazily.
         tag_arity_index_.clear();
         tag_arity_index_built_size_ = 0;
+        define_index_4682_.clear();
+        define_index_sym_of_4682_.clear();
         type_id_.clear();
         mutation_log_.clear();
         // Issue #282: clear narrowing provenance on FlatAST reset.

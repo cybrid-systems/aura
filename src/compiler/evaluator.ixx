@@ -3326,6 +3326,12 @@ public:
     // set_repopulate_workspace_dep_graph_fn in service.ixx for
     // the rationale.
     std::function<void()> repopulate_workspace_dep_graph_fn_ = nullptr;
+    // Issue #4682 step 2: single-define repopulate (falls back to full).
+    std::function<void(const std::string&, std::uint64_t)> repopulate_dep_graph_one_fn_4682_;
+    void set_repopulate_dep_graph_one_fn_4682(
+        std::function<void(const std::string&, std::uint64_t)> fn) {
+        repopulate_dep_graph_one_fn_4682_ = std::move(fn);
+    }
     void set_repopulate_workspace_dep_graph_fn(std::function<void()> fn) {
         repopulate_workspace_dep_graph_fn_ = std::move(fn);
     }

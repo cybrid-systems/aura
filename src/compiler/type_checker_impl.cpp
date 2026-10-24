@@ -3959,6 +3959,19 @@ void InferenceEngine::seed_workspace_value_defines(FlatAST& flat, StringPool& po
     auto bind_define = [&](NodeId id) {
         if (!flat.is_live_node(id))
             return;
+        // Issue #4682 step 2: column probes (tag / first child tag) before
+        // the full view: this runs over all W root children per rebind.
+        if (flat.tag(id) != NodeTag::Define)
+            return;
+        {
+            const auto ch = flat.children(id);
+            if (ch.empty() || !flat.is_live_node(ch[0]))
+                return;
+            const auto t = flat.tag(ch[0]);
+            if (t != NodeTag::LiteralString && t != NodeTag::LiteralInt &&
+                t != NodeTag::LiteralFloat)
+                return;
+        }
         auto v = flat.get(id);
         if (v.tag != NodeTag::Define || v.sym_id == INVALID_SYM || v.children.empty())
             return;
@@ -3981,9 +3994,9 @@ void InferenceEngine::seed_workspace_value_defines(FlatAST& flat, StringPool& po
         env_.bind(std::move(name), ty);
     };
     bind_define(root);
-    auto rv = flat.get(root);
-    if (rv.tag == NodeTag::Begin || rv.tag == NodeTag::Let || rv.tag == NodeTag::LetRec) {
-        for (auto c : rv.children)
+    const auto rt = flat.tag(root);
+    if (rt == NodeTag::Begin || rt == NodeTag::Let || rt == NodeTag::LetRec) {
+        for (auto c : flat.children(root))
             bind_define(c);
     }
     // Issue #4587: host (define n 5) / (define (get-n) n) live in top_env,
@@ -10038,7 +10051,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                         break;
                     const NodeId gp = flat.parent_of(par);
                     const bool par_is_root_begin =
-                        flat.get(par).tag == NodeTag::Begin &&
+                        flat.tag(par) == NodeTag::Begin &&
                         (par == flat.root || gp == NULL_NODE || gp >= flat.size());
                     if (par_is_root_begin)
                         break;
@@ -10059,7 +10072,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             // Only the referenced defines are added: O(callers), not O(W)
             // (the root Begin itself stays out of the cone).
             if (!lifted.empty() && flat.root != NULL_NODE && flat.root < flat.size() &&
-                flat.get(flat.root).tag == NodeTag::Begin) {
+                flat.tag(flat.root) == NodeTag::Begin) {
                 std::unordered_set<std::uint32_t> want_syms;
                 for (auto top : lifted) {
                     std::vector<NodeId> stack{top};
@@ -10089,7 +10102,28 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                     // O(callers) path still covers callee rebinds, where the
                     // caller's reference is the callee already in the cone.
                     bool need_root = false;
-                    for (auto child : flat.get(flat.root).children) {
+                    // Issue #4682 step 2: probe the persistent define index
+                    // per referenced name (O(refs)) instead of walking all W
+                    // root children. AURA_DEFINE_INDEX_4682=0 keeps the walk.
+                    static const bool use_def_index_4682 = [] {
+                        const char* e = std::getenv("AURA_DEFINE_INDEX_4682");
+                        return !(e && e[0] == '0');
+                    }();
+                    if (use_def_index_4682) {
+                        for (auto sym : want_syms) {
+                            for (auto d :
+                                 flat.defines_for_sym(static_cast<aura::ast::SymId>(sym))) {
+                                if (flat.parent_of(d) == flat.root && d != rec.target_node) {
+                                    need_root = true;
+                                    break;
+                                }
+                            }
+                            if (need_root)
+                                break;
+                        }
+                    }
+                    for (auto child : use_def_index_4682 ? decltype(flat.get(flat.root).children){}
+                                                         : flat.get(flat.root).children) {
                         if (child == NULL_NODE || child >= flat.size())
                             continue;
                         auto cv = flat.get(child);
