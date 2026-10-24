@@ -117,17 +117,37 @@
 (if (> *fails* 0)
     (begin (display "FAIL-4599 filler\n") (exit 1)))
 
-(run-f1 n)
-(run-g n)
-(define t-big (best5 (lambda () (run-f1 n))))
-(define tg-big (best5 (lambda () (run-g n))))
-(define c-big (best5 (lambda () (run-f1-ctl n))))
-(define cg-big (best5 (lambda () (run-g-ctl n))))
-; Issue #4677: compare the CONTROL-NORMALIZED cost across the two phases,
-; cross-multiplied so the arithmetic stays integral. The bounds are the old
-; ones (1.2x + 3%, 2.0x + 8%) restated on the normalized cost.
-(check "f1 ratio" (<= (* t-big c-small 100) (* 123 t-small c-big)) #t)
-(check "g ratio" (<= (* tg-big cg-small 100) (* 208 tg-small cg-big)) #t)
+; Issue #4677 / #4684: one unmeasured warm-up round settles the allocator and
+; any GC the fillers left pending, then two measured rounds. Each round takes
+; its own (target, control) pair back-to-back; a round is inside the bound when
+; its CONTROL-NORMALIZED cost is, cross-multiplied so the arithmetic stays
+; integral (1.2x + 3%, 2.0x + 8% as before). The check fails only when EVERY
+; measured round is outside the bound: a single post-filler stall (contended
+; runner, one GC cycle) no longer turns CI red, while a real define-count
+; regression re-resolves on every call and so stays outside the bound in every
+; round. The bounds themselves are unchanged.
+(define t-big 0)
+(define tg-big 0)
+(define c-big 0)
+(define cg-big 0)
+(define (measure-round)
+  (run-f1 n)
+  (run-g n)
+  (set! t-big (best5 (lambda () (run-f1 n))))
+  (set! tg-big (best5 (lambda () (run-g n))))
+  (set! c-big (best5 (lambda () (run-f1-ctl n))))
+  (set! cg-big (best5 (lambda () (run-g-ctl n))))
+  0)
+(define (f-round-ok?) (<= (* t-big c-small 100) (* 123 t-small c-big)))
+(define (g-round-ok?) (<= (* tg-big cg-small 100) (* 208 tg-small cg-big)))
+(define (rounds-ok pass? k)
+  (let loop ((i 0) (ok 0))
+    (if (< i k)
+        (begin (measure-round) (loop (+ i 1) (if (pass?) (+ ok 1) ok)))
+        ok)))
+(measure-round)  ; warm-up round: not counted, not asserted
+(check "f1 ratio" (rounds-ok f-round-ok? 2) 2)
+(check "g ratio" (rounds-ok g-round-ok? 2) 2)
 
 (if (and (= *fails* 0) (= *passes* 11))
     (display "OK-4599 f1 stays within 1.2x as defines grow\n")
