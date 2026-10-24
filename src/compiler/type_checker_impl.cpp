@@ -9993,6 +9993,9 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         if (!keep_root_begin_4682 && !affected.empty()) {
             std::unordered_set<NodeId> seen(affected.begin(), affected.end());
             const std::size_t n0 = affected.size();
+            std::vector<NodeId> lifted;
+            lifted.reserve(n0);
+            std::unordered_set<NodeId> lifted_seen;
             for (std::size_t k = 0; k < n0; ++k) {
                 NodeId cur = affected[k];
                 if (cur == NULL_NODE || cur >= flat.size())
@@ -10010,8 +10013,81 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                         break;
                     cur = par;
                 }
+                // Every affected node's top-level form is part of the cone
+                // (the primary Define is already there; use sites lift to it).
+                if (cur != NULL_NODE && cur < flat.size() && lifted_seen.insert(cur).second)
+                    lifted.push_back(cur);
                 if (cur != affected[k] && seen.insert(cur).second)
                     affected.push_back(cur);
+            }
+            // Issue #4682: a lifted caller is re-checked whole, so the top-level
+            // Define of every name it references must be in the cone too —
+            // otherwise the callee reads as an unbound variable in the narrow
+            // cone (4362 soft loses the arity gate; 4363 leaves a spurious
+            // "unbound variable: hello" diagnostic after a rejected rebind).
+            // Only the referenced defines are added: O(callers), not O(W)
+            // (the root Begin itself stays out of the cone).
+            if (!lifted.empty() && flat.root != NULL_NODE && flat.root < flat.size() &&
+                flat.get(flat.root).tag == NodeTag::Begin) {
+                std::unordered_set<std::uint32_t> want_syms;
+                for (auto top : lifted) {
+                    std::vector<NodeId> stack{top};
+                    std::unordered_set<NodeId> visited;
+                    while (!stack.empty()) {
+                        const NodeId id = stack.back();
+                        stack.pop_back();
+                        if (id == NULL_NODE || id >= flat.size() || !visited.insert(id).second)
+                            continue;
+                        auto nv = flat.get(id);
+                        if (nv.tag == NodeTag::Variable && nv.sym_id != INVALID_SYM)
+                            want_syms.insert(static_cast<std::uint32_t>(nv.sym_id));
+                        for (auto c : nv.children) {
+                            if (c != NULL_NODE)
+                                stack.push_back(c);
+                        }
+                    }
+                }
+                if (!want_syms.empty()) {
+                    // A lifted caller may reference another top-level define
+                    // (bye calls hello) that is not in the cone. The narrow
+                    // cone does not carry the root Begin's global scope, so
+                    // that reference reads as an unbound variable (4362 soft
+                    // loses the arity gate; 4363 leaves a stale "unbound
+                    // variable: hello"). For that shape only, fall back to the
+                    // root-Begin cone (old behaviour): correctness first. The
+                    // O(callers) path still covers callee rebinds, where the
+                    // caller's reference is the callee already in the cone.
+                    bool need_root = false;
+                    for (auto child : flat.get(flat.root).children) {
+                        if (child == NULL_NODE || child >= flat.size())
+                            continue;
+                        auto cv = flat.get(child);
+                        if (cv.tag != NodeTag::Define || cv.sym_id == INVALID_SYM)
+                            continue;
+                        if (!want_syms.count(static_cast<std::uint32_t>(cv.sym_id)))
+                            continue;
+                        // The mutation's own define resolves in the narrow
+                        // cone (its cone covers the rebind target), so a
+                        // caller referring to it keeps the O(callers) path.
+                        // Any OTHER top-level define needs the root Begin's
+                        // global scope; without it the caller reads it as
+                        // unbound (4362/4363).
+                        if (child != rec.target_node) {
+                            need_root = true;
+                            break;
+                        }
+                    }
+                    if (need_root) {
+                        if (seen.insert(flat.root).second) {
+                            affected.push_back(flat.root);
+                            if (metrics_) {
+                                static_cast<struct CompilerMetrics*>(metrics_)
+                                    ->type_dep_partial_nodes_added.fetch_add(
+                                        1, std::memory_order_relaxed);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
