@@ -2954,6 +2954,15 @@ add_dependencies(all_test_issue_targets test_shape_soa_unit_batch)
 
 aura_add_issue_test(test_mutation_typed_audit_batch)
 
+# Issue #4689: mutate family batch driver (legacy EXCLUDE_FROM_ALL batch;
+# on-demand `ninja test_mutate_batch`). The driver kept the pre-#1958 batch
+# shape and had no target, so its runtime ACs were never executable; register
+# it here so the #4689 rollback-since ACs actually run.
+aura_add_issue_test(test_mutate_batch)
+aura_issue_test_link_light(test_mutate_batch)
+set_target_properties(test_mutate_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+add_dependencies(all_test_issue_targets test_mutate_batch)
+
 # Wave 20 (#1957): linear ownership family batch (tests/observability/)
 aura_add_issue_test(test_linear_ownership_batch)
 aura_issue_test_link_light(test_linear_ownership_batch)
