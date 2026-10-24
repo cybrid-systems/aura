@@ -1325,9 +1325,10 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 const auto rv = flat->get(expanded);
                 if (rv.tag == aura::ast::NodeTag::Define) {
                     if (rv.sym_id != aura::ast::INVALID_SYM) {
-                        auto nm = std::string(pool->resolve(rv.sym_id));
+                        // #4682 B: probe with the view; allocate only on a hit.
+                        const auto nm = pool->resolve(rv.sym_id);
                         if (!nm.empty() && ev.top_env().lookup_primitive(nm))
-                            ws_prim_defines.emplace_back(std::move(nm), rv.sym_id);
+                            ws_prim_defines.emplace_back(std::string(nm), rv.sym_id);
                     }
                 } else {
                     for (auto child : rv.children) {
@@ -1338,9 +1339,9 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                         if (cv.tag != aura::ast::NodeTag::Define ||
                             cv.sym_id == aura::ast::INVALID_SYM)
                             continue;
-                        auto nm = std::string(pool->resolve(cv.sym_id));
+                        const auto nm = pool->resolve(cv.sym_id);
                         if (!nm.empty() && ev.top_env().lookup_primitive(nm))
-                            ws_prim_defines.emplace_back(std::move(nm), cv.sym_id);
+                            ws_prim_defines.emplace_back(std::string(nm), cv.sym_id);
                     }
                 }
             }

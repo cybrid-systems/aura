@@ -944,6 +944,18 @@ private:
     // Maintained by bind_symid* / bind_with_linear_state; rebuilt on
     // set_pool rekey + unbind shift.
     std::unordered_map<aura::ast::SymId, std::size_t> symid_index_;
+    // Issue #4682 (B): set_pool rekey memo. eval-current / mutate flip
+    // top_ between the script pool and the workspace pool every cycle;
+    // each flip re-interned every binding name. Remember the SymIds a
+    // rekey produced per pool (keyed by the pool's unique intern_epoch)
+    // and reuse slot i only when pool->resolve(sym) still equals
+    // bindings_[i].first — identical to what intern() would return.
+    struct RekeyMemo4682 {
+        std::uint64_t epoch = 0;
+        std::vector<aura::ast::SymId> syms;
+    };
+    RekeyMemo4682 rekey_memo_4682_[2];
+    std::uint8_t rekey_memo_next_4682_ = 0;
     // Issue #1539: parallel linear ownership SoA (same length as
     // bindings_symid_). Copied into EnvFrame by alloc_env_frame_from_env.
     std::vector<std::uint8_t> bindings_linear_ownership_state_;

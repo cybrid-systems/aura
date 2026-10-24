@@ -673,12 +673,41 @@ void Env::set_pool(const aura::ast::StringPool* p) {
             std::vector<std::pair<aura::ast::SymId, types::EvalValue>> rekeyed;
             rekeyed.reserve(bindings_.size());
             auto* mut = const_cast<aura::ast::StringPool*>(p);
-            for (const auto& b : bindings_) {
-                rekeyed.emplace_back(mut->intern(b.first), b.second);
+            static const bool memo_on = [] {
+                const char* e = std::getenv("AURA_REKEY_MEMO_4682");
+                return !(e && e[0] == '0');
+            }();
+            RekeyMemo4682* memo = nullptr;
+            if (memo_on && gen != 0) {
+                for (auto& m : rekey_memo_4682_)
+                    if (m.epoch == gen)
+                        memo = &m;
+                if (!memo) {
+                    memo = &rekey_memo_4682_[rekey_memo_next_4682_];
+                    rekey_memo_next_4682_ ^= 1;
+                    memo->epoch = gen;
+                    memo->syms.clear();
+                }
+            }
+            for (std::size_t i = 0; i < bindings_.size(); ++i) {
+                const auto& b = bindings_[i];
+                aura::ast::SymId s;
+                if (memo && i < memo->syms.size() && p->resolve(memo->syms[i]) == b.first) {
+                    s = memo->syms[i];
+                } else {
+                    s = mut->intern(b.first);
+                }
+                rekeyed.emplace_back(s, b.second);
+            }
+            if (memo) {
+                memo->syms.resize(rekeyed.size());
+                for (std::size_t i = 0; i < rekeyed.size(); ++i)
+                    memo->syms[i] = rekeyed[i].first;
             }
             bindings_symid_ = std::move(rekeyed);
             // Issue #4343: SymIds remapped — rebuild the O(1) index.
             symid_index_.clear();
+            symid_index_.reserve(bindings_symid_.size()); // #4682 B: no rehash churn
             for (std::size_t i = 0; i < bindings_symid_.size(); ++i)
                 symid_index_[bindings_symid_[i].first] = i;
             bindings_linear_ownership_state_.assign(bindings_symid_.size(), linear_rt::Untracked);

@@ -1,0 +1,34 @@
+; Issue #4682 B: eval-current probes workspace Define names against the
+; primitive table with a string view (allocating only on a hit). Workspace
+; defines that shadow a primitive must still win inside eval-current, and
+; non-primitive names must be unaffected; repeated eval-current and rebinds
+; must keep the shadow consistent. Also exercises the set_pool rekey memo
+; (AURA_REKEY_MEMO_4682) and value-cell sync prefilter
+; (AURA_VCELL_SYNC_PREFILTER_4682): same results with each set to 0.
+(define *fails* 0)
+(define *n* 0)
+(define (check! ok msg)
+  (set! *n* (+ *n* 1))
+  (if (not ok)
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+(set-code (string-append
+  "(define abs (lambda (x) 42))\n"
+  "(define helper (lambda (x) (+ x 1)))\n"
+  "(define v 7)\n"
+  "(list (abs -3) (helper 1) v)"))
+(check! (equal? (eval-current) (list 42 2 7)) "workspace define shadows primitive")
+(check! (equal? (eval-current) (list 42 2 7)) "shadow stable on repeat")
+(let loop ((i 0))
+  (if (< i 5)
+      (begin
+        (mutate:rebind "abs" (string-append "(lambda (x) " (number->string i) ")") "t")
+        (check! (equal? (eval-current) (list i (if (= i 0) 2 i) 7)) (string-append "rebind shadow " (number->string i)))
+        (mutate:rebind "helper" (string-append "(lambda (x) (+ x " (number->string i) "))") "t")
+        (check! (equal? (eval-current) (list i (+ 1 i) 7)) (string-append "rebind helper " (number->string i)))
+        (loop (+ i 1)))))
+(set-code "(define helper (lambda (x) (* x 3)))\n(list (abs -3) (helper 2))")
+(check! (equal? (eval-current) (list 3 6)) "primitive restored once shadow is gone")
+(check! (= (abs -5) 5) "top-level primitive intact")
+(if (= *fails* 0)
+    (begin (display "OK-primshadow4682 ") (display *n*) (display " checks") (newline))
+    (begin (display "eval_current_prim_shadow_4682: ") (display (- *n* *fails*)) (display "/") (display *n*) (newline) (exit 1)))

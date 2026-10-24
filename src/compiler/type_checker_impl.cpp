@@ -10177,14 +10177,23 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             if (!lifted.empty() && flat.root != NULL_NODE && flat.root < flat.size() &&
                 flat.tag(flat.root) == NodeTag::Begin) {
                 std::unordered_set<std::uint32_t> want_syms;
+                // Issue #4682 (B): per-top visited as a dense bitmap reset via
+                // a touched list (same per-top semantics, no hash-node churn).
+                std::vector<std::uint8_t> visited_bits(flat.size(), 0);
+                std::vector<NodeId> visited_touched;
                 for (auto top : lifted) {
+                    for (auto t : visited_touched)
+                        visited_bits[t] = 0;
+                    visited_touched.clear();
                     std::vector<NodeId> stack{top};
-                    std::unordered_set<NodeId> visited;
                     while (!stack.empty()) {
                         const NodeId id = stack.back();
                         stack.pop_back();
-                        if (id == NULL_NODE || id >= flat.size() || !visited.insert(id).second)
+                        if (id == NULL_NODE || id >= flat.size() || id >= visited_bits.size() ||
+                            visited_bits[id])
                             continue;
+                        visited_bits[id] = 1;
+                        visited_touched.push_back(id);
                         auto nv = flat.get(id);
                         if (nv.tag == NodeTag::Variable && nv.sym_id != INVALID_SYM)
                             want_syms.insert(static_cast<std::uint32_t>(nv.sym_id));
