@@ -177,6 +177,12 @@ static void bump_linear_occurrence_predicate_safe(void* metrics) {
 }
 
 static bool subtree_has_linear_ops(const FlatAST& flat, NodeId root) {
+    // Issue #4682 step 5b: exact short-circuit on the #4598 live counter.
+    if (!flat.has_linear_ops_live() && [] {
+            const char* e = std::getenv("AURA_ESCAPE_LINEAR_GATE_4682");
+            return !(e && e[0] == '0');
+        }())
+        return false;
     std::function<bool(NodeId)> walk = [&](NodeId id) -> bool {
         if (id == NULL_NODE || id >= flat.size() || flat.is_free_slot(id))
             return false;
@@ -6942,13 +6948,14 @@ static void collect_deep_predicate_if_exprs_in_subtree(const FlatAST& flat, cons
         stack.pop_back();
         if (id == NULL_NODE || id >= flat.size())
             continue;
-        const auto v = flat.get(id);
-        if (v.tag == NodeTag::IfExpr && !v.children.empty()) {
-            const auto cond_id = v.child(0);
+        // Issue #4682 step 5b: column + span reads (no NodeView assembly).
+        const auto kids = flat.children(id);
+        if (flat.tag(id) == NodeTag::IfExpr && !kids.empty()) {
+            const auto cond_id = kids[0];
             if (is_deep_predicate_cond_node(flat, pool, cond_id) && seen.insert(id).second)
                 out.push_back(id);
         }
-        for (auto c : v.children) {
+        for (auto c : kids) {
             if (c != NULL_NODE)
                 stack.push_back(c);
         }
@@ -6971,15 +6978,16 @@ static void collect_occurrence_dirty_if_exprs_in_subtree(const FlatAST& flat, No
         stack.pop_back();
         if (id == NULL_NODE || id >= flat.size())
             continue;
-        const auto v = flat.get(id);
-        if (v.tag == NodeTag::IfExpr &&
+        // Issue #4682 step 5b: column + span reads (no NodeView assembly).
+        const auto kids = flat.children(id);
+        if (flat.tag(id) == NodeTag::IfExpr &&
             (flat.is_dirty_for(id, kOccurrenceBit) || flat.is_occurrence_stale(id) != 0) &&
             seen.insert(id).second) {
             out.push_back(id);
         }
-        if (!v.children.empty()) {
-            for (std::size_t i = v.children.size(); i-- > 0;) {
-                const auto c = v.children[i];
+        if (!kids.empty()) {
+            for (std::size_t i = kids.size(); i-- > 0;) {
+                const auto c = kids[i];
                 if (c != NULL_NODE)
                     stack.push_back(c);
             }
@@ -9584,6 +9592,19 @@ static void collect_linear_bindings_under_nodes(const aura::ast::FlatAST& flat,
                                                 const aura::ast::StringPool& pool,
                                                 const std::vector<aura::ast::NodeId>& nodes,
                                                 std::unordered_set<std::string>& out) {
+    // Issue #4682 step 5b: both discovery patterns need a Linear / Move /
+    // Borrow / MutBorrow / Drop node, all counted by the #4598 live counter,
+    // so with none live the walk cannot add a name. Skip the O(subtree) walk
+    // (often the whole workspace via parent_id == root).
+    // AURA_ESCAPE_LINEAR_GATE_4682=0 restores the walk.
+    {
+        static const bool gate_on = [] {
+            const char* e = std::getenv("AURA_ESCAPE_LINEAR_GATE_4682");
+            return !(e && e[0] == '0');
+        }();
+        if (gate_on && !flat.has_linear_ops_live())
+            return;
+    }
     std::function<void(aura::ast::NodeId)> walk = [&](aura::ast::NodeId id) {
         if (id == aura::ast::NULL_NODE || id >= flat.size() || flat.is_free_slot(id))
             return;
