@@ -5288,6 +5288,27 @@ void InferenceEngine::seed_mutation_touched_roots(const FlatAST& flat, const Str
     }
 }
 
+// Issue #4682 step 5c: set while infer_flat_partial's affected loop runs,
+// after its own seed_workspace_value_defines. AURA_SEED_ONCE_4682=0 = old.
+namespace {
+    thread_local const void* seeded_pass_engine_4682 = nullptr;
+    struct SeededPassMarker4682 {
+        const void* prev;
+        explicit SeededPassMarker4682(const void* eng)
+            : prev(seeded_pass_engine_4682) {
+            static const bool on = [] {
+                const char* e = std::getenv("AURA_SEED_ONCE_4682");
+                return !(e && e[0] == '0');
+            }();
+            if (on)
+                seeded_pass_engine_4682 = eng;
+        }
+        ~SeededPassMarker4682() { seeded_pass_engine_4682 = prev; }
+        SeededPassMarker4682(const SeededPassMarker4682&) = delete;
+        SeededPassMarker4682& operator=(const SeededPassMarker4682&) = delete;
+    };
+} // namespace
+
 TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, bool preserve_cs) {
     if (id == NULL_NODE || id >= flat.size() || flat.is_free_slot(id))
         return reg_.dynamic_type();
@@ -5323,7 +5344,8 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, b
     // an earlier lambda is synthesized, and the gate then drops that
     // UnboundVariable because the name is a top-level define. Seed the
     // literal before synthesis so the arith peel sees String.
-    seed_workspace_value_defines(flat, pool);
+    if (!(preserve_cs && seeded_pass_engine_4682 == this))
+        seed_workspace_value_defines(flat, pool);
     // Issue #4107: capture the diagnostic count before synthesis so a
     // production TypeError reported by the lub ground join / arith peel
     // can demote this export (see the authoritative store below).
@@ -10787,6 +10809,15 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         affected.swap(live);
     }
     engine.seed_workspace_value_defines(flat, const_cast<StringPool&>(pool));
+    // Issue #4682 step 5c: membership for the #656 ancestor dedupe, and a
+    // marker telling infer_flat that this pass already seeded (re-seeding
+    // per affected root was O(W) each; seed binds only unbound names, so a
+    // repeat inside the same pass is a no-op).
+    std::unordered_set<NodeId> affected_member_4682(affected.begin(), affected.end());
+    std::unordered_map<NodeId, std::uint32_t> affected_id_count_4682;
+    for (auto a : affected)
+        ++affected_id_count_4682[a];
+    SeededPassMarker4682 seeded_marker_4682(&engine);
 
     std::size_t re_inferred = 0;
     std::uint32_t max_narrow_evidence = 0;
@@ -10811,25 +10842,23 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         // the selective recheck visits the new Lambda's body Variable
         // `x` without x being in env_. Fix: skip `id` if any ancestor
         // is also in the affected set.
+        // Issue #4682 step 5c: one upward walk against a membership set
+        // (was O(|affected|^2 * depth)). Same answer: the walk starts at
+        // parent_of(id), so `id` itself never matches (other than via the
+        // impossible cycle case, which the old loop also tolerated only for
+        // bi != ai entries holding a different copy of id).
         bool ancestor_in_affected = false;
-        for (std::size_t bi = 0; bi < affected.size(); ++bi) {
-            if (bi == ai)
-                continue;
-            auto other = affected[bi];
-            // Walk up from `id` toward root and check if any step
-            // is `other` (also in the affected set). Bounded by
-            // flat.size() for the (impossible-but-safe) cycle case.
+        {
             NodeId cur = flat.parent_of(id);
             std::size_t safety = 0;
             while (cur != aura::ast::NULL_NODE && cur < flat.size() && safety++ < flat.size()) {
-                if (cur == other) {
+                if (affected_member_4682.count(cur) != 0 &&
+                    (cur != id || affected_id_count_4682[cur] > 1)) {
                     ancestor_in_affected = true;
                     break;
                 }
                 cur = flat.parent_of(cur);
             }
-            if (ancestor_in_affected)
-                break;
         }
         if (ancestor_in_affected) {
             continue; // ancestor's recursive walk will cover us
