@@ -1888,6 +1888,31 @@ namespace {
 //      always touch the stack but only emit the barrier when the
 //      stack is non-empty, since an empty stack means no
 //      boundary is active).
+namespace {
+    // Issue #4682 step 1: consume the rebind cone cover at the outermost flush.
+    // Covered iff the only AST mutations since the previous outermost flush on
+    // this flat are rebinds that already dirtied their define + caller cone
+    // (one contiguous mutation-log range). Always advances the flush anchor.
+    bool consume_cone_cover_4682(Evaluator& ev) {
+        auto* flat = ev.workspace_flat();
+        const bool cover_valid = ev.cone_cover_valid_4682_.exchange(false);
+        const std::uint64_t log_now = flat ? flat->mutation_log_size() : 0;
+        const bool same_flat = ev.cone_flush_flat_4682_ == flat;
+        const std::uint64_t last_flush = ev.cone_flush_log_4682_;
+        ev.cone_flush_flat_4682_ = flat;
+        ev.cone_flush_log_4682_ = log_now;
+        return cover_valid && same_flat && flat &&
+               ev.cone_cover_begin_4682_.load(std::memory_order_relaxed) == last_flush &&
+               ev.cone_cover_end_4682_.load(std::memory_order_relaxed) == log_now;
+    }
+    // Counts a skipped #1274 mark-all; returns `covered`.
+    bool cone_skip_4682(Evaluator& ev, bool covered) {
+        if (covered)
+            ev.cone_cover_skip_4682_count_.fetch_add(1, std::memory_order_relaxed);
+        return covered;
+    }
+} // namespace
+
 void Evaluator::flush_mutation_boundary() {
     // (1) Touch the active mutation stack so any pending mutations
     // to the stack itself (push/pop, lazy allocation) are visible.
@@ -1921,16 +1946,7 @@ void Evaluator::flush_mutation_boundary() {
             // Issue #4357: one-line Soft rebind already stamped this define.
             // Issue #3918: heap guards leave the bit false. Yield still has
             // the real checkpoint; the exit fence uses the bit.
-            // Issue #4682 step 1: consume the rebind cone cover. Covered iff
-            // the only AST mutations since the previous outermost flush on
-            // this flat are rebinds that already dirtied their cone.
-            const bool cover_valid = cone_cover_valid_4682_.exchange(false);
-            const std::uint64_t log_now =
-                workspace_flat_ ? workspace_flat_->mutation_log_size() : 0;
-            const bool same_flat = cone_flush_flat_4682_ == workspace_flat_;
-            const std::uint64_t last_flush = cone_flush_log_4682_;
-            cone_flush_flat_4682_ = workspace_flat_;
-            cone_flush_log_4682_ = log_now;
+            const bool covered = consume_cone_cover_4682(*this); // #4682
             if (!rebind_light_path_) {
                 bool ast_mutated = outermost_ast_mutated_;
                 if (!stack.back().exit_fence && workspace_flat_) {
@@ -1938,13 +1954,7 @@ void Evaluator::flush_mutation_boundary() {
                     ast_mutated = frame.lightweight ||
                                   workspace_flat_->mutation_log_size() > frame.mutation_log_size;
                 }
-                const bool cone_covered =
-                    cover_valid && same_flat && workspace_flat_ &&
-                    cone_cover_begin_4682_.load(std::memory_order_relaxed) == last_flush &&
-                    cone_cover_end_4682_.load(std::memory_order_relaxed) == log_now;
-                if (ast_mutated && cone_covered)
-                    cone_cover_skip_4682_count_.fetch_add(1, std::memory_order_relaxed);
-                else if (ast_mutated)
+                if (ast_mutated && !cone_skip_4682(*this, covered))
                     mark_all_defines_dirty_fn_();
             }
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
