@@ -1921,6 +1921,16 @@ void Evaluator::flush_mutation_boundary() {
             // Issue #4357: one-line Soft rebind already stamped this define.
             // Issue #3918: heap guards leave the bit false. Yield still has
             // the real checkpoint; the exit fence uses the bit.
+            // Issue #4682 step 1: consume the rebind cone cover. Covered iff
+            // the only AST mutations since the previous outermost flush on
+            // this flat are rebinds that already dirtied their cone.
+            const bool cover_valid = cone_cover_valid_4682_.exchange(false);
+            const std::uint64_t log_now =
+                workspace_flat_ ? workspace_flat_->mutation_log_size() : 0;
+            const bool same_flat = cone_flush_flat_4682_ == workspace_flat_;
+            const std::uint64_t last_flush = cone_flush_log_4682_;
+            cone_flush_flat_4682_ = workspace_flat_;
+            cone_flush_log_4682_ = log_now;
             if (!rebind_light_path_) {
                 bool ast_mutated = outermost_ast_mutated_;
                 if (!stack.back().exit_fence && workspace_flat_) {
@@ -1928,7 +1938,13 @@ void Evaluator::flush_mutation_boundary() {
                     ast_mutated = frame.lightweight ||
                                   workspace_flat_->mutation_log_size() > frame.mutation_log_size;
                 }
-                if (ast_mutated)
+                const bool cone_covered =
+                    cover_valid && same_flat && workspace_flat_ &&
+                    cone_cover_begin_4682_.load(std::memory_order_relaxed) == last_flush &&
+                    cone_cover_end_4682_.load(std::memory_order_relaxed) == log_now;
+                if (ast_mutated && cone_covered)
+                    cone_cover_skip_4682_count_.fetch_add(1, std::memory_order_relaxed);
+                else if (ast_mutated)
                     mark_all_defines_dirty_fn_();
             }
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
