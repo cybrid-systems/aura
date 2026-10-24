@@ -2296,6 +2296,11 @@ public:
     // Issue #3003: last solve outcome + type-export authority.
     SolveResult last_solve_status_ = SolveResult::SOLVED;
     bool last_type_export_authoritative_ = true;
+    // Issue #4684: the most recent InferenceEngine::lub call under the
+    // production face reported its ground gate (TypeError + Void). The
+    // IfExpr arm consumes this to stamp the node error and leave the
+    // join uncached/dirty instead of clear_dirty'ing a solved Void.
+    bool last_join_gate_error_ = false;
 
     // Issue #281: per-condition memoization for analyze_predicate_flat.
     // Keyed by cond NodeId + the epoch at which the predicate was

@@ -1,0 +1,71 @@
+{
+  "issue": 4684,
+  "title": "production if must not skip the ground gate when a branch is already Dynamic",
+  "checks": [
+    {
+      "ac": "AC1-normalize-before-dynamic",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "Issue #4684: a branch whose synthesized TypeId is already",
+        "last_join_gate_error_ = false;",
+        "a = cs_.normalize(a);",
+        "if (reg_.is_var(a) || reg_.is_var(b))",
+        "incompatible ground types"
+      ]
+    },
+    {
+      "ac": "AC1-no-pre-normalize-early-return",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains_any": [
+        "TypeId InferenceEngine::lub(TypeId a, TypeId b) {\n    last_join_gate_error_ = false;"
+      ]
+    },
+    {
+      "ac": "AC2-gate-flag-declared",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "Issue #4684: the most recent InferenceEngine::lub call under the",
+        "bool last_join_gate_error_ = false;"
+      ]
+    },
+    {
+      "ac": "AC2-ifexpr-arm-refuses-cache",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "if (last_join_gate_error_) {",
+        "flat.set_node_error(id, static_cast<std::uint8_t>(ErrorKind::TypeError));",
+        "flat.mark_dirty(id);",
+        "if_join_refused",
+        "if (call_ground_refused || if_join_refused)"
+      ]
+    },
+    {
+      "ac": "AC3-runtime-assertions",
+      "path": "tests/compiler/test_ir.cpp",
+      "contains": [
+        "ac4684_1_dynamic_arm_gate_prod",
+        "ac4684_2_dynamic_arm_soft_gradual",
+        "ac4684_3_4107_two_grounds_preserved",
+        "ac4684_4_4515_unbound_rep_stays_dynamic",
+        "ac4684_5_consistent_unify_dynamic_int_prod_false"
+      ]
+    },
+    {
+      "ac": "AC4-coverage-check",
+      "path": "scripts/coverage/checks/check_if_dynamic_arm_ground_gate_4684.py",
+      "contains": [
+        "Issue #4684",
+        "#4107",
+        "#4515"
+      ]
+    },
+    {
+      "ac": "AC-no-issue-dir",
+      "forbid": [
+        "tests/issues/test_issue_4684.cpp",
+        "tests/compiler/test_issue_4684.cpp",
+        "docs/design/4684-dynamic-arm-ground-gate.md"
+      ]
+    }
+  ]
+}
