@@ -1,0 +1,53 @@
+{
+  "issue": 4688,
+  "title": "agent mint table overflow must not share one fiber across overflow Agents",
+  "checks": [
+    {
+      "ac": "AC1-overflow-disjoint-band",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "Issue #4688",
+        "kAgentFiberOverflowBand = 0x4166'0000u",
+        "return kAgentFiberOverflowBand +",
+        "g_agent_fiber_stamp_seq.fetch_add(1, std::memory_order_relaxed)"
+      ]
+    },
+    {
+      "ac": "AC1-overflow-replaces-full-table-fallthrough",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains_any": [
+        "draws (the same envelope as the in-table band).\n        return kAgentFiberOverflowBand"
+      ]
+    },
+    {
+      "ac": "AC2-decl-overflow-arm",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "overflow must not return the shared",
+        "#4688",
+        "kAgentMintSlotCount = 32"
+      ]
+    },
+    {
+      "ac": "AC3-runtime-4688",
+      "path": "tests/serve/test_stable_ref_provenance_fiber_cow.cpp",
+      "contains": [
+        "ac4688_1_overflow_mints_never_shared",
+        "ac4688_2_overflow_cross_agent_schema2_denies",
+        "ac4688_3_table_and_fingerprint_zero_unchanged",
+        "ac4688_4_source_cite",
+        "4688 AC1: 33 distinct Agents get pairwise-distinct stamps",
+        "4688 AC2: B does NOT resolve A's live schema-2 Fresh",
+        "4688 AC3: fingerprint-0 mint stable per Evaluator"
+      ]
+    },
+    {
+      "ac": "AC-no-invent",
+      "forbid": [
+        "tests/issues/test_issue_4688.cpp",
+        "tests/core/test_issue_4688.cpp",
+        "docs/design/4688-agent-mint-overflow.md"
+      ]
+    }
+  ]
+}

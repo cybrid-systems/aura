@@ -1887,6 +1887,204 @@ static void ac4235_5_source_cite() {
     aura::core::resource_quota::reset_process_resource_quota_for_test();
 }
 
+// ── #4688 ACs — a full 32-slot mint table must not share one fiber ──
+// #4235's per-Agent table fell through to the per-Evaluator
+// agent_fiber_id_ once all 32 slots were claimed, so a 33rd (and every
+// later) identified Agent on one Evaluator observed that same mint. The
+// hard InvalidFiber equality check only denies when the two non-zero ids
+// differ, so two overflow Agents compared equal and the other Agent's
+// live schema-2 resolved Fresh. #4688 mints a fresh disjoint-band
+// (0x4166xxxx) id on the overflow arm — never agent_fiber_id_ — so no
+// overflow Agent can ever observe another's stamp. The in-table 0x4165
+// slots and the fingerprint-0 per-Evaluator mint are unchanged.
+// Dispatched in the armed pristine block (#1547 budget).
+static void ac4688_1_overflow_mints_never_shared() {
+    std::println("\n=== #4688 AC1: 33rd Agent on a full 32-slot mint table is not shared ===");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+    apply_production_audit_defaults();
+    CompilerService cs;
+    cs.evaluator().arm_production_audit_defaults_for_test();
+    std::vector<std::uint32_t> mints;
+    mints.reserve(33);
+    for (std::uint64_t i = 1; i <= 32; ++i) {
+        cs.evaluator().set_current_agent_fingerprint(0x468800000000ull + i);
+        const auto m = cs.evaluator().agent_scoped_fiber_id();
+        CHECK(m >= 0x41650000u && m < 0x41660000u,
+              "4688 AC1: in-table Agent still mints in the 0x4165 Agent band");
+        mints.push_back(m);
+    }
+    // The 33rd identified Agent: all 32 slots are claimed.
+    cs.evaluator().set_current_agent_fingerprint(0x468800000101ull);
+    const auto overflow = cs.evaluator().agent_scoped_fiber_id();
+    CHECK(overflow != 0, "4688 AC1: overflow Agent still resolves a non-zero fiber");
+    bool pairwise = true;
+    for (std::size_t i = 0; i < mints.size(); ++i) {
+        if (mints[i] == overflow)
+            pairwise = false;
+        for (std::size_t j = i + 1; j < mints.size(); ++j)
+            if (mints[i] == mints[j])
+                pairwise = false;
+    }
+    CHECK(pairwise, "4688 AC1: 33 distinct Agents get pairwise-distinct stamps");
+    // Pre-fix the overflow fell through to this shared per-Evaluator id.
+    cs.evaluator().set_current_agent_fingerprint(0); // implicit agent
+    const auto fallback = cs.evaluator().agent_scoped_fiber_id();
+    CHECK(overflow != fallback,
+          "4688 AC1: overflow stamp is not the shared per-Evaluator agent_fiber_id_");
+    cs.evaluator().disarm_production_audit_defaults_for_test();
+    apply_dev_audit_defaults();
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+}
+
+static void ac4688_2_overflow_cross_agent_schema2_denies() {
+    std::println("\n=== #4688 AC2: overflow Agent cannot resolve another overflow Agent's "
+                 "schema-2 Fresh ===");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::types::as_bool;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_bool;
+    using aura::compiler::types::is_int;
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+    apply_production_audit_defaults();
+    CompilerService cs; // ONE Evaluator: A and B are both overflow Agents
+    cs.evaluator().arm_production_audit_defaults_for_test();
+    for (std::uint64_t i = 1; i <= 32; ++i) {
+        cs.evaluator().set_current_agent_fingerprint(0x468800000100ull + i);
+        (void)cs.evaluator().agent_scoped_fiber_id();
+    }
+    CHECK(cs.eval("(set-code \"(define a4688 (lambda (x) 3))\")").has_value(),
+          "4688 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4688 AC2: eval");
+    cs.evaluator().set_current_agent_fingerprint(0x468800000201ull); // overflow Agent A
+    const auto mint_a = cs.evaluator().agent_scoped_fiber_id();
+    CHECK(mint_a >= 0x41660000u, "4688 AC2: overflow Agent mints from the disjoint overflow band");
+    CHECK(cs.eval("(define q4688a (query :find \"a4688\" :as-query-result #t))").has_value(),
+          "4688 AC2: A exports a live schema-2 QueryResult");
+    auto fid = cs.eval("(hash-ref q4688a \"fiber-id\")");
+    const auto fid_v = fid && is_int(*fid) ? as_int(*fid) : -1;
+    CHECK(fid_v >= 0x41660000LL, "4688 AC2: A's schema-2 stamp carries an overflow-band fiber");
+    cs.evaluator().set_current_agent_fingerprint(0x468800000202ull); // overflow Agent B
+    const auto mint_b = cs.evaluator().agent_scoped_fiber_id();
+    CHECK(mint_b != mint_a, "4688 AC2: two overflow Agents on the full table mint distinct ids");
+    auto fresh_b = cs.eval("(query:result-fresh? q4688a)");
+    CHECK(fresh_b && is_bool(*fresh_b) && !as_bool(*fresh_b),
+          "4688 AC2: B does NOT resolve A's live schema-2 Fresh (InvalidFiber deny)");
+    // Control: the same result under A's stamped fiber is Fresh — the deny
+    // above is the fiber equality, not a generation/wrap/tenant mismatch.
+    aura::core::capability::set_effect_fiber_id_override(static_cast<std::uint32_t>(fid_v));
+    auto fresh_own = cs.eval("(query:result-fresh? q4688a)");
+    CHECK(fresh_own && is_bool(*fresh_own) && as_bool(*fresh_own),
+          "4688 AC2: the export is otherwise fresh — only the foreign fiber denies");
+    aura::core::capability::set_effect_fiber_id_override(0);
+    CHECK(cs.eval("(define m4688b (query:result-matches q4688a))").has_value(),
+          "4688 AC2: B query:result-matches attempt binds");
+    auto eq_stale = cs.eval("(equal? (car m4688b) \"stale-ref\")");
+    CHECK(eq_stale && is_bool(*eq_stale) && as_bool(*eq_stale),
+          "4688 AC2: B cannot read A's node — stale-ref");
+    cs.evaluator().disarm_production_audit_defaults_for_test();
+    apply_dev_audit_defaults();
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+}
+
+static void ac4688_3_table_and_fingerprint_zero_unchanged() {
+    std::println(
+        "\n=== #4688 AC3: 32 in-table slots + fingerprint-0 per-Evaluator mint unchanged ===");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+    apply_production_audit_defaults();
+    CompilerService cs;
+    cs.evaluator().arm_production_audit_defaults_for_test();
+    std::vector<std::uint32_t> first;
+    first.reserve(32);
+    for (std::uint64_t i = 1; i <= 32; ++i) {
+        cs.evaluator().set_current_agent_fingerprint(0x468800000300ull + i);
+        first.push_back(cs.evaluator().agent_scoped_fiber_id());
+    }
+    bool distinct = true;
+    for (std::size_t i = 0; i < first.size(); ++i)
+        for (std::size_t j = i + 1; j < first.size(); ++j)
+            if (first[i] == first[j])
+                distinct = false;
+    CHECK(distinct, "4688 AC3: the 32 in-table slots stay distinct");
+    bool stable = true;
+    for (std::size_t i = 0; i < first.size(); ++i) {
+        cs.evaluator().set_current_agent_fingerprint(0x468800000300ull + i + 1);
+        if (cs.evaluator().agent_scoped_fiber_id() != first[i])
+            stable = false;
+    }
+    CHECK(stable, "4688 AC3: in-table hits keep their mint (hit path unchanged)");
+    // A 33rd identified Agent must not evict a claimed slot.
+    cs.evaluator().set_current_agent_fingerprint(0x468800000401ull);
+    (void)cs.evaluator().agent_scoped_fiber_id();
+    bool kept = true;
+    for (std::size_t i = 0; i < first.size(); ++i) {
+        cs.evaluator().set_current_agent_fingerprint(0x468800000300ull + i + 1);
+        if (cs.evaluator().agent_scoped_fiber_id() != first[i])
+            kept = false;
+    }
+    CHECK(kept, "4688 AC3: an overflow Agent does not evict a table slot");
+    // Fingerprint 0: the implicit agent keeps #4165's stable per-Evaluator mint.
+    cs.evaluator().set_current_agent_fingerprint(0);
+    const auto z1 = cs.evaluator().agent_scoped_fiber_id();
+    const auto z2 = cs.evaluator().agent_scoped_fiber_id();
+    CHECK(z1 >= 0x41650000u && z1 < 0x41660000u,
+          "4688 AC3: fingerprint-0 mint stays in the 0x4165 Agent band");
+    CHECK(z1 == z2, "4688 AC3: fingerprint-0 mint stable per Evaluator (#4165 kept)");
+    bool disjoint = true;
+    for (const auto m : first)
+        if (m == z1)
+            disjoint = false;
+    CHECK(disjoint, "4688 AC3: implicit-agent mint stays distinct from identified mints");
+    cs.evaluator().disarm_production_audit_defaults_for_test();
+    apply_dev_audit_defaults();
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+}
+
+static void ac4688_4_source_cite() {
+    std::println("\n=== #4688 AC4: source-cite — overflow arm never returns the shared mint ===");
+    auto read_src = [](const char* rel) {
+        std::ifstream f(rel);
+        return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    };
+    const auto sec = read_src("src/compiler/evaluator_security.cpp");
+    const auto begin = sec.find("std::uint32_t Evaluator::agent_scoped_fiber_id()");
+    const auto end = sec.find("void Evaluator::stamp_ref_tenant", begin);
+    CHECK(begin != std::string::npos && end != std::string::npos && end > begin,
+          "4688 AC4: resolution body located");
+    if (begin != std::string::npos && end != std::string::npos && end > begin) {
+        const auto body = sec.substr(begin, end - begin);
+        CHECK(body.find("Issue #4688") != std::string::npos,
+              "4688 AC4: overflow arm cites the issue");
+        CHECK(body.find("kAgentFiberOverflowBand") != std::string::npos,
+              "4688 AC4: overflow mints from the disjoint band");
+        const auto full = body.rfind("compare_exchange_strong");
+        const auto over = body.find("kAgentFiberOverflowBand +");
+        CHECK(full != std::string::npos && over != std::string::npos && over > full,
+              "4688 AC4: overflow mint replaces the post-CAS full-table fallthrough");
+        CHECK(body.find("if (agent_fiber_id_ == 0)") != std::string::npos,
+              "4688 AC4: fingerprint-0 per-Evaluator mint arm kept");
+    }
+    const auto dec = read_src("src/compiler/query_result_decode.hh");
+    CHECK(dec.find("current_fiber_id != 0 && m.fiber_id != current_fiber_id") != std::string::npos,
+          "4688 AC4: hard InvalidFiber equality untouched (no weakening)");
+    {
+        std::ifstream f("tests/core/test_issue_4688.cpp");
+        CHECK(!f.good(), "4688 AC4: no tests/core/test_issue_4688.cpp (#81934)");
+    }
+    {
+        std::ifstream f("docs/design/4688-agent-mint-overflow.md");
+        CHECK(!f.good(), "4688 AC4: no docs/design/4688-*");
+    }
+    {
+        std::ifstream f("scripts/coverage/manifests/4688.json");
+        CHECK(f.good(), "4688 AC4: coverage manifest present");
+    }
+}
+
 // Issue #4438: fiberless production query resolve passed aura_fiber_current_id()
 // (0) into query_result_is_fresh_with_refs, so another Agent's schema-2 hash
 // was Fresh and query:node returned the node. Packed ensure compared only the
@@ -2267,6 +2465,11 @@ int main() {
     ac4235_3_unidentified_agent_keeps_per_evaluator_mint();
     ac4235_4_override_beats_agent_mint();
     ac4235_5_source_cite();
+    // #4688 ACs (4) — full 32-slot mint table must not share one fiber.
+    ac4688_1_overflow_mints_never_shared();
+    ac4688_2_overflow_cross_agent_schema2_denies();
+    ac4688_3_table_and_fingerprint_zero_unchanged();
+    ac4688_4_source_cite();
     ac4438_fiberless_cross_agent_query_stale();
     // ORIG ACs (9)
     ac1_orig();

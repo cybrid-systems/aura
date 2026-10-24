@@ -8778,9 +8778,10 @@ public:
     // low 32 bits = the minted Agent-band id. Zero word = free slot (a
     // key32 of 0 can never be stored: the fingerprint-0 case takes the
     // agent_fiber_id_ fallback before the table). 32 slots bound the one-
-    // fiber-per-Agent deploy contract; overflow degrades to the
-    // per-Evaluator mint — fail-closed, a shared mint can only widen
-    // InvalidFiber denies, never admit a foreign resolve. Single-word CAS
+    // fiber-per-Agent deploy contract; overflow must not return the shared
+    // per-Evaluator id (#4688) — it mints a unique disjoint-band id per
+    // resolve instead (fail-closed: own re-resolve also denies InvalidFiber,
+    // never a shared stamp). Single-word CAS
     // claims keep readers torn-state-free with no lock; mutable for const
     // stamp/resolve.
     static constexpr std::size_t kAgentMintSlotCount = 32;
