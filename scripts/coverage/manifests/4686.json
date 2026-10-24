@@ -1,0 +1,54 @@
+{
+  "issue": 4686,
+  "title": "second SecurityEvent WAL enable failure must not report crash-recovery success nor keep fail-closed disarmed",
+  "checks": [
+    {
+      "ac": "AC1-recovery-stamp-after-open",
+      "path": "src/core/security_event_wal.hh",
+      "contains": [
+        "Issue #4686",
+        "bool replayed_nonempty = false;",
+        "replayed_nonempty = !out_replay->empty();",
+        "Issue #4686: stamp recovery success only after the segment really",
+        "if (replayed_nonempty)",
+        "g_security_event_wal_metrics().security_event_crash_recovery_success.fetch_add("
+      ]
+    },
+    {
+      "ac": "AC2-enable-result-consumed",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "Issue #4686: the sidecar enable result is authoritative",
+        "const bool se_ok = enable_security_event_wal(persist_dir);",
+        "if (!se_ok) {",
+        "wal_fail_closed_defaulted_by_force_wal() != 0",
+        "arm_force_wal_enable_fail();",
+        "Issue #4686: the empty-sidecar rebuild arm is only reachable"
+      ]
+    },
+    {
+      "ac": "AC3-runtime-4686",
+      "path": "tests/compiler/test_audit_durable_gap_force_wal.cpp",
+      "contains": [
+        "4686 AC1: second enable reports failure",
+        "4686 AC1: recovery counter not bumped by the failed open",
+        "4686 AC1: enable-fail posture re-armed (was disarmed)",
+        "4686 AC2: overflow reason is se-wal-enable-miss",
+        "4686 AC2: nothing silently written to the unopened segment",
+        "4686 AC3: non-empty replay now counts recovery success once",
+        "4686 AC3: recovered deny reached the segment",
+        "4686 AC3: recovered pair can be disarmed",
+        "4686 AC4: Soft failure does not arm the fail-closed posture",
+        "4686 AC4: Soft fail-closed stays off"
+      ]
+    },
+    {
+      "ac": "AC4-no-invent",
+      "forbid": [
+        "tests/issues/test_issue_4686.cpp",
+        "tests/compiler/test_issue_4686.cpp",
+        "docs/design/4686-se-wal-second-enable.md"
+      ]
+    }
+  ]
+}

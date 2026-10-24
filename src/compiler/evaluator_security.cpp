@@ -1398,13 +1398,32 @@ bool Evaluator::enable_mutation_audit_wal(std::string_view persist_dir) noexcept
     const auto se_recov_before =
         ::aura::core::security_event_wal::snapshot_security_event_wal_stats()
             .crash_recovery_success;
-    (void)enable_security_event_wal(persist_dir);
+    // Issue #4686: the sidecar enable result is authoritative. A second
+    // enable can fail to open an existing segment (read-only file) after the
+    // first enable already disarmed fail-closed; the recovery counter must
+    // never be read as replay success in that case.
+    const bool se_ok = enable_security_event_wal(persist_dir);
+    if (!se_ok) {
+        // The enable-fail posture is only clear because an earlier enable
+        // succeeded and disarmed it (#3965 / #4005). Re-arm it so deny keeps
+        // the force_wal posture (wal-enable-failed + schedule deny) and the
+        // existing overflow / se-wal-enable-miss accounting stays reachable
+        // instead of the mutation sliding through on the 1024-entry ring.
+        // Soft / WAL-off (never force_wal-defaulted) and an already-armed
+        // process stay untouched; arm honours AURA_WAL_APPEND_FAIL_OPEN.
+        if (::aura::core::wal_slo::wal_fail_closed_defaulted_by_force_wal() != 0 &&
+            ::aura::core::wal_slo::force_wal_enable_failed() == 0)
+            ::aura::core::wal_slo::arm_force_wal_enable_fail();
+        return false;
+    }
     const auto se_recov_after =
         ::aura::core::security_event_wal::snapshot_security_event_wal_stats()
             .crash_recovery_success;
     const bool sidecar_replayed_nonempty = se_recov_after > se_recov_before;
     if (sidecar_replayed_nonempty)
         return true;
+    // Issue #4686: the empty-sidecar rebuild arm is only reachable when the
+    // sidecar actually opened (se_ok) and replayed nothing.
     // Issue #3465: fallback rebuild. Never invent mid from seq/1; skip
     // mid==0. Stored reason if the tail is present, else wal-replay-legacy.
     {
