@@ -46,7 +46,21 @@ def _switch_cases(impl: str) -> set[str]:
     start = impl.find("TypeId InferenceEngine::synthesize_flat")
     if start < 0:
         return set()
-    body = impl[start : start + 8000]
+    sw = impl.find("switch (v.tag)", start)
+    if sw < 0:
+        return set()
+    depth = 0
+    i = sw
+    while i < len(impl):
+        c = impl[i]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    body = impl[sw:i]
     return set(re.findall(r"case\s+Tag::([A-Za-z_][A-Za-z0-9_]*)", body))
 
 
