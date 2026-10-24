@@ -1,0 +1,66 @@
+; Issue #4679: eval-current reuses the closure of a clean top-level lambda
+; (no per-define closure/env-frame rebuild) and indexes the letrec cell scan.
+; Rebinds, cascaded callers, set!, duplicate names and set-code must still
+; observe fresh semantics. W >= 16 exercises the indexed path.
+(define *fails* 0)
+(define *n* 0)
+(define (check! ok msg)
+  (set! *n* (+ *n* 1))
+  (if (not ok)
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+(define (gen-src w extra)
+  (let loop ((i 0) (acc ""))
+    (if (>= i w)
+        (string-append "(define base (lambda (x) (+ x 1)))\n"
+                       "(define counter 0)\n"
+                       "(define bump (lambda () (set! counter (+ counter 1)) counter))\n"
+                       acc extra)
+        (loop (+ i 1)
+              (string-append acc "(define f" (number->string i)
+                             " (lambda (x) (base (+ x " (number->string i) "))))\n")))))
+(set-code (gen-src 40 "(define top (lambda (x) (f39 (f0 x))))\n"))
+(eval-current)
+(check! (= (f0 1) 2) "initial f0")
+(check! (= (top 1) 42) "initial top")
+;; callee rebind: every clean caller (reused closures) must see it
+(let loop ((k 0))
+  (if (< k 10)
+      (begin
+        (mutate:rebind "base" (string-append "(lambda (x) (* x " (number->string (+ k 2)) "))") "t")
+        (eval-current)
+        (check! (= (f3 1) (* 4 (+ k 2))) "f3 after base rebind")
+        (check! (= (top 0) (* (+ (* 0 (+ k 2)) 39) (+ k 2))) "top after base rebind")
+        (loop (+ k 1)))))
+;; caller rebind
+(mutate:rebind "f5" "(lambda (x) (- x 5))" "t")
+(eval-current)
+(check! (= (f5 10) 5) "f5 rebound")
+(check! (= (f6 0) (* 6 11)) "f6 untouched")
+;; set! through a reused closure writes the live global cell; eval-current
+;; re-runs non-lambda defines (counter resets) exactly as before #4679.
+(check! (= (bump) 1) "bump 1")
+(check! (= (bump) 2) "bump 2")
+(mutate:rebind "f7" "(lambda (x) x)" "t")
+(eval-current)
+(check! (= (bump) 1) "reused bump sees re-run counter define")
+(check! (= counter 1) "counter cell shared with reused closure")
+;; rebind the middle of a chain
+(mutate:rebind "f39" "(lambda (x) (+ x 1000))" "t")
+(eval-current)
+(check! (= (top 0) (+ (* 0 11) 1000)) "top sees f39 rebind")
+;; set-code with a duplicate name: last define wins
+(set-code (gen-src 20 "(define f3 (lambda (x) 'dup))\n(define alias f3)\n"))
+(eval-current)
+(mutate:rebind "f3" "(lambda (x) 'z)" "t")
+(eval-current)
+(check! (eq? (f3 0) 'z) "duplicate-name define rebound")
+(check! (eq? (alias 0) 'z) "alias re-run after rebind")
+;; set-code removing and re-adding defines
+(set-code (gen-src 18 ""))
+(eval-current)
+(check! (= (f17 0) 18) "re-set-code f17")
+(mutate:rebind "base" "(lambda (x) (- x))" "t")
+(eval-current)
+(check! (= (f17 1) -18) "f17 after base rebind post set-code")
+(display "eval_current_closure_reuse_4679: ") (display (- *n* *fails*)) (display "/") (display *n*) (newline)
+(if (> *fails* 0) (exit 1))

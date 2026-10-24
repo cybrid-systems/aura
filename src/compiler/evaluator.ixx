@@ -6701,6 +6701,19 @@ private:
     //     memory_order_acquire — synchronizes with prior releases.
     //   - read for stats / debug: memory_order_relaxed is fine.
     std::atomic<std::uint64_t> defuse_version_{0};
+
+public:
+    // Issue #4679: clean top-level lambda closure reuse in eval-current.
+    std::uint64_t closure_reuse_4679_count_ = 0;
+    static bool closure_reuse_4679_enabled() noexcept {
+        static const bool on = [] {
+            const char* e = std::getenv("AURA_EVAL_CLOSURE_REUSE_4679");
+            return !(e && e[0] == '0');
+        }();
+        return on;
+    }
+
+private:
     // Issue #2043: linear-ownership epoch — bumped under mutate_mtx_ at the
     // end of finalize_linear_gc_invalidation_window_ so apply / JIT linear
     // fences can detect "invalidate completed linear+GC revalidation".

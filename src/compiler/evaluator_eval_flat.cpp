@@ -8519,6 +8519,11 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     auto top_capture_is_live_safe = [&]() -> bool {
                         if (current_env != &top_ || top_.cap_snapshot())
                             return false;
+                        // Issue #4679: O(bindings) per Lambda made W top-level
+                        // defines O(W^2) per eval-current. With no linear state
+                        // ever written every binding is Untracked (#4683 flag).
+                        if (!linear_rt::state_ever_written())
+                            return true;
                         for (auto st : top_.bindings_linear_ownership_state())
                             if (st != linear_rt::Untracked)
                                 return false;
@@ -8567,11 +8572,12 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         };
                         thread_local ModuleCaptureShare share;
                         bool linear_free = true;
-                        for (auto st : current_env->bindings_linear_ownership_state())
-                            if (st != linear_rt::Untracked) {
-                                linear_free = false;
-                                break;
-                            }
+                        if (linear_rt::state_ever_written())
+                            for (auto st : current_env->bindings_linear_ownership_state())
+                                if (st != linear_rt::Untracked) {
+                                    linear_free = false;
+                                    break;
+                                }
                         if (linear_free) {
                             const Env& ce = *current_env;
                             const auto pid = ce.parent_id();
@@ -9144,18 +9150,18 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         auto cid = v.child(i);
                         if (cid == aura::ast::NULL_NODE)
                             continue;
-                        auto child_node = f->get(cid);
-                        if (child_node.tag == aura::ast::NodeTag::Define) {
+                        // Issue #4679: Define children read SoA columns; a
+                        // full NodeView per top-level form was O(W) assembly.
+                        if (f->tag(cid) == aura::ast::NodeTag::Define) {
                             define_count++;
                             if (define_count > 1)
                                 has_multiple_defs = true;
                             if (saw_non_define)
                                 define_after_expr = true;
-                            letrec_defs.push_back({std::string(p->resolve(child_node.sym_id)),
-                                                   child_node.children.empty()
-                                                       ? aura::ast::NULL_NODE
-                                                       : child_node.child(0)});
-                        } else if (!is_module_prologue(child_node)) {
+                            const auto dch = f->children(cid);
+                            letrec_defs.push_back({std::string(p->resolve(f->sym_id(cid))),
+                                                   dch.empty() ? aura::ast::NULL_NODE : dch[0]});
+                        } else if (!is_module_prologue(f->get(cid))) {
                             // Real body expr (not export/require/import).
                             saw_non_define = true;
                         }
@@ -9179,18 +9185,19 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             auto cid = v.child(ci);
                             if (cid == aura::ast::NULL_NODE)
                                 continue;
-                            auto child_node = f->get(cid);
-                            if (child_node.tag == aura::ast::NodeTag::Define) {
+                            // Issue #4679: Define children read SoA columns; a
+                            // full NodeView per top-level form was O(W) assembly.
+                            if (f->tag(cid) == aura::ast::NodeTag::Define) {
                                 define_count++;
                                 if (define_count > 1)
                                     has_multiple_defs = true;
                                 if (saw_non_define)
                                     define_after_expr = true;
-                                letrec_defs.push_back({std::string(p->resolve(child_node.sym_id)),
-                                                       child_node.children.empty()
-                                                           ? aura::ast::NULL_NODE
-                                                           : child_node.child(0)});
-                            } else if (!is_module_prologue(child_node)) {
+                                const auto dch = f->children(cid);
+                                letrec_defs.push_back(
+                                    {std::string(p->resolve(f->sym_id(cid))),
+                                     dch.empty() ? aura::ast::NULL_NODE : dch[0]});
+                            } else if (!is_module_prologue(f->get(cid))) {
                                 saw_non_define = true;
                             }
                         }
@@ -9206,8 +9213,11 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             auto cid = v.child(i);
                             if (cid == aura::ast::NULL_NODE)
                                 continue;
-                            auto child_node = f->get(cid);
-                            if (!is_module_prologue(child_node))
+                            const auto ctag = f->tag(cid);
+                            if (ctag != aura::ast::NodeTag::Export &&
+                                ctag != aura::ast::NodeTag::Call)
+                                continue;
+                            if (!is_module_prologue(f->get(cid)))
                                 continue;
                             auto r = finish_child(eval_flat(*f, *p, cid, eval_env), cid);
                             if (!r || (is_error(*r) && !is_string(*r)))
@@ -9227,6 +9237,25 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             if (p)
                                 mutable_env.set_pool(p);
 
+                            // #4679: index last local cell per name once (was an
+                            // O(W*bindings) scan). AURA_LETREC_SCAN_4679=1 = old.
+                            static const bool force_scan_4679 = [] {
+                                const char* e = std::getenv("AURA_LETREC_SCAN_4679");
+                                return e && *e == '1';
+                            }();
+                            constexpr std::size_t kLetrecIndexMin = 16;
+                            const bool use_index =
+                                !force_scan_4679 && letrec_defs.size() >= kLetrecIndexMin;
+                            std::unordered_map<std::string, std::size_t> last_cell;
+                            if (use_index) {
+                                const auto& bs = mutable_env.bindings();
+                                last_cell.reserve(bs.size() + letrec_defs.size());
+                                for (const auto& b : bs) {
+                                    if (is_cell(b.second))
+                                        last_cell[b.first] = as_cell_id(b.second);
+                                }
+                            }
+                            cell_ids.reserve(letrec_defs.size());
                             for (auto& d : letrec_defs) {
                                 // Issue #2571: re-entering a multi-define begin
                                 // inside (while …) must reuse an existing cell
@@ -9243,11 +9272,16 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 // but local string match is the correct policy
                                 // for "same name re-entry" here.
                                 std::optional<std::size_t> existing_ci;
-                                for (auto it = mutable_env.bindings().rbegin();
-                                     it != mutable_env.bindings().rend(); ++it) {
-                                    if (it->first == d.first && is_cell(it->second)) {
-                                        existing_ci = as_cell_id(it->second);
-                                        break;
+                                if (use_index) {
+                                    if (auto it = last_cell.find(d.first); it != last_cell.end())
+                                        existing_ci = it->second;
+                                } else {
+                                    for (auto it = mutable_env.bindings().rbegin();
+                                         it != mutable_env.bindings().rend(); ++it) {
+                                        if (it->first == d.first && is_cell(it->second)) {
+                                            existing_ci = as_cell_id(it->second);
+                                            break;
+                                        }
                                     }
                                 }
                                 if (existing_ci) {
@@ -9256,6 +9290,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 }
                                 auto ci = alloc_cell(make_void());
                                 mutable_env.bind(d.first, make_cell(ci));
+                                if (use_index)
+                                    last_cell[d.first] = ci;
                                 cell_ids.push_back(ci);
                             }
                         }
@@ -9281,7 +9317,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             auto rhs = letrec_defs[i].second;
                             if (rhs == aura::ast::NULL_NODE)
                                 continue;
-                            if (f->get(rhs).tag != aura::ast::NodeTag::Lambda)
+                            if (f->tag(rhs) != aura::ast::NodeTag::Lambda)
                                 continue;
                             lambda_def[i] = 1;
                             if (cell_ids[i] < cells_.size())
@@ -9313,8 +9349,39 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             auto& d = letrec_defs[i];
                             if (d.second == aura::ast::NULL_NODE)
                                 continue;
-                            if (f->get(d.second).tag != aura::ast::NodeTag::Lambda)
+                            if (f->tag(d.second) != aura::ast::NodeTag::Lambda)
                                 continue;
+                            // Issue #4679: a clean top-level lambda whose cell
+                            // still holds the closure built from this very node
+                            // is reused instead of re-allocating a closure + env
+                            // frame per define per eval-current (O(W) closures).
+                            // Rebinds dirty their own subtree (and cascaded
+                            // callers), so those still rebuild.
+                            // AURA_EVAL_CLOSURE_REUSE_4679=0 disables.
+                            if (closure_reuse_4679_enabled() && &eval_env == &top_ &&
+                                !f->has_dirty_subtree(d.second) && cell_ids[i] < cells_.size() &&
+                                is_closure(cells_[cell_ids[i]])) {
+                                const auto rcid = as_closure_id(cells_[cell_ids[i]]);
+                                const auto dch = f->children(d.second);
+                                const auto want_body = dch.empty() ? aura::ast::NULL_NODE : dch[0];
+                                bool reuse = false;
+                                if (!types::is_ffi_closure_id(rcid)) {
+                                    auto& sh = closures_shards_[closures_shard_index(rcid)];
+                                    std::shared_lock<std::shared_mutex> rl(sh.mu);
+                                    auto it = sh.map.find(rcid);
+                                    if (it != sh.map.end()) {
+                                        const auto& cl = it->second;
+                                        reuse = cl.flat == f && cl.body_id == want_body &&
+                                                cl.lifetime_valid_for_views() &&
+                                                !cl.must_deopt_before_next_call &&
+                                                cl.linear_state == 0;
+                                    }
+                                }
+                                if (reuse) {
+                                    ++closure_reuse_4679_count_;
+                                    continue;
+                                }
+                            }
                             auto val = eval_flat(*f, *p, d.second, eval_env);
                             if (!val) {
                                 rollback_still_void_defs();
@@ -9326,12 +9393,12 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             auto& d = letrec_defs[i];
                             if (d.second == aura::ast::NULL_NODE)
                                 continue;
-                            if (f->get(d.second).tag == aura::ast::NodeTag::Lambda)
+                            if (f->tag(d.second) == aura::ast::NodeTag::Lambda)
                                 continue;
                             // Issue #4354: bare alias written before the
                             // lambda redefinition captures the pre-group value.
-                            if (p && f->get(d.second).tag == aura::ast::NodeTag::Variable) {
-                                auto vname = std::string(p->resolve(f->get(d.second).sym_id));
+                            if (p && f->tag(d.second) == aura::ast::NodeTag::Variable) {
+                                auto vname = std::string(p->resolve(f->sym_id(d.second)));
                                 bool earlier_lambda = false;
                                 bool later_lambda = false;
                                 EvalValue snap = make_void();
@@ -9363,10 +9430,9 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             auto cid = v.child(i);
                             if (cid == aura::ast::NULL_NODE)
                                 continue;
-                            auto child_node = f->get(cid);
-                            if (child_node.tag == aura::ast::NodeTag::Define)
+                            if (f->tag(cid) == aura::ast::NodeTag::Define)
                                 continue;
-                            if (is_module_prologue(child_node))
+                            if (is_module_prologue(f->get(cid)))
                                 continue; // #2766 Phase 0 already ran
                             auto r = finish_child(eval_flat(*f, *p, cid, eval_env), cid);
                             if (!r || (is_error(*r) && !is_string(*r)))
