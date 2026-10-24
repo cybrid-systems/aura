@@ -2996,6 +2996,180 @@ int main() {
                 }
             }
 
+            // ── Issue #4684: an if branch whose synthesized TypeId is
+            // already dynamic_type() must not skip the production ground
+            // gate. lub used to return Dynamic before normalize (the
+            // #4107 "both Dynamic arms unchanged" early exit), so a
+            // Dynamic arm joined with a ground published a solved Dynamic
+            // with no TypeError. The join now reaches the same gate,
+            // reports TypeError + Void, demotes the export authority, and
+            // the IfExpr arm leaves the node dirty / uncached. ──
+            auto find_if_node = [](const aura::ast::FlatAST& flat) -> aura::ast::NodeId {
+                for (aura::ast::NodeId nid = 0; nid < static_cast<aura::ast::NodeId>(flat.size());
+                     ++nid) {
+                    if (flat.get(nid).tag == aura::ast::NodeTag::IfExpr)
+                        return nid;
+                }
+                return aura::ast::NULL_NODE;
+            };
+            // d is bound to a Dynamic-returning primitive, so the
+            // then-branch synthesizes to exactly dynamic_type(); the
+            // else-branch is the Int literal 1.
+            constexpr std::string_view kDynamicIfSrc =
+                "(let ((d (mutate:rebind \"a\" \"b\"))) (if #t d 1))";
+
+            // AC1: production — gate TypeError, Void, demoted authority,
+            // if node still dirty, error-stamped, never cached.
+            {
+                ProdScope prod;
+                aura::ast::ASTArena arena;
+                auto alloc = arena.allocator();
+                aura::ast::StringPool pool(alloc);
+                aura::ast::FlatAST flat(alloc);
+                aura::core::TypeRegistry treg;
+                aura::diag::DiagnosticCollector diag;
+                TypeChecker tc(treg);
+                tc.set_strict(false);
+                auto pr = aura::parser::parse_to_flat(kDynamicIfSrc, flat, pool);
+                const auto if_id = (pr.success && pr.root != aura::ast::NULL_NODE)
+                                       ? find_if_node(flat)
+                                       : aura::ast::NULL_NODE;
+                flat.bump_type_cache_generation();
+                if (if_id != aura::ast::NULL_NODE)
+                    flat.mark_dirty(if_id);
+                diag.clear();
+                auto ty = (pr.success && pr.root != aura::ast::NULL_NODE)
+                              ? tc.infer_flat(flat, pool, pr.root, diag)
+                              : treg.void_type();
+                bool gate_te = false;
+                bool other_te = false;
+                for (const auto& d : diag.diagnostics()) {
+                    if (d.kind != ErrorKind::TypeError)
+                        continue;
+                    if (d.message.find("incompatible ground types") != std::string::npos)
+                        gate_te = true;
+                    else
+                        other_te = true;
+                }
+                if (pr.success && if_id != aura::ast::NULL_NODE && gate_te && !other_te &&
+                    ty == treg.void_type() && !tc.type_export_is_authoritative() &&
+                    flat.is_dirty(if_id) && flat.type_cache_gen(if_id) == 0 &&
+                    flat.node_error(if_id) == static_cast<std::uint8_t>(ErrorKind::TypeError)) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4684_1_dynamic_arm_gate_prod");
+                } else {
+                    for (const auto& d : diag.diagnostics())
+                        std::println(std::cerr, "  ac4684_1 diag [{}]: {}",
+                                     static_cast<int>(d.kind), d.message);
+                    ++ts_failed;
+                    std::println(std::cerr,
+                                 "TS FAIL: ac4684_1_dynamic_arm_gate_prod parse={} if={} gate={} "
+                                 "other={} void={} auth={} dirty={} err={} gen={}",
+                                 pr.success, if_id != aura::ast::NULL_NODE, gate_te, other_te,
+                                 ty == treg.void_type(), tc.type_export_is_authoritative(),
+                                 if_id != aura::ast::NULL_NODE && flat.is_dirty(if_id),
+                                 if_id != aura::ast::NULL_NODE
+                                     ? static_cast<int>(flat.node_error(if_id))
+                                     : -1,
+                                 if_id != aura::ast::NULL_NODE ? flat.type_cache_gen(if_id) : 0);
+                }
+            }
+
+            // AC2 soft: the same Dynamic/Int if still takes the gradual
+            // Dynamic join — no gate TypeError, node not error-stamped.
+            {
+                apply_dev_audit_defaults();
+                aura::ast::ASTArena arena;
+                auto alloc = arena.allocator();
+                aura::ast::StringPool pool(alloc);
+                aura::ast::FlatAST flat(alloc);
+                aura::core::TypeRegistry treg;
+                aura::diag::DiagnosticCollector diag;
+                TypeChecker tc(treg);
+                tc.set_strict(false);
+                auto pr = aura::parser::parse_to_flat(kDynamicIfSrc, flat, pool);
+                const auto if_id = (pr.success && pr.root != aura::ast::NULL_NODE)
+                                       ? find_if_node(flat)
+                                       : aura::ast::NULL_NODE;
+                diag.clear();
+                auto ty = (pr.success && pr.root != aura::ast::NULL_NODE)
+                              ? tc.infer_flat(flat, pool, pr.root, diag)
+                              : treg.void_type();
+                bool gate_te = false;
+                for (const auto& d : diag.diagnostics())
+                    if (d.kind == ErrorKind::TypeError &&
+                        d.message.find("incompatible ground types") != std::string::npos)
+                        gate_te = true;
+                if (pr.success && if_id != aura::ast::NULL_NODE && !gate_te &&
+                    ty == treg.dynamic_type() && flat.node_error(if_id) == 0) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4684_2_dynamic_arm_soft_gradual");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr,
+                                 "TS FAIL: ac4684_2_dynamic_arm_soft_gradual gate={} dyn={} err={}",
+                                 gate_te, ty == treg.dynamic_type(),
+                                 if_id != aura::ast::NULL_NODE
+                                     ? static_cast<int>(flat.node_error(if_id))
+                                     : -1);
+                }
+            }
+
+            // AC3: #4107 stays landed — two distinct grounds on the
+            // production arm still report the gate TypeError and Void.
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                auto r = infer_src("(if p 1 \"a\")", treg);
+                if (r.saw_gate_te && r.ty == treg.void_type() && !r.authoritative) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4684_3_4107_two_grounds_preserved");
+                } else {
+                    ++ts_failed;
+                    std::println(
+                        std::cerr,
+                        "TS FAIL: ac4684_3_4107_two_grounds_preserved te={} void={} auth={}",
+                        r.saw_gate_te, r.ty == treg.void_type(), r.authoritative);
+                }
+            }
+
+            // AC4: #4515 stays landed — an unbound union-find rep joined
+            // with a ground is still gradual Dynamic with no TypeError.
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                auto r = infer_src("(lambda (x) (if #t x 1))", treg);
+                const auto* ft = treg.func_of(r.ty);
+                if (!r.saw_any_te && ft && ft->ret == treg.dynamic_type()) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4684_4_4515_unbound_rep_stays_dynamic");
+                } else {
+                    ++ts_failed;
+                    std::println(
+                        std::cerr,
+                        "TS FAIL: ac4684_4_4515_unbound_rep_stays_dynamic te={} ft={} dyn={}",
+                        r.saw_any_te, ft != nullptr, ft ? ft->ret == treg.dynamic_type() : false);
+                }
+            }
+
+            // AC5: consistent_unify's hard-face Dynamic~Int refusal is
+            // unchanged (the join now mirrors it; it is not modified).
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                ConstraintSystem cs(treg);
+                cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+                if (!cs.consistent_unify(treg.dynamic_type(), treg.int_type()) &&
+                    !cs.consistent_unify(treg.int_type(), treg.dynamic_type())) {
+                    ++ts_passed;
+                    std::println("TS OK: ac4684_5_consistent_unify_dynamic_int_prod_false");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr,
+                                 "TS FAIL: ac4684_5_consistent_unify_dynamic_int_prod_false");
+                }
+            }
+
             apply_dev_audit_defaults();
         }
 
