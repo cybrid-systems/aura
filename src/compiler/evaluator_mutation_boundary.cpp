@@ -5534,10 +5534,19 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             else
                 mid_audit = typed_audit::join_audit_and_se_mid(0);
         }
-        (void)ev_->run_typed_mutation_invariant_audit(mid_audit, "outermost-pre-persist", 0,
-                                                      mut_epoch, mut_epoch,
-                                                      /*composite_mode=*/false, &inv);
-        if (!inv.adt_ok)
+        // Issue #4685: keep the audit verdict, not just adt_ok. A vacuous
+        // outermost (no dirty/log, no atomic batch) still freezes the
+        // Occurrence snapshot + may grant query:type; a false provenance
+        // (reflect) or type invariant must deny before that persist. The
+        // empty workspace stays successful: post_mutation_reflect_validate
+        // reports false for !ws/size==0, which is vacuous, not a failure.
+        // Linear !all_safe is already denied by the #3614 gate above
+        // (enforce_linear_boundary_consistency) — no extra sweep here.
+        const bool inv_ok = ev_->run_typed_mutation_invariant_audit(
+            mid_audit, "outermost-pre-persist", 0, mut_epoch, mut_epoch,
+            /*composite_mode=*/false, &inv);
+        const bool live_ws = ev_->workspace_flat_ && ev_->workspace_flat_->size() > 0;
+        if (!inv.adt_ok || (!mutated && !batch_active && live_ws && !inv_ok))
             audit_ok = false;
         if (batch_active) {
             typed_audit::CompositeTxnCommitResult ccr{};
