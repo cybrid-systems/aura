@@ -4761,10 +4761,9 @@ void InferenceEngine::init_primitive_env_part2(TypeId Int, TypeId Bool, TypeId F
 }
 
 TypeId InferenceEngine::lub(TypeId a, TypeId b) {
+    last_join_gate_error_ = false;
     if (a == b)
         return a;
-    if (a == reg_.dynamic_type() || b == reg_.dynamic_type())
-        return reg_.dynamic_type();
     // Int → Float promotion
     if ((a == reg_.int_type() && b == reg_.lookup_type("Float")) ||
         (a == reg_.lookup_type("Float") && b == reg_.int_type()))
@@ -4772,8 +4771,9 @@ TypeId InferenceEngine::lub(TypeId a, TypeId b) {
     // Issue #4107: under the production face a pair of distinct grounds
     // reaching synthesize_flat_if's join must not publish a solved
     // Dynamic (the authoritative-Dynamic hole behind `(if p 1 "a")`).
-    // The Int/Float promotion above, both Dynamic arms, and the gradual
-    // fallback below are unchanged. Issue #4515: is_var reads the raw
+    // The Int/Float promotion above and the gradual fallback below are
+    // unchanged; an arm already typed Dynamic no longer early-returns
+    // ahead of this block (Issue #4684). Issue #4515: is_var reads the raw
     // registry tag, which stays TYPE_VAR for a lambda parameter even
     // after consistent_unify bound its union-find rep to a ground type
     // (binding_[root]). Normalize both ids through the constraint
@@ -4793,6 +4793,18 @@ TypeId InferenceEngine::lub(TypeId a, TypeId b) {
             return a;
         if (reg_.is_var(a) || reg_.is_var(b))
             return reg_.dynamic_type(); // later unify binds the variable
+        // Issue #4684: a branch whose synthesized TypeId is already
+        // dynamic_type() used to leave this gate above (the pre-normalize
+        // early return) and publish a solved Dynamic for e.g.
+        // `(if #t d 1)` with d bound to a Dynamic-returning call.
+        // Dynamic is not a variable and consistent_unify's hard face
+        // refuses Dynamic~ground (see
+        // 2044-2054), so the pair falls through to the same ground gate
+        // below. The is_var branch above still covers #4515's genuinely
+        // unbound union-find rep joined with Dynamic. infer_flat demotes
+        // the type-export authority on the reported TypeError, and
+        // synthesize_flat's IfExpr arm leaves the node dirty/uncached.
+        last_join_gate_error_ = true;
         diag_.report(
             Diagnostic(ErrorKind::TypeError,
                        "incompatible ground types: if branches join " + reg_.format_type(a) +
@@ -5306,6 +5318,14 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, b
     const bool call_ground_refused =
         flat.get(id).tag == NodeTag::Call &&
         flat.node_error(id) == static_cast<std::uint8_t>(ErrorKind::TypeError);
+    // Issue #4684: a root IfExpr whose join the production gate refused is
+    // likewise left dirty/uncached (the arm above stamped the node error
+    // instead of caching Void). Keep the demotion of
+    // last_type_export_authoritative_ computed below — only the commit is
+    // skipped.
+    const bool if_join_refused =
+        flat.get(id).tag == NodeTag::IfExpr &&
+        flat.node_error(id) == static_cast<std::uint8_t>(ErrorKind::TypeError);
     cs_.set_delta_record_mode(false);
     std::vector<Constraint> unresolved;
     SolveResult solve_status = SolveResult::SOLVED;
@@ -5449,8 +5469,8 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, b
             result = reg_.dynamic_type();
         }
     }
-    if (call_ground_refused) {
-        // Do not republish Void or clear_dirty on the root Call.
+    if (call_ground_refused || if_join_refused) {
+        // Do not republish Void or clear_dirty on the root Call/IfExpr.
         return synth_result;
     }
     auto normalized = cs_.normalize(result);
@@ -5504,7 +5524,18 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
                 return result;
             break;
         case Tag::IfExpr:
+            last_join_gate_error_ = false;
             result = synthesize_flat_if(flat, pool, id, v);
+            if (last_join_gate_error_) {
+                // Issue #4684: the join refused a Dynamic~ground pair (or
+                // any distinct ground pair, #4107). Mirror the Call arm:
+                // stamp the node error, keep the node dirty, and do not
+                // cache a solved Void for the refused join.
+                last_join_gate_error_ = false;
+                flat.set_node_error(id, static_cast<std::uint8_t>(ErrorKind::TypeError));
+                flat.mark_dirty(id);
+                return result;
+            }
             break;
         case Tag::Lambda:
             result = synthesize_flat_lambda(flat, pool, v);
