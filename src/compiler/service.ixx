@@ -9205,7 +9205,19 @@ public:
         auto* ws_flat = evaluator_.workspace_flat();
         auto* ws_pool = evaluator_.workspace_pool();
         if (ws_flat && ws_pool) {
+            // Issue #4682 (B): prefilter on the tag / sym SoA columns so
+            // FlatAST::get (seqlock + full NodeView assemble) runs only for
+            // Define nodes. Same ids, same order, same checks as the old
+            // full get() scan (free slots included). Opt-out:
+            // AURA_VCELL_SYNC_PREFILTER_4682=0.
+            static const bool prefilter = [] {
+                const char* e = std::getenv("AURA_VCELL_SYNC_PREFILTER_4682");
+                return !(e && e[0] == '0');
+            }();
             for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
+                if (prefilter && (ws_flat->tag(id) != aura::ast::NodeTag::Define ||
+                                  ws_flat->sym_id(id) == aura::ast::INVALID_SYM))
+                    continue;
                 auto v = ws_flat->get(id);
                 if (v.tag != aura::ast::NodeTag::Define || v.sym_id == aura::ast::INVALID_SYM)
                     continue;
@@ -12210,8 +12222,13 @@ public:
             return;
         std::vector<std::string> names;
         if (focus.empty()) {
+            constexpr std::size_t kWorkspaceSpecializeCap = 64;
             for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
                 if (ws_flat->is_free_slot(id))
+                    continue;
+                // Issue #4682 (B): column prefilter before the full get().
+                if (ws_flat->tag(id) != aura::ast::NodeTag::Define ||
+                    ws_flat->sym_id(id) == aura::ast::INVALID_SYM)
                     continue;
                 auto v = ws_flat->get(id);
                 if (v.tag != aura::ast::NodeTag::Define || v.children.empty() ||
@@ -12223,8 +12240,11 @@ public:
                 if (n.empty() || n[0] == '_')
                     continue;
                 names.push_back(std::move(n));
+                // Issue #4682 (B): over the cap the function returns below
+                // regardless (loop is side-effect free) — stop scanning.
+                if (names.size() > kWorkspaceSpecializeCap)
+                    return;
             }
-            constexpr std::size_t kWorkspaceSpecializeCap = 64;
             if (names.empty() || names.size() > kWorkspaceSpecializeCap)
                 return;
         } else {
