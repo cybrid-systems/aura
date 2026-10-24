@@ -43,7 +43,24 @@ def main() -> int:
     bpos = mx.find("Issue #2023: body of macro_expand_all")
     if bpos < 0:
         bpos = mx.rfind("macro_expand_all_body")
-    bwin = mx[bpos : bpos + 12000] if bpos >= 0 else ""
+    # Issue #4687: the body grew; a fixed 12000-character window dropped the
+    # deny site. Brace-match the function body so the window follows the code.
+    bwin = ""
+    if bpos >= 0:
+        brace = mx.find("{", bpos)
+        if brace >= 0:
+            depth = 0
+            i = brace
+            while i < len(mx):
+                c = mx[i]
+                if c == "{":
+                    depth += 1
+                elif c == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                i += 1
+            bwin = mx[bpos:i]
 
     # AC1 production refuse-partial
     must("Issue #3062", "AC1 cite", mx)
@@ -53,7 +70,11 @@ def main() -> int:
     # Issue #3651: the no-boundary guard consults the deny-code predicate
     # (depth/pass/steal/cap/gensym) instead of the raw reason==2 load; the
     # atomic itself lives in inner_expand_production_limit_deny().
-    must("inner_expand_production_limit_deny()", "AC1 reason gate", bwin)
+    # Issue #4687: the pass loop consults the deny-ALL wrapper, which covers
+    # every expand deny code (depth/pass/steal/gensym) and delegates to the
+    # bare predicate. Keep the AC1 contract, follow the new call site.
+    must("inner_expand_production_limit_deny_all()", "AC1 reason gate", bwin)
+    must("if (inner_expand_production_limit_deny())", "AC1 deny-all delegates to the predicate", mx)
     must("3062 AC1", "AC1 test", lim_t)
 
     # AC2 boundary restore
