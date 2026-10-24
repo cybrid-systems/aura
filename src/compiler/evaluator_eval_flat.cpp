@@ -10118,17 +10118,14 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
 
         // Issue #2762: splice expanded root into the Call's parent slot
         // so subsequent eval-current / IR lower sees the hygienic tree.
-        const auto pid = flat.parent_of(call_id);
-        if (pid != NULL_NODE && pid < flat.size()) {
-            auto pv = flat.get(pid);
-            for (std::uint32_t ci = 0; ci < pv.children.size(); ++ci) {
-                if (pv.child(ci) == call_id) {
-                    flat.set_child(pid, ci, expanded);
-                    flat.mark_dirty_upward(expanded);
-                    break;
-                }
-            }
-        }
+        // Issue #4687: the slot is the LIVE node that lists the Call. The
+        // expanded Call may itself be a shared subst argument whose
+        // parent_of is the CALLER (which expand_inner_macros may have
+        // already spliced away), so parent_of alone is not the slot —
+        // set_child on it left the clone's slot unexpanded. The caller
+        // edge is preserved by the shared splice helper.
+        if (macro_exp::splice_expansion_into_live_slot(flat, flat.root, call_id, expanded))
+            flat.mark_dirty_upward(expanded);
         last_expanded = expanded;
         return true;
     };

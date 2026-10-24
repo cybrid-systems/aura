@@ -305,6 +305,23 @@ export aura::ast::NodeId expand_inner_macros(
 export aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                           aura::ast::NodeId root, int max_passes = 32);
 
+// Issue #4687: install a successfully expanded non-root macro Call into
+// the LIVE tree slot that actually lists it. `live_root` is the root of
+// the tree being expanded. parent_of(old_child) is only the CALLER edge
+// (#4309/#4649 keeps a live caller's reverse link on a shared subst
+// argument); the slot itself comes from a forward walk of the live tree
+// rooted at `live_root` (a per-pass child -> live-parent map), so a
+// dead caller's stale reverse chain is never trusted. Returns true when
+// a slot was rewritten. The caller edge is preserved by the existing
+// splice_child_keep_caller_edge, so the caller's syntax does not move.
+// `live_slots` is an optional per-pass child -> live-parent map
+// (macro_expand_all rebuilds it at most once per pass and updates it on
+// every splice); nullptr falls back to a one-shot live-tree walk.
+export bool splice_expansion_into_live_slot(
+    aura::ast::FlatAST& flat, aura::ast::NodeId live_root, aura::ast::NodeId old_child,
+    aura::ast::NodeId new_child,
+    std::unordered_map<aura::ast::NodeId, aura::ast::NodeId>* live_slots = nullptr);
+
 // Issue #3153: stamp_rest_param_hygiene was static inline in
 // macro_expansion.cpp — only the macro_expand_all / expand_inner_macros
 // paths inside that TU could call it. eval_flat dotted-rest + reexpand_call
