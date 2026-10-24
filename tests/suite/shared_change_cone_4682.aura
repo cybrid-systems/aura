@@ -1,0 +1,64 @@
+; Issue #4682 step 1: a rebind dirties its own define plus the transitive
+; caller cone, so the outermost Guard exit skips the #1274 mark-all
+; backstop. Callers (direct and transitive), value defines, repeated
+; rebinds, mixed mutations, the IR-bound path and :jit must still see the
+; fresh body. Run with AURA_SHARED_CONE_4682 unset and =0; same results.
+(define *fails* 0)
+(define *n* 0)
+(define (check! ok msg)
+  (set! *n* (+ *n* 1))
+  (if (not ok)
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+(define (fill k acc)
+  (if (= k 0) acc
+      (fill (- k 1) (string-append acc "(define w" (number->string k) " (lambda (x) (* x " (number->string k) ")))\n"))))
+(set-code (string-append
+  "(define f (lambda (x) (+ x 1)))\n"
+  "(define g (lambda (x) (* 2 (f x))))\n"
+  "(define h (lambda (x) (+ (g x) 100)))\n"
+  "(define ev? (lambda (n) (if (= n 0) #t (od? (- n 1)))))\n"
+  "(define od? (lambda (n) (if (= n 0) #f (ev? (- n 1)))))\n"
+  (fill 40 "")
+  "(define k (h 1))\n"
+  "(list (h 1) k (w7 3) (ev? 10))"))
+(check! (equal? (eval-current) (list 104 104 21 #t)) "initial")
+;; direct + transitive callers + value define see the new callee
+(let loop ((i 2))
+  (if (< i 12)
+      (begin
+        (mutate:rebind "f" (string-append "(lambda (x) (+ x " (number->string i) "))") "t")
+        (let ((r (eval-current)) (want (+ (* 2 (+ 1 i)) 100)))
+          (check! (equal? r (list want want 21 #t)) (string-append "rebind f " (number->string i))))
+        (check! (= (h 1) (+ (* 2 (+ 1 i)) 100)) (string-append "top call h " (number->string i)))
+        (loop (+ i 1)))))
+;; two rebinds before one eval
+(mutate:rebind "f" "(lambda (x) (- x 1))" "t")
+(mutate:rebind "g" "(lambda (x) (* 3 (f x)))" "t")
+(check! (equal? (eval-current) (list 100 100 21 #t)) "two rebinds one eval")
+;; mutual recursion: rebind one half
+(mutate:rebind "od?" "(lambda (n) (if (= n 0) 'odd (ev? (- n 1))))" "t")
+(check! (equal? (eval-current) (list 100 100 21 #t)) "mutual rebind even")
+(set-code (string-append
+  "(define ev? (lambda (n) (if (= n 0) #t (od? (- n 1)))))\n"
+  "(define od? (lambda (n) (if (= n 0) #f (ev? (- n 1)))))\n"
+  (fill 20 "")
+  "(ev? 7)"))
+(check! (equal? (eval-current) #f) "set-code then eval")
+(mutate:rebind "od?" "(lambda (n) (if (= n 0) 'odd (ev? (- n 1))))" "t")
+(check! (equal? (eval-current) 'odd) "mutual rebind reaches odd base")
+;; :jit (legacy and 6a) agrees with the tree walker after a cone-only rebind
+(set-code (string-append
+  "(define f (lambda (x) (+ x 1)))\n(define g (lambda (x) (* 2 (f x))))\n"
+  (fill 20 "") "(g 5)"))
+(eval-current)
+(mutate:rebind "f" "(lambda (x) (+ x 10))" "t")
+(check! (equal? (eval-current :jit) 30) ":jit after rebind")
+(check! (equal? (eval-current) 30) "interp after rebind")
+;; rebind on a name nobody calls, then rebind the callee: still fresh
+(mutate:rebind "w3" "(lambda (x) 'w3)" "t")
+(mutate:rebind "f" "(lambda (x) (+ x 20))" "t")
+(check! (equal? (eval-current) 50) "unrelated + callee rebind")
+(check! (equal? (w3 0) 'w3) "unrelated rebind visible")
+(if (= *fails* 0)
+    (begin (display "OK-cone4682 ") (display *n*) (display " checks") (newline))
+    (begin (display "FAILED-cone4682 ") (display *fails*) (newline)))

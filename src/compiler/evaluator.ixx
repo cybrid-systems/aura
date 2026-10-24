@@ -6703,6 +6703,40 @@ private:
     std::atomic<std::uint64_t> defuse_version_{0};
 
 public:
+    // Issue #4682 step 1 (shared change cone): a rebind that already
+    // dirtied its own define plus the transitive caller cone records the
+    // mutation-log range it covered. The outermost Guard exit then skips
+    // the #1274 mark_all_defines_dirty backstop when every AST mutation
+    // in the frame lies inside that range (no O(W) re-dirty of unrelated
+    // defines). Any other mutation in the frame breaks the range and the
+    // backstop runs as before. Consumed at every outermost exit.
+    // Opt-out: AURA_SHARED_CONE_4682=0.
+    std::atomic<std::uint64_t> cone_cover_begin_4682_{0};
+    std::atomic<std::uint64_t> cone_cover_end_4682_{0};
+    std::atomic<bool> cone_cover_valid_4682_{false};
+    std::atomic<std::uint64_t> cone_cover_skip_4682_count_{0};
+    // Log size + flat at the previous outermost flush (single writer: outermost exit).
+    const void* cone_flush_flat_4682_ = nullptr;
+    std::uint64_t cone_flush_log_4682_ = 0;
+    static bool shared_cone_4682_enabled() noexcept {
+        static const bool on = [] {
+            const char* e = std::getenv("AURA_SHARED_CONE_4682");
+            return !(e && e[0] == '0');
+        }();
+        return on;
+    }
+    void note_cone_cover_4682(std::uint64_t log_before, std::uint64_t log_after) noexcept {
+        if (!shared_cone_4682_enabled())
+            return;
+        if (cone_cover_valid_4682_.load(std::memory_order_relaxed) &&
+            cone_cover_end_4682_.load(std::memory_order_relaxed) == log_before) {
+            cone_cover_end_4682_.store(log_after, std::memory_order_relaxed);
+            return;
+        }
+        cone_cover_begin_4682_.store(log_before, std::memory_order_relaxed);
+        cone_cover_end_4682_.store(log_after, std::memory_order_relaxed);
+        cone_cover_valid_4682_.store(true, std::memory_order_relaxed);
+    }
     // Issue #4679: clean top-level lambda closure reuse in eval-current.
     std::uint64_t closure_reuse_4679_count_ = 0;
     static bool closure_reuse_4679_enabled() noexcept {

@@ -4471,6 +4471,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 }
             }
         }
+        const std::uint64_t cone_log_before_4682 = flat.mutation_log_size();
         flat.add_mutation_with_rollback(
             old_define, "rebind", name, summary, summary, aura::ast::MutationStatus::Committed,
             /*field_offset=*/0, static_cast<std::uint64_t>(old_value_node),
@@ -4538,8 +4539,21 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
         // Phase 2: mark this define's IR cache entry dirty so the next
         // (eval-current) re-lowers it.
-        if (ev.mark_define_dirty_fn_)
+        if (ev.mark_define_dirty_fn_) {
             ev.mark_define_dirty_fn_(name);
+            // Issue #4682 step 1: this define + its caller cone are dirty;
+            // the rebind / set_child log entries need no mark-all backstop.
+            // Duplicate-name defines (last wins in eval) keep the mark-all
+            // backstop: the cone is keyed by name, not by Define node.
+            std::size_t same_name_defines = 0;
+            for (aura::ast::NodeId id = 0, n = flat.size(); id < n && same_name_defines < 2; ++id) {
+                if (flat.tag(id) == aura::ast::NodeTag::Define && flat.sym_id(id) == sym &&
+                    !flat.is_free_slot(id))
+                    ++same_name_defines;
+            }
+            if (same_name_defines == 1)
+                ev.note_cone_cover_4682(cone_log_before_4682, flat.mutation_log_size());
+        }
         // Issue #3681: the closure captured before this rebind still holds
         // the pre-reemit body. Poison it after dirty so production apply
         // refuses; the re-eval below installs a fresh closure.
