@@ -85,8 +85,12 @@ void register_control_primitives(PrimRegistrar add, Evaluator& ev) {
         auto pred_cid = types::as_closure_id(a[0]);
         for (;;) {
             auto pred_result = ev.apply_closure(pred_cid, {});
+            // Issue #4690: nullopt is a failed apply. The diagnostic is
+            // parked for the caller. Breaking would iterate, and the next
+            // apply_closure would clear it — the loop then accepts again
+            // with an empty stderr.
             if (!pred_result)
-                break;
+                return make_void();
             auto& val = *pred_result;
             // Issue #4619: an error value as the test is not a truth value.
             // Treating it as true ran the loop forever; it propagates the
@@ -101,10 +105,14 @@ void register_control_primitives(PrimRegistrar add, Evaluator& ev) {
                 if (!types::is_closure(a[i]))
                     continue;
                 auto body_result = ev.apply_closure(types::as_closure_id(a[i]), {});
+                // Issue #4690: a failed body is not "this form returned
+                // nothing". Stop. Do not run a later body or the next test.
+                if (!body_result)
+                    return make_void();
                 // Issue #4619: an error value in a body form leaves the loop
                 // the way begin lets an error leave (#2570) — it is not a
                 // value the loop may drop.
-                if (body_result && types::is_error(*body_result))
+                if (types::is_error(*body_result))
                     return *body_result;
             }
         }
