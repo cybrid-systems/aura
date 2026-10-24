@@ -2833,6 +2833,11 @@ namespace {
     // unique draw, so two Agents can never observe one id.
     inline constexpr std::uint32_t kAgentFiberStampBand = 0x4165'0000u;
     inline constexpr std::uint32_t kAgentFiberStampBandMask = 0x0000'FFFFu;
+    // Issue #4688: disjoint band for table-full overflow mints. An id here
+    // can never equal an in-table Agent's 0x4165xxxx stamp, so the hard
+    // InvalidFiber equality check denies instead of admitting a foreign
+    // schema-2. Overflow draws share the per-process mint sequence.
+    inline constexpr std::uint32_t kAgentFiberOverflowBand = 0x4166'0000u;
     std::atomic<std::uint32_t> g_agent_fiber_stamp_seq{0};
 
 } // namespace
@@ -2850,6 +2855,11 @@ namespace {
 // keeps #4165's per-Evaluator mint. Soft / Off keep the legacy 0 stamp
 // (no new soft face). Mints draw from the shared per-process sequence:
 // each claim burns one unique id, two Agents can never observe one mint.
+// Issue #4688: a 33rd (and every later) identified Agent on a full table
+// must not observe the shared per-Evaluator id — that made two overflow
+// Agents compare equal and admitted the other Agent's live schema-2 as
+// Fresh. The overflow arm mints a fresh disjoint-band id per resolve
+// (fail-closed: own re-resolve denies too), never agent_fiber_id_.
 std::uint32_t Evaluator::agent_scoped_fiber_id() const noexcept {
     const auto resolved = ::aura::core::capability::effect_fiber_id_or(
         static_cast<std::uint32_t>(aura_fiber_current_id()));
@@ -2894,10 +2904,22 @@ std::uint32_t Evaluator::agent_scoped_fiber_id() const noexcept {
             if ((w >> 32) == key32)
                 return static_cast<std::uint32_t>(w & 0xFFFF'FFFFull);
         }
-        // Table full (32 identified Agents on one Evaluator — beyond the
-        // one-fiber-per-Agent deploy contract): degrade to the #4165
-        // per-Evaluator mint below. Fail-closed shape: a shared mint can
-        // only widen InvalidFiber denies, never admit a foreign resolve.
+        // Issue #4688: table full (32 identified Agents on one Evaluator —
+        // beyond the one-fiber-per-Agent deploy contract). Do NOT fall
+        // through to the shared per-Evaluator agent_fiber_id_: two
+        // overflow Agents observed ONE id, so the equality check
+        // (current_fiber != 0 && stamped != current_fiber) was false and
+        // the other Agent's live schema-2 resolved Fresh. Mint a fresh id
+        // from the disjoint overflow band instead — every draw is unique
+        // on the shared sequence, so it can never compare equal to another
+        // Agent's stamp (all in-table mints stay 0x4165xxxx). No free slot
+        // remains to keep this Agent's id stable, so its own held refs
+        // also deny InvalidFiber: fail-closed refusal, never a shared
+        // stamp. The 16-bit sequence bounds uniqueness at 65536 overflow
+        // draws (the same envelope as the in-table band).
+        return kAgentFiberOverflowBand +
+               (g_agent_fiber_stamp_seq.fetch_add(1, std::memory_order_relaxed) &
+                kAgentFiberStampBandMask);
     }
     if (agent_fiber_id_ == 0)
         agent_fiber_id_ = kAgentFiberStampBand +
