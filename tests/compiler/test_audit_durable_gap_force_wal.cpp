@@ -32,7 +32,10 @@
 #include "core/workspace_isolation.hh"
 #include "orch/security_schedule_gate.h"
 
+#include <chrono>
+#include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <print>
 #include <string>
@@ -60,7 +63,37 @@ static bool contains(const std::string& hay, const char* needle) {
     return hay.find(needle) != std::string::npos;
 }
 
+// Issue #4686: temp SE-WAL dir, segment counter, steady millisecond clock
+// for the "second enable must not look like recovery" runtime repro.
+static std::filesystem::path fresh_wal_dir_4686(const std::string& tag) {
+    const auto base = std::filesystem::temp_directory_path() / (std::string("aura-4686-") + tag);
+    std::error_code ec;
+    std::filesystem::remove_all(base, ec);
+    std::filesystem::create_directories(base, ec);
+    return base;
+}
+
+static int count_se_segments_4686(const std::filesystem::path& dir) {
+    int n = 0;
+    std::error_code ec;
+    if (!std::filesystem::exists(dir, ec))
+        return 0;
+    for (const auto& ent : std::filesystem::directory_iterator(dir, ec)) {
+        const auto name = ent.path().filename().string();
+        if (name.rfind("security-event-", 0) == 0 && ent.path().extension() == ".wal")
+            ++n;
+    }
+    return n;
+}
+
+static std::uint64_t now_ms_4686() noexcept {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                          std::chrono::system_clock::now().time_since_epoch())
+                                          .count());
+}
+
 } // namespace
+
 
 int run_test_audit_durable_gap_force_wal() {
     std::println(
@@ -553,7 +586,179 @@ int run_test_audit_durable_gap_force_wal() {
               "4005: Soft live helper false");
     }
 
+    // ── #4686: a failed second SE-WAL enable must not look like recovery ──
+    // Production posture (Restricted force_wal): the first enable inside
+    // apply_production_security_defaults succeeds, disarms the enable-fail
+    // posture and writes a durable SE record. A later second enable (the
+    // Evaluator attach path) replays that non-empty segment; when the segment
+    // cannot be opened the WAL is off, so the recovery counter must not move,
+    // the call must report failure, and fail-closed must re-arm.
+    {
+        namespace fs_4686 = std::filesystem;
+        namespace se_wal_4686 = aura::core::security_event_wal;
+        namespace slo_4686 = aura::core::wal_slo;
+        using aura::compiler::CompilerService;
+        using aura::compiler::security::apply_production_security_defaults;
+        using aura::compiler::security::kEffectMutate;
+        using aura::core::security_event::SecurityEventKind;
+
+        std::println("\n--- #4686 AC1: second enable open-fail re-arms fail-closed ---");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        aura::core::capability::reset_capability_effects_for_test();
+        aura::core::security_event::reset_security_event_ring_for_test();
+        se_wal_4686::reset_security_event_wal_for_test();
+        aura::core::audit_wal::reset_audit_wal_for_test();
+        se_wal_4686::wal_overflow_ring_clear_for_test();
+        const auto dir_4686a = fresh_wal_dir_4686("second-enable");
+
+        const char* prev_sb = std::getenv("AURA_SANDBOX");
+        std::string prev_sb_s = prev_sb ? prev_sb : "";
+        const char* prev_wal = std::getenv("AURA_MUTATION_AUDIT_WAL");
+        std::string prev_wal_s = prev_wal ? prev_wal : "";
+        const char* prev_open = std::getenv("AURA_WAL_APPEND_FAIL_OPEN");
+        std::string prev_open_s = prev_open ? prev_open : "";
+        ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+        ::setenv("AURA_SANDBOX", "restricted", 1);
+        ::setenv("AURA_MUTATION_AUDIT_WAL", dir_4686a.c_str(), 1);
+
+        apply_production_security_defaults();
+        CHECK(se_wal_4686::g_security_event_wal().is_enabled(),
+              "4686 AC1: first enable opened the SE sidecar");
+        CHECK(aura::core::audit_wal::g_mutation_audit_wal().is_enabled(),
+              "4686 AC1: mutation WAL enabled on the same dir");
+        CHECK(slo_4686::wal_append_fail_closed_active(),
+              "4686 AC1: force_wal fail-closed posture active");
+        CHECK(slo_4686::force_wal_enable_failed() == 0,
+              "4686 AC1: first enable success disarmed the enable-fail arm");
+
+        const auto recov_4686a =
+            se_wal_4686::snapshot_security_event_wal_stats().crash_recovery_success;
+        const auto persisted_4686_first =
+            se_wal_4686::snapshot_security_event_wal_stats().persisted;
+        CHECK(se_wal_4686::persist_security_event(SecurityEventKind::EffectDeny, 7, 4686001ull, 21,
+                                                  kEffectMutate, "test:4686", "first-enable-deny",
+                                                  /*denied=*/true, /*fiber=*/1, now_ms_4686()),
+              "4686 AC1: first enable persists a durable SE record");
+        const auto seg_4686a = dir_4686a / "security-event-0.wal";
+        CHECK(fs_4686::exists(seg_4686a), "4686 AC1: replay-bearing segment exists");
+        CHECK(se_wal_4686::snapshot_security_event_wal_stats().persisted ==
+                  persisted_4686_first + 1,
+              "4686 AC1: the first-enable record is durable");
+        const int seg_count_4686a = count_se_segments_4686(dir_4686a);
+
+        // Existing bytes still replay (readable), but fopen("ab+") fails.
+        std::error_code ec_4686;
+        fs_4686::permissions(seg_4686a,
+                             fs_4686::perms::owner_read | fs_4686::perms::group_read |
+                                 fs_4686::perms::others_read,
+                             fs_4686::perm_options::replace, ec_4686);
+        CHECK(!ec_4686, "4686 AC1: existing segment made read-only");
+
+        // Second enable: mutation WAL reopens (writable), SE open fails.
+        CompilerService cs_4686;
+        auto& ev_4686 = cs_4686.evaluator();
+        CHECK(!ev_4686.enable_mutation_audit_wal(dir_4686a.string()),
+              "4686 AC1: second enable reports failure");
+        CHECK(!se_wal_4686::g_security_event_wal().is_enabled(), "4686 AC1: SE WAL stays off");
+        CHECK(se_wal_4686::snapshot_security_event_wal_stats().crash_recovery_success ==
+                  recov_4686a,
+              "4686 AC1: recovery counter not bumped by the failed open");
+        CHECK(slo_4686::wal_append_fail_closed_active(),
+              "4686 AC1: fail-closed still active after the failed enable");
+        CHECK(slo_4686::force_wal_enable_failed() != 0,
+              "4686 AC1: enable-fail posture re-armed (was disarmed)");
+
+        std::println("\n--- #4686 AC2: deny lands in fail-closed overflow, not ring-only ---");
+        se_wal_4686::wal_overflow_ring_clear_for_test();
+        const auto persisted_4686a = se_wal_4686::snapshot_security_event_wal_stats().persisted;
+        // The durable dual-write entry is what the capability / isolation
+        // audit rings call: ring row + persist attempt + fail-closed capture.
+        se_wal_4686::emit_security_event_durable(SecurityEventKind::EffectDeny, 7, 4686002ull, 21,
+                                                 kEffectMutate, "test:4686", "post-fail-deny",
+                                                 /*denied=*/true, /*fiber=*/1);
+        const auto* ovr_4686 = se_wal_4686::wal_overflow_find_by_mid(4686002ull);
+        CHECK(ovr_4686 != nullptr, "4686 AC2: deny captured in the overflow ring");
+        CHECK(ovr_4686 != nullptr && ovr_4686->reason == "se-wal-enable-miss",
+              "4686 AC2: overflow reason is se-wal-enable-miss");
+        CHECK(se_wal_4686::snapshot_security_event_wal_stats().persisted == persisted_4686a,
+              "4686 AC2: nothing silently written to the unopened segment");
+        CHECK(count_se_segments_4686(dir_4686a) == seg_count_4686a,
+              "4686 AC2: no extra segment appeared");
+
+        std::println("\n--- #4686 AC3: successful reopen counts recovery + disarm ---");
+        fs_4686::permissions(seg_4686a, fs_4686::perms::owner_all, fs_4686::perm_options::replace,
+                             ec_4686);
+        CHECK(!ec_4686, "4686 AC3: segment writable again");
+        const auto recov_4686b =
+            se_wal_4686::snapshot_security_event_wal_stats().crash_recovery_success;
+        CHECK(ev_4686.enable_mutation_audit_wal(dir_4686a.string()),
+              "4686 AC3: reopen after chmod succeeds");
+        CHECK(se_wal_4686::g_security_event_wal().is_enabled(), "4686 AC3: SE WAL enabled again");
+        CHECK(se_wal_4686::snapshot_security_event_wal_stats().crash_recovery_success ==
+                  recov_4686b + 1,
+              "4686 AC3: non-empty replay now counts recovery success once");
+        const auto persisted_4686b = se_wal_4686::snapshot_security_event_wal_stats().persisted;
+        CHECK(se_wal_4686::persist_security_event(SecurityEventKind::EffectDeny, 7, 4686003ull, 21,
+                                                  kEffectMutate, "test:4686", "recovered-deny",
+                                                  /*denied=*/true, /*fiber=*/1, now_ms_4686()),
+              "4686 AC3: durable append after reopen");
+        CHECK(se_wal_4686::snapshot_security_event_wal_stats().persisted == persisted_4686b + 1,
+              "4686 AC3: recovered deny reached the segment");
+        slo_4686::disarm_force_wal_enable_fail();
+        CHECK(slo_4686::force_wal_enable_failed() == 0, "4686 AC3: recovered pair can be disarmed");
+
+        std::println("\n--- #4686 AC4: Soft / WAL-off enable miss never arms ---");
+        se_wal_4686::g_security_event_wal().disable();
+        aura::core::audit_wal::g_mutation_audit_wal().disable();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        ::setenv("AURA_SANDBOX", "off", 1);
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        slo_4686::reset_wal_append_fail_slo_for_test();
+        const auto dir_4686b = fresh_wal_dir_4686("soft");
+        CHECK(se_wal_4686::g_security_event_wal().enable(dir_4686b.string()),
+              "4686 AC4: dev enable");
+        CHECK(se_wal_4686::persist_security_event(SecurityEventKind::EffectDeny, 7, 4686004ull, 21,
+                                                  kEffectMutate, "test:4686", "dev-deny",
+                                                  /*denied=*/true, /*fiber=*/1, now_ms_4686()),
+              "4686 AC4: dev record written");
+        se_wal_4686::g_security_event_wal().disable();
+        const auto seg_4686b = dir_4686b / "security-event-0.wal";
+        fs_4686::permissions(seg_4686b,
+                             fs_4686::perms::owner_read | fs_4686::perms::group_read |
+                                 fs_4686::perms::others_read,
+                             fs_4686::perm_options::replace, ec_4686);
+        CHECK(!ev_4686.enable_mutation_audit_wal(dir_4686b.string()),
+              "4686 AC4: dev second enable still reports failure");
+        CHECK(ev_4686.mutation_audit_wal_enabled(), "4686 AC4: mutation WAL still enabled in dev");
+        CHECK(slo_4686::force_wal_enable_failed() == 0,
+              "4686 AC4: Soft failure does not arm the fail-closed posture");
+        CHECK(!slo_4686::wal_append_fail_closed_active(), "4686 AC4: Soft fail-closed stays off");
+
+        se_wal_4686::g_security_event_wal().disable();
+        aura::core::audit_wal::g_mutation_audit_wal().disable();
+        fs_4686::permissions(seg_4686b, fs_4686::perms::owner_all, fs_4686::perm_options::replace,
+                             ec_4686);
+        fs_4686::remove_all(dir_4686a, ec_4686);
+        fs_4686::remove_all(dir_4686b, ec_4686);
+        if (!prev_sb_s.empty())
+            ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        else
+            ::unsetenv("AURA_SANDBOX");
+        if (!prev_wal_s.empty())
+            ::setenv("AURA_MUTATION_AUDIT_WAL", prev_wal_s.c_str(), 1);
+        else
+            ::unsetenv("AURA_MUTATION_AUDIT_WAL");
+        if (!prev_open_s.empty())
+            ::setenv("AURA_WAL_APPEND_FAIL_OPEN", prev_open_s.c_str(), 1);
+        else
+            ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
+
     return g_failed ? 1 : 0;
 }
 
