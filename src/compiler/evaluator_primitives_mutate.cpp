@@ -4545,13 +4545,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // the rebind / set_child log entries need no mark-all backstop.
             // Duplicate-name defines (last wins in eval) keep the mark-all
             // backstop: the cone is keyed by name, not by Define node.
-            std::size_t same_name_defines = 0;
-            for (aura::ast::NodeId id = 0, n = flat.size(); id < n && same_name_defines < 2; ++id) {
-                if (flat.tag(id) == aura::ast::NodeTag::Define && flat.sym_id(id) == sym &&
-                    !flat.is_free_slot(id))
-                    ++same_name_defines;
-            }
-            if (same_name_defines == 1)
+            // Step 2: O(#same-name defines) via the persistent define index.
+            if (flat.defines_for_sym(sym).size() == 1)
                 ev.note_cone_cover_4682(cone_log_before_4682, flat.mutation_log_size());
         }
         // Issue #3681: the closure captured before this rebind still holds
@@ -4578,7 +4573,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // Issue #4357: eval-current already recorded called_by. A same-name
         // one-line body adds no user callee, so rebuilding the graph is
         // pure overhead on the timed rebind.
-        if (ev.repopulate_workspace_dep_graph_fn_ && !ev.rebind_light_path())
+        if (ev.repopulate_dep_graph_one_fn_4682_ && !ev.rebind_light_path())
+            ev.repopulate_dep_graph_one_fn_4682_(name, cone_log_before_4682);
+        else if (ev.repopulate_workspace_dep_graph_fn_ && !ev.rebind_light_path())
             ev.repopulate_workspace_dep_graph_fn_();
 
         // Issue #680: precise IR/JIT/bridge invalidation for closure-heavy Defines.

@@ -1,0 +1,63 @@
+; Issue #4682 step 2: persistent define index (FlatAST::defines_for_sym)
+; and per-define reverse-dep graph repopulate on rebind. Callers must keep
+; seeing callee rebinds after body edges change, after a caller rebind adds
+; or drops an edge, around duplicate names, set-code and mixed mutations.
+; Run with AURA_DEP_GRAPH_INCREMENTAL_4682 / AURA_DEFINE_INDEX_4682 unset
+; and =0, and with AURA_DEFINE_INDEX_CHECK=1 (index == scan); same results.
+(define *fails* 0)
+(define *n* 0)
+(define (check! ok msg)
+  (set! *n* (+ *n* 1))
+  (if (not ok)
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+(define (fill k acc)
+  (if (= k 0) acc
+      (fill (- k 1) (string-append acc "(define w" (number->string k) " (lambda (x) (* x " (number->string k) ")))\n"))))
+(set-code (string-append
+  "(define f (lambda (x) (+ x 1)))\n"
+  "(define g (lambda (x) (* 2 (f x))))\n"
+  "(define p (lambda (x) (- x 7)))\n"
+  "(define h (lambda (x) (+ (g x) 100)))\n"
+  "(define n 5)\n"
+  (fill 30 "")
+  "(list (h 1) (w3 2) n)"))
+(check! (equal? (eval-current) (list 104 6 5)) "initial")
+(let loop ((i 2))
+  (if (< i 8)
+      (begin
+        (mutate:rebind "f" (string-append "(lambda (x) (+ x " (number->string i) "))") "t")
+        (check! (equal? (eval-current) (list (+ (* 2 (+ 1 i)) 100) 6 5))
+                (string-append "callee rebind " (number->string i)))
+        (loop (+ i 1)))))
+;; caller rebind moves its edge from f to p; then rebinding p must reach g/h
+(mutate:rebind "g" "(lambda (x) (* 2 (p x)))" "t")
+(check! (equal? (eval-current) (list 88 6 5)) "caller edge f->p")
+(mutate:rebind "p" "(lambda (x) (- x 1))" "t")
+(check! (equal? (eval-current) (list 100 6 5)) "new edge p cascades")
+(check! (= (h 1) 100) "top call h after p rebind")
+;; caller rebind adds an edge to a value define
+(mutate:rebind "g" "(lambda (x) (* n (p x)))" "t")
+(check! (equal? (eval-current) (list 100 6 5)) "edge to value define")
+(mutate:rebind "p" "(lambda (x) (+ x 1))" "t")
+(check! (equal? (eval-current) (list 110 6 5)) "value-define caller cascade")
+;; set-body / other mutation in between forces the full repopulate path
+(mutate:rebind "w3" "(lambda (x) (* x 30))" "t")
+(mutate:rebind "f" "(lambda (x) x)" "t")
+(check! (equal? (eval-current) (list 110 60 5)) "two rebinds then eval")
+;; duplicate-name define: index must report both; last define wins
+(set-code (string-append (fill 10 "") "(define d (lambda (x) 'one))\n(define d (lambda (x) 'two))\n(define u (lambda (x) (d x)))\n(u 0)"))
+(check! (eq? (eval-current) 'two) "dup initial")
+(mutate:rebind "d" "(lambda (x) 'z)" "t")
+;; (same result with every opt-out: pre-existing duplicate-name semantics)
+(check! (eq? (eval-current) 'z) "dup rebind re-evaluates")
+;; fresh set-code: stale sync must not carry over
+(set-code (string-append "(define a (lambda (x) (+ x 1)))\n(define b (lambda (x) (a x)))\n" (fill 5 "") "(b 1)"))
+(check! (= (eval-current) 2) "reset initial")
+(mutate:rebind "a" "(lambda (x) (+ x 10))" "t")
+(check! (= (eval-current) 11) "reset rebind cascades")
+(mutate:rebind "b" "(lambda (x) (* 3 (a x)))" "t")
+(mutate:rebind "a" "(lambda (x) (+ x 20))" "t")
+(check! (= (eval-current) 63) "reset caller then callee")
+(if (= *fails* 0)
+    (begin (display "OK-defidx4682 ") (display *n*) (display " checks") (newline))
+    (begin (display "define_index_dep_graph_4682: ") (display (- *n* *fails*)) (display "/") (display *n*) (newline) (exit 1)))

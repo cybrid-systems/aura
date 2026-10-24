@@ -1489,6 +1489,11 @@ public:
         // storms.
         evaluator_.set_repopulate_workspace_dep_graph_fn(
             [this]() { this->populate_dep_graph_from_workspace(); });
+        // Issue #4682 step 2: per-define repopulate for a single rebind.
+        evaluator_.set_repopulate_dep_graph_one_fn_4682(
+            [this](const std::string& name, std::uint64_t log_before) {
+                this->populate_dep_graph_one_4682_(name, log_before);
+            });
         // Issue #1495 / #2813: lazy partial re-lower of dirty defines on
         // (eval-current) + push_post_mutate_incremental_cascade under Guard.
         // Production requirement: this MUST be wired. Leaving it null
@@ -9040,6 +9045,47 @@ public:
         return "(define " + name + " " + body_src + ")";
     }
 
+    // Issue #4682 step 2: persistent reverse-dep graph. A full populate
+    // records the mutation-log position it is in sync with; a single
+    // rebind whose log_before matches (nothing else mutated in between)
+    // re-walks only that define: O(|body|) instead of O(N) + W unparses.
+    // AURA_DEP_GRAPH_INCREMENTAL_4682=0 keeps the full walk.
+    const void* dep_sync_flat_4682_ = nullptr;
+    std::uint64_t dep_sync_log_4682_ = ~std::uint64_t{0};
+    std::uint64_t dep_sync_last_id_4682_ = ~std::uint64_t{0};
+    std::uint64_t dep_graph_one_hits_4682_ = 0;
+    static std::uint64_t log_last_id_4682_(const aura::ast::FlatAST& f, std::uint64_t n) {
+        const auto& log = f.all_mutations();
+        return (n == 0 || n > log.size()) ? 0 : log[n - 1].mutation_id;
+    }
+    std::uint64_t dep_graph_one_fallbacks_4682_ = 0;
+    void populate_dep_graph_one_4682_(const std::string& name, std::uint64_t log_before) {
+        static const bool on = [] {
+            const char* e = std::getenv("AURA_DEP_GRAPH_INCREMENTAL_4682");
+            return !(e && e[0] == '0');
+        }();
+        auto* ws_flat = evaluator_.workspace_flat();
+        auto* ws_pool = evaluator_.workspace_pool();
+        if (!ws_flat || !ws_pool)
+            return;
+        const auto sym = ws_pool->find_by_name(name);
+        std::vector<aura::ast::NodeId> ids;
+        if (sym)
+            ids = ws_flat->defines_for_sym(*sym);
+        if (!on || dep_sync_flat_4682_ != ws_flat || dep_sync_log_4682_ != log_before ||
+            dep_sync_last_id_4682_ != log_last_id_4682_(*ws_flat, log_before) || ids.size() != 1) {
+            ++dep_graph_one_fallbacks_4682_;
+            populate_dep_graph_from_workspace();
+            return;
+        }
+        ++dep_graph_one_hits_4682_;
+        populate_dep_graph_define_4682_(*ws_flat, *ws_pool, ids.front(),
+                                        [&](aura::ast::SymId s, const std::string&) {
+                                            return !ws_flat->defines_for_sym(s).empty();
+                                        });
+        dep_sync_log_4682_ = ws_flat->mutation_log_size();
+        dep_sync_last_id_4682_ = log_last_id_4682_(*ws_flat, dep_sync_log_4682_);
+    }
     void populate_dep_graph_from_workspace() {
         auto* ws_flat = evaluator_.workspace_flat();
         auto* ws_pool = evaluator_.workspace_pool();
@@ -9054,17 +9100,32 @@ public:
             if (sv.tag == aura::ast::NodeTag::Define && sv.sym_id != aura::ast::INVALID_SYM)
                 define_names.insert(std::string(ws_pool->resolve(sv.sym_id)));
         }
-        for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
+        for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id)
+            populate_dep_graph_define_4682_(*ws_flat, *ws_pool, id,
+                                            [&](aura::ast::SymId, const std::string& vname) {
+                                                return define_names.count(vname) != 0;
+                                            });
+        dep_sync_flat_4682_ = ws_flat;
+        dep_sync_log_4682_ = ws_flat->mutation_log_size();
+        dep_sync_last_id_4682_ = log_last_id_4682_(*ws_flat, dep_sync_log_4682_);
+    }
+    template <class IsDefine>
+    void populate_dep_graph_define_4682_(aura::ast::FlatAST& flat_ref,
+                                         aura::ast::StringPool& pool_ref, aura::ast::NodeId id,
+                                         IsDefine&& is_define) {
+        auto* ws_flat = &flat_ref;
+        auto* ws_pool = &pool_ref;
+        {
             auto v = ws_flat->get(id);
             if (v.tag != aura::ast::NodeTag::Define)
-                continue;
+                return;
             if (v.sym_id == aura::ast::INVALID_SYM)
-                continue;
+                return;
             auto name = std::string(ws_pool->resolve(v.sym_id));
             if (name.empty() || name[0] == '_')
-                continue;
+                return;
             if (v.children.empty())
-                continue;
+                return;
             // Build canonical source + hash for the v2 entry (lightweight —
             // just unparse, no cache_define, no eval_flat side effects).
             auto child_id = v.child(0);
@@ -9087,7 +9148,7 @@ public:
                     auto vname = std::string(ws_pool->resolve(nv.sym_id));
                     if (!vname.empty() && vname != name && seen.insert(vname).second) {
                         // Check if vname is a sibling define in this workspace
-                        if (define_names.count(vname) != 0) {
+                        if (is_define(nv.sym_id, vname)) {
                             record_dependency(name, vname);
                         }
                     }
@@ -11365,6 +11426,16 @@ public:
         def_memo_size_4681_ = f.size();
     }
     aura::ast::NodeId first_define_for_sym_4681_(aura::ast::FlatAST& f, aura::ast::SymId sid) {
+        // Issue #4682 step 2: persistent FlatAST define index (no per-
+        // mutation memo rebuild). AURA_DEFINE_INDEX_4682=0 keeps the memo.
+        static const bool persistent = [] {
+            const char* e = std::getenv("AURA_DEFINE_INDEX_4682");
+            return !(e && e[0] == '0');
+        }();
+        if (persistent) {
+            const auto ids = f.defines_for_sym(sid);
+            return ids.empty() ? aura::ast::NULL_NODE : ids.front();
+        }
         if (def_memo_flat_4681_ != &f || def_memo_log_4681_ != f.all_mutations().size() ||
             def_memo_size_4681_ != f.size())
             rebuild_define_memo_4681_(f);
