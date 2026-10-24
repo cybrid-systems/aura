@@ -27,16 +27,26 @@
         "(define (run-g-ctl iters)",
         "(define c-small (best5 (lambda () (run-f1-ctl n))))",
         "(define cg-small (best5 (lambda () (run-g-ctl n))))",
-        "(define c-big (best5 (lambda () (run-f1-ctl n))))",
-        "(define cg-big (best5 (lambda () (run-g-ctl n))))"
+        "(set! c-big (best5 (lambda () (run-f1-ctl n))))",
+        "(set! cg-big (best5 (lambda () (run-g-ctl n))))"
       ]
     },
     {
       "ac": "AC4-normalized-bounds",
       "path": "tests/suite/interp_baseline_4599.aura",
       "contains": [
-        "(check \"f1 ratio\" (<= (* t-big c-small 100) (* 123 t-small c-big)) #t)",
-        "(check \"g ratio\" (<= (* tg-big cg-small 100) (* 208 tg-small cg-big)) #t)"
+        "(define (f-round-ok?) (<= (* t-big c-small 100) (* 123 t-small c-big)))",
+        "(define (g-round-ok?) (<= (* tg-big cg-small 100) (* 208 tg-small cg-big)))",
+        "(check \"f1 ratio\" (rounds-ok f-round-ok? 2) 2)",
+        "(check \"g ratio\" (rounds-ok g-round-ok? 2) 2)"
+      ]
+    },
+    {
+      "ac": "AC5-warmup-rounds",
+      "path": "tests/suite/interp_baseline_4599.aura",
+      "contains": [
+        "(define (rounds-ok pass? k)",
+        "(measure-round)  ; warm-up round: not counted, not asserted"
       ]
     },
     {
