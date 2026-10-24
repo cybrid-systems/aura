@@ -24,9 +24,9 @@ Fix shape (no second model; the hard InvalidFiber face is untouched):
   - Resolution order unchanged: explicit caller fiber > #2151
     effect_fiber_id_or override > live aura_fiber_current_id() > mint;
     production gate and Soft/Off legacy 0 stamp unchanged.
-  - Overflow beyond 32 identified Agents on one Evaluator degrades to the
-    per-Evaluator mint — fail-closed (a shared mint can only widen
-    InvalidFiber denies, never admit a foreign resolve).
+  - Overflow beyond 32 identified Agents on one Evaluator must not share
+    the per-Evaluator mint (#4688): it mints a unique disjoint-band id per
+    resolve instead (fail-closed; the own re-resolve also denies).
   - Stamp/resolve wiring and the hard InvalidFiber face stay verbatim.
 
 Contract (one row per AC):
