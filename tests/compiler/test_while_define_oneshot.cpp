@@ -12,6 +12,7 @@
 
 #include "compiler/pipeline_policy.hh"
 
+#include <csignal>
 #include <cstdlib>
 #include <fstream>
 #include <print>
@@ -475,6 +476,112 @@ static void ac4466_while_multi_body() {
     }
 }
 
+// Issue #4690: a closure-form while used to drop a failed thunk and
+// iterate. The diagnostic (and the name) must come back, the body must
+// not run again, and a thunk that stops on #f must still count to 3.
+// The child is killed if it is still looping — the old bug hangs.
+static void ac4690_closure_while_keeps_diagnostic() {
+    std::println("\n--- #4690: closure-form while keeps a failed thunk ---");
+    CHECK(read_file("src/compiler/evaluator_primitives_control.cpp").find("#4690") !=
+              std::string::npos,
+          "4690: primitive cite");
+    CHECK(read_file("src/compiler/evaluator_eval_flat.cpp").find("#4690") != std::string::npos,
+          "4690: apply cite");
+
+    const pid_t pid = ::fork();
+    if (pid < 0) {
+        CHECK(false, "4690: fork");
+        return;
+    }
+    if (pid == 0) {
+        setenv("AURA_SANDBOX", "off", 1);
+        setenv("AURA_PIPELINE_STRICT", "force-soa", 1);
+        apply_pipeline_strict_defaults(/*dev_sandbox_off=*/true);
+        CompilerService cs;
+        auto body = cs.eval(R"((begin
+  (define n 0)
+  (while (lambda () #t)
+    (lambda ()
+      (set! n (+ n 1))
+      (not-a-real-binding-4690)
+      (set! n (+ n 1))))
+  n))");
+        if (body)
+            _exit(2);
+        // force-soa reports the call-position failure as "cannot call"
+        // (same text as the flat while on that face). The walker face
+        // reports "unbound variable". Either way the name is in the
+        // diagnostic and the loop has stopped.
+        const auto text = body.error().format();
+        if (text.find("not-a-real-binding-4690") == std::string::npos)
+            _exit(3);
+        if (text.find("unbound variable") == std::string::npos &&
+            text.find("cannot call") == std::string::npos)
+            _exit(3);
+        auto n = cs.eval("n");
+        if (!n || !is_int(*n) || as_int(*n) != 1)
+            _exit(4);
+
+        auto pred = cs.eval(R"((begin
+  (define m 0)
+  (while (lambda () (not-a-real-pred-4690))
+    (lambda () (set! m (+ m 1))))
+  m))");
+        if (pred)
+            _exit(5);
+        if (pred.error().format().find("not-a-real-pred-4690") == std::string::npos)
+            _exit(6);
+        auto m = cs.eval("m");
+        if (!m || !is_int(*m) || as_int(*m) != 0)
+            _exit(7);
+
+        auto count = cs.eval(R"((let ((i 0))
+  (while (lambda () (< i 3)) (lambda () (set! i (+ i 1))))
+  i))");
+        if (!count || !is_int(*count) || as_int(*count) != 3)
+            _exit(8);
+
+        auto multi = cs.eval(R"((begin
+  (define k 0)
+  (while (lambda () #t)
+    (lambda () (set! k (+ k 1)))
+    (lambda () (not-a-real-binding-4690-b)))
+  k))");
+        if (multi)
+            _exit(9);
+        if (multi.error().format().find("not-a-real-binding-4690-b") == std::string::npos)
+            _exit(10);
+        auto k = cs.eval("k");
+        if (!k || !is_int(*k) || as_int(*k) != 1)
+            _exit(11);
+        _exit(0);
+    }
+
+    int status = 0;
+    bool reaped = false;
+    for (int i = 0; i < 600; ++i) {
+        const pid_t w = ::waitpid(pid, &status, WNOHANG);
+        if (w == pid) {
+            reaped = true;
+            break;
+        }
+        if (w < 0)
+            break;
+        ::usleep(100000);
+    }
+    if (!reaped) {
+        ::kill(pid, SIGKILL);
+        ::waitpid(pid, &status, 0);
+        std::println(std::cerr, "4690: child still running after 60s (status {:#x})", status);
+        CHECK(false, "4690: closure while hung");
+        return;
+    }
+    const bool ok = WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    if (!ok)
+        std::println(std::cerr, "4690: child status {:#x}", status);
+    CHECK(ok, "4690: closure-form while reports the unbound name and stops");
+}
+
 } // namespace
 
 int run_test_while_define_oneshot() {
@@ -487,6 +594,7 @@ int run_test_while_define_oneshot() {
     ac4372_while_set_in_define();
     ac4379_ir_while_lambda_set();
     ac4466_while_multi_body();
+    ac4690_closure_while_keeps_diagnostic();
     std::println("\n=== #2571: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

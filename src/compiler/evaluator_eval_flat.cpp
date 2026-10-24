@@ -1206,10 +1206,52 @@ namespace {
 
 } // namespace
 
+namespace {
+
+    // Issue #4690: apply_closure returns optional, so a Diagnostic raised
+    // inside a thunk (closure-form while) used to vanish. Park it here.
+    // The while primitive stops without calling apply_closure again, and
+    // the prim call site returns the parked diagnostic. Any other primitive
+    // clears it, so a soft nullopt stays a soft miss.
+    thread_local std::optional<aura::diag::Diagnostic> pending_apply_diagnostic;
+
+    void clear_pending_apply_diagnostic() noexcept {
+        pending_apply_diagnostic.reset();
+    }
+
+    void park_pending_apply_diagnostic(aura::diag::Diagnostic d) {
+        pending_apply_diagnostic = std::move(d);
+    }
+
+    std::optional<aura::diag::Diagnostic> take_pending_apply_diagnostic() {
+        if (!pending_apply_diagnostic)
+            return std::nullopt;
+        auto out = std::move(*pending_apply_diagnostic);
+        pending_apply_diagnostic.reset();
+        return out;
+    }
+
+    // Common case is an empty park: one thread_local check, no name compare.
+    EvalResult finish_prim_call(std::string_view name, EvalValue value) {
+        if (!pending_apply_diagnostic)
+            return value;
+        if (name == "while") {
+            auto diag = std::move(*pending_apply_diagnostic);
+            pending_apply_diagnostic.reset();
+            return std::unexpected(std::move(diag));
+        }
+        pending_apply_diagnostic.reset();
+        return value;
+    }
+
+} // namespace
+
 // apply_closure — looks up closures_, foreign functions, or IR bridge
 std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const EvalValue> args) {
     // Issue #4467: drop a message left by a caller that did not take it.
+    // Issue #4690: same for a diagnostic the previous apply parked.
     clear_pending_user_arity();
+    clear_pending_apply_diagnostic();
     // Issue #252: closure dual-path observability. Bump the
     // total counter on every call. The path-specific counters
     // (ffi / tw / bridge / ir) are bumped in each branch.
@@ -1920,6 +1962,10 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             auto r = eval_flat(*cl_copy.flat, *cl_copy.pool, cl_copy.body_id, ne);
             if (r)
                 return *r;
+            // Issue #4690: keep the diagnostic. Callers that turn nullopt
+            // into InvalidClosure, or the while primitive, take it.
+            park_pending_apply_diagnostic(std::move(r.error()));
+            return std::nullopt;
         }
         return std::nullopt;
     }
@@ -3008,7 +3054,9 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 current = pairs_[arg_pair].cdr;
             }
             // Issue #441 / #1357: call count + optional render latency.
-            return invoke_prim_with_telemetry(fn_name, [&]() { return (*prim)(args); });
+            // Issue #4690: a closure-form while parks its thunk's diagnostic.
+            return finish_prim_call(
+                fn_name, invoke_prim_with_telemetry(fn_name, [&]() { return (*prim)(args); }));
         }
 
         // Issue #158: macro expansion in eval_data_as_code. The
@@ -3149,7 +3197,9 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
         if (result)
             return *result;
         // The empty probe is not the real argument list (#4467).
+        // Issue #4690: it is not the call that failed either.
         clear_pending_user_arity();
+        clear_pending_apply_diagnostic();
         // Issue #3688: apply_closure nullopt on persist-reject must not
         // fall through to eval_flat of the pre-restore body.
         if (production_eval_flat_commit_readiness_refuse(
@@ -5956,9 +6006,10 @@ std::optional<EvalResult> Evaluator::try_eval_flat_hot(aura::ast::FlatAST& flat,
                 invoke_prim_with_telemetry_at(cname, e.aux, [&]() { return make_float(r); }));
         }
     }
-    return EvalResult(invoke_prim_with_telemetry_at(cname, e.aux, [&]() {
-        return (*pfn)(std::span<const types::EvalValue>(buf.data(), nargs));
-    }));
+    // Issue #4690: closure-form while on the cached prim path.
+    return finish_prim_call(cname, invoke_prim_with_telemetry_at(cname, e.aux, [&]() {
+                                return (*pfn)(std::span<const types::EvalValue>(buf.data(), nargs));
+                            }));
 }
 
 EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
@@ -7727,11 +7778,14 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                         cname, [&]() { return make_float(r); });
                                 }
                             }
+                            // Issue #4690: closure-form while parks the thunk diagnostic.
                             if (slot_here)
-                                return prim_owner->invoke_prim_with_telemetry_at(
-                                    cname, slot, [&]() { return (*prim)(args); });
-                            return prim_owner->invoke_prim_with_telemetry(
-                                cname, [&]() { return (*prim)(args); });
+                                return finish_prim_call(
+                                    cname, prim_owner->invoke_prim_with_telemetry_at(
+                                               cname, slot, [&]() { return (*prim)(args); }));
+                            return finish_prim_call(cname,
+                                                    prim_owner->invoke_prim_with_telemetry(
+                                                        cname, [&]() { return (*prim)(args); }));
                         }
                     }
                     // Closure call (eval func + arg evals are recursive; body is tail)
@@ -7762,6 +7816,10 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             auto result = apply_closure(cid, cargs);
                             if (result)
                                 return *result;
+                            // Issue #4690: the foreign call's body raised.
+                            // Do not replace that diagnostic with InvalidClosure.
+                            if (auto diag = take_pending_apply_diagnostic())
+                                return std::unexpected(std::move(*diag));
                             if (auto msg = take_pending_user_arity()) {
                                 if (callee.tag == aura::ast::NodeTag::Variable)
                                     prefer_user_arity_call_name(*msg, p->resolve(callee.sym_id));
@@ -7826,6 +7884,10 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             auto bridged = apply_closure(cid, cargs);
                             if (bridged)
                                 return *bridged;
+                            // Issue #4690: an unbound name inside the bridge
+                            // body is not an invalid closure.
+                            if (auto diag = take_pending_apply_diagnostic())
+                                return std::unexpected(std::move(*diag));
                             if (auto msg = take_pending_user_arity()) {
                                 // The IR define bridge drops call_closure's
                                 // diagnostic. The parked text says "lambda"
@@ -8362,9 +8424,11 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 // Null-owner fallback — see Variable primitive path above.
                                 Evaluator* prim_owner =
                                     eval_env.owner() != nullptr ? eval_env.owner() : this;
-                                return prim_owner->invoke_prim_with_telemetry(
-                                    primitives_.name_for_slot(slot),
-                                    [&]() { return (*prim)(args); });
+                                const auto& pname = primitives_.name_for_slot(slot);
+                                // Issue #4690: a primitive value `while`.
+                                return finish_prim_call(
+                                    pname, prim_owner->invoke_prim_with_telemetry(
+                                               pname, [&]() { return (*prim)(args); }));
                             }
                         }
                     }
