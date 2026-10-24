@@ -1,0 +1,35 @@
+{
+  "issue": 4685,
+  "title": "the no-mutation outermost boundary ignores non-ADT invariants and still persists",
+  "checks": [
+    {
+      "ac": "AC-src-verdict",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #4685",
+        "const bool inv_ok = ev_->run_typed_mutation_invariant_audit(",
+        "const bool live_ws = ev_->workspace_flat_ && ev_->workspace_flat_->size() > 0",
+        "!mutated && !batch_active && live_ws && !inv_ok",
+        "!inv.adt_ok"
+      ]
+    },
+    {
+      "ac": "AC-test",
+      "path": "tests/compiler/test_outermost_persist_fail_closed.cpp",
+      "contains": [
+        "ac4685_source_cites",
+        "ac4685_nonempty_vacuous_provenance_denies",
+        "ac4685_empty_workspace_stays_success",
+        "Issue #4685"
+      ]
+    },
+    {
+      "ac": "AC-no-issue-dir",
+      "forbid": [
+        "tests/issues/test_issue_4685.cpp",
+        "tests/compiler/test_issue_4685.cpp",
+        "docs/design/4685-outermost-vacuous-invariants.md"
+      ]
+    }
+  ]
+}
