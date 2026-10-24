@@ -199,6 +199,22 @@ inline std::atomic<std::uint64_t>& wal_overflow_ring_wrap_refuse_total() noexcep
     return wal_overflow_ring_depth() >= kWalOverflowRingCapacity;
 }
 
+// Issue #4686: deterministic segment-open failure for the second-enable ACs.
+// A read-only-but-readable segment is expressed with DAC permissions, but a
+// root CI container bypasses them (CAP_DAC_OVERRIDE) and fopen("ab+") still
+// succeeds — the runtime repro then never takes the open-fail branch. This
+// test seam injects exactly that failure while leaving the existing bytes
+// readable, so replay is still real and the open failure is deterministic
+// on every uid.
+inline std::atomic<bool>& security_event_segment_open_fail_for_test() noexcept {
+    static std::atomic<bool> v{false};
+    return v;
+}
+
+inline void set_security_event_segment_open_fail_for_test(bool on) noexcept {
+    security_event_segment_open_fail_for_test().store(on, std::memory_order_relaxed);
+}
+
 inline void wal_overflow_ring_clear_for_test() noexcept {
     wal_overflow_ring_head().store(0, std::memory_order_relaxed);
     wal_overflow_ring_count().store(0, std::memory_order_relaxed);
@@ -291,6 +307,9 @@ struct SecurityEventWal {
             return false;
         current_path =
             (fs::path(dir) / ("security-event-" + std::to_string(seg) + ".wal")).string();
+        // Issue #4686: see security_event_segment_open_fail_for_test().
+        if (security_event_segment_open_fail_for_test().load(std::memory_order_relaxed))
+            return false;
         fp = std::fopen(current_path.c_str(), "ab+");
         if (!fp)
             return false;
@@ -742,6 +761,7 @@ inline SecurityEventWal& g_security_event_wal() noexcept {
 }
 
 inline void reset_security_event_wal_for_test() noexcept {
+    set_security_event_segment_open_fail_for_test(false);
     g_security_event_wal().clear_for_test();
 }
 

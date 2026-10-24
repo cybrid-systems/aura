@@ -654,6 +654,11 @@ int run_test_audit_durable_gap_force_wal() {
                                  fs_4686::perms::others_read,
                              fs_4686::perm_options::replace, ec_4686);
         CHECK(!ec_4686, "4686 AC1: existing segment made read-only");
+        // A root CI container bypasses DAC (CAP_DAC_OVERRIDE), so the mode
+        // above alone leaves fopen("ab+") succeeding there. Inject the
+        // open failure deterministically; the bytes stay readable, so the
+        // replay-bearing segment below is still the real one.
+        se_wal_4686::set_security_event_segment_open_fail_for_test(true);
 
         // Second enable: mutation WAL reopens (writable), SE open fails.
         CompilerService cs_4686;
@@ -690,6 +695,7 @@ int run_test_audit_durable_gap_force_wal() {
         fs_4686::permissions(seg_4686a, fs_4686::perms::owner_all, fs_4686::perm_options::replace,
                              ec_4686);
         CHECK(!ec_4686, "4686 AC3: segment writable again");
+        se_wal_4686::set_security_event_segment_open_fail_for_test(false);
         const auto recov_4686b =
             se_wal_4686::snapshot_security_event_wal_stats().crash_recovery_success;
         CHECK(ev_4686.enable_mutation_audit_wal(dir_4686a.string()),

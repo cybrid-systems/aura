@@ -13,6 +13,7 @@
 #include "compiler/pipeline_policy.hh"
 
 #include <csignal>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <print>
@@ -480,6 +481,20 @@ static void ac4466_while_multi_body() {
 // iterate. The diagnostic (and the name) must come back, the body must
 // not run again, and a thunk that stops on #f must still count to 3.
 // The child is killed if it is still looping — the old bug hangs.
+
+// Issue #4690: a failed eval rolls the top-level environment back
+// (transactional commit), so a counter defined inside the failing form is
+// unbound afterwards — reading it cannot observe how often the thunk ran.
+// Count a stdout marker instead: it survives the rollback and is exactly
+// the property under test (the failed thunk must not run again).
+static int count_marker_4690(const std::string& path, char marker) {
+    std::ifstream in(path);
+    int n = 0;
+    for (char c; in.get(c);)
+        if (c == marker)
+            ++n;
+    return n;
+}
 static void ac4690_closure_while_keeps_diagnostic() {
     std::println("\n--- #4690: closure-form while keeps a failed thunk ---");
     CHECK(read_file("src/compiler/evaluator_primitives_control.cpp").find("#4690") !=
@@ -497,15 +512,18 @@ static void ac4690_closure_while_keeps_diagnostic() {
         setenv("AURA_SANDBOX", "off", 1);
         setenv("AURA_PIPELINE_STRICT", "force-soa", 1);
         apply_pipeline_strict_defaults(/*dev_sandbox_off=*/true);
+        const std::string out_path =
+            std::format("/tmp/aura-4690-{}.out", static_cast<long>(::getpid()));
+        if (!std::freopen(out_path.c_str(), "w", stdout))
+            _exit(12);
         CompilerService cs;
         auto body = cs.eval(R"((begin
   (define n 0)
   (while (lambda () #t)
     (lambda ()
-      (set! n (+ n 1))
-      (not-a-real-binding-4690)
-      (set! n (+ n 1))))
-  n))");
+      (display "A")
+      (not-a-real-binding-4690))))");
+        std::fflush(stdout);
         if (body)
             _exit(2);
         // force-soa reports the call-position failure as "cannot call"
@@ -518,21 +536,21 @@ static void ac4690_closure_while_keeps_diagnostic() {
         if (text.find("unbound variable") == std::string::npos &&
             text.find("cannot call") == std::string::npos)
             _exit(3);
-        auto n = cs.eval("n");
-        if (!n || !is_int(*n) || as_int(*n) != 1)
+        // The failed eval rolled the env back, so "n" is gone; the marker
+        // count is the surviving evidence that the body ran once.
+        if (count_marker_4690(out_path, 'A') != 1)
             _exit(4);
 
         auto pred = cs.eval(R"((begin
   (define m 0)
   (while (lambda () (not-a-real-pred-4690))
-    (lambda () (set! m (+ m 1))))
-  m))");
+    (lambda () (display "B"))))");
+        std::fflush(stdout);
         if (pred)
             _exit(5);
         if (pred.error().format().find("not-a-real-pred-4690") == std::string::npos)
             _exit(6);
-        auto m = cs.eval("m");
-        if (!m || !is_int(*m) || as_int(*m) != 0)
+        if (count_marker_4690(out_path, 'B') != 0)
             _exit(7);
 
         auto count = cs.eval(R"((let ((i 0))
@@ -544,15 +562,15 @@ static void ac4690_closure_while_keeps_diagnostic() {
         auto multi = cs.eval(R"((begin
   (define k 0)
   (while (lambda () #t)
-    (lambda () (set! k (+ k 1)))
+    (lambda () (display "C"))
     (lambda () (not-a-real-binding-4690-b)))
   k))");
+        std::fflush(stdout);
         if (multi)
             _exit(9);
         if (multi.error().format().find("not-a-real-binding-4690-b") == std::string::npos)
             _exit(10);
-        auto k = cs.eval("k");
-        if (!k || !is_int(*k) || as_int(*k) != 1)
+        if (count_marker_4690(out_path, 'C') != 1)
             _exit(11);
         _exit(0);
     }
