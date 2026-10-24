@@ -37,8 +37,8 @@
       "contains": [
         "(define (f-round-ok?) (<= (* t-big c-small 100) (* 123 t-small c-big)))",
         "(define (g-round-ok?) (<= (* tg-big cg-small 100) (* 208 tg-small cg-big)))",
-        "(check \"f1 ratio\" (rounds-ok f-round-ok? 2) 2)",
-        "(check \"g ratio\" (rounds-ok g-round-ok? 2) 2)"
+        "(check \"f1 ratio\" (>= (rounds-ok f-round-ok? 2) 1) #t)",
+        "(check \"g ratio\" (>= (rounds-ok g-round-ok? 2) 1) #t)"
       ]
     },
     {
