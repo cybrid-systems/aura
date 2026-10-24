@@ -401,6 +401,11 @@ struct SecurityEventWal {
         std::error_code ec;
         std::uint32_t max_seg = 0;
         bool any = false;
+        // Issue #4686: replay was non-empty, but recovery success is only
+        // stamped once open_segment_unlocked succeeds — a second enable that
+        // cannot open the existing (read-only) segment must not look like a
+        // successful crash recovery to the caller.
+        bool replayed_nonempty = false;
         // Issue #4520: collected indices double as the enable-time upgrade
         // prune list (exact, hole-tolerant) — no extra directory pass.
         std::vector<std::uint32_t> seg_indices;
@@ -465,15 +470,22 @@ struct SecurityEventWal {
                 1, std::memory_order_relaxed);
             g_security_event_wal_metrics().security_event_wal_replay_truncated.store(
                 replay_truncated ? 1 : 0, std::memory_order_relaxed);
-            if (!out_replay->empty())
-                g_security_event_wal_metrics().security_event_crash_recovery_success.fetch_add(
-                    1, std::memory_order_relaxed);
+            // Issue #4686: a non-empty replay is not crash recovery by
+            // itself — the segment still has to open below. Defer the stamp.
+            replayed_nonempty = !out_replay->empty();
         }
         if (!open_segment_unlocked(any ? max_seg : 0)) {
             g_security_event_wal_metrics().security_event_wal_enabled.store(
                 0, std::memory_order_relaxed);
             return false;
         }
+        // Issue #4686: stamp recovery success only after the segment really
+        // opened. Evaluator::enable_mutation_audit_wal reads this counter's
+        // delta as sidecar replay success; a phantom delta kept fail-closed
+        // disarmed while the WAL was actually off.
+        if (replayed_nonempty)
+            g_security_event_wal_metrics().security_event_crash_recovery_success.fetch_add(
+                1, std::memory_order_relaxed);
         // Issue #4520: upgrade path — a dir oversized by older versions
         // (retention defaulted to 0) is pruned to the cap on first
         // enable, from the dirent list collected above (exact indices,
