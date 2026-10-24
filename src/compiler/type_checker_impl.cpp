@@ -11276,6 +11276,19 @@ bool analyze_linear_escape_for_dirty(const FlatAST& flat, const StringPool& pool
     out.dirty_revalidate_hits = dirty_bindings.size();
     out.escape_reanalysis_hits = 1;
 
+    // Issue #4682 step 5: every state starts Owned and only Move/Borrow/
+    // MutBorrow/Drop nodes change it, so with no live linear-op node (the
+    // #4598 counter is a superset of what the walk can reach) no escape can
+    // be reported. Skip the O(W) walk. AURA_ESCAPE_LINEAR_GATE_4682=0 = old walk.
+    {
+        static const bool gate_on = [] {
+            const char* e = std::getenv("AURA_ESCAPE_LINEAR_GATE_4682");
+            return !(e && e[0] == '0');
+        }();
+        if (gate_on && !flat.has_linear_ops_live())
+            return true;
+    }
+
     OwnershipEnv tmp;
     for (const auto& name : dirty_bindings)
         tmp.mark(name, OwnershipState::Owned);
@@ -11739,6 +11752,19 @@ bool OwnershipEnv::validate_ownership_impl(const FlatAST& flat, const StringPool
         }
     };
 
+    std::vector<std::uint8_t> sym_dirty_memo_4682; // 0 unknown, 1 no, 2 yes
+    auto sym_is_dirty_4682 = [&](SymId sym) -> bool {
+        const auto i = static_cast<std::size_t>(sym);
+        if (i >= sym_dirty_memo_4682.size())
+            sym_dirty_memo_4682.resize(i + 64, 0);
+        auto& m = sym_dirty_memo_4682[i];
+        if (m == 0) {
+            const auto nm = pool.resolve(sym);
+            m = (!nm.empty() && dirty_bindings.count(std::string(nm)) > 0) ? 2 : 1;
+        }
+        return m == 2;
+    };
+
     // Recursive walker.
     auto walk = [&](this const auto& self, NodeId id) -> void {
         if (id >= flat.size())
@@ -11769,6 +11795,10 @@ bool OwnershipEnv::validate_ownership_impl(const FlatAST& flat, const StringPool
         // Issue #1458: Variable use of a moved linear binding.
         // can_use allows Owned | Borrowed; Moved / MutBorrowed fail.
         if (v.tag == NodeTag::Variable && v.sym_id != INVALID_SYM) {
+            // Issue #4682 step 5: memo the dirty-set membership per SymId
+            // (names are interned, so SymId -> name is a function).
+            if (!sym_is_dirty_4682(v.sym_id))
+                return;
             auto var_name = std::string(pool.resolve(v.sym_id));
             if (!var_name.empty() && dirty_bindings.count(var_name) > 0) {
                 if (!tmp_env.can_use(var_name)) {
@@ -13183,9 +13213,10 @@ std::vector<aura::ast::NodeId> affected_subtree_for_symbol(const aura::ast::Flat
     const std::size_t n = flat.size();
     affected.reserve(n / 8); // rough heuristic: typical body has ~12% Variable density
     for (std::size_t i = 0; i < n; ++i) {
-        auto v = flat.get(static_cast<NodeId>(i));
-        if (v.tag == NodeTag::Variable && v.sym_id == sym_id)
-            affected.push_back(static_cast<NodeId>(i));
+        // Issue #4682 step 5: column reads (no NodeView assembly).
+        const auto nid = static_cast<NodeId>(i);
+        if (flat.tag(nid) == NodeTag::Variable && flat.sym_id(nid) == sym_id)
+            affected.push_back(nid);
     }
     return affected;
 }
