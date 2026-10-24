@@ -1056,6 +1056,15 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
     // shared pin — MutationBoundary fails closed via TLS (see
     // note_eval_current_shared_* / Guard ctor). Prefer outer Guard when
     // evaluating code that itself mutates.
+    // #4682 step 6a toggle: AURA_EVAL_CURRENT_JIT_INCREMENTAL=1 (opt-in until
+    // the suite is green both ways).
+    static auto eval_current_jit_incremental_6a = []() -> bool {
+        static const bool on = [] {
+            const char* e = std::getenv("AURA_EVAL_CURRENT_JIT_INCREMENTAL");
+            return e && e[0] == '1';
+        }();
+        return on;
+    };
     add(aura::compiler::prim::kEvalCurrent, [&ev, mev](const auto& a) -> EvalValue {
         aura::compiler::phase_stats::Scope phase_eval_current(
             aura::compiler::phase_stats::EvalCurrent);
@@ -1066,7 +1075,17 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         if (a.size() == 1 && types::is_keyword(a[0])) {
             auto kidx = types::as_keyword_idx(a[0]);
             if (kidx < ev.keyword_table_.size() && ev.keyword_table_[kidx] == ":jit") {
-                if (ev.try_jit_fn_) {
+                // #4682 step 6a: route :jit onto the trusted incremental IR.
+                // The legacy branch below unparses + re-parses + fully
+                // typechecks + re-lowers the whole workspace per call (~17 ms
+                // of O(W) at W=1000; #4679). The incremental route reuses the
+                // post-rebind relowered ir_cache_v2_ entries and binds the
+                // dirty cone via IR (specialize_workspace_lambdas_via_ir:
+                // per-define gate, tree-walker fallback).
+                if (eval_current_jit_incremental_6a()) {
+                    // fall through to the incremental path below (relower dirty + IR bind of the
+                    // dirty cone)
+                } else if (ev.try_jit_fn_) {
                     std::string src = ev.authoritative_workspace_source();
                     if (!src.empty()) {
                         auto jit_result = ev.try_jit_fn_(src);
