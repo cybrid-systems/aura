@@ -2979,11 +2979,16 @@ public:
             return;
         }
         // Count dirty among already-built ids (cheap byte scan).
+        // Issue #4682: remember the dirty ids so the sparse patch below does
+        // not re-scan all N is_dirty bits (same ids, same ascending order).
         std::size_t dirty_n = 0;
         const std::size_t scan_n = std::min(n, tag_arity_index_built_size_);
+        std::vector<NodeId> dirty_ids;
         for (NodeId id = 0; id < static_cast<NodeId>(scan_n); ++id) {
-            if (is_dirty(id))
+            if (is_dirty(id)) {
                 ++dirty_n;
+                dirty_ids.push_back(id);
+            }
         }
         // Index dirty with no dirty bits and no growth: unknown
         // in-place change (mark_tag_arity_index_dirty alone) → full rebuild.
@@ -3006,7 +3011,27 @@ public:
             return;
         }
         // Issue #1503: sparse dirty set → per-node re-key patch.
-        patch_tag_arity_index_dirty_nodes();
+        patch_tag_arity_index_ids(dirty_ids);
+    }
+    // Issue #4682: patch_tag_arity_index_dirty_nodes with the dirty ids
+    // below built_size already known (from the ensure scan) + append tail.
+    void patch_tag_arity_index_ids(const std::vector<NodeId>& dirty_ids) noexcept {
+        auto t0 = std::chrono::steady_clock::now();
+        const std::size_t n = size();
+        if (tag_arity_node_key_.size() < n)
+            tag_arity_node_key_.resize(n, kTagArityNodeKeyNone);
+        for (auto id : dirty_ids)
+            if (static_cast<std::size_t>(id) < n)
+                patch_tag_arity_index_node(id);
+        for (std::size_t id = tag_arity_index_built_size_; id < n; ++id)
+            patch_tag_arity_index_node(static_cast<NodeId>(id));
+        tag_arity_index_built_size_ = n;
+        tag_arity_index_delta_hits_.fetch_add(1, std::memory_order_relaxed);
+        auto t1 = std::chrono::steady_clock::now();
+        const auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+        tag_arity_index_rebuild_time_us_.fetch_add(static_cast<std::uint64_t>(us),
+                                                   std::memory_order_relaxed);
+        tag_arity_index_dirty_.store(false, std::memory_order_release);
     }
     // Issue #1371 / #1503: structural dirty + index policy. Marks the
     // index dirty (like mark_dirty_upward) and, when the index is warm,
