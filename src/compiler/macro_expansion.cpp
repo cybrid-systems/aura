@@ -3875,6 +3875,147 @@ static void splice_child_keep_caller_edge(aura::ast::FlatAST& flat, aura::ast::N
         flat.restore_parent_link(new_child, caller);
 }
 
+// Issue #4687: child -> the live node that lists it, rebuilt at most
+// once per macro_expand_all pass (and updated on every splice). A dead
+// Call carries a preserved caller edge (#4309/#4649), so the
+// parent_of == NULL skip cannot see it; a per-call tree walk would be
+// O(live tree) per dead node on truncation-heavy flats.
+using LiveSlotCache = std::unordered_map<aura::ast::NodeId, aura::ast::NodeId>;
+
+// Full live-tree walk: record the first live parent of every child.
+static void fill_live_slot_cache(aura::ast::FlatAST& flat, aura::ast::NodeId live_root,
+                                 LiveSlotCache& cache) {
+    using namespace aura::ast;
+    cache.clear();
+    if (live_root == NULL_NODE || live_root >= flat.size() || !flat.is_live_node(live_root))
+        return;
+    std::vector<std::uint8_t> seen(flat.size(), 0);
+    std::vector<NodeId> stack;
+    auto push_once = [&](NodeId id) {
+        if (id == NULL_NODE || id >= flat.size() || !flat.is_live_node(id) || seen[id] != 0)
+            return;
+        seen[id] = 1;
+        stack.push_back(id);
+    };
+    push_once(live_root);
+    while (!stack.empty()) {
+        const auto cur = stack.back();
+        stack.pop_back();
+        const auto v = flat.get(cur);
+        for (const auto cid : v.children) {
+            if (cid == NULL_NODE || cid >= flat.size())
+                continue;
+            cache.emplace(cid, cur); // first live parent wins
+            push_once(cid);
+        }
+    }
+}
+
+// Incremental cache update after a splice: everything under the newly
+// installed subtree is live now, so its children map to their parent.
+static void record_subtree_slots(aura::ast::FlatAST& flat, aura::ast::NodeId root,
+                                 LiveSlotCache& cache) {
+    using namespace aura::ast;
+    if (root == NULL_NODE || root >= flat.size())
+        return;
+    std::unordered_set<NodeId> seen;
+    std::vector<NodeId> stack{root};
+    while (!stack.empty()) {
+        const auto cur = stack.back();
+        stack.pop_back();
+        if (cur == NULL_NODE || cur >= flat.size() || !flat.is_live_node(cur) ||
+            !seen.insert(cur).second)
+            continue;
+        const auto v = flat.get(cur);
+        for (const auto cid : v.children) {
+            if (cid == NULL_NODE || cid >= flat.size())
+                continue;
+            cache[cid] = cur;
+            stack.push_back(cid);
+        }
+    }
+}
+
+static aura::ast::NodeId find_live_child_slot_parent(aura::ast::FlatAST& flat,
+                                                     aura::ast::NodeId live_root,
+                                                     aura::ast::NodeId child,
+                                                     LiveSlotCache* cache) {
+    using namespace aura::ast;
+    if (child == NULL_NODE || child >= flat.size())
+        return NULL_NODE;
+    auto lists_child = [&](NodeId parent) {
+        if (parent == NULL_NODE || parent >= flat.size() || parent == child ||
+            !flat.is_live_node(parent))
+            return false;
+        const auto pv = flat.get(parent);
+        for (const auto cid : pv.children) {
+            if (cid == child)
+                return true;
+        }
+        return false;
+    };
+    const auto caller = flat.parent_of(child);
+    const bool have_root = live_root != NULL_NODE && live_root < flat.size();
+    if (!have_root)
+        return lists_child(caller) ? caller : NULL_NODE; // legacy: no live root
+    // Issue #4687: the live slot comes from a forward walk of the live
+    // tree, never from a reverse-edge climb. parent_of is the CALLER
+    // edge (#4309/#4649 keeps a shared subst child's live caller link),
+    // and after truncation a dead node's stale reverse chain can
+    // coincidentally pass through a live node — splicing there wrote a
+    // dead slot and made the mutation bookkeeping walk a corrupt chain.
+    // The per-pass map is built once (and updated on every splice) so
+    // the cost is O(live tree) per pass, not per Call.
+    if (cache != nullptr) {
+        if (cache->empty())
+            fill_live_slot_cache(flat, live_root, *cache);
+        const auto it = cache->find(child);
+        return it == cache->end() ? NULL_NODE : it->second;
+    }
+    // One-shot walk for callers without a pass cache (reexpand).
+    LiveSlotCache local;
+    fill_live_slot_cache(flat, live_root, local);
+    const auto it = local.find(child);
+    return it == local.end() ? NULL_NODE : it->second;
+}
+
+// Issue #4687: install a successful non-root expansion in the LIVE tree
+// slot. parent_of() is only the caller edge handed to the existing
+// splice_child_keep_caller_edge (a shared subst Call's reverse link stays
+// on its caller). The bug shape: the caller was already spliced away, so
+// set_child(parent_of) wrote the dead caller's slot, cleared the Call's
+// live reverse edge and published an unexpanded Call in the clone while
+// returning success.
+bool splice_expansion_into_live_slot(aura::ast::FlatAST& flat, aura::ast::NodeId live_root,
+                                     aura::ast::NodeId old_child, aura::ast::NodeId new_child,
+                                     LiveSlotCache* live_slots) {
+    using namespace aura::ast;
+    if (old_child == NULL_NODE || new_child == NULL_NODE || old_child == new_child)
+        return false;
+    const auto caller = flat.parent_of(old_child);
+    const auto structural = find_live_child_slot_parent(flat, live_root, old_child, live_slots);
+    if (structural == NULL_NODE || structural >= flat.size())
+        return false;
+    // Snapshot the slots: splice_child_keep_caller_edge mutates them.
+    const auto sv = flat.get(structural);
+    std::vector<NodeId> slots(sv.children.begin(), sv.children.end());
+    for (std::uint32_t ci = 0; ci < slots.size(); ++ci) {
+        if (slots[ci] == old_child) {
+            splice_child_keep_caller_edge(flat, structural, ci, new_child, old_child, caller);
+            if (live_slots != nullptr) {
+                // The old occupant no longer lives in this slot. Drop its
+                // entry; a still-shared node is re-discovered by the next
+                // pass's forward walk.
+                live_slots->erase(old_child);
+                (*live_slots)[new_child] = structural;
+                record_subtree_slots(flat, new_child, *live_slots);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                    aura::ast::NodeId root, int max_passes) {
     using namespace aura::ast;
@@ -4166,8 +4307,17 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
         // Phase 2: find and expand macro calls
         bool expanded_any = false;
         NodeId new_root = root;
+        // Issue #4687: per-pass live-slot map for the rare stale-caller
+        // splice. Built lazily by the helper, updated on every splice.
+        std::unordered_map<NodeId, NodeId> live_slot_cache;
+        // Issue #4687: scan only the nodes that existed when the pass
+        // began. A recursive macro otherwise re-enters its own fresh
+        // clones in the same pass and flat.size() grows on every
+        // expansion, so the loop never terminates; each pass then
+        // expands one level and the pass limit stays the outer bound.
+        const std::size_t pass_scan_limit = flat.size();
 
-        for (NodeId id = 0; id < flat.size(); ++id) {
+        for (NodeId id = 0; id < pass_scan_limit && id < flat.size(); ++id) {
             // Issue #3508: spliced-away Calls stay in the flat as User
             // orphans. Re-expanding them every pass sets expanded_any
             // forever and hits hygiene-pass-limit (production would
@@ -4230,28 +4380,32 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
                         if (expanded == NULL_NODE) {
                             if (rest_spine_pending && production_surface)
                                 flat.truncate_to(rest_spine_ckpt);
-                        } else {
-                            if (id == root)
-                                new_root = expanded;
-                            else {
-                                // Issue #3508: splice non-root expansions into
-                                // the parent (same face as expand_inner_macros).
-                                // Without set_child the clone is a MacroIntroduced
-                                // orphan and the source Call stays in the tree.
-                                const auto parent_id = flat.parent_of(id);
-                                if (parent_id != NULL_NODE && parent_id < flat.size()) {
-                                    auto pv = flat.get(parent_id);
-                                    std::vector<aura::ast::NodeId> pch(pv.children.begin(),
-                                                                       pv.children.end());
-                                    for (std::uint32_t ci = 0; ci < pch.size(); ++ci) {
-                                        if (pch[ci] == id) {
-                                            flat.set_child(parent_id, ci, expanded);
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
+                        } else if (id == root) {
+                            new_root = expanded;
                             expanded_any = true;
+                        } else {
+                            // Issue #3508: splice non-root expansions into
+                            // the live tree (same face as expand_inner_macros).
+                            // Without a splice the clone is a MacroIntroduced
+                            // orphan and the source Call stays in the tree.
+                            // Issue #4687: the slot is the LIVE node that
+                            // lists the Call, not blindly parent_of(id) — a
+                            // shared subst Call keeps the CALLER's reverse
+                            // edge (#4309), and that caller may already be
+                            // spliced away. set_child(parent_of) then wrote
+                            // the dead caller slot, cleared the Call's live
+                            // reverse edge, and the next pass skipped it
+                            // (parent_of == NULL) while returning success.
+                            // The #3508 skip below cannot see that shape:
+                            // the preserved caller edge keeps parent_of
+                            // non-NULL, so the dead Call is visited every
+                            // pass. Only a LIVE-slot splice is progress —
+                            // counting an orphan clone as progress would
+                            // hit hygiene-pass-limit and (production)
+                            // restore the checkpoint over a good expand.
+                            if (splice_expansion_into_live_slot(flat, new_root, id, expanded,
+                                                                &live_slot_cache))
+                                expanded_any = true;
                         }
                     }
                 }
