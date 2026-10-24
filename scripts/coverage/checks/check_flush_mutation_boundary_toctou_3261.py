@@ -48,7 +48,15 @@ def main() -> int:
     l3260 = _read("scripts/coverage/checks/check_macro_provenance_counter_unify_3260.py")
 
     pos = fiber.find("void Evaluator::flush_mutation_boundary()")
-    win = fiber[pos : pos + 3200] if pos >= 0 else ""
+    if pos < 0:
+        win = ""
+    else:
+        # Issue #3261: sample the whole function body. #4682 step 1 grew
+        # flush_mutation_boundary past the old 3.2 KB byte budget and pushed
+        # the (still present) hygiene hoist out of the window, which failed
+        # AC2/AC4 on source that satisfies the contract.
+        end = fiber.find("\n}\n", pos)
+        win = fiber[pos : (end + 3) if end >= 0 else pos + 3200]
     must("Issue #3261", "AC1 cite", win)
     must("const auto depth = stack.size()", "AC1 once", win)
     must("if (outermost_active)", "AC1 if", win)
