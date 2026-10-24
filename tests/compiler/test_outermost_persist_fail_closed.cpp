@@ -1384,6 +1384,116 @@ static void ac4672_reject_path_does_not_double_take() {
     reset_for_test();
 }
 
+// Issue #4685: the vacuous outermost pre-persist arm kept the audit only
+// for adt_ok. Non-empty workspace + false provenance/type invariant and
+// no dirty/log/batch still froze the Occurrence snapshot (query:type).
+// The deny now consumes the audit verdict; the empty workspace stays the
+// vacuous success (post_mutation_reflect_validate returns false for
+// !ws/size==0) and the #3614 linear gate is untouched.
+static void ac4685_source_cites() {
+    std::println("\n--- #4685 AC1: pre-persist keeps the invariant audit verdict ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto gate = emb.find("Issue #3653: Production/Full outermost");
+    CHECK(gate != std::string::npos, "4685 AC1: outermost pre-persist block present");
+    const auto win = (gate == std::string::npos) ? std::string{} : brace_block_after(emb, gate);
+    CHECK(!win.empty(), "4685 AC1: brace-matched pre-persist window");
+    CHECK(win.find("const bool inv_ok = ev_->run_typed_mutation_invariant_audit(") !=
+              std::string::npos,
+          "4685 AC1: audit verdict is kept");
+    CHECK(win.find("(void)ev_->run_typed_mutation_invariant_audit") == std::string::npos,
+          "4685 AC1: no discarded audit verdict");
+    CHECK(win.find("const bool live_ws") != std::string::npos,
+          "4685 AC1: non-empty workspace probe");
+    CHECK(win.find("!mutated && !batch_active && live_ws && !inv_ok") != std::string::npos,
+          "4685 AC1: vacuous non-empty invariant deny arm");
+    CHECK(win.find("!inv.adt_ok") != std::string::npos, "4685 AC1: ADT deny retained");
+    CHECK(win.find("Issue #4685") != std::string::npos, "4685 AC1: cite inside the window");
+    CHECK(win.find("= ev_->enforce_linear_boundary_consistency(") == std::string::npos,
+          "4685 AC1: no second linear sweep in this window");
+    const auto lin = emb.find("= ev_->enforce_linear_boundary_consistency(");
+    CHECK(lin != std::string::npos && lin < gate,
+          "4685 AC1: #3614 linear gate stays ahead of the window");
+    CHECK(read_file("tests/compiler/test_issue_4685.cpp").empty(), "4685 AC1: no test_issue file");
+    CHECK(read_file("docs/design/4685-outermost-vacuous-invariants.md").empty(),
+          "4685 AC1: no design doc");
+}
+
+static std::size_t ac4685_macro_introduced_count(aura::ast::FlatAST& ws) {
+    std::size_t n = 0;
+    for (aura::ast::NodeId id = 0; id < ws.size(); ++id) {
+        if (ws.is_macro_introduced(id))
+            ++n;
+    }
+    return n;
+}
+
+static void ac4685_nonempty_vacuous_provenance_denies() {
+    std::println("\n--- #4685 AC2: non-empty vacuous provenance deny ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define-hygienic-macro (dbl y) (* y 2)) (dbl 1) "
+                  "(define base 10) (+ base 1)\")")
+              .has_value(),
+          "4685 AC2: macro workspace");
+    CHECK(cs.eval("(eval-current)").has_value(), "4685 AC2: eval");
+    auto& ev = cs.evaluator();
+    auto* ws = ev.workspace_flat();
+    CHECK(ws != nullptr, "4685 AC2: workspace");
+    if (!ws || ws->size() == 0) {
+        apply_dev_audit_defaults();
+        reset_for_test();
+        return;
+    }
+    const auto macro_nodes = ac4685_macro_introduced_count(*ws);
+    std::println("  4685 AC2: macro-introduced nodes {}", macro_nodes);
+    CHECK(macro_nodes > 0, "4685 AC2: macro provenance surface present");
+    const auto dirty_up0 = ws->mark_dirty_upward_call_count();
+    const auto log0 = ws->mutation_log_size();
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(ev, &ok);
+        // MacroIntroduced without kMacroExpansion => reflect validate false.
+        // Touches only the macro_dirty_ column: no dirty/log delta, no batch.
+        ws->clear_macro_dirty_all();
+        CHECK(!ev.post_mutation_reflect_validate(), "4685 AC2: provenance invariant is false");
+        CHECK(!ev.txn_dirty(), "4685 AC2: boundary has no dirty txn");
+        CHECK(ws->mark_dirty_upward_call_count() == dirty_up0, "4685 AC2: no dirty-upward delta");
+        CHECK(ws->mutation_log_size() == log0, "4685 AC2: no mutation-log delta");
+    }
+    CHECK(!ok, "4685 AC2: outermost success denied");
+    CHECK(!ev.type_export_inflight(), "4685 AC2: no in-flight type export");
+    CHECK(!ev.type_export_is_authoritative(), "4685 AC2: no query:type authority");
+    CHECK(last_type_linear_proof_outcome_v_read() == kTypeLinearProofOutcomeReject,
+          "4685 AC2: deny block stamped the reject face");
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+static void ac4685_empty_workspace_stays_success() {
+    std::println("\n--- #4685 AC3: empty workspace is vacuous, never a #4685 failure ---");
+    // Vacuous contract: no workspace, no dirty/log → Guard success. The
+    // #4685 arm is production/Full-only and is gated on live_ws, so an empty
+    // workspace can never be what flips success here (source AC1 pins the
+    // live_ws conjunct). Production top-level Guards have their own
+    // pre-existing quota/#3872 faces; this AC is the vacuous-success face.
+    reset_for_test();
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws == nullptr || ws->size() == 0, "4685 AC3: empty workspace");
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+        CHECK(!cs.evaluator().post_mutation_reflect_validate(),
+              "4685 AC3: empty-workspace provenance is vacuous false");
+    }
+    CHECK(ok, "4685 AC3: vacuous empty Guard stays success");
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+
 int run_test_outermost_persist_fail_closed() {
     std::println("=== Issue #3376: outermost persist fail-closed (no half-green) ===");
     CHECK(true, "3376: issue stamp");
@@ -2378,6 +2488,10 @@ int run_test_outermost_persist_fail_closed() {
     ac4672_success_path_still_discards_the_tracker();
     ac4672_soft_stays_observe_only();
     ac4672_reject_path_does_not_double_take();
+
+    ac4685_source_cites();
+    ac4685_nonempty_vacuous_provenance_denies();
+    ac4685_empty_workspace_stays_success();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
