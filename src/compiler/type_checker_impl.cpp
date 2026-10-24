@@ -9980,6 +9980,41 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     // auto-wires kOccurrenceDirty on if-nodes in the new body
     // even when the per-symbol affected set is only use-sites).
     std::vector<NodeId> occurrence_targets;
+    // Issue #4682 (typecheck cone): the root Begin is no longer an
+    // affected root (affected_subtree_from_mutation). It used to re-check
+    // every caller's Call against the callee's new signature (arity, arg
+    // types). Lift each affected node to its top-level form under the root
+    // Begin so caller defines are re-inferred whole: O(callers), not O(W).
+    {
+        static const bool keep_root_begin_4682 = [] {
+            const char* e = std::getenv("AURA_TC_ROOT_BEGIN_CONE");
+            return e && e[0] == '1';
+        }();
+        if (!keep_root_begin_4682 && !affected.empty()) {
+            std::unordered_set<NodeId> seen(affected.begin(), affected.end());
+            const std::size_t n0 = affected.size();
+            for (std::size_t k = 0; k < n0; ++k) {
+                NodeId cur = affected[k];
+                if (cur == NULL_NODE || cur >= flat.size())
+                    continue;
+                std::size_t safety = 0;
+                while (safety++ < flat.size()) {
+                    const NodeId par = flat.parent_of(cur);
+                    if (par == NULL_NODE || par >= flat.size())
+                        break;
+                    const NodeId gp = flat.parent_of(par);
+                    const bool par_is_root_begin =
+                        flat.get(par).tag == NodeTag::Begin &&
+                        (par == flat.root || gp == NULL_NODE || gp >= flat.size());
+                    if (par_is_root_begin)
+                        break;
+                    cur = par;
+                }
+                if (cur != affected[k] && seen.insert(cur).second)
+                    affected.push_back(cur);
+            }
+        }
+    }
     std::unordered_set<NodeId> occurrence_seen;
     occurrence_targets.reserve(affected.size());
     for (auto id : affected)
@@ -12892,8 +12927,28 @@ affected_subtree_from_mutation(const aura::ast::FlatAST& flat,
 
     std::vector<NodeId> affected;
     std::unordered_set<NodeId> seen;
+    // Issue #4682 (typecheck cone): the program-root Begin is never an
+    // attachment context. Adding it made every rebind of a top-level
+    // Define re-infer all W siblings (synthesize_flat_begin), so the
+    // post-mutate typecheck scaled with workspace size. Top-level names
+    // resolve through the engine's cached/host-visible bindings, same as
+    // the per-symbol use-site roots. AURA_TC_ROOT_BEGIN_CONE=1 restores it.
+    static const bool keep_root_begin = [] {
+        const char* e = std::getenv("AURA_TC_ROOT_BEGIN_CONE");
+        return e && e[0] == '1';
+    }();
+    auto is_root_begin = [&](NodeId id) noexcept {
+        if (keep_root_begin || id == primary)
+            return false;
+        if (flat.get(id).tag != NodeTag::Begin)
+            return false;
+        const NodeId par = flat.parent_of(id);
+        return id == flat.root || par == NULL_NODE || par >= flat.size();
+    };
     auto add = [&](NodeId id) {
         if (id == NULL_NODE || id >= flat.size())
+            return;
+        if (is_root_begin(id))
             return;
         if (seen.insert(id).second)
             affected.push_back(id);

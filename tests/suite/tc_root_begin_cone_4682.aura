@@ -1,0 +1,34 @@
+; Issue #4682 (typecheck cone): rebinding a top-level Define re-infers only
+; the define cone and its use sites, never the program-root Begin. Sibling
+; defines must stay typed/correct and new bodies must still be checked.
+(define *fails* 0)
+(define *n* 0)
+(define (check! ok msg)
+  (set! *n* (+ *n* 1))
+  (if (not ok)
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+(define (fill k acc)
+  (if (= k 0) acc
+      (fill (- k 1) (string-append acc "(define w" (number->string k) " (lambda (x) (* x " (number->string k) ")))\n"))))
+(set-code (string-append "(define f (lambda (x) (+ x 1)))\n(define g (lambda (x) (f (f x))))\n(define h (lambda (s) (string-append s \"!\")))\n" (fill 200 "")))
+(eval-current)
+(let loop ((i 0))
+  (if (< i 10)
+      (begin
+        (mutate:rebind "f" (string-append "(lambda (x) (+ x " (number->string i) "))") "t")
+        (eval-current)
+        (check! (= (g 1) (+ 1 (* 2 i))) "g follows rebound f")
+        (check! (= (w200 2) 400) "sibling w200 untouched")
+        (check! (string=? (h "a") "a!") "sibling h untouched")
+        (loop (+ i 1)))))
+;; rebind a sibling far from f; f/g unaffected
+(mutate:rebind "w100" "(lambda (x) (- x 1))" "t")
+(eval-current)
+(check! (= (w100 5) 4) "w100 rebound")
+(check! (= (g 1) 19) "g unchanged by w100 rebind")
+;; type-changing rebind of h still type-checks its use (string body)
+(mutate:rebind "h" "(lambda (s) (string-append s \"?\"))" "t")
+(eval-current)
+(check! (string=? (h "b") "b?") "h rebound")
+(display "tc_root_begin_cone_4682: ") (display (- *n* *fails*)) (display "/") (display *n*) (newline)
+(if (> *fails* 0) (exit 1))
