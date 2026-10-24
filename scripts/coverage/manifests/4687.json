@@ -1,0 +1,53 @@
+{
+  "issue": 4687,
+  "title": "Issue #4687: production macro_expand_all / reexpand_call splice a shared subst macro Call into the live-tree slot that lists it, not into parent_of (the caller edge)",
+  "checks": [
+    {
+      "ac": "AC1-expand-all-splices-the-live-slot",
+      "path": "src/compiler/macro_expansion.cpp",
+      "contains": [
+        "Issue #4687",
+        "splice_expansion_into_live_slot(flat, new_root, id, expanded,",
+        "find_live_child_slot_parent",
+        "fill_live_slot_cache",
+        "pass_scan_limit"
+      ]
+    },
+    {
+      "ac": "AC2-reexpand-call-splices-the-live-slot",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "Issue #4687",
+        "macro_exp::splice_expansion_into_live_slot(flat, flat.root, call_id, expanded)"
+      ]
+    },
+    {
+      "ac": "AC3-shared-helpers-keep-the-caller-edge",
+      "path": "src/compiler/macro_expansion.cpp",
+      "contains": [
+        "bool splice_expansion_into_live_slot",
+        "splice_child_keep_caller_edge(flat, structural, ci, new_child, old_child, caller);",
+        "parent_of() is only the caller edge handed to the existing"
+      ]
+    },
+    {
+      "ac": "AC4-runtime-4687",
+      "path": "tests/compiler/test_macro_cross_flat_hygiene.cpp",
+      "contains": [
+        "ac4687_live_slot_helper",
+        "ac4687_service_repro",
+        "ac4687_source_both_splice_sites",
+        "no live (m) Call under the live root",
+        "live (list ...) slot lists the expanded literal 1"
+      ]
+    },
+    {
+      "ac": "AC5-no-invent",
+      "forbid": [
+        "tests/issues/test_issue_4687.cpp",
+        "tests/compiler/test_issue_4687.cpp",
+        "docs/design/4687-shared-subst-live-splice.md"
+      ]
+    }
+  ]
+}

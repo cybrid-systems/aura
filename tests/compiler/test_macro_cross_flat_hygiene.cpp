@@ -946,6 +946,221 @@ static void ac4649_expand_keeps_caller_edge() {
     }
 }
 
+// Issue #4687: a shared subst macro Call whose CALLER was already spliced
+// away must be installed in the LIVE tree slot that still lists it.
+//
+// Unit face: the live (list ...) call and a dead caller both list the same
+// (m) NodeId; parent_of((m)) is the dead caller (a standalone body node, so
+// its reverse chain never climbs to the live root). The helper must rewrite
+// the live slot, leave the caller's own child slot alone, and preserve the
+// caller's reverse edge (#4309 / #4649 contract).
+static void ac4687_live_slot_helper() {
+    std::println("\n--- #4687: live-slot splice rewrites the live slot, not the caller's ---");
+    using aura::compiler::macro_exp::splice_expansion_into_live_slot;
+    FlatAST flat;
+    StringPool pool;
+    // The shared subst Call: (m)
+    const auto m_call =
+        flat.add_call(flat.add_variable(pool.intern("m")), std::span<const aura::ast::NodeId>());
+    // The dead caller that still lists it (a body node, no live parent): (wrap (m))
+    const std::array<aura::ast::NodeId, 1> dead_args{m_call};
+    const auto dead_wrap = flat.add_call(flat.add_variable(pool.intern("wrap")), dead_args);
+    // The live slot that lists it: (list (m))
+    const std::array<aura::ast::NodeId, 1> live_args{m_call};
+    const auto live_list = flat.add_call(flat.add_variable(pool.intern("list")), live_args);
+    const std::array<aura::ast::NodeId, 1> root_kids{live_list};
+    flat.root = flat.add_begin(root_kids);
+    CHECK(flat.parent_of(m_call) == dead_wrap, "4687 helper: caller edge is the dead wrap");
+
+    const auto one = flat.add_literal(1);
+    CHECK(splice_expansion_into_live_slot(flat, flat.root, m_call, one),
+          "4687 helper: the live slot is found by descending from the root");
+    CHECK(flat.get(live_list).child(1) == one, "4687 helper: live slot holds the expansion");
+    CHECK(flat.get(dead_wrap).child(1) == m_call, "4687 helper: caller slot untouched");
+    CHECK(flat.parent_of(m_call) == dead_wrap, "4687 helper: caller reverse edge preserved");
+    CHECK(flat.parent_of(one) == live_list, "4687 helper: expansion owns the live parent");
+
+    // Fast path: a live caller whose reverse chain reaches the root is the
+    // slot; no descent changes the target.
+    {
+        FlatAST f2;
+        StringPool p2;
+        const auto call2 =
+            f2.add_call(f2.add_variable(p2.intern("m")), std::span<const aura::ast::NodeId>());
+        const std::array<aura::ast::NodeId, 1> kids{call2};
+        f2.root = f2.add_begin(kids);
+        const auto two = f2.add_literal(2);
+        CHECK(splice_expansion_into_live_slot(f2, f2.root, call2, two),
+              "4687 helper fast path: live caller is the slot");
+        CHECK(f2.get(f2.root).child(0) == two, "4687 helper fast path: root slot rewritten");
+    }
+}
+
+// Issue #4687: production macro_expand_all on the pass-2 state of the
+// issue repro.
+//
+//   (define-macro (wrap x) (list x))
+//   (define-macro (gen) (begin (define-macro (m) 1) (wrap (m))))
+//   (gen)
+//
+// Pass 1 expands (gen) and then (wrap (m)) in the clone: the shared subst
+// argument (m) stays listed by both the clone's (list (m)) slot and the
+// now-dead wrap caller, and parent_of((m)) is still wrap. This AC builds
+// exactly that state and runs the pass-2 expansion. The pre-#4687 splice
+// wrote wrap's dead slot, cleared (m)'s reverse edge and returned success,
+// leaving (list (m)) under the live root. The fix descends from the live
+// root and writes (list 1).
+static void ac4687_expand_all_pass2_repro() {
+    std::println("\n--- #4687: production expand_all on the pass-2 repro state ---");
+    using aura::compiler::macro_exp::note_hygiene_last_limit_reason_for_fiber;
+    using aura::core::capability::Effect;
+    using aura::core::capability::g_capability_registry;
+    using aura::core::capability::MacroSelfEvoPolicy;
+
+    auto reachable_call_named = [](FlatAST& flat, aura::ast::NodeId root, StringPool& pool,
+                                   std::string_view name) {
+        std::vector<aura::ast::NodeId> stack{root};
+        std::size_t guard = 0;
+        while (!stack.empty() && guard++ <= flat.size()) {
+            const auto cur = stack.back();
+            stack.pop_back();
+            if (cur == NULL_NODE || cur >= flat.size())
+                continue;
+            const auto v = flat.get(cur);
+            // Skip macro definition bodies: they stay in the flat and are
+            // reachable from the root, but they are not the evaluated
+            // program ((m) is expanded in the clone, not in the body).
+            if (v.tag == NodeTag::MacroDef)
+                continue;
+            if (v.tag == NodeTag::Call && !v.children.empty()) {
+                const auto head = flat.get(v.child(0));
+                if (head.tag == NodeTag::Variable &&
+                    std::string(pool.resolve(head.sym_id)) == std::string(name))
+                    return cur;
+            }
+            for (const auto c : v.children)
+                stack.push_back(c);
+        }
+        return NULL_NODE;
+    };
+
+    const auto fid = static_cast<std::uint32_t>(aura_fiber_current_id());
+    for (int mode = 0; mode < 2; ++mode) {
+        const bool production = mode == 1;
+        note_hygiene_last_limit_reason_for_fiber(fid, 0);
+        if (production) {
+            MacroSelfEvoPolicy pol;
+            pol.max_expansion_passes = 32;
+            pol.max_depth = 256;
+            pol.allow_rest_hygiene = true;
+            pol.allow_concurrent_fiber = true;
+            (void)g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                                aura_test_grant_prov());
+            (void)g_capability_registry().grant_macro_self_evo(0, pol, aura_test_grant_prov());
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        } else {
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        }
+        const std::string tag = production ? "prod" : "off";
+
+        FlatAST flat;
+        StringPool pool;
+        const auto m_sym = pool.intern("m");
+        // (define-macro (m) 1) is in the live root this pass (the clone
+        // introduced it; pass 1 could not collect it).
+        const auto one_body = flat.add_literal(1);
+        const auto m_def = flat.add_macrodef(m_sym, std::vector<aura::ast::SymId>{}, one_body,
+                                             /*dotted=*/false, /*hygienic=*/true);
+        // The shared subst Call: (m)
+        const auto m_call =
+            flat.add_call(flat.add_variable(m_sym), std::span<const aura::ast::NodeId>());
+        // The dead caller that still lists it: (wrap (m)) — no live parent.
+        const std::array<aura::ast::NodeId, 1> dead_args{m_call};
+        const auto dead_wrap = flat.add_call(flat.add_variable(pool.intern("wrap")), dead_args);
+        // The live slot that lists it: (list (m))
+        const std::array<aura::ast::NodeId, 1> list_args{m_call};
+        const auto list_call = flat.add_call(flat.add_variable(pool.intern("list")), list_args);
+        const std::array<aura::ast::NodeId, 2> root_kids{m_def, list_call};
+        flat.root = flat.add_begin(root_kids);
+        CHECK(flat.parent_of(m_call) == dead_wrap,
+              "4687 " + tag + ": caller edge is the dead wrap");
+
+        const auto expanded =
+            aura::compiler::macro_exp::macro_expand_all(flat, pool, flat.root, 32);
+        CHECK(expanded == flat.root, "4687 " + tag + ": expand_all returns the live root");
+        // The live tree lists the expanded literal at the (list ...) arg slot.
+        const auto lv = flat.get(list_call);
+        CHECK(lv.children.size() >= 2 && flat.get(lv.child(1)).tag == NodeTag::LiteralInt &&
+                  flat.get(lv.child(1)).int_value == 1,
+              "4687 " + tag + ": live (list ...) slot lists the expanded literal 1");
+        CHECK(flat.get(dead_wrap).child(1) == m_call,
+              "4687 " + tag + ": dead caller slot untouched");
+        CHECK(flat.parent_of(m_call) == dead_wrap,
+              "4687 " + tag + ": caller reverse edge preserved");
+        CHECK(reachable_call_named(flat, expanded, pool, "m") == NULL_NODE,
+              "4687 " + tag + ": no live (m) Call under the live root");
+        (void)reachable_call_named;
+    }
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    note_hygiene_last_limit_reason_for_fiber(fid, 0);
+}
+
+// Issue #4687: the exact program end-to-end through CompilerService.
+// The EDSL define-macro forms are registered at eval time (they are Call
+// nodes in the parsed flat), so the compiled pipeline expands the shared
+// subst (m) through the evaluation arm; the value must be the one-element
+// list (1), not the unexpanded (list (m)).
+static void ac4687_service_repro() {
+    std::println("\n--- #4687: CompilerService repro (wrap/gen/m) ---");
+    using aura::compiler::types::is_error;
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    CompilerService cs;
+    const auto setup = cs.eval("(set-code \"(define-macro (wrap x) (list x)) "
+                               "(define-macro (gen) (begin (define-macro (m) 1) (wrap (m)))) "
+                               "(gen)\")");
+    CHECK(setup.has_value() && !is_error(*setup), "4687 service: set-code accepted");
+    const auto evaled = cs.eval("(eval-current)");
+    CHECK(evaled.has_value() && !is_error(*evaled), "4687 service: eval-current has no error");
+    using aura::compiler::types::is_pair;
+    CHECK(is_pair(*evaled), "4687 service: (gen) evaluates to the expanded list (pair)");
+}
+
+// Issue #4687: both success-splice sites route through the shared
+// live-slot helper; the old parent_of + set_child write is gone. The
+// checkpoint / stable-reason surfaces are untouched.
+static void ac4687_source_both_splice_sites() {
+    std::println("\n--- #4687: both success-splice sites use the live-slot helper ---");
+    const auto mex = read_file("src/compiler/macro_expansion.cpp");
+    const auto eef = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(!mex.empty() && !eef.empty(), "4687: sources readable");
+    CHECK(mex.find("Issue #4687") != std::string::npos, "4687: macro_expansion.cpp cites #4687");
+    CHECK(eef.find("Issue #4687") != std::string::npos,
+          "4687: evaluator_eval_flat.cpp cites #4687");
+    CHECK(mex.find("bool splice_expansion_into_live_slot") != std::string::npos,
+          "4687: shared live-slot helper defined");
+    CHECK(mex.find("find_live_child_slot_parent") != std::string::npos,
+          "4687: structural-parent descent present");
+    CHECK(mex.find("splice_child_keep_caller_edge(flat, structural, ci, new_child, old_child, "
+                   "caller)") != std::string::npos,
+          "4687: caller edge goes through splice_child_keep_caller_edge");
+    CHECK(mex.find("splice_expansion_into_live_slot(flat, new_root, id, expanded,") !=
+              std::string::npos,
+          "4687: macro_expand_all_body splices into the live slot");
+    CHECK(eef.find("splice_expansion_into_live_slot(flat, flat.root, call_id, expanded)") !=
+              std::string::npos,
+          "4687: reexpand_call splices into the live slot");
+    CHECK(mex.find("flat.set_child(parent_id, ci, expanded)") == std::string::npos,
+          "4687: old parent_of + set_child splice removed from expand_all");
+    CHECK(eef.find("flat.set_child(pid, ci, expanded)") == std::string::npos,
+          "4687: old parent_of + set_child splice removed from reexpand");
+    // Stable Agent surfaces are untouched.
+    CHECK(mex.find("hygiene-pass-limit") != std::string::npos,
+          "4687: stable reason string unchanged");
+    // No new test files / design docs for this issue.
+    CHECK(read_file("tests/compiler/test_issue_4687.cpp").empty(), "4687: no invent test file");
+    CHECK(read_file("tests/issues/test_issue_4687.cpp").empty(), "4687: no tests/issues file");
+}
+
 int run_test_macro_cross_flat_hygiene() {
     std::println("=== Issue #2235 — cross-flat macro clone hygiene gate ===");
     ac_cross_flat_baseline();
@@ -966,6 +1181,11 @@ int run_test_macro_cross_flat_hygiene() {
     ac4293_zero_surfaces_reason();
     ac4309_cross_flat_keeps_caller_arg();
     ac4649_expand_keeps_caller_edge();
+    // Issue #4687: expand_all / reexpand splice the live slot.
+    ac4687_live_slot_helper();
+    ac4687_expand_all_pass2_repro();
+    ac4687_service_repro();
+    ac4687_source_both_splice_sites();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
