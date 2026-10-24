@@ -9691,6 +9691,54 @@ void discover_linear_bindings_in_subtree(const aura::ast::FlatAST& flat,
 
 // (cache_hits/cache_misses) is updated as a side effect
 // on `stats_`.
+// Issue #4682 header batch: dense NodeId membership for infer_flat_partial's
+// affected-cone dedupe sets (was unordered_set<NodeId> rebuilt per block).
+// Same insert(x).second / count / find!=end surface; grows on demand.
+namespace {
+    struct DenseNodeSet4682 {
+        std::vector<std::uint8_t> bits;
+        struct InsertResult {
+            bool second;
+        };
+        struct It {
+            bool hit;
+            bool operator!=(const It& o) const { return hit != o.hit; }
+            bool operator==(const It& o) const { return hit == o.hit; }
+        };
+        explicit DenseNodeSet4682(std::size_t n)
+            : bits(n, 0) {}
+        template <class I>
+        DenseNodeSet4682(I b, I e, std::size_t n)
+            : bits(n, 0) {
+            for (; b != e; ++b)
+                insert(*b);
+        }
+        InsertResult insert(aura::ast::NodeId id) {
+            if (static_cast<std::size_t>(id) >= bits.size()) {
+                if (id == aura::ast::NULL_NODE) {
+                    // NULL_NODE is a legal member of the old set; track separately.
+                    const bool fresh = !null_in;
+                    null_in = true;
+                    return {fresh};
+                }
+                bits.resize(static_cast<std::size_t>(id) + 1, 0);
+            }
+            if (bits[id])
+                return {false};
+            bits[id] = 1;
+            return {true};
+        }
+        std::size_t count(aura::ast::NodeId id) const {
+            if (id == aura::ast::NULL_NODE)
+                return null_in ? 1 : 0;
+            return static_cast<std::size_t>(id) < bits.size() && bits[id] ? 1 : 0;
+        }
+        It find(aura::ast::NodeId id) const { return It{count(id) != 0}; }
+        It end() const { return It{false}; }
+        bool null_in = false;
+    };
+} // namespace
+
 std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                                             const aura::ast::StringPool& pool,
                                             const aura::ast::MutationRecord& rec,
@@ -9923,7 +9971,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         // without falling back to a Begin-wide cascade.
         auto local = affected_subtree_from_mutation(flat, rec);
         if (!local.empty()) {
-            std::unordered_set<NodeId> seen(affected.begin(), affected.end());
+            DenseNodeSet4682 seen(affected.begin(), affected.end(), flat.size());
             for (auto id : local) {
                 if (seen.insert(id).second)
                     affected.push_back(id);
@@ -9940,7 +9988,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     // Reuse affected_subtree_from_mutation per record; cone cap (#2560)
     // still applies on the unioned set below.
     if (!extra_recs.empty()) {
-        std::unordered_set<NodeId> seen(affected.begin(), affected.end());
+        DenseNodeSet4682 seen(affected.begin(), affected.end(), flat.size());
         for (const auto& extra : extra_recs) {
             if (&extra == &rec)
                 continue;
@@ -10002,7 +10050,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                 record_type_dependency(v.type_id, id);
             }
         }
-        std::unordered_set<NodeId> seen(affected.begin(), affected.end());
+        DenseNodeSet4682 seen(affected.begin(), affected.end(), flat.size());
         std::vector<NodeId> seeds = affected;
         if (rec.target_node != aura::ast::NULL_NODE && rec.target_node < flat.size())
             seeds.push_back(rec.target_node);
@@ -10064,7 +10112,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         std::vector<NodeId> cascade_ast;
         dirty::pull_cascade_ast_dirty_into(cascade_ast);
         if (!cascade_ast.empty()) {
-            std::unordered_set<NodeId> seen(affected.begin(), affected.end());
+            DenseNodeSet4682 seen(affected.begin(), affected.end(), flat.size());
             for (auto id : cascade_ast) {
                 if (id == NULL_NODE || id >= flat.size())
                     continue;
@@ -10090,11 +10138,11 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             return e && e[0] == '1';
         }();
         if (!keep_root_begin_4682 && !affected.empty()) {
-            std::unordered_set<NodeId> seen(affected.begin(), affected.end());
+            DenseNodeSet4682 seen(affected.begin(), affected.end(), flat.size());
             const std::size_t n0 = affected.size();
             std::vector<NodeId> lifted;
             lifted.reserve(n0);
-            std::unordered_set<NodeId> lifted_seen;
+            DenseNodeSet4682 lifted_seen(flat.size());
             for (std::size_t k = 0; k < n0; ++k) {
                 NodeId cur = affected[k];
                 if (cur == NULL_NODE || cur >= flat.size())
@@ -10290,7 +10338,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         }
 
         if (!touched_type_ids.empty()) {
-            std::unordered_set<NodeId> seen(affected.begin(), affected.end());
+            DenseNodeSet4682 seen(affected.begin(), affected.end(), flat.size());
             std::uint64_t nodes_added = 0;
             const auto fan_cap = type_dep_fanout_cap();
             for (auto tid : touched_type_ids) {
@@ -10565,7 +10613,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     if (last_partial_cone_truncated_) {
         std::vector<NodeId> outside_cone_conds;
         outside_cone_conds.reserve(occurrence_targets.size());
-        std::unordered_set<NodeId> affected_set(affected.begin(), affected.end());
+        DenseNodeSet4682 affected_set(affected.begin(), affected.end(), flat.size());
         for (auto id : occurrence_targets) {
             if (affected_set.find(id) == affected_set.end())
                 outside_cone_conds.push_back(id);
@@ -10719,7 +10767,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     }
     auto adt_reverify = engine.constraint_system().drain_adt_reverify_roots();
     if (!adt_reverify.empty()) {
-        std::unordered_set<NodeId> cone_seen(affected.begin(), affected.end());
+        DenseNodeSet4682 cone_seen(affected.begin(), affected.end(), flat.size());
         auto* m = metrics_ ? static_cast<struct CompilerMetrics*>(metrics_) : nullptr;
         for (auto raw : adt_reverify) {
             const auto nid = static_cast<NodeId>(raw);
@@ -11659,6 +11707,17 @@ bool OwnershipEnv::validate_ownership_full(const FlatAST& flat, const StringPool
         return false;
     };
 
+    // Issue #4682: discovery can only find Let bindings whose value is a
+    // syntactic Linear node (counted by the #4598 live counter) or carries a
+    // registered Linear type. With neither, it finds nothing → true.
+    {
+        static const bool gate_4682 = [] {
+            const char* e = std::getenv("AURA_ESCAPE_LINEAR_GATE_4682");
+            return !(e && e[0] == '0');
+        }();
+        if (gate_4682 && !flat.has_linear_ops_live() && !reg.has_any_linear_type())
+            return true;
+    }
     std::unordered_set<std::string> linear_bindings;
     std::function<void(NodeId)> discover = [&](NodeId id) {
         if (id == NULL_NODE || id >= flat.size())

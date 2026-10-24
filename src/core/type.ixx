@@ -187,6 +187,12 @@ public:
     const FuncType* func_of(TypeId id) const;
     const ForallType* forall_of(TypeId id) const;
     const LinearType* linear_of(TypeId id) const;
+    // Issue #4682: true once any Linear type has been registered (monotonic,
+    // conservative). Lets whole-program linear discovery skip exactly when
+    // no type can be linear.
+    [[nodiscard]] bool has_any_linear_type() const noexcept {
+        return linear_types_registered_.load(std::memory_order_relaxed) != 0;
+    }
     const ModuleType* module_of(TypeId id) const;
     const VariantType* variant_of(TypeId id) const;
     const RecordType* record_of(TypeId id) const;
@@ -449,6 +455,7 @@ private:
         std::shared_mutex mu_;
     };
     mutable TypeRegistryLock type_registry_mutex_;
+    std::atomic<std::uint64_t> linear_types_registered_{0};
 
     [[nodiscard]] uint32_t current_generation() const noexcept {
         return next_generation_.load(std::memory_order_relaxed);

@@ -246,6 +246,7 @@ TypeId TypeRegistry::register_linear(TypeId inner) {
         .generation = current_generation(),
     };
     std::string linear_name = "(Linear " + std::string(name_of(inner)) + ")";
+    linear_types_registered_.fetch_add(1, std::memory_order_relaxed);
     entries_.push_back(arena_.allocate(Entry{
         TypeTag::LINEAR, std::move(linear_name), std::nullopt, std::nullopt, LinearType{inner},
         std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt}));
