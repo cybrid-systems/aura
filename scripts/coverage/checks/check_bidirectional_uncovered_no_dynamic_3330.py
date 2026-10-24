@@ -42,7 +42,22 @@ def main() -> int:
     build = _read("build.py")
 
     start = impl.find("TypeId InferenceEngine::synthesize_flat")
-    default = impl[start : start + 9000] if start >= 0 else ""
+    default = ""
+    if start >= 0:
+        sw = impl.find("switch (v.tag)", start)
+        if sw >= 0:
+            depth = 0
+            i = sw
+            while i < len(impl):
+                c = impl[i]
+                if c == "{":
+                    depth += 1
+                elif c == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                i += 1
+            default = impl[sw:i]
     dpos = default.rfind("default:")
     darm = default[dpos : dpos + 1200] if dpos >= 0 else ""
 

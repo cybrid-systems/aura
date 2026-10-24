@@ -102,7 +102,15 @@ def main() -> int:
     must("ErrorKind::TypeError", "AC1 hard TypeError", lub)
     must('"incompatible ground types: if branches join "', "AC1 diagnostic names the join", lub)
     must("return reg_.void_type();", "AC1 void result, not a Dynamic", lub)
-    must("if (a == reg_.dynamic_type() || b == reg_.dynamic_type())", "AC1 Dynamic arms unchanged", lub)
+    # Issue #4684: the pre-normalize "either arm is Dynamic" early return was
+    # removed on purpose — a Dynamic arm now normalizes and falls into the
+    # gate below. Assert the new order instead of the old one-liner.
+    must("a = cs_.normalize(a);", "AC1 normalize before the ground gate", lub)
+    absent(
+        "if (a == reg_.dynamic_type() || b == reg_.dynamic_type())",
+        "AC1 pre-normalize Dynamic early return removed (#4684)",
+        lub,
+    )
     must('a == reg_.int_type() && b == reg_.lookup_type("Float")', "AC1 Int/Float promotion unchanged", lub)
     must("return reg_.dynamic_type(); // safe fallback", "AC1 soft fallback retained", lub)
     absent("Constraint::GROUND", "AC1 no new constraint kind", lub)
