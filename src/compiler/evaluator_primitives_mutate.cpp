@@ -2845,7 +2845,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ValidateSchemaGuard schema_guard_qar(ev,
                                                  parse_validate_schema_on_commit_opt_in(ev, a) ||
                                                      ev.validate_schema_on_commit());
-            const std::uint64_t initial_log_size = flat.all_mutations().size();
+            // Issue #4689: rollback_since compares mutation_id, not a log
+            // index. Capture the id this batch's first append will take (the
+            // same handle MutationTransaction feeds). all_mutations().size()
+            // is the record COUNT, so on an untruncated log it equals the id
+            // of the PREVIOUS record - the inverse then takes a committed
+            // mutation (e.g. a prior tweak-literal scalar) out of the log.
+            const std::uint64_t initial_mutation_id = flat.next_mutation_id();
             flat.begin_atomic_batch();
             for (auto& match_ref : matches) {
                 if (!stable_match_still_attached(flat, match_ref))
@@ -2854,7 +2860,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 bool was_macro = false;
                 if (auto err = enforce_macro_hygiene_mutate_hotpath(
                         ev, flat, match_id, &match_ref, allow_macro_qar, false, mev, &was_macro)) {
-                    flat.rollback_since(initial_log_size);
+                    flat.rollback_since(initial_mutation_id);
                     flat.rollback_atomic_batch();
                     ok = false;
                     return *err;
@@ -2914,7 +2920,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     // Issue #1265: parse failure → full atomic rollback.
                     // Never commit a partial match set (self-evolution
                     // correctness: agent must not see silent skips).
-                    flat.rollback_since(initial_log_size);
+                    flat.rollback_since(initial_mutation_id);
                     flat.rollback_atomic_batch();
                     free_repl_parse_orphans();
                     if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
@@ -2930,7 +2936,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 if (parent_id == aura::ast::NULL_NODE ||
                     static_cast<std::size_t>(parent_id) >= size_before_parse ||
                     parent_id >= flat.size() || flat.is_free_slot(parent_id)) {
-                    flat.rollback_since(initial_log_size);
+                    flat.rollback_since(initial_mutation_id);
                     flat.rollback_atomic_batch();
                     free_repl_parse_orphans();
                     ok = false;
@@ -2940,7 +2946,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     auto pv = flat.get(parent_id);
                     if (*child_idx_opt >= pv.children.size() ||
                         pv.child(*child_idx_opt) != match_id) {
-                        flat.rollback_since(initial_log_size);
+                        flat.rollback_since(initial_mutation_id);
                         flat.rollback_atomic_batch();
                         free_repl_parse_orphans();
                         ok = false;
@@ -3342,7 +3348,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                                    parse_validate_schema_on_commit_opt_in(ev, a) ||
                                                        ev.validate_schema_on_commit());
 
-            std::uint64_t initial_log_size = flat.all_mutations().size();
+            // Issue #4689: same id-not-index handle as query-and-replace
+            // above; the batch's own appends are the records with
+            // mutation_id >= this capture.
+            const std::uint64_t initial_mutation_id = flat.next_mutation_id();
             flat.begin_atomic_batch();
 
             struct PartialFail {
@@ -3367,7 +3376,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 if (auto err = enforce_macro_hygiene_mutate_hotpath(ev, flat, match_id, &match_ref,
                                                                     allow_macro_batch, false, mev,
                                                                     &was_macro)) {
-                    flat.rollback_since(initial_log_size);
+                    flat.rollback_since(initial_mutation_id);
                     flat.rollback_atomic_batch();
                     ok = false;
                     return *err;
@@ -3475,7 +3484,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
             // All-or-nothing: any partial-fail OR validate-fail → rollback all.
             if (!partial_fails.empty() || !validate_pass) {
-                flat.rollback_since(initial_log_size);
+                flat.rollback_since(initial_mutation_id);
                 flat.rollback_atomic_batch();
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                     m->query_replace_batch_partial_fail_total.fetch_add(1,

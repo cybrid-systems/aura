@@ -1,0 +1,41 @@
+{
+  "issue": 4689,
+  "title": "query-and-replace rollback_since takes next_mutation_id(), not the log size",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "Issue #4689",
+        "flat.next_mutation_id()",
+        "rollback_since(initial_mutation_id)"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_mutate_batch.cpp",
+      "contains": [
+        "Issue #4689",
+        "run_4689_rollback_since_id",
+        "4689 AC1b: the committed tweak scalar is NOT inverted",
+        "4689 AC2: every batch row is RolledBack",
+        "4689 AC3: the parse-reject orphan free still runs"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "aura_add_issue_test(test_mutate_batch)"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_4689.cpp",
+        "tests/issues/test_issue_4689.cpp",
+        "docs/design/4689-rollback-since-id.md"
+      ]
+    }
+  ]
+}

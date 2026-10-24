@@ -18,6 +18,8 @@
 // EXCLUDE_FROM_ALL — default build skips; on-demand 'ninja test_mutate_batch'.
 
 #include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
+#include "core/sandbox.hh"
 #include "test_harness.hpp"
 
 #include <algorithm>
@@ -56,6 +58,7 @@ using aura::compiler::Evaluator;
 using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
 using aura::compiler::types::as_pair_idx;
+using aura::compiler::types::as_string_idx;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
@@ -126,6 +129,197 @@ static std::uint64_t exception_rollbacks(CompilerService& cs) {
     return m->mutation_boundary_exception_rollback_total.load(std::memory_order_relaxed);
 }
 
+// ── Issue #4689 helpers — rollback_since compares mutation ids, not the
+// log size. On an untruncated log all_mutations().size() equals the
+// PREVIOUS record's mutation_id, so the failing replace primitives used to
+// invert the last committed mutation as well (a tweak-literal scalar went
+// back to its pre-tweak value while its log row read RolledBack).
+static NodeId find_literal_int_4689(const FlatAST& flat, std::int64_t want) {
+    for (NodeId id = 0; id < flat.size(); ++id) {
+        if (!flat.is_live_node(id))
+            continue;
+        auto v = flat.get(id);
+        if (v.tag == NodeTag::LiteralInt && v.int_value == want)
+            return id;
+    }
+    return NULL_NODE;
+}
+
+static std::size_t live_nodes_4689(const FlatAST& flat) {
+    std::size_t n = 0;
+    for (NodeId id = 0; id < flat.size(); ++id)
+        if (flat.is_live_node(id))
+            ++n;
+    return n;
+}
+
+static std::string merr_kind_4689(CompilerService& cs, const aura::compiler::types::EvalValue& v) {
+    if (!is_pair(v))
+        return {};
+    auto idx = as_pair_idx(v);
+    auto& pairs = cs.evaluator().pairs();
+    if (idx >= pairs.size())
+        return {};
+    if (!is_string(pairs[idx].car))
+        return {};
+    auto sidx = as_string_idx(pairs[idx].car);
+    auto heap = cs.evaluator().string_heap();
+    if (sidx < 0 || static_cast<std::size_t>(sidx) >= heap.size())
+        return {};
+    return std::string(heap[static_cast<std::size_t>(sidx)]);
+}
+
+static bool int_eq_4689(CompilerService& cs, const std::string& expr, std::int64_t want) {
+    auto r = cs.eval(expr);
+    return r && is_int(*r) && as_int(*r) == want;
+}
+
+// #4689 AC4 + AC1/AC1b/AC2/AC3. A successful mutate:tweak-literal commits
+// int_val_ = 15; the following (rejected) replace batch must not walk that
+// record into the inverse. Its own records still roll back.
+static void run_4689_rollback_since_id() {
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+
+    // ── AC4: source contract — the id, not the log size, at every site ──
+    {
+        std::println("\n--- Issue #4689 AC4: rollback_since sites take next_mutation_id() ---");
+        auto src = read_first({"src/compiler/evaluator_primitives_mutate.cpp",
+                               "../src/compiler/evaluator_primitives_mutate.cpp",
+                               "../../src/compiler/evaluator_primitives_mutate.cpp"});
+        CHECK(!src.empty(), "4689 AC4: mutate primitives source readable");
+        CHECK(src.find("Issue #4689") != std::string::npos, "4689 AC4: fix cites #4689");
+        CHECK(src.find("flat.next_mutation_id()") != std::string::npos,
+              "4689 AC4: the batch captures the next mutation id");
+        CHECK(src.find("rollback_since(initial_mutation_id)") != std::string::npos,
+              "4689 AC4: rollback_since gets the captured mutation id");
+        CHECK(src.find("rollback_since(initial_log_size)") == std::string::npos,
+              "4689 AC4: no call site passes the log-size index");
+    }
+
+    apply_dev_audit_defaults();
+
+    // ── AC1: committed tweak survives a failing query-and-replace ──
+    {
+        std::println("\n--- Issue #4689 AC1: failed query-and-replace keeps the tweak ---");
+        CompilerService cs;
+        CHECK(eval_ok(cs, "(set-code \"(define f (lambda () 10)) (f)\")"), "4689 AC1: set-code");
+        CHECK(eval_ok(cs, "(eval-current)"), "4689 AC1: eval-current");
+        auto* ws = cs.evaluator().workspace_flat();
+        CHECK(ws != nullptr, "4689 AC1: workspace");
+        if (!ws) {
+            apply_dev_audit_defaults();
+            return;
+        }
+        auto lit = find_literal_int_4689(*ws, 10);
+        CHECK(lit != NULL_NODE, "4689 AC1: found the literal 10");
+        auto tw = cs.eval(std::format("(mutate:tweak-literal {} 5)", lit));
+        CHECK(tw && is_int(*tw) && as_int(*tw) == 15, "4689 AC1: the tweak commits 10 -> 15");
+        CHECK(ws->get(lit).int_value == 15, "4689 AC1: the workspace holds 15");
+        MutationRecord tweak_rec{};
+        CHECK(find_last_op(*ws, "tweak-literal", &tweak_rec) &&
+                  tweak_rec.status == aura::ast::MutationStatus::Committed,
+              "4689 AC1: the tweak row is Committed");
+
+        const auto size_before = ws->size();
+        const auto live_before = live_nodes_4689(*ws);
+        const auto freed_before = ws->ghost_orphan_nodes_freed();
+        auto fr = cs.eval("(mutate:query-and-replace (query:where :callee \"f\") \"1)\")");
+        CHECK(fr.has_value(), "4689 AC1: the rejected replace returns");
+        const auto kind = fr ? merr_kind_4689(cs, *fr) : std::string("novalue");
+        CHECK(kind == "parse-failure", std::format("4689 AC1: parse-failure (got {})", kind));
+
+        CHECK(ws->get(lit).int_value == 15, "4689 AC1: the committed tweak scalar is NOT inverted");
+        MutationRecord after_rec{};
+        CHECK(find_last_op(*ws, "tweak-literal", &after_rec) &&
+                  after_rec.status == aura::ast::MutationStatus::Committed,
+              "4689 AC1: the successful record is not RolledBack");
+        CHECK(int_eq_4689(cs, "(f)", 15), "4689 AC1: the next read is the tweaked value");
+
+        // ── AC3: the parse reject still frees its appended orphan rows ──
+        CHECK(live_nodes_4689(*ws) == live_before, "4689 AC3: no live parse orphan left");
+        CHECK(ws->ghost_orphan_nodes_freed() > freed_before,
+              "4689 AC3: the parse-reject orphan free still runs");
+        for (std::size_t id = size_before; id < ws->size(); ++id)
+            CHECK(ws->is_free_slot(static_cast<NodeId>(id)),
+                  std::format("4689 AC3: appended row {} is a free slot", id));
+    }
+
+    // ── AC1b: the same inversion through query-and-replace-batch ──
+    {
+        std::println("\n--- Issue #4689 AC1b: failed query-and-replace-batch keeps the tweak ---");
+        CompilerService cs;
+        CHECK(eval_ok(cs, "(set-code \"(define f (lambda () 10)) (f)\")"), "4689 AC1b: set-code");
+        CHECK(eval_ok(cs, "(eval-current)"), "4689 AC1b: eval-current");
+        auto* ws = cs.evaluator().workspace_flat();
+        CHECK(ws != nullptr, "4689 AC1b: workspace");
+        if (!ws) {
+            apply_dev_audit_defaults();
+            return;
+        }
+        auto lit = find_literal_int_4689(*ws, 10);
+        CHECK(lit != NULL_NODE, "4689 AC1b: found the literal 10");
+        auto tw = cs.eval(std::format("(mutate:tweak-literal {} 5)", lit));
+        CHECK(tw && is_int(*tw) && as_int(*tw) == 15, "4689 AC1b: the tweak commits 10 -> 15");
+
+        auto fr = cs.eval("(mutate:query-and-replace-batch (query:where :callee \"f\") \"1)\")");
+        CHECK(fr.has_value(), "4689 AC1b: the rejected batch returns");
+        const auto kind = fr ? merr_kind_4689(cs, *fr) : std::string("novalue");
+        CHECK(kind == "partial-fail", std::format("4689 AC1b: partial-fail (got {})", kind));
+        CHECK(ws->get(lit).int_value == 15,
+              "4689 AC1b: the committed tweak scalar is NOT inverted");
+        MutationRecord after_rec{};
+        CHECK(find_last_op(*ws, "tweak-literal", &after_rec) &&
+                  after_rec.status == aura::ast::MutationStatus::Committed,
+              "4689 AC1b: the successful record is not RolledBack");
+        CHECK(int_eq_4689(cs, "(f)", 15), "4689 AC1b: the next read is the tweaked value");
+    }
+
+    // ── AC2: a genuinely failing batch still rolls back its OWN records ──
+    // Every match parses, so the batch commits its own rows first; the
+    // post-batch :validate then misses (retired primitive / unknown type).
+    // Those rows must come back RolledBack and the tree must be untouched.
+    {
+        std::println("\n--- Issue #4689 AC2: a failing batch still rolls back its own records ---");
+        CompilerService cs;
+        CHECK(eval_ok(cs, "(set-code \"(define (h) 5) (define (f x) (+ x 1)) "
+                          "(define (g y) (+ y 2)) (f 2) (g 3) (h)\")"),
+              "4689 AC2: set-code");
+        CHECK(eval_ok(cs, "(eval-current)"), "4689 AC2: eval-current");
+        auto* ws = cs.evaluator().workspace_flat();
+        CHECK(ws != nullptr, "4689 AC2: workspace");
+        if (!ws) {
+            apply_dev_audit_defaults();
+            return;
+        }
+        const auto log_before = ws->mutation_log_view().size();
+        auto fr = cs.eval("(mutate:query-and-replace-batch (query:where :node-type \"Call\") "
+                          "\"(+ 1 2)\" :validate \"NoSuchType4689\")");
+        CHECK(fr.has_value(), "4689 AC2: the rejected batch returns");
+        const auto kind = fr ? merr_kind_4689(cs, *fr) : std::string("novalue");
+        CHECK(kind == "partial-fail", std::format("4689 AC2: partial-fail (got {})", kind));
+
+        std::size_t batch_records = 0;
+        bool all_rolled_back = true;
+        for (std::size_t i = log_before; i < ws->mutation_log_view().size(); ++i) {
+            const auto& rec = ws->mutation_log_view()[i];
+            if (rec.operator_name != "query-and-replace-batch")
+                continue;
+            ++batch_records;
+            if (rec.status != aura::ast::MutationStatus::RolledBack)
+                all_rolled_back = false;
+        }
+        CHECK(batch_records >= 1,
+              "4689 AC2: the failing batch committed its own rows before the reject");
+        CHECK(all_rolled_back, "4689 AC2: every batch row is RolledBack");
+        CHECK(int_eq_4689(cs, "(f 2)", 3), "4689 AC2: (f 2) is still 3");
+        CHECK(int_eq_4689(cs, "(h)", 5), "4689 AC2: (h) is still 5");
+        CHECK(eval_ok(cs, "(query:filter (query:where :callee \"f\"))"),
+              "4689 AC2: the original call is still queryable");
+    }
+
+    apply_dev_audit_defaults();
+}
+
 // ── Issue #1436 — mutate :op unified dispatcher ──
 static void run_1436_dispatch() {
     std::println("\n--- Issue #1436: mutate :op unified dispatcher ---");
@@ -187,9 +381,11 @@ static void run_1436_dispatch() {
         auto r = cs.eval("(api-reference)");
         CHECK(r && is_string(*r), "api-reference string");
         if (r && is_string(*r)) {
-            auto idx = as_int(*r); // eval'd as idx earlier; treat as string
+            auto idx = as_string_idx(*r);
             auto heap = cs.evaluator().string_heap();
-            std::string s = (idx < static_cast<std::int64_t>(heap.size())) ? heap[idx] : "";
+            std::string s = (static_cast<std::size_t>(idx) < heap.size())
+                                ? heap[static_cast<std::size_t>(idx)]
+                                : "";
             CHECK(s.find("mutate") != std::string::npos, "lists mutate");
             CHECK(s.find("*deprecated*") != std::string::npos, "*deprecated* section");
             CHECK(s.find("mutate:rebind") != std::string::npos, "deprecated mutate:rebind");
@@ -210,7 +406,9 @@ static void run_1691_dead_heap() {
     // AC1: source-level contract
     {
         std::println("\n--- AC1 (#1691): no dead define_str push ---");
-        auto src = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+        auto src = read_first({"src/compiler/evaluator_primitives_mutate.cpp",
+                               "../src/compiler/evaluator_primitives_mutate.cpp",
+                               "../../src/compiler/evaluator_primitives_mutate.cpp"});
         CHECK(!src.empty(), "read evaluator_primitives_mutate.cpp");
         CHECK(src.find("std::string define_str = \"(define (\"") != std::string::npos,
               "define_str local construction present");
@@ -229,8 +427,9 @@ static void run_1691_dead_heap() {
     // AC2: audit clean
     {
         std::println("\n--- AC2 (#1691): audit_dead_heap_push clean ---");
-        int rc =
-            std::system("python3 scripts/audit/audit_dead_heap_push.py >/tmp/audit_1691.out 2>&1");
+        int rc = std::system(
+            "cd \"" AURA_SOURCE_DIR
+            "\" && python3 scripts/audit/audit_dead_heap_push.py >/tmp/audit_1691.out 2>&1");
         CHECK(rc == 0, "audit_dead_heap_push exit 0");
         auto out = read_file("/tmp/audit_1691.out");
         CHECK(out.find("clean") != std::string::npos ||
@@ -251,7 +450,7 @@ static void run_1691_dead_heap() {
         for (NodeId id = 0; id < flat->size(); ++id) {
             if (!flat->is_live_node(id))
                 continue;
-            auto v = flat.get(id);
+            auto v = flat->get(id);
             if (v.tag == NodeTag::LiteralInt && v.int_value == 1) {
                 lit = id;
                 break;
@@ -767,8 +966,10 @@ static void run_1696_multi_node_log() {
             CHECK(mutate_src.find("add_mutation(NULL_NODE, \"replace-pattern\"") !=
                       std::string::npos,
                   "public replace-pattern uses NULL_NODE");
-            CHECK(mutate_src.find("add_mutation(NULL_NODE, \"rename-symbol\"") != std::string::npos,
-                  "public rename-symbol uses NULL_NODE");
+            CHECK(mutate_src.find("first_define != NULL_NODE ? first_define : NULL_NODE") !=
+                          std::string::npos &&
+                      mutate_src.find("\"rename-symbol\",") != std::string::npos,
+                  "public rename-symbol falls back to NULL_NODE");
         }
         if (!flat_src.empty()) {
             CHECK(flat_src.find("add_mutation(aura::ast::NULL_NODE, \"replace-pattern\"") !=
@@ -871,7 +1072,9 @@ static void run_1685_rebind_stale_define() {
         CHECK(int_eq(cs2, "(f -4)", 4), "3918 AC: direct (f -4)→4");
         CHECK(int_eq(cs2, "(let ((g f)) (g -4))", 4), "3918 AC: env/HO call (f -4)→4");
         CHECK(int_eq(cs2, "(f 2)", 2), "3918 AC: (f 2)→2");
-        const auto src = read_file("src/compiler/evaluator_eval_flat.cpp");
+        const auto src = read_first({"src/compiler/evaluator_eval_flat.cpp",
+                                     "../src/compiler/evaluator_eval_flat.cpp",
+                                     "../../src/compiler/evaluator_eval_flat.cpp"});
         CHECK(src.find("Issue #3918") != std::string::npos, "3918 AC: lockless rebind cites");
     }
 }
@@ -1502,6 +1705,7 @@ int main() {
     run_1699_splice();
     run_1704_sv_guard();
     run_1700_wrap();
+    run_4689_rollback_since_id();
     std::println("\n=== Mutate batch: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
