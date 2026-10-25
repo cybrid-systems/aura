@@ -1974,12 +1974,15 @@ void aura_free_closure(int64_t closure_id) {
 
 // Issue #4036: isolation-checked free. Production face (sandbox_mode != 0 —
 // Restricted/Strict, not Off): refuse a slot whose recorded principal is
-// non-zero and differs from the caller (IsolationDeny, zero free), and fail
-// closed on a legacy unstamped slot (tenant 0) under Strict / multi-tenant.
-// Soft/Off (mode 0) keeps today's free. Principal is the same
-// capability_tenant_id_ require_effect records (owner wiring). Returns 0 on
-// free, nonzero deny code otherwise (2 = foreign slot, 3 = legacy unstamped
-// under Strict/MT, 1 = bad id / out of range).
+// non-zero and differs from the caller (zero free), and fail closed on a
+// legacy unstamped slot (tenant 0) under Strict / multi-tenant. Issue
+// #4694: both refusals audit through aura_jit_owner_check_isolation, the
+// same call as closure-capture, so the IsolationDeny row carries fiber id,
+// mid, and tenant. The hook return is not the allow decision. Soft/Off
+// (mode 0) keeps today's free and does not load the stamp. Principal is
+// the same capability_tenant_id_ require_effect records (owner wiring).
+// Returns 0 on free, nonzero deny code otherwise (2 = foreign slot, 3 =
+// legacy unstamped under Strict/MT, 1 = bad id / out of range).
 int aura_free_closure_checked(int64_t closure_id, std::uint64_t caller_tenant, int sandbox_mode) {
     if (closure_id < 0)
         return 1;
@@ -2001,13 +2004,20 @@ int aura_free_closure_checked(int64_t closure_id, std::uint64_t caller_tenant, i
         const std::uint64_t slot_tenant =
             (cid < g_closure_tenants.size()) ? g_closure_tenants[cid] : 0;
         if (slot_tenant != 0 && slot_tenant != caller_tenant) {
-            // IsolationDeny: foreign-stamped slot, zero free.
+            // Issue #4694: foreign-stamped slot, zero free. Audit matches
+            // aura_closure_capture_checked (fiber id + mid + tenant).
+            (void)aura_jit_owner_check_isolation(caller_tenant, slot_tenant,
+                                                 aura::compiler::security::kEffectMutate,
+                                                 "closure:free");
             aura_unlock_workspace_write();
             return 2;
         }
         if (slot_tenant == 0 && (::aura::core::sandbox::is_strict() ||
                                  ::aura::core::provenance::multi_tenant_env_active())) {
             // Legacy unstamped slot fails closed under Strict / multi-tenant.
+            (void)aura_jit_owner_check_isolation(caller_tenant, slot_tenant,
+                                                 aura::compiler::security::kEffectMutate,
+                                                 "closure:free");
             aura_unlock_workspace_write();
             return 3;
         }

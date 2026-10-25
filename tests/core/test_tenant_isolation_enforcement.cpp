@@ -9448,6 +9448,179 @@ int main() {
         reset_all();
     }
 
+    // ── Issue #4694: closure:free! int-path deny writes IsolationDeny ──
+    {
+        std::println("\n--- #4694: closure:free! audits a foreign and an unstamped slot ---");
+        reset_all();
+        aura::core::provenance::reset_undeclared_mt_autodetect_for_test();
+        ::unsetenv("AURA_MT_AUTODETECT");
+        ::unsetenv("AURA_MULTI_TENANT");
+        ::unsetenv("AURA_HARD_CAPTURE_TENANT");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.disarm_production_audit_defaults_for_test();
+        ev.set_effect_sandbox_mode(1);
+        constexpr std::uint64_t tenant_a = 46941;
+        constexpr std::uint64_t tenant_b = 46942;
+        ev.set_tenant_principal(tenant_a, "4694-a");
+        ev.set_tenant_principal(tenant_b, "4694-b");
+        CHECK(aura::core::provenance::multi_tenant_env_active(),
+              "4694: second principal arms multi-tenant");
+        CHECK(ev.effect_sandbox_mode() == 1, "4694: face is Restricted");
+
+        using aura::compiler::types::EvalValue;
+        using aura::compiler::types::make_int;
+        using aura::core::capability::set_effect_fiber_id_override;
+
+        // The prim body is what returns false. Program eval still hits the
+        // dispatch Mutate choke first (#4036); that path is not this audit.
+        auto call_free = [&](std::int64_t id) {
+            auto pfn = ev.primitives().lookup("closure:free!");
+            if (!pfn)
+                return make_int(0);
+            const std::vector<EvalValue> args{make_int(id)};
+            return (*pfn)(args);
+        };
+        auto saw_free_deny = [&](std::uint64_t se_base, std::uint64_t expect_mid) {
+            bool saw = false;
+            const auto& ring = g_security_event_ring();
+            for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+                const auto& e = ring.ring[s % ring.ring.size()];
+                if (e.seq != s)
+                    continue;
+                if (static_cast<int>(e.kind) != static_cast<int>(SecurityEventKind::IsolationDeny))
+                    continue;
+                if (std::string_view(e.op) != "closure:free")
+                    continue;
+                saw = true;
+                CHECK(e.denied, "4694: IsolationDeny row is denied");
+                CHECK(e.tenant_id == tenant_b, "4694: IsolationDeny tenant is the caller");
+                CHECK(e.fiber_id == 4694, "4694: IsolationDeny carries the fiber");
+                CHECK(e.mutation_id == expect_mid, "4694: IsolationDeny carries the mid");
+                CHECK(e.effect_bits == kEffectMutate, "4694: IsolationDeny effect is Mutate");
+            }
+            return saw;
+        };
+
+        const auto foreign = aura_alloc_closure_tenant(4694, tenant_a);
+        const auto unstamped = aura_alloc_closure_tenant(4694, 0);
+        const auto own = aura_alloc_closure_tenant(4694, tenant_b);
+        const auto soft = aura_alloc_closure_tenant(4694, tenant_a);
+        CHECK(foreign >= 0 && unstamped >= 0 && own >= 0 && soft >= 0, "4694: slots allocated");
+        CHECK(aura_closure_is_freed(foreign) == 0, "4694: foreign slot starts live");
+
+        set_effect_fiber_id_override(4694);
+        bool strong = false;
+        {
+            Evaluator::TenantScope reader(ev, tenant_b);
+            cs.register_jit_primitives();
+            strong = aura_jit_owner_capability_tenant() == tenant_b;
+            const auto& ring = g_security_event_ring();
+            const auto se_foreign = ring.seq.load(std::memory_order_acquire);
+            const auto mid_foreign = aura_isolation_deny_se_mid();
+            const int rc_foreign = aura_free_closure_checked(foreign, tenant_b, /*sandbox_mode=*/1);
+            CHECK(rc_foreign == 2, "4694: foreign free returns 2");
+            CHECK(aura_closure_is_freed(foreign) == 0, "4694: foreign slot stays live");
+            const auto body = call_free(foreign);
+            CHECK(is_bool(body) && !as_bool(body), "4694: prim observes false");
+            CHECK(aura_closure_is_freed(foreign) == 0, "4694: prim leaves the slot live");
+            if (strong) {
+                CHECK(saw_free_deny(se_foreign, mid_foreign),
+                      "4694: foreign free records IsolationDeny");
+            } else {
+                // Light .so binds the weak owner stub (#4296). The skip is
+                // local; the stub writes no IsolationDeny. Production's
+                // strong hook calls check_workspace_isolation.
+                CHECK(!saw_free_deny(se_foreign, mid_foreign),
+                      "4694: light stub records no IsolationDeny");
+            }
+
+            const auto se_legacy = ring.seq.load(std::memory_order_acquire);
+            const auto mid_legacy = aura_isolation_deny_se_mid();
+            const int rc_legacy =
+                aura_free_closure_checked(unstamped, tenant_b, /*sandbox_mode=*/1);
+            CHECK(rc_legacy == 3, "4694: unstamped free returns 3");
+            CHECK(aura_closure_is_freed(unstamped) == 0, "4694: unstamped slot stays live");
+            if (strong) {
+                CHECK(saw_free_deny(se_legacy, mid_legacy),
+                      "4694: unstamped free records IsolationDeny");
+            } else {
+                CHECK(!saw_free_deny(se_legacy, mid_legacy),
+                      "4694: light stub records no unstamped IsolationDeny");
+            }
+
+            const auto se_own = ring.seq.load(std::memory_order_acquire);
+            const int rc_own = aura_free_closure_checked(own, tenant_b, /*sandbox_mode=*/1);
+            CHECK(rc_own == 0, "4694: same-tenant free returns 0");
+            CHECK(aura_closure_is_freed(own) == 1, "4694: same-tenant slot is freed");
+            CHECK(!saw_free_deny(se_own, 0), "4694: same-tenant free emits no IsolationDeny");
+
+            const auto se_soft = ring.seq.load(std::memory_order_acquire);
+            const int rc_soft = aura_free_closure_checked(soft, tenant_b, /*sandbox_mode=*/0);
+            CHECK(rc_soft == 0, "4694: Soft/Off still frees a foreign slot");
+            CHECK(aura_closure_is_freed(soft) == 1, "4694: Soft/Off slot is freed");
+            CHECK(!saw_free_deny(se_soft, 0), "4694: Soft/Off emits no IsolationDeny");
+        }
+        set_effect_fiber_id_override(0);
+
+        const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+        const auto fc = rt.find("int aura_free_closure_checked");
+        const auto arena = rt.find("g_arena_closure_envs[cid]", fc);
+        CHECK(fc != std::string::npos && arena != std::string::npos && fc < arena,
+              "4694: checked free located");
+        if (fc != std::string::npos && arena > fc) {
+            const auto body = rt.substr(fc, arena - fc);
+            const auto face = body.find("sandbox_mode != 0");
+            const auto foreign_arm = body.find("slot_tenant != caller_tenant");
+            const auto legacy_arm = body.find("multi_tenant_env_active()");
+            const auto audit =
+                body.find("aura_jit_owner_check_isolation(caller_tenant, slot_tenant,");
+            const auto audit2 =
+                audit == std::string::npos
+                    ? std::string::npos
+                    : body.find("aura_jit_owner_check_isolation(caller_tenant, slot_tenant,",
+                                audit + 1);
+            CHECK(face != std::string::npos && foreign_arm != std::string::npos &&
+                      legacy_arm != std::string::npos && audit != std::string::npos &&
+                      audit2 != std::string::npos && face < foreign_arm && foreign_arm < audit &&
+                      audit < legacy_arm && legacy_arm < audit2,
+                  "4694: both deny arms audit before the free, after the face probe");
+            CHECK(body.find("\"closure:free\"") != std::string::npos,
+                  "4694: audit op is closure:free");
+            CHECK(body.find("return 2") != std::string::npos &&
+                      body.find("return 3") != std::string::npos,
+                  "4694: deny codes stay 2 and 3");
+        }
+        const auto svc = read_file("src/compiler/service.ixx");
+        const auto hook = svc.find("int aura_jit_owner_check_isolation");
+        CHECK(hook != std::string::npos, "4694: strong isolation hook located");
+        if (hook != std::string::npos) {
+            const auto hwin = svc.substr(hook, 900);
+            CHECK(hwin.find("check_workspace_isolation(target_tenant, ref_tenant, bits,") !=
+                      std::string::npos,
+                  "4694: deny goes through check_workspace_isolation");
+        }
+        const auto iso = read_file("src/core/workspace_isolation.hh");
+        const auto rec = iso.find("void record_audit");
+        const auto mid_at = iso.find("entry.mutation_id = mid", rec);
+        CHECK(rec != std::string::npos && mid_at != std::string::npos,
+              "4694: record_audit located");
+        if (mid_at != std::string::npos) {
+            const auto span = iso.substr(mid_at, 3200);
+            CHECK(span.find("entry.fiber_id") != std::string::npos &&
+                      span.find("emit_security_event_durable") != std::string::npos &&
+                      span.find("IsolationDeny") != std::string::npos &&
+                      span.find("caller != 0 ? caller : target") != std::string::npos,
+                  "4694: IsolationDeny carries fiber, mid, and caller tenant");
+        }
+
+        ev.set_effect_sandbox_mode(0);
+        aura::core::provenance::reset_undeclared_mt_autodetect_for_test();
+        aura::core::provenance::set_hard_capture_tenant(false);
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        reset_all();
+    }
+
     reset_all();
     std::println("\n=== test_tenant_isolation_enforcement: {} passed, {} failed ===", g_passed,
                  g_failed);
