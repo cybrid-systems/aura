@@ -5,6 +5,7 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/runtime_shared.h"
 #include "compiler/security_capabilities.h"
 #include "compiler/tenant_host_path.hh"
 #include "compiler/tenant_exec_fs_jail.hh"
@@ -9216,6 +9217,231 @@ int main() {
 
         ev.note_boundary_audit_mid_for_test(0);
         ev.clear_boundary_audit_mid_for_test();
+        aura::core::provenance::reset_undeclared_mt_autodetect_for_test();
+        aura::core::provenance::set_hard_capture_tenant(false);
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        reset_all();
+    }
+
+    // ── Issue #4693: JIT inline hash-ref gates the tag and the owner ──
+    {
+        std::println("\n--- #4693: JIT hash-ref misses a foreign table and a non-hash ---");
+        reset_all();
+        aura::core::provenance::reset_undeclared_mt_autodetect_for_test();
+        ::unsetenv("AURA_MT_AUTODETECT");
+        ::unsetenv("AURA_MULTI_TENANT");
+        ::unsetenv("AURA_HARD_CAPTURE_TENANT");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.disarm_production_audit_defaults_for_test();
+        ev.set_effect_sandbox_mode(1);
+        constexpr std::uint64_t tenant_a = 46931;
+        constexpr std::uint64_t tenant_b = 46932;
+        ev.set_tenant_principal(tenant_a, "4693-a");
+        ev.set_tenant_principal(tenant_b, "4693-b");
+        CHECK(aura::core::provenance::multi_tenant_env_active(),
+              "4693: second principal arms multi-tenant");
+        CHECK(ev.effect_sandbox_mode() == 1, "4693: face is Restricted");
+
+        using aura::compiler::types::as_hash_idx;
+        using aura::compiler::types::as_int;
+        using aura::compiler::types::EvalValue;
+        using aura::compiler::types::is_hash;
+        using aura::compiler::types::is_int;
+        using aura::compiler::types::is_void;
+        using aura::compiler::types::make_imm_hash;
+        using aura::compiler::types::make_int;
+        using aura::compiler::types::make_void;
+
+        auto call_prim = [&](std::string_view name, std::initializer_list<EvalValue> args) {
+            auto pfn = ev.primitives().lookup(name);
+            if (!pfn)
+                return make_void();
+            const std::vector<EvalValue> v(args);
+            return (*pfn)(v);
+        };
+        auto saw_iso = [&](std::uint64_t se_base) {
+            bool saw = false;
+            const auto& ring = g_security_event_ring();
+            for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+                const auto& e = ring.ring[s % ring.ring.size()];
+                if (e.seq != s)
+                    continue;
+                if (static_cast<int>(e.kind) != static_cast<int>(SecurityEventKind::IsolationDeny))
+                    continue;
+                if (std::string_view(e.op) != "hash-ref")
+                    continue;
+                saw = true;
+                CHECK(e.denied, "4693: IsolationDeny row is denied");
+                CHECK(e.tenant_id == tenant_b, "4693: IsolationDeny tenant is the caller");
+            }
+            return saw;
+        };
+
+        EvalValue hv = make_void();
+        bool strong = false;
+        {
+            Evaluator::TenantScope owner(ev, tenant_a);
+            auto minted = cs.eval("(hash 7 42)");
+            CHECK(minted.has_value() && is_hash(*minted), "4693: A mints a hash");
+            if (minted && is_hash(*minted))
+                hv = *minted;
+            cs.register_jit_primitives();
+            strong = aura_jit_owner_capability_tenant() == tenant_a;
+        }
+        CHECK(is_hash(hv), "4693: minted value is a hash");
+        if (is_hash(hv)) {
+            const auto hidx = as_hash_idx(hv);
+            CHECK(hidx < g_hash_tenants.size() && g_hash_tenants[hidx] == tenant_a,
+                  "4693: table stamp is A");
+            const auto key = make_int(7);
+            const auto& ring = g_security_event_ring();
+            EvalValue tree_b = make_void();
+            const FlatHashTable* jit_b = nullptr;
+            {
+                Evaluator::TenantScope reader(ev, tenant_b);
+                const auto se_base = ring.seq.load(std::memory_order_acquire);
+                tree_b = call_prim("hash-ref", {hv, key});
+                jit_b = aura_hash_get_flat_table_checked(hv.val, tenant_b, 1);
+                CHECK(is_void(tree_b), "4693: tree foreign read is void");
+                CHECK(jit_b == nullptr, "4693: JIT foreign fetch is null");
+                CHECK(is_void(tree_b) && jit_b == nullptr, "4693: tree and JIT agree on the miss");
+                if (strong) {
+                    CHECK(saw_iso(se_base), "4693: foreign read records IsolationDeny");
+                    CHECK(aura_hash_get_flat_table(hv.val) == nullptr,
+                          "4693: one-arg ABI denies when the owner is B");
+                } else {
+                    // Light .so binds the weak owner stub (#4296). The skip is
+                    // local; the stub writes no IsolationDeny. Production's
+                    // strong hook calls check_workspace_isolation.
+                    CHECK(!saw_iso(se_base), "4693: light stub records no IsolationDeny");
+                    CHECK(aura_hash_get_flat_table(hv.val) != nullptr,
+                          "4693: light stub leaves the one-arg face unarmed");
+                }
+            }
+            {
+                Evaluator::TenantScope reader(ev, tenant_b);
+                const auto se_base = ring.seq.load(std::memory_order_acquire);
+                const auto tree_z = call_prim("hash-ref", {make_int(0), key});
+                const auto raw_bits = static_cast<std::int64_t>(hidx << 6);
+                const auto raw = make_int(static_cast<std::int64_t>(hidx << 5));
+                const auto imm = make_imm_hash(hidx);
+                CHECK(is_void(tree_z), "4693: tree (hash-ref 0 7) is void");
+                CHECK(!is_hash(raw) && is_void(call_prim("hash-ref", {raw, key})),
+                      "4693: tree raw index is not a hash");
+                CHECK(!is_hash(imm) && is_void(call_prim("hash-ref", {imm, key})),
+                      "4693: tree imm-hash is not a hash");
+                CHECK(aura_hash_get_flat_table_checked(0, tenant_a, 1) == nullptr,
+                      "4693: JIT fixnum 0 does not select a table");
+                CHECK(aura_hash_get_flat_table(0) == nullptr, "4693: one-arg ABI rejects fixnum 0");
+                CHECK(aura_hash_get_flat_table_checked(raw_bits, tenant_a, 1) == nullptr,
+                      "4693: JIT raw index does not select A's table");
+                CHECK(aura_hash_get_flat_table_checked(imm.val, tenant_a, 1) == nullptr,
+                      "4693: JIT imm-hash does not select A's table");
+                CHECK(ring.seq.load(std::memory_order_acquire) == se_base,
+                      "4693: a non-hash operand emits no IsolationDeny");
+            }
+            const auto* soft = aura_hash_get_flat_table_checked(hv.val, tenant_b, 0);
+            const auto* own = aura_hash_get_flat_table_checked(hv.val, tenant_a, 1);
+            CHECK(soft != nullptr && own == soft, "4693: unarmed face returns the owner table");
+            bool holds = false;
+            if (own != nullptr) {
+                const auto want = make_int(7).val;
+                const auto expect = make_int(42).val;
+                const auto* meta = own->metadata();
+                const auto* keys = own->keys();
+                const auto* vals = own->values();
+                for (std::uint64_t i = 0; i < own->capacity; ++i) {
+                    // Tree insert writes a fingerprint (0x80..0xFE), not only 0x80.
+                    const auto live = meta[i] >= 0x80 && meta[i] != 0xFF;
+                    if (live && keys[i] == want && vals[i] == expect)
+                        holds = true;
+                }
+            }
+            CHECK(holds, "4693: owner table still holds 42");
+            {
+                Evaluator::TenantScope reader(ev, tenant_b);
+                ev.set_effect_sandbox_mode(0);
+                const auto se_base = ring.seq.load(std::memory_order_acquire);
+                const auto shared = call_prim("hash-ref", {hv, key});
+                CHECK(is_int(shared) && as_int(shared) == 42,
+                      "4693: Soft/Off tree read returns 42");
+                CHECK(ring.seq.load(std::memory_order_acquire) == se_base,
+                      "4693: Soft/Off emits no IsolationDeny");
+                ev.set_effect_sandbox_mode(1);
+                const auto again = call_prim("hash-ref", {hv, key});
+                CHECK(is_void(again), "4693: restoring Restricted denies B again");
+            }
+            {
+                Evaluator::TenantScope owner(ev, tenant_a);
+                const auto back = call_prim("hash-ref", {hv, key});
+                CHECK(is_int(back) && as_int(back) == 42, "4693: A still reads 42");
+                CHECK(aura_hash_get_flat_table_checked(hv.val, tenant_a, 1) == own,
+                      "4693: A's armed fetch is the same table");
+            }
+        }
+
+        {
+            Evaluator::TenantScope owner(ev, tenant_a);
+            auto defined = cs.eval("(define t4693 (hash 7 42))");
+            CHECK(defined.has_value(), "4693: define binds A's hash");
+            auto own = cs.eval("(hash-ref t4693 7)");
+            CHECK(own && is_int(*own) && as_int(*own) == 42, "4693: eval owner reads 42");
+        }
+        {
+            Evaluator::TenantScope reader(ev, tenant_b);
+            auto denied = cs.eval("(hash-ref t4693 7)");
+            auto zero = cs.eval("(hash-ref 0 7)");
+            CHECK(denied && is_void(*denied), "4693: eval foreign read is void");
+            CHECK(zero && is_void(*zero), "4693: eval non-hash is void");
+            CHECK(!(denied && is_int(*denied) && as_int(*denied) == 42),
+                  "4693: eval never returns A's 42 to B");
+        }
+
+        const auto jit = read_file("src/compiler/aura_jit.cpp");
+        const auto op = jit.find("case OpHashRef:");
+        const auto op_end = jit.find("case OpHashSet:", op);
+        CHECK(op != std::string::npos && op_end != std::string::npos && op < op_end,
+              "4693: OpHashRef case");
+        if (op != std::string::npos && op_end > op) {
+            const auto win = jit.substr(op, op_end - op);
+            CHECK(win.find("fn_hash_get_flat_table") != std::string::npos,
+                  "4693: OpHashRef calls aura_hash_get_flat_table");
+            CHECK(win.find("{hash_val}") != std::string::npos, "4693: the IR call is one argument");
+            CHECK(win.find("fn_hash_ref") == std::string::npos,
+                  "4693: OpHashRef does not call aura_hash_ref");
+            CHECK(win.find("c64(11)") != std::string::npos, "4693: null path stores void 11");
+        }
+        const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+        const auto gate_at = rt.find("if (!hash_ref_operand_is_hash(hash_val))");
+        CHECK(gate_at != std::string::npos, "4693: tag test located");
+        if (gate_at != std::string::npos) {
+            const auto body = rt.substr(gate_at, 1600);
+            const auto shift = body.find(">> 6");
+            const auto gate = body.find("aura_hash_gate_checked(");
+            const auto ret = body.find("return ht");
+            CHECK(shift != std::string::npos && gate != std::string::npos &&
+                      ret != std::string::npos && shift < gate && gate < ret,
+                  "4693: tag test, then the gate, then the pointer");
+            CHECK(body.find("g_hash_tenants") == std::string::npos,
+                  "4693: the fetch does not load the stamp itself");
+            CHECK(body.find("aura_hash_get_flat_table_checked(hash_val,") != std::string::npos,
+                  "4693: one-arg ABI forwards into the checked body");
+        }
+        const auto svc = read_file("src/compiler/service.ixx");
+        const auto hook = svc.find("int aura_jit_owner_check_isolation");
+        CHECK(hook != std::string::npos, "4693: strong isolation hook located");
+        if (hook != std::string::npos) {
+            const auto hwin = svc.substr(hook, 900);
+            CHECK(hwin.find("check_workspace_isolation(target_tenant, ref_tenant, bits,") !=
+                      std::string::npos,
+                  "4693: deny goes through check_workspace_isolation");
+        }
+        CHECK(rt.find("aura_jit_owner_check_isolation(caller_tenant, slot_tenant,") !=
+                  std::string::npos,
+              "4693: jit_tenant_gate calls the owner isolation hook");
+
+        ev.set_effect_sandbox_mode(0);
         aura::core::provenance::reset_undeclared_mt_autodetect_for_test();
         aura::core::provenance::set_hard_capture_tenant(false);
         aura::core::provenance::set_multi_tenant_env_active(false);

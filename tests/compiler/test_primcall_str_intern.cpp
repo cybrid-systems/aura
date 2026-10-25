@@ -351,7 +351,13 @@ static void ac4319_ophashref_hashed_probe() {
     CHECK(hash >= 0 && pair != 0, "4319: alloc hash and pair");
     CHECK(aura_hash_set_checked(hash, pair, 4319, 0) == 0, "4319: hash-set");
     CHECK(aura_hash_ref_checked(hash, placed, 4319, 0) == 5150, "4319: hash-set key is found");
-    const auto* live = aura_hash_get_flat_table(hash);
+    // Issue #4693: the flat-table fetch requires a RefHash tag. Alloc returns
+    // the untagged index. Face 0 still returns the pointer (no tenant load).
+    using aura::compiler::types::kRefLowTag;
+    using aura::compiler::types::kRefTypeShift;
+    using aura::compiler::types::RefHash;
+    const auto tag = static_cast<std::int64_t>((RefHash << kRefTypeShift) | kRefLowTag);
+    const auto* live = aura_hash_get_flat_table_checked(hash | tag, 4319, 0);
     CHECK(live != nullptr && live->capacity >= cap, "4319: live table");
     if (live != nullptr) {
         const auto slot = aura_hash_probe_slot(aura_hash_splitmix64(placed), 0, live->capacity);
