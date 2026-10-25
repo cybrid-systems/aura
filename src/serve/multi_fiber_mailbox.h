@@ -600,12 +600,45 @@ inline void arm_scope_starve_throttle(std::string_view scope_id) noexcept {
     return false;
 }
 
+// Issue #2554: deferred_depth counts *outstanding deferred senders*, not
+// defer events. A fiber that is deferred k times before its retry succeeds
+// used to add k to depth but resolve only 1 on push Ok, leaking k-1 phantom
+// depth that hold-exit drain could only force-close on the hard starvation
+// face. Track pending sender fibers (slow defer path only; non-fiber callers
+// keep per-event semantics). Cleared whenever the window closes.
+inline std::mutex g_mailbox_defer_pending_mtx;
+inline std::unordered_map<std::uint64_t, bool> g_mailbox_defer_pending;
+// Returns true when the current fiber already holds an outstanding defer.
+[[nodiscard]] inline bool mailbox_defer_sender_already_pending() noexcept {
+    if (g_current_fiber == nullptr)
+        return false;
+    const auto fid = static_cast<std::uint64_t>(g_current_fiber->id());
+    std::lock_guard<std::mutex> lk(g_mailbox_defer_pending_mtx);
+    if (g_mailbox_defer_pending.size() > 65536)
+        g_mailbox_defer_pending.clear(); // bound: degrade to per-event count
+    return !g_mailbox_defer_pending.emplace(fid, true).second;
+}
+// Returns true when the current fiber had an outstanding defer (now resolved).
+inline bool mailbox_defer_sender_resolved() noexcept {
+    if (g_current_fiber == nullptr)
+        return false;
+    const auto fid = static_cast<std::uint64_t>(g_current_fiber->id());
+    std::lock_guard<std::mutex> lk(g_mailbox_defer_pending_mtx);
+    return g_mailbox_defer_pending.erase(fid) != 0;
+}
+inline void mailbox_defer_pending_clear() noexcept {
+    std::lock_guard<std::mutex> lk(g_mailbox_defer_pending_mtx);
+    g_mailbox_defer_pending.clear();
+}
+
 // Issue #2378: note a mutation-hold defer (push/fanout returned BP).
 // AC3: only called on the defer path (not on happy Ok push).
 // Issue #3775: optional scope_id (or TLS g_mf_mailbox_starve_note_scope)
 // keys per-scope deferred_depth under production; Soft/Off process-only.
 inline void note_mailbox_mutation_hold_defer(std::string_view scope_id = {}) noexcept {
     g_mf_mailbox_stats.mailbox_deferred_mutation_hold_total.fetch_add(1, std::memory_order_relaxed);
+    if (mailbox_defer_sender_already_pending())
+        return; // Issue #2554: retrying sender already counted in depth
     const auto d =
         g_mf_mailbox_stats.mailbox_deferred_depth.fetch_add(1, std::memory_order_relaxed) + 1;
     // High-water (relaxed CAS-free: max via loop is fine for metrics).
@@ -925,6 +958,7 @@ inline void note_mailbox_push_ok_drain_progress(std::string_view scope_id = {}) 
         return; // happy path — zero extra work beyond this load
     if (scope_id.empty())
         scope_id = g_mf_mailbox_starve_note_scope;
+    (void)mailbox_defer_sender_resolved(); // Issue #2554: sender no longer pending
     // Resolve one outstanding defer (sender retry succeeded).
     auto cur = depth;
     while (cur > 0 && !g_mf_mailbox_stats.mailbox_deferred_depth.compare_exchange_weak(
@@ -937,6 +971,7 @@ inline void note_mailbox_push_ok_drain_progress(std::string_view scope_id = {}) 
     if (cur == 1) {
         // Issue #2554: window closed — clear starvation canary so the next
         // open-defer window can report once again.
+        mailbox_defer_pending_clear();
         g_mailbox_defer_starve_reported.store(false, std::memory_order_relaxed);
         // Issue #2958: clear SLO hold-cancel arm for the next open window.
         g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
@@ -1124,6 +1159,8 @@ drain_deferred_under_budget(std::uint64_t budget_us = 0, std::string_view scope_
                     ++resolved;
                 }
                 r.force_resolved = resolved;
+                if (resolved > 0)
+                    mailbox_defer_pending_clear(); // Issue #2554: window force-closed
                 r.remaining_depth =
                     g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed);
                 if (resolved > 0) {
@@ -2010,7 +2047,13 @@ public:
             g_mf_mailbox_stats.recv_waits.fetch_add(1, std::memory_order_relaxed);
             if (g_current_fiber != nullptr) {
                 // Park so GC safepoint / steal can proceed.
-                g_current_fiber->set_state(FiberState::Waiting);
+                // Issue #2554: only an untimed wait parks off-queue (Waiting →
+                // worker drops it until notify/eventfd). A timed wait must stay
+                // runnable so the worker re-queues it and the deadline check
+                // above runs; Waiting + Explicit lost the fiber forever when no
+                // attached notifier fired (timeout never honoured).
+                if (timeout_ms <= 0)
+                    g_current_fiber->set_state(FiberState::Waiting);
                 // Issue #4506: record the mailbox this fiber parks on so
                 // the steal walk sees it even when Fiber::mailbox_ points
                 // at the body mailbox. Depth-counted: an ask-window

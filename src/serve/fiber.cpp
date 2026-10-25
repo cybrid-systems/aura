@@ -1038,10 +1038,14 @@ bool Fiber::check_and_enforce_resume_snapshot_invariant() noexcept {
     const auto snap = mutation_safety_snapshot();
     bool ticket_miss = false;
     if (has_resume_safety_ticket_) {
-        if (snap.ticket != resume_safety_ticket_)
+        // Issue #2554: Fiber::resume samples the ticket before its own
+        // mirror republish; other callers fall back to the live sample.
+        const auto observed = has_resume_pre_sync_ticket_ ? resume_pre_sync_ticket_ : snap.ticket;
+        if (observed != resume_safety_ticket_)
             ticket_miss = true;
         clear_resume_safety_ticket();
     }
+    has_resume_pre_sync_ticket_ = false;
     const bool snap_inconsistent = mutation_safety_snapshot_inconsistent(snap);
     // LayoutStamp path (new #2677). C ABI shim reads worker-side
     // current_layout_stamp + bumps per-CompilerMetrics + Fiber static
@@ -1595,6 +1599,17 @@ void Fiber::resume() {
         }
     }
 
+    // Issue #2554: sample the steal ticket seq BEFORE the resume-side
+    // mutation-stack sync below. sync_per_fiber_mutation_stack republishes
+    // the held/defuse mirrors (one seqlock write, seq += 2) on every resume,
+    // so comparing the steal-stamped ticket after it always missed and
+    // hard-failed every successfully stolen fiber (Done+cancel, body never
+    // finishes → chaos "no hang" + hard-fail delta). The resume's own
+    // republish is not a Guard enter/exit inside the steal→resume window.
+    if (has_resume_safety_ticket_) {
+        resume_pre_sync_ticket_ = current_safety_ticket();
+        has_resume_pre_sync_ticket_ = true;
+    }
     auto prev = g_current_fiber;
     g_current_fiber = this;
     // Issue #213 Cycle 3: also update the Evaluator's
@@ -1826,6 +1841,13 @@ void Fiber::yield() {
         std::uint8_t why = 0;
         if (yield_blocked_by_mutation_boundary(&why)) {
             note_yield_rejected_under_mutation_boundary(why);
+            // Issue #2554: callers that park (mailbox recv / BlockingIO) set
+            // Waiting *before* yielding. A rejected yield never swaps out, so
+            // the body keeps running — restore Running. Otherwise the stale
+            // Waiting survives to the next accepted yield and the worker
+            // drops the fiber off-queue with no waker (lost fiber → hang).
+            if (fb->state() == FiberState::Waiting)
+                fb->set_state(FiberState::Running);
             return; // no swapcontext — AC1
         }
     }
@@ -1867,6 +1889,13 @@ void Fiber::yield(YieldReason reason) {
         std::uint8_t why = 0;
         if (yield_blocked_by_mutation_boundary(&why)) {
             note_yield_rejected_under_mutation_boundary(why);
+            // Issue #2554: callers that park (mailbox recv / BlockingIO) set
+            // Waiting *before* yielding. A rejected yield never swaps out, so
+            // the body keeps running — restore Running. Otherwise the stale
+            // Waiting survives to the next accepted yield and the worker
+            // drops the fiber off-queue with no waker (lost fiber → hang).
+            if (fb->state() == FiberState::Waiting)
+                fb->set_state(FiberState::Running);
             return; // no swapcontext — AC1
         }
     }

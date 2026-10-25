@@ -1395,6 +1395,10 @@ private:
     // Independent of LayoutStamp restamp (#2510) — no dual-compute conflict.
     std::uint64_t resume_safety_ticket_ = 0;
     bool has_resume_safety_ticket_ = false;
+    // Issue #2554: ticket seq sampled by Fiber::resume before the
+    // mutation-stack sync republish (consumed by the resume invariant check).
+    std::uint64_t resume_pre_sync_ticket_ = 0;
+    bool has_resume_pre_sync_ticket_ = false;
     // Issue #2954: exclusive decision window for residual hard-AND + stamp
     // on this victim only (0 = free, 1 = busy).
     std::atomic<std::uint8_t> steal_decision_busy_{0};
