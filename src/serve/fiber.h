@@ -9,6 +9,7 @@
 #include <functional>
 #include <memory>
 #include <atomic>
+#include <chrono>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -710,6 +711,22 @@ public:
     uint64_t id() const { return id_; }
     FiberState state() const { return state_.load(std::memory_order_acquire); }
     void set_state(FiberState s) { state_.store(s, std::memory_order_release); }
+    // Issue #2554 / #4506: a timed park records the wall-clock deadline at
+    // which the scheduler must re-queue this fiber. A fiber parked as
+    // Waiting has no attacher to write its eventfd, so without this the
+    // deadline would never be re-checked (the #2554 regression).
+    void set_park_deadline_ms(int timeout_ms) {
+        const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                std::chrono::steady_clock::now().time_since_epoch())
+                                .count();
+        park_deadline_ns_.store(static_cast<std::uint64_t>(now_ns) +
+                                    static_cast<std::uint64_t>(timeout_ms) * 1000000ULL,
+                                std::memory_order_release);
+    }
+    std::uint64_t park_deadline_ns() const {
+        return park_deadline_ns_.load(std::memory_order_acquire);
+    }
+    void clear_park_deadline() { park_deadline_ns_.store(0, std::memory_order_release); }
     int eventfd() const { return eventfd_; }
     // Issue #4176: close the wake eventfd as soon as the fiber is done.
     // Completed fibers stay owned by the Scheduler (owned_fibers_, per
@@ -1247,6 +1264,8 @@ private:
     uint64_t id_;
     std::atomic<bool> current_resume_had_mismatch_{false};
     std::atomic<FiberState> state_{FiberState::Ready};
+    // Issue #2554 / #4506: 0 = no timed park armed.
+    std::atomic<std::uint64_t> park_deadline_ns_{0};
     std::atomic<YieldReason> last_yield_reason_{YieldReason::Explicit};
 
     // Issue #451: orchestration observability counters

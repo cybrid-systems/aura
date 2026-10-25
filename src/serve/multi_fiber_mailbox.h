@@ -2047,22 +2047,25 @@ public:
             g_mf_mailbox_stats.recv_waits.fetch_add(1, std::memory_order_relaxed);
             if (g_current_fiber != nullptr) {
                 // Park so GC safepoint / steal can proceed.
-                // Issue #2554: only an untimed wait parks off-queue (Waiting →
-                // worker drops it until notify/eventfd). A timed wait must stay
-                // runnable so the worker re-queues it and the deadline check
-                // above runs; Waiting + Explicit lost the fiber forever when no
-                // attached notifier fired (timeout never honoured).
-                if (timeout_ms <= 0)
-                    g_current_fiber->set_state(FiberState::Waiting);
                 // Issue #4506: record the mailbox this fiber parks on so
                 // the steal walk sees it even when Fiber::mailbox_ points
                 // at the body mailbox. Depth-counted: an ask-window
                 // registration (agent_ask) survives the resume clear.
                 note_fiber_parked_mailbox(g_current_fiber->id(), this);
-                if (timeout_ms > 0)
+                // Issue #2554 / #4506: both timed and untimed waits park as
+                // Waiting. A timed park arms a park deadline that
+                // Scheduler::run honours (it re-queues the fiber when the
+                // deadline elapses), so the timeout is still delivered without
+                // an attacher wake (the #2554 regression) while the fiber is
+                // genuinely parked for the steal walk and #4506 AC4.
+                g_current_fiber->set_state(FiberState::Waiting);
+                if (timeout_ms > 0) {
+                    g_current_fiber->set_park_deadline_ms(timeout_ms);
                     Fiber::yield(YieldReason::Explicit);
-                else
+                    g_current_fiber->clear_park_deadline();
+                } else {
                     Fiber::yield(YieldReason::BlockingIO);
+                }
                 clear_fiber_parked_mailbox(g_current_fiber->id(), this);
                 // Drain eventfd if present.
                 int evfd = g_current_fiber->eventfd();

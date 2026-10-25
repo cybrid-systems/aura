@@ -1076,6 +1076,40 @@ void Scheduler::run() {
         // the 2× SLO bound (no unlock; cooperative re-arm only).
         if (aura_hold_budget_cancel_armed() && wait_ms > 10)
             wait_ms = 10;
+        // Issue #2554 / #4506: a timed mailbox park is Waiting (so the steal
+        // walk and #4506 AC4 observe it) but nothing else wakes it, so the
+        // scheduler re-queues it at its own deadline. Scan owned_fibers_ (not
+        // wait_map_: a parked fiber need not be epoll-registered) and never
+        // sleep past the nearest armed deadline.
+        {
+            const auto now_ns =
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                               std::chrono::steady_clock::now().time_since_epoch())
+                                               .count());
+            std::uint64_t nearest = 0;
+            {
+                ::aura::compiler::lock_order::AuditedMutexLock lock(
+                    owned_fibers_mutex_, ::aura::compiler::lock_order::Level::OwnedFibers);
+                for (const auto& fp : owned_fibers_) {
+                    Fiber* fiber = fp.get();
+                    if (!fiber || fiber->is_done())
+                        continue;
+                    if (fiber->state() != FiberState::Waiting)
+                        continue;
+                    const std::uint64_t dl = fiber->park_deadline_ns();
+                    if (dl != 0 && (nearest == 0 || dl < nearest))
+                        nearest = dl;
+                }
+            }
+            if (nearest != 0) {
+                const std::uint64_t delta_ns = nearest > now_ns ? nearest - now_ns : 0;
+                int park_ms = static_cast<int>((delta_ns + 999999ULL) / 1000000ULL);
+                if (park_ms < 1)
+                    park_ms = 1;
+                if (park_ms < wait_ms)
+                    wait_ms = park_ms;
+            }
+        }
         int n = ::epoll_wait(epoll_fd_, events, 64, wait_ms);
 
         if (!running_.load(std::memory_order_acquire))
@@ -1217,6 +1251,46 @@ void Scheduler::run() {
                     wid = next_worker_id();
                 }
                 workers_[wid]->enqueue(fiber);
+            }
+        }
+
+        // Issue #2554 / #4506: re-queue timed parks whose deadline elapsed so
+        // the mailbox recv re-runs its deadline check. Scans owned_fibers_ so
+        // a parked fiber that is not epoll-registered is still woken.
+        {
+            const auto now_ns =
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                               std::chrono::steady_clock::now().time_since_epoch())
+                                               .count());
+            std::vector<Fiber*> expired;
+            {
+                ::aura::compiler::lock_order::AuditedMutexLock lock(
+                    owned_fibers_mutex_, ::aura::compiler::lock_order::Level::OwnedFibers);
+                for (const auto& fp : owned_fibers_) {
+                    Fiber* fiber = fp.get();
+                    if (!fiber || fiber->is_done())
+                        continue;
+                    if (fiber->state() != FiberState::Waiting)
+                        continue;
+                    const std::uint64_t dl = fiber->park_deadline_ns();
+                    if (dl != 0 && dl <= now_ns)
+                        expired.push_back(fiber);
+                }
+            }
+            for (auto* fiber : expired) {
+                if (fiber->is_done() || fiber->is_queued())
+                    continue;
+                int wid;
+                if (fiber->affinity() >= 0) {
+                    wid = std::min(fiber->affinity(), static_cast<int>(workers_.size()) - 1);
+                    if (wid < 0)
+                        wid = 0;
+                } else {
+                    wid = next_worker_id();
+                }
+                workers_[wid]->enqueue(fiber);
+                if (metrics_on_)
+                    metrics_.io_events_processed.fetch_add(1, std::memory_order_relaxed);
             }
         }
 
