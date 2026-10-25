@@ -109,7 +109,16 @@ int run_test_restore_children_structural_lock() {
                 }
             });
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+        // A fixed 40ms slice loses the overlap on a loaded CI runner
+        // (jobs=4): stop is set before the writer is scheduled, so the
+        // loop body never runs and restores stays 0. Wait for progress.
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (restores.load(std::memory_order_relaxed) > 0 &&
+                reads.load(std::memory_order_relaxed) > 0)
+                break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
         stop.store(true, std::memory_order_release);
         writer.join();
         for (auto& th : readers)
@@ -214,7 +223,15 @@ int run_test_restore_children_structural_lock() {
                 }
             });
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        // Same loaded-runner race as #2455 AC2: a fixed 50ms slice can
+        // set stop before this writer is scheduled (#2959 AC3).
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (restores.load(std::memory_order_relaxed) > 0 &&
+                reads.load(std::memory_order_relaxed) > 0)
+                break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
         stop.store(true, std::memory_order_release);
         writer.join();
         for (auto& th : readers)
