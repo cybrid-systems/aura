@@ -252,12 +252,26 @@ static void chaos_fiber(ChaosState& st, std::uint64_t seed, int max_steps,
             Fiber::yield(YieldReason::Explicit);
             st.yields.fetch_add(1, std::memory_order_relaxed);
         } else if (op < 48 && st.mailbox) {
-            MailMessage m;
-            m.from_fiber = aura::serve::g_current_fiber ? aura::serve::g_current_fiber->id() : 0;
-            m.to_fiber = 0;
-            m.payload = "c2352";
-            if (st.mailbox->push(std::move(m)) == PushStatus::Ok)
-                st.mb_ops.fetch_add(1, std::memory_order_relaxed);
+            // Issue #2554: honor the #2312 BP contract — a deferred sender
+            // retries after the hold releases (hold-exit drain waits under
+            // budget for exactly this). A fire-and-forget sender leaves every
+            // defer window to the hard force-resolve face, which then trips
+            // the starvation ceiling on a healthy scheduler. Bounded retry.
+            for (int attempt = 0; attempt < 8; ++attempt) {
+                MailMessage m;
+                m.from_fiber =
+                    aura::serve::g_current_fiber ? aura::serve::g_current_fiber->id() : 0;
+                m.to_fiber = 0;
+                m.payload = "c2352";
+                const auto ps = st.mailbox->push(std::move(m));
+                if (ps == PushStatus::Ok) {
+                    st.mb_ops.fetch_add(1, std::memory_order_relaxed);
+                    break;
+                }
+                if (ps != PushStatus::Backpressure)
+                    break;
+                Fiber::yield(YieldReason::Explicit);
+            }
             // Policy A: try_recv / recv(wait=false) under Guard is safe.
             (void)st.mailbox->try_recv();
             st.mb_ops.fetch_add(1, std::memory_order_relaxed);
@@ -275,8 +289,14 @@ static void chaos_fiber(ChaosState& st, std::uint64_t seed, int max_steps,
                 auto g = std::move(*gr);
                 Fiber::yield(YieldReason::Explicit);
                 st.yields.fetch_add(1, std::memory_order_relaxed);
+                // Policy A empty while depth>0. Issue #2554: the hold-budget
+                // force-release (#3118/#3222) may clear this fiber's depth at
+                // the yield edge above while `g` is still alive, so a blocking
+                // recv could park forever (20s "no hang" FAIL) and a timed
+                // recv would hold `g` across the wait (inflating hold-exit
+                // starvation). Non-blocking recv keeps the Policy A probe.
                 if (st.mailbox)
-                    (void)st.mailbox->recv(/*wait=*/true, /*timeout_ms=*/-1); // Policy A empty
+                    (void)st.mailbox->recv(/*wait=*/false);
             }
         } else if (op < 88) {
             // Issue #2513: non-yield tight loop (LLM-style inference).
@@ -552,7 +572,12 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
     const auto mb_hold_starve1 =
         aura::serve::mf_mailbox::g_mf_mailbox_stats.mailbox_hold_exit_starvation_total.load(
             std::memory_order_relaxed);
-    const auto mb_starve_delta = (mb_starve1 - mb_starve0) + (mb_hold_starve1 - mb_hold_starve0);
+    // Issue #2554: the hard hold-exit path bumps BOTH hold_exit_starvation
+    // and defer_starvation for the same event, so summing them double-counted
+    // every hard residual. defer_starvation_total is the superset (hard
+    // residual + age canary); count each event once, report hold-exit share.
+    const auto mb_hold_starve_delta = mb_hold_starve1 - mb_hold_starve0;
+    const auto mb_starve_delta = mb_starve1 - mb_starve0;
     // Default ceiling: 0 for PR/soak; composition-aware under release/sustained.
     // Env always wins when set (build.py sets 0 for PR; release may omit).
     const int mb_starve_env = k_int_env("AURA_CHAOS_MB_STARVE_MAX", -1);
@@ -562,8 +587,8 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
                                   ? static_cast<std::uint64_t>(std::max(64, n_fibers * 2))
                                   : 0ull);
     if (hard_fail_invariants || mb_starve_delta != 0)
-        std::println("  mailbox starvation delta={} (max allowed={})", mb_starve_delta,
-                     mb_starve_max);
+        std::println("  mailbox starvation delta={} (hold-exit={}, max allowed={})",
+                     mb_starve_delta, mb_hold_starve_delta, mb_starve_max);
     if (hard_fail_invariants)
         CHECK(mb_starve_delta <= mb_starve_max,
               "#2513/#2554/#2902: mailbox hold/defer starvation within ceiling");
