@@ -134,85 +134,18 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     using aura::compiler::pure_general;
     using aura::compiler::register_prim;
 
-    // Issue #4624: apply a callback closure and keep a raised diagnostic.
-    //
-    // Evaluator::apply_closure returns nullopt when the closure body
-    // raises a diagnostic (an unbound variable, an arity mismatch) and
-    // drops that diagnostic on the floor: a map / filter / for-each
-    // callback that raised one looked like it returned (), the element
-    // was dropped and try never saw an error. The tree walker's own
-    // closure call keeps the diagnostic (it inlines the body), so apply
-    // the callback body the same way here and hand the diagnostic back
-    // as an error value the caller propagates.
-    //
-    // Everything this path does not own falls back to apply_closure,
-    // which keeps its own guards: an FFI closure, an IR closure behind
-    // the closure bridge, a stale / refused closure and an arity miss.
-    auto apply_closure_keeping_diagnostic =
-        [&ev, &pairs, &string_heap, &error_values](std::uint64_t cid,
-                                                   std::span<const EvalValue> args) -> EvalValue {
-        auto via_apply_closure = [&ev](std::uint64_t c, std::span<const EvalValue> a) -> EvalValue {
-            auto r = ev.apply_closure(c, a);
-            return r ? *r : make_void();
-        };
-        // An FFI closure and an IR closure (one behind the closure
-        // bridge) are not tree-walker bodies: find_active_closure does
-        // not know them and this path falls back to apply_closure.
-        auto cl = ev.find_active_closure(cid);
-        if (!cl || !cl->flat)
-            return via_apply_closure(cid, args);
-        // A stale closure (bridge epoch, env frame) or a freed one is
-        // apply_closure's business: it refuses safely.
-        if (ev.closure_is_epoch_or_env_stale(*cl))
-            return via_apply_closure(cid, args);
-        if (!ev.revalidate_closure_snapshot(cid, *cl))
-            return via_apply_closure(cid, args);
-        // Issue #3421: the production pack refuses an apply while a
-        // densify is in flight (window / LCP). apply_closure owns that
-        // refuse; keep the production face there.
-        if (aura_production_densify_stale_refuse(static_cast<void*>(&ev)) != 0)
-            return via_apply_closure(cid, args);
-        // Issue #4467: an arity miss parks the message for the caller
-        // that has the source location. apply_closure owns that.
-        if (user_arity_mismatch(cl->params.size(), cl->dotted, args.size()))
-            return via_apply_closure(cid, args);
-        // The tree walker's own closure call: materialize the call env,
-        // bind the parameters and evaluate the body. A diagnostic the
-        // body raises survives here.
-        Env ne = ev.materialize_call_env(*cl);
-        ne.set_primitives(&ev.primitives());
-        ne.set_owner(&ev);
-        if (cl->pool)
-            ne.set_pool(cl->pool);
-        else if (auto* cp = ev.canonical_pool())
-            ne.set_pool(cp);
-        if (cl->dotted) {
-            const std::size_t named = cl->params.empty() ? 0 : cl->params.size() - 1;
-            for (std::size_t i = 0; i < named && i < args.size(); ++i)
-                ne.bind_symid(cl->params[i], args[i]);
-            EvalValue rest = make_void();
-            for (std::size_t i = args.size(); i > named; --i) {
-                auto pid = pairs.size();
-                pairs.push_back({args[i - 1], rest});
-                rest = make_pair(pid);
-            }
-            ne.bind_symid(cl->params.back(), rest);
-        } else {
-            for (std::size_t i = 0; i < cl->params.size() && i < args.size(); ++i)
-                ne.bind_symid(cl->params[i], args[i]);
-        }
-        auto r = ev.eval_flat(*cl->flat, *cl->pool, cl->body_id, ne);
-        if (r)
-            return *r;
-        // Issue #4624: the body raised a diagnostic. Surface it as an
-        // error value so the caller propagates it and try can catch it.
-        return make_primitive_error(string_heap, error_values, r.error().format(),
-                                    ev.primitive_error_counter_ptr());
+    // Issue #4624: apply a callback closure and keep a diagnostic the
+    // body raises. Evaluator::apply_closure surfaces that diagnostic as
+    // an error value (the #4586 shape), so the caller propagates it and
+    // try can catch it. A nullopt is a REFUSED apply (a stale closure, an
+    // arity miss, a densify refuse): it stays no value.
+    auto apply_callback = [&ev](std::uint64_t cid, std::span<const EvalValue> args) -> EvalValue {
+        auto r = ev.apply_closure(cid, args);
+        return r ? *r : make_void();
     };
 
-    auto apply_unary = [&ev,
-                        apply_closure_keeping_diagnostic](const EvalValue& fn, const EvalValue& arg,
-                                                          bool list_hotpath = false) -> EvalValue {
+    auto apply_unary = [&ev, apply_callback](const EvalValue& fn, const EvalValue& arg,
+                                             bool list_hotpath = false) -> EvalValue {
         // Issue #4228: deref define-cells (Soft std/math preds) before dispatch.
         EvalValue callee = fn;
         if (is_cell(callee)) {
@@ -245,13 +178,12 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             // Issue #4624: a diagnostic the callback body raises must
             // not be swallowed — keep it as an error value.
             const EvalValue call_args[1] = {arg};
-            return apply_closure_keeping_diagnostic(cid, call_args);
+            return apply_callback(cid, call_args);
         }
         return make_void();
     };
-    auto apply_pred = [&ev,
-                       apply_closure_keeping_diagnostic](const EvalValue& fn, const EvalValue& arg,
-                                                         bool list_hotpath = false) -> EvalValue {
+    auto apply_pred = [&ev, apply_callback](const EvalValue& fn, const EvalValue& arg,
+                                            bool list_hotpath = false) -> EvalValue {
         // Issue #4228: Soft std/math exports are define-cells. Env::lookup
         // returns the cell sentinel; Variable eval usually derefs, but
         // list hot-path preds must tolerate a cell reaching apply_pred
@@ -288,13 +220,13 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             // Issue #4624: same as map — a diagnostic the callback body
             // raises must not be swallowed.
             const EvalValue call_args[1] = {arg};
-            return apply_closure_keeping_diagnostic(cid, call_args);
+            return apply_callback(cid, call_args);
         }
         return make_bool(false);
     };
-    auto apply_binary = [&ev, apply_closure_keeping_diagnostic](
-                            const EvalValue& fn, const EvalValue& acc, const EvalValue& arg,
-                            bool list_hotpath = false) -> EvalValue {
+    auto apply_binary = [&ev, apply_callback](const EvalValue& fn, const EvalValue& acc,
+                                              const EvalValue& arg,
+                                              bool list_hotpath = false) -> EvalValue {
         // Issue #4228: deref define-cells before dispatch.
         EvalValue callee = fn;
         if (is_cell(callee)) {
@@ -326,7 +258,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             // Issue #4624: same as map — a diagnostic the callback body
             // raises must not be swallowed.
             const EvalValue call_args[2] = {acc, arg};
-            return apply_closure_keeping_diagnostic(cid, call_args);
+            return apply_callback(cid, call_args);
         }
         return make_void();
     };
@@ -785,9 +717,8 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // std/list as a two-parameter closure and raised an arity error on the
     // second list. Both walk every list in lockstep and stop at the
     // shortest one (R7RS).
-    auto apply_n = [&ev, apply_closure_keeping_diagnostic](const EvalValue& fn,
-                                                           std::span<const EvalValue> args,
-                                                           bool list_hotpath = false) -> EvalValue {
+    auto apply_n = [&ev, apply_callback](const EvalValue& fn, std::span<const EvalValue> args,
+                                         bool list_hotpath = false) -> EvalValue {
         // Issue #4228: deref define-cells before dispatch.
         EvalValue callee = fn;
         if (is_cell(callee)) {
@@ -818,7 +749,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 ev.bump_list_estimated_cache_misses();
             // Issue #4624: a diagnostic the callback body raises must
             // not be swallowed — keep it as an error value.
-            return apply_closure_keeping_diagnostic(cid, args);
+            return apply_callback(cid, args);
         }
         return make_void();
     };

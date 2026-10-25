@@ -2245,6 +2245,11 @@ public:
     std::optional<EvalValue> apply_closure(ClosureId cid, std::initializer_list<EvalValue> args) {
         return apply_closure(cid, std::span<const EvalValue>(args.begin(), args.size()));
     }
+    // Issue #4624: take the diagnostic the last apply_closure parked when
+    // the closure body RAISED one (the tree-walker arm). Empty when the
+    // body returned normally, when it returned an error VALUE, or when the
+    // apply was refused (a stale closure, an arity miss, a densify refuse).
+    std::optional<aura::diag::Diagnostic> take_raised_diagnostic();
 
     // Module loaded callback: called after a module file is successfully loaded.
     using ModuleLoadedFn = std::function<void(const std::string& source, const std::string& path)>;
