@@ -602,8 +602,10 @@ extern "C" int aura_hold_budget_poll_busy_path(void) noexcept {
     if (!snap.held || slo == 0 || snap.duration_us <= slo * 2ULL)
         return 0;
     if (g_hold_budget_cancel_armed_ns.load(std::memory_order_acquire) == 0 && snap.fiber_id != 0) {
-        (void)aura_fiber_request_hold_budget_cancel(snap.fiber_id);
-        if (snap.start_ns != 0)
+        // Registry miss leaves armed_fiber at 0. Do not stamp start_ns or
+        // the next real Guard looks past 2×SLO and is force-released.
+        const int armed = aura_fiber_request_hold_budget_cancel(snap.fiber_id);
+        if (armed != 0 && snap.start_ns != 0)
             g_hold_budget_cancel_armed_ns.store(snap.start_ns, std::memory_order_release);
     }
     const int exceeded = aura_hold_budget_poll_inbody_window();
