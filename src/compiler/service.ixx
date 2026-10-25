@@ -4,6 +4,7 @@ module;
 #include "core/atomic_fence_port.h"
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -122,6 +123,13 @@ extern "C" void aura_register_fn_named(const char* name, std::int64_t func_id,
 // thread-local sentinel so try_jit_execute does not publish that 0.
 // Strong def in aura_jit_bridge.cpp; weak 0 in the light stub.
 extern "C" int aura_jit_take_prologue_deopt_sentinel(void) noexcept;
+// Issue #4682 (6b): native tier for hot workspace defines. Strong defs in
+// aura_jit_bridge.cpp / aura_jit_runtime.cpp; weak "armed" / -1 in the
+// light stub (no tier there).
+extern "C" int aura_jit_deopt_frame_host_armed(void) noexcept;
+extern "C" std::int64_t aura_jit_exchange_native_self_id(std::int64_t id) noexcept;
+extern "C" void aura_jit_set_linear_env_none(void);
+extern "C" void aura_jit_tier_self_cell_swap_4682(std::int64_t* idx, std::int64_t* word) noexcept;
 
 [[nodiscard]] static aura::diag::Diagnostic hygiene_expand_deny_diag_4078() {
     const char* why = aura_macro_hygiene_last_limit_reason_string();
@@ -1216,6 +1224,9 @@ public:
     CompilerService()
         : user_bindings_{"#t", "#f", "nil"}
         , session_id_("default") {
+        // Issue #4682 (6b): opt-in TW native tier (off by default).
+        if (tier_jit_enabled_4682_())
+            evaluator_.set_tw_tier_hook_4682(&CompilerService::tw_tier_hook_thunk_4682_, this);
         // Issue #456: register this service's Evaluator as
         // the active query-evaluator for the current thread.
         // query:mutation-impact / query:epoch-stats /
@@ -11389,6 +11400,200 @@ public:
 
     // ---- Issue #272: IR-native define env binding --------------------
 
+    // ── Issue #4682 (6b): background native tier for hot workspace defines ──
+    // Opt-in (AURA_TIER_JIT_4682=1, off by default). A workspace Lambda
+    // define bound via IR (IRDefineEnvBinding) counts the calls that reach
+    // it through dispatch_ir_define_closure. At AURA_TIER_JIT_HOT_4682
+    // calls (default 2) an eligible body is snapshotted on the calling
+    // thread and handed to a background worker, which compiles it with a
+    // private AuraJIT instance (the worker is the only thread that ever
+    // touches that instance) and publishes the ScalarFn through an atomic
+    // slot. Later calls run the native body when the entry guards hold;
+    // everything else keeps the IR interpreter.
+    //
+    // Eligibility is deliberately narrow so the native body is pure and
+    // exact: fixnum/bool arithmetic, compares, branches, and calls whose
+    // callee is the define's own top cell (direct self-recursion, #4601).
+    // No allocation, cells, closures, strings, floats, primitives or I/O.
+    // A pure body can be re-run on the interpreter, so any guard exit,
+    // deopt sentinel, non-fixnum/bool result or a moved self cell simply
+    // discards the native result and interprets the call.
+    //
+    // Invalidation: a rebind / set-code replaces the IRDefineEnvBinding, so
+    // the new binding starts with a fresh slot; an in-flight compile only
+    // fills the orphaned slot it holds. Native code is never unmapped while
+    // the worker lives (unique symbol per compile), so a body that is still
+    // on the stack stays valid.
+    struct TierSlot4682 {
+        std::atomic<aura::jit::ScalarFn> fn{nullptr};
+        // 0 counting, 1 queued, 2 ready, 3 ineligible / failed
+        std::atomic<int> state{0};
+        std::atomic<std::uint64_t> calls{0};
+        std::uint32_t local_count = 0;
+        std::uint32_t arg_count = 0;
+        std::uint32_t self_cell = UINT32_MAX; // evaluator cell the body reads for self
+    };
+    struct TierJob4682 {
+        std::shared_ptr<TierSlot4682> slot;
+        std::vector<std::vector<aura::jit::FlatInstruction>> instrs;
+        std::vector<aura::jit::FlatBlock> blocks;
+        std::string name;
+        aura::jit::FlatFunction fn{};
+        // Self-calls the body makes; each must lower to the direct native
+        // self-call (#4601). A generic aura_closure_call on an IR closure
+        // word is not routable natively, so a shortfall refuses the code.
+        std::uint64_t self_calls = 0;
+    };
+    struct TierStats4682 {
+        std::atomic<std::uint64_t> queued{0}, compiled{0}, failed{0}, ineligible{0},
+            native_calls{0}, fallbacks{0};
+    };
+    class TierWorker4682 {
+    public:
+        TierWorker4682() = default;
+        TierWorker4682(const TierWorker4682&) = delete;
+        TierWorker4682& operator=(const TierWorker4682&) = delete;
+        ~TierWorker4682() {
+            {
+                std::lock_guard<std::mutex> lk(mu_);
+                stop_ = true;
+            }
+            cv_.notify_all();
+            if (th_.joinable())
+                th_.join();
+        }
+        void enqueue(std::unique_ptr<TierJob4682> job, TierStats4682& stats) {
+            std::lock_guard<std::mutex> lk(mu_);
+            if (stop_)
+                return;
+            stats_ = &stats;
+            q_.push_back(std::move(job));
+            if (!th_.joinable())
+                th_ = std::thread([this] { run_(); });
+            cv_.notify_one();
+        }
+        // Test / bench hook: wait until the queue is drained.
+        void drain() {
+            std::unique_lock<std::mutex> lk(mu_);
+            idle_cv_.wait(lk, [this] { return q_.empty() && !busy_; });
+        }
+
+    private:
+        void run_() {
+            std::unique_ptr<aura::jit::AuraJIT> jit;
+            for (;;) {
+                std::unique_ptr<TierJob4682> job;
+                {
+                    std::unique_lock<std::mutex> lk(mu_);
+                    cv_.wait(lk, [this] { return stop_ || !q_.empty(); });
+                    if (stop_)
+                        break;
+                    job = std::move(q_.front());
+                    q_.pop_front();
+                    busy_ = true;
+                }
+                if (!jit)
+                    jit = std::make_unique<aura::jit::AuraJIT>();
+                for (std::size_t i = 0; i < job->blocks.size(); ++i)
+                    job->blocks[i].instructions = job->instrs[i].data();
+                job->fn.name = job->name.c_str();
+                job->fn.blocks = job->blocks.data();
+                job->fn.num_blocks = static_cast<std::uint32_t>(job->blocks.size());
+                aura::jit::ScalarFn p = nullptr;
+                bool raw_ok = false;
+                std::uint64_t lowered_n = 0;
+                {
+                    // available() is false until the first compile() runs init().
+                    const auto before =
+                        jit->metrics().l1_self_call_total.load(std::memory_order_relaxed);
+                    const auto uh0 = jit->metrics().unhandled_opcode_count.load();
+                    const auto vf0 = jit->metrics().verify_fail_count.load();
+                    p = jit->compile(job->fn);
+                    if (!p && tier_jit_trace_4682_())
+                        std::fprintf(stderr, "[tier4682] compile fail unhandled+%llu verify+%llu\n",
+                                     static_cast<unsigned long long>(
+                                         jit->metrics().unhandled_opcode_count.load() - uh0),
+                                     static_cast<unsigned long long>(
+                                         jit->metrics().verify_fail_count.load() - vf0));
+                    const auto lowered =
+                        jit->metrics().l1_self_call_total.load(std::memory_order_relaxed) - before;
+                    raw_ok = p != nullptr;
+                    lowered_n = lowered;
+                    if (p && lowered < job->self_calls)
+                        p = nullptr;
+                }
+                if (tier_jit_trace_4682_())
+                    std::fprintf(stderr, "[tier4682] %s %s (raw=%d self_lowered=%llu/%llu)\n",
+                                 job->name.c_str(), p ? "compiled" : "refused", int(raw_ok),
+                                 static_cast<unsigned long long>(lowered_n),
+                                 static_cast<unsigned long long>(job->self_calls));
+                if (p) {
+                    job->slot->fn.store(p, std::memory_order_release);
+                    job->slot->state.store(2, std::memory_order_release);
+                    if (stats_)
+                        stats_->compiled.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    job->slot->state.store(3, std::memory_order_release);
+                    if (stats_)
+                        stats_->failed.fetch_add(1, std::memory_order_relaxed);
+                }
+                {
+                    std::lock_guard<std::mutex> lk(mu_);
+                    busy_ = false;
+                }
+                idle_cv_.notify_all();
+            }
+            // Code owned by `jit` is unmapped here, after the loop: the
+            // worker only stops when the service is being destroyed.
+            {
+                std::lock_guard<std::mutex> lk(mu_);
+                busy_ = false;
+            }
+            idle_cv_.notify_all();
+        }
+        std::mutex mu_;
+        std::condition_variable cv_;
+        std::condition_variable idle_cv_;
+        std::deque<std::unique_ptr<TierJob4682>> q_;
+        bool stop_ = false;
+        bool busy_ = false;
+        TierStats4682* stats_ = nullptr;
+        std::thread th_;
+    };
+    static bool tier_jit_enabled_4682_() noexcept {
+        static const bool on = [] {
+            const char* e = std::getenv("AURA_TIER_JIT_4682");
+            return e && e[0] == '1';
+        }();
+        return on;
+    }
+    static std::uint64_t tier_jit_hot_4682_() noexcept {
+        static const std::uint64_t n = [] {
+            const char* e = std::getenv("AURA_TIER_JIT_HOT_4682");
+            if (!e || !e[0])
+                return std::uint64_t{2};
+            const long long v = std::atoll(e);
+            return v < 1 ? std::uint64_t{1} : static_cast<std::uint64_t>(v);
+        }();
+        return n;
+    }
+    static bool tier_jit_sync_4682_() noexcept {
+        // AURA_TIER_JIT_SYNC_4682=1: wait for the worker right after queueing
+        // (deterministic tests; the compile still runs on the worker thread).
+        static const bool on = [] {
+            const char* e = std::getenv("AURA_TIER_JIT_SYNC_4682");
+            return e && e[0] == '1';
+        }();
+        return on;
+    }
+    static bool tier_jit_trace_4682_() noexcept {
+        static const bool on = [] {
+            const char* e = std::getenv("AURA_TIER_JIT_TRACE_4682");
+            return e && e[0] == '1';
+        }();
+        return on;
+    }
+
     struct IRDefineEnvBinding {
         aura::ir::IRModule module;
         aura::compiler::IRContext context;
@@ -11401,6 +11606,8 @@ public:
         // bind-time execute() mint is below it. Unset = the binding never
         // ran a call, so it owns no runtime mint.
         std::optional<std::uint64_t> runtime_mint_floor;
+        // Issue #4682 (6b): native tier slot (null until the first counted call).
+        std::shared_ptr<TierSlot4682> tier;
 
         IRDefineEnvBinding(aura::ir::IRModule mod, aura::compiler::Primitives& prim,
                            const aura::core::TypeRegistry* reg,
@@ -12367,6 +12574,369 @@ public:
         return true;
     }
 
+    // Issue #4682 (6b): snapshot an eligible define body for the worker.
+    // Returns null when the body is outside the pure subset.
+    std::unique_ptr<TierJob4682> tier_snapshot_4682_(const aura::ir::IRModule& mod,
+                                                     types::EvalValue self_word, TierSlot4682& slot,
+                                                     const std::string& name,
+                                                     std::uint32_t mk_self_cell = UINT32_MAX) {
+        using Op = aura::ir::IROpcode;
+        const aura::ir::IRFunction* fnp = nullptr;
+        for (const auto& f : mod.functions) {
+            if (f.id == mod.entry_function_id)
+                continue;
+            if (fnp)
+                return nullptr; // more than one body (nested lambdas): out of scope
+            fnp = &f;
+        }
+        if (!fnp || !fnp->free_vars.empty() || fnp->local_count == 0 ||
+            fnp->arg_count > fnp->local_count || fnp->marker == 1 || fnp->blocks.empty())
+            return nullptr;
+        const auto& f = *fnp;
+        std::uint32_t self_cell = UINT32_MAX;
+        std::uint64_t self_calls = 0;
+        std::vector<std::uint8_t> self_slot(f.local_count, 0);
+        for (const auto& blk : f.blocks) {
+            for (const auto& in : blk.instructions) {
+                if (in.source_marker == 1)
+                    return nullptr;
+                switch (in.opcode) {
+                    case Op::Nop:
+                    case Op::ConstI64:
+                    case Op::ConstBool:
+                    case Op::Local:
+                    case Op::Arg:
+                    case Op::Add:
+                    case Op::Sub:
+                    case Op::Mul:
+                    case Op::Eq:
+                    case Op::Lt:
+                    case Op::Gt:
+                    case Op::Le:
+                    case Op::Ge:
+                    case Op::Not:
+                    case Op::Branch:
+                    case Op::Jump:
+                    case Op::Return:
+                        break;
+                    case Op::TopCellLoad:
+                        if (self_cell != UINT32_MAX && self_cell != in.operands[1])
+                            return nullptr;
+                        self_cell = in.operands[1];
+                        if (in.operands[0] >= f.local_count)
+                            return nullptr;
+                        self_slot[in.operands[0]] = 1;
+                        break;
+                    case Op::IsError:
+                        break;
+                    case Op::MakeClosure:
+                        // TW tier: the self reference is rewritten to a load
+                        // of a private cell holding the TW closure word.
+                        if (mk_self_cell == UINT32_MAX || in.operands[1] != f.id ||
+                            in.operands[2] != 0 || in.operands[0] >= f.local_count ||
+                            (self_cell != UINT32_MAX && self_cell != mk_self_cell))
+                            return nullptr;
+                        self_cell = mk_self_cell;
+                        self_slot[in.operands[0]] = 1;
+                        break;
+                    case Op::Call:
+                        if (in.operands[0] >= f.local_count || !self_slot[in.operands[0]] ||
+                            in.operands[2] != f.arg_count)
+                            return nullptr;
+                        ++self_calls;
+                        break;
+                    default:
+                        return nullptr;
+                }
+                // A slot written by anything but TopCellLoad is no longer
+                // the self word.
+                if (in.opcode != Op::TopCellLoad && in.opcode != Op::MakeClosure &&
+                    in.opcode != Op::Call && in.opcode != Op::Branch && in.opcode != Op::Jump &&
+                    in.opcode != Op::Return && in.opcode != Op::Nop &&
+                    in.operands[0] < f.local_count)
+                    self_slot[in.operands[0]] = 0;
+                if (in.opcode == Op::Call && in.operands[3] < f.local_count)
+                    self_slot[in.operands[3]] = 0;
+            }
+        }
+        // The self cell must currently hold this binding's closure word, or
+        // the direct self-call guard would miss and leave native code.
+        if (self_cell != UINT32_MAX) {
+            if (self_cell >= evaluator_.cells().size() ||
+                evaluator_.cells()[self_cell] != self_word)
+                return nullptr;
+        }
+        auto job = std::make_unique<TierJob4682>();
+        static std::atomic<std::uint64_t> seq{0};
+        job->name = "__tier4682__" + name + "#" +
+                    std::to_string(seq.fetch_add(1, std::memory_order_relaxed));
+        job->instrs.resize(f.blocks.size());
+        job->blocks.resize(f.blocks.size());
+        for (std::size_t bi = 0; bi < f.blocks.size(); ++bi) {
+            for (const auto& in0 : f.blocks[bi].instructions) {
+                auto in = in0;
+                if (in.opcode == Op::MakeClosure) {
+                    in.opcode = Op::TopCellLoad;
+                    in.operands[1] = mk_self_cell;
+                    in.operands[2] = 0;
+                    in.operands[3] = 0;
+                }
+                job->instrs[bi].push_back(
+                    {static_cast<std::uint32_t>(in.opcode),
+                     {in.operands[0], in.operands[1], in.operands[2], in.operands[3]},
+                     0,
+                     in.narrow_evidence,
+                     in.type_id,
+                     in.linear_ownership_state,
+                     0,
+                     in.source_marker,
+                     in.provenance});
+            }
+            job->blocks[bi] = {f.blocks[bi].id, nullptr,
+                               static_cast<std::uint32_t>(job->instrs[bi].size())};
+        }
+        job->self_calls = self_calls;
+        job->fn.entry_block = f.entry_block;
+        job->fn.local_count = f.local_count;
+        job->fn.arg_count = f.arg_count;
+        job->fn.env_count = 0;
+        job->fn.func_id_map = nullptr;
+        job->fn.num_callees = 0;
+        job->fn.const_tags = nullptr;
+        job->fn.shape_map = nullptr;
+        job->fn.escape_map = nullptr;
+        job->fn.region = static_cast<std::uint8_t>(f.region);
+        job->fn.source_marker = 0;
+        job->fn.provenance = 0;
+        slot.local_count = f.local_count;
+        slot.arg_count = f.arg_count;
+        slot.self_cell = self_cell;
+        return job;
+    }
+
+    // Issue #4682 (6b): tree-walker tier. A workspace over the
+    // specialisation cap keeps its defines as TW closures; a hot
+    // self-recursive pure define is lowered from its source on the side
+    // and compiled by the same worker. Keyed by closure word, revalidated
+    // by body identity + lifetime version; only the service's own thread.
+    struct TwTierEntry4682 {
+        std::shared_ptr<TierSlot4682> slot;
+        const void* flat = nullptr;
+        std::uint32_t body_id = 0;
+        std::uint64_t lifetime_version = 0;
+        std::string name;
+    };
+    std::unordered_map<std::int64_t, TwTierEntry4682> tw_tier_4682_;
+    std::thread::id tw_tier_thread_4682_ = std::this_thread::get_id();
+
+    static std::optional<types::EvalValue>
+    tw_tier_hook_thunk_4682_(void* ctx, types::EvalValue fn, std::string_view name,
+                             const void* flat, std::uint32_t body_id, std::uint64_t lv,
+                             std::span<const types::EvalValue> args) {
+        return static_cast<CompilerService*>(ctx)->tw_tier_try_4682_(fn, name, flat, body_id, lv,
+                                                                     args);
+    }
+
+    std::unique_ptr<TierJob4682>
+    tw_tier_lower_4682_(const std::string& name, types::EvalValue self_word, TierSlot4682& slot) {
+        auto src_it = function_sources_.find(name);
+        if (src_it == function_sources_.end() || src_it->second.empty())
+            return nullptr;
+        const std::string source = src_it->second;
+        std::pmr::monotonic_buffer_resource scratch;
+        const auto alloc = std::pmr::polymorphic_allocator<std::byte>{&scratch};
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat(source, flat, pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE)
+            return nullptr;
+        flat.root = pr.root;
+        if (define_body_has_rest_param_4621(flat, pr.root) ||
+            define_body_sets_nonlocal_4618(flat, pool, pr.root, name) ||
+            workspace_lambda_free_name_unresolved(flat, pool, pr.root, name))
+            return nullptr;
+        auto ir_mod = lower_to_ir_with_cache_tracked(
+            flat, pool, arena_, nullptr, nullptr, &evaluator_.primitives(), nullptr, nullptr, &name,
+            &type_registry_, value_cells_for_lowering());
+        if (tier_jit_trace_4682_()) {
+            for (const auto& f : ir_mod.functions) {
+                if (f.id == ir_mod.entry_function_id)
+                    continue;
+                std::fprintf(stderr, "[tier4682] tw %s fn locals=%u args=%u free=%zu\n",
+                             name.c_str(), f.local_count, f.arg_count, f.free_vars.size());
+                for (const auto& blk : f.blocks)
+                    for (const auto& in : blk.instructions)
+                        std::fprintf(stderr, "[tier4682]   op=%u %u %u %u %u\n",
+                                     static_cast<unsigned>(in.opcode), in.operands[0],
+                                     in.operands[1], in.operands[2], in.operands[3]);
+            }
+        }
+        const auto ci = static_cast<std::uint32_t>(evaluator_.cells().size());
+        evaluator_.cells().push_back(self_word);
+        auto job = tier_snapshot_4682_(ir_mod, self_word, slot, name, ci);
+        if (!job && evaluator_.cells().size() == ci + 1u)
+            evaluator_.cells().pop_back();
+        return job;
+    }
+
+    // The top-level binding of `name` must still be this closure word.
+    bool tw_tier_self_bound_4682_(std::string_view name, types::EvalValue fnv) {
+        auto v = evaluator_.top_env().lookup(name);
+        if (!v)
+            return false;
+        if (types::is_cell(*v)) {
+            const auto id = types::as_cell_id(*v);
+            if (id >= evaluator_.cells().size())
+                return false;
+            return evaluator_.cells()[id] == fnv;
+        }
+        return *v == fnv;
+    }
+
+    std::optional<types::EvalValue> tw_tier_try_4682_(types::EvalValue fnv, std::string_view name,
+                                                      const void* flat, std::uint32_t body_id,
+                                                      std::uint64_t lv,
+                                                      std::span<const types::EvalValue> args) {
+        if (std::this_thread::get_id() != tw_tier_thread_4682_)
+            return std::nullopt;
+        auto& e = tw_tier_4682_[fnv.val];
+        if (!e.slot || e.flat != flat || e.body_id != body_id || e.lifetime_version != lv ||
+            e.name != name) {
+            e.slot = std::make_shared<TierSlot4682>();
+            e.flat = flat;
+            e.body_id = body_id;
+            e.lifetime_version = lv;
+            e.name = std::string(name);
+        }
+        auto slot_ref = e.slot; // the map may rehash under a nested call
+        auto& slot = *slot_ref;
+        if (!slot.fn.load(std::memory_order_acquire)) {
+            if (slot.state.load(std::memory_order_acquire) != 0)
+                return std::nullopt;
+            if (slot.calls.fetch_add(1, std::memory_order_relaxed) + 1 < tier_jit_hot_4682_())
+                return std::nullopt;
+            const std::string nm(name);
+            auto job = tw_tier_lower_4682_(nm, fnv, slot);
+            if (!job || job->self_calls == 0 || slot.self_cell == UINT32_MAX) {
+                slot.state.store(3, std::memory_order_release);
+                tier_stats_4682_.ineligible.fetch_add(1, std::memory_order_relaxed);
+                if (tier_jit_trace_4682_())
+                    std::fprintf(stderr, "[tier4682] tw %s ineligible\n", nm.c_str());
+                return std::nullopt;
+            }
+            job->slot = slot_ref;
+            slot.state.store(1, std::memory_order_release);
+            tier_stats_4682_.queued.fetch_add(1, std::memory_order_relaxed);
+            if (tier_jit_trace_4682_())
+                std::fprintf(stderr, "[tier4682] tw %s queued as %s\n", nm.c_str(),
+                             job->name.c_str());
+            if (!tier_worker_4682_)
+                tier_worker_4682_ = std::make_unique<TierWorker4682>();
+            tier_worker_4682_->enqueue(std::move(job), tier_stats_4682_);
+            if (tier_jit_sync_4682_())
+                tier_worker_4682_->drain();
+        }
+        if (!slot.fn.load(std::memory_order_acquire) || !tw_tier_self_bound_4682_(name, fnv))
+            return std::nullopt;
+        return tier_run_native_4682_(slot, fnv, args);
+    }
+
+    std::optional<types::EvalValue> tier_try_native_4682_(IRDefineEnvBinding& b,
+                                                          const std::string& name,
+                                                          std::span<const types::EvalValue> args) {
+        if (!b.tier)
+            b.tier = std::make_shared<TierSlot4682>();
+        auto& slot = *b.tier;
+        auto fn = slot.fn.load(std::memory_order_acquire);
+        if (!fn) {
+            if (slot.state.load(std::memory_order_acquire) != 0)
+                return std::nullopt;
+            if (slot.calls.fetch_add(1, std::memory_order_relaxed) + 1 < tier_jit_hot_4682_())
+                return std::nullopt;
+            auto job = tier_snapshot_4682_(b.module, b.bound_closure, slot, name);
+            if (!job) {
+                slot.state.store(3, std::memory_order_release);
+                tier_stats_4682_.ineligible.fetch_add(1, std::memory_order_relaxed);
+                if (tier_jit_trace_4682_())
+                    std::fprintf(stderr, "[tier4682] %s ineligible\n", name.c_str());
+                return std::nullopt;
+            }
+            job->slot = b.tier;
+            slot.state.store(1, std::memory_order_release);
+            tier_stats_4682_.queued.fetch_add(1, std::memory_order_relaxed);
+            if (tier_jit_trace_4682_())
+                std::fprintf(stderr, "[tier4682] %s queued as %s\n", name.c_str(),
+                             job->name.c_str());
+            if (!tier_worker_4682_)
+                tier_worker_4682_ = std::make_unique<TierWorker4682>();
+            tier_worker_4682_->enqueue(std::move(job), tier_stats_4682_);
+            if (tier_jit_sync_4682_())
+                tier_worker_4682_->drain();
+            fn = slot.fn.load(std::memory_order_acquire);
+            if (!fn)
+                return std::nullopt;
+        }
+        return tier_run_native_4682_(slot, b.bound_closure, args);
+    }
+
+    // Issue #4682 (6b): run a published native body. Exact: any guard
+    // exit, self-cell change or non-scalar result returns nullopt and the
+    // caller re-runs the (pure) body on its own interpreter.
+    std::optional<types::EvalValue> tier_run_native_4682_(TierSlot4682& slot,
+                                                          types::EvalValue self_word,
+                                                          std::span<const types::EvalValue> args) {
+        auto fn = slot.fn.load(std::memory_order_acquire);
+        if (!fn)
+            return std::nullopt;
+        // Entry guards: exact arity, fixnum args, no outer deopt host, and
+        // the self cell still names this closure.
+        if (args.size() != slot.arg_count || aura_jit_deopt_frame_host_armed() != 0)
+            return std::nullopt;
+        for (const auto& a : args)
+            if (!types::is_int(a))
+                return std::nullopt;
+        auto self_ok = [&]() {
+            return slot.self_cell == UINT32_MAX ||
+                   (slot.self_cell < evaluator_.cells().size() &&
+                    evaluator_.cells()[slot.self_cell] == self_word);
+        };
+        if (!self_ok())
+            return std::nullopt;
+        std::int64_t stack_locals[32];
+        std::vector<std::int64_t> heap_locals;
+        std::int64_t* locals = stack_locals;
+        if (slot.local_count > 32) {
+            heap_locals.assign(slot.local_count, 0);
+            locals = heap_locals.data();
+        } else {
+            for (std::uint32_t i = 0; i < slot.local_count; ++i)
+                stack_locals[i] = 0;
+        }
+        for (std::size_t i = 0; i < args.size(); ++i)
+            locals[i] = args[i].val;
+        (void)aura_jit_take_prologue_deopt_sentinel();
+        aura_jit_set_linear_env_none();
+        // Issue #4682 (6b): pin the self-cell load to this call's self word
+        // (the process-wide top-cell getter may be wired to another
+        // evaluator). Save/restore so nested native calls compose.
+        std::int64_t self_idx =
+            slot.self_cell == UINT32_MAX ? -1 : static_cast<std::int64_t>(slot.self_cell);
+        std::int64_t self_w = self_word.val;
+        aura_jit_tier_self_cell_swap_4682(&self_idx, &self_w);
+        const std::int64_t prev_self = aura_jit_exchange_native_self_id(self_word.val);
+        const std::int64_t raw = fn(locals, slot.arg_count);
+        (void)aura_jit_exchange_native_self_id(prev_self);
+        aura_jit_tier_self_cell_swap_4682(&self_idx, &self_w);
+        const bool deopted = aura_jit_take_prologue_deopt_sentinel() != 0;
+        const types::EvalValue rv(raw);
+        if (deopted || !self_ok() || !(types::is_int(rv) || raw == 3 || raw == 7)) {
+            tier_stats_4682_.fallbacks.fetch_add(1, std::memory_order_relaxed);
+            return std::nullopt;
+        }
+        tier_stats_4682_.native_calls.fetch_add(1, std::memory_order_relaxed);
+        return rv;
+    }
+
     std::optional<types::EvalValue>
     dispatch_ir_define_closure(aura::compiler::ClosureId cid,
                                std::span<const types::EvalValue> args) {
@@ -12481,6 +13051,11 @@ public:
         // global monotonic source around every runtime execution so
         // runtime mints never collide with any binding's reserved range;
         // drain the advanced cursor back afterwards.
+        // Issue #4682 (6b): opt-in native tier (pure, guarded, exact).
+        if (tier_jit_enabled_4682_() && bind_it->second->closure_id == cid) {
+            if (auto nr = tier_try_native_4682_(*bind_it->second, name, args))
+                return *nr;
+        }
         auto* owner_interp = bind_it->second->interpreter.get();
         owner_interp->set_next_closure_id(next_ir_define_closure_id_);
         // Issue #4626: the runtime-mint floor is the interpreter's id cursor
@@ -15899,6 +16474,9 @@ private:
     std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash, std::equal_to<>>
         ir_value_cell_bindings_;
     std::unordered_map<aura::compiler::ClosureId, std::string> ir_define_closure_owner_;
+    // Issue #4682 (6b): tier stats + worker (worker joins in its dtor).
+    TierStats4682 tier_stats_4682_;
+    std::unique_ptr<TierWorker4682> tier_worker_4682_;
     // Issue #4357: next id for bind_function_define_via_ir. Starts at the
     // high-bit base; each persistent interpreter consumes a disjoint span.
     std::uint64_t next_ir_define_closure_id_ = types::make_ir_closure_id(0);
@@ -16723,6 +17301,9 @@ public:
     // mutation checkpoints before arena teardown so PCV
     // children_snapshot copies do not race ~workspace_flat_.
     ~CompilerService() {
+        evaluator_.set_tw_tier_hook_4682(nullptr, nullptr);
+        if (tier_worker_4682_)
+            tier_worker_4682_->drain();
         // Issue #4377: drop the boundary-exit hook before teardown.
         pop_ir_cache_boundary_restamp(this);
         // Issue #3394: drain outstanding thread-backend fiber workers

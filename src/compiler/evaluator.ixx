@@ -2226,6 +2226,18 @@ public:
     using ClosureBridgeFn = std::function<std::optional<EvalValue>(
         ClosureId closure_id, std::span<const EvalValue> args)>;
 
+    // Issue #4682 (6b): opt-in native tier for hot tree-walker closures.
+    // Called on the inline TW closure-call path after arity is checked;
+    // nullopt = run the body on the walker as usual.
+    using TwTierHookFn = std::optional<EvalValue> (*)(void* ctx, EvalValue fn,
+                                                      std::string_view name, const void* flat,
+                                                      std::uint32_t body_id,
+                                                      std::uint64_t lifetime_version,
+                                                      std::span<const EvalValue> args);
+    void set_tw_tier_hook_4682(TwTierHookFn fn, void* ctx) noexcept {
+        tw_tier_ctx_4682_ = ctx;
+        tw_tier_hook_4682_ = fn;
+    }
     // Set the IR closure bridge for cross-evaluator closure calls
     void set_closure_bridge(ClosureBridgeFn bridge) { closure_bridge_ = std::move(bridge); }
     // Re-entrant IR execution (eval-current inside a running top-level form)
@@ -6116,6 +6128,8 @@ private:
     // next apply cannot observe a Closure whose frame was freelisted.
     void drop_apply_closure_tls() noexcept;
     ClosureBridgeFn closure_bridge_;
+    TwTierHookFn tw_tier_hook_4682_ = nullptr;
+    void* tw_tier_ctx_4682_ = nullptr;
     // Issue #252: optional pointer to CompilerMetrics for
     // closure_* counter increments. nullptr = counters
     // disabled (Evaluator constructed without service

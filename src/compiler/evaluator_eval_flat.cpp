@@ -7969,6 +7969,17 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                                               cl.dotted, provided.size()),
                                            aura::diag::SourceLocation{line, col, 0}, current_id});
                         }
+                        // Issue #4682 (6b): opt-in native tier (exact; the
+                        // hook returns nullopt unless the native body ran
+                        // to a fixnum/bool result under its guards).
+                        if (tw_tier_hook_4682_ && !cl.dotted && !cl.must_deopt_before_next_call &&
+                            !cl.name.empty()) {
+                            if (auto tr = tw_tier_hook_4682_(
+                                    tw_tier_ctx_4682_, *fn, cl.name, cl.flat, cl.body_id,
+                                    cl.lifetime_version,
+                                    std::span<const EvalValue>(provided.data(), provided.size())))
+                                return *tr;
+                        }
                         // Issue #4599 follow-up: a non-dotted call uses the
                         // evaluated argument buffer directly — the second
                         // TwSmallArgs + pin pair was a pure copy.

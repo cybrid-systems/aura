@@ -1,0 +1,42 @@
+; Issue #4682 (6b) / #4679: the tree-walker native tier must return the
+; same values as the walker. Regression: the tier's self-cell load went
+; through the process-wide top-cell getter (wired to another evaluator),
+; so every native self-call returned 0 — fib(n>=2) was 0 and the first
+; hot eval-current mixed native zeros into the result (1974 for fib 22).
+; Checks fib under rebind at W=0, 10 and 1000 filler defines. Values are
+; identical with the tier off (default) and on (AURA_TIER_JIT_4682=1,
+; plus AURA_TIER_JIT_SYNC_4682=1 for a deterministic compile point).
+(define *fails* 0)
+(define *n* 0)
+(define (check! ok msg)
+  (set! *n* (+ *n* 1))
+  (if (not ok)
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+(define (fill k acc)
+  (if (= k 0) acc
+      (fill (- k 1) (string-append acc "(define w" (number->string k)
+                                   " (lambda (x) (* x " (number->string k) ")))\n"))))
+(define (src w)
+  (string-append "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))\n"
+                 "(define k 0)\n" (fill w "")
+                 "(list k (fib 0) (fib 1) (fib 2) (fib 3) (fib 10) (fib 22))"))
+(define (expect k) (list k 0 1 1 2 55 17711))
+(define (run-w w)
+  (let ((tag (string-append "W=" (number->string w))))
+    (set-code (src w))
+    (check! (equal? (eval-current) (expect 0)) (string-append tag " first eval"))
+    (check! (equal? (eval-current) (expect 0)) (string-append tag " hot eval"))
+    (let loop ((i 1))
+      (if (<= i 4)
+          (begin
+            (mutate:rebind "k" (number->string i) "b")
+            (check! (equal? (eval-current) (expect i))
+                    (string-append tag " after rebind " (number->string i)))
+            (loop (+ i 1)))))))
+(run-w 0)
+(run-w 10)
+(run-w 1000)
+(if (= *fails* 0)
+    (begin (display "OK-tierfib4682 ") (display *n*) (display " checks") (newline))
+    (begin (display "tier_jit_fib_rebind_4682: ") (display (- *n* *fails*)) (display "/")
+           (display *n*) (newline) (exit 1)))
