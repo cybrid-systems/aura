@@ -536,10 +536,14 @@ struct SecurityEventWal {
         // Issue #4695: a truncated window still publishes
         // security_event_wal_replay_truncated. It must not also claim the
         // sidecar came back whole — that delta means the history is complete
-        // and skips the mutation-WAL → SE rebuild.
-        if (replayed_nonempty && !replay_truncated)
-            g_security_event_wal_metrics().security_event_crash_recovery_success.fetch_add(
-                1, std::memory_order_relaxed);
+        // and skips the mutation-WAL → SE rebuild. The #4686 nonempty gate
+        // stays; the combined predicate withholds the stamp when truncated.
+        const bool complete_window = replayed_nonempty && !replay_truncated;
+        if (replayed_nonempty) {
+            if (complete_window)
+                g_security_event_wal_metrics().security_event_crash_recovery_success.fetch_add(
+                    1, std::memory_order_relaxed);
+        }
         // Issue #4520: upgrade path — a dir oversized by older versions
         // (retention defaulted to 0) is pruned to the cap on first
         // enable, from the dirent list collected above (exact indices,
