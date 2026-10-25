@@ -6747,7 +6747,7 @@ public:
     // in the frame lies inside that range (no O(W) re-dirty of unrelated
     // defines). Any other mutation in the frame breaks the range and the
     // backstop runs as before. Consumed at every outermost exit.
-    // Opt-out: AURA_SHARED_CONE_4682=0.
+    // Opt-out: AURA_SHARED_CONE=0.
     std::atomic<std::uint64_t> cone_cover_begin_4682_{0};
     std::atomic<std::uint64_t> cone_cover_end_4682_{0};
     std::atomic<bool> cone_cover_valid_4682_{false};
@@ -6757,7 +6757,7 @@ public:
     std::uint64_t cone_flush_log_4682_ = 0;
     static bool shared_cone_4682_enabled() noexcept {
         static const bool on = [] {
-            const char* e = std::getenv("AURA_SHARED_CONE_4682");
+            const char* e = std::getenv("AURA_SHARED_CONE");
             return !(e && e[0] == '0');
         }();
         return on;
@@ -6778,7 +6778,7 @@ public:
     std::uint64_t closure_reuse_4679_count_ = 0;
     static bool closure_reuse_4679_enabled() noexcept {
         static const bool on = [] {
-            const char* e = std::getenv("AURA_EVAL_CLOSURE_REUSE_4679");
+            const char* e = std::getenv("AURA_EVAL_CLOSURE_REUSE");
             return !(e && e[0] == '0');
         }();
         return on;

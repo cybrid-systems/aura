@@ -9060,7 +9060,7 @@ public:
     // records the mutation-log position it is in sync with; a single
     // rebind whose log_before matches (nothing else mutated in between)
     // re-walks only that define: O(|body|) instead of O(N) + W unparses.
-    // AURA_DEP_GRAPH_INCREMENTAL_4682=0 keeps the full walk.
+    // AURA_DEP_GRAPH_INCREMENTAL=0 keeps the full walk.
     const void* dep_sync_flat_4682_ = nullptr;
     std::uint64_t dep_sync_log_4682_ = ~std::uint64_t{0};
     std::uint64_t dep_sync_last_id_4682_ = ~std::uint64_t{0};
@@ -9072,7 +9072,7 @@ public:
     std::uint64_t dep_graph_one_fallbacks_4682_ = 0;
     void populate_dep_graph_one_4682_(const std::string& name, std::uint64_t log_before) {
         static const bool on = [] {
-            const char* e = std::getenv("AURA_DEP_GRAPH_INCREMENTAL_4682");
+            const char* e = std::getenv("AURA_DEP_GRAPH_INCREMENTAL");
             return !(e && e[0] == '0');
         }();
         auto* ws_flat = evaluator_.workspace_flat();
@@ -9220,9 +9220,9 @@ public:
             // FlatAST::get (seqlock + full NodeView assemble) runs only for
             // Define nodes. Same ids, same order, same checks as the old
             // full get() scan (free slots included). Opt-out:
-            // AURA_VCELL_SYNC_PREFILTER_4682=0.
+            // AURA_VCELL_SYNC_PREFILTER=0.
             static const bool prefilter = [] {
-                const char* e = std::getenv("AURA_VCELL_SYNC_PREFILTER_4682");
+                const char* e = std::getenv("AURA_VCELL_SYNC_PREFILTER");
                 return !(e && e[0] == '0');
             }();
             for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
@@ -11401,9 +11401,9 @@ public:
     // ---- Issue #272: IR-native define env binding --------------------
 
     // ── Issue #4682 (6b): background native tier for hot workspace defines ──
-    // Opt-in (AURA_TIER_JIT_4682=1, off by default). A workspace Lambda
+    // Opt-in (AURA_TIER_JIT=1, off by default). A workspace Lambda
     // define bound via IR (IRDefineEnvBinding) counts the calls that reach
-    // it through dispatch_ir_define_closure. At AURA_TIER_JIT_HOT_4682
+    // it through dispatch_ir_define_closure. At AURA_TIER_JIT_HOT
     // calls (default 2) an eligible body is snapshotted on the calling
     // thread and handed to a background worker, which compiles it with a
     // private AuraJIT instance (the worker is the only thread that ever
@@ -11562,14 +11562,14 @@ public:
     };
     static bool tier_jit_enabled_4682_() noexcept {
         static const bool on = [] {
-            const char* e = std::getenv("AURA_TIER_JIT_4682");
+            const char* e = std::getenv("AURA_TIER_JIT");
             return e && e[0] == '1';
         }();
         return on;
     }
     static std::uint64_t tier_jit_hot_4682_() noexcept {
         static const std::uint64_t n = [] {
-            const char* e = std::getenv("AURA_TIER_JIT_HOT_4682");
+            const char* e = std::getenv("AURA_TIER_JIT_HOT");
             if (!e || !e[0])
                 return std::uint64_t{2};
             const long long v = std::atoll(e);
@@ -11578,17 +11578,17 @@ public:
         return n;
     }
     static bool tier_jit_sync_4682_() noexcept {
-        // AURA_TIER_JIT_SYNC_4682=1: wait for the worker right after queueing
+        // AURA_TIER_JIT_SYNC=1: wait for the worker right after queueing
         // (deterministic tests; the compile still runs on the worker thread).
         static const bool on = [] {
-            const char* e = std::getenv("AURA_TIER_JIT_SYNC_4682");
+            const char* e = std::getenv("AURA_TIER_JIT_SYNC");
             return e && e[0] == '1';
         }();
         return on;
     }
     static bool tier_jit_trace_4682_() noexcept {
         static const bool on = [] {
-            const char* e = std::getenv("AURA_TIER_JIT_TRACE_4682");
+            const char* e = std::getenv("AURA_TIER_JIT_TRACE");
             return e && e[0] == '1';
         }();
         return on;
@@ -11646,9 +11646,9 @@ public:
     }
     aura::ast::NodeId first_define_for_sym_4681_(aura::ast::FlatAST& f, aura::ast::SymId sid) {
         // Issue #4682 step 2: persistent FlatAST define index (no per-
-        // mutation memo rebuild). AURA_DEFINE_INDEX_4682=0 keeps the memo.
+        // mutation memo rebuild). AURA_DEFINE_INDEX=0 keeps the memo.
         static const bool persistent = [] {
-            const char* e = std::getenv("AURA_DEFINE_INDEX_4682");
+            const char* e = std::getenv("AURA_DEFINE_INDEX");
             return !(e && e[0] == '0');
         }();
         if (persistent) {
