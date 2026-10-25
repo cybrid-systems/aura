@@ -179,7 +179,7 @@ static void bump_linear_occurrence_predicate_safe(void* metrics) {
 static bool subtree_has_linear_ops(const FlatAST& flat, NodeId root) {
     // Issue #4682 step 5b: exact short-circuit on the #4598 live counter.
     if (!flat.has_linear_ops_live() && [] {
-            const char* e = std::getenv("AURA_ESCAPE_LINEAR_GATE_4682");
+            const char* e = std::getenv("AURA_ESCAPE_LINEAR_GATE");
             return !(e && e[0] == '0');
         }())
         return false;
@@ -5289,7 +5289,7 @@ void InferenceEngine::seed_mutation_touched_roots(const FlatAST& flat, const Str
 }
 
 // Issue #4682 step 5c: set while infer_flat_partial's affected loop runs,
-// after its own seed_workspace_value_defines. AURA_SEED_ONCE_4682=0 = old.
+// after its own seed_workspace_value_defines. AURA_SEED_ONCE=0 = old.
 namespace {
     thread_local const void* seeded_pass_engine_4682 = nullptr;
     struct SeededPassMarker4682 {
@@ -5297,7 +5297,7 @@ namespace {
         explicit SeededPassMarker4682(const void* eng)
             : prev(seeded_pass_engine_4682) {
             static const bool on = [] {
-                const char* e = std::getenv("AURA_SEED_ONCE_4682");
+                const char* e = std::getenv("AURA_SEED_ONCE");
                 return !(e && e[0] == '0');
             }();
             if (on)
@@ -9630,10 +9630,10 @@ static void collect_linear_bindings_under_nodes(const aura::ast::FlatAST& flat,
     // Borrow / MutBorrow / Drop node, all counted by the #4598 live counter,
     // so with none live the walk cannot add a name. Skip the O(subtree) walk
     // (often the whole workspace via parent_id == root).
-    // AURA_ESCAPE_LINEAR_GATE_4682=0 restores the walk.
+    // AURA_ESCAPE_LINEAR_GATE=0 restores the walk.
     {
         static const bool gate_on = [] {
-            const char* e = std::getenv("AURA_ESCAPE_LINEAR_GATE_4682");
+            const char* e = std::getenv("AURA_ESCAPE_LINEAR_GATE");
             return !(e && e[0] == '0');
         }();
         if (gate_on && !flat.has_linear_ops_live())
@@ -10216,9 +10216,9 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                     bool need_root = false;
                     // Issue #4682 step 2: probe the persistent define index
                     // per referenced name (O(refs)) instead of walking all W
-                    // root children. AURA_DEFINE_INDEX_4682=0 keeps the walk.
+                    // root children. AURA_DEFINE_INDEX=0 keeps the walk.
                     static const bool use_def_index_4682 = [] {
-                        const char* e = std::getenv("AURA_DEFINE_INDEX_4682");
+                        const char* e = std::getenv("AURA_DEFINE_INDEX");
                         return !(e && e[0] == '0');
                     }();
                     if (use_def_index_4682) {
@@ -10271,9 +10271,9 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     std::unordered_set<NodeId> occurrence_seen;
     // Issue #4682 step 4: one visited bitmap per collector so overlapping
     // roots (ancestor + descendants, parent_id) walk each node once.
-    // AURA_COLLECT_VISITED_4682=0 = old per-root full walks.
+    // AURA_COLLECT_VISITED=0 = old per-root full walks.
     static const bool collect_visited_4682 = [] {
-        const char* e = std::getenv("AURA_COLLECT_VISITED_4682");
+        const char* e = std::getenv("AURA_COLLECT_VISITED");
         return !(e && e[0] == '0');
     }();
     std::vector<std::uint8_t> occ_visited_4682, deep_visited_4682;
@@ -11413,10 +11413,10 @@ bool analyze_linear_escape_for_dirty(const FlatAST& flat, const StringPool& pool
     // Issue #4682 step 5: every state starts Owned and only Move/Borrow/
     // MutBorrow/Drop nodes change it, so with no live linear-op node (the
     // #4598 counter is a superset of what the walk can reach) no escape can
-    // be reported. Skip the O(W) walk. AURA_ESCAPE_LINEAR_GATE_4682=0 = old walk.
+    // be reported. Skip the O(W) walk. AURA_ESCAPE_LINEAR_GATE=0 = old walk.
     {
         static const bool gate_on = [] {
-            const char* e = std::getenv("AURA_ESCAPE_LINEAR_GATE_4682");
+            const char* e = std::getenv("AURA_ESCAPE_LINEAR_GATE");
             return !(e && e[0] == '0');
         }();
         if (gate_on && !flat.has_linear_ops_live())
@@ -11721,7 +11721,7 @@ bool OwnershipEnv::validate_ownership_full(const FlatAST& flat, const StringPool
     // registered Linear type. With neither, it finds nothing → true.
     {
         static const bool gate_4682 = [] {
-            const char* e = std::getenv("AURA_ESCAPE_LINEAR_GATE_4682");
+            const char* e = std::getenv("AURA_ESCAPE_LINEAR_GATE");
             return !(e && e[0] == '0');
         }();
         if (gate_4682 && !flat.has_linear_ops_live() && !reg.has_any_linear_type())

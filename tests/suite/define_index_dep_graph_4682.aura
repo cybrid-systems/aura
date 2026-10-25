@@ -2,7 +2,7 @@
 ; and per-define reverse-dep graph repopulate on rebind. Callers must keep
 ; seeing callee rebinds after body edges change, after a caller rebind adds
 ; or drops an edge, around duplicate names, set-code and mixed mutations.
-; Run with AURA_DEP_GRAPH_INCREMENTAL_4682 / AURA_DEFINE_INDEX_4682 unset
+; Run with AURA_DEP_GRAPH_INCREMENTAL / AURA_DEFINE_INDEX unset
 ; and =0, and with AURA_DEFINE_INDEX_CHECK=1 (index == scan); same results.
 (define *fails* 0)
 (define *n* 0)

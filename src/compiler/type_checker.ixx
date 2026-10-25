@@ -2949,10 +2949,8 @@ export struct TypeChecker {
     // Issue #4682 (opt): fingerprint of the host-name set last seeded into
     // this checker (0 = never). Post-mutate typecheck skips re-seeding when
     // the evaluator's top_env names are unchanged.
-    [[nodiscard]] std::uint64_t host_visible_names_fp_4682() const noexcept {
-        return host_names_fp_4682_;
-    }
-    void set_host_visible_names_fp_4682(std::uint64_t fp) noexcept { host_names_fp_4682_ = fp; }
+    [[nodiscard]] std::uint64_t host_visible_names_fp() const noexcept { return host_names_fp_; }
+    void set_host_visible_names_fp(std::uint64_t fp) noexcept { host_names_fp_ = fp; }
     // Issue #2355: on epoch advance, prune type_dep edges stamped at older
     // epochs (epoch > 0 && epoch < new_epoch). AC3: same epoch → no-op.
     void set_cache_epoch(std::uint64_t epoch) {
@@ -3657,7 +3655,7 @@ private:
     const void* registered_prim_ctx_ = nullptr;
     // Issue #4587: host bindings the workspace flat does not declare.
     std::vector<std::string> host_visible_names_;
-    std::uint64_t host_names_fp_4682_ = 0;
+    std::uint64_t host_names_fp_ = 0;
 
     // Issue #1407 R1: ConstraintSolver engine-level cache.
     // Per NodeId, store the (epoch, constraints_hash, solve_result)

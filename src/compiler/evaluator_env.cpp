@@ -674,7 +674,7 @@ void Env::set_pool(const aura::ast::StringPool* p) {
             rekeyed.reserve(bindings_.size());
             auto* mut = const_cast<aura::ast::StringPool*>(p);
             static const bool memo_on = [] {
-                const char* e = std::getenv("AURA_REKEY_MEMO_4682");
+                const char* e = std::getenv("AURA_REKEY_MEMO");
                 return !(e && e[0] == '0');
             }();
             RekeyMemo4682* memo = nullptr;

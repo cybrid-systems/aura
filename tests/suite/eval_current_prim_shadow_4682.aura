@@ -3,8 +3,8 @@
 ; defines that shadow a primitive must still win inside eval-current, and
 ; non-primitive names must be unaffected; repeated eval-current and rebinds
 ; must keep the shadow consistent. Also exercises the set_pool rekey memo
-; (AURA_REKEY_MEMO_4682) and value-cell sync prefilter
-; (AURA_VCELL_SYNC_PREFILTER_4682): same results with each set to 0.
+; (AURA_REKEY_MEMO) and value-cell sync prefilter
+; (AURA_VCELL_SYNC_PREFILTER): same results with each set to 0.
 (define *fails* 0)
 (define *n* 0)
 (define (check! ok msg)

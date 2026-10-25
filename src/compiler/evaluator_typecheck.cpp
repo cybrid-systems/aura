@@ -348,7 +348,7 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
                     mix(static_cast<std::uint64_t>(b.first));
                 host_fp = h | 1ull; // never 0
             }
-            if (reuse_host_names && tc.host_visible_names_fp_4682() == host_fp) {
+            if (reuse_host_names && tc.host_visible_names_fp() == host_fp) {
                 // unchanged: keep the checker's current host-visible names
             } else {
                 std::vector<std::string> host_names;
@@ -367,7 +367,7 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
                 for (const auto& binding : top_.bindings_with_names())
                     take(binding.first);
                 tc.set_host_visible_names(std::move(host_names));
-                tc.set_host_visible_names_fp_4682(host_fp);
+                tc.set_host_visible_names_fp(host_fp);
             }
         }
         // Issue #3655: mark infer-ran even when fingerprint is 0 (empty
