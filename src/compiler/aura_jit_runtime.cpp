@@ -5577,6 +5577,17 @@ extern "C" int64_t aura_jit_native_self_id() noexcept {
     return g_native_self_id;
 }
 
+// Issue #4682 (6b): the service-side native tier enters a JIT'd define
+// body without going through aura_closure_call. It publishes the
+// define's closure word here (save/restore, same contract as the
+// dispatch above) so the body's direct self-call (#4601) recognises its
+// own recursion. Returns the previous value.
+extern "C" int64_t aura_jit_exchange_native_self_id(int64_t id) noexcept {
+    const int64_t prev = g_native_self_id;
+    g_native_self_id = id;
+    return prev;
+}
+
 // Issue #4601: cell-heap write epoch. Every g_cell_heap mutation bumps it
 // under the workspace write lock; the JIT reads it (acquire) before and
 // after a hoisted env-cell read and only reuses the cached value when the
@@ -6282,7 +6293,26 @@ extern "C" void aura_clear_top_cell_getter_if_user(void* user) {
     }
 }
 
+// Issue #4682 (6b): the TW native tier loads its self word from a private
+// evaluator cell via TopCellLoad. g_top_cell_get is process-wide and
+// last-writer-wins across CompilerService instances (and unset outside a
+// JIT eval), so that load could read another evaluator's cells (→ 0): the
+// direct self-call guard then missed and every recursive call returned 0.
+// The tier publishes (index, word) here for the duration of a native call.
+static thread_local int64_t g_tier_self_cell_idx_4682 = -1;
+static thread_local int64_t g_tier_self_cell_word_4682 = 0;
+extern "C" void aura_jit_tier_self_cell_swap_4682(int64_t* idx, int64_t* word) noexcept {
+    const int64_t pi = g_tier_self_cell_idx_4682;
+    const int64_t pw = g_tier_self_cell_word_4682;
+    g_tier_self_cell_idx_4682 = *idx;
+    g_tier_self_cell_word_4682 = *word;
+    *idx = pi;
+    *word = pw;
+}
+
 extern "C" int64_t aura_top_cell_get(int64_t cell_index) {
+    if (cell_index >= 0 && cell_index == g_tier_self_cell_idx_4682)
+        return g_tier_self_cell_word_4682;
     aura_lock_workspace_read();
     int64_t result = 0;
     if (g_top_cell_get && cell_index >= 0)

@@ -413,6 +413,16 @@ aura_jit_deopt_frame_arg_count(const char* /*fn_name*/) noexcept {
 extern "C" __attribute__((weak)) int aura_jit_take_prologue_deopt_sentinel(void) noexcept {
     return 0;
 }
+// Issue #4682 (6b): light links have no native tier.
+extern "C" __attribute__((weak)) int aura_jit_deopt_frame_host_armed(void) noexcept {
+    return 1;
+}
+extern "C" __attribute__((weak)) std::int64_t
+aura_jit_exchange_native_self_id(std::int64_t) noexcept {
+    return -1;
+}
+extern "C" __attribute__((weak)) void aura_jit_tier_self_cell_swap_4682(std::int64_t*,
+                                                                        std::int64_t*) noexcept {}
 // Issue #4600 §3 (phase 3): light links never OSR (no host, no stats) —
 // interpreted tail loops keep running in the drain.
 extern "C" __attribute__((weak)) int

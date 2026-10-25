@@ -3712,6 +3712,13 @@ extern "C" std::uint32_t aura_jit_deopt_frame_arg_count(const char* fn_name) noe
     return arg_count > 0 ? static_cast<std::uint32_t>(arg_count) : 0u;
 }
 
+// Issue #4682 (6b): true while a JitDeoptHostArm is live. The native
+// tier refuses to enter while armed: a guard exit would resume under the
+// outer module's host, which does not own the tiered function.
+extern "C" int aura_jit_deopt_frame_host_armed(void) noexcept {
+    return g_deopt_frame_host != nullptr ? 1 : 0;
+}
+
 extern "C" std::int64_t aura_jit_deopt_frame(const char* fn_name, std::uint32_t block,
                                              std::uint32_t instr, const std::int64_t* slots,
                                              std::uint32_t nslots, std::uint32_t argc) {
