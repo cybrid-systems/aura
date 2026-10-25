@@ -1454,13 +1454,16 @@ static void ac4514_1_peer_recv_parks_sibling_runs_first() {
     // Long-batch hygiene (cf. #4686/#4690): earlier members deliberately fire
     // the hold-budget no-edge force (test_mailbox_hold_starvation_hard arms
     // real force-releases) and leave the process-wide live-hold face
-    // populated. This AC holds an outermost Guard across a fiber wait (up to
-    // seconds under CI load), so the 2xSLO edge-free path could reclaim the
-    // holder before the assertions observe it. Scope a fresh hold-budget face
+    // populated. A synthetic note_enter (start_ns=1, id not in the registry)
+    // used to stamp the in-body arm clock with no fiber; the scheduler idle
+    // poll then force-released this Guard inside Fiber::yield, before the
+    // #2200 reject, so the sibling saw process-held 0 and the reject delta
+    // stayed 0. Scope a fresh hold-budget face, including that arm clock,
     // and keep the SLO out of reach for the guard lifetime; restored below.
     aura::compiler::clear_hold_budget_no_edge_force_for_test();
     aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
     aura::compiler::mutation_hold_live_reset_for_test();
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
     const char* prev_slo_4514 = std::getenv("AURA_MUTATION_HOLD_SLO_US");
     const std::string prev_slo_4514_s = prev_slo_4514 != nullptr ? prev_slo_4514 : "";
     ::setenv("AURA_MUTATION_HOLD_SLO_US", "60000000", 1); // 60s > AC wait bounds
@@ -1621,6 +1624,7 @@ static void ac4514_1_peer_recv_parks_sibling_runs_first() {
     aura::compiler::clear_hold_budget_no_edge_force_for_test();
     aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
     aura::compiler::mutation_hold_live_reset_for_test();
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
     Evaluator::set_query_evaluator(nullptr);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
 }
