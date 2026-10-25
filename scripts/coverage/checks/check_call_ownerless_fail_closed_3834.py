@@ -44,7 +44,14 @@ def main() -> int:
     if call < 0:
         fails.append("AC1: Call case missing")
     else:
-        win = impl[call : call + 7500]
+        # Issue #4624: the Call arm grew past a fixed 7500-byte window
+        # (the #4624 IR faces added the raised-diagnostic handling), so the
+        # cited tokens fell outside it and the linter failed on correct
+        # code. Bound the window by the arm itself - up to the next
+        # IROpcode case - instead of a magic byte count. This also stops the
+        # window from reaching into the NEXT case.
+        nxt_case = impl.find("case IROpcode::", call + len("case IROpcode::Call"))
+        win = impl[call : nxt_case if nxt_case > call else call + 20000]
         must("is_primitive(callee_val)", "AC1 Call primitive arm", win)
         must("production_defaults_active()", "AC1 Call production gate", win)
         must("make_void()", "AC1 Call void fail-closed", win)
