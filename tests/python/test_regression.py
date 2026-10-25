@@ -2902,6 +2902,35 @@ def test_rebind_cascade_linear_4615():
     )
 
 
+def test_tier_jit_default_on_4679():
+    """Issue #4679: the TW native tier is default-on; AURA_TIER_JIT=0 opts out.
+
+    With AURA_TIER_JIT unset a hot workspace define (fib) reaches the tier
+    (AURA_TIER_JIT_TRACE prints "[tier4682]" lines); with AURA_TIER_JIT=0
+    nothing is traced. The value is identical either way.
+    """
+    prog = (
+        '(set-code "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))\\n'
+        '(define r (fib 15))")\n(eval-current)\n(eval-current)\n(eval-current)\n'
+        '(display (list "T" (fib 15)))\n(newline)\n'
+    )
+
+    def run(val):
+        env = {k: v for k, v in os.environ.items() if k != "AURA_TIER_JIT"}
+        env["AURA_TIER_JIT_TRACE"] = "1"
+        env["AURA_TIER_JIT_SYNC"] = "1"
+        if val is not None:
+            env["AURA_TIER_JIT"] = val
+        r = subprocess.run([AURA], input=prog, capture_output=True, text=True, timeout=120, env=env)
+        assert r.returncode == 0, (r.stderr or "")[-500:]
+        assert "(T 610)" in r.stdout, r.stdout[-300:]
+        return "[tier4682]" in r.stderr
+
+    assert run(None), "AURA_TIER_JIT unset: tier must be on by default"
+    assert not run("0"), "AURA_TIER_JIT=0 must disable the tier"
+    print("  PASS: test_tier_jit_default_on_4679")
+
+
 def test_tw_reclaim_ir_frame_roots_4617():
     """Issue #4617: the tree-walker's reclaim must root in-flight IR frames.
 
@@ -4346,6 +4375,7 @@ for tf in [
     test_cfunc_budget_4555,
     test_nary_map_for_each_4616,
     test_rebind_cascade_linear_4615,
+    test_tier_jit_default_on_4679,
     test_tw_reclaim_ir_frame_roots_4617,
     test_jit,
     test_mutation_sequences,

@@ -11401,7 +11401,7 @@ public:
     // ---- Issue #272: IR-native define env binding --------------------
 
     // ── Issue #4682 (6b): background native tier for hot workspace defines ──
-    // Opt-in (AURA_TIER_JIT=1, off by default). A workspace Lambda
+    // Default-on; AURA_TIER_JIT=0 disables it. A workspace Lambda
     // define bound via IR (IRDefineEnvBinding) counts the calls that reach
     // it through dispatch_ir_define_closure. At AURA_TIER_JIT_HOT
     // calls (default 2) an eligible body is snapshotted on the calling
@@ -11562,8 +11562,9 @@ public:
     };
     static bool tier_jit_enabled_4682_() noexcept {
         static const bool on = [] {
+            // Default-on (#4679); AURA_TIER_JIT=0 opts out.
             const char* e = std::getenv("AURA_TIER_JIT");
-            return e && e[0] == '1';
+            return !(e && e[0] == '0');
         }();
         return on;
     }
