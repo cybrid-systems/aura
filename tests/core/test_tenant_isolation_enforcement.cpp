@@ -9123,6 +9123,105 @@ int main() {
         reset_all();
     }
 
+    // ── Issue #4692: soft-session rearm stops after the MT flip ──
+    {
+        std::println("\n--- #4692: soft rearm does not follow a new mid under MT ---");
+        reset_all();
+        aura::core::provenance::reset_undeclared_mt_autodetect_for_test();
+        aura::core::bump_mutation_epoch(1);
+        ::unsetenv("AURA_MT_AUTODETECT");
+        ::unsetenv("AURA_MULTI_TENANT");
+        ::unsetenv("AURA_HARD_CAPTURE_TENANT");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.disarm_production_audit_defaults_for_test();
+        ev.set_effect_sandbox_mode(1);
+        CHECK(ev.kernel_self_single_tenant(), "4692: host face is Restricted single-tenant");
+        const auto st = ev.enter_soft_session(0);
+        CHECK(st.active && !st.refused, "4692: host soft session mints");
+        using aura::core::capability::CapabilityGrant;
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::kSoftAutoGrantName;
+        CapabilityGrant g{};
+        CHECK(g_capability_registry().find_grant(0, kSoftAutoGrantName, g),
+              "4692: soft row stored");
+        const auto minted = g.bound_mutation_id;
+        CHECK(minted != 0 && g.soft_session && g.session_bound, "4692: soft row is session-bound");
+        ev.note_boundary_audit_mid_for_test(minted + 3);
+        CHECK(ev.require_effect(kEffectMutate, "set-code", 0, 0),
+              "4692: single-tenant rearm still authorizes Mutate");
+        CHECK(g_capability_registry().find_grant(0, kSoftAutoGrantName, g),
+              "4692: row survives the single-tenant check");
+        const auto armed = g.bound_mutation_id;
+        CHECK(armed == minted + 3, "4692: single-tenant rearm follows the new mid");
+        CHECK(g_capability_registry().soft_session_active_, "4692: session stays active");
+
+        aura::core::provenance::reset_undeclared_mt_autodetect_for_test();
+        ev.set_tenant_principal(7, "4692-a");
+        CHECK(!aura::core::provenance::multi_tenant_env_active(),
+              "4692: one non-zero principal does not arm MT");
+        ev.set_tenant_principal(9, "4692-b");
+        CHECK(aura::core::provenance::multi_tenant_env_active(),
+              "4692: second principal arms multi-tenant");
+        CHECK(aura::core::provenance::hard_capture_tenant_active(),
+              "4692: autodetect arms hard-capture");
+        CHECK(g_capability_registry().hard_fiber_isolation_.load(std::memory_order_acquire),
+              "4692: autodetect arms hard fiber isolation");
+        ev.set_tenant_principal(0, "host");
+        CHECK(ev.capability_tenant_id() == 0, "4692: effect check runs as the host");
+        CHECK(!ev.kernel_self_single_tenant(), "4692: host is no longer single-tenant");
+
+        const auto& ring = g_security_event_ring();
+        const auto se_base = ring.seq.load(std::memory_order_acquire);
+        ev.note_boundary_audit_mid_for_test(armed + 19);
+        CHECK(!ev.require_effect(kEffectMutate, "set-code", 0, 0),
+              "4692: Mutate is not authorized after the flip");
+        CHECK(!ev.require_effect(aura::compiler::security::kEffectRead, "load", 0, 0),
+              "4692: Read is not authorized after the flip");
+        CHECK(g_capability_registry().find_grant(0, kSoftAutoGrantName, g),
+              "4692: soft row is left in place");
+        CHECK(g.bound_mutation_id == armed, "4692: bound mid is not re-armed");
+        CHECK(g.soft_session && !g.revoked, "4692: row is not revoked by the check");
+        CHECK(g_capability_registry().soft_session_active_, "4692: flag stays for explicit revoke");
+        bool saw_rearm = false;
+        for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (e.seq == s && std::string_view(e.op) == "rearm")
+                saw_rearm = true;
+        }
+        CHECK(!saw_rearm, "4692: the flipped check emits no rearm");
+
+        const auto src = read_file("src/core/capability_model.hh");
+        const auto fn = src.find("void rearm_soft_session_locked");
+        const auto fn_end = src.find("soft_session_covers_locked", fn);
+        CHECK(fn != std::string::npos && fn_end != std::string::npos && fn < fn_end,
+              "4692: rearm_soft_session_locked located");
+        if (fn != std::string::npos && fn_end > fn) {
+            const auto body = src.substr(fn, fn_end - fn);
+            const auto gate = body.find("multi_tenant_env_active");
+            const auto mint = body.find("grant_locked");
+            CHECK(gate != std::string::npos && mint != std::string::npos && gate < mint,
+                  "4692: posture fence is before the re-mint");
+            CHECK(body.find("hard_capture_tenant_active") != std::string::npos &&
+                      body.find("hard_capture_tenant_active") < mint,
+                  "4692: hard-capture is part of the rearm fence");
+        }
+        const auto sweep = src.find("revoke_session_grants_for_mid_locked");
+        CHECK(sweep != std::string::npos, "4692: session sweep located");
+        if (sweep != std::string::npos) {
+            const auto window = src.substr(sweep, 4500);
+            CHECK(window.find("g.soft_session") != std::string::npos,
+                  "4692: sweep still skips the soft row");
+        }
+
+        ev.note_boundary_audit_mid_for_test(0);
+        ev.clear_boundary_audit_mid_for_test();
+        aura::core::provenance::reset_undeclared_mt_autodetect_for_test();
+        aura::core::provenance::set_hard_capture_tenant(false);
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        reset_all();
+    }
+
     reset_all();
     std::println("\n=== test_tenant_isolation_enforcement: {} passed, {} failed ===", g_passed,
                  g_failed);

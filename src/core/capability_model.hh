@@ -9,6 +9,7 @@
 #include "core/workspace_epoch.hh"
 #include "core/security_event.hh"     // #2388 dual-write kinds
 #include "core/security_event_wal.hh" // #2388 emit_security_event_durable
+#include "core/provenance_tracker.hh" // #4692: rearm re-checks the mint posture
 
 #include <atomic>
 #include <cstdint>
@@ -2333,6 +2334,16 @@ struct CapabilityRegistry {
         if (!soft_session_active_ || tenant != soft_session_tenant_)
             return;
         if (prov.workspace_id != soft_session_workspace_ || prov.mutation_id == 0)
+            return;
+        // Issue #4692: the mint gate is Restricted, tenant 0, not
+        // hard-capture, and not multi-tenant. #3630 can arm those after
+        // the host mint. Do not re-bind the row onto the live mid; leave
+        // it to expire with the old mid or an explicit revoke. Soft/Off
+        // never reaches here (need_grant is false).
+        const auto mode = sandbox_mode.load(std::memory_order_acquire);
+        if (mode != EffectSandboxMode::Restricted || tenant != 0 ||
+            ::aura::core::provenance::hard_capture_tenant_active() ||
+            ::aura::core::provenance::multi_tenant_env_active())
             return;
         auto it = by_tenant.find(tenant);
         if (it == by_tenant.end())
