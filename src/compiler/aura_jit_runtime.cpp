@@ -926,18 +926,54 @@ extern "C" std::uint64_t aura_hash_probe_slot(std::uint64_t h, std::uint64_t i, 
     return probe_slot(h, i, cap);
 }
 
-extern "C" const FlatHashTable* aura_hash_get_flat_table(int64_t hash_val) {
+// Issue #4693: OpHashRef passes the operand bits. Match is_hash — Ref low
+// tag and RefHash, not RefImmHash — before the pool shift. Fixnum 0 is
+// table 0 if the shift runs first. The bit test is not a tenant load.
+static bool hash_ref_operand_is_hash(int64_t hash_val) noexcept {
+    const auto bits = static_cast<uint64_t>(hash_val);
+    using aura::compiler::types::kRefLowTag;
+    using aura::compiler::types::kRefTypeMask;
+    using aura::compiler::types::kRefTypeShift;
+    using aura::compiler::types::RefHash;
+    if ((bits & 3ULL) != kRefLowTag)
+        return false;
+    return ((bits & kRefTypeMask) >> kRefTypeShift) == RefHash;
+}
+
+// Issue #4693: body of aura_hash_get_flat_table. The one-arg ABI (the IR
+// call) forwards the owner hooks. Light-link tests pass caller and face
+// here because those hooks are the weak stubs (#4036) — same gate, not a
+// second model. A non-hash returns null before the shift, the lock, and
+// any stamp load. An armed foreign or unstamped table returns null so the
+// IR null path stores void 11 and never copies. Out of range misses with
+// no deny, matching the tree prim. Soft/Off returns inside
+// aura_hash_gate_checked before g_hash_tenants is read. A clean hit is
+// one workspace read lock and one pointer fetch.
+extern "C" const FlatHashTable*
+aura_hash_get_flat_table_checked(int64_t hash_val, std::uint64_t caller_tenant, int sandbox_mode) {
+    if (!hash_ref_operand_is_hash(hash_val))
+        return nullptr;
     // Issue #157 Phase 2: read lock — reads g_hash_tables[hidx].
     // The pointer is only safe to dereference while the lock is
     // held. OpHashRef (#4319) drops that lock around aura_hash_key_eq
     // after copying the key and value.
     aura_lock_workspace_read();
     const FlatHashTable* ht = nullptr;
-    auto hidx = static_cast<std::size_t>(static_cast<uint64_t>(hash_val) >> 6);
-    if (hidx < g_hash_tables.size())
+    const auto hidx = static_cast<std::size_t>(static_cast<uint64_t>(hash_val) >> 6);
+    if (hidx < g_hash_tables.size() && g_hash_tables[hidx] != nullptr) {
+        if (aura_hash_gate_checked(hidx, caller_tenant, sandbox_mode, "hash-ref")) {
+            aura_unlock_workspace_read();
+            return nullptr;
+        }
         ht = g_hash_tables[hidx];
+    }
     aura_unlock_workspace_read();
     return ht;
+}
+
+extern "C" const FlatHashTable* aura_hash_get_flat_table(int64_t hash_val) {
+    return aura_hash_get_flat_table_checked(hash_val, aura_jit_owner_capability_tenant(),
+                                            aura_jit_owner_sandbox_mode());
 }
 
 // ── FlatHashTable allocation ──

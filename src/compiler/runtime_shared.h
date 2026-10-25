@@ -508,6 +508,14 @@ extern "C" void aura_cell_set_checked(std::int64_t cell_id, std::int64_t val,
                                       std::uint64_t caller_tenant, int sandbox_mode);
 extern "C" std::int64_t aura_hash_ref_checked(std::int64_t hash_val, std::int64_t key_val,
                                               std::uint64_t caller_tenant, int sandbox_mode);
+// Issue #4693: OpHashRef's table fetch. The one-arg symbol is the IR call.
+// The checked twin is that body with an explicit caller and face (light-link
+// owner hooks are the weak stubs). A non-RefHash operand returns null before
+// the index shift. Armed and foreign returns null. Not a second gate model.
+extern "C" const FlatHashTable* aura_hash_get_flat_table_checked(std::int64_t hash_val,
+                                                                 std::uint64_t caller_tenant,
+                                                                 int sandbox_mode);
+extern "C" const FlatHashTable* aura_hash_get_flat_table(std::int64_t hash_val);
 extern "C" std::int64_t aura_hash_set_checked(std::int64_t hash_val, std::int64_t pair_val,
                                               std::uint64_t caller_tenant, int sandbox_mode);
 // Issue #4110: armed-face owner compare for the evaluator tree-walker hash
