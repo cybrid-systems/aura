@@ -104,6 +104,34 @@ struct WalOverflowRecord {
     std::string reason;      // failure reason (e.g. "fwrite_miss")
 };
 
+// Issue #4695: an enabled-WAL append miss used to store only the mechanical
+// token (inject_fail / fwrite_miss). The forensic join then returned None
+// for every deny that is not the capability-effect miss stamp
+// (mutation_wal_append_miss). The existing reason field carries the denial
+// class when the lost record is itself a deny and its reason is an
+// agent-facing class token (hyphenated: isolation-deny:*, grant-mid-refused,
+// hygiene-*). Placeholders such as "inject" stay on the mechanical token
+// (#3178 exact equality). Allow rows are not relabeled. Mechanical tokens
+// that happen to contain a hyphen (se-wal-enable-miss, wal-rotate-open-fail)
+// are not a denial class — those arms are not this path.
+[[nodiscard]] inline bool se_wal_reason_names_deny_class(std::string_view reason) noexcept {
+    if (reason.empty() || reason == "inject_fail" || reason == "fwrite_miss" ||
+        reason == "se-wal-enable-miss" || reason == "wal-rotate-open-fail")
+        return false;
+    return reason.find('-') != std::string_view::npos;
+}
+
+[[nodiscard]] inline std::string se_wal_overflow_miss_reason(const SecurityEventWalRecord& rec,
+                                                             std::string_view mechanical) {
+    if (rec.denied != 0) {
+        const auto n = ::strnlen(rec.reason, sizeof(rec.reason));
+        const std::string_view event_reason(rec.reason, n);
+        if (se_wal_reason_names_deny_class(event_reason))
+            return std::string(event_reason);
+    }
+    return std::string(mechanical);
+}
+
 inline WalOverflowRecord* wal_overflow_ring_storage() noexcept {
     // Process-local storage (header ODR-safe via inline). Sized at
     // kWalOverflowRingCapacity; head + count are atomic to allow push
@@ -425,6 +453,9 @@ struct SecurityEventWal {
         // cannot open the existing (read-only) segment must not look like a
         // successful crash recovery to the caller.
         bool replayed_nonempty = false;
+        // Issue #4695: hoisted so the recovery stamp below can see it.
+        // A truncated window is not a complete history.
+        bool replay_truncated = false;
         // Issue #4520: collected indices double as the enable-time upgrade
         // prune list (exact, hole-tolerant) — no extra directory pass.
         std::vector<std::uint32_t> seg_indices;
@@ -472,7 +503,7 @@ struct SecurityEventWal {
             // records from the last-read segment, or when the scan hit
             // max_replay with an existing segment still unread (seg_indices
             // is the exact dirent list, so retention holes do not count).
-            bool replay_truncated = newest_first.size() > max_replay;
+            replay_truncated = newest_first.size() > max_replay;
             if (!replay_truncated && newest_first.size() >= max_replay) {
                 for (const auto n : seg_indices) {
                     if (n < s) {
@@ -502,7 +533,11 @@ struct SecurityEventWal {
         // opened. Evaluator::enable_mutation_audit_wal reads this counter's
         // delta as sidecar replay success; a phantom delta kept fail-closed
         // disarmed while the WAL was actually off.
-        if (replayed_nonempty)
+        // Issue #4695: a truncated window still publishes
+        // security_event_wal_replay_truncated. It must not also claim the
+        // sidecar came back whole — that delta means the history is complete
+        // and skips the mutation-WAL → SE rebuild.
+        if (replayed_nonempty && !replay_truncated)
             g_security_event_wal_metrics().security_event_crash_recovery_success.fetch_add(
                 1, std::memory_order_relaxed);
         // Issue #4520: upgrade path — a dir oversized by older versions
@@ -645,7 +680,9 @@ struct SecurityEventWal {
                 ovr.fiber_id = static_cast<std::uint64_t>(rec.fiber_id);
                 ovr.epoch = rec.epoch;
                 ovr.op = rec.op[0] ? std::string(rec.op) : std::string("security_event_wal_append");
-                ovr.reason = std::string("inject_fail");
+                // Issue #4695: keep inject_fail unless the lost row's own
+                // reason names the denial class (then the join can attribute it).
+                ovr.reason = se_wal_overflow_miss_reason(rec, "inject_fail");
                 (void)wal_overflow_ring_push(ovr);
             }
             return false;
@@ -668,7 +705,8 @@ struct SecurityEventWal {
                 ovr.fiber_id = static_cast<std::uint64_t>(rec.fiber_id);
                 ovr.epoch = rec.epoch;
                 ovr.op = rec.op[0] ? std::string(rec.op) : std::string("security_event_wal_append");
-                ovr.reason = std::string("fwrite_miss");
+                // Issue #4695: same class-carrying reason as the inject arm.
+                ovr.reason = se_wal_overflow_miss_reason(rec, "fwrite_miss");
                 (void)wal_overflow_ring_push(ovr);
             }
             return false;
@@ -1106,12 +1144,14 @@ forensic_effect_verdict_for_mid_full(std::uint64_t mid) noexcept {
             return ForensicEffectVerdict::None;
         }
     }
-    // Overflow rows carry op/reason only (#3109) — the #3879 miss stamp
-    // is a Deny SE; any other reason keeps the verdict unset exactly
-    // like security-audit's overflow fill (reason surfaced, verdict not
-    // rewritten). In-memory scan only, no I/O.
+    // Overflow rows carry op/reason only (#3109). The #3879 miss stamp
+    // is a Deny. Issue #4695: a denial-class reason on the same field
+    // (isolation-deny:*, grant-mid-refused, hygiene-*) is also a Deny.
+    // Mechanical tokens and se-wal-enable-miss stay None. In-memory
+    // scan only, no I/O.
     if (const auto* ovr = ::aura::core::security_event_wal::wal_overflow_find_by_mid(mid)) {
-        if (ovr->reason == kMutationWalAppendMissReason)
+        if (ovr->reason == kMutationWalAppendMissReason ||
+            ::aura::core::security_event_wal::se_wal_reason_names_deny_class(ovr->reason))
             return ForensicEffectVerdict::Deny;
     }
     return ForensicEffectVerdict::None;
