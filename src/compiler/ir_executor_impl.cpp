@@ -1010,8 +1010,16 @@ EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const
             // Fall through to IR dispatch with restamped epochs.
         } else {
             if (auto tw =
-                    context_.evaluator->apply_closure(static_cast<ClosureId>(closure_id), args))
+                    context_.evaluator->apply_closure(static_cast<ClosureId>(closure_id), args)) {
+                // Issue #4624: a diagnostic the closure body RAISED comes
+                // back as an error value; the IR face fails loudly with the
+                // diagnostic instead of returning it as a value.
+                if (types::is_error(*tw)) {
+                    if (auto diag = context_.evaluator->take_raised_diagnostic())
+                        return std::unexpected(std::move(*diag));
+                }
                 return *tw;
+            }
             if (auto arity = take_ir_apply_arity(nullptr, context_.evaluator))
                 return std::unexpected(std::move(*arity));
             return std::unexpected(
@@ -2246,9 +2254,18 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             // to a cached define). Delegate to evaluator bridge.
                             if (context_.evaluator) {
                                 if (auto tw =
-                                        context_.evaluator->apply_closure(closure_id, call_args))
+                                        context_.evaluator->apply_closure(closure_id, call_args)) {
+                                    // Issue #4624: a diagnostic the closure body
+                                    // RAISED comes back as an error value; the IR
+                                    // face fails loudly with the diagnostic
+                                    // instead of storing the error in a local.
+                                    if (types::is_error(*tw)) {
+                                        if (auto diag =
+                                                context_.evaluator->take_raised_diagnostic())
+                                            return std::unexpected(std::move(*diag));
+                                    }
                                     locals[ops[3]] = *tw;
-                                else
+                                } else
                                     return std::unexpected(Diagnostic{ErrorKind::InvalidClosure,
                                                                       "invalid closure reference"});
                                 break;
@@ -2269,9 +2286,18 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                                              context_.metrics);
                             } else {
                                 if (auto tw =
-                                        context_.evaluator->apply_closure(closure_id, call_args))
+                                        context_.evaluator->apply_closure(closure_id, call_args)) {
+                                    // Issue #4624: a diagnostic the closure body
+                                    // RAISED comes back as an error value; the IR
+                                    // face fails loudly with the diagnostic
+                                    // instead of storing the error in a local.
+                                    if (types::is_error(*tw)) {
+                                        if (auto diag =
+                                                context_.evaluator->take_raised_diagnostic())
+                                            return std::unexpected(std::move(*diag));
+                                    }
                                     locals[ops[3]] = *tw;
-                                else
+                                } else
                                     return std::unexpected(
                                         Diagnostic{ErrorKind::InvalidClosure,
                                                    "stale IR closure after mutation"});
@@ -2495,10 +2521,19 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         if (it == runtime_closures_.end()) {
                             if (context_.evaluator) {
                                 if (auto tw =
-                                        context_.evaluator->apply_closure(closure_id, apply_args))
+                                        context_.evaluator->apply_closure(closure_id, apply_args)) {
+                                    // Issue #4624: a diagnostic the closure body
+                                    // RAISED comes back as an error value; the IR
+                                    // face fails loudly with the diagnostic
+                                    // instead of storing the error in a local.
+                                    if (types::is_error(*tw)) {
+                                        if (auto diag =
+                                                context_.evaluator->take_raised_diagnostic())
+                                            return std::unexpected(std::move(*diag));
+                                    }
                                     locals[ops[2]] = *tw;
-                                else if (auto arity =
-                                             take_ir_apply_arity(&instr, context_.evaluator))
+                                } else if (auto arity =
+                                               take_ir_apply_arity(&instr, context_.evaluator))
                                     return std::unexpected(std::move(*arity));
                                 else
                                     return std::unexpected(Diagnostic{ErrorKind::InvalidClosure,

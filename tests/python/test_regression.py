@@ -3706,14 +3706,18 @@ def test_callback_diagnostic_4624():
     Evaluator::apply_closure returned nullopt when the callback body raised a
     diagnostic, so map dropped the element (the row printed "()"), filter
     dropped the element and try never saw an error; for-each went on to
-    report its own result. The list primitives now keep the diagnostic and
-    hand it back as an error value (the #4586 propagation path), so try
+    report its own result. The fix lives at the SOURCE: the tree-walker
+    arm of apply_closure now turns the raised diagnostic into an error
+    VALUE (the #4586 propagation shape) instead of dropping it, so every
+    caller that applies a closure as a callback propagates it and try
     catches it exactly like the let-bound-lambda and direct-call rows.
 
-    Rows: map-cb / filter / for-each must print (caught ... unbound
-    variable: nope). let-lambda / direct are the pre-fix controls. The
-    normal map / filter / for-each / foldl / list-sort rows must be
-    unchanged by the new callback path.
+    Rows: map-cb / filter / for-each / apply-prim must print (caught ...
+    unbound variable: nope). let-lambda / direct are the pre-fix controls.
+    errval-map is the #4586 control: an error VALUE the callback RETURNS
+    keeps propagating unchanged (only the RAISED path moves). The normal
+    map / filter / for-each / foldl / list-sort rows must be unchanged by
+    the new callback path.
     """
     code = r"""
 (define (g x) (nope x))
@@ -3724,6 +3728,8 @@ def test_callback_diagnostic_4624():
 (display (list "for-each" (try (begin (for-each (lambda (y) (nope y)) (list 1)) "done") (catch (e) (list "caught" e))))) (newline)
 (display (list "filter" (try (filter (lambda (y) (nope y)) (list 1 2)) (catch (e) (list "caught" e))))) (newline)
 (display (list "direct" (try (g 1) (catch (e) (list "caught" e))))) (newline)
+(display (list "apply-prim" (try (apply (lambda (y) (nope y)) (list 1)) (catch (e) (list "caught" e))))) (newline)
+(display (list "errval-map" (try (map (lambda (x) (error "boom")) (list 1)) (catch (e) (list "caught" e))))) (newline)
 (display (list "normal-map" (map (lambda (x) (* x 2)) (list 1 2 3)))) (newline)
 (display (list "normal-filter" (filter (lambda (x) (= 0 (remainder x 2))) (list 1 2 3 4)))) (newline)
 (display (list "normal-for-each" (begin (for-each (lambda (x) x) (list 1 2)) "done"))) (newline)
@@ -3751,10 +3757,21 @@ def test_callback_diagnostic_4624():
         m = re.match(r"^\((\S+)(?: (.*))?\)$", ln)
         if m:
             rows[m.group(1)] = m.group(2) or ""
-    for tag in ("map-cb", "filter", "for-each", "let-lambda", "direct"):
+    for tag in ("map-cb", "filter", "for-each", "let-lambda", "direct", "apply-prim"):
         assert tag in rows, f"missing row {tag!r}: {out!r}"
         assert "(caught" in rows[tag], f"{tag} row: {rows[tag]!r}"
         assert "unbound variable: nope" in rows[tag], f"{tag} row: {rows[tag]!r}"
+    # Issue #4586 control: an error VALUE the callback RETURNS keeps
+    # propagating exactly as before (only the RAISED path moves).
+    assert rows.get("errval-map") == "(caught boom)", f"errval-map: {rows.get('errval-map')!r}"
+    # The fix lives at the SOURCE: Evaluator::apply_closure turns the
+    # raised diagnostic into an error value. A caller file must NOT
+    # re-implement the closure application to keep the diagnostic (the
+    # re-entry is what the first #4624 fix did).
+    eval_flat_src = (REPO / "src/compiler/evaluator_eval_flat.cpp").read_text()
+    assert "#4624" in eval_flat_src, "4624: apply_closure source cite missing"
+    list_src = (REPO / "src/compiler/evaluator_primitives_list.cpp").read_text()
+    assert "materialize_call_env" not in list_src, "4624: a caller file must not re-implement the closure application"
     assert rows.get("normal-map") == "(2 4 6)", f"normal-map: {rows.get('normal-map')!r}"
     assert rows.get("normal-filter") == "(2 4)", f"normal-filter: {rows.get('normal-filter')!r}"
     assert rows.get("normal-for-each") == "done", f"normal-for-each: {rows.get('normal-for-each')!r}"

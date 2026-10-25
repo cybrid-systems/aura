@@ -1246,6 +1246,14 @@ namespace {
 
 } // namespace
 
+// Issue #4624: the diagnostic the last apply_closure parked when the
+// closure body RAISED one. A caller that must fail loudly on a raised
+// diagnostic (the IR faces) takes it here; a caller that propagates the
+// error value apply_closure returns does not need it.
+std::optional<aura::diag::Diagnostic> Evaluator::take_raised_diagnostic() {
+    return take_pending_apply_diagnostic();
+}
+
 // apply_closure — looks up closures_, foreign functions, or IR bridge
 std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const EvalValue> args) {
     // Issue #4467: drop a message left by a caller that did not take it.
@@ -1964,8 +1972,18 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                 return *r;
             // Issue #4690: keep the diagnostic. Callers that turn nullopt
             // into InvalidClosure, or the while primitive, take it.
+            // Issue #4624: the body RAISED a diagnostic. A nullopt here made
+            // every caller that applies a closure AS A CALLBACK read the
+            // failure as no value: map consed (), filter dropped the element,
+            // for-each went on to its own result and try never saw an error.
+            // Surface the diagnostic as an error VALUE (the shape #4586
+            // already propagates) so the caller propagates it and try can
+            // catch it. The parked copy above still lets the #4690 while
+            // face raise the diagnostic instead of returning the value.
+            const std::string diag_text = r.error().format();
             park_pending_apply_diagnostic(std::move(r.error()));
-            return std::nullopt;
+            return primitives_detail::make_primitive_error(string_heap_, error_values_, diag_text,
+                                                           primitive_error_counter_ptr());
         }
         return std::nullopt;
     }
