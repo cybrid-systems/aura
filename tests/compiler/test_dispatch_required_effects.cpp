@@ -3074,8 +3074,15 @@ static void ac4505_inrange_reader_prims() {
     const auto dpos = rt_src.find("add(\"display\"");
     CHECK(dpos != std::string::npos, "4505: display body located");
     if (dpos != std::string::npos) {
-        const auto win = rt_src.substr(dpos, 900);
-        CHECK(win.find("io_walk_tenant_allows") != std::string::npos,
+        // Issue #4691 inserted the foreign-cause fence ahead of the
+        // pre-walk; a fixed 900-byte window no longer reaches it. Bound
+        // by the next prim so write's walk cannot satisfy this check.
+        const auto next = rt_src.find("\n    add(", dpos + 1);
+        const auto n = next == std::string::npos ? rt_src.size() - dpos : next - dpos;
+        const auto win = rt_src.substr(dpos, n);
+        const auto walk = win.find("io_walk_tenant_allows");
+        const auto printed = win.find("io_print_val");
+        CHECK(walk != std::string::npos && printed != std::string::npos && walk < printed,
               "4505: display pre-walks the payload before printing");
     }
     CHECK(rt_src.find("static bool io_walk_tenant_allows") != std::string::npos,
@@ -5371,8 +5378,12 @@ int run_test_dispatch_required_effects() {
         CHECK(call != std::string::npos, "3834 AC1: Call case present");
         CHECK(pc != std::string::npos, "3834 AC1: PrimCall case present");
         if (call != std::string::npos) {
-            // Window covers Call's is_primitive branch (not just case head).
-            const auto win = src.substr(call, 7500);
+            // Issue #4624 grew the closure face past a fixed 7500-byte
+            // window. Bound by the next opcode, same as the #3834 linter,
+            // so the primitive arm stays inside and the next case stays out.
+            const auto nxt = src.find("case IROpcode::", call + 1);
+            const auto n = nxt == std::string::npos ? src.size() - call : nxt - call;
+            const auto win = src.substr(call, n);
             CHECK(win.find("is_primitive(callee_val)") != std::string::npos,
                   "3834 AC1: Call has primitive arm");
             CHECK(win.find("production_defaults_active()") != std::string::npos,
