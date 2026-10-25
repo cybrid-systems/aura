@@ -37,6 +37,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <cstdint>
 #include <fstream>
 #include <print>
@@ -1450,6 +1451,19 @@ static void ac3732_4_send_under_guard_still_bp() {
 static void ac4514_1_peer_recv_parks_sibling_runs_first() {
     std::println("\n--- #4514 AC1: depth-0 peer recv parks; sibling runs before guard exit ---");
     aura::compiler::typed_audit::apply_production_audit_defaults();
+    // Long-batch hygiene (cf. #4686/#4690): earlier members deliberately fire
+    // the hold-budget no-edge force (test_mailbox_hold_starvation_hard arms
+    // real force-releases) and leave the process-wide live-hold face
+    // populated. This AC holds an outermost Guard across a fiber wait (up to
+    // seconds under CI load), so the 2xSLO edge-free path could reclaim the
+    // holder before the assertions observe it. Scope a fresh hold-budget face
+    // and keep the SLO out of reach for the guard lifetime; restored below.
+    aura::compiler::clear_hold_budget_no_edge_force_for_test();
+    aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
+    aura::compiler::mutation_hold_live_reset_for_test();
+    const char* prev_slo_4514 = std::getenv("AURA_MUTATION_HOLD_SLO_US");
+    const std::string prev_slo_4514_s = prev_slo_4514 != nullptr ? prev_slo_4514 : "";
+    ::setenv("AURA_MUTATION_HOLD_SLO_US", "60000000", 1); // 60s > AC wait bounds
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "4514 AC1: warm");
     Evaluator::set_query_evaluator(&cs.evaluator());
@@ -1600,6 +1614,13 @@ static void ac4514_1_peer_recv_parks_sibling_runs_first() {
 
     sched.stop();
     io.join();
+    if (!prev_slo_4514_s.empty())
+        ::setenv("AURA_MUTATION_HOLD_SLO_US", prev_slo_4514_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    aura::compiler::clear_hold_budget_no_edge_force_for_test();
+    aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
+    aura::compiler::mutation_hold_live_reset_for_test();
     Evaluator::set_query_evaluator(nullptr);
     aura::compiler::typed_audit::apply_dev_audit_defaults();
 }
