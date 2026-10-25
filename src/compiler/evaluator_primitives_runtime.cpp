@@ -67,15 +67,27 @@ namespace {
     // runner (main.cpp) reads this to exit 1.
     std::atomic<std::uint64_t> g_displayed_errors{0};
 
-    void note_displayed_error(Evaluator& ev, const EvalValue& v) {
+    // Returns false when the cause string is another principal's slot.
+    // IsolationDeny is already recorded; the caller must not print the
+    // bytes and must return the reader deny shape instead.
+    // Issue #4691: error_values_ stores the caller value verbatim, so the
+    // cause can name a foreign stamped string. Same fence as format,
+    // before any byte copy. Soft/Off returns inside the consult.
+    [[nodiscard]] bool note_displayed_error(Evaluator& ev, const EvalValue& v,
+                                            std::string_view op) {
         std::string msg = "runtime error";
         const auto idx = types::as_error_idx(v);
-        if (idx < ev.error_values_.size() && types::is_string(ev.error_values_[idx]))
-            msg = ev.copy_string_heap_at(types::as_string_idx(ev.error_values_[idx]));
+        if (idx < ev.error_values_.size() && types::is_string(ev.error_values_[idx])) {
+            const auto sidx = types::as_string_idx(ev.error_values_[idx]);
+            if (!ev.inrange_string_tenant_allows(sidx, /*required_effects=*/0, op))
+                return false;
+            msg = ev.copy_string_heap_at(sidx);
+        }
         std::fflush(stdout);
         std::fprintf(stderr, "error: %s\n", msg.c_str());
         std::fflush(stderr);
         g_displayed_errors.fetch_add(1, std::memory_order_relaxed);
+        return true;
     }
 
     // Issue #2482: empty list is make_void() only (int 0 is a number).
@@ -679,7 +691,14 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         if (is_error(a[0])) {
             if (ev.try_body_depth_ > 0)
                 return a[0];
-            note_displayed_error(ev, a[0]);
+            // Issue #4691: a foreign cause is the reader deny shape, not
+            // a stderr dump of the other principal's bytes.
+            if (!note_displayed_error(ev, a[0], "display")) {
+                g_displayed_errors.fetch_add(1, std::memory_order_relaxed);
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "display: cross-tenant string slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
             return make_void();
         }
         // Issue #4505: tenant-check the whole printable structure before any
@@ -715,7 +734,13 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         if (a.empty())
             return make_void();
         if (is_error(a[0])) {
-            note_displayed_error(ev, a[0]);
+            // Issue #4691: same cause fence as display.
+            if (!note_displayed_error(ev, a[0], "write")) {
+                g_displayed_errors.fetch_add(1, std::memory_order_relaxed);
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "write: cross-tenant string slot read denied (#4505)",
+                                            ev.primitive_error_counter_ptr());
+            }
             return make_void();
         }
         // Issue #4505: same fail-closed pre-walk as display, before the
@@ -1047,7 +1072,15 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
             auto* evp = static_cast<Evaluator*>(user);
             if (!evp)
                 return;
-            note_displayed_error(*evp, EvalValue{val});
+            // Issue #4691: JIT has no return channel. Name the deny, not
+            // the foreign cause bytes, and still mark the run failed.
+            if (!note_displayed_error(*evp, EvalValue{val}, "display")) {
+                std::fflush(stdout);
+                std::fprintf(stderr,
+                             "error: display: cross-tenant string slot read denied (#4505)\n");
+                std::fflush(stderr);
+                g_displayed_errors.fetch_add(1, std::memory_order_relaxed);
+            }
         },
         static_cast<void*>(&ev));
 }

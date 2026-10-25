@@ -15780,7 +15780,8 @@ public:
     // Issue #4273: Soft serve must not report status=ok with value <error>
     // (pick-best soft_bad_value / set-code truncated CASE). Surface the
     // stored cause string when present.
-    [[nodiscard]] std::string soft_error_message(types::EvalValue v) const {
+    // Not const: a foreign cause records IsolationDeny before the copy.
+    [[nodiscard]] std::string soft_error_message(types::EvalValue v) {
         if (!types::is_error(v) || types::is_string(v))
             return "<error>";
         const auto idx = types::as_error_idx(v);
@@ -15789,8 +15790,14 @@ public:
         const auto& cause = error_values_[idx];
         if (types::is_string(cause)) {
             const auto sidx = types::as_string_idx(cause);
-            if (sidx < string_heap_.size())
+            if (sidx < string_heap_.size()) {
+                // Issue #4691: file-mode (file_mode_escaped_primitive) and
+                // every other caller copy this cause. Gate before the bytes.
+                // Soft/Off returns inside the consult.
+                if (!inrange_string_tenant_allows(sidx, /*required_effects=*/0, "file-mode"))
+                    return "file-mode: cross-tenant string slot read denied (#4505)";
                 return string_heap_[sidx];
+            }
         }
         return "<error>";
     }

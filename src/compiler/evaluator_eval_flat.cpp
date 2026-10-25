@@ -7153,8 +7153,16 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                     const auto eidx = as_error_idx(*last);
                                     if (eidx < error_values_.size() &&
                                         is_string(error_values_[eidx])) {
-                                        why = copy_string_heap_at(static_cast<std::size_t>(
-                                            as_string_idx(error_values_[eidx])));
+                                        // Issue #4691: file-mode require copies
+                                        // the cause. Gate before the bytes.
+                                        const auto si = static_cast<std::size_t>(
+                                            as_string_idx(error_values_[eidx]));
+                                        if (!inrange_string_tenant_allows(
+                                                si, /*required_effects=*/0, "file-mode"))
+                                            why = "file-mode: cross-tenant string slot read "
+                                                  "denied (#4505)";
+                                        else
+                                            why = copy_string_heap_at(si);
                                     }
                                     if (!last_module_load_failure_.empty() &&
                                         (why.empty() || why.find(last_module_load_failure_) ==

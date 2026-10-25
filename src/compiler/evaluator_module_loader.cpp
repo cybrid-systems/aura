@@ -612,8 +612,14 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
             auto& cause = error_values_[eidx];
             if (is_string(cause)) {
                 auto si = as_string_idx(cause);
-                if (si < string_heap_.size())
-                    why = string_heap_[si];
+                if (si < string_heap_.size()) {
+                    // Issue #4691: module-load fail copies the cause.
+                    // Gate before the bytes. Soft/Off stays inside the consult.
+                    if (!inrange_string_tenant_allows(si, /*required_effects=*/0, "file-mode"))
+                        why = "file-mode: cross-tenant string slot read denied (#4505)";
+                    else
+                        why = string_heap_[si];
+                }
             }
         }
         return fail_load(why);

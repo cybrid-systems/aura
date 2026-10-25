@@ -8881,6 +8881,248 @@ int main() {
     ac4644_1_foreign_listener_is_not_drained();
     ac4644_2_owner_gate_reaches_every_affected_prim();
 
+    // ── Issue #4691: error-cause readers consult the string stamp ──
+    {
+        std::println("\n--- #4691: foreign error cause is not copied ---");
+        reset_all();
+        aura::core::bump_mutation_epoch(1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        const char* k_secret = "SECRET4691-foreign-cause";
+        const auto& ring = g_security_event_ring();
+        using aura::compiler::types::as_error_idx;
+        using aura::compiler::types::is_void;
+        using aura::compiler::types::make_string;
+
+        auto flatten = [&](const aura::compiler::types::EvalValue& root) {
+            std::string out;
+            auto walk = [&](auto&& self, const aura::compiler::types::EvalValue& v,
+                            int depth) -> void {
+                if (depth > 12)
+                    return;
+                if (is_string(v)) {
+                    out += ev.copy_string_heap_at(as_string_idx(v));
+                    return;
+                }
+                if (is_error(v)) {
+                    const auto eidx = as_error_idx(v);
+                    if (eidx < ev.error_values_.size())
+                        self(self, ev.error_values_[eidx], depth + 1);
+                    return;
+                }
+                if (is_pair(v)) {
+                    const auto idx = as_pair_idx(v);
+                    if (idx >= ev.pairs().size())
+                        return;
+                    const auto& p = ev.pairs()[idx];
+                    self(self, p.car, depth + 1);
+                    self(self, p.cdr, depth + 1);
+                }
+            };
+            walk(walk, root, 0);
+            return out;
+        };
+        auto saw_iso = [&](std::uint64_t se_base, std::string_view op) {
+            bool saw = false;
+            for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+                const auto& e = ring.ring[s % ring.ring.size()];
+                if (e.seq != s)
+                    continue;
+                if (static_cast<int>(e.kind) != static_cast<int>(SecurityEventKind::IsolationDeny))
+                    continue;
+                if (std::string_view(e.op) != op)
+                    continue;
+                saw = true;
+                CHECK(e.tenant_id == 9, "4691: IsolationDeny tenant is the caller");
+                CHECK(e.denied, "4691: IsolationDeny row is denied");
+            }
+            return saw;
+        };
+        struct StderrCapture {
+            int saved = -1;
+            int fds[2] = {-1, -1};
+            bool active = false;
+            StderrCapture() {
+                saved = ::dup(STDERR_FILENO);
+                if (saved < 0 || ::pipe(fds) != 0) {
+                    if (saved >= 0)
+                        ::close(saved);
+                    saved = -1;
+                    return;
+                }
+                // dup2 returns the new descriptor on success, not 0.
+                if (::dup2(fds[1], STDERR_FILENO) != -1)
+                    active = true;
+            }
+            std::string stop() {
+                if (!active)
+                    return {};
+                std::fflush(stderr);
+                ::dup2(saved, STDERR_FILENO);
+                ::close(fds[1]);
+                std::string out;
+                char buf[512];
+                ssize_t n = 0;
+                while ((n = ::read(fds[0], buf, sizeof buf)) > 0)
+                    out.append(buf, static_cast<std::size_t>(n));
+                ::close(fds[0]);
+                ::close(saved);
+                active = false;
+                return out;
+            }
+            ~StderrCapture() {
+                if (active)
+                    (void)stop();
+            }
+        };
+
+        aura::compiler::types::EvalValue secret;
+        {
+            Evaluator::TenantScope t7(ev, 7);
+            secret = make_string(static_cast<std::uint64_t>(ev.push_string_heap(k_secret)));
+        }
+        auto error_prim = ev.primitives().lookup("error");
+        auto display_prim = ev.primitives().lookup("display");
+        auto recover_prim = ev.primitives().lookup("agent:recover-from-error");
+        CHECK(error_prim.has_value() && display_prim.has_value() && recover_prim.has_value(),
+              "4691: error, display, and agent:recover-from-error are registered");
+        aura::compiler::types::EvalValue err = aura::compiler::types::make_void();
+        if (error_prim) {
+            Evaluator::TenantScope t9(ev, 9);
+            err = (*error_prim)({secret});
+        }
+        CHECK(is_error(err) && !is_string(err), "4691: B built an error over A's string");
+
+        if (display_prim) {
+            Evaluator::TenantScope t7(ev, 7);
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            StderrCapture cap;
+            const auto shown = (*display_prim)({err});
+            const auto text = cap.stop();
+            CHECK(is_void(shown), "4691: owner display still consumes the error");
+            CHECK(text.find(k_secret) != std::string::npos, "4691: owner display names the cause");
+            CHECK(ring.seq.load(std::memory_order_acquire) == se_base,
+                  "4691: owner display emits no IsolationDeny");
+        }
+        if (display_prim) {
+            Evaluator::TenantScope t9(ev, 9);
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            StderrCapture cap;
+            const auto shown = (*display_prim)({err});
+            const auto text = cap.stop();
+            const auto body = flatten(shown);
+            CHECK(text.find(k_secret) == std::string::npos,
+                  "4691: display stderr has no foreign bytes");
+            CHECK(body.find(k_secret) == std::string::npos,
+                  "4691: display result has no foreign bytes");
+            CHECK(body.find("cross-tenant string slot read denied") != std::string::npos,
+                  "4691: display returns the reader deny shape");
+            CHECK(saw_iso(se_base, "display"), "4691: display emits IsolationDeny");
+        }
+        if (recover_prim) {
+            Evaluator::TenantScope t9(ev, 9);
+            const auto code =
+                make_string(static_cast<std::uint64_t>(ev.push_string_heap("code-4691")));
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            const auto recovered = (*recover_prim)({err, code});
+            const auto body = flatten(recovered);
+            CHECK(body.find(k_secret) == std::string::npos,
+                  "4691: agent:recover-from-error has no foreign bytes");
+            CHECK(body.find("cross-tenant string slot read denied") != std::string::npos,
+                  "4691: agent:recover-from-error returns the reader deny shape");
+            CHECK(saw_iso(se_base, "agent:recover-from-error"),
+                  "4691: agent:recover-from-error emits IsolationDeny");
+        }
+        {
+            Evaluator::TenantScope t9(ev, 9);
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            const auto msg = ev.soft_error_message(err);
+            CHECK(msg.find(k_secret) == std::string::npos,
+                  "4691: file-mode cause has no foreign bytes");
+            CHECK(msg.find("cross-tenant string slot read denied") != std::string::npos,
+                  "4691: file-mode returns the reader deny shape");
+            CHECK(saw_iso(se_base, "file-mode"), "4691: file-mode emits IsolationDeny");
+        }
+        cs.set_require_failure_is_diagnostic(true);
+        {
+            Evaluator::TenantScope t7(ev, 7);
+            auto defined = cs.eval("(define secret \"SECRET4691-foreign-cause\")");
+            CHECK(defined.has_value(), "4691: owner define binds the secret");
+        }
+        {
+            Evaluator::TenantScope t9(ev, 9);
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            auto escaped = cs.eval("(error secret)");
+            std::string surfaced;
+            if (!escaped)
+                surfaced = escaped.error().message;
+            else if (is_error(*escaped))
+                surfaced = ev.soft_error_message(*escaped);
+            CHECK(surfaced.find(k_secret) == std::string::npos,
+                  "4691: file-mode eval output has no foreign bytes");
+            CHECK(saw_iso(se_base, "file-mode"), "4691: file-mode eval emits IsolationDeny");
+        }
+        cs.set_require_failure_is_diagnostic(false);
+
+        ev.set_effect_sandbox_mode(0);
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            const auto msg = ev.soft_error_message(err);
+            CHECK(msg.find(k_secret) != std::string::npos,
+                  "4691: Soft/Off still returns the cause");
+            CHECK(ring.seq.load(std::memory_order_acquire) == se_base,
+                  "4691: Soft/Off emits no IsolationDeny");
+        }
+
+        const auto runtime = read_file("src/compiler/evaluator_primitives_runtime.cpp");
+        const auto diag = read_file("src/compiler/evaluator_primitives_diagnostic.cpp");
+        const auto ixx = read_file("src/compiler/evaluator.ixx");
+        const auto note = runtime.find("bool note_displayed_error");
+        const auto note_end = runtime.find("is_end_of_list", note);
+        CHECK(note != std::string::npos && note_end != std::string::npos && note < note_end,
+              "4691: note_displayed_error located");
+        if (note != std::string::npos && note_end > note) {
+            const auto body = runtime.substr(note, note_end - note);
+            const auto gate = body.find("inrange_string_tenant_allows");
+            const auto copy = body.find("copy_string_heap_at");
+            CHECK(gate != std::string::npos && copy != std::string::npos && gate < copy,
+                  "4691: display cause fence is before the byte copy");
+        }
+        const auto soft = ixx.find("std::string soft_error_message");
+        const auto soft_end = ixx.find("error_cause_value", soft);
+        CHECK(soft != std::string::npos && soft_end != std::string::npos && soft < soft_end,
+              "4691: soft_error_message located");
+        if (soft != std::string::npos && soft_end > soft) {
+            const auto body = ixx.substr(soft, soft_end - soft);
+            const auto gate = body.find("inrange_string_tenant_allows");
+            const auto copy = body.find("return string_heap_[sidx]");
+            CHECK(gate != std::string::npos && copy != std::string::npos && gate < copy,
+                  "4691: file-mode cause fence is before the byte copy");
+        }
+        const auto extract = diag.find("auto extract_err_string");
+        const auto extract_end = diag.find("if (a.size() == 1)", extract);
+        CHECK(extract != std::string::npos && extract_end != std::string::npos &&
+                  extract < extract_end,
+              "4691: extract_err_string located");
+        if (extract != std::string::npos && extract_end > extract) {
+            const auto body = diag.substr(extract, extract_end - extract);
+            const auto gate = body.find("inrange_string_tenant_allows");
+            const auto copy = body.find("return ev.string_heap_[si]");
+            CHECK(gate != std::string::npos && copy != std::string::npos && gate < copy,
+                  "4691: recover cause fence is before the byte copy");
+        }
+
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        reset_all();
+    }
+
     reset_all();
     std::println("\n=== test_tenant_isolation_enforcement: {} passed, {} failed ===", g_passed,
                  g_failed);

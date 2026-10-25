@@ -453,20 +453,28 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_result(false, 5, "bad-args", "", make_void());
         }
 
+        // Issue #4691: both arms copy a stamped string. A foreign cause
+        // (or a foreign string argument) sets cause_denied and copies nothing.
+        bool cause_denied = false;
         auto extract_err_string = [&](const EvalValue& v) -> std::string {
-            if (is_string(v)) {
-                auto si = as_string_idx(v);
-                if (si < ev.string_heap_.size())
-                    return ev.string_heap_[si];
-            } else if (is_error(v)) {
+            auto take = [&](std::size_t si) -> std::string {
+                if (si >= ev.string_heap_.size())
+                    return {};
+                if (!ev.inrange_string_tenant_allows(si, /*required_effects=*/0,
+                                                     "agent:recover-from-error")) {
+                    cause_denied = true;
+                    return {};
+                }
+                return ev.string_heap_[si];
+            };
+            if (is_string(v))
+                return take(as_string_idx(v));
+            if (is_error(v)) {
                 auto eidx = types::as_error_idx(v);
                 if (eidx < ev.error_values_.size()) {
                     auto& cause = ev.error_values_[eidx];
-                    if (is_string(cause)) {
-                        auto si = as_string_idx(cause);
-                        if (si < ev.string_heap_.size())
-                            return ev.string_heap_[si];
-                    }
+                    if (is_string(cause))
+                        return take(as_string_idx(cause));
                 }
             }
             return {};
@@ -491,6 +499,13 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
             }
         } else {
             err_msg = extract_err_string(a[0]);
+            if (cause_denied) {
+                ev.note_agent_recovery_result(5, false, false, false);
+                return make_primitive_error(
+                    ev.string_heap_, ev.error_values_,
+                    "agent:recover-from-error: cross-tenant string slot read denied (#4505)",
+                    ev.primitive_error_counter_ptr());
+            }
             if (err_msg.empty() || !is_string(a[1])) {
                 ev.note_agent_recovery_result(5, false, false, false);
                 return make_result(false, 5, "bad-args", "", make_void());
