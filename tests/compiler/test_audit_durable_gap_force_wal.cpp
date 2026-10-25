@@ -734,8 +734,13 @@ int run_test_audit_durable_gap_force_wal() {
                              fs_4686::perms::owner_read | fs_4686::perms::group_read |
                                  fs_4686::perms::others_read,
                              fs_4686::perm_options::replace, ec_4686);
+        // Same root-CI DAC bypass as AC1: the mode alone leaves fopen("ab+")
+        // succeeding under CAP_DAC_OVERRIDE, so drive the segment-open
+        // failure through the deterministic seam and keep the AC uid-agnostic.
+        se_wal_4686::set_security_event_segment_open_fail_for_test(true);
         CHECK(!ev_4686.enable_mutation_audit_wal(dir_4686b.string()),
               "4686 AC4: dev second enable still reports failure");
+        se_wal_4686::set_security_event_segment_open_fail_for_test(false);
         CHECK(ev_4686.mutation_audit_wal_enabled(), "4686 AC4: mutation WAL still enabled in dev");
         CHECK(slo_4686::force_wal_enable_failed() == 0,
               "4686 AC4: Soft failure does not arm the fail-closed posture");
