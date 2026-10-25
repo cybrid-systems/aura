@@ -4,8 +4,8 @@
 ; so every native self-call returned 0 — fib(n>=2) was 0 and the first
 ; hot eval-current mixed native zeros into the result (1974 for fib 22).
 ; Checks fib under rebind at W=0, 10 and 1000 filler defines. Values are
-; identical with the tier off (default) and on (AURA_TIER_JIT=1,
-; plus AURA_TIER_JIT_SYNC=1 for a deterministic compile point).
+; identical with the tier on (default) and off (AURA_TIER_JIT=0;
+; AURA_TIER_JIT_SYNC=1 gives a deterministic compile point).
 (define *fails* 0)
 (define *n* 0)
 (define (check! ok msg)
