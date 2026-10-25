@@ -3,6 +3,7 @@
 
 module;
 
+#include <optional>
 #include "observability_metrics.h"
 #include "rebind_phase_stats.h"              // per-phase rebind timing (opt-in)
 #include "typed_mutation_audit.h"            // Issue #1614 / #2145 invariant audit + hard-gate
@@ -285,6 +286,8 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
         }
         if (!workspace_flat_ || !workspace_pool_)
             return true;
+        std::optional<aura::compiler::phase_stats::Scope> phase_tc_ensure;
+        phase_tc_ensure.emplace(aura::compiler::phase_stats::TcEnsure);
         auto& treg = *static_cast<aura::core::TypeRegistry*>(ensure_type_registry());
         // Issue #2220: long-lived TypeChecker — reuses solve_delta_cs_ / cs_cache_
         // across multi-round Agent mutate (not a cold start each call).
@@ -313,26 +316,59 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
         auto& tc = *tc_ptr;
         // Issue #4397: selective and full post-mutate engines copy this probe.
         tc.set_registered_prim_probe(&prim_name_registered, &primitives_);
+        phase_tc_ensure.reset();
         // Issue #4587: runtime already sees host top_env. Seed those names
         // so the post-mutate check does not call a host helper unbound.
         // Truly free names are not in top_env and stay UnboundVariable.
         {
-            std::vector<std::string> host_names;
-            std::unordered_set<std::string> seen;
-            auto take = [&](const std::string& nm) {
-                if (nm.empty())
-                    return;
-                const char c0 = nm[0];
-                if (c0 == '_' || c0 == '@' || c0 == ':')
-                    return;
-                if (seen.insert(nm).second)
-                    host_names.push_back(nm);
-            };
-            for (const auto& binding : top_.bindings())
-                take(binding.first);
-            for (const auto& binding : top_.bindings_with_names())
-                take(binding.first);
-            tc.set_host_visible_names(std::move(host_names));
+            aura::compiler::phase_stats::Scope phase_tc_host(
+                aura::compiler::phase_stats::TcHostNames);
+            // Issue #4682 (opt): the seeded set depends only on top_'s
+            // binding names. Fingerprint them (no allocation) and skip the
+            // rebuild when this checker already holds the same set. A fresh
+            // checker has fp 0 and always seeds. AURA_TC_HOST_NAMES_REUSE=0
+            // re-seeds every call.
+            static const bool reuse_host_names = [] {
+                const char* e = std::getenv("AURA_TC_HOST_NAMES_REUSE");
+                return !(e && e[0] == '0');
+            }();
+            std::uint64_t host_fp = 0;
+            if (reuse_host_names) {
+                std::uint64_t h = 1469598103934665603ull;
+                auto mix = [&](std::uint64_t x) {
+                    h ^= x + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+                };
+                const auto legacy = top_.bindings();
+                mix(legacy.size());
+                for (const auto& b : legacy)
+                    mix(std::hash<std::string_view>{}(b.first));
+                const auto syms = top_.bindings_symid();
+                mix(syms.size());
+                for (const auto& b : syms)
+                    mix(static_cast<std::uint64_t>(b.first));
+                host_fp = h | 1ull; // never 0
+            }
+            if (reuse_host_names && tc.host_visible_names_fp_4682() == host_fp) {
+                // unchanged: keep the checker's current host-visible names
+            } else {
+                std::vector<std::string> host_names;
+                std::unordered_set<std::string> seen;
+                auto take = [&](const std::string& nm) {
+                    if (nm.empty())
+                        return;
+                    const char c0 = nm[0];
+                    if (c0 == '_' || c0 == '@' || c0 == ':')
+                        return;
+                    if (seen.insert(nm).second)
+                        host_names.push_back(nm);
+                };
+                for (const auto& binding : top_.bindings())
+                    take(binding.first);
+                for (const auto& binding : top_.bindings_with_names())
+                    take(binding.first);
+                tc.set_host_visible_names(std::move(host_names));
+                tc.set_host_visible_names_fp_4682(host_fp);
+            }
         }
         // Issue #3655: mark infer-ran even when fingerprint is 0 (empty
         // live goals). Distinguishes vacuous SOLVED from skipped SDO.
@@ -373,8 +409,11 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
                 }
             }
             // Issue #2516: dirty txn entry (invalidate → re-infer → mirror).
+            std::optional<aura::compiler::phase_stats::Scope> phase_tc_infer;
+            phase_tc_infer.emplace(aura::compiler::phase_stats::TcInfer);
             const auto reinferred = tc.infer_flat_partial_with_dirty_txn(
                 *workspace_flat_, *workspace_pool_, log.back(), diag, nullptr, extra);
+            phase_tc_infer.reset();
             (void)reinferred;
             // Issue #3658: this-boundary type cone is now the IR-cascade
             // authority (do not re-run on Guard persist-front / rebind).

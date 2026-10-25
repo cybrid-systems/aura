@@ -3,6 +3,8 @@
 
 module;
 #include <atomic>
+#include <optional>
+#include <unordered_set>
 #include <bit>
 #include <cstdio>
 #include <cstdlib> // #2988 AURA_MUTATE_INVALIDATE_COARSE
@@ -11362,6 +11364,28 @@ void Evaluator::clear_cascade_bfs_invalidate() noexcept {
     return true;
 }
 
+// Issue #4682: the cascade path2 index only needs Defines whose SymId is
+// one of the looked-up names (a handful), not every Define in the
+// workspace. Same ids, same ascending order per SymId. nullopt = index all
+// (AURA_CASCADE_SYM_FILTER=0).
+template <class Names, class Pool>
+[[nodiscard]] static std::optional<std::unordered_set<aura::ast::SymId>>
+cascade_wanted_syms(const Names& names, Pool& pool) {
+    static const bool on = [] {
+        const char* e = std::getenv("AURA_CASCADE_SYM_FILTER");
+        return !(e && e[0] == '0');
+    }();
+    if (!on)
+        return std::nullopt;
+    std::unordered_set<aura::ast::SymId> out;
+    out.reserve(names.size() * 2 + 1);
+    std::for_each(names.begin(), names.end(), [&](const auto& nm) {
+        if (!nm.empty())
+            out.insert(pool.intern(nm));
+    });
+    return out;
+}
+
 void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_begin,
                                                      bool defer_relower) noexcept {
     aura::compiler::phase_stats::Scope phase_cascade(aura::compiler::phase_stats::Cascade);
@@ -11457,6 +11481,11 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
         }
     }
 
+    // #4682: SymIds the path2 index needs (nullopt: index every Define).
+    const auto wanted = defuse_affected_syms_.empty()
+                            ? std::optional<std::unordered_set<aura::ast::SymId>>{}
+                            : cascade_wanted_syms(defuse_affected_syms_, pool);
+
     // 2) Names already staged by precise mutates (query-and-replace etc.).
     // Issue #2815: note ALL Define nodes with this name (not first-only).
     // Issue #2816: O(N) build of SymId→Define NodeIds once, then O(1)
@@ -11470,14 +11499,12 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
         aura::compiler::phase_stats::Scope phase_cascade_index(
             aura::compiler::phase_stats::CascadeIndex);
         std::unordered_map<aura::ast::SymId, std::vector<aura::ast::NodeId>> define_by_sym;
-        define_by_sym.reserve(std::max<std::size_t>(16, flat.size() / 8));
-        // Issue #4680: seed from the maintained tag index (O(#defines))
-        // instead of an O(N) node scan. AURA_DEFINE_TAG_INDEX=0 restores
-        // the full scan. Ids are re-validated; ascending order is kept.
+        // #4680: seed from the Define tag index (AURA_DEFINE_TAG_INDEX=0: scan).
         static const bool use_tag_index = [] {
             const char* e = std::getenv("AURA_DEFINE_TAG_INDEX");
             return !(e && e[0] == '0');
         }();
+        define_by_sym.reserve(std::max<std::size_t>(16, flat.size() / 8));
         auto add_def = [&](aura::ast::NodeId id) {
             if (id >= flat.size() || flat.is_free_slot(id))
                 return;
@@ -11485,6 +11512,8 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
                 return;
             auto v = flat.get(id);
             if (v.sym_id == aura::ast::INVALID_SYM)
+                return;
+            if (wanted && wanted->count(v.sym_id) == 0)
                 return;
             define_by_sym[v.sym_id].push_back(id);
             ++path2_index_nodes;
@@ -11527,6 +11556,8 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
     // live Define exists (Issue #2817).
     std::uint64_t ghost_name_touches = 0;
     std::uint64_t defuse_bumps_2988 = 0;
+    std::optional<aura::compiler::phase_stats::Scope> phase_cascade_mark;
+    phase_cascade_mark.emplace(aura::compiler::phase_stats::CascadeMark);
     for (const auto& name : affected_names) {
         if (mark_define_dirty_fn_)
             mark_define_dirty_fn_(name);
@@ -11542,6 +11573,8 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
             ++ghost_name_touches;
         }
     }
+
+    phase_cascade_mark.reset();
 
     // Issue #2988: mutate success close-loop — binding_gen + JIT invalidate
     // signal so same-fiber apply_closure / eval-current cannot keep a stale
@@ -11577,6 +11610,8 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
 
     // Per-Define finalize + BFS enqueue (every unique def_id).
     std::uint64_t defines_n = static_cast<std::uint64_t>(affected_defs.size());
+    std::optional<aura::compiler::phase_stats::Scope> phase_cascade_fin;
+    phase_cascade_fin.emplace(aura::compiler::phase_stats::CascadeFinalize);
     for (const auto& [def_id, name] : affected_defs) {
         // Soft path under Guard: mark_dirty_upward + impact_scope.
         // Issue #2812: hard invalidate_function deferred to post-unlock.
@@ -11588,6 +11623,7 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
                 ++coarse_skip_2988;
         }
     }
+    phase_cascade_fin.reset();
     // Name-only (ghost) entries still count so relower may run for cache keys.
     defines_n += ghost_name_touches;
 
@@ -11618,6 +11654,8 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
     // so misconfigured Evaluators are visible (not silent success).
     // defines_n == 0 is a true no-op (nothing affected) — not a skip.
     if (defines_n > 0) {
+        aura::compiler::phase_stats::Scope phase_cascade_relower(
+            aura::compiler::phase_stats::CascadeRelower);
         if (relower_dirty_defines_fn_) {
             // Issue #4357: the light rebind lowers the define and its direct
             // caller once after the guard, into the IR interpreter. The eager

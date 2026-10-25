@@ -25,13 +25,21 @@ enum Phase : unsigned {
     Relower,      // relower_dirty_defines_from_workspace
     Passes,       // run_incremental_dirty_pass_suite_
     EvalCurrent,  // whole eval-current primitive
+    // Issue #4682 (opt): sub-phases (inclusive, nested in their parent).
+    TcEnsure,        // typecheck: ensure_typechecker / TC setup
+    TcHostNames,     // typecheck: host top_env name seeding
+    TcInfer,         // typecheck: infer_flat_partial_with_dirty_txn
+    CascadeMark,     // cascade: per-name mark_define_dirty + defuse_touch
+    CascadeFinalize, // cascade: per-define finalize + BFS enqueue
+    CascadeRelower,  // cascade: eager relower + re-mark
     kCount
 };
 
 inline constexpr const char* kNames[kCount] = {
-    "rebind-prim", "parse",         "typecheck",   "cascade",    "cascade-index",
-    "drain",       "invalidate-fn", "restamp",     "mark-dirty", "pre-audit",
-    "relower",     "passes",        "eval-current"};
+    "rebind-prim", "parse",         "typecheck",        "cascade",        "cascade-index",
+    "drain",       "invalidate-fn", "restamp",          "mark-dirty",     "pre-audit",
+    "relower",     "passes",        "eval-current",     "tc-ensure",      "tc-host-names",
+    "tc-infer",    "cascade-mark",  "cascade-finalize", "cascade-relower"};
 
 inline std::atomic<std::uint64_t> g_ns[kCount]{};
 inline std::atomic<std::uint64_t> g_count[kCount]{};
