@@ -63,6 +63,7 @@
 #include "core/security_event.hh"
 #include "core/security_event_wal.hh"
 #include "core/workspace_epoch.hh"
+#include "core/workspace_isolation.hh"
 #include "core/mutation_audit_wal.hh"
 #include "core/capability_model.hh"
 #include "core/wal_append_fail_slo.h"
@@ -2552,6 +2553,236 @@ static void ac4520_default_retention_bounded_replay() {
     CHECK(read_file("docs/design/4520-wal-default-retention.md").empty(), "4520: no design doc");
 }
 
+// Issue #4695: (1) an enabled SE-WAL append miss during a cross-tenant
+// isolation deny must join as Deny, and the overflow reason must name the
+// denial class. (2) a truncated startup replay must not claim recovery
+// success, the dropped mid must still join via scan-all, and the
+// mutation-WAL → SE rebuild must still run. No new query key.
+static void ac4695_se_wal_miss_class_and_truncated_replay() {
+    std::println("\n--- #4695: overflow deny class + truncated replay honesty ---");
+    using aura::core::security_event::forensic_effect_verdict_for_mid;
+    using aura::core::security_event::ForensicEffectVerdict;
+    using aura::core::security_event::g_security_event_ring;
+    using aura::core::security_event::kSecurityEventRingSize;
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    using aura::core::security_event::SecurityEventKind;
+    using aura::core::security_event_wal::persist_security_event;
+    using aura::core::security_event_wal::snapshot_security_event_wal_stats;
+    namespace fs = std::filesystem;
+
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    const std::string prev_sb_s = prev_sb ? prev_sb : "";
+    const char* prev_fc = std::getenv("AURA_WAL_APPEND_FAIL_CLOSED");
+    const std::string prev_fc_s = prev_fc ? prev_fc : "";
+
+    auto ring_has = [](std::uint64_t mid) {
+        for (const auto& e : g_security_event_ring().ring)
+            if (e.mutation_id == mid)
+                return true;
+        return false;
+    };
+    auto cleanup = [&]() {
+        aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
+            0, std::memory_order_relaxed);
+        aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+        aura::core::security_event_wal::g_security_event_wal().disable();
+        aura::core::audit_wal::g_mutation_audit_wal().disable();
+        if (prev_sb_s.empty())
+            ::unsetenv("AURA_SANDBOX");
+        else
+            ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        if (prev_fc_s.empty())
+            ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+        else
+            ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", prev_fc_s.c_str(), 1);
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        reset_security_event_ring_for_test();
+    };
+
+    // ── AC1: isolation deny + enabled append miss ──────────────────
+    reset_all();
+    aura::core::workspace_isolation::reset_tenant_isolation_for_test();
+    aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+    aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(7);
+    ev.clear_boundary_audit_mid_for_test();
+    ev.note_boundary_audit_mid_for_test(4695001);
+    const auto dir1 = fresh_wal_dir_3603("4695-iso");
+    CHECK(ev.enable_security_event_wal(dir1.string()), "4695 AC1: SE WAL enabled");
+    CHECK(aura::core::wal_slo::wal_append_fail_closed_active(), "4695 AC1: fail-closed active");
+    const auto persisted_before = snapshot_security_event_wal_stats().persisted;
+    aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
+        1, std::memory_order_relaxed);
+    // Caller 7, foreign ref 42: isolation_deny_reason → isolation-deny:ref-tenant=42.
+    CHECK(!ev.check_workspace_isolation(42, 42, aura::compiler::security::kEffectMutate,
+                                        "test:4695-iso"),
+          "4695 AC1: cross-tenant isolation denies");
+    CHECK(snapshot_security_event_wal_stats().persisted == persisted_before,
+          "4695 AC1: deny row did not reach the segment");
+    const auto* ovr = aura::core::security_event_wal::wal_overflow_find_by_mid(4695001);
+    CHECK(ovr != nullptr, "4695 AC1: overflow row joins the isolation mid");
+    CHECK(ovr && ovr->op == "test:4695-iso", "4695 AC1: overflow op stays the event op");
+    CHECK(ovr && ovr->reason.find("isolation-deny") != std::string::npos,
+          "4695 AC1: overflow reason names the denial class");
+    CHECK(ovr && ovr->reason.find("ref-tenant=42") != std::string::npos,
+          "4695 AC1: class names the foreign ref tenant");
+    CHECK(ovr && ovr->reason != "inject_fail", "4695 AC1: mechanical token is not the class");
+    auto durable = aura::core::security_event_wal::g_security_event_wal()
+                       .find_by_mutation_id_scan_all_segments(4695001);
+    CHECK(!durable.has_value(), "4695 AC1: scan-all has no durable row for the miss");
+    // Ring still holds the IsolationDeny. Drop it so the join is the overflow.
+    reset_security_event_ring_for_test();
+    CHECK(forensic_effect_verdict_for_mid(4695001) == ForensicEffectVerdict::Deny,
+          "4695 AC1: overflow join verdict is Deny");
+    auto verd = cs.eval("(hash-ref (engine:metrics \"query:capability-effect-stats\" 4695001) "
+                        "\"last-se-wins-verdict\")");
+    CHECK(verd && is_int(*verd) && as_int(*verd) == 2, "4695 AC1: last-se-wins-verdict Deny(2)");
+    auto deny_n = cs.eval("(hash-ref (engine:metrics \"query:capability-effect-stats\" 4695001) "
+                          "\"se-deny-count\")");
+    CHECK(deny_n && is_int(*deny_n) && as_int(*deny_n) >= 1,
+          "4695 AC1: se-deny-count attributes the class");
+    auto miss = cs.eval("(hash-ref (engine:metrics \"query:capability-effect-stats\" 4695001) "
+                        "\"wal-miss-deny\")");
+    CHECK(miss && is_int(*miss) && as_int(*miss) == 0,
+          "4695 AC1: class reason is not rewritten to mutation_wal_append_miss");
+
+    // Allow + placeholder reasons keep the mechanical token (#3178).
+    aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+    aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
+        1, std::memory_order_relaxed);
+    CHECK(!persist_security_event(SecurityEventKind::EffectAllow, 7, 4695002, 7, 0,
+                                  "test:4695-allow", "isolation-deny:ref-tenant=9",
+                                  /*denied=*/false, 0, now_ms_3603()),
+          "4695 AC1: allow inject still fails the append");
+    const auto* allow_ovr = aura::core::security_event_wal::wal_overflow_find_by_mid(4695002);
+    CHECK(allow_ovr && allow_ovr->reason == "inject_fail",
+          "4695 AC1: allow overflow stays inject_fail");
+    reset_security_event_ring_for_test();
+    CHECK(forensic_effect_verdict_for_mid(4695002) == ForensicEffectVerdict::None,
+          "4695 AC1: allow miss is not a Deny");
+    aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+    aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
+        1, std::memory_order_relaxed);
+    CHECK(!persist_security_event(SecurityEventKind::EffectDeny, 7, 4695003, 7, 0, "test:4695-ph",
+                                  "inject", /*denied=*/true, 0, now_ms_3603()),
+          "4695 AC1: placeholder deny inject fails");
+    const auto* ph = aura::core::security_event_wal::wal_overflow_find_by_mid(4695003);
+    CHECK(ph && ph->reason == "inject_fail", "4695 AC1: placeholder reason stays inject_fail");
+    ev.clear_boundary_audit_mid_for_test();
+    ev.disable_security_event_wal();
+    fs::remove_all(dir1);
+
+    // ── AC2: truncated replay is not a complete recovery ───────────
+    reset_all();
+    reset_security_event_ring_for_test();
+    aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
+        0, std::memory_order_relaxed);
+    const auto dir2 = fresh_wal_dir_3603("4695-trunc");
+    CHECK(ev.enable_mutation_audit_wal(dir2.string()), "4695 AC2: pair WAL enabled");
+    aura::core::audit_wal::AuditWalRecord mrec{};
+    mrec.seq = 1;
+    mrec.tenant_id = 7;
+    mrec.provenance_mutation_id = 4695101;
+    mrec.effect_denied = 1;
+    std::memcpy(mrec.op, "test:4695-fb", sizeof("test:4695-fb"));
+    std::memcpy(mrec.reason, "4695-fallback", sizeof("4695-fallback"));
+    CHECK(aura::core::audit_wal::g_mutation_audit_wal().append(mrec),
+          "4695 AC2: mutation row seeded for the fallback");
+    constexpr std::uint64_t kDropped = 4695200;
+    constexpr std::uint64_t kCount = kSecurityEventRingSize + 2;
+    const auto ts = now_ms_3603();
+    std::uint64_t seeded = 0;
+    for (std::uint64_t i = 0; i < kCount; ++i) {
+        if (persist_security_event(SecurityEventKind::EffectDeny, 7, kDropped + i, 7, 0,
+                                   "test:4695-seed", "4695-seed", /*denied=*/true, 0, ts))
+            ++seeded;
+    }
+    CHECK(seeded == kCount, "4695 AC2: seeded more records than the replay window");
+    ev.disable_mutation_audit_wal();
+    reset_security_event_ring_for_test();
+    const auto recov_before = snapshot_security_event_wal_stats().crash_recovery_success;
+    CHECK(ev.enable_mutation_audit_wal(dir2.string()), "4695 AC2: restart pair WAL");
+    const auto snap = snapshot_security_event_wal_stats();
+    const auto recov_delta = snap.crash_recovery_success - recov_before;
+    const bool claimed_complete = recov_delta > 0 && snap.replay_truncated == 0;
+    CHECK(snap.replay_truncated == 1, "4695 AC2: truncation marker is set");
+    CHECK(recov_delta == 0, "4695 AC2: truncated replay does not stamp recovery success");
+    CHECK(!claimed_complete, "4695 AC2: success and truncation cannot both mean complete");
+    auto dropped = aura::core::security_event_wal::g_security_event_wal()
+                       .find_by_mutation_id_scan_all_segments(kDropped);
+    CHECK(dropped.has_value(), "4695 AC2: dropped mid still joins via scan-all");
+    CHECK(dropped && std::string(dropped->reason) == "4695-seed",
+          "4695 AC2: scan-all keeps the seeded reason");
+    CHECK(ring_has(4695101), "4695 AC2: fallback rebuild put the mutation mid in the ring");
+    bool fallback_reason = false;
+    for (const auto& e : g_security_event_ring().ring) {
+        if (e.mutation_id == 4695101 && std::string(e.reason) == "4695-fallback")
+            fallback_reason = true;
+    }
+    CHECK(fallback_reason, "4695 AC2: fallback kept the mutation reason");
+    CHECK(!ring_has(kDropped + kCount - 1), "4695 AC2: rebuild replaced the truncated hydrate");
+    ev.disable_mutation_audit_wal();
+    fs::remove_all(dir2);
+
+    // ── AC3: a complete nonempty replay still skips the rebuild ────
+    reset_all();
+    reset_security_event_ring_for_test();
+    const auto dir3 = fresh_wal_dir_3603("4695-complete");
+    CHECK(ev.enable_mutation_audit_wal(dir3.string()), "4695 AC3: pair WAL enabled");
+    aura::core::audit_wal::AuditWalRecord skip{};
+    skip.seq = 1;
+    skip.tenant_id = 7;
+    skip.provenance_mutation_id = 4695400;
+    skip.effect_denied = 1;
+    std::memcpy(skip.op, "test:4695-skip", sizeof("test:4695-skip"));
+    std::memcpy(skip.reason, "4695-skip-rebuild", sizeof("4695-skip-rebuild"));
+    CHECK(aura::core::audit_wal::g_mutation_audit_wal().append(skip),
+          "4695 AC3: mutation row that the rebuild must not copy");
+    std::uint64_t full_seeded = 0;
+    for (std::uint64_t i = 0; i < 3; ++i) {
+        if (persist_security_event(SecurityEventKind::EffectAllow, 7, 4695300 + i, 7, 0,
+                                   "test:4695-full", "4695-full", /*denied=*/false, 0, ts))
+            ++full_seeded;
+    }
+    CHECK(full_seeded == 3, "4695 AC3: complete sidecar persisted");
+    ev.disable_mutation_audit_wal();
+    reset_security_event_ring_for_test();
+    const auto recov_full_before = snapshot_security_event_wal_stats().crash_recovery_success;
+    CHECK(ev.enable_mutation_audit_wal(dir3.string()), "4695 AC3: restart complete sidecar");
+    const auto full = snapshot_security_event_wal_stats();
+    CHECK(full.replay_truncated == 0, "4695 AC3: complete window is not truncated");
+    CHECK(full.crash_recovery_success == recov_full_before + 1,
+          "4695 AC3: complete nonempty replay stamps recovery success once");
+    CHECK(ring_has(4695302), "4695 AC3: hydrated sidecar row stays in the ring");
+    CHECK(!ring_has(4695400), "4695 AC3: complete replay skips the mutation-WAL rebuild");
+    ev.disable_mutation_audit_wal();
+    ev.clear_boundary_audit_mid_for_test();
+    fs::remove_all(dir3);
+
+    const auto sew = read_file("src/core/security_event_wal.hh");
+    CHECK(sew.find("replayed_nonempty && !replay_truncated") != std::string::npos,
+          "4695: recovery stamp requires a complete window");
+    CHECK(sew.find("se_wal_reason_names_deny_class") != std::string::npos,
+          "4695: deny class rides the existing overflow reason");
+    const auto evs = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(evs.find("sidecar_replayed_nonempty && !se_wal_replay_truncated") != std::string::npos,
+          "4695: truncated sidecar still runs the rebuild");
+    CHECK(read_file("src/compiler/evaluator_primitives_security.cpp").find("schema-4695") ==
+              std::string::npos,
+          "4695: no new query key");
+    CHECK(read_file("tests/core/test_issue_4695.cpp").empty(), "4695: no test_issue_4695.cpp");
+    CHECK(read_file("docs/design/4695-se-wal-miss-class.md").empty(), "4695: no design doc");
+    cleanup();
+}
+
 int run_test_audit_replay_join() {
     std::println("=== Issue #3143: typed_mid SSOT + audit-replay-join query surface ===");
     ac1_typedmid_first_stamp_order();
@@ -2588,6 +2819,7 @@ int run_test_audit_replay_join() {
     ac4508_overflow_fill_keeps_op();
     ac4445_hydrate_keeps_wal_seq();
     ac4520_default_retention_bounded_replay();
+    ac4695_se_wal_miss_class_and_truncated_replay();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

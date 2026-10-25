@@ -1416,14 +1416,20 @@ bool Evaluator::enable_mutation_audit_wal(std::string_view persist_dir) noexcept
             ::aura::core::wal_slo::arm_force_wal_enable_fail();
         return false;
     }
-    const auto se_recov_after =
-        ::aura::core::security_event_wal::snapshot_security_event_wal_stats()
-            .crash_recovery_success;
-    const bool sidecar_replayed_nonempty = se_recov_after > se_recov_before;
-    if (sidecar_replayed_nonempty)
+    const auto se_after = ::aura::core::security_event_wal::snapshot_security_event_wal_stats();
+    const bool sidecar_replayed_nonempty = se_after.crash_recovery_success > se_recov_before;
+    // Issue #4695: truncation is this enable's stored marker (enable always
+    // writes 0 or 1 when it replays). A truncated nonempty sidecar must not
+    // skip the rebuild — mids the window dropped are still on disk, and the
+    // mutation-WAL fallback backfills the ring. A complete nonempty replay
+    // still returns here (#2225/#3465). Enable failure already returned
+    // above (#4686) and did not stamp success.
+    const bool se_wal_replay_truncated = se_after.replay_truncated != 0;
+    if (sidecar_replayed_nonempty && !se_wal_replay_truncated)
         return true;
-    // Issue #4686: the empty-sidecar rebuild arm is only reachable when the
-    // sidecar actually opened (se_ok) and replayed nothing.
+    // Issue #4686: the rebuild arm is only reachable when the sidecar
+    // actually opened (se_ok). Issue #4695: it also runs when the startup
+    // window was truncated, not only when the sidecar replayed nothing.
     // Issue #3465: fallback rebuild. Never invent mid from seq/1; skip
     // mid==0. Stored reason if the tail is present, else wal-replay-legacy.
     {

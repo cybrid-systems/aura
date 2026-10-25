@@ -840,9 +840,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 // ring-only with zero extra I/O (AC2, one is_enabled()
                 // load max). Count truth: one durable row found for the
                 // mid; deny truth: rec->denied, and overflow rows join as
-                // denies only for the #3879 mutation_wal_append_miss
-                // stamp (their schema has no kind/denied fields —
-                // security-audit's overflow fill behaves the same).
+                // denies for the #3879 mutation_wal_append_miss stamp or a
+                // #4695 denial-class reason (no kind/denied field on the
+                // overflow row). No new query key.
                 const bool se_join_durable =
                     ::aura::compiler::typed_audit::production_hard_face_active();
                 if (se_count == 0 && se_join_durable) {
@@ -865,7 +865,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                                 ::aura::core::security_event_wal::wal_overflow_find_by_mid(mid)) {
                             se_count = 1; // overflow join (#3109/#3780)
                             if (ovr->reason ==
-                                ::aura::core::security_event::kMutationWalAppendMissReason)
+                                    ::aura::core::security_event::kMutationWalAppendMissReason ||
+                                ::aura::core::security_event_wal::se_wal_reason_names_deny_class(
+                                    ovr->reason))
                                 ++se_deny_count;
                         }
                     }
