@@ -368,6 +368,33 @@ std::uint64_t eventfd_wake_force_safepoint_total_v_read() noexcept;
 // Called from fiber.cpp safepoint wait path (where the per-GC counter
 // is also bumped, on > 1ms waits).
 void record_safepoint_blocked_by_long_mutation_us(std::int64_t us) noexcept;
+
+// -- Issue #4698: spawn a fiber whose pending body closure is pinned ---
+//
+// The fiber body closure is a tree-walker temporary: fiber:spawn drops it
+// when the spawn returns, so nothing roots it. The tree-walker reclaim
+// (Evaluator::maybe_reclaim_tw_unreachable - the #4459 / #4474 safepoint)
+// can then erase it before the worker thread applies it: apply_closure
+// returns nullopt, the body never runs and fiber:join returns void
+// (silent result loss - 7 of 8 spawned fibers lost their results under
+// aura --serve-async).
+//
+// This helper pins the pending body through the evaluator's own
+// pinned-closure watermark (the same mechanism the CLI thread backend
+// uses since #4697):
+//
+//   * the pin is taken BEFORE the fiber exists - the scheduler may run
+//     the body on a worker concurrently, so the pin has to be in place
+//     first, and
+//   * the pin is released once the body has been applied - the closure is
+//     not needed after that.
+//
+// evaluator: the session Evaluator that owns the pending body closure
+// (nullptr disables the pin). body: the fiber body. worker_id: the
+// worker affinity. Returns the new fiber id, or 0 when the fiber was not
+// created.
+std::int64_t spawn_with_pinned_body(Scheduler& sched, void* evaluator, Fiber::Func body,
+                                    int worker_id, size_t stack_size = 2 * 1024 * 1024);
 } // namespace aura::serve
 
 #endif // AURA_SERVE_SCHEDULER_H

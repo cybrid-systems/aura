@@ -411,6 +411,40 @@ Fiber* Scheduler::spawn_with_affinity(Fiber::Func func, int worker_id, size_t st
     return ptr;
 }
 
+// Issue #4698: spawn a fiber whose pending body closure is pinned against
+// the tree-walker reclaim until the body has been applied. See the
+// declaration in scheduler.h for the contract.
+std::int64_t spawn_with_pinned_body(Scheduler& sched, void* evaluator, Fiber::Func body,
+                                    int worker_id, size_t stack_size) {
+    // The pin has to be in place BEFORE the fiber exists: the scheduler
+    // may run the body on a worker concurrently, and the body closure is a
+    // tree-walker temporary that fiber:spawn drops on return.
+    if (evaluator)
+        aura_fiber_root_pending_body_latest(evaluator);
+    auto* fiber = sched.spawn_with_affinity(
+        [body = std::move(body), evaluator]() mutable {
+            // Release the pin once the body has been applied: the closure
+            // is not needed any more. The guard also releases on the error
+            // path.
+            struct PendingBodyPinRelease {
+                void* evaluator;
+                ~PendingBodyPinRelease() {
+                    if (evaluator)
+                        aura_fiber_release_pending_body_latest(evaluator);
+                }
+            } pin_release{evaluator};
+            body();
+        },
+        worker_id, stack_size);
+    if (!fiber) {
+        // The fiber was never created: drop the pin now (no body will run).
+        if (evaluator)
+            aura_fiber_release_pending_body_latest(evaluator);
+        return 0;
+    }
+    return static_cast<std::int64_t>(fiber->id());
+}
+
 // ── stop ─────────────────────────────────────────────
 
 void Scheduler::stop() {

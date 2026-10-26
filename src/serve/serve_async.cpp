@@ -67,6 +67,23 @@ static std::string fmt_val(const EvalValue& v, aura::compiler::CompilerService& 
         &cs.evaluator().primitives(), cs.evaluator().keyword_table(), cs.evaluator().vector_heap());
 }
 
+namespace {
+
+    // Issue #4698: the session Evaluator that owns the pending fiber body
+    // closure. The fiber:spawn primitive evaluates the body closure on the
+    // session Evaluator, so the pending-body pin (the tree-walker reclaim
+    // protection) has to go on THAT evaluator - the watermark it raises is
+    // per-evaluator state.
+    void* current_session_evaluator() noexcept {
+        auto* svc = static_cast<aura::compiler::CompilerService*>(
+            aura::messaging::g_current_compiler_service);
+        if (!svc)
+            return nullptr;
+        return static_cast<void*>(&svc->evaluator());
+    }
+
+} // namespace
+
 // ── In-process libcurl (Issue #473 §8) ────────────────────────────
 //
 // The async HTTP handler used to fork+exec curl with the auth token in
@@ -480,8 +497,15 @@ void run_serve_async(int num_workers) {
                 aff = 0;
             }
         }
-        auto* f = sched.spawn_with_affinity(std::move(fn), aff);
-        return static_cast<int64_t>(f ? f->id() : 0);
+        // Issue #4698: the pending body closure is a tree-walker temporary
+        // that fiber:spawn drops on return; without the pin the
+        // tree-walker reclaim erases it before the worker applies it (the
+        // body never runs and fiber:join returns void - 7 of 8 spawned
+        // fibers lost their results under aura --serve-async).
+        // spawn_with_pinned_body takes the pin BEFORE the fiber exists
+        // and releases it once the body has been applied.
+        return aura::serve::spawn_with_pinned_body(sched, current_session_evaluator(),
+                                                   std::move(fn), aff);
     };
 
     // Issue #119: register fiber-by-id lookup so the evaluator
@@ -1392,8 +1416,15 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
                 aff = 0;
             }
         }
-        auto* f = sched.spawn_with_affinity(std::move(fn), aff);
-        return static_cast<int64_t>(f ? f->id() : 0);
+        // Issue #4698: the pending body closure is a tree-walker temporary
+        // that fiber:spawn drops on return; without the pin the
+        // tree-walker reclaim erases it before the worker applies it (the
+        // body never runs and fiber:join returns void - 7 of 8 spawned
+        // fibers lost their results under aura --serve-async).
+        // spawn_with_pinned_body takes the pin BEFORE the fiber exists
+        // and releases it once the body has been applied.
+        return aura::serve::spawn_with_pinned_body(sched, current_session_evaluator(),
+                                                   std::move(fn), aff);
     };
 
     // Issue #119: register fiber-by-id lookup (see comment in
@@ -1556,6 +1587,10 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
                 remaining.erase(0, end);
 
                 if (!expr.empty()) {
+                    // Issue #4698: the fiber body closure belongs to the
+                    // bench session Evaluator; the pending-body pin
+                    // resolves it through g_current_compiler_service.
+                    aura::messaging::g_current_compiler_service = &sess->service;
                     auto result = sess->service.eval(expr);
                     if (!result) {
                         std::print(std::cerr, "eval error on expr (len={}): {}\n  msg: {}\n",
