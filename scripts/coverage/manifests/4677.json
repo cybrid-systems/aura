@@ -14,9 +14,11 @@
       "ac": "AC2-min-of-5",
       "path": "tests/suite/interp_baseline_4599.aura",
       "contains": [
-        "(define (best5 th)",
-        "(define (min5 a b c d e)",
-        "(min5 a b c d e)"
+        "(define (sample-f1-phase iters)",
+        "(define (sample-g-phase iters)",
+        "(if (< i 5)",
+        "(sample-f1-pair iters) (loop (+ i 1))",
+        "(sample-g-pair iters) (loop (+ i 1))"
       ]
     },
     {
@@ -25,10 +27,10 @@
       "contains": [
         "(define (run-f1-ctl iters)",
         "(define (run-g-ctl iters)",
-        "(define c-small (best5 (lambda () (run-f1-ctl n))))",
-        "(define cg-small (best5 (lambda () (run-g-ctl n))))",
-        "(set! c-big (best5 (lambda () (run-f1-ctl n))))",
-        "(set! cg-big (best5 (lambda () (run-g-ctl n))))"
+        "(define c-small *fc*)",
+        "(define cg-small *gc*)",
+        "(set! c-big *fc*)",
+        "(set! cg-big *gc*)"
       ]
     },
     {

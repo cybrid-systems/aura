@@ -19,6 +19,19 @@
 ; moves the normalized ratio, so the guard keeps its teeth. The C++ twin of
 ; this guard (test_pmr_alloc_fiber_safe.cpp AC5) passed on the same CI run
 ; that failed this suite.
+; Issue #4703: PAIRED sampling. The four arms used to be sampled in four
+; separate best-of-5 blocks, so a target and its own control could land
+; minutes apart in the worst case, and one CI stall could inflate one arm
+; without touching the other. On CI run 40244789089 the g target read
+; 157 ms while its OWN control read 85 ms in the same round - and the f1
+; arms and both controls all got FASTER - so the phase ratio moved 2.10x
+; and crossed the 2.08 bound with no change in the interpreter (the C++
+; twin of this property, test_pmr_alloc_fiber_safe.cpp AC5, passed in
+; that same run at 1.01x). Each sample now measures a target and its
+; control BACK TO BACK, and the phase keeps the quietest PAIR (the
+; smallest target+control total), so a stall hits both arms of a pair or
+; neither and cancels in the pair ratio; a real define-count regression
+; slows EVERY pair, so the ratio still moves and the bound still bites.
 (define *fails* 0)
 (define *passes* 0)
 (define (check name got want)
@@ -76,16 +89,62 @@
   (let ((lg (lambda (x) (let ((r 1)) r))))
     (let loop ((i 0))
       (if (< i iters) (begin (lg 1) (loop (+ i 1))) 0))))
-(define (min2 a b) (if (< a b) a b))
-(define (min5 a b c d e) (min2 (min2 a b) (min2 c (min2 d e))))
-; Issue #4677: min of 5 samples - one contention spike cannot set the number.
-(define (best5 th)
-  (let ((a (time-ms th)))
-    (let ((b (time-ms th)))
-      (let ((c (time-ms th)))
-        (let ((d (time-ms th)))
-          (let ((e (time-ms th)))
-            (min5 a b c d e)))))))
+; Issue #4703: the quietest PAIR seen so far, per arm, and its total. A
+; sample is a (target, control) pair measured back to back; the pair with
+; the smallest target+control total comes from the quietest moment, so a
+; stall that hits only one arm of a pair cannot be the pair we keep.
+(define *ft* 0)
+(define *fc* 0)
+(define *fsum* 0)
+(define *gt* 0)
+(define *gc* 0)
+(define *gsum* 0)
+(define (keep-f1-pair t c)
+  (if (< (+ t c) *fsum*)
+      (begin (set! *ft* t) (set! *fc* c) (set! *fsum* (+ t c)))
+      0)
+  0)
+(define (keep-g-pair t c)
+  (if (< (+ t c) *gsum*)
+      (begin (set! *gt* t) (set! *gc* c) (set! *gsum* (+ t c)))
+      0)
+  0)
+(define (reset-f1-pair)
+  (set! *ft* 0)
+  (set! *fc* 0)
+  (set! *fsum* 1000000000)
+  0)
+(define (reset-g-pair)
+  (set! *gt* 0)
+  (set! *gc* 0)
+  (set! *gsum* 1000000000)
+  0)
+; One paired sample: the target, then its own control, back to back.
+(define (sample-f1-pair iters)
+  (let ((t (time-ms (lambda () (run-f1 iters)))))
+    (let ((c (time-ms (lambda () (run-f1-ctl iters)))))
+      (keep-f1-pair t c)
+      0)))
+(define (sample-g-pair iters)
+  (let ((t (time-ms (lambda () (run-g iters)))))
+    (let ((c (time-ms (lambda () (run-g-ctl iters)))))
+      (keep-g-pair t c)
+      0)))
+; Five paired samples per arm; the quietest pair wins - the same
+; min-of-5 discipline as before, but the two arms of a sample are
+; adjacent in time instead of in two separate blocks.
+(define (sample-f1-phase iters)
+  (reset-f1-pair)
+  (let loop ((i 0))
+    (if (< i 5)
+        (begin (sample-f1-pair iters) (loop (+ i 1)))
+        0)))
+(define (sample-g-phase iters)
+  (reset-g-pair)
+  (let loop ((i 0))
+    (if (< i 5)
+        (begin (sample-g-pair iters) (loop (+ i 1)))
+        0)))
 
 (define n 20000)
 (let pick ((cur 20000))
@@ -94,10 +153,12 @@
         (set! n cur)
         (pick (* cur 2)))))
 
-(define t-small (best5 (lambda () (run-f1 n))))
-(define tg-small (best5 (lambda () (run-g n))))
-(define c-small (best5 (lambda () (run-f1-ctl n))))
-(define cg-small (best5 (lambda () (run-g-ctl n))))
+(sample-f1-phase n)
+(sample-g-phase n)
+(define t-small *ft*)
+(define c-small *fc*)
+(define tg-small *gt*)
+(define cg-small *gc*)
 
 (define (one-def k)
   (string-append "(define (p4599x" (number->string k) " x) (+ x " (number->string k) "))"))
@@ -133,10 +194,12 @@
 (define (measure-round)
   (run-f1 n)
   (run-g n)
-  (set! t-big (best5 (lambda () (run-f1 n))))
-  (set! tg-big (best5 (lambda () (run-g n))))
-  (set! c-big (best5 (lambda () (run-f1-ctl n))))
-  (set! cg-big (best5 (lambda () (run-g-ctl n))))
+  (sample-f1-phase n)
+  (sample-g-phase n)
+  (set! t-big *ft*)
+  (set! c-big *fc*)
+  (set! tg-big *gt*)
+  (set! cg-big *gc*)
   0)
 (define (f-round-ok?) (<= (* t-big c-small 100) (* 123 t-small c-big)))
 (define (g-round-ok?) (<= (* tg-big cg-small 100) (* 208 tg-small cg-big)))

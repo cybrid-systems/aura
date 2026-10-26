@@ -1,0 +1,66 @@
+{
+  "issue": 4703,
+  "title": "the interp_baseline_4599.aura define-count ratio guard sampled the four arms in four separate best-of-5 blocks, so a target and its own control could land minutes apart and one CI stall inflated one arm alone (CI 40244789089: g target 157 ms vs its own control 85 ms)",
+  "checks": [
+    {
+      "ac": "AC1-paired-sampling",
+      "path": "tests/suite/interp_baseline_4599.aura",
+      "contains": [
+        "(define (sample-f1-pair iters)",
+        "(define (sample-g-pair iters)",
+        "(let ((t (time-ms (lambda () (run-f1 iters)))))",
+        "(let ((c (time-ms (lambda () (run-f1-ctl iters)))))",
+        "(let ((t (time-ms (lambda () (run-g iters)))))",
+        "(let ((c (time-ms (lambda () (run-g-ctl iters)))))"
+      ]
+    },
+    {
+      "ac": "AC2-quietest-pair",
+      "path": "tests/suite/interp_baseline_4599.aura",
+      "contains": [
+        "(define (keep-f1-pair t c)",
+        "(define (keep-g-pair t c)",
+        "(if (< (+ t c) *fsum*)",
+        "(if (< (+ t c) *gsum*)",
+        "(define (reset-f1-pair)",
+        "(define (reset-g-pair)"
+      ]
+    },
+    {
+      "ac": "AC3-both-phases-paired",
+      "path": "tests/suite/interp_baseline_4599.aura",
+      "contains": [
+        "(sample-f1-phase n)",
+        "(sample-g-phase n)",
+        "(define t-small *ft*)",
+        "(define tg-small *gt*)",
+        "(set! t-big *ft*)",
+        "(set! tg-big *gt*)"
+      ]
+    },
+    {
+      "ac": "AC4-bounds-unchanged",
+      "path": "tests/suite/interp_baseline_4599.aura",
+      "contains": [
+        "(define (f-round-ok?) (<= (* t-big c-small 100) (* 123 t-small c-big)))",
+        "(define (g-round-ok?) (<= (* tg-big cg-small 100) (* 208 tg-small cg-big)))"
+      ]
+    },
+    {
+      "ac": "AC5-expect-and-tally",
+      "path": "tests/suite/interp_baseline_4599.aura",
+      "contains": [
+        ";; expect: OK-4599 f1 stays within 1.2x as defines grow",
+        "(= *passes* 11)"
+      ]
+    },
+    {
+      "ac": "AC-no-issue-dir",
+      "forbid": [
+        "tests/issues/test_issue_4703.cpp",
+        "tests/compiler/test_issue_4703.cpp",
+        "docs/design/4703-interp-baseline-paired-sampling.md"
+      ]
+    }
+  ]
+}
