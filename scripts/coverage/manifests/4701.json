@@ -1,0 +1,46 @@
+{
+  "issue": 4701,
+  "title": "Issue #4701: an immediately-applied lambda returning a closure lost the captured parameter (unbound variable: j).",
+  "ok": "OK: Issue #4701 immediately-applied lambda closure capture - all 4 AC contract rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "Issue #4701: the inline-lambda call frame MUST carry the",
+        "tail_env->set_pool(p)",
+        "tail_env->bind_symid(pspan[i]",
+        "tail_env->bind_symid(pspan.back()"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_env_lookup_soa_shadow_reverse.cpp",
+      "contains": [
+        "#4701 AC7: inline lambda captures its parameter",
+        "AC7: captured parameter reads 3 (pre-fix: unbound variable: j)",
+        "(((lambda (j) (lambda () j)) 3))"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_env_lookup_soa_shadow_reverse.cpp",
+      "contains": [
+        "#4701 AC8: define-form parity",
+        "AC8: define form reads captured 3",
+        "#4701 AC9: no dual-path desync for the capture frame",
+        "AC9: capture frame stays dual-path consistent",
+        "get_envframe_desync_detected"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_env_lookup_soa_shadow_reverse.cpp",
+      "contains": [
+        "#4701 AC10: source-cite inline-lambda call frame",
+        "AC10: inline-lambda frame sets the pool before the binds",
+        "AC10: inline-lambda frame binds params via bind_symid"
+      ]
+    }
+  ]
+}
