@@ -4395,6 +4395,58 @@ def test_workspace_inline_callback_4626():
     print("  \u2705 test_workspace_inline_callback_4626 (inline map/filter callbacks in a workspace define)")
 
 
+def test_exit_quiesce_4705():
+    """Issue #4705: (exit N) must not leave a JIT worker running at teardown.
+
+    The `exit` primitive ended the process with std::exit(), which does NOT
+    unwind the stack: the owning CompilerService was never destroyed, so the
+    tier-JIT worker (#4682, default-on) was never joined. That worker kept
+    running LLVM codegen while the exit phase tore LLVM's global state down,
+    and both freed the same bucket array -> "double free or corruption (out)"
+    (SIGABRT) on the worker thread, or a SIGSEGV at a bogus IP once the
+    freed memory was reused. Reproduced 49/80 runs of
+    tests/suite/set_code_module_bind_2868.aura on a release build.
+
+    The fix quiesces the background workers BEFORE std::exit(): the service
+    installs an exit-quiesce hook on its Evaluator, the `exit` primitive
+    calls it, and the hook stop+joins the tier worker (join() waits for an
+    in-flight compile to finish, so nothing is still inside LLVM afterwards).
+
+    The runtime rows re-run the issue's own program and assert the process
+    never printed the crash banner and never died by signal. The source
+    cites pin the fix's shape so this guard cannot pass vacuously.
+    """
+    suite = REPO / "tests" / "suite" / "set_code_module_bind_2868.aura"
+    assert suite.exists(), f"missing {suite}"
+    env = os.environ.copy()
+    env["AURA_SANDBOX"] = "off"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env["AURA_TIER_JIT"] = "1"
+    env.pop("AURA_SOFT", None)
+    env.pop("AURA_FORCE_IR", None)
+    # The tier worker only engages when a closure body is queued for native
+    # compilation, which this program does (leaf_a/leaf_b). Run it enough
+    # times that a per-run race would be overwhelmingly likely to show.
+    for _ in range(40):
+        r = subprocess.run([AURA, str(suite)], capture_output=True, text=True, timeout=120, env=env)
+        out = r.stdout or ""
+        err = r.stderr or ""
+        assert "AURA CRASH" not in out and "AURA CRASH" not in err, (
+            f"#4705: crash at exit while a JIT worker was still running: {err[-400:]!r}"
+        )
+        assert r.returncode < 128, f"#4705: process died by signal {128 - r.returncode} at exit: {err[-400:]!r}"
+    # Source cite: the exit primitive must quiesce the workers before the
+    # process teardown starts (std::exit skips all destructors).
+    rt = (REPO / "src/compiler/evaluator_primitives_runtime.cpp").read_text(encoding="utf-8")
+    q = rt.find("quiesce_before_exit();")
+    x = rt.find("std::exit(code);")
+    assert q != -1 and x != -1, "#4705: exit primitive lost the quiesce call"
+    assert q < x, "#4705: the exit primitive must quiesce BEFORE std::exit"
+    svc = (REPO / "src/compiler/service.ixx").read_text(encoding="utf-8")
+    assert "set_exit_quiesce_hook" in svc, "#4705: the service no longer installs an exit-quiesce hook"
+    assert "stop_and_join" in svc, "#4705: the tier worker no longer has a joinable stop"
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -4451,6 +4503,7 @@ for tf in [
     test_aot_assoc_matches_evaluator_4640,
     test_file_mode_equal_fresh_list_corruption_4627,
     test_file_mode_pair_list_corruption_4629,
+    test_exit_quiesce_4705,
 ]:
     try:
         tf()

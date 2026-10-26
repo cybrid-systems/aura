@@ -569,6 +569,13 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         std::fflush(stdout);
         std::fflush(stderr);
+        // Issue #4705: std::exit() does NOT unwind the stack, so the
+        // owning CompilerService is never destroyed and its background
+        // workers are never joined. The tier-JIT worker would keep
+        // running LLVM codegen while the exit phase tears LLVM's global
+        // state down -> double free / SIGSEGV on the worker thread.
+        // Stop+join the workers BEFORE the exit phase starts.
+        ev.quiesce_before_exit();
         std::exit(code);
     });
 

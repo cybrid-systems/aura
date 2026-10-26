@@ -9290,8 +9290,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             // #4679: index last local cell per name once (was an
                             // O(W*bindings) scan).
                             constexpr std::size_t kLetrecIndexMin = 16;
-                            const bool use_index =
-                                letrec_defs.size() >= kLetrecIndexMin;
+                            const bool use_index = letrec_defs.size() >= kLetrecIndexMin;
                             std::unordered_map<std::string, std::size_t> last_cell;
                             if (use_index) {
                                 const auto& bs = mutable_env.bindings();
@@ -9404,9 +9403,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             // Rebinds dirty their own subtree (and cascaded
                             // callers), so those still rebuild.
 
-                            if (&eval_env == &top_ &&
-                                !f->has_dirty_subtree(d.second) && cell_ids[i] < cells_.size() &&
-                                is_closure(cells_[cell_ids[i]])) {
+                            if (&eval_env == &top_ && !f->has_dirty_subtree(d.second) &&
+                                cell_ids[i] < cells_.size() && is_closure(cells_[cell_ids[i]])) {
                                 const auto rcid = as_closure_id(cells_[cell_ids[i]]);
                                 const auto dch = f->children(d.second);
                                 const auto want_body = dch.empty() ? aura::ast::NULL_NODE : dch[0];
