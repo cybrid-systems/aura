@@ -128,6 +128,7 @@ import aura.compiler.type_checker;        // Issue #2608: maybe_persist_occurren
 import aura.compiler.optimization_passes; // Issue #2674: layered evidence-coherence
 
 #include "compiler/mutation_guard_helpers.hh" // Issue #3122: structured abort result
+#include "match_scan_bound.h"
 
 // Issue #2724 / #2754 counters + regions_disjoint (+ cone mask-AND) live
 // in mutation_hold_budget.h (shared with query:mutation-boundary-hold-stats).
@@ -2424,7 +2425,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     !(workspace_flat_ &&
                       workspace_flat_->mutation_log_size() > cp.mutation_log_size);
                 if (workspace_flat_ && !heap_slot_quiet_4346) {
-                    const auto n = workspace_flat_->size();
+                    const auto n = match_scan_bound(*workspace_flat_);
                     for (aura::ast::NodeId id = 0; id < n; ++id) {
                         if (workspace_flat_->has_match_info(id)) {
                             match_sites = true;

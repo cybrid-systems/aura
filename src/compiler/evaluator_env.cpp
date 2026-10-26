@@ -704,12 +704,24 @@ void Env::set_pool(const aura::ast::StringPool* p) {
                 for (std::size_t i = 0; i < rekeyed.size(); ++i)
                     memo->syms[i] = rekeyed[i].first;
             }
+            // Same SymIds in the same order (memo hit across an epoch bump)
+            // leave the SymId -> index map exactly as it would be rebuilt.
+            static const bool index_reuse_on = [] {
+                const char* e = std::getenv("AURA_SYMID_INDEX_REUSE");
+                return !(e && e[0] == '0');
+            }();
+            bool same_keys =
+                index_reuse_on && !symid_index_.empty() && bindings_symid_.size() == rekeyed.size();
+            for (std::size_t i = 0; same_keys && i < rekeyed.size(); ++i)
+                same_keys = bindings_symid_[i].first == rekeyed[i].first;
             bindings_symid_ = std::move(rekeyed);
-            // Issue #4343: SymIds remapped — rebuild the O(1) index.
-            symid_index_.clear();
-            symid_index_.reserve(bindings_symid_.size()); // #4682 B: no rehash churn
-            for (std::size_t i = 0; i < bindings_symid_.size(); ++i)
-                symid_index_[bindings_symid_[i].first] = i;
+            if (!same_keys) {
+                // Issue #4343: SymIds remapped — rebuild the O(1) index.
+                symid_index_.clear();
+                symid_index_.reserve(bindings_symid_.size()); // #4682 B: no rehash churn
+                for (std::size_t i = 0; i < bindings_symid_.size(); ++i)
+                    symid_index_[bindings_symid_[i].first] = i;
+            }
             bindings_linear_ownership_state_.assign(bindings_symid_.size(), linear_rt::Untracked);
         } else if (pool_ && !bindings_symid_.empty()) {
             // SymId-only capture frame: resolve names via the previous pool.

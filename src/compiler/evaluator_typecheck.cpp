@@ -15,6 +15,7 @@ module;
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "linear_occurrence_mutate_stats.h" // Issue #2144 / #747
 #include "ownership_escape_lowering_gate.h" // Issue #2309: aura_escape_move_gate_clear + rollback counter
+#include "match_scan_bound.h"
 
 module aura.compiler.evaluator;
 
@@ -839,7 +840,7 @@ bool Evaluator::hard_block_cross_batch_linear_escape(
             // like a linear ownership op (full-workspace dirty set).
             using aura::ast::NodeTag;
             for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
-                const auto tag = flat->get(id).tag;
+                const auto tag = flat->tag(id);
                 if (tag == NodeTag::Move || tag == NodeTag::Borrow || tag == NodeTag::MutBorrow ||
                     tag == NodeTag::Drop) {
                     aura::compiler::discover_linear_bindings_in_subtree(*flat, *pool, id, dirty);
@@ -2640,7 +2641,7 @@ bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear
     // must not under-sample ADT self-mod), mirror linear_ops_present.
     bool match_sites = false;
     if (workspace_flat_) {
-        const auto n = workspace_flat_->size();
+        const auto n = match_scan_bound(*workspace_flat_);
         for (aura::ast::NodeId id = 0; id < n; ++id) {
             if (workspace_flat_->has_match_info(id)) {
                 match_sites = true;
