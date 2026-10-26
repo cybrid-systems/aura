@@ -623,6 +623,19 @@ void WorkerThread::run() {
         while (iter < MAX_ITER_PER_ROUND) {
             Fiber* fiber = local_queue_.pop();
             if (!fiber) {
+                // Issue #4699: a fiber that yielded waits in the FIFO
+                // ready queue (ready_fifo_). The Chase-Lev deque is LIFO
+                // for the owner thread, so a yielded fiber used to be
+                // re-pushed at the near end and popped again immediately
+                // (run-to-completion). The FIFO is drained only after the
+                // local deque is empty: a fiber that has never run yet
+                // gets its first turn before a yielded fiber resumes.
+                if (!ready_fifo_.empty()) {
+                    fiber = ready_fifo_.front();
+                    ready_fifo_.pop_front();
+                }
+            }
+            if (!fiber) {
                 // A remote enqueue may have raced in after Phase 0.
                 if (drain_injections())
                     continue;
@@ -702,8 +715,14 @@ void WorkerThread::run() {
                     my_metrics->fibers_waiting.fetch_add(1, std::memory_order_relaxed);
                 }
             } else {
-                // Non-Waiting yield: keep scheduling
-                local_queue_.push(fiber);
+                // Non-Waiting yield: keep scheduling.
+                // Issue #4699: re-queue at the TAIL of the FIFO ready
+                // queue instead of the near end of the LIFO deque. The
+                // yielding fiber now waits behind the siblings that are
+                // already ready, so fiber:yield really interleaves them
+                // (before: the yielding fiber was popped again right
+                // away and every body ran to completion).
+                ready_fifo_.push_back(fiber);
                 // pending_ unchanged
                 if (my_metrics) {
                     my_metrics->fibers_yielded.fetch_add(1, std::memory_order_relaxed);

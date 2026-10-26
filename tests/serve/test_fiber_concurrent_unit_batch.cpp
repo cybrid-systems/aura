@@ -1706,6 +1706,230 @@ int run_4698_scheduler_pending_body_root_smoke() {
 }
 } // namespace aura_fiber_run_wave62_4698
 
+// Wave 63 (#4699): fiber_orch - fiber:yield interleaves sibling fibers
+namespace aura_fiber_run_wave63_4699 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+
+// Issue #4699: fiber:yield did not interleave sibling fibers - every
+// spawned body ran to completion. The issue repro printed
+// (3 3 3 2 2 2 1 1 1) under BOTH aura --load and aura --serve-async.
+//
+// Two causes:
+//   1. serve layer: the worker's local Chase-Lev deque is LIFO for the
+//      owner thread, so a fiber that yielded was re-pushed at the near
+//      end and popped again immediately - the yielding fiber always
+//      resumed before any sibling could run.
+//   2. compiler layer: the body mutex (the CLI thread backend bodies and
+//      the Soft Ready denseness bodies share one Evaluator) was released
+//      only across a WAIT (fiber:join), so a sibling body could not run
+//      while the yielding body held it.
+//
+// The program returns (+ (* 1000 (length log)) (runs (reverse log))):
+// the number of logged turns (9) and the number of runs (the maximal
+// blocks of equal ids in the log). Run-to-completion => 3 runs (9003);
+// interleaved => every turn is its own run (9009).
+constexpr const char* kYieldInterleaveProgram = R"AURA(
+(define log '())
+(define (w id) (lambda () (let loop ((i 0)) (if (< i 3) (begin (set! log (cons id log)) (fiber:yield) (loop (+ i 1)))))))
+(define fs (map (lambda (id) (fiber:spawn (w id))) '(1 2 3)))
+(for-each fiber:join fs)
+(define (runs xs) (if (null? xs) 0 (if (null? (cdr xs)) 1 (if (= (car xs) (car (cdr xs))) (runs (cdr xs)) (+ 1 (runs (cdr xs)))))))
+(+ (* 1000 (length log)) (runs (reverse log)))
+)AURA";
+
+// Issue #4699: a long root yield loop must let the spawned child run.
+// Pre-fix the root loop spun through all 100k yields without the child
+// ever getting a turn (the child stayed in the worker's LIFO queue
+// behind the root fiber).
+constexpr const char* kRootYieldLoopProgram = R"AURA(
+(define log '())
+(define fid (fiber:spawn (lambda () (set! log (cons 1 log)))))
+(let loop ((i 0))
+  (if (< i 100000)
+      (begin (fiber:yield) (loop (+ i 1)))
+      (begin (fiber:join fid) (length log))))
+)AURA";
+
+namespace {
+
+    // The scheduler the wave's fiber:spawn wiring uses. Scheduler::run() is
+    // single-shot (the idle auto-stop clears the running flag), so the second
+    // program below needs its own scheduler.
+    aura::serve::Scheduler* g_wave63_scheduler = nullptr;
+
+    // Decode the encoded result: turns * 1000 + runs.
+    struct InterleaveScore {
+        long long turns = -1;
+        long long runs = -1;
+    };
+
+    InterleaveScore decode(long long encoded) {
+        InterleaveScore s;
+        if (encoded < 0)
+            return s;
+        s.turns = encoded / 1000;
+        s.runs = encoded % 1000;
+        return s;
+    }
+
+} // namespace
+
+// AC1: the CLI thread backend interleaves the sibling bodies.
+int run_4699_cli_yield_interleave_smoke() {
+    std::println("\n=== #4699: CLI thread backend: fiber:yield interleaves sibling fibers ===");
+    CompilerService cs;
+    auto v = cs.eval(kYieldInterleaveProgram);
+    CHECK(v.has_value(), "#4699 CLI yield-interleave program evaluates");
+    CHECK(v && is_int(*v), "#4699 CLI yield-interleave program returns a count");
+    const long long encoded = (v && is_int(*v)) ? static_cast<long long>(as_int(*v)) : -1;
+    const auto score = decode(encoded);
+    std::println("  #4699 CLI encoded = {} (turns={} runs={})", encoded, score.turns, score.runs);
+    CHECK(score.turns == 9,
+          "[#4699] AC1 CLI thread backend: every spawned body ran all three turns");
+    CHECK(score.runs > 3,
+          "[#4699] AC1 CLI thread backend: fiber:yield interleaves the sibling fibers "
+          "(no body runs to completion)");
+    return g_failed ? 1 : 0;
+}
+
+// AC2: the serve-async scheduler backend interleaves the sibling fibers,
+// and AC3: a long root yield loop lets the spawned child run.
+//
+// The serve-async spawn wiring mirrors src/serve/serve_async.cpp (the
+// #4698 pinned-body protocol: spawn_with_pinned_body).
+int run_4699_scheduler_yield_interleave_smoke() {
+    std::println(
+        "\n=== #4699: serve-async scheduler backend: fiber:yield interleaves sibling fibers ===");
+    CompilerService cs;
+    aura::messaging::g_current_compiler_service = &cs;
+
+    aura::serve::Scheduler sched(1);
+    g_wave63_scheduler = &sched;
+
+    aura::messaging::g_fiber_spawn = [](std::function<void()> fn) -> int64_t {
+        int aff = 0;
+        if (aura::serve::g_current_fiber) {
+            const int parent_aff = aura::serve::g_current_fiber->affinity();
+            if (parent_aff >= 0)
+                aff = parent_aff;
+            else {
+                aura::serve::g_current_fiber->set_affinity(0);
+                aff = 0;
+            }
+        }
+        auto* svc = static_cast<aura::compiler::CompilerService*>(
+            aura::messaging::g_current_compiler_service);
+        void* ev = svc ? static_cast<void*>(&svc->evaluator()) : nullptr;
+        return aura::serve::spawn_with_pinned_body(*g_wave63_scheduler, ev, std::move(fn), aff);
+    };
+    aura::messaging::g_fiber_lookup = +[](int64_t fid) -> void* {
+        return static_cast<void*>(aura::serve::g_scheduler ? aura::serve::g_scheduler->fiber_by_id(
+                                                                 static_cast<std::uint64_t>(fid))
+                                                           : nullptr);
+    };
+    aura::messaging::g_fiber_yield = []() {
+        if (aura::serve::g_current_fiber)
+            aura::serve::Fiber::yield();
+    };
+
+    // The program runs INSIDE a scheduler fiber: the fiber:join path parks
+    // the joiner fiber, so the joiner has to be a fiber.
+    long long encoded = -1;
+    int evaluated = 0;
+    sched.spawn_with_affinity(
+        [&cs, &encoded, &evaluated]() {
+            auto r = cs.eval(kYieldInterleaveProgram);
+            evaluated = r.has_value() ? 1 : 0;
+            if (!r)
+                std::println("  #4699 eval error: {}", r.error().format());
+            if (r && is_int(*r))
+                encoded = static_cast<long long>(as_int(*r));
+        },
+        0);
+    sched.run();
+
+    const auto score = decode(encoded);
+    std::println("  #4699 scheduler encoded = {} (turns={} runs={})", encoded, score.turns,
+                 score.runs);
+    CHECK(evaluated == 1, "#4699 scheduler yield-interleave program evaluates");
+    CHECK(score.turns == 9,
+          "[#4699] AC2 serve-async scheduler backend: every spawned body ran all three turns");
+    CHECK(score.runs > 3,
+          "[#4699] AC2 serve-async scheduler backend: fiber:yield interleaves the sibling "
+          "fibers (no body runs to completion)");
+
+    // AC3: the long root yield loop must let the spawned child run.
+    int child_ran = 0;
+    int loop_evaluated = 0;
+    aura::serve::Scheduler sched2(1);
+    g_wave63_scheduler = &sched2;
+    sched2.spawn_with_affinity(
+        [&cs, &child_ran, &loop_evaluated]() {
+            auto r = cs.eval(kRootYieldLoopProgram);
+            loop_evaluated = r.has_value() ? 1 : 0;
+            if (!r)
+                std::println("  #4699 root-loop eval error: {}", r.error().format());
+            if (r && is_int(*r))
+                child_ran = static_cast<int>(as_int(*r));
+            std::println("  #4699 root-loop value = {}", child_ran);
+        },
+        0);
+    sched2.run();
+
+    CHECK(loop_evaluated == 1, "#4699 root yield-loop program evaluates");
+    CHECK(child_ran == 1,
+          "[#4699] AC3 serve-async scheduler backend: a 100k-iteration root fiber:yield "
+          "loop lets the spawned child run");
+
+    // Leave the global bridge as it was found.
+    aura::messaging::g_fiber_spawn = nullptr;
+    aura::messaging::g_fiber_lookup = nullptr;
+    aura::messaging::g_fiber_yield = nullptr;
+    aura::messaging::g_current_compiler_service = nullptr;
+    return g_failed ? 1 : 0;
+}
+
+// AC4: the source contract - the serve-layer FIFO ready queue and the
+// compiler-layer cooperative-yield body-mutex hand-off.
+int run_4699_source_contract_smoke() {
+    std::println("\n=== #4699: source contract (FIFO ready queue + yield hand-off) ===");
+    auto read_file = [](const char* path) {
+        std::ifstream in(path);
+        if (!in)
+            return std::string{};
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    };
+
+    std::string worker;
+    for (const char* p : {"src/serve/worker.cpp", "../src/serve/worker.cpp"}) {
+        worker = read_file(p);
+        if (!worker.empty())
+            break;
+    }
+    CHECK(!worker.empty(), "read worker.cpp");
+    CHECK(worker.find("ready_fifo_") != std::string::npos,
+          "[#4699] AC4 worker.cpp has the FIFO ready queue for yielded fibers");
+    CHECK(worker.find("Issue #4699") != std::string::npos, "[#4699] AC4 worker.cpp cites #4699");
+
+    std::string messaging;
+    for (const char* p : {"src/compiler/evaluator_primitives_messaging.cpp",
+                          "../src/compiler/evaluator_primitives_messaging.cpp"}) {
+        messaging = read_file(p);
+        if (!messaging.empty())
+            break;
+    }
+    CHECK(!messaging.empty(), "read evaluator_primitives_messaging.cpp");
+    CHECK(messaging.find("CliBodyYieldHandoff") != std::string::npos,
+          "[#4699] AC4 messaging has the cooperative-yield body-mutex hand-off");
+    CHECK(messaging.find("Issue #4699") != std::string::npos, "[#4699] AC4 messaging cites #4699");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave63_4699
+
 int main() {
 
 
@@ -1986,6 +2210,13 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave62_4698 ########");
     if (int rc = aura_fiber_run_wave62_4698::run_4698_scheduler_pending_body_root_smoke(); rc != 0)
+        return rc;
+    std::println("\n######## wave63_4699 ########");
+    if (int rc = aura_fiber_run_wave63_4699::run_4699_cli_yield_interleave_smoke(); rc != 0)
+        return rc;
+    if (int rc = aura_fiber_run_wave63_4699::run_4699_scheduler_yield_interleave_smoke(); rc != 0)
+        return rc;
+    if (int rc = aura_fiber_run_wave63_4699::run_4699_source_contract_smoke(); rc != 0)
         return rc;
 
     return 0;

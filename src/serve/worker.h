@@ -283,6 +283,21 @@ private:
     // Lock-free work-stealing deque (Chase-Lev)
     WorkStealingDeque<Fiber*> local_queue_;
 
+    // Issue #4699: FIFO ready queue for fibers that yielded.
+    //
+    // local_queue_ is LIFO for the owner thread (push + pop at the near
+    // end), so a fiber that yielded was re-pushed at the near end and
+    // popped again IMMEDIATELY: the yielding fiber always resumed before
+    // any sibling and a cooperative fiber degenerated into
+    // run-to-completion (fiber:yield never interleaved siblings).
+    //
+    // Yielded fibers now go to this FIFO and are re-dispatched in yield
+    // order, so a yield hands the worker to a sibling that is already
+    // ready. Owner-thread only (same discipline as local_queue_): pushed
+    // by the worker right after it resumes the fiber, popped by the same
+    // worker in the dispatch loop.
+    std::deque<Fiber*> ready_fifo_;
+
     // Wake eventfd — scheduler writes to this to wake the worker
     int wake_evfd_ = -1;
 
