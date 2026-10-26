@@ -44,6 +44,16 @@ extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
 extern "C" void aura_fiber_root_pending_body(void* evaluator, std::uint64_t closure_id,
                                              std::uint64_t fiber_id) noexcept;
 extern "C" void aura_fiber_release_pending_body(void* evaluator, std::uint64_t fiber_id) noexcept;
+// Issue #4698: the same pending-body root for the serve-async SCHEDULER
+// backend. The scheduler runs the body on a worker thread, so the body
+// closure must survive the tree-walker reclaim that runs on the
+// SPAWNING thread until the worker has applied it. The root is taken
+// before the fiber exists (the scheduler may run the body
+// concurrently) and released once the body has been applied, so the pin
+// covers exactly the pending window. This root is NOT keyed by a fiber
+// id: the serve layer owns the root/release pair around the body call.
+extern "C" void aura_fiber_root_pending_body_latest(void* evaluator) noexcept;
+extern "C" void aura_fiber_release_pending_body_latest(void* evaluator) noexcept;
 // Issue #2114 / #2188: outermost Guard held flag (weak default 0 in
 // fiber_bridge when Evaluator not linked).
 // Issue #2849: also true when process-wide held count > 0 so cross-thread

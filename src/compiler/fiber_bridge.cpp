@@ -296,6 +296,19 @@ __attribute__((weak, used)) void aura_fiber_release_pending_body(void* evaluator
     (void)evaluator;
     (void)fiber_id;
 }
+// Issue #4698: pending scheduler-backend fiber body root (serve-async).
+// Strong definition in evaluator_fiber_mutation.cpp: it raises the
+// evaluator's pinned-closure watermark over every closure allocated so
+// far (the pending body closure is the newest tree-walker closure), so
+// the tree-walker reclaim cannot erase it before the worker thread
+// applies it (body never ran / fiber:join returned void). Weak no-op
+// keeps link units without the evaluator module happy.
+__attribute__((weak, used)) void aura_fiber_root_pending_body_latest(void* evaluator) noexcept {
+    (void)evaluator;
+}
+__attribute__((weak, used)) void aura_fiber_release_pending_body_latest(void* evaluator) noexcept {
+    (void)evaluator;
+}
 
 // Issue #1880 / #2118: orch agent body try_acquire (strong defs in evaluator_fiber_mutation.cpp).
 __attribute__((weak, used)) int aura_orch_agent_body_try_acquire() {

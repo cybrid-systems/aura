@@ -3153,16 +3153,17 @@ extern "C" void aura_evaluator_on_fiber_join_session_revoke(void* joined_fiber) 
 }
 
 // Issue #4697: pending thread-fiber body roots (CLI thread backend).
+// Issue #4698: the same pending-body root for the serve-async SCHEDULER
+// backend (the serve scheduler spawns the body on a worker thread).
 //
-// The tree-walker reclaim (Evaluator::maybe_reclaim_tw_unreachable — the
+// The tree-walker reclaim (Evaluator::maybe_reclaim_tw_unreachable - the
 // #4459 / #4474 safepoint) marks from env frames and the CURRENT
 // thread's pinned temporaries only, then erases every closure that no
-// root references. A pending thread-fiber's body closure is a
-// tree-walker temporary: fiber:spawn drops it when the spawn returns, so
-// nothing roots it, and the reclaim could erase it before the worker
-// thread applied it. apply_closure then returned nullopt, the body never
-// ran, and fiber:join returned void — silent result loss (the first
-// fibers spawned in the first call of a function lost their results).
+// root references. A pending fiber's body closure is a tree-walker
+// temporary: fiber:spawn drops it when the spawn returns, so nothing
+// roots it, and the reclaim could erase it before the worker thread
+// applied it. apply_closure then returned nullopt, the body never ran,
+// and fiber:join returned void - silent result loss.
 //
 // Root the pending body closure through the evaluator's OWN pinned-closure
 // watermark (gc_safe_closure_id_): the reclaim keeps every closure whose
@@ -3176,21 +3177,74 @@ extern "C" void aura_evaluator_on_fiber_join_session_revoke(void* joined_fiber) 
 // The watermark is restored when the last pending fiber is released, so
 // the pin does not outlive the fiber. Only the watermark THIS hook raised
 // is restored: a (gc-freeze) that ran meanwhile keeps its own value.
+//
+// Issue #4698 (serve-async scheduler backend): the CLI thread backend
+// rooted the pending body at spawn time (#4697), but the serve-async
+// scheduler backend never did. fiber:spawn handed the body closure id to
+// the scheduler, the spawn dropped the tree-walker temporary, and the
+// parent's next tree-walker reclaim (its own allocation safepoint)
+// erased the closure before the worker applied it - every fiber whose
+// body closure was a tree-walker temporary was LOST (8 spawned -> 7 void
+// joins, the last one survived because no further allocation ran before
+// the bodies were applied). The scheduler backend roots the pending body
+// through the SAME watermark, with two differences:
+//
+//   * the root is NOT keyed by a fiber id: the serve layer owns the
+//     root/release pair around the body call, so it releases the root
+//     once the body has been applied (the closure is not needed after
+//     that). The keyed form (#4697) stays for the CLI thread backend.
+//   * the root is taken BEFORE the fiber is created (the scheduler may
+//     run the body on a worker concurrently, so the pin has to be in
+//     place first).
+//
+// The keyed roots and the unkeyed roots are counted SEPARATELY but share
+// the one watermark, so a release from one backend can never unpin a
+// pending body that the other backend still owns.
 namespace {
     struct PendingFiberRootState {
-        std::uint32_t pending = 0;
+        // Roots keyed by fiber id (the CLI thread backend, #4697).
+        std::unordered_map<std::uint64_t, ClosureId> id_roots;
+        // Roots not keyed by a fiber id (the serve scheduler backend, #4698).
+        std::uint32_t unkeyed_pending = 0;
         ClosureId saved_watermark = 0;  // the watermark to restore
         ClosureId raised_watermark = 0; // the watermark this hook raised to
         bool have_saved = false;
+
+        [[nodiscard]] std::uint32_t pending() const noexcept {
+            return unkeyed_pending + static_cast<std::uint32_t>(id_roots.size());
+        }
+        void reset() noexcept {
+            id_roots.clear();
+            unkeyed_pending = 0;
+            have_saved = false;
+        }
     };
     std::mutex g_pending_fiber_roots_mtx;
     std::unordered_map<const Evaluator*, std::unique_ptr<PendingFiberRootState>>
         g_pending_fiber_roots;
+
+    // Raise the evaluator's pinned-closure watermark over 'want' and
+    // remember the value to restore. The caller holds
+    // g_pending_fiber_roots_mtx.
+    void raise_pending_watermark(Evaluator* ev, PendingFiberRootState& st,
+                                 ClosureId want) noexcept {
+        if (want > ev->gc_safe_closure_id()) {
+            ev->set_gc_safe_closure_id(want);
+            st.raised_watermark = want;
+        }
+    }
+
+    // Restore the watermark this hook raised, but only when no root is
+    // left: a (gc-freeze) that ran while the fiber was pending keeps its
+    // own value. The caller holds g_pending_fiber_roots_mtx.
+    void restore_pending_watermark(Evaluator* ev, PendingFiberRootState& st) noexcept {
+        if (st.have_saved && ev->gc_safe_closure_id() == st.raised_watermark)
+            ev->set_gc_safe_closure_id(st.saved_watermark);
+    }
 } // namespace
 
 extern "C" void aura_fiber_root_pending_body(void* evaluator, std::uint64_t closure_id,
                                              std::uint64_t fiber_id) noexcept {
-    (void)fiber_id;
     if (!evaluator)
         return;
     auto* ev = static_cast<Evaluator*>(evaluator);
@@ -3204,20 +3258,20 @@ extern "C" void aura_fiber_root_pending_body(void* evaluator, std::uint64_t clos
         // still pending, then a new evaluator allocated at the same
         // address) must not carry its watermark over: the watermark now
         // reads lower than the one this state raised, so reset the state.
-        if (st.pending > 0 && ev->gc_safe_closure_id() < st.raised_watermark) {
-            st.pending = 0;
-            st.have_saved = false;
+        if (st.pending() > 0 && ev->gc_safe_closure_id() < st.raised_watermark) {
+            st.reset();
         }
-        if (st.pending == 0) {
+        // Idempotent per fiber id: a second root for the same fiber must
+        // not raise the pending count twice (the release is one-shot).
+        if (st.id_roots.find(fiber_id) != st.id_roots.end())
+            return;
+        if (st.pending() == 0) {
             st.saved_watermark = ev->gc_safe_closure_id();
             st.have_saved = true;
         }
-        ++st.pending;
         const auto want = static_cast<ClosureId>(closure_id + 1);
-        if (want > ev->gc_safe_closure_id()) {
-            ev->set_gc_safe_closure_id(want);
-            st.raised_watermark = want;
-        }
+        st.id_roots.emplace(fiber_id, want);
+        raise_pending_watermark(ev, st, want);
     } catch (...) {
         // [SILENCE-PRIM-#4697] noexcept C ABI: a failed root must not
         // abort the spawn. The body then runs unprotected (the
@@ -3226,7 +3280,6 @@ extern "C" void aura_fiber_root_pending_body(void* evaluator, std::uint64_t clos
 }
 
 extern "C" void aura_fiber_release_pending_body(void* evaluator, std::uint64_t fiber_id) noexcept {
-    (void)fiber_id;
     if (!evaluator)
         return;
     auto* ev = static_cast<Evaluator*>(evaluator);
@@ -3236,17 +3289,83 @@ extern "C" void aura_fiber_release_pending_body(void* evaluator, std::uint64_t f
         if (it == g_pending_fiber_roots.end())
             return;
         auto& st = *it->second;
-        if (st.pending == 0)
+        // Only a root that was actually taken for THIS fiber id may be
+        // released. A release for an unknown id (the serve-async join
+        // path releasing a scheduler fiber that the keyed backend never
+        // rooted) must not unpin another backend's pending body.
+        if (st.id_roots.erase(fiber_id) == 0)
             return;
-        if (--st.pending != 0)
+        if (st.pending() != 0)
             return;
-        // Restore only the watermark this hook raised: a (gc-freeze) that
-        // ran while the fiber was pending keeps its own value.
-        if (st.have_saved && ev->gc_safe_closure_id() == st.raised_watermark)
-            ev->set_gc_safe_closure_id(st.saved_watermark);
+        restore_pending_watermark(ev, st);
         g_pending_fiber_roots.erase(it);
     } catch (...) {
         // [SILENCE-PRIM-#4697] noexcept C ABI: a failed release must not
+        // terminate the process; the watermark then stays raised, which
+        // only pins closures (it never frees a live one).
+    }
+}
+
+// Issue #4698: the serve-async scheduler backend's pending body root.
+//
+// The closure to protect is the NEWEST tree-walker closure: the fiber
+// body closure is the argument of the fiber:spawn call, so it is the
+// last closure allocated before the spawn. Every closure allocated so
+// far has an id below the evaluator's closure-id watermark, so raising
+// the pinned-closure watermark to that watermark pins the pending body
+// (and only the closures that already exist - the pin does not grow
+// without bound).
+extern "C" void aura_fiber_root_pending_body_latest(void* evaluator) noexcept {
+    if (!evaluator)
+        return;
+    auto* ev = static_cast<Evaluator*>(evaluator);
+    try {
+        std::lock_guard<std::mutex> lock(g_pending_fiber_roots_mtx);
+        auto& slot = g_pending_fiber_roots[ev];
+        if (!slot)
+            slot = std::make_unique<PendingFiberRootState>();
+        auto& st = *slot;
+        // A stale entry (an evaluator that was destroyed with a fiber
+        // still pending, then a new evaluator allocated at the same
+        // address) must not carry its watermark over.
+        if (st.pending() > 0 && ev->gc_safe_closure_id() < st.raised_watermark) {
+            st.reset();
+        }
+        if (st.pending() == 0) {
+            st.saved_watermark = ev->gc_safe_closure_id();
+            st.have_saved = true;
+        }
+        ++st.unkeyed_pending;
+        raise_pending_watermark(ev, st, static_cast<ClosureId>(ev->closure_id_watermark()));
+    } catch (...) {
+        // [SILENCE-PRIM-#4698] noexcept C ABI: a failed root must not
+        // abort the spawn. The body then runs unprotected (the
+        // pre-#4698 behaviour) instead of terminating the process.
+    }
+}
+
+// Issue #4698: release the serve-async scheduler backend's pending body
+// root - the body has been applied, so the closure is not needed any
+// more. Idempotent: a release without a matching root is a no-op.
+extern "C" void aura_fiber_release_pending_body_latest(void* evaluator) noexcept {
+    if (!evaluator)
+        return;
+    auto* ev = static_cast<Evaluator*>(evaluator);
+    try {
+        std::lock_guard<std::mutex> lock(g_pending_fiber_roots_mtx);
+        auto it = g_pending_fiber_roots.find(ev);
+        if (it == g_pending_fiber_roots.end())
+            return;
+        auto& st = *it->second;
+        if (st.unkeyed_pending == 0)
+            return;
+        --st.unkeyed_pending;
+        if (st.pending() != 0)
+            return;
+        restore_pending_watermark(ev, st);
+        g_pending_fiber_roots.erase(it);
+    } catch (...) {
+        // [SILENCE-PRIM-#4698] noexcept C ABI: a failed release must not
         // terminate the process; the watermark then stays raised, which
         // only pins closures (it never frees a live one).
     }

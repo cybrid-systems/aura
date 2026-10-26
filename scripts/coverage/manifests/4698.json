@@ -1,0 +1,72 @@
+{
+  "issue": 4698,
+  "title": "Issue #4698: the serve-async scheduler backend keeps the pending fiber body closure alive across the tree-walker reclaim (fiber:join returned void, the body never ran).",
+  "ok": "OK: Issue #4698 serve-async scheduler backend pending fiber body root - every spawned body runs and fiber:join returns its value",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "aura_fiber_root_pending_body_latest",
+        "aura_fiber_release_pending_body_latest",
+        "closure_id_watermark",
+        "set_gc_safe_closure_id",
+        "Issue #4698"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/serve/fiber.h",
+      "contains": [
+        "aura_fiber_root_pending_body_latest",
+        "aura_fiber_release_pending_body_latest",
+        "Issue #4698"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/fiber_bridge.cpp",
+      "contains": [
+        "aura_fiber_root_pending_body_latest",
+        "aura_fiber_release_pending_body_latest",
+        "Issue #4698"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/scheduler.h",
+      "contains": [
+        "spawn_with_pinned_body",
+        "Issue #4698"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/scheduler.cpp",
+      "contains": [
+        "spawn_with_pinned_body",
+        "aura_fiber_root_pending_body_latest",
+        "aura_fiber_release_pending_body_latest",
+        "Issue #4698"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/serve_async.cpp",
+      "contains": [
+        "spawn_with_pinned_body",
+        "current_session_evaluator",
+        "Issue #4698"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/serve/test_fiber_concurrent_unit_batch.cpp",
+      "contains": [
+        "[#4698] AC1",
+        "run_4698_scheduler_pending_body_root_smoke",
+        "kSchedulerPendingBodyProgram"
+      ]
+    }
+  ]
+}
