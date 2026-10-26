@@ -8652,6 +8652,27 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4615 block-prefix offset linter failed - run python3 scripts/check_block_prefix_offsets_4615.py")
         return r
+    # Issue #4696 (security): the production pin table must not launder a
+    # raw NodeId. pin-stable-refs / with-pinned built a zero-provenance
+    # handle from a bare int, promoted it with make_stamped_ref (stamping
+    # the CURRENT generation of whatever occupies the slot) and then
+    # validated that fresh stamp against itself, so a deleted node's id
+    # became a valid pinned cross-round handle for a DIFFERENT node. The
+    # production face now refuses a raw NodeId with stale-ref (same shape
+    # as query:as-stable-ref #3425) and validates a packed handle
+    # without occupancy-remaking it (#3661 parity). Runtime ACs live in
+    # tests/serve/test_stable_ref_provenance_fiber_cow.cpp (no
+    # test_issue_4696.cpp per #81934, no docs/design/4696-* per #1655).
+    pspr4696_script = ROOT / "scripts" / "check_pin_stable_refs_provenance_4696.py"
+    if not pspr4696_script.exists():
+        fail(f"missing {pspr4696_script}")
+        return 1
+    r = run([sys.executable, str(pspr4696_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4696 pin stable-ref provenance linter failed - run python3 scripts/check_pin_stable_refs_provenance_4696.py"
+        )
+        return r
     # Issue #4232 (Soft): "cannot call: car" in soft_worldline_pick (serve-async
     # Soft Ready denseness, soft_select.via=host_fallback). The tree-walker's
     # prim-value call handler re-resolved a registry-manufactured PrimitiveRef
