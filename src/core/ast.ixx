@@ -1549,6 +1549,10 @@ public:
     [[nodiscard]] bool has_linear_ops_live() const noexcept {
         return linear_ops_live_.load(std::memory_order_relaxed) != 0;
     }
+    // One past the highest id that can carry match info: has_match_info(id)
+    // is false for every id >= this, so a "first match site" scan can stop
+    // here instead of walking the whole flat (dead slots included).
+    [[nodiscard]] std::size_t match_info_extent() const noexcept { return match_info_.size(); }
     [[nodiscard]] bool has_match_sites_live() const noexcept {
         return match_sites_live_.load(std::memory_order_relaxed) != 0;
     }

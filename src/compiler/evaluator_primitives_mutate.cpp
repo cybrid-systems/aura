@@ -4237,14 +4237,15 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             if (flat.is_free_slot(id))
                 continue;
-            auto v = flat.get(id);
-            if (v.tag != aura::ast::NodeTag::Define)
+            // Column probes: no NodeView assembly per node.
+            if (flat.tag(id) != aura::ast::NodeTag::Define)
                 continue;
-            if (v.sym_id == sym) {
+            const auto v_sym = flat.sym_id(id);
+            if (v_sym == sym) {
                 old_define = id;
                 continue;
             }
-            if (v.sym_id != aura::ast::INVALID_SYM && ev.workspace_pool_->resolve(v.sym_id) == name)
+            if (v_sym != aura::ast::INVALID_SYM && ev.workspace_pool_->resolve(v_sym) == name)
                 old_define = id;
         }
         // Issue #373: hygiene guard. If old_define is a

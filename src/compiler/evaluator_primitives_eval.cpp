@@ -1335,13 +1335,14 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                         if (child == aura::ast::NULL_NODE || child >= flat->size() ||
                             flat->is_free_slot(child))
                             continue;
-                        const auto cv = flat->get(child);
-                        if (cv.tag != aura::ast::NodeTag::Define ||
-                            cv.sym_id == aura::ast::INVALID_SYM)
+                        if (flat->tag(child) != aura::ast::NodeTag::Define)
                             continue;
-                        const auto nm = pool->resolve(cv.sym_id);
+                        const auto cv_sym = flat->sym_id(child);
+                        if (cv_sym == aura::ast::INVALID_SYM)
+                            continue;
+                        const auto nm = pool->resolve(cv_sym);
                         if (!nm.empty() && ev.top_env().lookup_primitive(nm))
-                            ws_prim_defines.emplace_back(std::string(nm), cv.sym_id);
+                            ws_prim_defines.emplace_back(std::string(nm), cv_sym);
                     }
                 }
             }
