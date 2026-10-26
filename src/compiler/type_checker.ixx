@@ -307,9 +307,21 @@ export class TypeEnv {
     std::vector<std::unordered_map<std::string, Binding, aura::core::TransparentStringHash,
                                    std::equal_to<>>>
         scopes_;
+    // Issue #4682 fix 3: host top_env names read as host_fallback_type_
+    // when no scope binds them (same answer as seeding each one into the
+    // outermost scope, without O(host names) binds per engine).
+    const std::unordered_set<std::string, aura::core::TransparentStringHash, std::equal_to<>>*
+        host_fallback_ = nullptr;
+    aura::core::TypeId host_fallback_type_{};
 
 public:
+    using HostNameSet =
+        std::unordered_set<std::string, aura::core::TransparentStringHash, std::equal_to<>>;
     explicit TypeEnv(aura::core::TypeRegistry& reg);
+    void set_host_fallback(const HostNameSet* names, aura::core::TypeId type) noexcept {
+        host_fallback_ = names;
+        host_fallback_type_ = type;
+    }
     void push_scope();
     void pop_scope();
     void bind(std::string name, aura::core::TypeId type);
@@ -1900,6 +1912,10 @@ export class InferenceEngine {
     // Issue #4587: host top_env names. Seeded as Dynamic when the workspace
     // flat does not already give them a type. Empty for unit tests.
     std::vector<std::string> host_visible_names_;
+    // Issue #4682 fix 3: prebuilt filtered set shared from the TypeChecker
+    // (rebuilt only when the host names change). Non-null => seed installs
+    // a TypeEnv fallback instead of binding every name.
+    std::shared_ptr<const TypeEnv::HostNameSet> host_name_set_;
 
     // ADT constructors are looked up via TypeRegistry::get_adt_constructors()
 
@@ -2021,6 +2037,9 @@ public:
     // Issue #4587: copied onto the short-lived engine before seed.
     void set_host_visible_names(std::vector<std::string> names) {
         host_visible_names_ = std::move(names);
+    }
+    void set_host_name_set(std::shared_ptr<const TypeEnv::HostNameSet> s) {
+        host_name_set_ = std::move(s);
     }
     // Issue #536: forward solve_delta observability hooks.
     void set_solve_delta_observability_hooks(std::function<void(std::size_t)> on_snapshot,
@@ -2945,6 +2964,7 @@ export struct TypeChecker {
     // Issue #4587: host top_env names for both short-lived engines.
     void set_host_visible_names(std::vector<std::string> names) {
         host_visible_names_ = std::move(names);
+        host_name_set_.reset(); // Issue #4682 fix 3: rebuilt lazily
     }
     // Issue #4682 (opt): fingerprint of the host-name set last seeded into
     // this checker (0 = never). Post-mutate typecheck skips re-seeding when
@@ -3656,6 +3676,8 @@ private:
     // Issue #4587: host bindings the workspace flat does not declare.
     std::vector<std::string> host_visible_names_;
     std::uint64_t host_names_fp_ = 0;
+    // Issue #4682 fix 3: filtered host-name set handed to each engine.
+    std::shared_ptr<const TypeEnv::HostNameSet> host_name_set_;
 
     // Issue #1407 R1: ConstraintSolver engine-level cache.
     // Per NodeId, store the (epoch, constraints_hash, solve_result)

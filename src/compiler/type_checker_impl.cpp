@@ -337,6 +337,8 @@ TypeId TypeEnv::lookup(const std::string& name) {
             return f->second.type;
         }
     }
+    if (host_fallback_ && host_fallback_->contains(name))
+        return host_fallback_type_;
     return TypeId{}; // invalid = not found
 }
 
@@ -344,13 +346,19 @@ bool TypeEnv::is_bound(const std::string& name) const {
     for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it)
         if (it->count(name))
             return true;
-    return false;
+    return host_fallback_ && host_fallback_->contains(name);
 }
 
 void TypeEnv::collect_names(std::vector<std::string>& out) const {
     for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it)
         for (auto& [name, _] : *it)
             out.push_back(name);
+    if (host_fallback_) {
+        for (const auto& name : *host_fallback_) {
+            if (scopes_.empty() || !scopes_.front().contains(name))
+                out.push_back(name);
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -4009,6 +4017,17 @@ void InferenceEngine::seed_workspace_value_defines(FlatAST& flat, StringPool& po
     // not in this workspace flat. Bind them Dynamic when this flat has not
     // already given the name a type, so a later rebind does not report the
     // host helper as unbound. A real free name is not in the list.
+    // Issue #4682 fix 3: with a prebuilt set, install it as the TypeEnv
+    // miss fallback (same lookup / is_bound answers, no per-name binds).
+    // AURA_TC_SEED_INCREMENTAL=0 = bind every name as before.
+    static const bool seed_incremental = [] {
+        const char* e = std::getenv("AURA_TC_SEED_INCREMENTAL");
+        return !(e && e[0] == '0');
+    }();
+    if (seed_incremental && host_name_set_) {
+        env_.set_host_fallback(host_name_set_.get(), reg_.dynamic_type());
+        return;
+    }
     for (const auto& host_name : host_visible_names_) {
         if (host_name.empty())
             continue;
@@ -10137,6 +10156,10 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             const char* e = std::getenv("AURA_TC_ROOT_BEGIN_CONE");
             return e && e[0] == '1';
         }();
+        static const bool skip_detached_4682 = [] {
+            const char* e = std::getenv("AURA_TC_DIRTY_CLEAR");
+            return !(e && e[0] == '0');
+        }();
         if (!keep_root_begin_4682 && !affected.empty()) {
             DenseNodeSet4682 seen(affected.begin(), affected.end(), flat.size());
             const std::size_t n0 = affected.size();
@@ -10148,10 +10171,16 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                 if (cur == NULL_NODE || cur >= flat.size())
                     continue;
                 std::size_t safety = 0;
+                bool detached = false;
                 while (safety++ < flat.size()) {
                     const NodeId par = flat.parent_of(cur);
-                    if (par == NULL_NODE || par >= flat.size())
+                    if (par == NULL_NODE || par >= flat.size()) {
+                        // Issue #4682 fix 1: a parentless non-root node is a
+                        // subtree a rebind detached (old lambda body). It is
+                        // not a top-level form; do not lift / walk it.
+                        detached = cur != flat.root;
                         break;
+                    }
                     const NodeId gp = flat.parent_of(par);
                     const bool par_is_root_begin =
                         flat.tag(par) == NodeTag::Begin &&
@@ -10160,6 +10189,8 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                         break;
                     cur = par;
                 }
+                if (detached && skip_detached_4682)
+                    continue;
                 // Every affected node's top-level form is part of the cone
                 // (the primary Define is already there; use sites lift to it).
                 if (cur != NULL_NODE && cur < flat.size() && lifted_seen.insert(cur).second)
@@ -10503,7 +10534,29 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     // re-inference pass.
     InferenceEngine engine(types, diag);
     engine.set_registered_prim_probe(registered_prim_probe_, registered_prim_ctx_);
-    engine.set_host_visible_names(host_visible_names_);
+    {
+        // Issue #4682 fix 3: build the filtered host-name set once per
+        // host-name change and share it; skip the per-call vector copy.
+        static const bool seed_incremental = [] {
+            const char* e = std::getenv("AURA_TC_SEED_INCREMENTAL");
+            return !(e && e[0] == '0');
+        }();
+        if (seed_incremental) {
+            if (!host_name_set_ && !host_visible_names_.empty()) {
+                auto set = std::make_shared<TypeEnv::HostNameSet>();
+                set->reserve(host_visible_names_.size());
+                for (const auto& n : host_visible_names_) {
+                    if (n.empty() || n[0] == '_' || n[0] == '@' || n[0] == ':')
+                        continue;
+                    set->insert(n);
+                }
+                host_name_set_ = std::move(set);
+            }
+            engine.set_host_name_set(host_name_set_);
+        } else {
+            engine.set_host_visible_names(host_visible_names_);
+        }
+    }
     engine.declared_modules_ = type_module_src_;
     engine.declared_sigs_ = type_sigs_;
     engine.set_strict(strict_);                                 // Issue #79: plumb strict mode
@@ -11205,7 +11258,18 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             collect_linear_bindings_under_nodes(flat, pool, {rec.parent_id}, linear_bindings);
             discover_linear_bindings_in_subtree(flat, pool, rec.parent_id, linear_bindings);
         }
-        if (sym_for_lookup != aura::ast::INVALID_SYM) {
+        // Issue #4682 fix 2: the rebound name is added even when nothing
+        // marks it linear, which made every rebind walk the whole workspace
+        // (validate_ownership from flat.root, O(W)). With no live linear-op
+        // node and no discovered linear binding the name is not a linear
+        // resource, so leave it out (the walk is skipped when the set ends
+        // up empty). AURA_TC_LINEAR_SCOPE=0 = always add it.
+        static const bool linear_scope = [] {
+            const char* e = std::getenv("AURA_TC_LINEAR_SCOPE");
+            return !(e && e[0] == '0');
+        }();
+        if (sym_for_lookup != aura::ast::INVALID_SYM &&
+            (!linear_scope || !linear_bindings.empty() || flat.has_linear_ops_live())) {
             const auto sym_name = std::string(pool.resolve(sym_for_lookup));
             if (!sym_name.empty())
                 linear_bindings.insert(sym_name);

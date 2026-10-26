@@ -2931,6 +2931,52 @@ def test_tier_jit_default_on_4679():
     print("  PASS: test_tier_jit_default_on_4679")
 
 
+def test_tc_infer_flat_in_rebind_count_4682():
+    """Issue #4682: tc-infer per rebind must not grow with the rebind count.
+
+    mirror_type_affected_to_cascade marked every rebind's type cone into
+    g_global_dirty and nothing cleared it, so each later infer_flat_partial
+    pulled (and re-lifted) the cone of every earlier rebind: at W=300 the
+    tc-infer time of 60 rebinds after 480 rebinds was ~2.3x that of the
+    first 60. With the marks dropped at the next mirror it stays flat.
+    AURA_TC_DIRTY_CLEAR=0 restores the old growth.
+    """
+    prog = r"""(define W 300)
+(define (fill k acc) (if (= k 0) acc (fill (- k 1) (string-append acc "(define w" (number->string k) " (lambda (x) (* x " (number->string k) ")))\n"))))
+(define (cl k acc) (if (= k 20) acc (cl (+ k 1) (string-append acc "((= x -" (number->string (+ k 1)) ") " (number->string k) ")"))))
+(define (body v) (string-append "(lambda (x) (cond " (cl 0 "") " (else (+ x " (number->string v) "))))"))
+(set-code (string-append "(define f " (body 0) ")\n(define c0 (lambda (x) (f x)))\n" (fill W "")))
+(eval-current)
+(define (tci) (hash-ref (engine:metrics "query:incremental-relower-stats") "phase-tc-infer-ns"))
+(define (run n) (let loop ((i 0)) (if (< i n) (begin (mutate:rebind "f" (body i) "t") (eval-current) (loop (+ i 1))))))
+(run 20)
+(define a0 (tci)) (run 60) (define a1 (tci))
+(run 400)
+(define b0 (tci)) (run 60) (define b1 (tci))
+(display (list "EARLY" (- a1 a0) "LATE" (- b1 b0) "C" (c0 1))) (newline)
+"""
+
+    def run():
+        env = dict(os.environ)
+        env["AURA_PHASE_STATS"] = "1"
+        r = subprocess.run([AURA], input=prog, capture_output=True, text=True, timeout=300, env=env)
+        assert r.returncode == 0, (r.stderr or "")[-500:]
+        m = re.search(r"\(EARLY (\d+) LATE (\d+) C 60\)", r.stdout)
+        assert m, r.stdout[-300:]
+        return int(m.group(1)), int(m.group(2))
+
+    # Best of 3 against load noise.
+    best = None
+    for _ in range(3):
+        early, late = run()
+        ratio = late / max(early, 1)
+        best = ratio if best is None else min(best, ratio)
+        if best < 1.5:
+            break
+    assert best < 1.5, f"tc-infer grows with rebind count: late/early={best:.2f}"
+    print("  PASS: test_tc_infer_flat_in_rebind_count_4682")
+
+
 def test_tw_reclaim_ir_frame_roots_4617():
     """Issue #4617: the tree-walker's reclaim must root in-flight IR frames.
 
@@ -4376,6 +4422,7 @@ for tf in [
     test_nary_map_for_each_4616,
     test_rebind_cascade_linear_4615,
     test_tier_jit_default_on_4679,
+    test_tc_infer_flat_in_rebind_count_4682,
     test_tw_reclaim_ir_frame_roots_4617,
     test_jit,
     test_mutation_sequences,
