@@ -6,11 +6,23 @@
 //   AC2: buffered channel allows send without recv (size < buf)
 //   AC3: source predicate / waiting_receivers / channels_mtx_ scope
 //   AC4: gate wiring
+//
+// Issue #4700 — under --serve-async the channel primitives run inside a
+// FIBER on a worker thread; the condvar wait froze the whole worker, so a
+// peer fiber on the same worker could never run (deadlock).
+//
+//   AC5: fiber-parked channel handoff (no worker-thread deadlock)
+//   AC6: source contract (cooperative channel park)
+//   AC7: coverage manifest wiring
 
 #include "test_harness.hpp"
 
+#include "serve/fiber.h"
+#include "serve/scheduler.h"
+
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <fstream>
 #include <print>
 #include <string>
@@ -150,7 +162,10 @@ static void ac3_source() {
     auto spos = src.find("channel:send");
     CHECK(spos != std::string::npos, "AC3: channel:send present");
     if (spos != std::string::npos) {
-        auto win = src.substr(spos, 2500);
+        // Issue #4700 widened the windows: the cooperative channel park
+        // (fiber-level wait) added ~30 lines between the primitive
+        // registrations, so the grep window has to span them.
+        auto win = src.substr(spos, 4000);
         CHECK(win.find("waiting_receivers") != std::string::npos,
               "AC3: send uses waiting_receivers");
         CHECK(win.find("ch.buffer_size == 0 || ch.queue.size()") == std::string::npos,
@@ -160,7 +175,10 @@ static void ac3_source() {
     auto rpos = src.find("channel:recv");
     CHECK(rpos != std::string::npos, "AC3: channel:recv present");
     if (rpos != std::string::npos) {
-        auto win = src.substr(rpos, 1500);
+        // Issue #4700: the fiber-cooperative receive path sits between the
+        // registration and the host-thread wait — widen the window so the
+        // "announces waiters" contract is still checked on the primitive.
+        auto win = src.substr(rpos, 4000);
         CHECK(win.find("waiting_receivers") != std::string::npos, "AC3: recv announces waiters");
     }
     auto ixx = read_file("src/compiler/evaluator.ixx");
@@ -180,6 +198,125 @@ static void ac4_gate() {
           "AC4: check script exists");
 }
 
+// ── Issue #4700 AC5: fiber-parked channel handoff ────────────────
+//
+// Under --serve-async the channel primitives run inside a FIBER on a worker
+// thread. Before #4700, channel:recv / channel:send blocked the whole
+// worker on the channel condvar, so a peer fiber on the same worker could
+// never run → deadlock.
+//
+// The test drives a rendezvous (buffer_size=0) channel on a 1-worker
+// scheduler: whichever fiber runs first has to park at the FIBER level for
+// the handoff, so a completed handoff proves the cooperative park. Without
+// the fix the first fiber freezes the worker and the scheduler never
+// finishes — the watchdog turns that into a FAIL instead of a hung binary.
+static void ac5_fiber_park_no_deadlock() {
+    std::println("\n--- #4700 AC5: fiber-parked channel handoff (no worker-thread deadlock) ---");
+    // Heap-allocated on purpose: a deadlocked worker thread must not run
+    // ~Scheduler (it would join the stuck worker). The watchdog below exits
+    // the process on a deadlock, so the leak is only in the failing case.
+    auto* sched = new aura::serve::Scheduler(1);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    (void)cs.eval("1"); // warm registry
+
+    auto create = lookup_prim(ev, "channel:create");
+    auto send = lookup_prim(ev, "channel:send");
+    auto recv = lookup_prim(ev, "channel:recv");
+    CHECK(create && send && recv, "AC5: channel prims registered");
+    if (!create || !send || !recv)
+        return;
+
+    auto id_v = (*create)({}); // rendezvous: buffer_size = 0
+    CHECK(is_int(id_v), "AC5: create returns id");
+    auto id = as_int(id_v);
+
+    auto& sh = ev.string_heap_mut();
+    auto sidx = sh.mint("fiber-handoff");
+    auto msg = make_string(static_cast<std::uint64_t>(sidx));
+
+    std::atomic<bool> recv_done{false};
+    std::atomic<bool> send_done{false};
+    std::atomic<bool> recv_ok{false};
+    std::atomic<bool> send_ok{false};
+    PrimFn send_fn = *send;
+    PrimFn recv_fn = *recv;
+
+    sched->spawn([&] {
+        auto r = recv_fn({make_int(id)});
+        recv_ok.store(is_string(r), std::memory_order_release);
+        recv_done.store(true, std::memory_order_release);
+    });
+    sched->spawn([&] {
+        auto r = send_fn({make_int(id), msg});
+        send_ok.store(is_bool(r) && as_bool(r), std::memory_order_release);
+        send_done.store(true, std::memory_order_release);
+    });
+
+    std::atomic<bool> finished{false};
+    std::thread runner([&] {
+        sched->run();
+        finished.store(true, std::memory_order_release);
+    });
+    runner.detach();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (!finished.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const bool scheduler_done = finished.load(std::memory_order_acquire);
+    CHECK(scheduler_done, "AC5: scheduler finished (no worker-thread deadlock)");
+    if (!scheduler_done) {
+        std::println("AC5: FAIL — a channel fiber blocked its worker thread (#4700 deadlock)");
+        std::fflush(stdout);
+        std::fflush(stderr);
+        std::_Exit(1);
+    }
+    CHECK(recv_done.load(std::memory_order_acquire), "AC5: receive fiber completed");
+    CHECK(send_done.load(std::memory_order_acquire), "AC5: send fiber completed");
+    CHECK(recv_ok.load(std::memory_order_acquire), "AC5: receive returned a string");
+    CHECK(send_ok.load(std::memory_order_acquire), "AC5: send returned #t");
+    delete sched;
+}
+
+// ── Issue #4700 AC6: source contract (cooperative channel park) ────
+static void ac6_source_4700() {
+    std::println("\n--- #4700 AC6: source contract (cooperative channel park) ---");
+    auto src = read_file("src/compiler/evaluator_primitives_messaging.cpp");
+    CHECK(!src.empty(), "AC6: read messaging");
+    CHECK(src.find("Issue #4700") != std::string::npos, "AC6: cites #4700");
+    CHECK(src.find("channel_park_fiber") != std::string::npos, "AC6: cooperative park helper");
+    CHECK(src.find("channel_wake_waiters") != std::string::npos, "AC6: parked waiters are woken");
+    CHECK(src.find("aura::serve::YieldReason::BlockingIO") != std::string::npos,
+          "AC6: park yields with BlockingIO (fiber-level, not thread-level)");
+    CHECK(src.find("CliBodyLockJoinGuard body_lock_guard") != std::string::npos,
+          "AC6: denseness body mutex released across the park");
+    // The channel mutex must never be held across the park (a parked fiber
+    // may resume on another worker thread).
+    auto park = src.find("channel_park_fiber(fiber);");
+    CHECK(park != std::string::npos, "AC6: park call site present");
+    if (park != std::string::npos) {
+        auto win = src.substr(park > 900 ? park - 900 : 0, 900);
+        CHECK(win.find("ul.unlock();") != std::string::npos,
+              "AC6: channel mutex released before the park");
+    }
+    // The host-thread path (no fiber) must stay: the condvar wait is still
+    // the fallback for CLI / stdin use.
+    CHECK(src.find("ch.cv.wait(ul, [&]() { return ch.closed || !ch.queue.empty(); });") !=
+              std::string::npos,
+          "AC6: host-thread condvar wait preserved for the non-fiber path");
+}
+
+// ── Issue #4700 AC7: coverage manifest wiring ────────────────────
+static void ac7_coverage_manifest() {
+    std::println("\n--- #4700 AC7: coverage manifest ---");
+    auto manifest = read_file("scripts/coverage/manifests/4700.json");
+    CHECK(!manifest.empty(), "AC7: manifest exists");
+    CHECK(manifest.find("\"issue\": 4700") != std::string::npos,
+          "AC7: manifest declares issue 4700");
+    CHECK(manifest.find("AC5") != std::string::npos, "AC7: manifest covers AC5");
+    CHECK(manifest.find("AC6") != std::string::npos, "AC7: manifest covers AC6");
+    CHECK(manifest.find("AC7") != std::string::npos, "AC7: manifest covers AC7");
+}
+
 } // namespace
 
 int run_test_channel_rendezvous() {
@@ -188,6 +325,10 @@ int run_test_channel_rendezvous() {
     ac2_buffered();
     ac3_source();
     ac4_gate();
+    // Issue #4700 — fiber-cooperative channel waits.
+    ac5_fiber_park_no_deadlock();
+    ac6_source_4700();
+    ac7_coverage_manifest();
     std::println("\n=== #2483 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

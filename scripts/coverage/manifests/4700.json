@@ -1,0 +1,49 @@
+{
+  "issue": 4700,
+  "title": "Issue #4700: channel:recv / channel:send blocked the serve-async worker thread (condvar) instead of parking the fiber.",
+  "ok": "OK: Issue #4700 fiber-cooperative channel wait - all 4 AC contract rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_messaging.cpp",
+      "contains": [
+        "Issue #4700: fiber-cooperative channel waits",
+        "channel_park_fiber",
+        "channel_wake_waiters",
+        "aura::serve::YieldReason::BlockingIO",
+        "CliBodyLockJoinGuard body_lock_guard"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_messaging.cpp",
+      "contains": [
+        "Issue #4700: under the fiber scheduler the receive must park the",
+        "Issue #4700: under the fiber scheduler the send must park the",
+        "channel_recv_cooperative",
+        "channel_send_cooperative"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_channel_rendezvous.cpp",
+      "contains": [
+        "#4700 AC5: fiber-parked channel handoff",
+        "AC5: scheduler finished (no worker-thread deadlock)",
+        "AC5: receive fiber completed",
+        "AC5: send fiber completed"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_channel_rendezvous.cpp",
+      "contains": [
+        "#4700 AC6: source contract (cooperative channel park)",
+        "AC6: park yields with BlockingIO (fiber-level, not thread-level)",
+        "AC6: denseness body mutex released across the park",
+        "#4700 AC7: coverage manifest",
+        "AC7: manifest exists"
+      ]
+    }
+  ]
+}
