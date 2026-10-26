@@ -5,6 +5,12 @@
 
 #include "test_harness.hpp"
 
+// Issue #4698: the serve-async scheduler backend regression needs the
+// scheduler + the messaging bridge (the fiber:spawn / fiber:join wiring
+// the serve-async runtime installs).
+#include "serve/scheduler.h"
+#include "compiler/messaging_bridge.h"
+
 #include <atomic>
 #include <fstream>
 #include <print>
@@ -1592,6 +1598,114 @@ int run_4697_pending_body_root_smoke() {
 }
 } // namespace aura_fiber_run_wave61_4697
 
+// Wave 62 (#4698): fiber_orch - serve-async scheduler backend pending
+// fiber body root
+namespace aura_fiber_run_wave62_4698 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+
+// Issue #4698: under aura --serve-async the fiber body closure is a
+// tree-walker temporary - fiber:spawn drops it when the spawn returns, so
+// nothing roots it. The tree-walker reclaim
+// (Evaluator::maybe_reclaim_tw_unreachable - the #4459 / #4474 safepoint)
+// then erased it before the worker applied it: apply_closure returned
+// nullopt, the body never ran and fiber:join returned void (7 of the 8
+// spawned fibers lost their results). The CLI thread backend roots the
+// pending body since #4697; the serve-async SCHEDULER backend did not.
+//
+// The program below is the issue repro: the seq phase allocates enough
+// tree-walker closures that the reclaim runs WHILE the par batch bodies
+// are pending. Pre-fix the par joins returned void; post-fix every join
+// returns the spawned body value.
+//
+// The last form returns (1000 * void_results + numeric_results): 20 means
+// every one of the 20 bodies ran AND every join returned its value.
+constexpr const char* kSchedulerPendingBodyProgram = R"AURA(
+(define cnt 0)
+(define (mk n) (let loop ((i 0) (acc '()))
+  (if (= i n) acc (loop (+ i 1) (cons i acc)))))
+(define (seq n) (let loop ((i 0) (acc (list)))
+  (if (= i n) acc (loop (+ i 1) (cons (fiber:join (fiber:spawn (lambda () 7))) acc)))))
+(define (par n) (let loop ((i 0) (acc (list)))
+  (if (= i n) acc (loop (+ i 1) (cons (fiber:spawn (lambda () (set! cnt (+ cnt 1)) (length (mk 1000)))) acc)))))
+(define (jn fs) (let loop ((f fs) (acc (list)))
+  (if (null? f) acc (loop (cdr f) (cons (fiber:join (car f)) acc)))))
+(define (bad rs) (length (filter (lambda (x) (not (number? x))) rs)))
+(define (good rs) (length (filter (lambda (x) (number? x)) rs)))
+(void (seq 100))
+(define res (jn (par 20)))
+(+ (* 1000 (bad res)) (good res))
+)AURA";
+
+// The serve-async spawn wiring, mirroring src/serve/serve_async.cpp.
+// Issue #4698: the pending body closure is pinned against the tree-walker
+// reclaim through spawn_with_pinned_body.
+int run_4698_scheduler_pending_body_root_smoke() {
+    std::println(
+        "\n=== #4698: serve-async scheduler backend keeps the pending fiber body alive ===");
+    CompilerService cs;
+    aura::messaging::g_current_compiler_service = &cs;
+
+    aura::serve::Scheduler sched(1);
+
+    aura::messaging::g_fiber_spawn = [&sched](std::function<void()> fn) -> int64_t {
+        int aff = 0;
+        if (aura::serve::g_current_fiber) {
+            const int parent_aff = aura::serve::g_current_fiber->affinity();
+            if (parent_aff >= 0)
+                aff = parent_aff;
+            else {
+                aura::serve::g_current_fiber->set_affinity(0);
+                aff = 0;
+            }
+        }
+        auto* svc = static_cast<aura::compiler::CompilerService*>(
+            aura::messaging::g_current_compiler_service);
+        void* ev = svc ? static_cast<void*>(&svc->evaluator()) : nullptr;
+        return aura::serve::spawn_with_pinned_body(sched, ev, std::move(fn), aff);
+    };
+    aura::messaging::g_fiber_lookup = +[](int64_t fid) -> void* {
+        return static_cast<void*>(aura::serve::g_scheduler ? aura::serve::g_scheduler->fiber_by_id(
+                                                                 static_cast<std::uint64_t>(fid))
+                                                           : nullptr);
+    };
+    aura::messaging::g_fiber_yield = []() {
+        if (aura::serve::g_current_fiber)
+            aura::serve::Fiber::yield();
+    };
+
+    // The program runs INSIDE a scheduler fiber: the fiber:join path parks
+    // the joiner fiber, so the joiner has to be a fiber.
+    int outcome = -2;
+    int evaluated = 0;
+    sched.spawn_with_affinity(
+        [&cs, &outcome, &evaluated]() {
+            auto r = cs.eval(kSchedulerPendingBodyProgram);
+            evaluated = r.has_value() ? 1 : 0;
+            if (!r)
+                std::println("  #4698 eval error: {}", r.error().format());
+            if (r && is_int(*r))
+                outcome = static_cast<int>(as_int(*r));
+        },
+        0);
+    sched.run();
+
+    CHECK(evaluated == 1, "#4698 scheduler pending-body program evaluates");
+    CHECK(outcome == 20, "[#4698] AC1 serve-async scheduler backend: every spawned fiber body ran "
+                         "and every fiber:join returned its value");
+
+    // Leave the global bridge as it was found.
+    aura::messaging::g_fiber_spawn = nullptr;
+    aura::messaging::g_fiber_lookup = nullptr;
+    aura::messaging::g_fiber_yield = nullptr;
+    aura::messaging::g_current_compiler_service = nullptr;
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave62_4698
+
 int main() {
 
 
@@ -1866,6 +1980,12 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave61_4697 ########");
     if (int rc = aura_fiber_run_wave61_4697::run_4697_pending_body_root_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave62_4698 ########");
+    if (int rc = aura_fiber_run_wave62_4698::run_4698_scheduler_pending_body_root_smoke(); rc != 0)
         return rc;
 
     return 0;
