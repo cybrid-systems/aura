@@ -3228,18 +3228,29 @@ namespace {
     // g_pending_fiber_roots_mtx.
     void raise_pending_watermark(Evaluator* ev, PendingFiberRootState& st,
                                  ClosureId want) noexcept {
-        if (want > ev->gc_safe_closure_id()) {
-            ev->set_gc_safe_closure_id(want);
-            st.raised_watermark = want;
-        }
+        // Issue #4704: CAS the PIN watermark UP to max(current, want). The
+        // old read-compare-then-write raced the parent's reclaim (which
+        // READS the watermark on the spawning thread) and the (gc-freeze)
+        // raise (which runs on the worker thread).
+        const auto before = ev->gc_pending_pin_watermark();
+        const auto after = ev->set_gc_safe_closure_id(want);
+        if (after > before)
+            st.raised_watermark = after;
     }
 
     // Restore the watermark this hook raised, but only when no root is
     // left: a (gc-freeze) that ran while the fiber was pending keeps its
     // own value. The caller holds g_pending_fiber_roots_mtx.
     void restore_pending_watermark(Evaluator* ev, PendingFiberRootState& st) noexcept {
-        if (st.have_saved && ev->gc_safe_closure_id() == st.raised_watermark)
-            ev->set_gc_safe_closure_id(st.saved_watermark);
+        if (!st.have_saved)
+            return;
+        // Issue #4704: CAS the PIN watermark DOWN from the value this hook
+        // raised to the saved value, and ONLY while it still holds exactly
+        // that value. The EFFECTIVE watermark also includes the monotone
+        // (gc-freeze) floor, so a (gc-freeze) raise that lands in the
+        // compare/write window is never clobbered by this restore: the
+        // pinned generation stays pinned.
+        ev->restore_gc_safe_closure_id(st.raised_watermark, st.saved_watermark);
     }
 } // namespace
 
@@ -3258,7 +3269,7 @@ extern "C" void aura_fiber_root_pending_body(void* evaluator, std::uint64_t clos
         // still pending, then a new evaluator allocated at the same
         // address) must not carry its watermark over: the watermark now
         // reads lower than the one this state raised, so reset the state.
-        if (st.pending() > 0 && ev->gc_safe_closure_id() < st.raised_watermark) {
+        if (st.pending() > 0 && ev->gc_pending_pin_watermark() < st.raised_watermark) {
             st.reset();
         }
         // Idempotent per fiber id: a second root for the same fiber must
@@ -3266,7 +3277,7 @@ extern "C" void aura_fiber_root_pending_body(void* evaluator, std::uint64_t clos
         if (st.id_roots.find(fiber_id) != st.id_roots.end())
             return;
         if (st.pending() == 0) {
-            st.saved_watermark = ev->gc_safe_closure_id();
+            st.saved_watermark = ev->gc_pending_pin_watermark();
             st.have_saved = true;
         }
         const auto want = static_cast<ClosureId>(closure_id + 1);
@@ -3328,11 +3339,11 @@ extern "C" void aura_fiber_root_pending_body_latest(void* evaluator) noexcept {
         // A stale entry (an evaluator that was destroyed with a fiber
         // still pending, then a new evaluator allocated at the same
         // address) must not carry its watermark over.
-        if (st.pending() > 0 && ev->gc_safe_closure_id() < st.raised_watermark) {
+        if (st.pending() > 0 && ev->gc_pending_pin_watermark() < st.raised_watermark) {
             st.reset();
         }
         if (st.pending() == 0) {
-            st.saved_watermark = ev->gc_safe_closure_id();
+            st.saved_watermark = ev->gc_pending_pin_watermark();
             st.have_saved = true;
         }
         ++st.unkeyed_pending;

@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 894 | Preferred destination suites |
-| **Total scanned** | **894** | |
+| `tests/core/test_*.cpp` | 895 | Preferred destination suites |
+| **Total scanned** | **895** | |
 
 ### Related artifacts
 
@@ -32,7 +32,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 93 | 93 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 94 | 94 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 276 | 276 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 107 | 107 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 26 | 26 | P1 — small, already partially batched |
@@ -482,6 +482,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_gc_heap_cells_clear.cpp`
 - `tests/serve/test_gc_mark_size_inject.cpp`
 - `tests/compiler/test_gc_misc_batch.cpp`
+- `tests/compiler/test_gc_watermark_atomic.cpp`
 - `tests/core/test_general_object_pin.cpp`
 - `tests/core/test_general_object_pin_adopt.cpp`
 - `tests/core/test_general_object_pin_coverage_gate.cpp`
@@ -1113,13 +1114,13 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (93)
+### `arena_compaction` — Arena / compaction / GC (94)
 
 **Target:** tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (93)
+#### domain/ (94)
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/orch/test_agent_name_table_isolation.cpp` (—) [large, domain_suite, theme_orch] — AC1: source cites #2078; no process-static OrchAgentNameTable;
@@ -1170,6 +1171,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_gc_heap_cells_clear.cpp` (—) [domain_suite, theme_compiler] — AC1: after seeding cells + gc-heap, cells().size() == 0
 - `tests/serve/test_gc_mark_size_inject.cpp` (—) [domain_suite, theme_serve] — AC1: mark_from_roots with injected sizes → MarkBitVector size == heap size
 - `tests/compiler/test_gc_misc_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_gc_misc_batch.cpp — thematic multi-TU batch
+- `tests/compiler/test_gc_watermark_atomic.cpp` (—) [domain_suite, theme_compiler] — AC1: the watermark field is atomic and every access goes through the
 - `tests/core/test_general_object_pin.cpp` (—) [domain_suite, theme_core] — AC1: Non-render buffer pin-or-remap; validate succeeds after densify.
 - `tests/core/test_general_object_pin_adopt.cpp` (—) [domain_suite, theme_core] — AC1: wire_general_object_create_pair pins both buffers + bumps wire
 - `tests/core/test_get_nodeview_snapshot.cpp` (—) [domain_suite, theme_core] — AC1: sequential get() is self-consistent (tag matches payload)
