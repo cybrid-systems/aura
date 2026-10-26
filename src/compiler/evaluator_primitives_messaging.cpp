@@ -102,6 +102,177 @@ namespace {
     std::mutex s_cli_thread_fiber_body_mtx;
     thread_local std::unique_lock<std::mutex>* s_tls_cli_body_lock = nullptr;
 
+    // ── Issue #4699: cooperative-yield body-mutex handoff ─────────────
+    //
+    // The body mutex serializes the fiber bodies that share one Evaluator
+    // (CLI thread backend + Soft Ready --serve-async denseness). It is
+    // released across a WAIT (fiber:join, channel park, http-post) so a
+    // sibling body can run while the waiter sleeps. A cooperative yield is
+    // a wait too: without releasing the mutex across it, the sibling the
+    // scheduler hands the worker to would block on the mutex forever (the
+    // sibling runs on the SAME worker thread -> self-deadlock).
+    //
+    // The CLI thread backend has no scheduler that hands the worker over,
+    // so the yielding body must WAIT until a sibling body has taken the
+    // mutex over. Otherwise it re-acquires the mutex itself (barging) and
+    // the bodies stay run-to-completion — the #4699 symptom. The takeover
+    // is published as an epoch bump under s_cli_handoff_mtx; the yield
+    // waits on the condition variable for the epoch to advance.
+    //
+    // The wait is skipped when no other body is alive (a single-fiber
+    // program keeps the old no-op cost) and it is bounded, so a lost
+    // wakeup can never hang a session.
+    std::mutex s_cli_handoff_mtx;
+    std::condition_variable s_cli_handoff_cv;
+    std::uint64_t s_cli_handoff_epoch{0};
+    // Pending fiber bodies (CLI thread backend + scheduler backend): a body
+    // that was spawned and has not finished yet. The count is taken at SPAWN
+    // time, not at body start: a sibling OS thread of the CLI thread backend
+    // may not have started yet, and a yield that does not see it would hand
+    // the turn over to nobody and run the body to completion.
+    std::atomic<std::size_t> s_cli_body_pending{0};
+
+    // Monotonic counter of SPAWNED bodies. The parent spawns its children
+    // ONE AT A TIME, so a body that yields early can see "no sibling yet"
+    // even though the parent is about to spawn the next one. Without this
+    // counter the early body concludes that it is alone, skips the
+    // hand-off and runs to completion - the run-to-completion symptom.
+    // The counter tells the yielding body whether the sibling set changed
+    // while it waited: if it did, a sibling exists and the body must keep
+    // waiting for the hand-off instead of latching "solo".
+    std::atomic<std::uint64_t> s_cli_spawn_epoch{0};
+
+    // True while this thread runs a spawned fiber body (the CLI main / the
+    // root program is not a body). Used by the yield hand-off to tell
+    // "another body exists" (a body counts itself) from "a body exists".
+    thread_local bool s_tls_in_fiber_body = false;
+
+    // Sticky per-body flag: "this body waited for a hand-off and nothing
+    // happened - no sibling took over and the parent spawned nobody else".
+    // It keeps the yield a cheap no-op for a single-fiber program (the old
+    // cost) instead of paying the bounded wait on every turn. It is
+    // cleared as soon as a sibling is seen again.
+    thread_local bool s_tls_cli_body_solo = false;
+
+    // RAII: mark the end of a spawned fiber body (the pending count was
+    // already taken by the spawn path).
+    struct CliBodyDoneScope {
+        CliBodyDoneScope() {
+            s_tls_in_fiber_body = true;
+            s_tls_cli_body_solo = false;
+        }
+        ~CliBodyDoneScope() {
+            s_tls_in_fiber_body = false;
+            s_cli_body_pending.fetch_sub(1, std::memory_order_acq_rel);
+        }
+        CliBodyDoneScope(const CliBodyDoneScope&) = delete;
+        CliBodyDoneScope& operator=(const CliBodyDoneScope&) = delete;
+    };
+
+    // Publish that a body has taken the body mutex over (the epoch bump
+    // wakes a yielding sibling that is waiting for its turn).
+    void cli_body_lock_publish_takeover() {
+        {
+            std::lock_guard<std::mutex> handoff_lock(s_cli_handoff_mtx);
+            ++s_cli_handoff_epoch;
+        }
+        s_cli_handoff_cv.notify_all();
+    }
+
+    // Acquire the body mutex and publish the takeover so a yielding sibling
+    // wakes up (the CLI thread backend has no scheduler to do the hand-off,
+    // so the takeover publish IS the hand-off).
+    void cli_body_lock_acquire(std::unique_lock<std::mutex>& lock) {
+        lock.lock();
+        cli_body_lock_publish_takeover();
+    }
+
+    // Issue #4699: release the body mutex across a cooperative yield.
+    //
+    // wait_for_takeover is true in the CLI thread backend (no scheduler to
+    // hand the worker over): the yielding body waits until a sibling body
+    // has taken the mutex over, so the bodies interleave instead of
+    // running to completion. In the scheduler backend the scheduler FIFO
+    // (serve/worker.cpp) hands the worker to a sibling, so the yield only
+    // releases the mutex and re-acquires it after the fiber resumes.
+    struct CliBodyYieldHandoff {
+        std::unique_lock<std::mutex>* lock = nullptr;
+        bool released = false;
+        explicit CliBodyYieldHandoff(bool wait_for_takeover) {
+            if (!s_tls_cli_body_lock || !s_tls_cli_body_lock->owns_lock())
+                return;
+            lock = s_tls_cli_body_lock;
+            // Another body can take the turn over. A body counts itself in
+            // the pending registry, the CLI main / the root program does
+            // not.
+            const std::size_t pending = s_cli_body_pending.load(std::memory_order_acquire);
+            const std::size_t others =
+                s_tls_in_fiber_body ? (pending > 0 ? pending - 1 : 0) : pending;
+            // A body CANNOT know whether the parent will spawn MORE
+            // siblings: the parent spawns them one at a time, so "no
+            // sibling yet" is not proof that there is none (the early body
+            // would skip the hand-off and run to completion). A body
+            // therefore waits once even when it looks alone, and latches
+            // "solo" only if neither a hand-over nor a new spawn
+            // happened - that keeps the yield a cheap no-op for a
+            // single-fiber program.
+            const bool sibling_alive =
+                s_tls_in_fiber_body ? (others > 0 || !s_tls_cli_body_solo) : (others > 0);
+            // Sample the takeover epoch BEFORE the unlock: the sibling that
+            // takes the mutex over publishes its takeover after the unlock,
+            // so the epoch must be read first or the takeover would be
+            // missed and the yield would wait for the next one.
+            std::uint64_t seen_epoch = 0;
+            {
+                std::lock_guard<std::mutex> handoff_lock(s_cli_handoff_mtx);
+                seen_epoch = s_cli_handoff_epoch;
+            }
+            // Sample the spawn epoch too: a spawn that lands while this
+            // body waits means a sibling exists (or is about to run).
+            const std::uint64_t seen_spawn = s_cli_spawn_epoch.load(std::memory_order_acquire);
+            lock->unlock();
+            // Clear the TLS slot while unlocked: a sibling body on this
+            // OS thread must not observe our unlocked lock (#4054).
+            s_tls_cli_body_lock = nullptr;
+            released = true;
+            if (!wait_for_takeover || !sibling_alive)
+                return;
+            // Wait until a sibling body has taken the mutex over. Bounded:
+            // a lost wakeup or a sibling that finished must never hang a
+            // session - the yield then takes the mutex back.
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
+            std::unique_lock<std::mutex> handoff_lock(s_cli_handoff_mtx);
+            while (s_cli_handoff_epoch == seen_epoch) {
+                if (s_cli_body_pending.load(std::memory_order_acquire) == 0)
+                    break; // no sibling body left to hand over to
+                if (std::chrono::steady_clock::now() >= deadline)
+                    break; // bounded: never hang a session
+                s_cli_handoff_cv.wait_for(handoff_lock, std::chrono::milliseconds(5));
+            }
+            if (s_tls_in_fiber_body) {
+                // Latch "solo" only when the body is provably alone: no
+                // hand-over happened, the parent spawned nobody else while
+                // we waited, and no other body is pending. A body that saw
+                // a sibling (or a new spawn) keeps waiting for the
+                // hand-off on its next turn.
+                const bool handed_over = (s_cli_handoff_epoch != seen_epoch);
+                const bool alone =
+                    !handed_over &&
+                    (s_cli_spawn_epoch.load(std::memory_order_acquire) == seen_spawn) &&
+                    (s_cli_body_pending.load(std::memory_order_acquire) <= 1);
+                s_tls_cli_body_solo = alone;
+            }
+        }
+        ~CliBodyYieldHandoff() {
+            if (!released || !lock)
+                return;
+            cli_body_lock_acquire(*lock);
+            s_tls_cli_body_lock = lock;
+        }
+        CliBodyYieldHandoff(const CliBodyYieldHandoff&) = delete;
+        CliBodyYieldHandoff& operator=(const CliBodyYieldHandoff&) = delete;
+    };
+
     // RAII: temporarily release denseness body mutex around wait/yield.
     //
     // Issue #4054: Soft Ready workers=1 runs denseness fibers as cooperative
@@ -134,7 +305,9 @@ namespace {
         }
         ~CliBodyLockJoinGuard() {
             if (unlocked && lock && !lock->owns_lock()) {
-                lock->lock();
+                // Issue #4699: tracked acquire - the takeover publish
+                // wakes a yielding sibling that waits for its turn.
+                cli_body_lock_acquire(*lock);
                 s_tls_cli_body_lock = lock;
             }
         }
@@ -432,7 +605,8 @@ namespace {
         if (unlocked && lock) {
             auto* l = static_cast<std::unique_lock<std::mutex>*>(lock);
             if (l && !l->owns_lock()) {
-                l->lock();
+                // Issue #4699: tracked acquire (takeover publish).
+                cli_body_lock_acquire(*l);
                 s_tls_cli_body_lock = l; // republish after wait
             }
         }
@@ -447,7 +621,9 @@ namespace {
     void* cli_main_body_lock_acquire_impl() {
         if (s_tls_cli_body_lock && s_tls_cli_body_lock->owns_lock())
             return nullptr;
-        auto* lk = new std::unique_lock<std::mutex>(s_cli_thread_fiber_body_mtx);
+        auto* lk = new std::unique_lock<std::mutex>(s_cli_thread_fiber_body_mtx, std::defer_lock);
+        // Issue #4699: tracked acquire (takeover publish).
+        cli_body_lock_acquire(*lk);
         s_tls_cli_body_lock = lk;
         return lk;
     }
@@ -1137,6 +1313,11 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #2869: publish TLS lock pointer so nested fiber:join can
             // temporarily unlock while waiting for a child (child needs this
             // mutex to run on the thread backend).
+            // Issue #4699: the pending-body count was taken by the spawn
+            // path (before this body existed); this scope only marks the
+            // end of the body so a cooperative yield knows that no sibling
+            // body is left to hand the turn over to.
+            CliBodyDoneScope body_done_scope;
             std::unique_lock<std::mutex> body_lock(s_cli_thread_fiber_body_mtx, std::defer_lock);
             // Issue #4048: serialize denseness bodies for BOTH backends.
             // Soft Ready --serve-async denseness fibers share the session
@@ -1146,7 +1327,10 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             // TLS/heap and hangs the session. Always take the body mutex;
             // fiber:join / async http-post DensenessBodyLockWaitGuard unlocks
             // across the wait so siblings can overlap (#2869 / #4053).
-            body_lock.lock();
+            // Issue #4699: tracked acquire - the takeover publish wakes a
+            // yielding sibling that waits for its turn (the CLI thread
+            // backend has no scheduler to do the hand-off).
+            cli_body_lock_acquire(body_lock);
             // Issue #4054: do NOT save/restore a prev TLS pointer across the
             // denseness body. Cooperative Soft fibers share one OS thread;
             // restoring prev after a sibling has published (or after wait
@@ -1167,6 +1351,10 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                 TlsBodyLockScope& operator=(const TlsBodyLockScope&) = delete;
             } tls_scope(body_lock.owns_lock() ? &body_lock : nullptr);
             *result_ptr = ev.apply_closure(cid, {});
+            // Issue #4699: publish the body end so a sibling body that is
+            // waiting for its turn (a cooperative yield) does not stall on
+            // a takeover that will never come.
+            cli_body_lock_publish_takeover();
             // Issue #1291: wait until spawn path publishes the real fid
             // AND registers s_fiber_results[fid] (g_fiber_spawn may run
             // the body before returning / before register).
@@ -1187,6 +1375,16 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             s_fiber_results_cv.notify_all();
         };
         int64_t fid = 0;
+        // Issue #4699: the pending-body count is taken at SPAWN time, before
+        // the body exists: a sibling body of the CLI thread backend may not
+        // have started yet, and a cooperative yield that does not see it
+        // would hand the turn over to nobody and run the body to
+        // completion. The body scope drops the count when the body ends.
+        s_cli_body_pending.fetch_add(1, std::memory_order_acq_rel);
+        // Issue #4699: the spawn epoch tells a yielding sibling that the
+        // parent spawned another body (the parent spawns one at a time, so
+        // the sibling set grows while the sibling waits for its turn).
+        s_cli_spawn_epoch.fetch_add(1, std::memory_order_acq_rel);
         // In serve-async mode: use g_fiber_spawn to create a real fiber
         if (aura::messaging::g_fiber_spawn) {
             // Issue #4176: at RLIMIT_NOFILE exhaustion the Fiber ctor
@@ -1204,8 +1402,11 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                 spawn_failed = true;
             }
             fid_holder->store(fid, std::memory_order_release);
-            if (spawn_failed)
+            if (spawn_failed) {
+                // No body will run: drop the pending-body count.
+                s_cli_body_pending.fetch_sub(1, std::memory_order_acq_rel);
                 return make_bool(false);
+            }
         }
         // Fallback (CLI denseness / stdin): std::thread with positive ids.
         if (fid <= 0) {
@@ -1264,7 +1465,26 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // (fiber:yield) — Yield current fiber to scheduler (serve mode only)
     // Uses g_fiber_yield callback if available.
+    //
+    // Issue #4699: a cooperative yield must hand the turn to a sibling
+    // fiber, not run the body to completion. Two parts:
+    //
+    // 1. The body mutex is released across the yield (the same protocol
+    //    as the fiber:join wait). The sibling body that runs next needs
+    //    that mutex, and on a single worker it runs on the SAME OS thread:
+    //    holding it across the yield would self-deadlock the worker.
+    // 2. In the CLI thread backend there is no scheduler that hands the
+    //    worker over, so the yielding body waits until a sibling body has
+    //    taken the mutex over (CliBodyYieldHandoff). Without that wait the
+    //    yielding body re-acquires the mutex itself (barging) and the
+    //    bodies stay run-to-completion.
+    //
+    // In the scheduler backend the serve-layer FIFO ready queue
+    // (serve/worker.cpp) does the hand-off: the yielded fiber is
+    // re-dispatched behind the siblings that are already ready.
     add("fiber:yield", [&ev](const auto&) -> EvalValue {
+        const bool scheduler_backend = aura::messaging::g_fiber_yield != nullptr;
+        CliBodyYieldHandoff body_handoff(!scheduler_backend);
         if (aura::messaging::g_fiber_yield) {
             aura::messaging::g_fiber_yield();
         }
