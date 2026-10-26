@@ -1,0 +1,51 @@
+{
+  "issue": 4699,
+  "title": "Issue #4699: fiber:yield interleaves sibling fibers - a cooperative yield hands the turn to a sibling body instead of running the body to completion (the issue repro printed (3 3 3 2 2 2 1 1 1) under both aura --load and aura --serve-async).",
+  "ok": "OK: Issue #4699 fiber:yield interleaves sibling fibers - the serve-layer FIFO ready queue hands the worker to a sibling and the compiler-layer cooperative-yield body-mutex hand-off lets the sibling body run",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_messaging.cpp",
+      "contains": [
+        "CliBodyYieldHandoff",
+        "cli_body_lock_acquire",
+        "cli_body_lock_publish_takeover",
+        "s_cli_body_pending",
+        "add(\"fiber:yield\"",
+        "Issue #4699"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/worker.cpp",
+      "contains": [
+        "ready_fifo_",
+        "Issue #4699"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/worker.h",
+      "contains": [
+        "ready_fifo_",
+        "Issue #4699"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/serve/test_fiber_concurrent_unit_batch.cpp",
+      "contains": [
+        "[#4699] AC1",
+        "[#4699] AC2",
+        "[#4699] AC3",
+        "[#4699] AC4",
+        "run_4699_cli_yield_interleave_smoke",
+        "run_4699_scheduler_yield_interleave_smoke",
+        "run_4699_source_contract_smoke",
+        "kYieldInterleaveProgram",
+        "kRootYieldLoopProgram",
+        "wave63_4699"
+      ]
+    }
+  ]
+}
