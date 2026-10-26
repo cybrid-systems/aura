@@ -2662,6 +2662,8 @@ public:
     std::pmr::vector<InvalidationRecord> invalidation_trace_;
     // Issue #261: NodeId lifecycle observability counters.
     mutable std::atomic<std::uint64_t> node_recycle_total_{0};
+    // Rebind rollback refs released once their body was no longer whole.
+    mutable std::atomic<std::uint64_t> rebind_rollback_ref_released_total_{0};
     mutable std::atomic<std::uint64_t> node_slot_reuse_count_{0};
     mutable std::atomic<std::uint64_t> node_compact_total_{0};
     // Issue #497: soft compaction + stale-ref auto-refresh observability.
@@ -6515,11 +6517,49 @@ public:
         const auto is_rebind_record = [](const std::string& op) {
             return op == "rebind" || op == "batch-rebind";
         };
-        for (const auto& rec : mutation_log_) {
+        // A committed log record's body ref is only worth keeping while the
+        // body is still whole. Only the ref slot itself is kept above, so
+        // once the body's children die (the next rebind-entry recycle) the
+        // kept root was a lone dead slot pinned forever (one per rebind)
+        // and a later rollback could only reattach a body over recycled
+        // children. Release such a ref and retire the record's rollback
+        // data instead (rollback then reports NoRollbackData). A childless
+        // body (literal) stays kept and restorable as before.
+        // AURA_REBIND_REF_RELEASE=0 keeps every ref (old behaviour).
+        static const bool release_on = [] {
+            const char* e = std::getenv("AURA_REBIND_REF_RELEASE");
+            return !(e && e[0] == '0');
+        }();
+        const auto body_whole = [&](std::uint64_t v) {
+            if (v >= static_cast<std::uint64_t>(size()) || is_free_slot(static_cast<NodeId>(v)))
+                return true; // keep_rollback_ref ignores it anyway
+            if (live[static_cast<NodeId>(v)])
+                return true;
+            for (auto cid : children(static_cast<NodeId>(v))) {
+                if (cid != NULL_NODE && cid < size() && !live[cid])
+                    return false;
+            }
+            return true;
+        };
+        std::vector<std::size_t> release_idx;
+        for (std::size_t ri = 0; ri < mutation_log_.size(); ++ri) {
+            const auto& rec = mutation_log_[ri];
             if (!rec.has_rollback_data || !is_rebind_record(rec.operator_name))
                 continue;
+            if (release_on && !atomic_batch_active() &&
+                (!body_whole(rec.old_value) || !body_whole(rec.new_value))) {
+                release_idx.push_back(ri);
+                continue;
+            }
             keep_rollback_ref(rec.old_value);
             keep_rollback_ref(rec.new_value);
+        }
+        if (!release_idx.empty()) {
+            auto& log_mut = mutation_log_.mut();
+            for (auto ri : release_idx)
+                log_mut[ri].has_rollback_data = false;
+            rebind_rollback_ref_released_total_.fetch_add(release_idx.size(),
+                                                          std::memory_order_relaxed);
         }
         for (const auto& frame : lightweight_frames_) {
             for (const auto& rec : frame) {
@@ -6873,6 +6913,9 @@ public:
         return stats;
     }
 
+    std::uint64_t rebind_rollback_ref_released_total() const noexcept {
+        return rebind_rollback_ref_released_total_.load(std::memory_order_relaxed);
+    }
     std::uint64_t node_recycle_total() const noexcept {
         return node_recycle_total_.load(std::memory_order_relaxed);
     }

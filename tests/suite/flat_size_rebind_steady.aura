@@ -1,0 +1,31 @@
+;; expect: OK flat size steady over rebinds
+;; mode: load
+;; timeout: 120
+;; A committed rebind record must not pin its old body's root slot once
+;; the body's children were recycled (was +1 slot per rebind forever).
+
+(define (cl k acc)
+  (if (= k 12) acc
+      (cl (+ k 1) (string-append acc "((= x -" (number->string (+ k 1)) ") " (number->string k) ")"))))
+(define (body v) (string-append "(lambda (x) (cond " (cl 0 "") " (else (+ x " (number->string v) "))))"))
+(set-code (string-append "(define f " (body 0) ")\n(define c0 (lambda (x) (f x)))\n(define k 1)"))
+(eval-current)
+(define (run n start)
+  (let loop ((i 0))
+    (if (< i n)
+        (begin (mutate:rebind "f" (body (+ start i)) "t") (eval-current) (loop (+ i 1))))))
+(define (slots) (stats:get "ast:node-count"))
+(run 10 0)
+(define s0 (slots))
+(run 300 10)
+(define s1 (slots))
+(define fails 0)
+(define (check name ok) (if (not ok) (begin (set! fails (+ fails 1)) (display "FAIL ") (display name) (newline))))
+(check "slots steady" (<= s1 (+ s0 4)))
+(check "c0 value" (= (c0 1) 310))
+;; Literal (childless) rebinds stay restorable: rollback of the last one.
+(mutate:rebind "k" "2" "t") (eval-current)
+(check "k rebound" (= k 2))
+(if (= fails 0)
+    (display "OK flat size steady over rebinds\n")
+    (begin (display "FAIL flat-size s0=") (display s0) (display " s1=") (display s1) (newline)))
