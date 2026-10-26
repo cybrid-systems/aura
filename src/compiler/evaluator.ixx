@@ -2238,6 +2238,24 @@ public:
         tw_tier_ctx_4682_ = ctx;
         tw_tier_hook_4682_ = fn;
     }
+    // Issue #4705: a hard process exit does NOT unwind the stack, so the
+    // owning CompilerService is never destroyed and its background
+    // workers are never joined. The tier-JIT worker then keeps running
+    // LLVM codegen while the exit phase tears LLVM's global state down
+    // -> double free / SIGSEGV on the worker thread. The owner installs
+    // a hook here that stops+joins its workers; the `exit` primitive
+    // calls quiesce_before_exit() before std::exit().
+    using ExitQuiesceFn = void (*)(void* ctx) noexcept;
+    void set_exit_quiesce_hook(ExitQuiesceFn fn, void* ctx) noexcept {
+        exit_quiesce_ctx_ = ctx;
+        exit_quiesce_hook_ = fn;
+    }
+    // Stop+join every background worker this evaluator's owner owns.
+    // Idempotent: the tier worker refuses new jobs once stopped.
+    void quiesce_before_exit() noexcept {
+        if (exit_quiesce_hook_)
+            exit_quiesce_hook_(exit_quiesce_ctx_);
+    }
     // Set the IR closure bridge for cross-evaluator closure calls
     void set_closure_bridge(ClosureBridgeFn bridge) { closure_bridge_ = std::move(bridge); }
     // Re-entrant IR execution (eval-current inside a running top-level form)
@@ -6213,6 +6231,8 @@ private:
     ClosureBridgeFn closure_bridge_;
     TwTierHookFn tw_tier_hook_4682_ = nullptr;
     void* tw_tier_ctx_4682_ = nullptr;
+    ExitQuiesceFn exit_quiesce_hook_ = nullptr;
+    void* exit_quiesce_ctx_ = nullptr;
     // Issue #252: optional pointer to CompilerMetrics for
     // closure_* counter increments. nullptr = counters
     // disabled (Evaluator constructed without service

@@ -1227,6 +1227,12 @@ public:
         // Issue #4682 (6b): opt-in TW native tier (off by default).
         if (tier_jit_enabled_4682_())
             evaluator_.set_tw_tier_hook_4682(&CompilerService::tw_tier_hook_thunk_4682_, this);
+        // Issue #4705: the `exit` primitive ends the process with
+        // std::exit(), which does NOT unwind the stack -- so this service
+        // is never destroyed and the tier-JIT worker is never joined.
+        // Install the quiesce hook so the exit primitive can stop+join the
+        // worker before the exit phase tears LLVM's globals down.
+        evaluator_.set_exit_quiesce_hook(&CompilerService::exit_quiesce_thunk_, this);
         // Issue #456: register this service's Evaluator as
         // the active query-evaluator for the current thread.
         // query:mutation-impact / query:epoch-stats /
@@ -1414,18 +1420,18 @@ public:
         // Issue #4678: restamp batch bracket (drain_cascade_bfs_invalidate).
         evaluator_.set_dirty_batch_fn([this](bool begin) { this->set_dirty_batch(begin); });
         evaluator_.set_boundary_prep_batch_fn([this](bool begin) {
-                if (begin) {
-                    if (boundary_prep_depth_++ == 0) {
-                        boundary_prep_done_ = false;
-                        boundary_finalize_done_ = false;
-                        boundary_rate_sampled_ = false;
-                    }
-                } else if (boundary_prep_depth_ > 0 && --boundary_prep_depth_ == 0) {
+            if (begin) {
+                if (boundary_prep_depth_++ == 0) {
                     boundary_prep_done_ = false;
                     boundary_finalize_done_ = false;
                     boundary_rate_sampled_ = false;
                 }
-            });
+            } else if (boundary_prep_depth_ > 0 && --boundary_prep_depth_ == 0) {
+                boundary_prep_done_ = false;
+                boundary_finalize_done_ = false;
+                boundary_rate_sampled_ = false;
+            }
+        });
         // Issue #3681: the id captured before set-body / rebind is the IR
         // define closure. Dropping the owner entry makes dispatch return
         // nullopt; the env refresh below installs a fresh closure.
@@ -8501,9 +8507,8 @@ public:
         // FlatAST + StringPool from the arena on every relower (O(heap)
         // safepoint work).
         aura::ast::NodeId ws_define_root = aura::ast::NULL_NODE;
-        if (!source.empty() &&
-            expanded_root != aura::ast::NULL_NODE && expanded_root < flat.size() &&
-            !flat.is_free_slot(expanded_root)) {
+        if (!source.empty() && expanded_root != aura::ast::NULL_NODE &&
+            expanded_root < flat.size() && !flat.is_free_slot(expanded_root)) {
             const auto ev = flat.get(expanded_root);
             if (ev.tag == aura::ast::NodeTag::Define) {
                 ws_define_root = expanded_root;
@@ -11474,7 +11479,11 @@ public:
         TierWorker4682() = default;
         TierWorker4682(const TierWorker4682&) = delete;
         TierWorker4682& operator=(const TierWorker4682&) = delete;
-        ~TierWorker4682() {
+        ~TierWorker4682() { stop_and_join(); }
+        // Issue #4705: stop the worker AND join it. join() waits for an
+        // in-flight compile to finish, so once this returns no background
+        // thread is still inside LLVM.
+        void stop_and_join() noexcept {
             {
                 std::lock_guard<std::mutex> lk(mu_);
                 stop_ = true;
@@ -12720,6 +12729,18 @@ public:
                              std::span<const types::EvalValue> args) {
         return static_cast<CompilerService*>(ctx)->tw_tier_try_4682_(fn, name, flat, body_id, lv,
                                                                      args);
+    }
+
+    static void exit_quiesce_thunk_(void* ctx) noexcept {
+        static_cast<CompilerService*>(ctx)->quiesce_background_workers();
+    }
+
+    // Issue #4705: stop+join the background workers before a hard process
+    // exit. Idempotent: the tier worker refuses new jobs once stopped, so
+    // a second call is a no-op.
+    void quiesce_background_workers() noexcept {
+        if (tier_worker_4682_)
+            tier_worker_4682_->stop_and_join();
     }
 
     std::unique_ptr<TierJob4682>
@@ -17294,6 +17315,7 @@ public:
     // children_snapshot copies do not race ~workspace_flat_.
     ~CompilerService() {
         evaluator_.set_tw_tier_hook_4682(nullptr, nullptr);
+        evaluator_.set_exit_quiesce_hook(nullptr, nullptr);
         if (tier_worker_4682_)
             tier_worker_4682_->drain();
         // Issue #4377: drop the boundary-exit hook before teardown.

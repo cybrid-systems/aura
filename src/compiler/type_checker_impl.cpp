@@ -3913,8 +3913,7 @@ void ConstraintSystem::import_delta_marks_from(ConstraintSystem& src) {
     // them duplicates), so the table grew per rebind forever. Drop those
     // before the next import. SUBTYPE / INSTANCE rows are kept (reverse
     // map rebuilt). Union-Find, roots and occurrence goals are untouched.
-    if (dirty_count_ == 0 &&
-        !pending_full_after_partial_clear_ && !constraints_.empty()) {
+    if (dirty_count_ == 0 && !pending_full_after_partial_clear_ && !constraints_.empty()) {
         std::size_t keep = 0;
         for (std::size_t i = 0; i < constraints_.size(); ++i) {
             if (constraints_[i].kind == Constraint::EQUAL ||
