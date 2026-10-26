@@ -4059,6 +4059,20 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                                                       consistency + prevented));
         });
 
+    // Issue #4682: query:tc-constraints-live. constraints_.size() the
+    // latest solve_delta saw; stays bounded across rebinds.
+    ObservabilityPrims::register_stats_impl(
+        "query:tc-constraints-live", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* __qev_ = Evaluator::get_query_evaluator();
+            const auto* m =
+                __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics()) : nullptr;
+            if (!m)
+                return make_int(0);
+            return make_int(static_cast<std::int64_t>(
+                m->solve_delta_constraints_live.load(std::memory_order_relaxed)));
+        });
+
     // Issue #573: query:typed-incremental-stats. Returns the sum
     // of 4 Task2 incremental typed self-mod reliability counters:
     //   - delta_conflicts_caught: cross_delta_conflicts_caught_

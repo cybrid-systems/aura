@@ -1397,6 +1397,10 @@ struct CompilerMetrics {
     //     used full solve() instead of solve_delta in an
     //     incremental delta-record context
     std::atomic<std::uint64_t> solve_delta_full_solve_fallback_total{0};
+    // Issue #4682: constraints_.size() seen by the latest solve_delta
+    // (gauge). Steady across rebinds when the partial boundary starts a
+    // fresh ConstraintSystem (AURA_TC_CONSTRAINT_RETRACT).
+    std::atomic<std::uint64_t> solve_delta_constraints_live{0};
     // Issue #341: match + Occurrence Typing
     // integration observability. 2 lifetime counters:
     //   - match_subject_narrowed_total: count of

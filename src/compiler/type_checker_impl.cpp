@@ -73,6 +73,18 @@ void reset_solve_delta_full_solve_force_escalate_total_for_test() noexcept {
 // AURA_TYPE_DEP_FANOUT_CAP (default 64 per TypeId expand step).
 // Zero extra work when cone under soft cap (AC3).
 namespace {
+// Issue #4682: TypeChecker::solve_delta_cs_ lives for the whole session
+// and every infer_flat_partial imports the engine's dirty constraints
+// into it. Nothing ever dropped them, so constraints_ grew by one
+// boundary's worth per rebind and solve_delta scanned O(history).
+// AURA_TC_CONSTRAINT_RETRACT=0 keeps the old append-only table.
+[[nodiscard]] bool tc_constraint_retract_enabled() noexcept {
+    static const bool v = []() noexcept {
+        const char* e = std::getenv("AURA_TC_CONSTRAINT_RETRACT");
+        return !(e && e[0] == '0' && e[1] == '\0');
+    }();
+    return v;
+}
 [[nodiscard]] std::size_t partial_cone_soft_cap() noexcept {
     static const std::size_t v = []() noexcept -> std::size_t {
         const char* e = std::getenv("AURA_PARTIAL_CONE_SOFT");
@@ -2549,6 +2561,12 @@ SolveResult ConstraintSystem::solve_delta(std::vector<Constraint>* unresolved_ou
 // from Issue #148 Phase 2 — only the structure is different
 // (moved into a private impl method).
 SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolved_out) {
+    // Issue #4682: live constraint gauge (regression guard for the
+    // per-rebind accumulation fixed by AURA_TC_CONSTRAINT_RETRACT).
+    if (metrics_) {
+        static_cast<struct CompilerMetrics*>(metrics_)->solve_delta_constraints_live.store(
+            constraints_.size(), std::memory_order_relaxed);
+    }
     // Issue #2913: reset locality residual snapshot for this delta.
     last_locality_pruned_ = 0;
     // Issue #3003: one escalate cycle per solve_delta (wrapper skips
@@ -3897,6 +3915,37 @@ void ConstraintSystem::import_delta_marks_from(ConstraintSystem& src) {
         set_active_mutation_id(src.active_mutation_id());
     if (src.active_predicate_cond_node() != 0 || src.active_affected_node() != 0) {
         set_active_blame_context(src.active_predicate_cond_node(), src.active_affected_node());
+    }
+    // Issue #4682: once every held constraint is solved (no dirty bit, no
+    // #3169 leftover latch), a solved EQUAL / CONSISTENT row has already
+    // written its bindings into Union-Find; keeping it only costs scan
+    // time, and every partial re-imports its boundary's rows (most of
+    // them duplicates), so the table grew per rebind forever. Drop those
+    // before the next import. SUBTYPE / INSTANCE rows are kept (reverse
+    // map rebuilt). Union-Find, roots and occurrence goals are untouched.
+    if (tc_constraint_retract_enabled() && dirty_count_ == 0 &&
+        !pending_full_after_partial_clear_ && !constraints_.empty()) {
+        std::size_t keep = 0;
+        for (std::size_t i = 0; i < constraints_.size(); ++i) {
+            if (constraints_[i].kind == Constraint::EQUAL ||
+                constraints_[i].kind == Constraint::CONSISTENT)
+                continue;
+            if (keep != i)
+                constraints_[keep] = std::move(constraints_[i]);
+            ++keep;
+        }
+        if (keep != constraints_.size()) {
+            constraints_.resize(keep);
+            constraint_dirty_.assign(keep, false);
+            var_to_constraints_.clear();
+            for (std::size_t i = 0; i < keep; ++i) {
+                const auto& c = constraints_[i];
+                if (c.lhs.valid())
+                    var_to_constraints_[find(c.lhs).index].push_back(i);
+                if (c.rhs.valid())
+                    var_to_constraints_[find(c.rhs).index].push_back(i);
+            }
+        }
     }
     // Re-add dirty constraints so solve_delta has real work (not empty CS).
     const auto n = src.constraints_.size();

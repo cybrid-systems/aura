@@ -1,0 +1,31 @@
+;; expect: OK tc constraints steady over rebinds
+;; mode: load
+;; timeout: 120
+;; Issue #4682: a partial typecheck boundary whose first affected node is
+;; skipped (ancestor dedupe) must still start a fresh ConstraintSystem.
+;; Keying that on the affected index kept every earlier rebind's
+;; constraints alive (+~30 per rebind, solve_delta O(history)).
+
+(define (cl k acc)
+  (if (= k 12) acc
+      (cl (+ k 1) (string-append acc "((= x -" (number->string (+ k 1)) ") " (number->string k) ")"))))
+(define (body v) (string-append "(lambda (x) (cond " (cl 0 "") " (else (+ x " (number->string v) "))))"))
+(define (fill k acc) (if (= k 0) acc (fill (- k 1) (string-append acc "(define w" (number->string k) " (lambda (x) (* x " (number->string k) ")))\n"))))
+(set-code (string-append "(define f " (body 0) ")\n(define c0 (lambda (x) (f x)))\n" (fill 20 "")))
+(eval-current)
+(define (run n start)
+  (let loop ((i 0))
+    (if (< i n)
+        (begin (mutate:rebind "f" (body (+ start i)) "t") (eval-current) (loop (+ i 1))))))
+(define (live) (engine:metrics "query:tc-constraints-live"))
+(run 20 0)
+(define s0 (live))
+(run 200 20)
+(define s1 (live))
+(define fails 0)
+(define (check name ok) (if (not ok) (begin (set! fails (+ fails 1)) (display "FAIL ") (display name) (newline))))
+(check "constraints steady" (<= s1 (+ s0 64)))
+(check "c0 value" (= (c0 1) 220))
+(if (= fails 0)
+    (display "OK tc constraints steady over rebinds\n")
+    (begin (display "FAIL tc-constraints s0=") (display s0) (display " s1=") (display s1) (newline)))

@@ -162,6 +162,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:constraint-delta-stats",
     // Issue #628 — solve_delta clean-conflict safety
     "query:solve-delta-safety-stats",
+    // Issue #4682 — live constraint gauge (rebind retract guard)
+    "query:tc-constraints-live",
     // Issue #467 — Per-node occurrence-dirty + blame chain
     "query:occurrence-stats",
     // Issue #495 — Task2 refinement closed-loop pillars
