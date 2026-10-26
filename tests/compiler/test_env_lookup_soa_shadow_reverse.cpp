@@ -18,6 +18,15 @@
 //          !parent_is_live_top; cell lookups reverse-scan live top_
 //   (param-shadow + named-let recursion CLI faces live in
 //    tests/python/run-tests.sh 4353-named-let-shadow.)
+//   AC7 (#4701): an IMMEDIATELY-APPLIED lambda whose body returns a closure
+//          captures its parameter — (((lambda (j) (lambda () j)) 3)) → 3
+//          (pre-fix: "unbound variable: j")
+//   AC8 (#4701): define-form parity — (define (mk j) (lambda () j)) then
+//          ((mk 3)) → 3 (the face that already worked)
+//   AC9 (#4701): the inline-lambda capture keeps the dual-path consistent —
+//          no envframe desync detected for the capture frame
+//   AC10 (#4701): source-cite — the inline-lambda call frame sets the pool
+//          and binds the parameters through bind_symid (both binding arrays)
 
 #include "test_harness.hpp"
 
@@ -26,6 +35,9 @@
 #include <string>
 
 import std;
+// Issue #4701: the dual-path desync accessor lives on the Evaluator
+// (aura.compiler.evaluator) - the service module alone does not export it.
+import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
 
@@ -167,6 +179,77 @@ static void ac6_4595_source_cite_gates() {
     CHECK(found_flat_cpp, "AC6: evaluator_eval_flat.cpp found from CWD");
 }
 
+// AC7 (#4701): an IMMEDIATELY-APPLIED lambda whose body returns a
+// closure must capture the parameter. Pre-fix the inline-lambda call
+// frame bound the parameter into the legacy string array only, so the
+// capture frame was dual-path desynced and materialize_call_env
+// hard-failed — the returned closure read "unbound variable: j".
+static void ac7_4701_inline_lambda_capture() {
+    std::println("\n--- #4701 AC7: inline lambda captures its parameter ---");
+    CompilerService cs;
+    auto r = cs.eval("(((lambda (j) (lambda () j)) 3))");
+    if (!r.has_value())
+        std::println("AC7 diagnostic: {}", r.error().message);
+    CHECK(r.has_value(), "AC7: eval ok");
+    if (r.has_value())
+        CHECK(is_int(*r) && as_int(*r) == 3,
+              "AC7: captured parameter reads 3 (pre-fix: unbound variable: j)");
+}
+
+// AC8 (#4701): the define form was the working control — the same closure
+// shape through a named procedure still resolves the captured parameter.
+static void ac8_4701_define_form_parity() {
+    std::println("\n--- #4701 AC8: define-form parity ---");
+    CompilerService cs;
+    auto r = cs.eval("(begin (define (mk j) (lambda () j)) ((mk 3)))");
+    if (!r.has_value())
+        std::println("AC8 diagnostic: {}", r.error().message);
+    CHECK(r.has_value(), "AC8: eval ok");
+    if (r.has_value())
+        CHECK(is_int(*r) && as_int(*r) == 3, "AC8: define form reads captured 3");
+}
+
+// AC9 (#4701): the inline-lambda capture frame must not trip the
+// dual-path desync detector (bindings_ vs bindings_symid_ length parity).
+static void ac9_4701_no_dualpath_desync() {
+    std::println("\n--- #4701 AC9: no dual-path desync for the capture frame ---");
+    CompilerService cs;
+    const auto before = cs.evaluator().get_envframe_desync_detected();
+    auto r = cs.eval("(((lambda (j) (lambda () j)) 3))");
+    const auto after = cs.evaluator().get_envframe_desync_detected();
+    std::println("  desync: {} -> {}", before, after);
+    CHECK(r.has_value(), "AC9: eval ok");
+    CHECK(after == before, "AC9: capture frame stays dual-path consistent");
+}
+
+// AC10 (#4701): source-cite — the inline-lambda apply path sets the pool
+// on the call frame and binds the parameters through bind_symid, so both
+// binding arrays carry the parameter (the #1482 shape).
+static void ac10_4701_source_cite_inline_lambda_frame() {
+    std::println("\n--- #4701 AC10: source-cite inline-lambda call frame ---");
+    bool found = false;
+    for (const auto& p : {std::string("src/compiler/evaluator_eval_flat.cpp"),
+                          std::string("../src/compiler/evaluator_eval_flat.cpp"),
+                          std::string("../../src/compiler/evaluator_eval_flat.cpp")}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        found = true;
+        std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        const auto anchor = src.find("Issue #4701: the inline-lambda call frame MUST carry the");
+        CHECK(anchor != std::string::npos, "AC10: inline-lambda frame cites #4701");
+        if (anchor == std::string::npos)
+            break;
+        const auto win = src.substr(anchor, 1400);
+        CHECK(win.find("tail_env->set_pool(p)") != std::string::npos,
+              "AC10: inline-lambda frame sets the pool before the binds");
+        CHECK(win.find("tail_env->bind_symid(pspan[i]") != std::string::npos,
+              "AC10: inline-lambda frame binds params via bind_symid");
+        break;
+    }
+    CHECK(found, "AC10: evaluator_eval_flat.cpp found from CWD");
+}
+
 } // namespace
 
 int run_test_env_lookup_soa_shadow_reverse() {
@@ -176,6 +259,10 @@ int run_test_env_lookup_soa_shadow_reverse() {
     ac4_4595_letstar_variant();
     ac5_4595_setbang_consistency();
     ac6_4595_source_cite_gates();
+    ac7_4701_inline_lambda_capture();
+    ac8_4701_define_form_parity();
+    ac9_4701_no_dualpath_desync();
+    ac10_4701_source_cite_inline_lambda_frame();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
