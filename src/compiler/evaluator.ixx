@@ -5091,8 +5091,73 @@ public:
     // until the fiber body has run. The watermark is per-evaluator state,
     // so it protects the closure against the reclaim on EVERY thread: the
     // spawning thread and the worker thread that applies the body.
-    void set_gc_safe_closure_id(ClosureId v) noexcept { gc_safe_closure_id_ = v; }
-    [[nodiscard]] ClosureId gc_safe_closure_id() const noexcept { return gc_safe_closure_id_; }
+    //
+    // Issue #4704: the watermark is TWO atomic watermarks, never one plain
+    // field, and the reclaim-facing value is their maximum:
+    //
+    //   * gc_safe_closure_id_   - the PENDING-BODY PIN. The pending-body
+    //     root raises it; the pending-body release restores it. It is the
+    //     ONLY watermark a release may lower.
+    //   * gc_freeze_closure_id_ - the (gc-freeze) FLOOR. It is MONOTONE:
+    //     a (gc-freeze) raises it and NOTHING ever lowers it.
+    //
+    // The EFFECTIVE watermark (max(pin, floor)) is what the reclaim
+    // compares a closure id against. The split is what makes a
+    // pending-body release unable to CLOBBER a (gc-freeze) raise: the
+    // release lowers the pin only, and the floor still holds the
+    // (gc-freeze) generation pinned. Both fields are std::atomic because
+    // the serve-async backend releases the pin on the WORKER thread while
+    // the parent's reclaim READS the watermark on the spawning thread.
+    //
+    // The EFFECTIVE pinned-closure watermark (the reclaim reads this).
+    [[nodiscard]] ClosureId gc_safe_closure_id() const noexcept {
+        const auto pin = gc_safe_closure_id_.load(std::memory_order_acquire);
+        const auto floor = gc_freeze_closure_id_.load(std::memory_order_acquire);
+        return pin > floor ? pin : floor;
+    }
+    // The raw PENDING-BODY PIN watermark: the value a pending-body root
+    // raises and a pending-body release restores.
+    [[nodiscard]] ClosureId gc_pending_pin_watermark() const noexcept {
+        return gc_safe_closure_id_.load(std::memory_order_acquire);
+    }
+    // Issue #4704: CAS the PIN watermark UP to max(current, v). It never
+    // lowers the watermark, so it can never unpin a (gc-freeze) generation.
+    // Returns the PIN value after the call. (The name is kept from #4697:
+    // it is still the single setter of the pinned-closure watermark.)
+    [[nodiscard]] ClosureId set_gc_safe_closure_id(ClosureId v) noexcept {
+        auto cur = gc_safe_closure_id_.load(std::memory_order_acquire);
+        for (;;) {
+            if (cur >= v)
+                return cur;
+            if (gc_safe_closure_id_.compare_exchange_weak(cur, v, std::memory_order_acq_rel,
+                                                          std::memory_order_acquire))
+                return v;
+        }
+    }
+    // Issue #4704: CAS the PIN watermark DOWN from 'expected' to 'desired',
+    // and only while it still holds EXACTLY 'expected'. The EFFECTIVE
+    // watermark also includes the monotone (gc-freeze) floor, so a
+    // (gc-freeze) raise that lands in the compare/write window is never
+    // clobbered by this restore.
+    bool restore_gc_safe_closure_id(ClosureId expected, ClosureId desired) noexcept {
+        auto cur = gc_safe_closure_id_.load(std::memory_order_acquire);
+        for (;;) {
+            if (cur != expected)
+                return false;
+            if (gc_safe_closure_id_.compare_exchange_weak(cur, desired, std::memory_order_acq_rel,
+                                                          std::memory_order_acquire))
+                return true;
+        }
+    }
+    // Issue #4704: CAS the (gc-freeze) FLOOR watermark UP to max(current,
+    // v). The floor is monotone: a (gc-freeze) pins a generation and
+    // NOTHING lowers it again.
+    void raise_gc_freeze_closure_id(ClosureId v) noexcept {
+        auto cur = gc_freeze_closure_id_.load(std::memory_order_acquire);
+        while (cur < v && !gc_freeze_closure_id_.compare_exchange_weak(
+                              cur, v, std::memory_order_acq_rel, std::memory_order_acquire)) {
+        }
+    }
     // Loop-head safepoint. No-op under the allocation threshold.
     void maybe_reclaim_tw_unreachable();
     // Issue #4599 follow-up: the per-opcode call site checks the same
@@ -7857,7 +7922,14 @@ private:
     // relaxed: only uniqueness matters here; the shard map insert + the
     // closures apply epoch (issue #3832) provide the cross-thread ordering.
     std::atomic<std::uint64_t> next_id_{1};
-    ClosureId gc_safe_closure_id_ = 0;
+    // Issue #4704: the pinned-closure watermark is atomic (the serve-async
+    // worker thread releases the pending-body pin while the parent's reclaim
+    // reads it) and is split into the PENDING-BODY PIN (raised / restored by
+    // the pending-body root / release) and the MONOTONE (gc-freeze) FLOOR.
+    // The effective watermark the reclaim uses is max(pin, floor) - see
+    // gc_safe_closure_id().
+    std::atomic<ClosureId> gc_safe_closure_id_{0};
+    std::atomic<ClosureId> gc_freeze_closure_id_{0};
     // Issue #68: depth counter (was bool) so nested `intend` calls
     // correctly keep outer closures in the persistent arena. With
     // bool, an outer intend's closures could be allocated in the

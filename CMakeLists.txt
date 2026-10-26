@@ -2865,6 +2865,15 @@ aura_add_issue_test(test_fiber_concurrent_unit_batch)
 aura_issue_test_link_light(test_fiber_concurrent_unit_batch)
 add_dependencies(all_test_issue_targets test_fiber_concurrent_unit_batch)
 
+# Issue #4704: the evaluator's pinned-closure watermark (gc_safe_closure_id_)
+# must be atomic and CAS-guarded - the serve-async worker releases the
+# pending-body pin while the parent reclaim reads the watermark, and a
+# (gc-freeze) raise must never be clobbered by that release. Lives in
+# tests/compiler/ per #81934/#81967.
+aura_add_issue_test(test_gc_watermark_atomic)
+aura_issue_test_link_light(test_gc_watermark_atomic)
+add_dependencies(all_test_issue_targets test_gc_watermark_atomic)
+
 # tests/compiler/jit/ AOT hot-update consolidation (#1640/#544/#1370/#1480/#1641).
 # Keep test_jit_metrics (+ stub) as custom non-module LLVM target above.
 aura_add_issue_test(test_jit_aot_hot_update_unit_batch)
