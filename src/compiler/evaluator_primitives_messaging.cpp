@@ -939,6 +939,14 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             const auto seq = thread_fiber_seq.fetch_add(1, std::memory_order_relaxed) + 1;
             fid = static_cast<std::int64_t>(0x4000'0000LL) | seq;
             fid_holder->store(fid, std::memory_order_release);
+            // Issue #4697: root the pending body closure BEFORE the worker
+            // thread starts. The body closure is a tree-walker temporary
+            // that this spawn drops on return, so the tree-walker reclaim
+            // (the #4459 / #4474 safepoint) could erase it before the
+            // worker applied it: apply_closure returned nullopt, the body
+            // never ran and fiber:join returned void (silent result loss).
+            aura_fiber_root_pending_body(static_cast<void*>(&ev), static_cast<std::uint64_t>(cid),
+                                         static_cast<std::uint64_t>(fid));
             {
                 std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
                 s_fiber_results[fid] = FiberResult{result_ptr, false};
@@ -1056,6 +1064,19 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
         auto fid = static_cast<int64_t>(as_int(a[0]));
+
+        // Issue #4697: release the pending body root once this join has
+        // consumed the fiber (the body has run). The root is the
+        // evaluator's pinned-closure watermark, so the release is safe
+        // from any thread: the watermark is restored only when the last
+        // pending fiber is done.
+        struct PendingBodyRootRelease {
+            void* ev;
+            std::uint64_t fid;
+            ~PendingBodyRootRelease() { aura_fiber_release_pending_body(ev, fid); }
+        };
+        const PendingBodyRootRelease pending_body_root_release{static_cast<void*>(&ev),
+                                                               static_cast<std::uint64_t>(fid)};
 
         auto is_ready = [fid] {
             auto it = s_fiber_results.find(fid);
