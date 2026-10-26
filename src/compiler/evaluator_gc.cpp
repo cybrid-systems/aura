@@ -263,10 +263,13 @@ void Evaluator::flush_gc_roots(void* root_set_out) {
         out.pair_roots.push_back(static_cast<int64_t>(i));
     }
 
-    // 3. closures_ — only roots with id < gc_safe_closure_id_ are
+    // 3. closures_ — only roots with id < gc_safe_closure_id() are
     //    pinned (module-level / while-loop bodies). Anything above
     //    that watermark was created inside a temp-arena intend and
     //    is safe to collect. We walk the map and emit the safe set.
+    //    Issue #4704: the watermark is an ATOMIC (the serve-async
+    //    worker releases the pending-body pin while this reclaim reads
+    //    it on the spawning thread), so the read is an atomic load.
     //
     // Issue #2473: shared_lock(closures_shards_[closures_shard_index(id)].mu) alongside heap_mutex_
     // so concurrent register_active_closure / erase cannot rehash the
@@ -286,7 +289,7 @@ void Evaluator::flush_gc_roots(void* root_set_out) {
         for (const auto& shard : closures_shards_) {
             out.closure_roots.reserve(out.closure_roots.size() + shard.map.size());
             for (const auto& [id, c] : shard.map) {
-                if (static_cast<std::uint64_t>(id) < gc_safe_closure_id_) {
+                if (static_cast<std::uint64_t>(id) < gc_safe_closure_id()) {
                     out.closure_roots.push_back(static_cast<int64_t>(id));
                 }
             }
@@ -333,7 +336,7 @@ std::size_t Evaluator::gc_root_count() const {
         cl_locks[i] = std::shared_lock<std::shared_mutex>(closures_shards_[i].mu);
     for (const auto& shard : closures_shards_) {
         for (const auto& [id, _] : shard.map) {
-            if (static_cast<std::uint64_t>(id) < gc_safe_closure_id_) {
+            if (static_cast<std::uint64_t>(id) < gc_safe_closure_id()) {
                 ++n;
             }
         }
@@ -1644,7 +1647,7 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         for (auto& cl_sh : closures_shards_) {
             for (auto it = cl_sh.map.begin(); it != cl_sh.map.end();) {
                 const auto id = it->first;
-                if (id < gc_safe_closure_id_ || live_tw.contains(id) || seen_ir.contains(id)) {
+                if (id < gc_safe_closure_id() || live_tw.contains(id) || seen_ir.contains(id)) {
                     ++it;
                     continue;
                 }
@@ -2013,7 +2016,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
                 for (const auto& kv : cl_sh.map) {
                     const auto id = kv.first;
                     const bool keep =
-                        id < gc_safe_closure_id_ || live_tw.contains(id) || seen_ir.contains(id);
+                        id < gc_safe_closure_id() || live_tw.contains(id) || seen_ir.contains(id);
                     if (!keep || !expanded.insert(id).second)
                         continue;
                     if (kv.second.env_id != NULL_ENV_ID)
@@ -2040,7 +2043,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         for (auto& cl_sh : closures_shards_) {
             for (auto it = cl_sh.map.begin(); it != cl_sh.map.end();) {
                 const auto id = it->first;
-                if (id < gc_safe_closure_id_ || live_tw.contains(id) || seen_ir.contains(id)) {
+                if (id < gc_safe_closure_id() || live_tw.contains(id) || seen_ir.contains(id)) {
                     ++it;
                     continue;
                 }

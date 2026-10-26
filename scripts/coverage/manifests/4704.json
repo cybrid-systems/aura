@@ -1,0 +1,55 @@
+{
+  "issue": 4704,
+  "title": "Issue #4704: the pinned-closure watermark (gc_safe_closure_id_) is atomic and CAS-guarded - a pending-body release never lowers it below a (gc-freeze) value.",
+  "ok": "OK: Issue #4704 the pinned-closure watermark is atomic and CAS-guarded - the pending-body release never lowers the watermark below the (gc-freeze) value",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "std::atomic<ClosureId>",
+        "gc_freeze_closure_id_",
+        "compare_exchange_weak",
+        "Issue #4704"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "set_gc_safe_closure_id",
+        "restore_gc_safe_closure_id",
+        "gc_pending_pin_watermark",
+        "Issue #4704"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_memory.cpp",
+      "contains": [
+        "raise_gc_freeze_closure_id",
+        "Issue #4704"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_gc.cpp",
+      "contains": [
+        "gc_safe_closure_id()",
+        "Issue #4704"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_gc_watermark_atomic.cpp",
+      "contains": [
+        "[#4704] AC1",
+        "[#4704] AC2",
+        "[#4704] AC3",
+        "[#4704] AC4",
+        "ac4704_gc_freeze_survives_pending_body_release",
+        "ac4704_concurrent_release_never_lowers_watermark"
+      ]
+    }
+  ]
+}

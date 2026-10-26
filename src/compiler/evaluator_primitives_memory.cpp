@@ -342,7 +342,13 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     add("gc-freeze", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
         // Issue #4580: acquire load — next_id_ is a shared atomic now
         // (registering threads draw ids concurrently).
-        ev.gc_safe_closure_id_ = ev.next_id_.load(std::memory_order_acquire);
+        // Issue #4704: the (gc-freeze) generation is pinned through the
+        // MONOTONE floor watermark. A pending-body release lowers only the
+        // pending-body PIN, so it can never CLOBBER this raise: the old
+        // read-compare-then-write restore wrote the LOWER saved watermark
+        // back and unpinned the closures (gc-freeze) had pinned, so the
+        // next reclaim could free a LIVE closure.
+        ev.raise_gc_freeze_closure_id(ev.next_id_.load(std::memory_order_acquire));
         return types::make_bool(true);
     });
 
@@ -438,7 +444,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 for (const auto& cl_sh : ev.closures_shards_) {
                     closure_count += cl_sh.map.size();
                     for (const auto& [id, _] : cl_sh.map) {
-                        if (id < ev.gc_safe_closure_id_)
+                        if (id < ev.gc_safe_closure_id())
                             ++root_count;
                     }
                 }
