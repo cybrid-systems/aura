@@ -4695,6 +4695,18 @@ extern "C" void aura_evaluator_force_unlock_outermost_holder(std::uint64_t fiber
 
 // ── destructor ───────────────────────────────────────────────────────────
 Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
+    // One pre-cascade audit per boundary exit (cascade marks + BFS drain).
+    struct BoundaryPrepBatch {
+        const std::function<void(bool)>* fn = nullptr;
+        ~BoundaryPrepBatch() {
+            if (fn && *fn)
+                (*fn)(false);
+        }
+    } boundary_prep_batch;
+    if (ev_ && !inert_ && ev_->boundary_prep_batch_fn_) {
+        boundary_prep_batch.fn = &ev_->boundary_prep_batch_fn_;
+        ev_->boundary_prep_batch_fn_(true);
+    }
     if (g_tls_outermost_guard == this)
         g_tls_outermost_guard = nullptr;
     if (!ev_ || inert_) {

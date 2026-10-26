@@ -604,7 +604,7 @@ void CompilerService::mark_define_dirty(const std::string& name) {
         metrics_.selfevo_linear_enforce_total.fetch_add(1, std::memory_order_relaxed);
         // Issue #4680: the scan is global (all live closures) and no
         // evaluation runs inside a dirty batch, so once per batch suffices.
-        if (!(dirty_batch_depth_ > 0 && dirty_batch_coalesce_enabled_() &&
+        if (!(dirty_batch_depth_ > 0 &&
               dirty_batch_linear_scan_done_)) {
             (void)evaluator_.scan_live_closures_for_linear_captures(
                 /*mark_invalid=*/true, /*only_if_moved=*/true);
@@ -824,10 +824,10 @@ void CompilerService::mark_define_dirty(const std::string& name) {
     // Issue #4681: the O(#defines) dirty-rate sample feeds only the #2209
     // adaptive threshold; take it once per dirty batch, not per name.
     const bool skip_rate_sample =
-        dirty_batch_depth_ > 0 && dirty_batch_coalesce_enabled_() && dirty_batch_rate_sampled_;
+        dirty_batch_depth_ > 0 && dirty_batch_rate_sampled_;
     if (dirty_batch_depth_ > 0)
         dirty_batch_rate_sampled_ = true;
-    if (!skip_rate_sample) {
+    if (!skip_rate_sample && !boundary_rate_sample_skip_()) {
         std::size_t dirty_funcs = 0;
         for (const auto& kv : ir_cache_v2_) {
             if (kv.second.dirty || kv.second.any_block_dirty())
@@ -1477,7 +1477,7 @@ void CompilerService::invalidate_function(const std::string& name) {
     // that still predate cur_epoch are expired before clear_ir_define_env_binding.
     // Issue #4680: inside a dirty batch the epoch is bumped once, so a
     // repeat walk/expire at the same epoch finds nothing new.
-    if (!(dirty_batch_depth_ > 0 && dirty_batch_coalesce_enabled_() &&
+    if (!(dirty_batch_depth_ > 0 &&
           dirty_batch_walk_epoch_ == bridge_epoch())) {
         notify_walk_active_closures_(bridge_epoch());
         (void)expire_stale_live_closures_(bridge_epoch());

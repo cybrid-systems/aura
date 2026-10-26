@@ -2,7 +2,7 @@
 ; caller cone, so the outermost Guard exit skips the #1274 mark-all
 ; backstop. Callers (direct and transitive), value defines, repeated
 ; rebinds, mixed mutations, the IR-bound path and :jit must still see the
-; fresh body. Run with AURA_SHARED_CONE unset and =0; same results.
+; fresh body.
 (define *fails* 0)
 (define *n* 0)
 (define (check! ok msg)

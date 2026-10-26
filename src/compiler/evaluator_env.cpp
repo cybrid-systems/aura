@@ -673,12 +673,8 @@ void Env::set_pool(const aura::ast::StringPool* p) {
             std::vector<std::pair<aura::ast::SymId, types::EvalValue>> rekeyed;
             rekeyed.reserve(bindings_.size());
             auto* mut = const_cast<aura::ast::StringPool*>(p);
-            static const bool memo_on = [] {
-                const char* e = std::getenv("AURA_REKEY_MEMO");
-                return !(e && e[0] == '0');
-            }();
             RekeyMemo4682* memo = nullptr;
-            if (memo_on && gen != 0) {
+            if (gen != 0) {
                 for (auto& m : rekey_memo_4682_)
                     if (m.epoch == gen)
                         memo = &m;
@@ -706,12 +702,7 @@ void Env::set_pool(const aura::ast::StringPool* p) {
             }
             // Same SymIds in the same order (memo hit across an epoch bump)
             // leave the SymId -> index map exactly as it would be rebuilt.
-            static const bool index_reuse_on = [] {
-                const char* e = std::getenv("AURA_SYMID_INDEX_REUSE");
-                return !(e && e[0] == '0');
-            }();
-            bool same_keys =
-                index_reuse_on && !symid_index_.empty() && bindings_symid_.size() == rekeyed.size();
+            bool same_keys = !symid_index_.empty() && bindings_symid_.size() == rekeyed.size();
             for (std::size_t i = 0; same_keys && i < rekeyed.size(); ++i)
                 same_keys = bindings_symid_[i].first == rekeyed[i].first;
             bindings_symid_ = std::move(rekeyed);

@@ -6525,11 +6525,6 @@ public:
         // children. Release such a ref and retire the record's rollback
         // data instead (rollback then reports NoRollbackData). A childless
         // body (literal) stays kept and restorable as before.
-        // AURA_REBIND_REF_RELEASE=0 keeps every ref (old behaviour).
-        static const bool release_on = [] {
-            const char* e = std::getenv("AURA_REBIND_REF_RELEASE");
-            return !(e && e[0] == '0');
-        }();
         const auto body_whole = [&](std::uint64_t v) {
             if (v >= static_cast<std::uint64_t>(size()) || is_free_slot(static_cast<NodeId>(v)))
                 return true; // keep_rollback_ref ignores it anyway
@@ -6546,7 +6541,7 @@ public:
             const auto& rec = mutation_log_[ri];
             if (!rec.has_rollback_data || !is_rebind_record(rec.operator_name))
                 continue;
-            if (release_on && !atomic_batch_active() &&
+            if (!atomic_batch_active() &&
                 (!body_whole(rec.old_value) || !body_whole(rec.new_value))) {
                 release_idx.push_back(ri);
                 continue;

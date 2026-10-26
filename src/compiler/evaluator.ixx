@@ -3248,6 +3248,15 @@ public:
     }
     // Phase 2: EDSL IR cache V2 hooks (set by CompilerService on init)
     void set_dirty_batch_fn(std::function<void(bool)> fn) { dirty_batch_fn_ = std::move(fn); }
+    // Brackets one outermost mutation-boundary exit (cascade + BFS drain) so
+    // the name-independent pre-cascade audit runs once.
+    void set_boundary_prep_batch_fn(std::function<void(bool)> fn) {
+        boundary_prep_batch_fn_ = std::move(fn);
+    }
+    void boundary_prep_batch(bool begin) {
+        if (boundary_prep_batch_fn_)
+            boundary_prep_batch_fn_(begin);
+    }
     void set_mark_define_dirty_fn(std::function<void(const std::string&)> fn) {
         mark_define_dirty_fn_ = std::move(fn);
     }
@@ -6821,7 +6830,6 @@ public:
     // in the frame lies inside that range (no O(W) re-dirty of unrelated
     // defines). Any other mutation in the frame breaks the range and the
     // backstop runs as before. Consumed at every outermost exit.
-    // Opt-out: AURA_SHARED_CONE=0.
     std::atomic<std::uint64_t> cone_cover_begin_4682_{0};
     std::atomic<std::uint64_t> cone_cover_end_4682_{0};
     std::atomic<bool> cone_cover_valid_4682_{false};
@@ -6829,16 +6837,7 @@ public:
     // Log size + flat at the previous outermost flush (single writer: outermost exit).
     const void* cone_flush_flat_4682_ = nullptr;
     std::uint64_t cone_flush_log_4682_ = 0;
-    static bool shared_cone_4682_enabled() noexcept {
-        static const bool on = [] {
-            const char* e = std::getenv("AURA_SHARED_CONE");
-            return !(e && e[0] == '0');
-        }();
-        return on;
-    }
     void note_cone_cover_4682(std::uint64_t log_before, std::uint64_t log_after) noexcept {
-        if (!shared_cone_4682_enabled())
-            return;
         if (cone_cover_valid_4682_.load(std::memory_order_relaxed) &&
             cone_cover_end_4682_.load(std::memory_order_relaxed) == log_before) {
             cone_cover_end_4682_.store(log_after, std::memory_order_relaxed);
@@ -6850,13 +6849,6 @@ public:
     }
     // Issue #4679: clean top-level lambda closure reuse in eval-current.
     std::uint64_t closure_reuse_4679_count_ = 0;
-    static bool closure_reuse_4679_enabled() noexcept {
-        static const bool on = [] {
-            const char* e = std::getenv("AURA_EVAL_CLOSURE_REUSE");
-            return !(e && e[0] == '0');
-        }();
-        return on;
-    }
 
 private:
     // Issue #2043: linear-ownership epoch — bumped under mutate_mtx_ at the
@@ -7525,6 +7517,7 @@ private:
     // update_function_source_fn_(name,src) → function_sources_ SSOT (#2730)
     std::function<void(const std::string&)> mark_define_dirty_fn_ = nullptr;
     std::function<void(bool)> dirty_batch_fn_ = nullptr; // Issue #4678
+    std::function<void(bool)> boundary_prep_batch_fn_ = nullptr;
     // Issue #3681: clear_ir_define_env_binding for the mutated name only.
     std::function<void(const std::string&)> drop_ir_define_binding_fn_ = nullptr;
     std::function<void()> mark_all_defines_dirty_fn_ = nullptr;

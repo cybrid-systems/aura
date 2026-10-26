@@ -4071,6 +4071,16 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // failure: guard rolls back the MutationRecord log +
     // panic_checkpoint restores the source).
     add_mutate("mutate:rebind", [&ev, mev, safe_str](const auto& a) -> EvalValue {
+        // One rebind = up to two boundary exits + a direct mark; share one
+        // prep / finalize / rate-sample batch across them.
+        struct RebindPrepBatch {
+            Evaluator& e;
+            explicit RebindPrepBatch(Evaluator& x)
+                : e(x) {
+                e.boundary_prep_batch(true);
+            }
+            ~RebindPrepBatch() { e.boundary_prep_batch(false); }
+        } rebind_prep_batch(ev);
         aura::compiler::phase_stats::Scope phase_rebind_prim(
             aura::compiler::phase_stats::RebindPrim);
         // Issue #1918: mutate hot path records SoA/column migration progress
@@ -11424,17 +11434,10 @@ void Evaluator::clear_cascade_bfs_invalidate() noexcept {
 
 // Issue #4682: the cascade path2 index only needs Defines whose SymId is
 // one of the looked-up names (a handful), not every Define in the
-// workspace. Same ids, same ascending order per SymId. nullopt = index all
-// (AURA_CASCADE_SYM_FILTER=0).
+// workspace. Same ids, same ascending order per SymId.
 template <class Names, class Pool>
 [[nodiscard]] static std::optional<std::unordered_set<aura::ast::SymId>>
 cascade_wanted_syms(const Names& names, Pool& pool) {
-    static const bool on = [] {
-        const char* e = std::getenv("AURA_CASCADE_SYM_FILTER");
-        return !(e && e[0] == '0');
-    }();
-    if (!on)
-        return std::nullopt;
     std::unordered_set<aura::ast::SymId> out;
     out.reserve(names.size() * 2 + 1);
     std::for_each(names.begin(), names.end(), [&](const auto& nm) {

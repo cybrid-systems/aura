@@ -353,6 +353,7 @@ struct CompilerMetrics {
     // hybrid cascade reported more blocks / cross-fn than the local mask
     // (dual-DepGraph callee edge not yet cascaded into block_dirty).
     std::atomic<std::uint64_t> partial_forced_full_by_impact_total{0};
+    std::atomic<std::uint64_t> relower_from_workspace_total{0};
     // Issue #2133: consume ImpactScope affected_instrs in relower + pass pipeline.
     //   - instr_level_relower_total: times relower_affected_instrs path ran
     //   - instr_level_pass_skipped_clean: clean instrs skipped inside dirty blocks
@@ -1399,7 +1400,7 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> solve_delta_full_solve_fallback_total{0};
     // Issue #4682: constraints_.size() seen by the latest solve_delta
     // (gauge). Steady across rebinds when the partial boundary starts a
-    // fresh ConstraintSystem (AURA_TC_CONSTRAINT_RETRACT).
+    // fresh ConstraintSystem.
     std::atomic<std::uint64_t> solve_delta_constraints_live{0};
     // Issue #341: match + Occurrence Typing
     // integration observability. 2 lifetime counters:

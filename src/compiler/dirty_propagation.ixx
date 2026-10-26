@@ -594,13 +594,6 @@ inline thread_local std::vector<NodeId> t_last_type_cone_ast{};
 // Issue #4682 fix 1: AST-dep marks the last mirror added to g_global_dirty
 // (not dirty before, not since persisted by a force_* path).
 inline thread_local std::vector<NodeId> t_mirror_owned_deps{};
-[[nodiscard]] inline bool dirty_clear_enabled() noexcept {
-    static const bool on = [] {
-        const char* e = std::getenv("AURA_TC_DIRTY_CLEAR");
-        return !(e && e[0] == '0');
-    }();
-    return on;
-}
 inline void disown_mirror_dep(NodeId dep) noexcept {
     auto& v = t_mirror_owned_deps;
     for (std::size_t i = 0; i < v.size(); ++i) {
@@ -735,27 +728,14 @@ inline void reset_residual_castop_persist_for_test() noexcept {
 inline void pull_cascade_ast_dirty_into(std::vector<NodeId>& out) {
     // Issue #4682 fix 1: tagged AST-dep ids live in the sparse set; skip
     // the dense scan of dirty_nodes() (same ids, no vector copy).
-    if (dirty_clear_enabled()) {
-        for (NodeId d : g_global_dirty.sparse) {
-            if (is_ast_dep_node(d))
-                out.push_back(decode_ast_dep_node(d));
-        }
-        for (NodeId r : t_pipeline_cascade_roots) {
-            if (is_ast_dep_node(r))
-                out.push_back(decode_ast_dep_node(r));
-        }
-        return;
-    }
-    for (NodeId d : g_global_dirty.dirty_nodes()) {
-        if (!is_ast_dep_node(d))
-            continue;
-        out.push_back(decode_ast_dep_node(d));
+    for (NodeId d : g_global_dirty.sparse) {
+        if (is_ast_dep_node(d))
+            out.push_back(decode_ast_dep_node(d));
     }
     // Also scan pending pipeline cascade roots not yet flushed.
     for (NodeId r : t_pipeline_cascade_roots) {
-        if (!is_ast_dep_node(r))
-            continue;
-        out.push_back(decode_ast_dep_node(r));
+        if (is_ast_dep_node(r))
+            out.push_back(decode_ast_dep_node(r));
     }
 }
 
@@ -771,8 +751,8 @@ inline std::size_t mirror_type_affected_to_cascade(std::span<const NodeId> affec
     // cleared them, so every later infer_flat_partial pulled the cone of
     // every earlier rebind (affected grew with rebind count). Drop the marks
     // this mirror added last time (only ones that were not already dirty and
-    // were not re-forced durable since). AURA_TC_DIRTY_CLEAR=0 = keep them.
-    if (dirty_clear_enabled() && !t_mirror_owned_deps.empty()) {
+    // were not re-forced durable since).
+    if (!t_mirror_owned_deps.empty()) {
         // The pending pipeline roots this mirror noted are dropped too when
         // no pass pipeline flushed them (else they pile up per rebind).
         std::unordered_set<NodeId> owned(t_mirror_owned_deps.begin(), t_mirror_owned_deps.end());

@@ -1413,6 +1413,19 @@ public:
             [this](const std::string& name) { this->mark_define_dirty(name); });
         // Issue #4678: restamp batch bracket (drain_cascade_bfs_invalidate).
         evaluator_.set_dirty_batch_fn([this](bool begin) { this->set_dirty_batch(begin); });
+        evaluator_.set_boundary_prep_batch_fn([this](bool begin) {
+                if (begin) {
+                    if (boundary_prep_depth_++ == 0) {
+                        boundary_prep_done_ = false;
+                        boundary_finalize_done_ = false;
+                        boundary_rate_sampled_ = false;
+                    }
+                } else if (boundary_prep_depth_ > 0 && --boundary_prep_depth_ == 0) {
+                    boundary_prep_done_ = false;
+                    boundary_finalize_done_ = false;
+                    boundary_rate_sampled_ = false;
+                }
+            });
         // Issue #3681: the id captured before set-body / rebind is the IR
         // define closure. Dropping the owner entry makes dispatch return
         // nullopt; the env refresh below installs a fresh closure.
@@ -7322,8 +7335,8 @@ public:
         // Resolve through the maintained Define tag index instead: if
         // exactly one live Define of this symbol is reachable from root it
         // is what the DFS would return. 0 or >1 candidates fall back to the
-        // DFS (pre-order tie-break). AURA_DEFINE_ROOT_TAG_INDEX=0 disables.
-        if (define_root_tag_index_enabled_()) {
+        // DFS (pre-order tie-break).
+        {
             if (const auto sym = pool.find_by_name(name)) {
                 aura::ast::NodeId only = aura::ast::NULL_NODE;
                 int n = 0;
@@ -7371,13 +7384,6 @@ public:
             cur = par;
         }
         return false;
-    }
-    static bool define_root_tag_index_enabled_() noexcept {
-        static const bool on = [] {
-            const char* e = std::getenv("AURA_DEFINE_ROOT_TAG_INDEX");
-            return !(e && e[0] == '0');
-        }();
-        return on;
     }
     std::atomic<std::uint64_t> metrics_define_root_tag_index_hits_{0};
     std::uint64_t linear_window_scans_skipped_4683_ = 0;
@@ -8490,7 +8496,32 @@ public:
         aura::ast::StringPool* lower_pool = &pool;
         const aura::ast::NodeId saved_root = flat.root;
         bool restore_root = false;
-        if (!source.empty()) {
+        // Lower straight from the live workspace Define when the caller
+        // gave us its node: re-parsing the canonical text allocates a temp
+        // FlatAST + StringPool from the arena on every relower (O(heap)
+        // safepoint work).
+        aura::ast::NodeId ws_define_root = aura::ast::NULL_NODE;
+        if (!source.empty() &&
+            expanded_root != aura::ast::NULL_NODE && expanded_root < flat.size() &&
+            !flat.is_free_slot(expanded_root)) {
+            const auto ev = flat.get(expanded_root);
+            if (ev.tag == aura::ast::NodeTag::Define) {
+                ws_define_root = expanded_root;
+            } else if (ev.tag == aura::ast::NodeTag::Lambda) {
+                const auto par = flat.parent_of(expanded_root);
+                if (par != aura::ast::NULL_NODE && par < flat.size() &&
+                    flat.get(par).tag == aura::ast::NodeTag::Define) {
+                    const auto want = pool.find_by_name(name);
+                    if (want && flat.sym_id(par) == *want)
+                        ws_define_root = par;
+                }
+            }
+        }
+        if (ws_define_root != aura::ast::NULL_NODE) {
+            flat.root = ws_define_root;
+            restore_root = true;
+            metrics_.relower_from_workspace_total.fetch_add(1, std::memory_order_relaxed);
+        } else if (!source.empty()) {
             auto alloc = arena_.allocator();
             aura::ast::StringPool* tmp_pool = nullptr;
             aura::ast::FlatAST* tmp_flat = nullptr;
@@ -8517,7 +8548,7 @@ public:
                 }
             }
         }
-        if (lower_flat == &flat && expanded_root != aura::ast::NULL_NODE &&
+        if (!restore_root && lower_flat == &flat && expanded_root != aura::ast::NULL_NODE &&
             expanded_root < flat.size()) {
             flat.root = expanded_root;
             restore_root = true;
@@ -9060,7 +9091,6 @@ public:
     // records the mutation-log position it is in sync with; a single
     // rebind whose log_before matches (nothing else mutated in between)
     // re-walks only that define: O(|body|) instead of O(N) + W unparses.
-    // AURA_DEP_GRAPH_INCREMENTAL=0 keeps the full walk.
     const void* dep_sync_flat_4682_ = nullptr;
     std::uint64_t dep_sync_log_4682_ = ~std::uint64_t{0};
     std::uint64_t dep_sync_last_id_4682_ = ~std::uint64_t{0};
@@ -9071,10 +9101,6 @@ public:
     }
     std::uint64_t dep_graph_one_fallbacks_4682_ = 0;
     void populate_dep_graph_one_4682_(const std::string& name, std::uint64_t log_before) {
-        static const bool on = [] {
-            const char* e = std::getenv("AURA_DEP_GRAPH_INCREMENTAL");
-            return !(e && e[0] == '0');
-        }();
         auto* ws_flat = evaluator_.workspace_flat();
         auto* ws_pool = evaluator_.workspace_pool();
         if (!ws_flat || !ws_pool)
@@ -9083,7 +9109,7 @@ public:
         std::vector<aura::ast::NodeId> ids;
         if (sym)
             ids = ws_flat->defines_for_sym(*sym);
-        if (!on || dep_sync_flat_4682_ != ws_flat || dep_sync_log_4682_ != log_before ||
+        if (dep_sync_flat_4682_ != ws_flat || dep_sync_log_4682_ != log_before ||
             dep_sync_last_id_4682_ != log_last_id_4682_(*ws_flat, log_before) || ids.size() != 1) {
             ++dep_graph_one_fallbacks_4682_;
             populate_dep_graph_from_workspace();
@@ -9219,15 +9245,10 @@ public:
             // Issue #4682 (B): prefilter on the tag / sym SoA columns so
             // FlatAST::get (seqlock + full NodeView assemble) runs only for
             // Define nodes. Same ids, same order, same checks as the old
-            // full get() scan (free slots included). Opt-out:
-            // AURA_VCELL_SYNC_PREFILTER=0.
-            static const bool prefilter = [] {
-                const char* e = std::getenv("AURA_VCELL_SYNC_PREFILTER");
-                return !(e && e[0] == '0');
-            }();
+            // full get() scan (free slots included).
             for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
-                if (prefilter && (ws_flat->tag(id) != aura::ast::NodeTag::Define ||
-                                  ws_flat->sym_id(id) == aura::ast::INVALID_SYM))
+                if (ws_flat->tag(id) != aura::ast::NodeTag::Define ||
+                    ws_flat->sym_id(id) == aura::ast::INVALID_SYM)
                     continue;
                 auto v = ws_flat->get(id);
                 if (v.tag != aura::ast::NodeTag::Define || v.sym_id == aura::ast::INVALID_SYM)
@@ -11627,48 +11648,11 @@ public:
         }();
         return on;
     }
-    const void* def_memo_flat_4681_ = nullptr;
-    std::size_t def_memo_log_4681_ = ~std::size_t{0};
-    std::size_t def_memo_size_4681_ = ~std::size_t{0};
-    std::unordered_map<aura::ast::SymId, aura::ast::NodeId> def_memo_4681_;
-    void rebuild_define_memo_4681_(aura::ast::FlatAST& f) {
-        def_memo_4681_.clear();
-        for (auto id : f.collect_by_tag(static_cast<std::uint32_t>(aura::ast::NodeTag::Define))) {
-            if (id >= f.size() || f.is_free_slot(id) || f.tag(id) != aura::ast::NodeTag::Define)
-                continue;
-            const auto sid = f.sym_id(id);
-            auto [it, ins] = def_memo_4681_.emplace(sid, id);
-            if (!ins && id < it->second)
-                it->second = id;
-        }
-        def_memo_flat_4681_ = &f;
-        def_memo_log_4681_ = f.all_mutations().size();
-        def_memo_size_4681_ = f.size();
-    }
     aura::ast::NodeId first_define_for_sym_4681_(aura::ast::FlatAST& f, aura::ast::SymId sid) {
         // Issue #4682 step 2: persistent FlatAST define index (no per-
-        // mutation memo rebuild). AURA_DEFINE_INDEX=0 keeps the memo.
-        static const bool persistent = [] {
-            const char* e = std::getenv("AURA_DEFINE_INDEX");
-            return !(e && e[0] == '0');
-        }();
-        if (persistent) {
-            const auto ids = f.defines_for_sym(sid);
-            return ids.empty() ? aura::ast::NULL_NODE : ids.front();
-        }
-        if (def_memo_flat_4681_ != &f || def_memo_log_4681_ != f.all_mutations().size() ||
-            def_memo_size_4681_ != f.size())
-            rebuild_define_memo_4681_(f);
-        auto it = def_memo_4681_.find(sid);
-        if (it == def_memo_4681_.end())
-            return aura::ast::NULL_NODE;
-        const auto id = it->second;
-        if (id < f.size() && !f.is_free_slot(id) && f.tag(id) == aura::ast::NodeTag::Define &&
-            f.sym_id(id) == sid)
-            return id;
-        rebuild_define_memo_4681_(f); // stale hit: rebuild once
-        it = def_memo_4681_.find(sid);
-        return it == def_memo_4681_.end() ? aura::ast::NULL_NODE : it->second;
+        // mutation memo rebuild).
+        const auto ids = f.defines_for_sym(sid);
+        return ids.empty() ? aura::ast::NULL_NODE : ids.front();
     }
     // Issue #4681: top-level lambda define name -> env cell (its call slot).
     aura::compiler::CallSlotCells4681 ir_call_slots_4681_;
@@ -17132,12 +17116,19 @@ private:
         if (lock_order::is_held(lock_order::Level::Mutate))
             metrics_.linear_gc_window_under_mutate_total.fetch_add(1, std::memory_order_relaxed);
         // Issue #4681: name-independent window; one per restamp batch.
-        if (dirty_batch_depth_ > 0 && dirty_batch_coalesce_enabled_()) {
+        if (dirty_batch_depth_ > 0) {
             if (dirty_batch_finalize_done_) {
                 ++dirty_batch_coalesced_4678_;
                 return;
             }
             dirty_batch_finalize_done_ = true;
+        }
+        if (boundary_prep_depth_ > 0) {
+            if (boundary_finalize_done_) {
+                ++dirty_batch_coalesced_4678_;
+                return;
+            }
+            boundary_finalize_done_ = true;
         }
 
         // Issue #4683: no binding ever carried a tracked linear state and
@@ -18875,9 +18866,24 @@ public:
     // audit and the global epoch bump + closure walk once per dependent.
     // Inside a batch the global halves run once (first name); per-name
     // work (gc coordination, feedback reset, bridge invalidate) still runs
-    // for every name. AURA_DIRTY_BATCH_COALESCE=0 disables.
+    // for every name.
     int dirty_batch_depth_ = 0;
     bool dirty_batch_pre_done_ = false;
+    // Boundary-exit prep coalescing (see set_boundary_prep_batch_fn).
+    int boundary_prep_depth_ = 0;
+    bool boundary_prep_done_ = false;
+    bool boundary_finalize_done_ = false;
+    bool boundary_rate_sampled_ = false;
+    // Dedupe the name-independent cascade tail (linear/GC window finalize,
+    // workspace dirty-rate sample) across one boundary exit.
+    [[nodiscard]] bool boundary_rate_sample_skip_() noexcept {
+        if (boundary_prep_depth_ <= 0)
+            return false;
+        if (boundary_rate_sampled_)
+            return true;
+        boundary_rate_sampled_ = true;
+        return false;
+    }
     bool dirty_batch_epoch_done_ = false;
     bool dirty_batch_finalize_done_ = false;
     bool dirty_batch_linear_scan_done_ = false;    // #4680
@@ -18885,13 +18891,6 @@ public:
     bool dirty_batch_rate_sampled_ = false;        // #4681
     std::uint64_t dirty_batch_walk_epoch_ = ~0ull; // #4680
     std::uint64_t dirty_batch_coalesced_4678_ = 0;
-    static bool dirty_batch_coalesce_enabled_() noexcept {
-        static const bool on = [] {
-            const char* e = std::getenv("AURA_DIRTY_BATCH_COALESCE");
-            return !(e && e[0] == '0');
-        }();
-        return on;
-    }
     void set_dirty_batch(bool begin) noexcept {
         if (begin) {
             if (dirty_batch_depth_++ == 0) {
@@ -18915,13 +18914,21 @@ public:
     }
     void prepare_unified_invalidation_pre_cascade_(const std::string& name) {
         aura::compiler::phase_stats::Scope phase_pre_audit(aura::compiler::phase_stats::PreAudit);
-        if (dirty_batch_depth_ > 0 && dirty_batch_coalesce_enabled_()) {
+        if (dirty_batch_depth_ > 0) {
             if (dirty_batch_pre_done_) {
                 on_compiler_invalidate_gc_coordination(name);
                 ++dirty_batch_coalesced_4678_;
                 return;
             }
             dirty_batch_pre_done_ = true;
+        }
+        if (boundary_prep_depth_ > 0) {
+            if (boundary_prep_done_) {
+                on_compiler_invalidate_gc_coordination(name);
+                ++dirty_batch_coalesced_4678_;
+                return;
+            }
+            boundary_prep_done_ = true;
         }
         // Issue #2131: PrePin work under active Scope (opened by soft/hard entry).
         (void)evaluator_.scan_live_closures_for_linear_captures(/*mark_invalid=*/true);
@@ -18941,7 +18948,7 @@ public:
             aura::compiler::feedback::reset_name(name);
         // Issue #4678: second+ name of a restamp batch - the epoch bump,
         // closure walk and expire already ran for this batch.
-        if (!name.empty() && dirty_batch_depth_ > 0 && dirty_batch_coalesce_enabled_()) {
+        if (!name.empty() && dirty_batch_depth_ > 0) {
             if (dirty_batch_epoch_done_) {
                 metrics_.unified_invalidation_protocol_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
@@ -19719,7 +19726,7 @@ public:
         }
         // Issue #1543 / #2131: JIT hot-swap / batch-deopt under GcCoord Scope.
         // Issue #4680: name-independent audit; once per dirty batch.
-        if (dirty_batch_depth_ > 0 && dirty_batch_coalesce_enabled_()) {
+        if (dirty_batch_depth_ > 0) {
             if (dirty_batch_hotswap_audit_done_) {
                 ++dirty_batch_coalesced_4678_;
                 return;
