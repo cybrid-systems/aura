@@ -1852,13 +1852,18 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // Issue #2189: Agent-visible pin lifecycle (pin table = cow_boundary_pinned_refs_).
     // Collect NodeIds / stable-refs from a single arg or a list of them.
     auto collect_pin_handles = [&ev, unpack_stable_ref_arg](const EvalValue& arg,
-                                                            std::vector<StableNodeRef>& out) {
+                                                            std::vector<StableNodeRef>& out,
+                                                            bool& saw_raw_id) {
         auto push_one = [&](const EvalValue& v) {
             if (auto packed = unpack_stable_ref_arg(v)) {
                 out.push_back(*packed);
                 return;
             }
             if (is_int(v)) {
+                // Issue #4696: a bare int is a slot number, not an
+                // identity. Record it so the pin-granting prims can refuse
+                // it on the production face instead of promoting it below.
+                saw_raw_id = true;
                 StableNodeRef r{};
                 r.id = static_cast<aura::ast::NodeId>(as_int(v));
                 out.push_back(r);
@@ -1895,18 +1900,49 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             if (!ev.workspace_flat_)
                 return mev("no-workspace", "no workspace AST loaded");
             std::vector<StableNodeRef> handles;
+            bool saw_raw_id = false;
             for (const auto& arg : a)
-                collect_pin_handles(arg, handles);
+                collect_pin_handles(arg, handles, saw_raw_id);
+            // Issue #4696: the pin table was the last face that still
+            // treated a bare NodeId as an identity. Promoting one with
+            // make_stamped_ref stamps it with the CURRENT generation / wrap
+            // / COW of whatever occupies that slot and then validates that
+            // fresh stamp against itself, so a deleted node's id becomes a
+            // valid, pinned cross-round handle for a DIFFERENT node. Fail
+            // closed with stale-ref — the same shape query:as-stable-ref
+            // (#3425) and resolve_mutate_node_arg (#3395) use for a bare int
+            // — and refuse BEFORE any pin is registered so a mixed call
+            // cannot leave a partial pin behind.
+            const bool production_face = aura::compiler::typed_audit::production_defaults_active();
+            if (saw_raw_id && production_face) {
+                ev.bump_raw_nodeid_usage_in_primitives_count();
+                return mev("stale-ref", "pin-stable-refs: raw node-id rejected under production; "
+                                        "use a packed v2 StableNodeRef (Issue #4696)");
+            }
             std::size_t pinned = 0;
             for (auto ref : handles) {
-                // Promote bare id to stamped live ref.
+                // Promote bare id to stamped live ref. On the production face
+                // a zero-provenance handle never reaches here (a raw NodeId
+                // was refused above and a packed v2 ref carries
+                // gen / wrap / tenant / cow), so the promotion stays
+                // Soft-only.
                 if (ref.gen == 0 && ref.wrap_epoch == 0)
                     ref = ev.make_stamped_ref(ref.id);
                 else
                     ev.stamp_stable_ref(ref);
                 // Tenant isolation: ensure_valid fails cross-tenant under sandbox.
-                if (!ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/true).has_value())
+                // Issue #4696: under the production face a packed ref is
+                // validated, not occupancy-remade onto the slot's current
+                // occupant (#3661 parity with resolve_mutate_node_arg): an
+                // expired gen must fail closed instead of being remade.
+                if (!ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/!production_face)
+                         .has_value()) {
+                    if (production_face)
+                        return mev("stale-ref",
+                                   "pin-stable-refs: stable-ref is stale under production; "
+                                   "re-query the node (Issue #4696)");
                     continue;
+                }
                 ref.pin_for_cow();
                 ev.pin_stable_ref_for_cow_boundary(ref);
                 ++pinned;
@@ -1926,8 +1962,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             if (a.empty())
                 return mev("bad-arg", "usage: (unpin-stable-refs ref|(ref ...) ...)");
             std::vector<StableNodeRef> handles;
+            // Issue #4696: unpin RELEASES a pin, it never mints a
+            // cross-round handle, so a raw NodeId stays accepted here.
+            bool saw_raw_id = false;
             for (const auto& arg : a)
-                collect_pin_handles(arg, handles);
+                collect_pin_handles(arg, handles, saw_raw_id);
             std::size_t n = 0;
             for (const auto& ref : handles) {
                 if (ev.unpin_stable_ref_from_cow_boundary(ref.id, ref.workspace_id))
@@ -1950,7 +1989,18 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (!ev.workspace_flat_)
             return mev("no-workspace", "no workspace AST loaded");
         std::vector<StableNodeRef> handles;
-        collect_pin_handles(a[0], handles);
+        bool saw_raw_id = false;
+        collect_pin_handles(a[0], handles, saw_raw_id);
+        // Issue #4696: same production-face refuse as pin-stable-refs — a raw
+        // NodeId would otherwise be promoted onto the slot's current occupant
+        // and the body would then act on that occupant. Refuse before the
+        // body runs.
+        const bool production_face = aura::compiler::typed_audit::production_defaults_active();
+        if (saw_raw_id && production_face) {
+            ev.bump_raw_nodeid_usage_in_primitives_count();
+            return mev("stale-ref", "with-pinned: raw node-id rejected under production; "
+                                    "use a packed v2 StableNodeRef (Issue #4696)");
+        }
         std::vector<aura::ast::NodeId> pinned_ids;
         pinned_ids.reserve(handles.size());
         for (auto ref : handles) {
@@ -1958,8 +2008,15 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 ref = ev.make_stamped_ref(ref.id);
             else
                 ev.stamp_stable_ref(ref);
-            if (!ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/true).has_value())
+            // Issue #4696: under the production face a packed ref is
+            // validated, not occupancy-remade onto the slot's current
+            // occupant (#3661 parity with resolve_mutate_node_arg).
+            if (!ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/!production_face).has_value()) {
+                if (production_face)
+                    return mev("stale-ref", "with-pinned: stable-ref is stale under production; "
+                                            "re-query the node (Issue #4696)");
                 continue;
+            }
             ref.pin_for_cow();
             ev.pin_stable_ref_for_cow_boundary(ref);
             pinned_ids.push_back(ref.id);

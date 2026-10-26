@@ -277,3 +277,4 @@ check_hash_probe_4612.py
 check_jit_reuse_lowering_4600.py
 check_pair_vector_hash_reclaim_4613.py
 check_block_prefix_offsets_4615.py
+check_pin_stable_refs_provenance_4696.py

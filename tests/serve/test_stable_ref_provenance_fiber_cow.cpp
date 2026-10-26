@@ -27,6 +27,13 @@
 //     AC7: (gc-heap) integration with COW + validate cycle
 //     AC8: regression — generation_ visible via metrics
 //     AC9: regression — workspace_flat() readable after COW
+//   #4696 (production pin table):
+//     AC1: production pin-stable-refs of a raw NodeId -> stale-ref
+//     AC2: production with-pinned of a raw NodeId -> stale-ref
+//     AC3: production packed v2 StableNodeRef still pins
+//     AC4: Soft raw NodeId pin still promotes (legacy #2186 path)
+//     AC5: production expired-gen packed ref is refused, not remade
+//     AC6: no docs/design/4696-*, linter wired, no test_issue_4696.cpp
 
 #include "test_harness.hpp"
 #include "compiler/typed_mutation_audit.h"
@@ -2439,6 +2446,214 @@ static void ac4438_fiberless_cross_agent_query_stale() {
     }
 }
 
+// ── Issue #4696: the production pin table must not launder a raw NodeId ──
+// A bare int is a slot number, not an identity. pin-stable-refs promoted it
+// with make_stamped_ref (stamping the CURRENT generation of whatever occupies
+// that slot) and then validated that fresh stamp against itself, so a deleted
+// node's id became a valid pinned cross-round handle for a DIFFERENT node.
+// with-pinned had the same promotion. The sibling faces already refuse a bare
+// int on the production face (query:as-stable-ref #3425, resolve_mutate_node_arg
+// #3395) and already refuse to occupancy-remake an expired-gen packed ref
+// (#3661), so the pin table was the asymmetric survivor.
+//
+// AC1: production pin-stable-refs of a recycled slot's raw id -> stale-ref,
+//      and the new occupant is never pinned
+// AC2: production with-pinned of a raw id -> stale-ref, no pin registered
+// AC3: production packed v2 StableNodeRef still pins
+// AC4: Soft raw NodeId pin still promotes (legacy #2186 path)
+// AC5: production expired-gen packed ref is refused, not remade onto the
+//      slot's current occupant
+// AC6: no docs/design/4696-*, linter wired, no test_issue_4696.cpp
+
+// Find the literal child of define "a" (the #4391 fixture shape).
+static bool ac4696_find_literal(CompilerService& cs, NodeId& parent_out,
+                                std::uint32_t& child_idx_out, NodeId& slot_out) {
+    auto* flat = cs.evaluator().workspace_flat();
+    auto* pool = cs.evaluator().workspace_pool();
+    if (!flat || !pool)
+        return false;
+    auto def = flat->find_define_by_name(*pool, "a");
+    if (!def)
+        return false;
+    auto dv = flat->get(*def);
+    for (std::uint32_t i = 0; i < dv.children.size(); ++i) {
+        const auto c = dv.child(i);
+        if (c == aura::ast::NULL_NODE || c >= flat->size() || flat->is_free_slot(c))
+            continue;
+        auto cv = flat->get(c);
+        if (cv.tag == aura::ast::NodeTag::LiteralInt && cv.int_value == 1) {
+            parent_out = *def;
+            child_idx_out = i;
+            slot_out = c;
+            return true;
+        }
+    }
+    return false;
+}
+
+// Detach the literal, recycle the slot and re-allocate a DIFFERENT node
+// there — the #4391 recycle idiom. Returns the recycled slot id (the id an
+// Agent would still be holding from an earlier round) or NULL_NODE.
+static NodeId ac4696_recycle_slot(CompilerService& cs) {
+    auto* flat = cs.evaluator().workspace_flat();
+    NodeId parent = aura::ast::NULL_NODE;
+    NodeId slot = aura::ast::NULL_NODE;
+    std::uint32_t child_idx = 0;
+    if (!flat || !ac4696_find_literal(cs, parent, child_idx, slot))
+        return aura::ast::NULL_NODE;
+    flat->set_child(parent, child_idx, aura::ast::NULL_NODE);
+    flat->recycle_dead_nodes();
+    if (!flat->is_free_slot(slot))
+        return aura::ast::NULL_NODE;
+    NodeId reused = aura::ast::NULL_NODE;
+    for (int i = 0; i < 64 && flat->is_free_slot(slot); ++i)
+        reused = flat->add_node(aura::ast::NodeTag::LiteralFloat);
+    if (reused != slot)
+        return aura::ast::NULL_NODE;
+    return slot;
+}
+
+static void ac4696_1_prod_raw_id_pin_rejected() {
+    std::println("\n=== #4696 AC1: production pin-stable-refs refuses a raw NodeId ===");
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+    CompilerService cs;
+    open_4106_production_session(cs);
+    CHECK(cs.eval("(set-code \"(define a 1) (define b 2)\")").has_value(), "4696 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4696 AC1: eval-current");
+    const auto slot = ac4696_recycle_slot(cs);
+    CHECK(slot != aura::ast::NULL_NODE, "4696 AC1: slot recycled and reused");
+    auto r = cs.eval(std::format("(pin-stable-refs {})", static_cast<long long>(slot)));
+    CHECK(r.has_value(), "4696 AC1: pin returns a value");
+    if (r)
+        CHECK(kind4106(cs, *r) == "stale-ref",
+              "4696 AC1: raw NodeId pin is refused with stale-ref");
+    CHECK(!cs.evaluator().is_agent_pinned(slot), "4696 AC1: new occupant is not pinned");
+    CHECK(cs.evaluator().cow_boundary_pinned_ref_count() == 0, "4696 AC1: pin table stays empty");
+    cs.evaluator().disarm_production_audit_defaults_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac4696_2_prod_with_pinned_raw_id_rejected() {
+    std::println("\n=== #4696 AC2: production with-pinned refuses a raw NodeId ===");
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+    CompilerService cs;
+    open_4106_production_session(cs);
+    CHECK(cs.eval("(set-code \"(define a 1) (define b 2)\")").has_value(), "4696 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4696 AC2: eval-current");
+    const auto slot = ac4696_recycle_slot(cs);
+    CHECK(slot != aura::ast::NULL_NODE, "4696 AC2: slot recycled and reused");
+    auto r = cs.eval(std::format("(with-pinned {} 42)", static_cast<long long>(slot)));
+    CHECK(r.has_value(), "4696 AC2: with-pinned returns a value");
+    if (r)
+        CHECK(kind4106(cs, *r) == "stale-ref",
+              "4696 AC2: raw NodeId with-pinned is refused with stale-ref");
+    CHECK(!cs.evaluator().is_agent_pinned(slot), "4696 AC2: new occupant is not pinned");
+    CHECK(cs.evaluator().cow_boundary_pinned_ref_count() == 0, "4696 AC2: pin table stays empty");
+    cs.evaluator().disarm_production_audit_defaults_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac4696_3_prod_packed_ref_still_pins() {
+    std::println("\n=== #4696 AC3: production packed v2 StableNodeRef still pins ===");
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+    CompilerService cs;
+    open_4106_production_session(cs);
+    CHECK(cs.eval("(set-code \"(define w4696 (lambda (x) 1))\")").has_value(),
+          "4696 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4696 AC3: eval-current");
+    CHECK(cs.eval("(define qr4696 (query :find \"w4696\" :as-query-result #t))").has_value(),
+          "4696 AC3: query result hash");
+    CHECK(cs.eval("(define p4696 (query:as-stable-ref qr4696))").has_value(), "4696 AC3: pack v2");
+    auto pr = cs.eval("(pin-stable-refs p4696)");
+    CHECK(pr && is_int(*pr) && as_int(*pr) >= 1, "4696 AC3: packed v2 ref pins");
+    auto idv = cs.eval("(car p4696)");
+    CHECK(idv && is_int(*idv), "4696 AC3: packed ref names a node id");
+    if (idv && is_int(*idv))
+        CHECK(cs.evaluator().is_agent_pinned(static_cast<NodeId>(as_int(*idv))),
+              "4696 AC3: the packed node is pinned");
+    cs.evaluator().disarm_production_audit_defaults_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac4696_4_soft_raw_id_still_promotes() {
+    std::println("\n=== #4696 AC4: Soft raw NodeId pin still promotes (legacy #2186) ===");
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define a 1) (define b 2)\")").has_value(), "4696 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4696 AC4: eval-current");
+    NodeId parent = aura::ast::NULL_NODE;
+    NodeId slot = aura::ast::NULL_NODE;
+    std::uint32_t child_idx = 0;
+    CHECK(ac4696_find_literal(cs, parent, child_idx, slot), "4696 AC4: live literal found");
+    auto pr = cs.eval(std::format("(pin-stable-refs {})", static_cast<long long>(slot)));
+    CHECK(pr && is_int(*pr) && as_int(*pr) >= 1, "4696 AC4: Soft raw NodeId pin still promotes");
+    CHECK(cs.evaluator().is_agent_pinned(slot), "4696 AC4: Soft node is pinned");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac4696_5_prod_expired_packed_ref_not_remade() {
+    std::println("\n=== #4696 AC5: production expired-gen packed ref is refused, not remade ===");
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    aura::core::resource_quota::reset_process_resource_quota_for_test();
+    CompilerService cs;
+    open_4106_production_session(cs);
+    CHECK(cs.eval("(set-code \"(define w4696b (lambda (x) 2))\")").has_value(),
+          "4696 AC5: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4696 AC5: eval-current");
+    CHECK(cs.eval("(define qr4696b (query :find \"w4696b\" :as-query-result #t))").has_value(),
+          "4696 AC5: query result hash");
+    CHECK(cs.eval("(define p4696b (query:as-stable-ref qr4696b))").has_value(),
+          "4696 AC5: pack v2");
+    // Deterministic expiry (the #4106 recycle idiom): bump the workspace
+    // generation and restamp, so the packed gen no longer matches the
+    // authority. The old code auto-refreshed it onto whatever now occupies
+    // the slot; the fix must fail closed instead.
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "4696 AC5: workspace flat");
+    if (ws) {
+        ws->bump_generation();
+        ws->restamp_all_node_generations();
+    }
+    auto pr = cs.eval("(pin-stable-refs p4696b)");
+    CHECK(pr.has_value(), "4696 AC5: pin returns a value");
+    if (pr)
+        CHECK(kind4106(cs, *pr) == "stale-ref",
+              "4696 AC5: expired-gen packed ref is refused, not remade");
+    CHECK(cs.evaluator().cow_boundary_pinned_ref_count() == 0, "4696 AC5: pin table stays empty");
+    cs.evaluator().disarm_production_audit_defaults_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac4696_6_no_docs_linter_wired() {
+    std::println("\n=== #4696 AC6: no docs/design/, linter wired, no invented test ===");
+    {
+        std::ifstream f("docs/design/4696-pin-raw-nodeid-identity.md");
+        CHECK(!f.good(), "4696 AC6: no docs/design/4696-*");
+    }
+    {
+        std::ifstream f("tests/core/test_issue_4696.cpp");
+        CHECK(!f.good(), "4696 AC6: no tests/core/test_issue_4696.cpp (#81934)");
+    }
+    {
+        std::ifstream f("build.py");
+        std::string build((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        CHECK(build.find("check_pin_stable_refs_provenance_4696") != std::string::npos,
+              "4696 AC6: linter wired into build.py");
+    }
+    {
+        std::ifstream f("scripts/coverage/root_check_allowlist.txt");
+        std::string allow((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        CHECK(allow.find("check_pin_stable_refs_provenance_4696.py") != std::string::npos,
+              "4696 AC6: root allowlist carries the linter");
+    }
+}
+
 int main() {
     std::println(
         "=== Merged stable-ref provenance fiber COW: ORIG #457-#549 + TASK1 #551-#552 ===");
@@ -2452,6 +2667,15 @@ int main() {
     ac4106_3_recycled_slot_never_rebound();
     ac4106_4_soft_stable_ref_still_mints();
     ac4106_5_no_docs_linter_wired();
+    // #4696 ACs (6) — production pin table refuses a raw NodeId. Dispatched
+    // with the other production-face ACs: the long-running suites below
+    // exhaust the process-global production budget the pin table consults.
+    ac4696_1_prod_raw_id_pin_rejected();
+    ac4696_2_prod_with_pinned_raw_id_rejected();
+    ac4696_3_prod_packed_ref_still_pins();
+    ac4696_4_soft_raw_id_still_promotes();
+    ac4696_5_prod_expired_packed_ref_not_remade();
+    ac4696_6_no_docs_linter_wired();
     ac4391_restricted_bare_int_is_stale_ref();
     // #4165 ACs (5) — same-tenant multi-Agent Agent-scoped fiber isolation.
     ac4165_1_prod_fiberless_entry_stamps_agent_band();
