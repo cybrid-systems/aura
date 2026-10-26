@@ -1038,9 +1038,33 @@ void run_serve_async(int num_workers) {
                             // alive — an unwound session fiber stops replying
                             // forever (host polls the sock with no reply: the
                             // permanent-stall shape this issue reports).
+                            // Issue #4702: split the chunk into its top-level
+                            // forms and evaluate them one at a time. A
+                            // multi-form chunk used to be evaluated as ONE
+                            // program: the compiler lowers a multi-form
+                            // program (Begin root) to IR, where the
+                            // top-level defines become IR-local cells that
+                            // die with the IR module — so the defines never
+                            // reached the session env and the NEXT exec
+                            // failed with "unbound variable". One form per
+                            // eval makes every top-level define a
+                            // single-form program, which the compiler binds
+                            // in the session env. An unbalanced chunk is
+                            // rejected before anything runs (it used to be
+                            // accepted silently and to swallow the forms
+                            // after it).
+                            auto split = detail::split_top_level_forms(code);
+                            if (!split.ok()) {
+                                emit_status_line(status_line_error(nsid, split.error, ""));
+                                continue;
+                            }
                             try {
-                                auto captured =
-                                    capture_stdout_during([&] { return cs.exec_with_cache(code); });
+                                auto captured = capture_stdout_during([&] {
+                                    return detail::eval_top_level_forms(
+                                        split.forms, [&](std::string_view form) {
+                                            return cs.exec_with_cache(form);
+                                        });
+                                });
                                 if (!captured) {
                                     // Issue #4229: capture setup failed —
                                     // explicit transient error; the exec did
@@ -1049,11 +1073,16 @@ void run_serve_async(int num_workers) {
                                         nsid, "serve stdout capture unavailable (transient)", ""));
                                 } else {
                                     auto [r, display] = std::move(*captured);
-                                    if (r) {
-                                        emit_exec_result(nsid, *r, display, cs);
+                                    if (!r) {
+                                        // The chunk held no top-level form.
+                                        emit_status_line(status_line_error(
+                                            nsid, "parse error: no complete form in exec chunk",
+                                            display));
+                                    } else if (!*r) {
+                                        emit_status_line(status_line_error(
+                                            nsid, (*r).error().format(), display));
                                     } else {
-                                        emit_status_line(
-                                            status_line_error(nsid, r.error().format(), display));
+                                        emit_exec_result(nsid, **r, display, cs);
                                     }
                                 }
                             } catch (const std::exception& e) {
@@ -1174,9 +1203,31 @@ void run_serve_async(int num_workers) {
                         // named-session loop above — an exception escaping
                         // exec must surface as a status error, never unwind
                         // the session fiber.
+                        // Issue #4702: split the chunk into its top-level
+                        // forms and evaluate them one at a time. A
+                        // multi-form chunk used to be evaluated as ONE
+                        // program: the compiler lowers a multi-form program
+                        // (Begin root) to IR, where the top-level defines
+                        // become IR-local cells that die with the IR module
+                        // — so the defines never reached the session env
+                        // and the NEXT exec failed with "unbound variable".
+                        // One form per eval makes every top-level define a
+                        // single-form program, which the compiler binds in
+                        // the session env. An unbalanced chunk is rejected
+                        // before anything runs (it used to be accepted
+                        // silently and to swallow the forms after it).
+                        auto split = detail::split_top_level_forms(code);
+                        if (!split.ok()) {
+                            emit_status_line(status_line_error(sid, split.error, ""));
+                            continue;
+                        }
                         try {
-                            auto captured =
-                                capture_stdout_during([&] { return cs.exec_with_cache(code); });
+                            auto captured = capture_stdout_during([&] {
+                                return detail::eval_top_level_forms(
+                                    split.forms, [&](std::string_view form) {
+                                        return cs.exec_with_cache(form);
+                                    });
+                            });
                             if (!captured) {
                                 // Issue #4229: capture setup failed —
                                 // explicit transient error; the exec did
@@ -1185,9 +1236,17 @@ void run_serve_async(int num_workers) {
                                     sid, "serve stdout capture unavailable (transient)", ""));
                             } else {
                                 auto [result, display] = std::move(*captured);
-                                if (result) {
+                                if (!result) {
+                                    // The chunk held no top-level form.
+                                    emit_status_line(status_line_error(
+                                        sid, "parse error: no complete form in exec chunk",
+                                        display));
+                                } else if (!*result) {
+                                    auto& d = (*result).error();
+                                    emit_status_line(status_line_error(sid, d.format(), display));
+                                } else {
                                     try {
-                                        auto& v = *result;
+                                        auto& v = **result;
                                         // Check if closure
                                         if (is_closure(v)) {
                                             if (display.empty()) {
@@ -1209,9 +1268,6 @@ void run_serve_async(int num_workers) {
                                         emit_status_line(
                                             status_line_error(sid, "out of memory", display));
                                     }
-                                } else {
-                                    auto& d = result.error();
-                                    emit_status_line(status_line_error(sid, d.format(), display));
                                 }
                             }
                         } catch (const std::exception& e) {

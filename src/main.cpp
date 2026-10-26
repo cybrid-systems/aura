@@ -1330,6 +1330,25 @@ int main(int argc, char* argv[]) {
                                          json_escape(d.format()));
                         }
                     } else if (type == "exec") {
+                        // Issue #4702: split the chunk into its top-level
+                        // forms and evaluate them one at a time. A
+                        // multi-form chunk used to be evaluated as ONE
+                        // program: the compiler lowers a multi-form program
+                        // (Begin root) to IR, where the top-level defines
+                        // become IR-local cells that die with the IR module
+                        // — so the defines never reached the session env
+                        // and the NEXT exec failed with "unbound variable".
+                        // One form per eval makes every top-level define a
+                        // single-form program, which the compiler binds in
+                        // the session env. An unbalanced chunk is rejected
+                        // before anything runs (it used to be accepted
+                        // silently and to swallow the forms after it).
+                        auto split = aura::serve::detail::split_top_level_forms(code);
+                        if (!split.ok()) {
+                            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
+                                         json_escape(split.error));
+                            continue;
+                        }
                         // Timeout-based eval: run in async future, wait up to 30s
                         int timeout_sec = 30;
                         auto timeout_it = cmd.find("timeout");
@@ -1339,8 +1358,11 @@ int main(int argc, char* argv[]) {
                             } catch (...) {
                             }
                         }
-                        auto future = std::async(std::launch::async,
-                                                 [&]() { return cs.exec_with_cache(code); });
+                        auto future = std::async(std::launch::async, [&]() {
+                            return aura::serve::detail::eval_top_level_forms(
+                                split.forms,
+                                [&](std::string_view form) { return cs.exec_with_cache(form); });
+                        });
                         auto status = future.wait_for(std::chrono::seconds(timeout_sec));
                         if (status == std::future_status::timeout) {
                             std::println(
@@ -1348,9 +1370,17 @@ int main(int argc, char* argv[]) {
                                 timeout_sec);
                         } else {
                             auto result = future.get();
-                            if (result) {
+                            if (!result) {
+                                // The chunk held no top-level form.
+                                std::println("{{\"status\":\"error\",\"msg\":\"parse error: no "
+                                             "complete form in exec chunk\"}}");
+                            } else if (!*result) {
+                                auto& d = (*result).error();
+                                std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
+                                             json_escape(d.format()));
+                            } else {
                                 try {
-                                    auto& v = *result;
+                                    auto& v = **result;
                                     if (aura::compiler::types::is_closure(v)) {
                                         std::println("{{\"status\":\"closure\",\"value\":\"#<"
                                                      "procedure>\"}}");
@@ -1362,10 +1392,6 @@ int main(int argc, char* argv[]) {
                                     std::println(
                                         "{{\"status\":\"error\",\"msg\":\"out of memory\"}}");
                                 }
-                            } else {
-                                auto& d = result.error();
-                                std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
-                                             json_escape(d.format()));
                             }
                         }
                     } else if (type == "redefine") {
