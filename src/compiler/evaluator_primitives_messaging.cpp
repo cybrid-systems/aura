@@ -13,6 +13,8 @@ module;
 #include "observability_metrics.h"
 #include "hash_meta.h"
 
+#include <unistd.h>
+
 module aura.compiler.evaluator;
 
 import std;
@@ -139,6 +141,281 @@ namespace {
         CliBodyLockJoinGuard(const CliBodyLockJoinGuard&) = delete;
         CliBodyLockJoinGuard& operator=(const CliBodyLockJoinGuard&) = delete;
     };
+
+    // ── Issue #4700: fiber-cooperative channel waits ───────────────
+    //
+    // The channel send/recv primitives used to block the CALLING OS THREAD
+    // on the channel condition_variable. Under --serve-async the caller is a
+    // FIBER running on a worker thread, so the condvar wait froze the
+    // whole worker: a peer fiber on the same worker (the sender) could
+    // never run → deadlock (#4700).
+    //
+    // Cooperative protocol: a fiber that has to wait parks ITSELF
+    // (FiberState::Waiting + Fiber::yield(BlockingIO)) and is woken by a
+    // 1-byte write to its eventfd — the same wake protocol as fiber:join's
+    // joiner wake (Scheduler::on_fiber_done) and MultiFiberMailbox's
+    // notify_all_unlocked. The channel mutex is NEVER held across the
+    // park (a parked fiber may be resumed on another worker thread).
+    //
+    // The waiter registry lives here (not in Evaluator::Channel) so the
+    // evaluator module interface stays untouched: the channel address is
+    // the registry key and the waiters are opaque Fiber pointers.
+    // Issue #4700: a non-owning view of Evaluator::Channel. The Channel
+    // type is private to the Evaluator, so the cooperative helpers take the
+    // fields they need instead of the type — evaluator.ixx stays untouched.
+    struct ChannelView {
+        const void* key = nullptr; // stable channel identity (the Channel address)
+        std::mutex& mtx;
+        std::condition_variable& cv;
+        std::deque<std::string>& queue;
+        std::size_t& buffer_size;
+        std::size_t& waiting_receivers;
+        bool& closed;
+    };
+    struct ChannelWaiter {
+        aura::serve::Fiber* fiber = nullptr;
+        bool sender = false; // true = parked sender, false = parked receiver
+    };
+    std::mutex s_channel_waiters_mtx;
+    std::unordered_map<std::uint64_t, std::vector<ChannelWaiter>> s_channel_waiters;
+
+    inline std::uint64_t channel_waiter_key(const void* ch) noexcept {
+        return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(ch));
+    }
+
+    // Register the fiber as a waiter of the channel. The caller MUST hold
+    // ch.mtx so a peer cannot slip between the predicate check and the
+    // registration (the peer pushes under the same lock).
+    void channel_register_waiter(const void* ch, aura::serve::Fiber* fiber, bool sender) {
+        std::lock_guard lk(s_channel_waiters_mtx);
+        s_channel_waiters[channel_waiter_key(ch)].push_back(ChannelWaiter{fiber, sender});
+    }
+
+    // Drop the registration made by channel_register_waiter. Idempotent.
+    void channel_unregister_waiter(const void* ch, aura::serve::Fiber* fiber, bool sender) {
+        std::lock_guard lk(s_channel_waiters_mtx);
+        auto it = s_channel_waiters.find(channel_waiter_key(ch));
+        if (it == s_channel_waiters.end())
+            return;
+        auto& vec = it->second;
+        for (auto i = vec.begin(); i != vec.end(); ++i) {
+            if (i->fiber == fiber && i->sender == sender) {
+                vec.erase(i);
+                break;
+            }
+        }
+        if (vec.empty())
+            s_channel_waiters.erase(it);
+    }
+
+    // Wake every parked waiter of the channel with the given role. Mirrors
+    // MultiFiberMailbox::notify_all_unlocked: write the fiber's eventfd and
+    // flip Waiting -> Ready so the scheduler may pick it up.
+    void channel_wake_waiters(const void* ch, bool sender) {
+        std::vector<aura::serve::Fiber*> to_wake;
+        {
+            std::lock_guard lk(s_channel_waiters_mtx);
+            auto it = s_channel_waiters.find(channel_waiter_key(ch));
+            if (it == s_channel_waiters.end())
+                return;
+            auto& vec = it->second;
+            for (auto i = vec.begin(); i != vec.end();) {
+                if (i->sender == sender) {
+                    to_wake.push_back(i->fiber);
+                    i = vec.erase(i);
+                } else {
+                    ++i;
+                }
+            }
+            if (vec.empty())
+                s_channel_waiters.erase(it);
+        }
+        for (auto* f : to_wake) {
+            if (!f || f->is_done())
+                continue;
+            const int evfd = f->eventfd();
+            if (evfd >= 0) {
+                std::uint64_t one = 1;
+                (void)::write(evfd, &one, sizeof(one));
+            }
+            if (f->state() == aura::serve::FiberState::Waiting)
+                f->set_state(aura::serve::FiberState::Ready);
+        }
+    }
+
+    // Issue #2554 / #3692: Fiber::yield is rejected while a mutation
+    // boundary is live — the yield never swaps out, so parking would
+    // hot-spin. Fall back to the host-thread wait in that case.
+    bool channel_can_park_fiber() {
+        if (aura_evaluator_mutation_boundary_depth() > 0)
+            return false;
+        if (aura::messaging::g_mutation_boundary_held &&
+            aura::messaging::g_mutation_boundary_held())
+            return false;
+        return true;
+    }
+
+    // Park the calling fiber until it is woken. Returns true when the fiber
+    // suspended, false when a wake was already pending (the caller must
+    // re-check its predicate).
+    bool channel_park_fiber(aura::serve::Fiber* fiber) {
+        if (!fiber)
+            return false;
+        const int evfd = fiber->eventfd();
+        if (evfd < 0)
+            return false;
+        // Issue #4700: a peer fiber on this worker may have written the wake
+        // eventfd between our predicate check and the park. Consume it here
+        // instead of parking on an already-signalled eventfd (which would
+        // sleep forever).
+        std::uint64_t primed = 0;
+        if (::read(evfd, &primed, sizeof(primed)) == static_cast<ssize_t>(sizeof(primed)))
+            return false; // wake already pending → caller re-checks
+        // Issue #2554: park as Waiting BEFORE the yield;
+        // Fiber::yield(BlockingIO) keeps the fiber off the worker queue
+        // (unstealable) until the IO thread re-queues it after the wake.
+        fiber->set_state(aura::serve::FiberState::Waiting);
+        {
+            // Issue #4700 / #2869: release the denseness body mutex across
+            // the park. The parked fiber still owns that mutex, so a peer
+            // fiber on the same worker would block on it forever (the same
+            // protocol as the fiber:join wait).
+            CliBodyLockJoinGuard body_lock_guard;
+            aura::serve::Fiber::yield(aura::serve::YieldReason::BlockingIO);
+        }
+        // Drain the eventfd so a stale wake cannot confuse the next park.
+        std::uint64_t val = 0;
+        while (::read(evfd, &val, sizeof(val)) > 0) {
+        }
+        fiber->set_state(aura::serve::FiberState::Running);
+        return true;
+    }
+
+    // Issue #4700: cooperative (fiber) channel receive. Parks the calling
+    // FIBER (never the worker thread) until a message is queued or the
+    // channel is closed. Returns the message, or nullopt when the channel
+    // was closed (the caller then returns the empty string).
+    std::optional<std::string> channel_recv_cooperative(ChannelView& ch,
+                                                        aura::serve::Fiber* fiber) {
+        const void* key = ch.key;
+        for (;;) {
+            {
+                std::unique_lock ul(ch.mtx);
+                if (!ch.queue.empty()) {
+                    auto msg = std::move(ch.queue.front());
+                    ch.queue.pop_front();
+                    ul.unlock();
+                    // A parked sender may have buffer room again (buffered
+                    // channel) — wake it so it can push.
+                    channel_wake_waiters(key, /*sender=*/true);
+                    ch.cv.notify_all();
+                    return msg;
+                }
+                if (ch.closed) {
+                    ul.unlock();
+                    channel_wake_waiters(key, /*sender=*/true);
+                    ch.cv.notify_all();
+                    return std::nullopt;
+                }
+                // Issue #2483: announce the waiting receiver so a rendezvous
+                // send can proceed.
+                ++ch.waiting_receivers;
+                channel_register_waiter(key, fiber, /*sender=*/false);
+                ul.unlock();
+            }
+            // We are a posted receiver: a parked sender (rendezvous) can
+            // hand its message over now — wake it so it can push.
+            channel_wake_waiters(key, /*sender=*/true);
+            if (!channel_can_park_fiber()) {
+                // The fiber cannot suspend (Fiber::yield is rejected while a
+                // mutation boundary is live) — fall back to the host-thread
+                // wait so the channel still makes progress.
+                std::unique_lock ul(ch.mtx);
+                ch.cv.wait(ul, [&]() { return ch.closed || !ch.queue.empty(); });
+                --ch.waiting_receivers;
+                channel_unregister_waiter(key, fiber, /*sender=*/false);
+                if (ch.queue.empty()) {
+                    ul.unlock();
+                    ch.cv.notify_all();
+                    return std::nullopt;
+                }
+                auto msg = std::move(ch.queue.front());
+                ch.queue.pop_front();
+                ul.unlock();
+                ch.cv.notify_all();
+                channel_wake_waiters(key, /*sender=*/true);
+                return msg;
+            }
+            // Park the fiber — the worker thread stays free for peers.
+            channel_park_fiber(fiber);
+            {
+                std::lock_guard lk(ch.mtx);
+                --ch.waiting_receivers;
+            }
+            channel_unregister_waiter(key, fiber, /*sender=*/false);
+            // Re-check: the wake may have been spurious, or another
+            // receiver may have taken the message.
+        }
+    }
+
+    // Issue #4700: cooperative (fiber) channel send. Parks the calling FIBER
+    // (never the worker thread) until the buffer has room (buffered
+    // channel) or a receiver is posted (rendezvous).
+    bool channel_send_cooperative(ChannelView& ch, std::string msg, aura::serve::Fiber* fiber) {
+        const void* key = ch.key;
+        for (;;) {
+            {
+                std::unique_lock ul(ch.mtx);
+                if (ch.closed) {
+                    ul.unlock();
+                    return false;
+                }
+                // Issue #2483: buffer_size==0 must NOT short-circuit the wait
+                // predicate (rendezvous waits for a posted receiver).
+                const bool ready = ch.buffer_size > 0
+                                       ? ch.queue.size() < ch.buffer_size
+                                       : (ch.waiting_receivers > 0 && ch.queue.empty());
+                if (ready) {
+                    ch.queue.push_back(std::move(msg));
+                    ul.unlock();
+                    ch.cv.notify_all();
+                    // A parked receiver can take the message now.
+                    channel_wake_waiters(key, /*sender=*/false);
+                    return true;
+                }
+                // No room yet — park as a sender.
+                channel_register_waiter(key, fiber, /*sender=*/true);
+                ul.unlock();
+            }
+            if (!channel_can_park_fiber()) {
+                // Cannot suspend (live mutation boundary) — fall back to the
+                // host-thread wait.
+                std::unique_lock ul(ch.mtx);
+                ch.cv.wait(ul, [&]() {
+                    if (ch.closed)
+                        return true;
+                    if (ch.buffer_size > 0)
+                        return ch.queue.size() < ch.buffer_size;
+                    return ch.waiting_receivers > 0 && ch.queue.empty();
+                });
+                channel_unregister_waiter(key, fiber, /*sender=*/true);
+                if (ch.closed) {
+                    ul.unlock();
+                    return false;
+                }
+                ch.queue.push_back(std::move(msg));
+                ul.unlock();
+                ch.cv.notify_all();
+                channel_wake_waiters(key, /*sender=*/false);
+                return true;
+            }
+            // Park the fiber — the worker thread stays free for peers.
+            channel_park_fiber(fiber);
+            channel_unregister_waiter(key, fiber, /*sender=*/true);
+            // Re-check the predicate (the wake may have been spurious).
+        }
+    }
+
 
     void denseness_body_unlock_hook(void** lock_out, bool* unlocked_out) {
         *lock_out = nullptr;
@@ -1430,6 +1707,16 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             ch_ptr = ev.channels_[ch_id];
         }
         auto& ch = *ch_ptr;
+        // Issue #4700: under the fiber scheduler the send must park the
+        // FIBER, not the worker thread. The condvar wait below freezes the
+        // whole worker, so a peer fiber on that worker (the receiver) could
+        // never run → deadlock. Park cooperatively instead.
+        aura::serve::Fiber* fiber = aura::serve::g_current_fiber;
+        if (fiber && channel_can_park_fiber()) {
+            ChannelView view{
+                &ch, ch.mtx, ch.cv, ch.queue, ch.buffer_size, ch.waiting_receivers, ch.closed};
+            return make_bool(channel_send_cooperative(view, std::move(msg), fiber));
+        }
         std::unique_lock ul(ch.mtx);
         ch.cv.wait(ul, [&]() {
             if (ch.closed)
@@ -1464,6 +1751,20 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             ch_ptr = ev.channels_[ch_id];
         }
         auto& ch = *ch_ptr;
+        // Issue #4700: under the fiber scheduler the receive must park the
+        // FIBER, not the worker thread. The condvar wait below freezes the
+        // whole worker, so a peer fiber on that worker (the sender) could
+        // never run → deadlock. Park cooperatively instead.
+        aura::serve::Fiber* fiber = aura::serve::g_current_fiber;
+        if (fiber && channel_can_park_fiber()) {
+            ChannelView view{
+                &ch, ch.mtx, ch.cv, ch.queue, ch.buffer_size, ch.waiting_receivers, ch.closed};
+            auto msg = channel_recv_cooperative(view, fiber);
+            if (!msg)
+                return make_string(0); // channel closed
+            auto idx = ev.string_heap_.mint(std::move(*msg));
+            return make_string(static_cast<std::uint64_t>(idx));
+        }
         std::unique_lock ul(ch.mtx);
         // Issue #2483: announce waiting receiver so rendezvous send can proceed.
         ++ch.waiting_receivers;
@@ -1504,6 +1805,8 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         ch.queue.pop_front();
         ul.unlock();
         ch.cv.notify_all(); // wake blocked senders (full buffer / next rendezvous)
+        // Issue #4700: wake a parked fiber sender — the buffer slot is free.
+        channel_wake_waiters(&ch, /*sender=*/true);
         auto idx = ev.string_heap_.mint(std::move(msg));
         return make_string(static_cast<std::uint64_t>(idx));
     });
@@ -1527,6 +1830,10 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             ch.closed = true;
         }
         ch.cv.notify_all();
+        // Issue #4700: wake parked fiber waiters (receivers and senders) so
+        // they observe the closed channel instead of parking forever.
+        channel_wake_waiters(&ch, /*sender=*/false);
+        channel_wake_waiters(&ch, /*sender=*/true);
         return make_bool(true);
     });
 
