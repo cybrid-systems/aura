@@ -1,0 +1,54 @@
+{
+  "issue": 4702,
+  "title": "the serve exec command evaluated a multi-form chunk as ONE program, so the top-level defines of the chunk were dropped (IR-local cells) and an unbalanced chunk was accepted silently",
+  "checks": [
+    {
+      "ac": "AC1-chunk-split-helper",
+      "path": "src/serve/serve_async.h",
+      "contains": [
+        "split_top_level_forms",
+        "eval_top_level_forms",
+        "struct FormSplit",
+        "unclosed '(' (missing ')')",
+        "unexpected ')'"
+      ]
+    },
+    {
+      "ac": "AC2-serve-async-exec-splits-the-chunk",
+      "path": "src/serve/serve_async.cpp",
+      "contains": [
+        "detail::split_top_level_forms(code)",
+        "detail::eval_top_level_forms(",
+        "parse error: no complete form in exec chunk"
+      ]
+    },
+    {
+      "ac": "AC3-sync-serve-exec-splits-the-chunk",
+      "path": "src/main.cpp",
+      "contains": [
+        "aura::serve::detail::split_top_level_forms(code)",
+        "aura::serve::detail::eval_top_level_forms("
+      ]
+    },
+    {
+      "ac": "AC4-regression-guard",
+      "path": "tests/serve/test_serve_legacy_issue_batch.cpp",
+      "contains": [
+        "test_issue_4702_exec_chunk_forms",
+        "AC1: three top-level forms recovered",
+        "AC2: an unclosed '(' is rejected",
+        "AC3: both defines of the chunk are bound (1 2)",
+        "AC4: the function define is callable"
+      ]
+    },
+    {
+      "ac": "AC-no-issue-dir",
+      "forbid": [
+        "tests/issues/test_issue_4702.cpp",
+        "tests/compiler/test_issue_4702.cpp",
+        "tests/serve/test_issue_4702.cpp",
+        "docs/design/4702-serve-exec-chunk-forms.md"
+      ]
+    }
+  ]
+}
