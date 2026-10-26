@@ -20,6 +20,30 @@
 // per-thread mutation boundary depth probe. Defined
 // in evaluator_fiber_mutation.cpp.
 extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
+// Issue #4697: pending thread-fiber body root (CLI thread backend).
+// The tree-walker reclaim (Evaluator::maybe_reclaim_tw_unreachable, the
+// #4459 / #4474 safepoint) marks from env frames and the CURRENT
+// thread's pinned temporaries only, then erases every closure no root
+// references. A pending thread-fiber's body closure is a tree-walker
+// temporary — fiber:spawn drops it when the spawn returns — so the
+// reclaim could erase it before the worker thread applied it:
+// apply_closure returned nullopt, the body never ran and fiber:join
+// returned void (silent result loss — the first fibers spawned in the
+// first call of a function lost their results).
+//
+// These hooks are the C-linkage face of that root. The strong definition
+// (evaluator_fiber_mutation.cpp) raises the evaluator's own
+// pinned-closure watermark (gc_safe_closure_id_) over the pending body
+// closure id, so the reclaim keeps the closure until the fiber body has
+// run. The watermark is per-evaluator state, so it protects the closure
+// against the reclaim on EVERY thread: the spawning thread and the worker
+// thread that applies the body.
+//
+// fiber_bridge.cpp provides the weak no-op for link units without the
+// evaluator.
+extern "C" void aura_fiber_root_pending_body(void* evaluator, std::uint64_t closure_id,
+                                             std::uint64_t fiber_id) noexcept;
+extern "C" void aura_fiber_release_pending_body(void* evaluator, std::uint64_t fiber_id) noexcept;
 // Issue #2114 / #2188: outermost Guard held flag (weak default 0 in
 // fiber_bridge when Evaluator not linked).
 // Issue #2849: also true when process-wide held count > 0 so cross-thread

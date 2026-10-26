@@ -276,6 +276,27 @@ __attribute__((weak, used)) void aura_evaluator_on_fiber_join(void* /*joined_fib
 __attribute__((weak, used)) void
 aura_evaluator_on_fiber_join_session_revoke(void* /*joined_fiber*/) {}
 
+// Issue #4697: pending thread-fiber body root (CLI thread backend).
+// Strong definition in evaluator_fiber_mutation.cpp: it raises the
+// evaluator's pinned-closure watermark over the pending fiber's body
+// closure id so the tree-walker reclaim cannot erase it before the worker
+// thread applies it (body never ran / fiber:join returned void). Weak
+// no-op keeps link units without the evaluator module happy; the used
+// attribute prevents --gc-sections from dropping the empty weak body
+// before resolution.
+__attribute__((weak, used)) void aura_fiber_root_pending_body(void* evaluator,
+                                                              std::uint64_t closure_id,
+                                                              std::uint64_t fiber_id) noexcept {
+    (void)evaluator;
+    (void)closure_id;
+    (void)fiber_id;
+}
+__attribute__((weak, used)) void aura_fiber_release_pending_body(void* evaluator,
+                                                                 std::uint64_t fiber_id) noexcept {
+    (void)evaluator;
+    (void)fiber_id;
+}
+
 // Issue #1880 / #2118: orch agent body try_acquire (strong defs in evaluator_fiber_mutation.cpp).
 __attribute__((weak, used)) int aura_orch_agent_body_try_acquire() {
     return 0; // no evaluator → allow body
