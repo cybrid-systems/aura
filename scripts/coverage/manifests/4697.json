@@ -1,0 +1,60 @@
+{
+  "issue": 4697,
+  "title": "Issue #4697: CLI thread backend keeps the pending fiber body closure alive across the tree-walker reclaim (fiber:join returned void, body never ran).",
+  "ok": "OK: Issue #4697 CLI thread backend pending fiber body root - every spawned body runs exactly once and fiber:join returns its value",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_messaging.cpp",
+      "contains": [
+        "aura_fiber_root_pending_body",
+        "aura_fiber_release_pending_body",
+        "Issue #4697"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "aura_fiber_root_pending_body",
+        "set_gc_safe_closure_id",
+        "Issue #4697"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "set_gc_safe_closure_id",
+        "gc_safe_closure_id",
+        "Issue #4697"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/serve/fiber.h",
+      "contains": [
+        "aura_fiber_root_pending_body",
+        "aura_fiber_release_pending_body",
+        "Issue #4697"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/fiber_bridge.cpp",
+      "contains": [
+        "aura_fiber_root_pending_body",
+        "aura_fiber_release_pending_body",
+        "Issue #4697"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/serve/test_fiber_concurrent_unit_batch.cpp",
+      "contains": [
+        "[#4697] AC1",
+        "run_4697_pending_body_root_smoke"
+      ]
+    }
+  ]
+}
