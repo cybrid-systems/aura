@@ -3219,8 +3219,9 @@ extern "C" void aura_fiber_root_pending_body(void* evaluator, std::uint64_t clos
             st.raised_watermark = want;
         }
     } catch (...) {
-        // A root that cannot be taken must not abort the spawn: the body
-        // then runs unprotected (the pre-#4697 behaviour).
+        // [SILENCE-PRIM-#4697] noexcept C ABI: a failed root must not
+        // abort the spawn. The body then runs unprotected (the
+        // pre-#4697 behaviour) instead of terminating the process.
     }
 }
 
@@ -3245,6 +3246,9 @@ extern "C" void aura_fiber_release_pending_body(void* evaluator, std::uint64_t f
             ev->set_gc_safe_closure_id(st.saved_watermark);
         g_pending_fiber_roots.erase(it);
     } catch (...) {
+        // [SILENCE-PRIM-#4697] noexcept C ABI: a failed release must not
+        // terminate the process; the watermark then stays raised, which
+        // only pins closures (it never frees a live one).
     }
 }
 
