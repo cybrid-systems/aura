@@ -9288,14 +9288,10 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 mutable_env.set_pool(p);
 
                             // #4679: index last local cell per name once (was an
-                            // O(W*bindings) scan). AURA_LETREC_SCAN=1 = old.
-                            static const bool force_scan_4679 = [] {
-                                const char* e = std::getenv("AURA_LETREC_SCAN");
-                                return e && *e == '1';
-                            }();
+                            // O(W*bindings) scan).
                             constexpr std::size_t kLetrecIndexMin = 16;
                             const bool use_index =
-                                !force_scan_4679 && letrec_defs.size() >= kLetrecIndexMin;
+                                letrec_defs.size() >= kLetrecIndexMin;
                             std::unordered_map<std::string, std::size_t> last_cell;
                             if (use_index) {
                                 const auto& bs = mutable_env.bindings();
@@ -9407,8 +9403,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             // frame per define per eval-current (O(W) closures).
                             // Rebinds dirty their own subtree (and cascaded
                             // callers), so those still rebuild.
-                            // AURA_EVAL_CLOSURE_REUSE=0 disables.
-                            if (closure_reuse_4679_enabled() && &eval_env == &top_ &&
+
+                            if (&eval_env == &top_ &&
                                 !f->has_dirty_subtree(d.second) && cell_ids[i] < cells_.size() &&
                                 is_closure(cells_[cell_ids[i]])) {
                                 const auto rcid = as_closure_id(cells_[cell_ids[i]]);

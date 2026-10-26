@@ -2939,7 +2939,6 @@ def test_tc_infer_flat_in_rebind_count_4682():
     pulled (and re-lifted) the cone of every earlier rebind: at W=300 the
     tc-infer time of 60 rebinds after 480 rebinds was ~2.3x that of the
     first 60. With the marks dropped at the next mirror it stays flat.
-    AURA_TC_DIRTY_CLEAR=0 restores the old growth.
     """
     prog = r"""(define W 300)
 (define (fill k acc) (if (= k 0) acc (fill (- k 1) (string-append acc "(define w" (number->string k) " (lambda (x) (* x " (number->string k) ")))\n"))))

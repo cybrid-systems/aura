@@ -327,14 +327,9 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             // Issue #4682 (opt): the seeded set depends only on top_'s
             // binding names. Fingerprint them (no allocation) and skip the
             // rebuild when this checker already holds the same set. A fresh
-            // checker has fp 0 and always seeds. AURA_TC_HOST_NAMES_REUSE=0
-            // re-seeds every call.
-            static const bool reuse_host_names = [] {
-                const char* e = std::getenv("AURA_TC_HOST_NAMES_REUSE");
-                return !(e && e[0] == '0');
-            }();
+            // checker has fp 0 and always seeds.
             std::uint64_t host_fp = 0;
-            if (reuse_host_names) {
+            {
                 std::uint64_t h = 1469598103934665603ull;
                 auto mix = [&](std::uint64_t x) {
                     h ^= x + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
@@ -349,7 +344,7 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
                     mix(static_cast<std::uint64_t>(b.first));
                 host_fp = h | 1ull; // never 0
             }
-            if (reuse_host_names && tc.host_visible_names_fp() == host_fp) {
+            if (tc.host_visible_names_fp() == host_fp) {
                 // unchanged: keep the checker's current host-visible names
             } else {
                 std::vector<std::string> host_names;
