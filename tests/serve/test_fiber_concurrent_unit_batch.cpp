@@ -1546,6 +1546,52 @@ int run_4271_snapshot_deep_flat_cap_smoke() {
 }
 } // namespace aura_fiber_run_wave60_4271
 
+// Wave 61 (#4697): fiber_orch - CLI thread backend pending fiber body root
+namespace aura_fiber_run_wave61_4697 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+
+// Issue #4697: the CLI thread backend spawned the fiber body on a worker
+// thread and kept only the raw closure id. The body closure is a
+// tree-walker temporary - fiber:spawn drops it when the spawn returns - so
+// no root referenced it, and the tree-walker reclaim
+// (Evaluator::maybe_reclaim_tw_unreachable) erased it before the worker
+// thread applied it: apply_closure returned nullopt, the body never ran,
+// and fiber:join returned void (silent result loss - the first fibers
+// spawned in the first call of a function lost their results).
+//
+// The program below is the issue repro: the seq phase allocates enough
+// tree-walker closures that the reclaim runs WHILE the par batch bodies
+// are pending. Pre-fix 17 of the 20 joins returned void; post-fix every
+// join returns the spawned body value.
+constexpr const char* kPendingBodyProgram = R"AURA(
+(define (bad rs) (length (filter (lambda (x) (not (number? x))) rs)))
+(define (seq n) (let loop ((i 0) (acc (list)))
+  (if (= i n) acc (loop (+ i 1) (cons (fiber:join (fiber:spawn (lambda () 7))) acc)))))
+(define (par n) (let loop ((i 0) (acc (list)))
+  (if (= i n) acc (loop (+ i 1) (cons (fiber:spawn (lambda () 7)) acc)))))
+(define (jn fs) (let loop ((f fs) (acc (list)))
+  (if (null? f) acc (loop (cdr f) (cons (fiber:join (car f)) acc)))))
+(void (seq 100))
+(bad (jn (par 20)))
+)AURA";
+
+int run_4697_pending_body_root_smoke() {
+    std::println("\n=== #4697: CLI thread backend keeps the pending fiber body alive ===");
+    CompilerService cs;
+    auto v = cs.eval(kPendingBodyProgram);
+    CHECK(v.has_value(), "#4697 pending-body program evaluates");
+    CHECK(v && is_int(*v), "#4697 pending-body program returns a count");
+    CHECK(
+        v && is_int(*v) && as_int(*v) == 0,
+        "[#4697] AC1 CLI thread backend: every fiber:join result survives the tree-walker reclaim");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave61_4697
+
 int main() {
 
 
@@ -1816,5 +1862,11 @@ int main() {
         return rc;
 
     std::println("\ntest_fiber_concurrent_unit_batch: OK ({} passed)", ::aura::test::g_passed);
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave61_4697 ########");
+    if (int rc = aura_fiber_run_wave61_4697::run_4697_pending_body_root_smoke(); rc != 0)
+        return rc;
+
     return 0;
 }

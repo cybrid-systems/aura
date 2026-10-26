@@ -3152,6 +3152,102 @@ extern "C" void aura_evaluator_on_fiber_join_session_revoke(void* joined_fiber) 
     }
 }
 
+// Issue #4697: pending thread-fiber body roots (CLI thread backend).
+//
+// The tree-walker reclaim (Evaluator::maybe_reclaim_tw_unreachable — the
+// #4459 / #4474 safepoint) marks from env frames and the CURRENT
+// thread's pinned temporaries only, then erases every closure that no
+// root references. A pending thread-fiber's body closure is a
+// tree-walker temporary: fiber:spawn drops it when the spawn returns, so
+// nothing roots it, and the reclaim could erase it before the worker
+// thread applied it. apply_closure then returned nullopt, the body never
+// ran, and fiber:join returned void — silent result loss (the first
+// fibers spawned in the first call of a function lost their results).
+//
+// Root the pending body closure through the evaluator's OWN pinned-closure
+// watermark (gc_safe_closure_id_): the reclaim keeps every closure whose
+// id is below that watermark, so raising the watermark over the pending
+// body closure id pins it for the whole pending window. The watermark is
+// per-evaluator state (not a thread-local root registry), so it is
+// visible to EVERY thread that runs the reclaim: the spawning thread AND
+// the worker thread that applies the body. No cross-thread root plumbing
+// and no second root model.
+//
+// The watermark is restored when the last pending fiber is released, so
+// the pin does not outlive the fiber. Only the watermark THIS hook raised
+// is restored: a (gc-freeze) that ran meanwhile keeps its own value.
+namespace {
+    struct PendingFiberRootState {
+        std::uint32_t pending = 0;
+        ClosureId saved_watermark = 0;  // the watermark to restore
+        ClosureId raised_watermark = 0; // the watermark this hook raised to
+        bool have_saved = false;
+    };
+    std::mutex g_pending_fiber_roots_mtx;
+    std::unordered_map<const Evaluator*, std::unique_ptr<PendingFiberRootState>>
+        g_pending_fiber_roots;
+} // namespace
+
+extern "C" void aura_fiber_root_pending_body(void* evaluator, std::uint64_t closure_id,
+                                             std::uint64_t fiber_id) noexcept {
+    (void)fiber_id;
+    if (!evaluator)
+        return;
+    auto* ev = static_cast<Evaluator*>(evaluator);
+    try {
+        std::lock_guard<std::mutex> lock(g_pending_fiber_roots_mtx);
+        auto& slot = g_pending_fiber_roots[ev];
+        if (!slot)
+            slot = std::make_unique<PendingFiberRootState>();
+        auto& st = *slot;
+        // A stale entry (an evaluator that was destroyed with a fiber
+        // still pending, then a new evaluator allocated at the same
+        // address) must not carry its watermark over: the watermark now
+        // reads lower than the one this state raised, so reset the state.
+        if (st.pending > 0 && ev->gc_safe_closure_id() < st.raised_watermark) {
+            st.pending = 0;
+            st.have_saved = false;
+        }
+        if (st.pending == 0) {
+            st.saved_watermark = ev->gc_safe_closure_id();
+            st.have_saved = true;
+        }
+        ++st.pending;
+        const auto want = static_cast<ClosureId>(closure_id + 1);
+        if (want > ev->gc_safe_closure_id()) {
+            ev->set_gc_safe_closure_id(want);
+            st.raised_watermark = want;
+        }
+    } catch (...) {
+        // A root that cannot be taken must not abort the spawn: the body
+        // then runs unprotected (the pre-#4697 behaviour).
+    }
+}
+
+extern "C" void aura_fiber_release_pending_body(void* evaluator, std::uint64_t fiber_id) noexcept {
+    (void)fiber_id;
+    if (!evaluator)
+        return;
+    auto* ev = static_cast<Evaluator*>(evaluator);
+    try {
+        std::lock_guard<std::mutex> lock(g_pending_fiber_roots_mtx);
+        auto it = g_pending_fiber_roots.find(ev);
+        if (it == g_pending_fiber_roots.end())
+            return;
+        auto& st = *it->second;
+        if (st.pending == 0)
+            return;
+        if (--st.pending != 0)
+            return;
+        // Restore only the watermark this hook raised: a (gc-freeze) that
+        // ran while the fiber was pending keeps its own value.
+        if (st.have_saved && ev->gc_safe_closure_id() == st.raised_watermark)
+            ev->set_gc_safe_closure_id(st.saved_watermark);
+        g_pending_fiber_roots.erase(it);
+    } catch (...) {
+    }
+}
+
 // Issue #1880 / #2118 / #2555: thread-local TransactionGuard for orch agent body
 // (host path: full MBG via TransactionGuardHost) + soft per-fiber depth
 // registration (fiber path: soft sentinel host, no full MBG stack).

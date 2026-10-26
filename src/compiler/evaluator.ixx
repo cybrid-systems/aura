@@ -5084,6 +5084,15 @@ public:
         return file_heap_allocs_trigger_;
     }
     void note_tw_closure_alloc() noexcept { ++tw_closure_allocs_; }
+    // Issue #4697: pending thread-fiber body roots (CLI thread backend).
+    // The tree-walker reclaim (reclaim_tw_unreachable) keeps every closure
+    // whose id is below this watermark and erases the rest, so raising the
+    // watermark over a pending fiber's body closure id pins that closure
+    // until the fiber body has run. The watermark is per-evaluator state,
+    // so it protects the closure against the reclaim on EVERY thread: the
+    // spawning thread and the worker thread that applies the body.
+    void set_gc_safe_closure_id(ClosureId v) noexcept { gc_safe_closure_id_ = v; }
+    [[nodiscard]] ClosureId gc_safe_closure_id() const noexcept { return gc_safe_closure_id_; }
     // Loop-head safepoint. No-op under the allocation threshold.
     void maybe_reclaim_tw_unreachable();
     // Issue #4599 follow-up: the per-opcode call site checks the same
