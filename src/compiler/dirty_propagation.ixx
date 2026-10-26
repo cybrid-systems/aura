@@ -591,6 +591,26 @@ inline constexpr NodeId kAstDepTag = 0x20000000u;
 // Last mirrored type cone (AST NodeIds, not encoded). Thread-local for
 // tests / Agent dashboards after infer_flat_partial.
 inline thread_local std::vector<NodeId> t_last_type_cone_ast{};
+// Issue #4682 fix 1: AST-dep marks the last mirror added to g_global_dirty
+// (not dirty before, not since persisted by a force_* path).
+inline thread_local std::vector<NodeId> t_mirror_owned_deps{};
+[[nodiscard]] inline bool dirty_clear_enabled() noexcept {
+    static const bool on = [] {
+        const char* e = std::getenv("AURA_TC_DIRTY_CLEAR");
+        return !(e && e[0] == '0');
+    }();
+    return on;
+}
+inline void disown_mirror_dep(NodeId dep) noexcept {
+    auto& v = t_mirror_owned_deps;
+    for (std::size_t i = 0; i < v.size(); ++i) {
+        if (v[i] == dep) {
+            v[i] = v.back();
+            v.pop_back();
+            return;
+        }
+    }
+}
 
 // Issue #3120: residual CastOp source AST / containing-block persist
 // that survives mirror_type_affected_to_cascade's wipe of
@@ -713,6 +733,19 @@ inline void reset_residual_castop_persist_for_test() noexcept {
 // Pull cascade / global-dirty AST dep nodes into out (decoded NodeIds).
 // Used to seed infer_flat_partial when IR cascade marked AST-linked dirty.
 inline void pull_cascade_ast_dirty_into(std::vector<NodeId>& out) {
+    // Issue #4682 fix 1: tagged AST-dep ids live in the sparse set; skip
+    // the dense scan of dirty_nodes() (same ids, no vector copy).
+    if (dirty_clear_enabled()) {
+        for (NodeId d : g_global_dirty.sparse) {
+            if (is_ast_dep_node(d))
+                out.push_back(decode_ast_dep_node(d));
+        }
+        for (NodeId r : t_pipeline_cascade_roots) {
+            if (is_ast_dep_node(r))
+                out.push_back(decode_ast_dep_node(r));
+        }
+        return;
+    }
     for (NodeId d : g_global_dirty.dirty_nodes()) {
         if (!is_ast_dep_node(d))
             continue;
@@ -733,6 +766,21 @@ inline void pull_cascade_ast_dirty_into(std::vector<NodeId>& out) {
 // empty span → zero cost (AC4).
 // Returns number of distinct AST nodes mirrored.
 inline std::size_t mirror_type_affected_to_cascade(std::span<const NodeId> affected_ast) {
+    // Issue #4682 fix 1: the previous cone's AST-dep marks were set only so
+    // the pipeline / reverse pull of THAT mutation saw them. Nothing ever
+    // cleared them, so every later infer_flat_partial pulled the cone of
+    // every earlier rebind (affected grew with rebind count). Drop the marks
+    // this mirror added last time (only ones that were not already dirty and
+    // were not re-forced durable since). AURA_TC_DIRTY_CLEAR=0 = keep them.
+    if (dirty_clear_enabled() && !t_mirror_owned_deps.empty()) {
+        // The pending pipeline roots this mirror noted are dropped too when
+        // no pass pipeline flushed them (else they pile up per rebind).
+        std::unordered_set<NodeId> owned(t_mirror_owned_deps.begin(), t_mirror_owned_deps.end());
+        for (NodeId dep : t_mirror_owned_deps)
+            g_global_dirty.sparse.erase(dep);
+        std::erase_if(t_pipeline_cascade_roots, [&](NodeId r) { return owned.contains(r); });
+    }
+    t_mirror_owned_deps.clear();
     t_last_type_cone_ast.clear();
     if (affected_ast.empty()) {
         // Still sample union size so avg tracks quiet windows.
@@ -759,6 +807,8 @@ inline std::size_t mirror_type_affected_to_cascade(std::span<const NodeId> affec
         note_pipeline_cascade_root(dep);
         // Immediate mark so reverse pull + DirtySet queries see the cone
         // even before flush_pipeline_cascade_roots (pass_manager entry).
+        if (!g_global_dirty.is_dirty(dep) && DirtySet::uses_sparse(dep))
+            t_mirror_owned_deps.push_back(dep);
         g_global_dirty.mark(dep);
         ++mirrored;
     }
@@ -843,6 +893,7 @@ inline std::size_t force_dead_coercion_elim_into_cone(std::span<const NodeId> el
         const NodeId dep = encode_ast_dep_node(nid);
         note_pipeline_cascade_root(dep);
         g_global_dirty.mark(dep);
+        disown_mirror_dep(dep); // Issue #4682 fix 1: persisted mark stays
         ++added;
     }
     if (added == 0)
