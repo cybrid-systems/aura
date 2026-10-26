@@ -6660,9 +6660,22 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         pin_if_current_in_tail();
                         tail_env.emplace(current_env);
                         tail_env->set_primitives(&primitives_);
-
+                        // Issue #4701: the inline-lambda call frame MUST carry the
+                        // pool before the parameter binds. Without pool_ a bind
+                        // lands ONLY in the legacy string array (bindings_); the
+                        // SymId array (bindings_symid_, the PRIMARY array) stays
+                        // empty. The capture frame built later by
+                        // alloc_env_frame_from_env is then dual-path desynced
+                        // (bindings_.size() != bindings_symid_.size()), the
+                        // dual-path gate hard-fails at materialize_call_env and
+                        // drops the captured bindings, and a body closure that
+                        // captures the parameter reports "unbound variable: j"
+                        // for ((lambda (j) (lambda () j)) 3). Same shape as the
+                        // #1482 restore in the letrec path below.
+                        if (p)
+                            tail_env->set_pool(p);
                         for (std::size_t i = 0; i < iargs.size(); ++i) {
-                            tail_env->bind(std::string(p->resolve(pspan[i])), std::move(iargs[i]));
+                            tail_env->bind_symid(pspan[i], std::move(iargs[i]));
                         }
                         if (dotted && !pspan.empty()) {
                             types::EvalValue rest = make_void();
@@ -6671,7 +6684,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 pairs_.push_back({rest_args[i - 1], rest});
                                 rest = make_pair(pid);
                             }
-                            tail_env->bind(std::string(p->resolve(pspan.back())), rest);
+                            tail_env->bind_symid(pspan.back(), rest);
                         }
                         auto body_id =
                             callee.children.empty() ? aura::ast::NULL_NODE : callee.child(0);
