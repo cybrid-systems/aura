@@ -73,6 +73,86 @@ namespace {
     std::mutex s_fiber_results_mtx;
     std::condition_variable s_fiber_results_cv;
 
+    // ---- Issue #4708: single-fiber cooperative cancellation ----
+    // (fiber:cancel f) requests cancellation of ONE fiber by id. The
+    // request is *cooperative*: the target observes it at its next
+    // safepoint -- (fiber:yield), the fiber-parking channel prims, and
+    // the fiber:join wait -- and raises the catchable 'fiber-cancelled'
+    // condition there, so try/catch cleanup can run and a join on the
+    // cancelled fiber returns instead of waiting to the 200s ceiling.
+    //
+    // A request is delivered AT MOST ONCE per request (kPending ->
+    // kDelivered). A second (fiber:cancel f) re-arms it, so a body that
+    // catches the condition and keeps running can be interrupted again.
+    // A body that never reaches a safepoint cannot be interrupted --
+    // the same documented limitation as the #2153 cooperative protocol
+    // (there is no async unwind across a mid-turn block).
+    enum class FiberCancelState : std::uint8_t { kNone = 0, kPending = 1, kDelivered = 2 };
+    std::mutex s_fiber_cancel_mtx;
+    std::unordered_map<int64_t, FiberCancelState> s_fiber_cancel;
+
+    // Thread-backend current body id. Scheduler fibers answer through
+    // aura::serve::g_current_fiber instead (current_fiber_body_id).
+    thread_local std::int64_t s_tls_fiber_body_id = 0;
+
+    // The fiber body running on this thread, 0 outside a body.
+    std::int64_t current_fiber_body_id() {
+        if (aura::serve::g_current_fiber)
+            return static_cast<std::int64_t>(aura::serve::g_current_fiber->id());
+        return s_tls_fiber_body_id;
+    }
+
+    // Arm cancellation for fid. Always re-arms (kDelivered -> kPending).
+    void fiber_cancel_request(int64_t fid) {
+        if (fid == 0)
+            return;
+        std::lock_guard<std::mutex> lock(s_fiber_cancel_mtx);
+        s_fiber_cancel[fid] = FiberCancelState::kPending;
+    }
+
+    // One-shot: consume a pending request. True iff this call is the
+    // first safepoint to observe the request.
+    bool fiber_cancel_take(int64_t fid) {
+        if (fid == 0)
+            return false;
+        std::lock_guard<std::mutex> lock(s_fiber_cancel_mtx);
+        auto it = s_fiber_cancel.find(fid);
+        if (it == s_fiber_cancel.end() || it->second != FiberCancelState::kPending)
+            return false;
+        it->second = FiberCancelState::kDelivered;
+        return true;
+    }
+
+    // Drop all bookkeeping for a finished/joined fiber.
+    void fiber_cancel_forget(int64_t fid) {
+        std::lock_guard<std::mutex> lock(s_fiber_cancel_mtx);
+        s_fiber_cancel.erase(fid);
+    }
+
+    // The catchable condition a cancelled fiber observes. Single source
+    // so every safepoint reports the same payload (Agents match on it).
+    // Takes the standard primitive error channels by reference: the
+    // Evaluator members are private and this is not a friend function
+    // (only the register_* entries are), so callers pass them through.
+    template <typename Heap>
+    EvalValue fiber_cancel_condition_value(Heap& string_heap, std::vector<EvalValue>& error_values,
+                                           std::atomic<std::uint64_t>* error_counter) {
+        return make_primitive_error(string_heap, error_values,
+                                    "fiber-cancelled: cancel requested via (fiber:cancel)",
+                                    error_counter);
+    }
+
+    // The condition a cancelled body observes at a safepoint. Returns
+    // nullopt when this body has no pending request.
+    template <typename Heap>
+    std::optional<EvalValue> fiber_cancel_safepoint(Heap& string_heap,
+                                                    std::vector<EvalValue>& error_values,
+                                                    std::atomic<std::uint64_t>* error_counter) {
+        if (!fiber_cancel_take(current_fiber_body_id()))
+            return std::nullopt;
+        return fiber_cancel_condition_value(string_heap, error_values, error_counter);
+    }
+
     // Issue #4710: publish the registry's values as GC roots. A body's
     // return value is stored HERE and nowhere else until fiber:join
     // fetches and erases the entry, so without this provider the
@@ -504,10 +584,18 @@ namespace {
     // FIBER (never the worker thread) until a message is queued or the
     // channel is closed. Returns the message, or nullopt when the channel
     // was closed (the caller then returns the empty string).
-    std::optional<std::string> channel_recv_cooperative(ChannelView& ch,
-                                                        aura::serve::Fiber* fiber) {
+    std::optional<std::string> channel_recv_cooperative(ChannelView& ch, aura::serve::Fiber* fiber,
+                                                        bool* cancelled_out = nullptr) {
         const void* key = ch.key;
         for (;;) {
+            // Issue #4708: cancellation safepoint -- this is one of the
+            // "blocking prims that already park", so a cancelled fiber must
+            // leave the park loop instead of waiting for a message.
+            if (fiber && fiber_cancel_take(static_cast<int64_t>(fiber->id()))) {
+                if (cancelled_out)
+                    *cancelled_out = true;
+                return std::nullopt;
+            }
             {
                 std::unique_lock ul(ch.mtx);
                 if (!ch.queue.empty()) {
@@ -570,9 +658,17 @@ namespace {
     // Issue #4700: cooperative (fiber) channel send. Parks the calling FIBER
     // (never the worker thread) until the buffer has room (buffered
     // channel) or a receiver is posted (rendezvous).
-    bool channel_send_cooperative(ChannelView& ch, std::string msg, aura::serve::Fiber* fiber) {
+    bool channel_send_cooperative(ChannelView& ch, std::string msg, aura::serve::Fiber* fiber,
+                                  bool* cancelled_out = nullptr) {
         const void* key = ch.key;
         for (;;) {
+            // Issue #4708: cancellation safepoint (see
+            // channel_recv_cooperative).
+            if (fiber && fiber_cancel_take(static_cast<int64_t>(fiber->id()))) {
+                if (cancelled_out)
+                    *cancelled_out = true;
+                return false;
+            }
             {
                 std::unique_lock ul(ch.mtx);
                 if (ch.closed) {
@@ -1360,6 +1456,19 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             // path (before this body existed); this scope only marks the
             // end of the body so a cooperative yield knows that no sibling
             // body is left to hand the turn over to.
+            // Issue #4708: publish this body's fiber id so a cancellation
+            // safepoint can find it on the thread backend (scheduler fibers
+            // answer through aura::serve::g_current_fiber instead).
+            struct FiberBodyIdScope {
+                std::int64_t prev;
+                explicit FiberBodyIdScope(std::int64_t id) noexcept
+                    : prev(s_tls_fiber_body_id) {
+                    s_tls_fiber_body_id = id;
+                }
+                ~FiberBodyIdScope() noexcept { s_tls_fiber_body_id = prev; }
+                FiberBodyIdScope(const FiberBodyIdScope&) = delete;
+                FiberBodyIdScope& operator=(const FiberBodyIdScope&) = delete;
+            } body_id_scope(fid_holder->load(std::memory_order_acquire));
             CliBodyDoneScope body_done_scope;
             std::unique_lock<std::mutex> body_lock(s_cli_thread_fiber_body_mtx, std::defer_lock);
             // Issue #4048: serialize denseness bodies for BOTH backends.
@@ -1506,6 +1615,74 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_int(2);     // thread fallback (CLI denseness)
     });
 
+    // (fiber:cancel fiber-id) -- request cooperative cancellation of ONE fiber.
+    //
+    // Issue #4708: before this a host had only a shared 'stop' flag that
+    // workers polled between turns (or orch:scope-cancel-all). A worker
+    // stopped mid-turn kept its claim, and a fiber parked inside a body
+    // could not be stopped at all.
+    //
+    //   #t    -- request accepted for a live fiber (either backend)
+    //   #f    -- no live fiber with that id (unknown / already done)
+    //   error -- bad arg, or capability denial under sandbox
+    //
+    // The request is observed at the target's next safepoint: fiber:yield,
+    // the fiber-parking channel prims (send / recv), and
+    // the fiber:join wait. The observing body gets a catchable condition
+    // ("fiber-cancelled: ...") so try/catch cleanup can run; an uncaught
+    // condition is the body result, which fiber:join returns.
+    add("fiber:cancel", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "fiber:cancel: usage: (fiber:cancel fiber-id)",
+                                        ev.primitive_error_counter_ptr());
+        // Issue #1294 Phase 1: same capability gate as fiber:spawn.
+        if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapFiber) &&
+            !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+            ev.bump_capability_denial();
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "capability denied: fiber required",
+                                        ev.primitive_error_counter_ptr());
+        }
+        const auto fid = static_cast<int64_t>(as_int(a[0]));
+        if (fid == 0)
+            return make_bool(false);
+        if (aura::messaging::g_fiber_lookup) {
+            // Scheduler backend: Fiber already carries the #1584
+            // cooperative cancel flag; also record it here so the
+            // safepoint helper is backend-agnostic.
+            auto* target = static_cast<aura::serve::Fiber*>(aura::messaging::g_fiber_lookup(fid));
+            if (!target || target->is_done())
+                return make_bool(false);
+            target->request_cancel();
+            fiber_cancel_request(fid);
+            // Nudge a PARKED fiber: a Waiting fiber is woken by a 1-byte
+            // write to its eventfd (the scheduler wake protocol). A
+            // spurious wake is legal -- the parking loops re-check their
+            // predicate after every wake (#4176).
+            const int evfd = target->eventfd();
+            if (evfd >= 0) {
+                std::uint64_t one = 1;
+                (void)::write(evfd, &one, sizeof(one));
+            }
+            if (target->state() == aura::serve::FiberState::Waiting)
+                target->set_state(aura::serve::FiberState::Ready);
+            return make_bool(true);
+        }
+        // Thread backend: the worker observes the flag at its next
+        // safepoint. notify_all wakes a joiner blocked on the cv so it can
+        // re-check its own cancellation promptly.
+        {
+            std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
+            auto it = s_fiber_results.find(fid);
+            if (it == s_fiber_results.end() || it->second.ready)
+                return make_bool(false);
+        }
+        fiber_cancel_request(fid);
+        s_fiber_results_cv.notify_all();
+        return make_bool(true);
+    });
+
     // (fiber:yield) — Yield current fiber to scheduler (serve mode only)
     // Uses g_fiber_yield callback if available.
     //
@@ -1526,6 +1703,12 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
     // (serve/worker.cpp) does the hand-off: the yielded fiber is
     // re-dispatched behind the siblings that are already ready.
     add("fiber:yield", [&ev](const auto&) -> EvalValue {
+        // Issue #4708: the yield is the primary cancellation safepoint. A
+        // cancelled body raises a catchable condition here BEFORE the
+        // hand-off, so try/catch cleanup runs on the fiber's own stack.
+        if (auto cancel_cond = fiber_cancel_safepoint(ev.string_heap_, ev.error_values_,
+                                                      ev.primitive_error_counter_ptr()))
+            return *cancel_cond;
         const bool scheduler_backend = aura::messaging::g_fiber_yield != nullptr;
         CliBodyYieldHandoff body_handoff(!scheduler_backend);
         if (aura::messaging::g_fiber_yield) {
@@ -1700,6 +1883,16 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                 while (true) {
                     if (target->is_done() || target->is_reclaimed())
                         break;
+                    // Issue #4708: a cancelled JOINER stops waiting and
+                    // raises the same catchable condition instead of
+                    // parking until the target finishes.
+                    if (joiner_fiber &&
+                        fiber_cancel_take(static_cast<int64_t>(joiner_fiber->id()))) {
+                        if (joiner_target_id && aura::serve::g_scheduler)
+                            aura::serve::g_scheduler->remove_joiner(joiner_target_id, joiner_fiber);
+                        return fiber_cancel_condition_value(ev.string_heap_, ev.error_values_,
+                                                            ev.primitive_error_counter_ptr());
+                    }
                     if (!static_cast<aura::serve::Fiber*>(aura::messaging::g_fiber_lookup(fid)))
                         break; // target unregistered — result fetch below
                     if (!(aura::serve::g_scheduler &&
@@ -1759,7 +1952,18 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #2869: unlock CLI body mutex while waiting (nested join).
             CliBodyLockJoinGuard body_join_guard;
             std::unique_lock<std::mutex> lock(s_fiber_results_mtx);
-            s_fiber_results_cv.wait_for(lock, std::chrono::seconds(200), is_ready);
+            // Issue #4708: the wait is cancellation-aware -- a cancelled
+            // joiner returns the catchable condition instead of sitting on
+            // the cv until the target publishes (or the 200s ceiling).
+            const auto join_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(200);
+            while (!is_ready()) {
+                if (fiber_cancel_take(current_fiber_body_id()))
+                    return fiber_cancel_condition_value(ev.string_heap_, ev.error_values_,
+                                                        ev.primitive_error_counter_ptr());
+                if (std::chrono::steady_clock::now() >= join_deadline)
+                    break;
+                s_fiber_results_cv.wait_for(lock, std::chrono::milliseconds(50));
+            }
         } else {
             // Stdin mode: real blocking wait on the cv. 200s
             // ceiling via wait_for (returns false on timeout,
@@ -1771,7 +1975,18 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             // mutex and complete. Relock after wakeup (RAII).
             CliBodyLockJoinGuard body_join_guard;
             std::unique_lock<std::mutex> lock(s_fiber_results_mtx);
-            s_fiber_results_cv.wait_for(lock, std::chrono::seconds(200), is_ready);
+            // Issue #4708: the wait is cancellation-aware -- a cancelled
+            // joiner returns the catchable condition instead of sitting on
+            // the cv until the target publishes (or the 200s ceiling).
+            const auto join_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(200);
+            while (!is_ready()) {
+                if (fiber_cancel_take(current_fiber_body_id()))
+                    return fiber_cancel_condition_value(ev.string_heap_, ev.error_values_,
+                                                        ev.primitive_error_counter_ptr());
+                if (std::chrono::steady_clock::now() >= join_deadline)
+                    break;
+                s_fiber_results_cv.wait_for(lock, std::chrono::milliseconds(50));
+            }
         }
 
         // Result is ready (or timed out). Fetch and return.
@@ -1787,6 +2002,8 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             }
             result_ptr = std::move(it->second.value);
             s_fiber_results.erase(it);
+            // Issue #4708: the fiber is joined -- drop its cancel state.
+            fiber_cancel_forget(fid);
         }
 
         // Issue #3394: join the thread-backend worker now that its body
@@ -1978,7 +2195,12 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         if (fiber && channel_can_park_fiber()) {
             ChannelView view{
                 &ch, ch.mtx, ch.cv, ch.queue, ch.buffer_size, ch.waiting_receivers, ch.closed};
-            return make_bool(channel_send_cooperative(view, std::move(msg), fiber));
+            bool cancelled = false;
+            const bool sent = channel_send_cooperative(view, std::move(msg), fiber, &cancelled);
+            if (cancelled)
+                return fiber_cancel_condition_value(ev.string_heap_, ev.error_values_,
+                                                    ev.primitive_error_counter_ptr());
+            return make_bool(sent);
         }
         std::unique_lock ul(ch.mtx);
         ch.cv.wait(ul, [&]() {
@@ -2022,7 +2244,11 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         if (fiber && channel_can_park_fiber()) {
             ChannelView view{
                 &ch, ch.mtx, ch.cv, ch.queue, ch.buffer_size, ch.waiting_receivers, ch.closed};
-            auto msg = channel_recv_cooperative(view, fiber);
+            bool cancelled = false;
+            auto msg = channel_recv_cooperative(view, fiber, &cancelled);
+            if (cancelled)
+                return fiber_cancel_condition_value(ev.string_heap_, ev.error_values_,
+                                                    ev.primitive_error_counter_ptr());
             if (!msg)
                 return make_string(0); // channel closed
             auto idx = ev.string_heap_.mint(std::move(*msg));
