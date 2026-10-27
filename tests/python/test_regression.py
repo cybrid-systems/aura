@@ -4949,6 +4949,96 @@ def test_fiber_hash_key_survives_rebind_4709():
     print("  OK test_fiber_hash_key_survives_rebind_4709 (global hash key stays 9 chars under 4 rebind fibers)")
 
 
+def test_fiber_sibling_define_dispatch_4712():
+    """Issue #4712: set-code + eval-current must not strand a sibling IR define.
+
+    Reported on main 235bcfa6b (JIT off): a fiber body spawned before a
+    second (set-code ...) + (eval-current) calls a workspace define the new
+    text never touched; joining the fiber aborted the process with
+    "error: invalid closure: eval_flat: invalid closure" (rc=1, 5/5).
+
+    Mechanism: (set-code ...) installs a fresh workspace flat and clears the
+    wholesale cid->name index (mark_all_defines_dirty ->
+    ir_define_closure_owner_.clear(), service_dirty.cpp). The sibling
+    define's IRDefineEnvBinding and its top_env cell survive that clear, but
+    it has no dirty row, so the eval-current specialize pass re-binds only
+    the new/changed cone. Its own bind-time closure id was then in no owner
+    row, and the strict runtime-mint rule (#4450 / #4349) denied it, so
+    dispatch_ir_define_closure returned nullopt and every caller read
+    "eval_flat: invalid closure". The index is an optimisation:
+    dispatch_ir_define_closure now falls back to the live binding whose
+    closure_id IS the id before the runtime-mint search (a replaced binding
+    is gone from the map, so a genuinely stale id still denies).
+
+    Arms: (a) the issue's fiber program - the fiber completes and prints
+    (9); (b) the same miss without a fiber (a re-evaluated workspace cell
+    still holding the sibling's closure), which proves the gap is the
+    cleared index, not fiber scheduling. Source rows pin the fallback and
+    the wholesale clear it compensates for.
+    """
+    holder = r"""(define (holder)
+  (let ((m (make-hash)))
+    (hash-set! m \"join-void\" 1)
+    (let loop ((i 0))
+      (if (< i 6) (begin (fiber:yield) (loop (+ i 1))) (map string-length (hash-keys m))))))
+(define (pol-0 x) (+ x 0))"""
+    env = os.environ.copy()
+    env["AURA_TIER_JIT"] = "0"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env["AURA_SANDBOX"] = "off"
+    env.pop("AURA_SOFT", None)
+    env.pop("AURA_FORCE_IR", None)
+    # (a) The issue program: fiber spawned before the second set-code.
+    fiber_program = (
+        f'(set-code "{holder}")\n'
+        "(eval-current)\n"
+        "(define h (fiber:spawn (lambda () (holder))))\n"
+        '(set-code "(define (pol-0 x) (+ x 2))") (eval-current)\n'
+        "(display (fiber:join h))\n"
+        "(newline)\n"
+    )
+    # (b) Same miss without a fiber: holder stays in the env cell and the
+    # second eval-current re-evaluates the call after the unrelated replace.
+    plain_program = (
+        f'(set-code "{holder}")\n'
+        "(eval-current)\n"
+        '(set-code "(define (pol-9 x) (+ x 2))") (eval-current)\n'
+        "(display (holder))\n"
+        "(newline)\n"
+    )
+    for label, program in (("fiber", fiber_program), ("plain", plain_program)):
+        fd, path = tempfile.mkstemp(suffix=".aura", prefix=f"aura-4712-{label}-")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(program)
+            for attempt in range(3):
+                r = subprocess.run([AURA, path], capture_output=True, text=True, timeout=180, env=env, cwd=str(REPO))
+                err = r.stderr or ""
+                assert r.returncode == 0, f"#4712 {label} run {attempt}: rc={r.returncode} err={err[-400:]!r}"
+                assert "invalid closure" not in err, (
+                    f"#4712 {label} run {attempt}: the sibling workspace IR define was denied: {err[-400:]!r}"
+                )
+                lines = [ln.strip() for ln in (r.stdout or "").splitlines() if ln.strip()]
+                assert lines and all(ln == "(9)" for ln in lines), (
+                    f"#4712 {label} run {attempt}: expected (9) from the sibling define, got {lines!r}"
+                )
+        finally:
+            os.remove(path)
+    # Source rows: the fallback resolves an index miss by binding identity,
+    # and the wholesale clear it compensates for is still in place.
+    svc = (REPO / "src/compiler/service.ixx").read_text(encoding="utf-8")
+    assert "Issue #4712" in svc, "#4712: the dispatch fallback citation is gone"
+    assert "owner_name = &kv.first" in svc, (
+        "#4712: dispatch_ir_define_closure no longer resolves a cleared-index id to its live binding"
+    )
+    assert "kv.second->closure_id == cid" in svc, "#4712: the fallback no longer matches the binding that OWNS the id"
+    dirty = (REPO / "src/compiler/service_dirty.cpp").read_text(encoding="utf-8")
+    assert "ir_define_closure_owner_.clear()" in dirty, (
+        "#4712: the workspace-replace index clear this fallback compensates for is gone"
+    )
+    print("  OK test_fiber_sibling_define_dispatch_4712 (sibling IR define stays dispatchable after set-code)")
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -5010,6 +5100,7 @@ for tf in [
     test_fiber_lock_order_inversion_4711,
     test_fiber_cancel_4708,
     test_fiber_hash_key_survives_rebind_4709,
+    test_fiber_sibling_define_dispatch_4712,
     test_serve_async_two_fiber_yield_reclaim_4706,
 ]:
     try:

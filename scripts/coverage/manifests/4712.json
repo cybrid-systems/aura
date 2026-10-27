@@ -1,0 +1,37 @@
+{
+  "issue": 4712,
+  "title": "Issue #4712: set-code + eval-current clears the whole IR define cid->name index, so an untouched sibling workspace define (still bound in top_env, no dirty row) lost its dispatch route and every caller read 'eval_flat: invalid closure' - a fiber spawned before the replace aborted the process.",
+  "ok": "OK: Issue #4712 sibling workspace IR define stays dispatchable across set-code - dispatch resolves a cleared-index id to the live binding that owns it",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "Issue #4712",
+        "const std::string* owner_name = nullptr",
+        "owner_name = &kv.first",
+        "kv.second->closure_id == cid",
+        "const auto& name = *owner_name"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/service_dirty.cpp",
+      "contains": [
+        "Issue #4360",
+        "mark_all_clears_ir_owners",
+        "ir_define_closure_owner_.clear()"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/python/test_regression.py",
+      "contains": [
+        "Issue #4712",
+        "test_fiber_sibling_define_dispatch_4712",
+        "fiber:join h",
+        "eval_flat: invalid closure"
+      ]
+    }
+  ]
+}

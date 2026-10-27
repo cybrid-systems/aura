@@ -13120,8 +13120,34 @@ public:
     std::optional<types::EvalValue>
     dispatch_ir_define_closure(aura::compiler::ClosureId cid,
                                std::span<const types::EvalValue> args) {
+        // Issue #4712: resolve the owning define by binding identity when
+        // the cid->name index has no row. A workspace replace (set-code /
+        // snapshot restore) clears the index wholesale in
+        // mark_all_defines_dirty, because the previous workspace's ids must
+        // not resurrect (#2026). The binding and its top_env cell survive
+        // that clear, and an unchanged sibling define has no dirty row, so
+        // the eval-current specialize pass never re-binds it: its own
+        // bind-time id then had no index row and was also denied by the
+        // strict runtime-mint rule below (#4450 / #4349), so a cell still
+        // holding it (a fiber body spawned before the replace, or the
+        // re-evaluated workspace) got "eval_flat: invalid closure". The
+        // index is an optimisation; the binding's closure_id is the
+        // authority the indexed branch re-checks anyway, so fall back to it
+        // before the runtime-mint search. A replaced binding is gone from
+        // the map, so a genuinely stale id still denies.
+        const std::string* owner_name = nullptr;
         auto owner_it = ir_define_closure_owner_.find(cid);
-        if (owner_it == ir_define_closure_owner_.end()) {
+        if (owner_it != ir_define_closure_owner_.end()) {
+            owner_name = &owner_it->second;
+        } else {
+            for (auto& kv : ir_define_env_bindings_) {
+                if (kv.second && kv.second->interpreter && kv.second->closure_id == cid) {
+                    owner_name = &kv.first;
+                    break;
+                }
+            }
+        }
+        if (owner_name == nullptr) {
             // Issue #4450: a closure minted at RUNTIME by a define's body
             // (an escaping lambda) carries a fresh id that is in no owner
             // map — it lives in the minting interpreter's runtime_closures_.
@@ -13170,7 +13196,7 @@ public:
             }
             return std::nullopt;
         }
-        const auto& name = owner_it->second;
+        const auto& name = *owner_name;
         auto bind_it = ir_define_env_bindings_.find(name);
         if (bind_it == ir_define_env_bindings_.end() || !bind_it->second->interpreter)
             return std::nullopt;
