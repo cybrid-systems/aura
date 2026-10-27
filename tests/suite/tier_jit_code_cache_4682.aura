@@ -1,0 +1,32 @@
+; Issue #4682 (JIT ORC c): the tier worker reuses native code for a body
+; it already compiled (content-addressed by the full flat codegen input).
+; Toggling a hot self-recursive define between distinct bodies must keep
+; returning each body's own values; a key collision would return the
+; other body's result.
+(define *fails* 0)
+(define *n* 0)
+(define (check! ok msg)
+  (set! *n* (+ *n* 1))
+  (if (not ok)
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+(define (body base) (string-append "(lambda (n) (if (< n 2) (+ n " (number->string base) ") (+ (fib (- n 1)) (fib (- n 2)))))"))
+; fib with base offset b: f(0)=b, f(1)=1+b
+(define (ref n b) (if (< n 2) (+ n b) (+ (ref (- n 1) b) (ref (- n 2) b))))
+(set-code (string-append "(define fib " (body 0) ")\n(fib 18)"))
+(check! (= (eval-current) (ref 18 0)) "initial")
+(check! (= (eval-current) (ref 18 0)) "hot")
+(let loop ((i 0))
+  (if (< i 12)
+      (let ((b (modulo i 3)))
+        (mutate:rebind "fib" (body b) "t")
+        (check! (= (eval-current) (ref 18 b)) (string-append "toggle " (number->string i) " first"))
+        (check! (= (eval-current) (ref 18 b)) (string-append "toggle " (number->string i) " hot"))
+        (loop (+ i 1)))))
+; same body re-entered via set-code (reload) keeps working
+(set-code (string-append "(define fib " (body 1) ")\n(fib 18)"))
+(check! (= (eval-current) (ref 18 1)) "reload first")
+(check! (= (eval-current) (ref 18 1)) "reload hot")
+(if (= *fails* 0)
+    (begin (display "OK-tiercache4682 ") (display *n*) (display " checks") (newline))
+    (begin (display "tier_jit_code_cache_4682: ") (display (- *n* *fails*)) (display "/")
+           (display *n*) (newline) (exit 1)))
