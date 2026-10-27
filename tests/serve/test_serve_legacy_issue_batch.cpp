@@ -97,7 +97,7 @@ static int test_issue_4702_exec_chunk_forms() {
             auto text = aura::compiler::format_value(
                 *read, cs.evaluator().primitives().string_heap(), cs.evaluator().pairs(), 0,
                 &cs.evaluator().primitives(), cs.evaluator().keyword_table(),
-                cs.evaluator().vector_heap());
+                cs.evaluator().vector_heap(), cs.evaluator().symbol_table());
             CHECK(text == "(1 2)", "AC3: both defines of the chunk are bound (1 2)");
         }
         // A function define of the same chunk stays callable.

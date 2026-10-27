@@ -1519,6 +1519,27 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // same content for this module_; reuse first materialize.
                     // Issue #4321: operands[2]==1 is a keyword literal.
                     const std::uint32_t pool_idx = ops[1];
+                    // Issue #4727: operands[2]==2 is a symbol atom (the
+                    // tree-walker's datum shape); 1 is a keyword. Both intern
+                    // by NAME, which is what makes identity survive the pool
+                    // that produced the text.
+                    if (ops[2] == 2) {
+                        if (auto cit = const_symbol_cache_.find(pool_idx);
+                            cit != const_symbol_cache_.end()) {
+                            locals[ops[0]] = cit->second;
+                            break;
+                        }
+                        EvalValue val = make_void();
+                        if (context_.evaluator) {
+                            std::string_view content;
+                            if (pool_idx < module_.string_pool.size())
+                                content = module_.string_pool[pool_idx];
+                            val = context_.evaluator->intern_symbol(content);
+                        }
+                        const_symbol_cache_.emplace(pool_idx, val);
+                        locals[ops[0]] = val;
+                        break;
+                    }
                     if (ops[2] != 0) {
                         if (auto cit = const_keyword_cache_.find(pool_idx);
                             cit != const_keyword_cache_.end()) {

@@ -212,10 +212,20 @@ inline constexpr bool kIntZeroIsFalse = false;
 // index as payload. Classification is a low-byte compare, never a range.
 inline constexpr std::int64_t kImmKindFloat = AURA_KIND_FLOAT;
 inline constexpr std::int64_t kImmKindString = AURA_KIND_STRING;
+// Issue #4727: interned symbol atoms are ImmKind 10, an ABI-additive kind
+// (0/1/2/8/9 keep their bits). The payload indexes the evaluator-global
+// symbol table, so same-name symbols share one raw word and eq? is bit
+// identity — no string-heap index involved (a workspace pool cannot split
+// them).
+inline constexpr std::int64_t kImmKindSymbol = AURA_KIND_SYMBOL;
 inline constexpr std::int64_t kFloatLow8 = AURA_FLOAT_LOW8;
 inline constexpr std::int64_t kStringLow8 = AURA_STRING_LOW8;
+inline constexpr std::int64_t kSymbolLow8 = AURA_SYMBOL_LOW8;
 static_assert(AURA_IMM_LOW8(AURA_KIND_FLOAT) == AURA_FLOAT_LOW8, "#4502: float low byte drift");
 static_assert(AURA_IMM_LOW8(AURA_KIND_STRING) == AURA_STRING_LOW8, "#4502: string low byte drift");
+static_assert(AURA_IMM_LOW8(AURA_KIND_SYMBOL) == AURA_SYMBOL_LOW8, "#4727: symbol low byte drift");
+static_assert(AURA_SYMBOL_LOW8 != AURA_STRING_LOW8 && AURA_SYMBOL_LOW8 != AURA_FLOAT_LOW8,
+              "#4727: symbol must not alias string/float low bytes");
 static_assert(AURA_IMM(AURA_KIND_FALSE, 0) == AURA_V_FALSE &&
                   AURA_IMM(AURA_KIND_TRUE, 0) == AURA_V_TRUE &&
                   AURA_IMM(AURA_KIND_VOID, 0) == AURA_V_VOID,
@@ -333,6 +343,16 @@ inline constexpr bool is_float_raw_v2(std::int64_t v) noexcept {
 inline constexpr std::uint64_t float_idx_raw_v2(std::int64_t v) noexcept {
     return AURA_IMM_PAYLOAD(v);
 }
+// Issue #4727: symbol atom codec (ImmKind 10, payload = symbol-table index).
+inline constexpr std::int64_t make_symbol_raw_v2(std::uint64_t idx) noexcept {
+    return AURA_MAKE_SYMBOL(idx);
+}
+inline constexpr bool is_symbol_raw_v2(std::int64_t v) noexcept {
+    return AURA_IS_SYMBOL(v);
+}
+inline constexpr std::uint64_t symbol_idx_raw_v2(std::int64_t v) noexcept {
+    return AURA_IMM_PAYLOAD(v);
+}
 
 // Tag and roundtrip guards, including indices up to 2^56 (AC: no type change).
 static_assert(is_string_raw_v2(make_string_raw_v2(0)) && is_string_raw_v2(make_string_raw_v2(31)),
@@ -341,6 +361,14 @@ static_assert(is_float_raw_v2(make_float_raw_v2(0)) && is_float_raw_v2(make_floa
               "float tag");
 static_assert(!is_float_raw_v2(make_string_raw_v2(7)) && !is_string_raw_v2(make_float_raw_v2(7)),
               "float/string disjoint");
+// Issue #4727: symbol tag is disjoint from string/float and roundtrips.
+static_assert(is_symbol_raw_v2(make_symbol_raw_v2(0)) && is_symbol_raw_v2(make_symbol_raw_v2(9)),
+              "symbol tag");
+static_assert(!is_symbol_raw_v2(make_string_raw_v2(7)) && !is_symbol_raw_v2(make_float_raw_v2(7)) &&
+                  !is_string_raw_v2(make_symbol_raw_v2(7)),
+              "symbol/string/float disjoint");
+static_assert(symbol_idx_raw_v2(make_symbol_raw_v2((1ULL << 56) - 1)) == (1ULL << 56) - 1,
+              "symbol roundtrip");
 static_assert(string_idx_raw_v2(make_string_raw_v2(42)) == 42, "string roundtrip");
 static_assert(float_idx_raw_v2(make_float_raw_v2(0xFFFFFULL)) == 0xFFFFFULL, "float roundtrip");
 static_assert(float_idx_raw_v2(make_float_raw_v2((1ULL << 56) - 1)) == (1ULL << 56) - 1 &&

@@ -135,6 +135,7 @@ using types::as_keyword_idx;
 using types::as_pair_idx;
 using types::as_primitive_slot;
 using types::as_string_idx;
+using types::as_symbol_idx;
 using types::as_vector_idx;
 using types::EvalValue;
 using types::is_bool;
@@ -148,6 +149,7 @@ using types::is_keyword;
 using types::is_pair;
 using types::is_primitive;
 using types::is_string;
+using types::is_symbol;
 using types::is_vector;
 using types::is_void;
 using types::make_bool;
@@ -2397,19 +2399,28 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
 }
 
 // ── ast_to_data: convert AST subtree to EvalValue data ───────
+// Issue #4727: the datum flag marks a quoted-datum conversion. In datum
+// context every identifier atom becomes an interned symbol (make_symbol);
+// outside it (macro argument data, which eval_data_as_code consumes as
+// code) the historical string materialization is kept.
 EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
-                                 aura::ast::NodeId nid) {
+                                 aura::ast::NodeId nid, bool datum) {
     if (nid == ast::NULL_NODE)
         return make_void();
     auto v = flat.get(nid);
-    // Local helper: build (cons "fn-name" args)
+    // Local helper: build (cons fn-name args)
     auto cd = [&](const std::string& fn, const EvalValue& args) -> EvalValue {
         // Issue #1397: size() read + push_back() + index return must be
         // atomic (fiber:spawn shares Evaluator across threads).
         std::lock_guard lock(alloc_storage_lock_);
-        auto fi = push_string_heap(fn);
+        // Issue #4727: a form head inside a quoted datum is an identifier
+        // atom too, so it is a symbol there. Non-datum callers (macro data)
+        // keep the string head eval_data_as_code matches on.
+        EvalValue head = types::make_string(push_string_heap(fn));
+        if (datum)
+            head = intern_symbol(fn);
         auto pi = pairs_.size();
-        pairs_.push_back({types::make_string(fi), args});
+        pairs_.push_back({head, args});
         return types::make_pair(pi);
     };
 
@@ -2440,6 +2451,16 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
         }
         case ast::NodeTag::Variable: {
             auto name = std::string(pool.resolve(v.sym_id));
+            // Issue #4727: a quoted identifier atom is a SYMBOL, interned by
+            // name in the evaluator-global table (not a string_heap_ entry).
+            // SymId is pool-local, so the old string materialization split
+            // the same name across a workspace layer and the caller program
+            // (string_intern_by_sym_ keys on SymId) — eq? was #f and symbol?
+            // was #f. Name interning holds identity across set-code /
+            // eval-current / mutate:rebind and across the tree-walker and
+            // tier faces alike.
+            if (datum)
+                return intern_symbol(name);
             // Issue #231 / #2568: dedup by content so two quote literals
             // of the same symbol produce the same string heap index.
             // Without this, `(eq? 'commit 'commit)` / `(eq? d 'skip)` fail
@@ -2482,7 +2503,7 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
                     std::vector<EvalValue> elems;
                     elems.reserve(v.children.size() - 1);
                     for (std::size_t i = 1; i < v.children.size(); ++i)
-                        elems.push_back(ast_to_data(flat, pool, v.child(i)));
+                        elems.push_back(ast_to_data(flat, pool, v.child(i), datum));
                     const TwPinMany pin_elems(elems);
                     const auto vid = mint_vector(std::move(elems), /*check_quota=*/true);
                     if (vid == kFileHeapMintDenied)
@@ -2498,7 +2519,7 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             std::vector<EvalValue> items;
             items.reserve(v.children.size());
             for (auto it = v.children.rbegin(); it != v.children.rend(); ++it)
-                items.push_back(ast_to_data(flat, pool, *it));
+                items.push_back(ast_to_data(flat, pool, *it, datum));
             std::lock_guard lock(alloc_storage_lock_);
             EvalValue tail = make_void();
             for (auto& item : items) {
@@ -2513,7 +2534,7 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             std::vector<EvalValue> items;
             items.reserve(v.children.size());
             for (auto it = v.children.rbegin(); it != v.children.rend(); ++it)
-                items.push_back(ast_to_data(flat, pool, *it));
+                items.push_back(ast_to_data(flat, pool, *it, datum));
             std::lock_guard lock(alloc_storage_lock_);
             EvalValue tail = make_void();
             for (auto& item : items) {
@@ -2524,9 +2545,12 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             return cd("begin", tail);
         }
         case ast::NodeTag::IfExpr: {
-            auto cond = v.children.size() > 0 ? ast_to_data(flat, pool, v.child(0)) : make_void();
-            auto then_b = v.children.size() > 1 ? ast_to_data(flat, pool, v.child(1)) : make_void();
-            auto else_b = v.children.size() > 2 ? ast_to_data(flat, pool, v.child(2)) : make_void();
+            auto cond =
+                v.children.size() > 0 ? ast_to_data(flat, pool, v.child(0), datum) : make_void();
+            auto then_b =
+                v.children.size() > 1 ? ast_to_data(flat, pool, v.child(1), datum) : make_void();
+            auto else_b =
+                v.children.size() > 2 ? ast_to_data(flat, pool, v.child(2), datum) : make_void();
             // Issue #1397: lock across the two push_backs + make_pair calls
             // so the tail indices the IfExpr chain uses are stable.
             std::lock_guard lock(alloc_storage_lock_);
@@ -2548,7 +2572,8 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
                 pairs_.push_back({make_string(pidx), params_tail});
                 params_tail = make_pair(pair_idx);
             }
-            auto body = v.children.empty() ? make_void() : ast_to_data(flat, pool, v.child(0));
+            auto body =
+                v.children.empty() ? make_void() : ast_to_data(flat, pool, v.child(0), datum);
             auto tail = make_pair(pairs_.size());
             pairs_.push_back({params_tail, body});
             return cd("lambda", tail);
@@ -2559,7 +2584,8 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             // must be atomic so the symbol / value pair has stable indices.
             std::lock_guard lock(alloc_storage_lock_);
             auto nidx = push_string_heap(name_str);
-            auto val = v.children.empty() ? make_void() : ast_to_data(flat, pool, v.child(0));
+            auto val =
+                v.children.empty() ? make_void() : ast_to_data(flat, pool, v.child(0), datum);
             auto tail = make_pair(pairs_.size());
             pairs_.push_back({make_string(nidx), val});
             return cd("define", tail);
@@ -2579,7 +2605,7 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             pairs_.push_back({make_string(tnidx), params_tail});
             EvalValue ctors_tail = make_void();
             for (auto it = v.children.rbegin(); it != v.children.rend(); ++it) {
-                auto ctor_data = ast_to_data(flat, pool, *it);
+                auto ctor_data = ast_to_data(flat, pool, *it, datum);
                 auto pp = pairs_.size();
                 pairs_.push_back({ctor_data, ctors_tail});
                 ctors_tail = make_pair(pp);
@@ -2591,7 +2617,8 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
         case ast::NodeTag::Set: {
             auto name_str = std::string(pool.resolve(v.sym_id));
             auto nidx = push_string_heap(name_str);
-            auto val = v.children.empty() ? make_void() : ast_to_data(flat, pool, v.child(0));
+            auto val =
+                v.children.empty() ? make_void() : ast_to_data(flat, pool, v.child(0), datum);
             auto tail = make_pair(pairs_.size());
             pairs_.push_back({make_string(nidx), val});
             return cd("set!", tail);
@@ -2606,10 +2633,10 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             auto body_id = v.children.size() < 2 ? aura::ast::NULL_NODE : v.child(1);
             auto bname = std::string(pool.resolve(v.sym_id));
             auto bni = push_string_heap(bname);
-            auto bv =
-                val_id != aura::ast::NULL_NODE ? ast_to_data(flat, pool, val_id) : make_void();
-            auto body =
-                body_id != aura::ast::NULL_NODE ? ast_to_data(flat, pool, body_id) : make_void();
+            auto bv = val_id != aura::ast::NULL_NODE ? ast_to_data(flat, pool, val_id, datum)
+                                                     : make_void();
+            auto body = body_id != aura::ast::NULL_NODE ? ast_to_data(flat, pool, body_id, datum)
+                                                        : make_void();
             // Build: (cons name val) → bindings pair
             auto bp = pairs_.size();
             pairs_.push_back({make_string(bni), bv});
@@ -2622,7 +2649,7 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
         }
         case ast::NodeTag::Quote: {
             if (!v.children.empty()) {
-                auto quoted = ast_to_data(flat, pool, v.child(0));
+                auto quoted = ast_to_data(flat, pool, v.child(0), datum);
                 auto tail = make_pair(pairs_.size());
                 pairs_.push_back({quoted, make_void()});
                 return cd("quote", tail);
@@ -2631,7 +2658,7 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
         }
         case ast::NodeTag::Coercion: {
             if (!v.children.empty()) {
-                auto expr = ast_to_data(flat, pool, v.child(0));
+                auto expr = ast_to_data(flat, pool, v.child(0), datum);
                 auto tail = make_pair(pairs_.size());
                 pairs_.push_back({expr, make_void()});
                 return cd("cast", tail);
@@ -2643,9 +2670,9 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             // code list (cons car cdr) (which also came back cyclic when it
             // held a symbol). Same answer as the IR quote lowering
             // (cons(lower_q(car), lower_q(cdr))).
-            auto car = ast_to_data(flat, pool, v.child(0));
+            auto car = ast_to_data(flat, pool, v.child(0), datum);
             auto cdr_val =
-                v.children.size() > 1 ? ast_to_data(flat, pool, v.child(1)) : make_void();
+                v.children.size() > 1 ? ast_to_data(flat, pool, v.child(1), datum) : make_void();
             std::lock_guard lock(alloc_storage_lock_);
             auto pi = pairs_.size();
             pairs_.push_back({car, cdr_val});
@@ -2680,6 +2707,16 @@ ast::NodeId Evaluator::data_to_flat(const types::EvalValue& data, aura::ast::Fla
         flat.set_marker(nil_id, ast::SyntaxMarker::EmptyList);
         return nil_id;
     }
+    // Issue #4727: a quoted datum's identifier atom is an interned symbol.
+    // In code position it names a variable, so intern the text in the
+    // target pool (the symbol table is name-keyed, so the AST name is the
+    // same name the source had).
+    if (is_symbol(data)) {
+        const auto sidx = as_symbol_idx(data);
+        if (sidx < symbol_table_.size())
+            return flat.add_variable(pool.intern(symbol_table_[sidx]));
+        return ast::NULL_NODE;
+    }
     if (is_string(data)) {
         auto idx = as_string_idx(data);
         if (idx < string_heap_.size()) {
@@ -2697,6 +2734,16 @@ ast::NodeId Evaluator::data_to_flat(const types::EvalValue& data, aura::ast::Fla
 
         auto car_data = pairs_[pair_idx].car;
         auto cdr_data = pairs_[pair_idx].cdr;
+
+        // Issue #4727: a quoted form head is an interned symbol; the form
+        // dispatch below reads its text, so project it back to the
+        // string-heap shape once.
+        if (is_symbol(car_data)) {
+            const auto hidx = as_symbol_idx(car_data);
+            if (hidx < symbol_table_.size())
+                car_data =
+                    make_string(static_cast<std::uint64_t>(push_string_heap(symbol_table_[hidx])));
+        }
 
         if (is_string(car_data)) {
             auto fn_idx = as_string_idx(car_data);
@@ -3050,6 +3097,21 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
     auto car_val = pairs_[pair_idx].car;
     auto cdr_val = pairs_[pair_idx].cdr;
 
+    // Issue #4727: quoted data now carries interned symbols for identifiers.
+    // Everything below keys on the operator/name TEXT (string-heap index),
+    // so project a symbol back to that shape once, at the entry: eval of a
+    // quoted form keeps dispatching to the special forms.
+    auto ident_text_value = [&](const EvalValue& atom) -> EvalValue {
+        if (!types::is_symbol(atom))
+            return atom;
+        const auto sidx = types::as_symbol_idx(atom);
+        if (sidx >= symbol_table_.size())
+            return atom;
+        return types::make_string(
+            static_cast<std::uint64_t>(push_string_heap(symbol_table_[sidx])));
+    };
+    car_val = ident_text_value(car_val);
+
     // Handle special forms by name
     if (types::is_string(car_val)) {
         auto fn_idx = types::as_string_idx(car_val);
@@ -3265,7 +3327,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
         if (fn_name == "define") {
             if (types::is_pair(cdr_val)) {
                 auto name_pair = types::as_pair_idx(cdr_val);
-                auto name_val = pairs_[name_pair].car;
+                auto name_val = ident_text_value(pairs_[name_pair].car);
                 auto val_rest = pairs_[name_pair].cdr;
 
                 // (define name value)
@@ -3374,7 +3436,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
         if (fn_name == "set!") {
             if (types::is_pair(cdr_val)) {
                 auto name_pair = types::as_pair_idx(cdr_val);
-                auto name_val = pairs_[name_pair].car;
+                auto name_val = ident_text_value(pairs_[name_pair].car);
                 auto val_rest = pairs_[name_pair].cdr;
                 if (types::is_string(name_val) && types::is_pair(val_rest)) {
                     auto val = eval_data_as_code(pairs_[types::as_pair_idx(val_rest)].car, env,
@@ -3405,7 +3467,8 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 while (types::is_pair(current)) {
                     auto binding_pair = pairs_[types::as_pair_idx(current)].car;
                     if (types::is_pair(binding_pair)) {
-                        auto name_val = pairs_[types::as_pair_idx(binding_pair)].car;
+                        auto name_val =
+                            ident_text_value(pairs_[types::as_pair_idx(binding_pair)].car);
                         auto val_expr = pairs_[types::as_pair_idx(binding_pair)].cdr;
                         if (types::is_string(name_val) && types::is_pair(val_expr)) {
                             auto name_idx = types::as_string_idx(name_val);
@@ -10276,7 +10339,9 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             qv.marker != aura::ast::SyntaxMarker::BoolLiteral)
                             return EvalResult(make_void());
                     }
-                    return EvalResult(ast_to_data(*f, *p, v.child(0)));
+                    // Issue #4727: quoted data materializes identifier atoms
+                    // as interned symbols (datum context).
+                    return EvalResult(ast_to_data(*f, *p, v.child(0), /*datum=*/true));
                 }
                 case aura::ast::NodeTag::TypeAnnotation: {
                     if (v.children.empty())

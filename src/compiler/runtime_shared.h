@@ -566,6 +566,13 @@ extern "C" void aura_clear_top_cell_getter_if_user(void* user);
 extern "C" void aura_set_keyword_hooks(int64_t (*intern)(void*, const char*),
                                        const char* (*name)(void*, int64_t), void* user_data);
 extern "C" void aura_clear_keyword_hooks_if_user(void* user);
+// Issue #4727: JIT ConstString operands[2]==2 (quoted symbol atom). intern
+// writes a symbol EvalValue through Evaluator::intern_symbol; name reads the
+// interned text for display/write. Same shape as the keyword hooks because
+// the JIT SO must not link the evaluator's table directly.
+extern "C" void aura_set_symbol_hooks(int64_t (*intern)(void*, const char*),
+                                      const char* (*name)(void*, int64_t), void* user_data);
+extern "C" void aura_clear_symbol_hooks_if_user(void* user);
 
 // Issue #452: AOT bridge metrics pointer (aot_stale_reject_count_,
 // aot_region_mismatch_, aot_hot_update_success_). Defined in

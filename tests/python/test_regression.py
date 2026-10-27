@@ -839,8 +839,9 @@ def test_jit_soundness_4567():
         expect="1",
     )
     # Predicate sweep: every predicate prim, a real hit and a real miss.
-    # symbol? is a constant #f in Aura (symbols are not first-class
-    # values), so it is swept for call parity only.
+    # Issue #4727: quoted identifier atoms are first-class interned
+    # symbols (ImmKind 10, evaluator-global symbol table), so symbol? has
+    # a real hit arm here too.
     for pred, hit, miss in (
         ("string?", '"s"', "42"),
         ("number?", "42", '"s"'),
@@ -854,6 +855,7 @@ def test_jit_soundness_4567():
         ("boolean?", "#t", "42"),
         ("char?", "#\\a", '"s"'),
         ("keyword?", ":kw", "42"),
+        ("symbol?", "'a", '"s"'),
         ("vector?", "(make-vector 2 0)", "42"),
     ):
         add(

@@ -35,6 +35,7 @@ using types::as_int;
 using types::as_pair_idx;
 using types::as_primitive_slot;
 using types::as_string_idx;
+using types::as_symbol_idx;
 using types::as_vector_idx;
 using types::EvalValue;
 using types::is_bool;
@@ -47,6 +48,7 @@ using types::is_int;
 using types::is_pair;
 using types::is_primitive;
 using types::is_string;
+using types::is_symbol;
 using types::is_vector;
 using types::is_void;
 using types::make_bool;
@@ -803,9 +805,22 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
     using ViewKind = FFIRuntime::ViewKind;
     using NativeView = FFIRuntime::NativeView;
     auto view_kind_of = [&ev](const EvalValue& v, ViewKind& out) {
-        if (!is_string(v))
+        // Issue #4727: the kind tag is written as a quoted atom ('u64). It
+        // used to arrive as a string (a quoted symbol WAS a string); now it
+        // is a real symbol, so read the name off either kind. A plain
+        // string "u64" keeps working (the historical spelling).
+        std::string k;
+        if (is_symbol(v)) {
+            const auto sidx = as_symbol_idx(v);
+            const auto& st = ev.symbol_table();
+            if (sidx >= st.size())
+                return false;
+            k = st[static_cast<std::size_t>(sidx)];
+        } else if (is_string(v)) {
+            k = ev.copy_string_heap_at(static_cast<std::size_t>(as_string_idx(v)));
+        } else {
             return false;
-        const std::string k = ev.copy_string_heap_at(static_cast<std::size_t>(as_string_idx(v)));
+        }
         if (k == "f64" || k == "double")
             out = ViewKind::F64;
         else if (k == "i64")
@@ -1323,9 +1338,20 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         std::string tag;
         if (a.size() >= 3) {
-            if (!is_string(a[2]))
+            // Issue #4727: the tag is a quoted atom ('slot) — a symbol now,
+            // and a string for the historical spelling. The error text always
+            // promised both.
+            if (is_symbol(a[2])) {
+                const auto sidx = as_symbol_idx(a[2]);
+                const auto& st = ev.symbol_table();
+                if (sidx >= st.size())
+                    return f64err("c-handle: tag must be a string or symbol");
+                tag = st[static_cast<std::size_t>(sidx)];
+            } else if (is_string(a[2])) {
+                tag = ev.copy_string_heap_at(static_cast<std::size_t>(as_string_idx(a[2])));
+            } else {
                 return f64err("c-handle: tag must be a string or symbol");
-            tag = ev.copy_string_heap_at(static_cast<std::size_t>(as_string_idx(a[2])));
+            }
         }
         std::lock_guard lock(ev.alloc_storage_lock_);
         auto& oh = ev.opaque_heap_;

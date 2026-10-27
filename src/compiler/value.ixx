@@ -208,6 +208,25 @@ export inline std::uint64_t as_string_idx(const EvalValue& v) noexcept {
     return string_idx_raw_v2(v.val);
 }
 
+// ── Issue #4727: interned symbols ────────────────────────────────
+// A quoted identifier atom is a symbol, not a string. The payload indexes
+// the evaluator-global symbol table (Evaluator::intern_symbol), so identity
+// is name identity for the whole process: a workspace layer's pool SymId
+// never participates, and eq? is a raw word compare. This is the same
+// identity model keywords already use (keyword_table_), extended to the
+// atom the EDSL dispatch (eq? / case / memq) actually keys on.
+export inline EvalValue make_symbol(std::uint64_t idx) noexcept {
+    return EvalValue(make_symbol_raw_v2(idx));
+}
+export inline bool is_symbol(const EvalValue& v) noexcept {
+    return is_symbol_raw_v2(v.val);
+}
+export inline std::uint64_t as_symbol_idx(const EvalValue& v) noexcept {
+    AURA_HOT_CONTRACT(is_symbol(v));
+    note_value_tag_hot_path();
+    return symbol_idx_raw_v2(v.val);
+}
+
 // ── Issue #181 Cycle 1: v2 string encoding prototype ──────
 //
 // #4502: all string values have low byte AURA_STRING_LOW8 — disjoint from fixnum

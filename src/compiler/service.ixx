@@ -386,6 +386,27 @@ static void install_lock_and_topcell_hooks_for_eval(aura::compiler::Evaluator* e
             return kt[u].c_str();
         },
         static_cast<void*>(ev));
+    // Issue #4727: JIT quoted-symbol atoms intern into the same evaluator-
+    // global symbol table the tree walker uses, so eq?/symbol? agree across
+    // the tier face and any workspace COW layer.
+    aura_set_symbol_hooks(
+        [](void* e, const char* name) -> int64_t {
+            auto* evp = static_cast<aura::compiler::Evaluator*>(e);
+            if (!evp)
+                return 0;
+            return evp->intern_symbol(name ? std::string_view(name) : std::string_view{}).val;
+        },
+        [](void* e, int64_t idx) -> const char* {
+            auto* evp = static_cast<aura::compiler::Evaluator*>(e);
+            if (!evp || idx < 0)
+                return nullptr;
+            const auto& st = evp->symbol_table();
+            const auto u = static_cast<std::size_t>(idx);
+            if (u >= st.size())
+                return nullptr;
+            return st[u].c_str();
+        },
+        static_cast<void*>(ev));
 }
 
 static void pop_lock_hooks_for_eval(aura::compiler::Evaluator* ev) {

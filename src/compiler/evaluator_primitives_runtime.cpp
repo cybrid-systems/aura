@@ -33,6 +33,7 @@ using types::as_int;
 using types::as_pair_idx;
 using types::as_primitive_slot;
 using types::as_string_idx;
+using types::as_symbol_idx;
 using types::as_vector_idx;
 using types::EvalValue;
 using types::is_bool;
@@ -45,6 +46,7 @@ using types::is_int;
 using types::is_pair;
 using types::is_primitive;
 using types::is_string;
+using types::is_symbol;
 using types::is_vector;
 using types::is_void;
 using types::make_bool;
@@ -143,7 +145,8 @@ namespace {
 
     static std::string fmt_val_to_string(const EvalValue& v, std::span<const std::string> heap,
                                          std::span<const Pair> pairs, bool quote, int depth,
-                                         std::span<const std::vector<EvalValue>> vectors) {
+                                         std::span<const std::vector<EvalValue>> vectors,
+                                         std::span<const std::string> symbols) {
         std::string out;
         auto app = [&](const auto&... args) { (out += ... += args); };
         if (depth > 64)
@@ -168,12 +171,20 @@ namespace {
             }
             return "";
         }
+        // Issue #4727: a symbol atom prints its interned name in both
+        // display and write form (R7RS: write of a symbol is its name).
+        if (is_symbol(v)) {
+            const auto idx = as_symbol_idx(v);
+            return idx < symbols.size() ? symbols[static_cast<std::size_t>(idx)]
+                                        : std::format("<symbol[{}]>", idx);
+        }
         if (is_pair(v)) {
             auto idx = as_pair_idx(v);
             if (idx >= pairs.size())
                 return "<pair>";
             out = "(";
-            out += fmt_val_to_string(pairs[idx].car, heap, pairs, quote, depth + 1, vectors);
+            out +=
+                fmt_val_to_string(pairs[idx].car, heap, pairs, quote, depth + 1, vectors, symbols);
             auto cdr = pairs[idx].cdr;
             while (is_pair(cdr)) {
                 out += " ";
@@ -182,12 +193,13 @@ namespace {
                     out += "<pair>";
                     break;
                 }
-                out += fmt_val_to_string(pairs[nidx].car, heap, pairs, quote, depth + 1, vectors);
+                out += fmt_val_to_string(pairs[nidx].car, heap, pairs, quote, depth + 1, vectors,
+                                         symbols);
                 cdr = pairs[nidx].cdr;
             }
             if (!is_end_of_list(cdr)) {
                 out += " . ";
-                out += fmt_val_to_string(cdr, heap, pairs, quote, depth + 1, vectors);
+                out += fmt_val_to_string(cdr, heap, pairs, quote, depth + 1, vectors, symbols);
             }
             out += ")";
             return out;
@@ -203,7 +215,7 @@ namespace {
             for (std::size_t i = 0; i < elems.size(); ++i) {
                 if (i > 0)
                     out += ' ';
-                out += fmt_val_to_string(elems[i], heap, pairs, quote, depth + 1, vectors);
+                out += fmt_val_to_string(elems[i], heap, pairs, quote, depth + 1, vectors, symbols);
             }
             out += ')';
             return out;
@@ -225,7 +237,8 @@ namespace {
     static void io_print_val(const EvalValue& v, std::span<const std::string> heap,
                              std::span<const Pair> pairs, bool quote, int depth,
                              std::span<const std::string> keywords,
-                             std::span<const std::vector<EvalValue>> vectors) {
+                             std::span<const std::vector<EvalValue>> vectors,
+                             std::span<const std::string> symbols) {
         if (depth > 64) {
             std::fprintf(stdout, "...");
             return;
@@ -289,6 +302,16 @@ namespace {
                 return;
             }
         }
+        // Issue #4727: symbol atom prints its interned name (display and
+        // write agree — R7RS write of a symbol is the bare name).
+        if (is_symbol(v)) {
+            const auto sidx = as_symbol_idx(v);
+            if (sidx < symbols.size())
+                std::fprintf(stdout, "%s", symbols[static_cast<std::size_t>(sidx)].c_str());
+            else
+                std::fprintf(stdout, "<symbol[%zu]>", static_cast<size_t>(sidx));
+            return;
+        }
         if (is_keyword(v)) {
             auto kidx = as_keyword_idx(v);
             if (!keywords.empty() && kidx < keywords.size()) {
@@ -320,7 +343,8 @@ namespace {
             if (is_end_of_list(cdr) && !quote) {
                 // Single-element list: (x)
                 std::fprintf(stdout, "(");
-                io_print_val(pairs[idx].car, heap, pairs, quote, depth + 1, keywords, vectors);
+                io_print_val(pairs[idx].car, heap, pairs, quote, depth + 1, keywords, vectors,
+                             symbols);
                 std::fprintf(stdout, ")");
                 return;
             }
@@ -346,11 +370,12 @@ namespace {
             for (std::size_t i = 0; i < elements.size(); ++i) {
                 if (i > 0)
                     std::fprintf(stdout, " ");
-                io_print_val(elements[i], heap, pairs, quote, depth + 1, keywords, vectors);
+                io_print_val(elements[i], heap, pairs, quote, depth + 1, keywords, vectors,
+                             symbols);
             }
             if (!is_end_of_list(next)) {
                 std::fprintf(stdout, " . ");
-                io_print_val(next, heap, pairs, quote, depth + 1, keywords, vectors);
+                io_print_val(next, heap, pairs, quote, depth + 1, keywords, vectors, symbols);
             }
             std::fprintf(stdout, ")");
             return;
@@ -367,7 +392,7 @@ namespace {
             for (std::size_t i = 0; i < elems.size(); ++i) {
                 if (i > 0)
                     std::fputc(' ', stdout);
-                io_print_val(elems[i], heap, pairs, quote, depth + 1, keywords, vectors);
+                io_print_val(elems[i], heap, pairs, quote, depth + 1, keywords, vectors, symbols);
             }
             std::fputc(')', stdout);
             return;
@@ -619,6 +644,10 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
             static_cast<std::uint64_t>(ev.push_string_heap(prefix + std::to_string(id))));
     });
 
+    // Issue #4727 deliberately adds NO conversion primitives: the public
+    // symbol<->string surface stays in lib/std (Issue #1448 primitive-surface
+    // freeze), and symbol->string renders through the printer there.
+
     add("symbol-append", [&ev](std::span<const EvalValue> a) -> EvalValue {
         // Issue #2652: lock string growth (same class as string-append).
         std::string result;
@@ -731,8 +760,8 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
             std::fflush(stdout);
             return make_void();
         }
-        io_print_val(a[0], ev.string_heap_, ev.pairs_, false, 0, ev.keyword_table_,
-                     ev.vector_heap_);
+        io_print_val(a[0], ev.string_heap_, ev.pairs_, false, 0, ev.keyword_table_, ev.vector_heap_,
+                     ev.symbol_table_);
         std::fflush(stdout);
         return make_void();
     });
@@ -791,7 +820,8 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
             std::fflush(stdout);
             return make_void();
         }
-        io_print_val(a[0], ev.string_heap_, ev.pairs_, true, 0, ev.keyword_table_, ev.vector_heap_);
+        io_print_val(a[0], ev.string_heap_, ev.pairs_, true, 0, ev.keyword_table_, ev.vector_heap_,
+                     ev.symbol_table_);
         std::fflush(stdout);
         return make_void();
     });
@@ -844,7 +874,7 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
                                         "format: cross-tenant string slot read denied (#4505)",
                                         ev.primitive_error_counter_ptr());
                                 result += fmt_val_to_string(val, ev.string_heap_, ev.pairs_, false,
-                                                            0, ev.vector_heap_);
+                                                            0, ev.vector_heap_, ev.symbol_table_);
                             }
                         }
                         ++i;
@@ -884,7 +914,7 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
                                         "format: cross-tenant string slot read denied (#4505)",
                                         ev.primitive_error_counter_ptr());
                                 result += fmt_val_to_string(val, ev.string_heap_, ev.pairs_, true,
-                                                            0, ev.vector_heap_);
+                                                            0, ev.vector_heap_, ev.symbol_table_);
                             }
                         }
                         ++i;

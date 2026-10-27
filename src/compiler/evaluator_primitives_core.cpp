@@ -62,9 +62,11 @@ void register_type_and_char_primitives(PrimRegistrar add) {
     add("symbol?", [](const auto& a) {
         if (a.empty())
             return types::make_bool(false);
-        // Symbols are interned during parsing and not represented as
-        // first-class EvalValue values; always return false.
-        return types::make_bool(false);
+        // Issue #4727: quoted identifier atoms are first-class interned
+        // symbols (ImmKind 10, evaluator-global symbol table). Everything
+        // else — including the string a symbol-typed atom used to decay to —
+        // is not a symbol.
+        return types::make_bool(types::is_symbol(a[0]));
     });
     add("procedure?", [](const auto& a) {
         if (a.empty())
