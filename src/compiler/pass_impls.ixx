@@ -975,7 +975,15 @@ public:
                         const bool unsafe_cast = !(is_tag(t1, aura::core::TypeTag::FLOAT) &&
                                                    is_tag(t2, aura::core::TypeTag::INT));
                         if (t1 != 0 && t2 != 0 && t1 != t2 && t1 != dyn_id.index &&
-                            t2 != dyn_id.index && !unsafe_cast) {
+                            t2 != dyn_id.index && !unsafe_cast &&
+                            // Issue #3699: a tag-3 target is a Dynamic
+                            // passthrough (`locals[out] = locals[in]`).
+                            // Emitting it only leaves a residual non-identity
+                            // CastOp that feeds the density streak and trips
+                            // the mutate gate on a later rebind. The registry
+                            // lookup stays inside the insert arm so the hot
+                            // path pays nothing.
+                            type_tag_for_coercion(aura::core::TypeId{t1, 1}) != 3) {
                             auto cast_slot = func.local_count++;
                             aura::ir::IRInstruction cast_instr;
                             cast_instr.opcode = aura::ir::IROpcode::CastOp;
@@ -1004,8 +1012,14 @@ public:
                     if (instr.opcode == aura::ir::IROpcode::Return) {
                         auto val_type = slot_type(ops[0]);
                         auto ret_type = instr.type_id;
+                        // Issue #3699: a tag-3 target (Dynamic / TYPE_VAR /
+                        // unregistered) is a Local copy at runtime. Do not
+                        // emit it: the residual non-identity CastOp it leaves
+                        // feeds the density streak (a later rebind then hits
+                        // the mutate gate) while changing nothing at run time.
                         if (val_type != 0 && ret_type != 0 && val_type != ret_type &&
-                            val_type != dyn_id.index && ret_type != dyn_id.index) {
+                            val_type != dyn_id.index && ret_type != dyn_id.index &&
+                            type_tag_for_coercion(aura::core::TypeId{ret_type, 1}) != 3) {
                             auto cast_slot = func.local_count++;
                             aura::ir::IRInstruction cast_instr;
                             cast_instr.opcode = aura::ir::IROpcode::CastOp;
@@ -1048,8 +1062,12 @@ public:
                         if (narrowed_type_known) {
                             ++narrow_evidence_skipped_;
                         }
+                        // Issue #3699: same Dynamic-passthrough rule as the
+                        // Return arm — a tag-3 branch-result cast is a Local
+                        // copy and must not be emitted as a residual CastOp.
                         if (!narrowed_type_known && if_result_type != 0 &&
-                            if_result_type != dyn_id.index) {
+                            if_result_type != dyn_id.index &&
+                            type_tag_for_coercion(aura::core::TypeId{if_result_type, 1}) != 3) {
                             auto then_blk = ops[1];
                             auto else_blk = ops[2];
                             auto check_and_cast = [&](std::uint32_t blk_id) {
