@@ -4447,6 +4447,93 @@ def test_exit_quiesce_4705():
     assert "stop_and_join" in svc, "#4705: the tier worker no longer has a joinable stop"
 
 
+def test_fiber_result_root_4710():
+    """Issue #4710: the hash a fiber returns must survive until fiber:join.
+
+    A fiber body's return value lives ONLY in the fiber:join registry
+    (s_fiber_results) between the body publishing it and the join
+    fetching it. That registry was not a GC root, so the tree-walker
+    reclaim (reclaim_tw_unreachable) proved the result's (hash) table
+    unreachable, freed the block, and put the slot on the hash free
+    list; the next (hash) mint reused the slot. The joiner then read an
+    empty table (-1) or a sibling fiber's table (two identical values).
+    Lists survived because their cells stayed reachable through the
+    module-level closures the fiber bodies run.
+
+    The runtime rows re-run the issue's program (three join waves plus a
+    20-wave churn) on the CLI file path and require every wave to answer
+    its own values; the source cites pin the provider and BOTH reclaim
+    consultation points so the guard cannot pass vacuously.
+    """
+    program = r"""(define (mk i) (let ((h (make-hash))) (hash-set! h "n" i) h))
+(define (spawn8) (let l ((i 0) (a (list))) (if (< i 8) (l (+ i 1) (cons (fiber:spawn (lambda () (mk i))) a)) a)))
+(define (go) (let ((fs (spawn8))) (map (lambda (f) (hash-ref (fiber:join f) "n" -1)) fs)))
+(display (go)) (newline)
+(define fs (spawn8))
+(display (map (lambda (f) (hash-ref (fiber:join f) "n" -1)) fs)) (newline)
+(define fs3 (spawn8))
+(define hs3 (map fiber:join fs3))
+(display (map (lambda (h) (hash-ref h "n" -1)) hs3)) (newline)
+(define (wave w) (let l ((i 0) (a (list))) (if (< i 8) (l (+ i 1) (cons (fiber:spawn (lambda () (mk (+ (* w 10) i)))) a)) a)))
+(define (sum lst) (if (null? lst) 0 (+ (car lst) (sum (cdr lst)))))
+(define (one-wave-bad w)
+  (let ((fs (wave w)))
+    (let ((vals (map (lambda (f) (hash-ref (fiber:join f) "n" -1)) fs)))
+      (if (= (sum vals) (+ (* 80 w) 28)) 0 1))))
+(define (churn)
+  (let loop ((w 0) (bad 0))
+    (if (< w 20)
+        (loop (+ w 1) (+ bad (one-wave-bad w)))
+        bad)))
+(display (churn)) (newline)
+"""
+    env = os.environ.copy()
+    env["AURA_TIER_JIT"] = "0"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env["AURA_SANDBOX"] = "off"
+    env.pop("AURA_SOFT", None)
+    env.pop("AURA_FORCE_IR", None)
+    want = "(7 6 5 4 3 2 1 0)"
+    fd, path = tempfile.mkstemp(suffix=".aura", prefix="aura-4710-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(program)
+        # The corruption is a race against the reclaim: a single run can
+        # come out clean, so the wave is repeated.
+        # cwd=REPO: the prelude's `std/*` modules resolve relative to the
+        # working directory (a run from elsewhere reports a
+        # 'cannot resolve std/list' load failure), so pin the invocation root.
+        for attempt in range(5):
+            r = subprocess.run([AURA, path], capture_output=True, text=True, timeout=120, env=env, cwd=str(REPO))
+            assert r.returncode == 0, f"#4710 run {attempt}: rc={r.returncode} err={(r.stderr or '')[-400:]!r}"
+            lines = [ln.strip() for ln in (r.stdout or "").splitlines() if ln.strip()]
+            assert len(lines) >= 4, f"#4710 run {attempt}: short stdout {r.stdout!r}"
+            for wave, line in enumerate(lines[:3]):
+                assert line == want, (
+                    f"#4710 run {attempt} wave {wave}: expected {want!r} got {line!r} "
+                    f"(a finished-but-unjoined fiber's hash table was freed and reused)"
+                )
+            assert lines[3] == "0", (
+                f"#4710 run {attempt}: {lines[3]} of 20 churn waves returned a corrupted hash (stdout {r.stdout!r})"
+            )
+    finally:
+        os.remove(path)
+    # Source cites: the provider, its install, and both consultation points.
+    hh = (REPO / "src/compiler/fiber_result_roots.hh").read_text(encoding="utf-8")
+    assert "Issue #4710" in hh, "#4710: fiber_result_roots.hh lost its issue citation"
+    assert "inline void install(" in hh and "inline std::size_t collect(" in hh, (
+        "#4710: the fiber-result root provider lost install()/collect()"
+    )
+    msg = (REPO / "src/compiler/evaluator_primitives_messaging.cpp").read_text(encoding="utf-8")
+    assert "collect_fiber_result_roots" in msg, "#4710: the messaging partition lost the collector"
+    assert "fiber_result_roots::install" in msg, "#4710: the collector is never installed"
+    gc_src = (REPO / "src/compiler/evaluator_gc.cpp").read_text(encoding="utf-8")
+    assert gc_src.count("fiber_result_roots::collect") == 2, (
+        "#4710: both reclaims (tree-walker + file-mode) must consult the fiber-result roots"
+    )
+    print("  ✅ test_fiber_result_root_4710 (fiber result hash survives to fiber:join)")
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -4504,6 +4591,7 @@ for tf in [
     test_file_mode_equal_fresh_list_corruption_4627,
     test_file_mode_pair_list_corruption_4629,
     test_exit_quiesce_4705,
+    test_fiber_result_root_4710,
 ]:
     try:
         tf()

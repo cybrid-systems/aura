@@ -12,6 +12,7 @@ module;
 #include "serve/parallel_orch.h"
 #include "observability_metrics.h"
 #include "hash_meta.h"
+#include "fiber_result_roots.hh" // Issue #4710: fiber:join result roots
 
 #include <unistd.h>
 
@@ -71,6 +72,31 @@ namespace {
     std::unordered_map<int64_t, FiberResult> s_fiber_results;
     std::mutex s_fiber_results_mtx;
     std::condition_variable s_fiber_results_cv;
+
+    // Issue #4710: publish the registry's values as GC roots. A body's
+    // return value is stored HERE and nowhere else until fiber:join
+    // fetches and erases the entry, so without this provider the
+    // evaluator's reclaim marks a finished fiber's (hash) table
+    // unreachable, frees it, and the next mint reuses the slot: the
+    // joiner reads an empty table (-1) or a sibling's table (two equal
+    // values) instead of its own result.
+    //
+    // Both states are collected: a ready entry (the body published,
+    // the join has not run) and a pending entry (the shared optional
+    // already holds a value the body wrote before flipping ready).
+    // Values here are this process's, and the mark is conservative —
+    // an extra root only keeps a slot alive, it never frees one.
+    std::size_t collect_fiber_result_roots(std::vector<std::int64_t>& out) {
+        const auto before = out.size();
+        std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
+        for (const auto& entry : s_fiber_results) {
+            const auto& slot = entry.second.value;
+            if (!slot || !slot->has_value())
+                continue;
+            out.push_back(slot->value().val);
+        }
+        return out.size() - before;
+    }
 
     // Issue #3394: joinable thread-fiber registry. Pre-#3394 the fallback
     // detached its worker, so an unjoined fiber could still be inside
@@ -648,6 +674,13 @@ namespace {
 } // namespace
 
 void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
+    // Issue #4710: install the fiber:join result-root provider so the
+    // evaluator's reclaims (tree-walker + file-mode) mark the values of
+    // finished-but-unjoined fibers. Registration is idempotent (first
+    // install wins) and process-global, like the registry itself: a
+    // serve session's later Evaluators reuse it.
+    fiber_result_roots::install(&collect_fiber_result_roots);
+
     // Issue #4053: ensure denseness body unlock hooks are live for http-post
     // (module static ctor alone is not reliable across Soft --serve-async).
     wire_denseness_body_lock_hooks();
