@@ -1,0 +1,36 @@
+; Issue #4682 (typecheck prim base layer): every InferenceEngine shares one
+; read-only primitive TypeEnv layer instead of replaying ~300 binds. User
+; defines must still shadow primitives, primitives must still type-check
+; (incl. polymorphic ones per use site), and unbound names still reject.
+(require "std/mutate" all:)
+(define *fails* 0)
+(define *n* 0)
+(define (check! ok msg)
+  (set! *n* (+ *n* 1))
+  (if (not ok)
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+(define (rebind name body label)
+  (try (mutate:rebind name body label) (catch (e) (list "raised" e))))
+(define (rejected? r) (and (pair? r) (equal? (car r) "mutation-failed")))
+(set-code (string-append
+  "(define abs (lambda (x) (* x 10)))\n"            ; shadows a primitive
+  "(define f (lambda (x) (+ (abs x) (string-length \"ab\"))))\n"
+  "(define g (lambda (x) (car (list x x))))\n"       ; polymorphic prims
+  "(define h (lambda (s) (string-append s (car (list \"!\")))))\n"))
+(eval-current)
+(check! (= (f 3) 32) "user abs shadows primitive")
+(check! (= (g 5) 5) "poly car/list on Int")
+(check! (string=? (h "a") "a!") "poly car/list on String")
+(let loop ((i 0))
+  (if (< i 5)
+      (begin
+        (check! (eq? (rebind "f" (string-append "(lambda (x) (+ (abs x) " (number->string i) "))") "t") #t) "rebind f accepted")
+        (eval-current)
+        (check! (= (f 2) (+ 20 i)) "f uses shadowing abs after rebind")
+        (check! (string=? (h "b") "b!") "h intact")
+        (loop (+ i 1)))))
+(check! (rejected? (rebind "f" "(lambda (x) (+ x strng-length-nope))" "unbound")) "unbound rejected")
+(check! (= (f 2) 24) "f survives rejection")
+(check! (= (g 7) 7) "g intact")
+(display "tc_prim_base_env_4682: ") (display (- *n* *fails*)) (display "/") (display *n*) (newline)
+(if (> *fails* 0) (exit 1))
