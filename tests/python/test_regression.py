@@ -4631,95 +4631,6 @@ def test_fiber_lock_order_inversion_4711():
     assert -1 < e < b, "#4711: DensenessBodyLockWaitGuard must drop the eval mutex first"
 
 
-for tf in [
-    test_jit_soundness_4567,
-    test_type_feedback_4568,
-    test_jit_assumption_invalidation_4569,
-    test_jit_prologue_word_and_storm_4600,
-    test_jit_osr_tail_4600,
-    test_jit_invalidation_walltime_4600,
-    test_jit_reuse_lowering_4600,
-    test_jit_l1_4570,
-    test_jit_mixed_compare_4570,
-    test_jit_self_call_4601,
-    test_jit_l2_4571,
-    test_jit_general_call_4603,
-    test_jit_call_path_4572,
-    test_jit_redefine_4604,
-    test_jit_scalar_pairs_4573,
-    test_jit_float_pair_fields_4605,
-    test_jit_tier_differential_4574,
-    test_jit_unbound_callee_4607,
-    test_jit_non_callable_callee_4636,
-    test_workspace_set_global_4618,
-    test_ir_call_depth_limit_4620,
-    test_cfunc_budget_4555,
-    test_nary_map_for_each_4616,
-    test_rebind_cascade_linear_4615,
-    test_tier_jit_default_on_4679,
-    test_tc_infer_flat_in_rebind_count_4682,
-    test_tw_reclaim_ir_frame_roots_4617,
-    test_jit,
-    test_mutation_sequences,
-    test_freeze_load,
-    test_freeze_multi_expr,
-    test_freeze_empty,
-    test_emit_binary,
-    test_aot,
-    test_aura_type_auto_load,
-    test_aura_type_no_sig,
-    test_aura_type_multi_func,
-    test_aura_type_different_types,
-    test_aura_type_cross_module,
-    test_generate_type_sigs,
-    test_module_chain_5,
-    test_cross_session,
-    test_fuzz_edsl,
-    test_char_literal_form_split_4622,
-    test_while_when_error_propagation_4619,
-    test_workspace_rest_params_4621,
-    test_named_let_bind_list_repeat_4623,
-    test_callback_diagnostic_4624,
-    test_workspace_inline_callback_4626,
-    test_sweep_set_fold_prov_index_4625,
-    test_member_structural_equality_4628,
-    test_aot_multi_call_site_4640,
-    test_aot_assoc_matches_evaluator_4640,
-    test_file_mode_equal_fresh_list_corruption_4627,
-    test_file_mode_pair_list_corruption_4629,
-    test_exit_quiesce_4705,
-    test_fiber_result_root_4710,
-    test_fiber_lock_order_inversion_4711,
-]:
-    try:
-        tf()
-        passed_s += 1
-    except Exception as e:
-        print(f"  ❌ {tf.__name__}: {e}")
-        failed_s += 1
-
-print(f"  Subprocess tests: {passed_s}/{passed_s + failed_s} passed")
-
-# Cleanup freeze/emit files
-for f in [
-    "/tmp/aura-test-freeze.aura",
-    "/tmp/aura-test-freeze2.aura",
-    "/tmp/aura-test-empty.aura",
-    "/tmp/aura-test-out.o.ir",
-]:
-    if os.path.exists(f):
-        os.remove(f)
-for f in ["/tmp/aura-test-out", "/tmp/aura-aot-compare", "/tmp/aura-aot-runtime"]:
-    if os.path.exists(f):
-        os.remove(f)
-
-
-# Fixture snippets share /tmp seeds — keep serial (jobs=1).
-# No skips allowed: every regression fixture must pass. The two former
-# KNOWN_SKIP cases (ast-viz-dot-mutation / colony-search) failed with
-# unbound module free vars after require/mutate; those module-capture
-# bugs were fixed in-tree (#2566 nested-require module env inject), so
-# the entries were removed 2026-09-04 and the cases run for real again.
 def test_serve_async_two_fiber_yield_reclaim_4706():
     """Issue #4706: serve-async SIGSEGV with two fibers yielding while allocating.
 
@@ -4779,6 +4690,98 @@ def test_serve_async_two_fiber_yield_reclaim_4706():
     print(
         "  OK test_serve_async_two_fiber_yield_reclaim_4706 (two fibers yielding while allocating: (50 50), clean exit)"
     )
+
+
+for tf in [
+    test_jit_soundness_4567,
+    test_type_feedback_4568,
+    test_jit_assumption_invalidation_4569,
+    test_jit_prologue_word_and_storm_4600,
+    test_jit_osr_tail_4600,
+    test_jit_invalidation_walltime_4600,
+    test_jit_reuse_lowering_4600,
+    test_jit_l1_4570,
+    test_jit_mixed_compare_4570,
+    test_jit_self_call_4601,
+    test_jit_l2_4571,
+    test_jit_general_call_4603,
+    test_jit_call_path_4572,
+    test_jit_redefine_4604,
+    test_jit_scalar_pairs_4573,
+    test_jit_float_pair_fields_4605,
+    test_jit_tier_differential_4574,
+    test_jit_unbound_callee_4607,
+    test_jit_non_callable_callee_4636,
+    test_workspace_set_global_4618,
+    test_ir_call_depth_limit_4620,
+    test_cfunc_budget_4555,
+    test_nary_map_for_each_4616,
+    test_rebind_cascade_linear_4615,
+    test_tier_jit_default_on_4679,
+    test_tc_infer_flat_in_rebind_count_4682,
+    test_tw_reclaim_ir_frame_roots_4617,
+    test_jit,
+    test_mutation_sequences,
+    test_freeze_load,
+    test_freeze_multi_expr,
+    test_freeze_empty,
+    test_emit_binary,
+    test_aot,
+    test_aura_type_auto_load,
+    test_aura_type_no_sig,
+    test_aura_type_multi_func,
+    test_aura_type_different_types,
+    test_aura_type_cross_module,
+    test_generate_type_sigs,
+    test_module_chain_5,
+    test_cross_session,
+    test_fuzz_edsl,
+    test_char_literal_form_split_4622,
+    test_while_when_error_propagation_4619,
+    test_workspace_rest_params_4621,
+    test_named_let_bind_list_repeat_4623,
+    test_callback_diagnostic_4624,
+    test_workspace_inline_callback_4626,
+    test_sweep_set_fold_prov_index_4625,
+    test_member_structural_equality_4628,
+    test_aot_multi_call_site_4640,
+    test_aot_assoc_matches_evaluator_4640,
+    test_file_mode_equal_fresh_list_corruption_4627,
+    test_file_mode_pair_list_corruption_4629,
+    test_exit_quiesce_4705,
+    test_fiber_result_root_4710,
+    test_fiber_lock_order_inversion_4711,
+    test_serve_async_two_fiber_yield_reclaim_4706,
+]:
+    try:
+        tf()
+        passed_s += 1
+    except Exception as e:
+        print(f"  ❌ {tf.__name__}: {e}")
+        failed_s += 1
+
+print(f"  Subprocess tests: {passed_s}/{passed_s + failed_s} passed")
+
+# Cleanup freeze/emit files
+for f in [
+    "/tmp/aura-test-freeze.aura",
+    "/tmp/aura-test-freeze2.aura",
+    "/tmp/aura-test-empty.aura",
+    "/tmp/aura-test-out.o.ir",
+]:
+    if os.path.exists(f):
+        os.remove(f)
+for f in ["/tmp/aura-test-out", "/tmp/aura-aot-compare", "/tmp/aura-aot-runtime"]:
+    if os.path.exists(f):
+        os.remove(f)
+
+
+# Fixture snippets share /tmp seeds — keep serial (jobs=1).
+# No skips allowed: every regression fixture must pass. The two former
+# KNOWN_SKIP cases (ast-viz-dot-mutation / colony-search) failed with
+# unbound module free vars after require/mutate; those module-capture
+# bugs were fixed in-tree (#2566 nested-require module env inject), so
+# the entries were removed 2026-09-04 and the cases run for real again.
 
 
 specs: list[SnippetSpec] = []
