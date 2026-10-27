@@ -1820,6 +1820,13 @@ namespace {
         // workspace_mtx_. Steal/GC still see depth via fiber mirrors.
         // Blocking yield here busy-loops keepalive / join-fail bodies
         // (#3208 / #2161) and starves cancel.
+        // Issue #4721: the soft-ONLY orch window (depth>0, no real frame)
+        // keeps #2200/#4514 park rejection on purpose — a body must not
+        // swapcontext inside the window (a two-parked-body pool proved
+        // unreliable to re-wake). MultiFiberMailbox::recv instead delivers
+        // queued messages and returns empty without parking
+        // (soft_orch_no_park), so in-body orch:agent-recv is usable without
+        // re-opening the park contract.
         if (g_current_fiber && g_current_fiber->orch_agent_boundary_active()) {
             if (!hook_held && !this_fiber_depth)
                 return false;

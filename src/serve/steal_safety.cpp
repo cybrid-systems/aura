@@ -496,6 +496,17 @@ MailboxDeliverySafety mailbox_delivery_safety_transaction(Fiber* target,
                              : steal_invariant_mask(StealInvariant::LifetimeProofOk);
     if (!check_envframe)
         skip |= steal_invariant_mask(StealInvariant::EnvFrameOk);
+    // Issue #4721: BoundarySafe is the STEAL predicate — it must keep
+    // treating the #2118 orch soft body window as unsafe (#2184). The
+    // mailbox caller has already applied the real-vs-soft split
+    // (Fiber::is_mailbox_deliverable, MutationSafetySnapshot::real_depth)
+    // before reaching here, so re-applying the soft-sensitive predicate
+    // resurrected the #4721 false positive: pushing to an agent body that
+    // is only inside its soft window returned Backpressure through
+    // mailbox_delivery_reject_residual_total. A REAL Guard target is
+    // rejected by the caller before this transaction runs, and the inject
+    // arms above still short-circuit for the #2987 test seams.
+    skip |= steal_invariant_mask(StealInvariant::BoundarySafe);
     // Mailbox never bumps steal counters (own mailbox_* totals).
     out.fail_bits = evaluate_residual_hard_and_bits(target, local, /*bump_counters=*/false, skip);
     out.decision = (out.fail_bits == 0) ? StealSafetyDecision::Ok : StealSafetyDecision::RejectHard;

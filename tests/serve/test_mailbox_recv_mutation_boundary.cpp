@@ -726,9 +726,12 @@ static void ac2680_source_cite_rows() {
     CHECK(mb.find("boundary_live = aura_evaluator_mutation_boundary_depth() > 0") !=
               std::string::npos,
           "AC2: recv() boundary_live cited as authority reference");
-    CHECK(mb.find("this_fiber_holds = aura_evaluator_mutation_boundary_depth() > 0") !=
-              std::string::npos,
-          "3692: recv splits this-fiber depth from process-held");
+    // Issue #4721: this-fiber truth is now the REAL-frame ABI (the soft
+    // orch body window keeps the same split but must not empty recv).
+    CHECK(mb.find("this_fiber_holds =") != std::string::npos &&
+              mb.find("aura_evaluator_mutation_boundary_this_fiber_real() != 0") !=
+                  std::string::npos,
+          "3692: recv splits this-fiber real depth from process-held (#4721)");
     // AC3: cross-fiber scenario covered (counter for Agents to observe pressure).
     CHECK(mb.find("mailbox_shared_evaluator_deferred_hard_total") != std::string::npos,
           "AC3: production hard counter");
@@ -1270,10 +1273,12 @@ static void ac3692_3_push_still_bp_on_process_held() {
           "3692 AC3: push helper retained");
     const auto helper = mb.find("note_mailbox_deferred_under_boundary(MultiFiberMailboxStats");
     const auto win = helper == std::string::npos ? std::string{} : mb.substr(helper, 1800);
-    CHECK(win.find("aura_evaluator_mutation_boundary_depth() > 0") != std::string::npos,
-          "3692 AC3: push still consults depth");
-    CHECK(win.find("aura_evaluator_mutation_boundary_held() != 0") != std::string::npos,
-          "3692 AC3: push still consults process-held");
+    // Issue #4721: the sender gate consults this-fiber REAL frames and the
+    // non-local held flag (soft orch window no longer defers a body's send).
+    CHECK(win.find("aura_evaluator_mutation_boundary_this_fiber_real() != 0") != std::string::npos,
+          "3692 AC3: push still consults real depth (#4721)");
+    CHECK(win.find("aura_evaluator_mutation_boundary_held_nonlocal() != 0") != std::string::npos,
+          "3692 AC3: push still consults non-local process/evaluator held (#4721)");
 }
 
 static void ac3692_4_soft_no_mark_failed() {

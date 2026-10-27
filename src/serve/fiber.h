@@ -123,6 +123,27 @@ extern "C" void aura_evaluator_on_fiber_join_session_revoke(void* joined_fiber);
 // during work-steal (thief thread must not read thread_local).
 extern "C" std::size_t aura_evaluator_mutation_stack_depth_from_ptr(void* mutation_stack_storage);
 
+// Issue #4721: REAL (non-soft) frame count from the same opaque storage.
+// The orch agent-body window (#2118/#2515) pushes a `orch_soft_frame`
+// checkpoint that is a steal-visibility mark only — it holds no
+// workspace_mtx_ and carries no rollback snapshot. Steal safety must keep
+// treating it as "boundary live" (#2184), but the messaging gates must
+// not: an agent body otherwise cannot use its own mailbox.
+extern "C" std::size_t
+aura_evaluator_mutation_stack_real_depth_from_ptr(void* mutation_stack_storage) noexcept;
+
+// Issue #4721: this-fiber REAL boundary truth (any non-soft frame).
+// Mailbox recv Policy A (#2188/#3673) and try_pop gate on this instead of
+// the raw depth: a soft-only orch window neither parks-under-lock nor
+// inverts Workspace→Mailbox, so it must not empty every in-body recv.
+extern "C" int aura_evaluator_mutation_boundary_this_fiber_real() noexcept;
+
+// Issue #4721: boundary held by anything OTHER than this fiber's soft
+// window (outermost Guard flag on the shared Evaluator, or the #2849
+// process-wide live-Guard count). Push/broadcast sender gate (#2849/#3613)
+// keys on this OR this_fiber_real — never on a soft-only depth.
+extern "C" int aura_evaluator_mutation_boundary_held_nonlocal() noexcept;
+
 // Issue #2184: process-wide steal snapshot mismatch counter
 // (depth/held/yield inconsistent after resume or under steal).
 extern "C" std::uint64_t aura_fiber_static_mutation_steal_snapshot_mismatch_total();
@@ -201,6 +222,11 @@ enum class YieldReason : uint8_t {
 // (or depth>0 under soft orch agent window) ⇒ steal unsafe.
 struct MutationSafetySnapshot {
     std::size_t depth = 0;
+    // Issue #4721: frames pushed by real MutationBoundaryGuards only
+    // (orch_soft_frame == false). deliverable-for-mailbox below uses this,
+    // so a peer can push to an agent body that is only inside the #2118
+    // soft window; steal safety keeps using depth/held unchanged.
+    std::size_t real_depth = 0;
     bool held = false;
     std::uint64_t defuse_version = 0;
     YieldReason last_yield = YieldReason::Explicit;
@@ -368,6 +394,10 @@ public:
         }
         s.depth = aura_evaluator_mutation_stack_depth_from_ptr(
             mutation_stack_storage_.load(std::memory_order_acquire));
+        // Issue #4721: same storage, real-Guard-only count (soft orch
+        // frames excluded) — mailbox delivery keys on this.
+        s.real_depth = aura_evaluator_mutation_stack_real_depth_from_ptr(
+            mutation_stack_storage_.load(std::memory_order_acquire));
         s.last_yield = last_yield_reason_.load(std::memory_order_acquire);
         return s;
     }
@@ -455,6 +485,19 @@ public:
             return true;
         // Issue #588 + #1254 + #2115 + #2184: only depth==0 && !held is safe.
         return s.depth == 0 && !s.held;
+    }
+
+    // Issue #4721: mailbox DELIVERY safety (push / broadcast_fanout target
+    // gate). Distinct from is_at_mutation_boundary_safe above on purpose:
+    // that predicate must keep returning false for the #2118 soft orch
+    // window (stealing a body mid-window is unsafe), while a peer pushing a
+    // message to a body that is only inside that window must be admitted —
+    // the window holds no workspace_mtx_ and no rollback checkpoint, so
+    // enqueueing cannot expose mid-mutation state, and the body's own pop
+    // is gated on the same real-frame truth. Only a REAL Guard frame
+    // (real_depth > 0) defers (#2312/#2680 contract kept for that case).
+    [[nodiscard]] bool is_mailbox_deliverable(const MutationSafetySnapshot& s) const noexcept {
+        return s.real_depth == 0;
     }
 
     // Issue #2184: post-resume / steal invariant — depth>0 implies

@@ -326,6 +326,237 @@ static void ac4085_soft_boundary_real_write_takes_workspace() {
     CHECK(read_file("docs/design/4085-soft-boundary-lock.md").empty(), "4085: no docs/design");
 }
 
+// Issue #4721: the #2118 soft agent-body window is a steal-visibility mark,
+// not a MutationBoundaryGuard (no workspace_mtx_, no rollback checkpoint).
+// Before this split, every in-body orch:agent-recv returned empty=#t
+// (#2188 Policy A keyed on raw depth) and every in-body orch:agent-send
+// returned status=backpressure (#2849/#3613 sender gate keyed on raw
+// depth), so an agent body could not use its own mailbox at all.
+//
+//   AC1: in-body send to an idle peer -> Ok (was Backpressure), peer recv
+//        sees the payload.
+//   AC2: in-body non-blocking recv of a queued message -> payload (was
+//        empty=#t).
+//   AC3: in-body recv with :wait #t and mail already queued delivers it
+//        immediately - no park, no rejected yield, no hot spin (the
+//        previous shape returned empty without even looking at the queue).
+//        The soft-only window keeps #2200/#4514 park rejection, so the
+//        body polls instead of blocking.
+//   AC4: a REAL Guard still defers both faces (push Backpressure, recv
+//        empty) — this_fiber_real() / real_depth keep #2188/#2849 intact.
+static void ac4721_soft_window_mailbox_usable() {
+    std::println("\n--- #4721 AC1-AC4: soft body window mailbox usable ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "4721: eval warm");
+
+    Scheduler sched(2);
+    std::thread io([&sched]() { sched.run(); });
+
+    // Peer agent "b": parks on the release flag so its mailbox keeps a live
+    // attacher for the whole test.
+    std::atomic<int> release{0};
+    AgentSpec bs;
+    bs.name = "4721-b";
+    bs.attach_mailbox = true;
+    bs.mutation_boundary = true;
+    // Fiber-side wait: park (not OS-thread sleep) so a worker stays free
+    // for the peer's wake. std::this_thread::sleep_for inside a fiber ties
+    // up a worker and starves the parked wake on a 2-worker pool.
+    bs.body = [&release]() {
+        while (release.load(std::memory_order_acquire) == 0)
+            aura::orch::fiber_sleep_ms(1);
+    };
+    auto peer =
+        std::make_shared<aura::orch::AgentHandle>(spawn_agent_with_mailbox(sched, std::move(bs)));
+    CHECK(peer->ok, "4721: peer spawn ok");
+
+    std::atomic<int> published{0};
+    std::atomic<int> ready_recv{0};
+    std::atomic<int> pre_queued{0};
+    std::atomic<int> ready_wait{0};
+    std::atomic<int> wake_queued{0};
+    std::atomic<int> wait_ms{-1};
+    std::atomic<int> wait_parked{0};
+    std::atomic<int> send_status{-1};
+    std::atomic<int> recv_now{-1};
+    std::atomic<int> recv_wait{-1};
+    std::atomic<int> soft_depth{-1};
+    std::atomic<int> soft_real{-1};
+    std::atomic<int> soft_steal_safe{-1};
+    std::atomic<int> soft_deliverable{-1};
+    std::atomic<std::uint64_t> self_fiber{0};
+    std::shared_ptr<aura::serve::mf_mailbox::MultiFiberMailbox> self_mb;
+
+    AgentSpec as;
+    as.name = "4721-a";
+    as.attach_mailbox = true;
+    as.mutation_boundary = true;
+    as.body = [&]() {
+        // Soft window is live here: depth>0 through an orch_soft_frame
+        // checkpoint, but no real Guard frame anywhere.
+        soft_depth.store(static_cast<int>(aura_evaluator_mutation_boundary_depth()),
+                         std::memory_order_release);
+        soft_real.store(aura_evaluator_mutation_boundary_this_fiber_real(),
+                        std::memory_order_release);
+        if (auto* fib = aura::serve::g_current_fiber) {
+            const auto snap = fib->mutation_safety_snapshot();
+            soft_steal_safe.store(fib->is_at_mutation_boundary_safe(snap) ? 1 : 0,
+                                  std::memory_order_release);
+            soft_deliverable.store(fib->is_mailbox_deliverable(snap) ? 1 : 0,
+                                   std::memory_order_release);
+        }
+        while (published.load(std::memory_order_acquire) == 0)
+            aura::orch::fiber_sleep_ms(1);
+        auto* mb = self_mb.get();
+        // AC1: send to the idle peer from inside the body.
+        aura::serve::mf_mailbox::MailMessage msg;
+        msg.payload = "4721-from-a";
+        send_status.store(static_cast<int>(aura::orch::agent_send(*peer, std::move(msg))),
+                          std::memory_order_release);
+        // AC2: a message queued BEFORE this call must come back.
+        ready_recv.store(1, std::memory_order_release);
+        while (pre_queued.load(std::memory_order_acquire) == 0)
+            aura::orch::fiber_sleep_ms(1);
+        if (mb) {
+            auto r = mb->recv(/*wait=*/false, /*timeout_ms=*/0, self_fiber.load());
+            recv_now.store(r.has_value() ? 1 : -1, std::memory_order_release);
+        }
+        // AC3: recv with :wait #t and mail ALREADY queued must deliver it
+        // at once. The soft window keeps park rejection (#2200/#4514), so
+        // the primitive polls: no Fiber::yield attempt (recv_waits delta 0)
+        // and no hot spin. Before #4721 the same call returned empty
+        // without ever looking at the queue.
+        ready_wait.store(1, std::memory_order_release);
+        while (wake_queued.load(std::memory_order_acquire) == 0)
+            aura::orch::fiber_sleep_ms(1);
+        if (mb) {
+            const auto w0 = aura::serve::mf_mailbox::g_mf_mailbox_stats.recv_waits.load();
+            const auto t0 = std::chrono::steady_clock::now();
+            auto r = mb->recv(/*wait=*/true, /*timeout_ms=*/3000, self_fiber.load());
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                     std::chrono::steady_clock::now() - t0)
+                                     .count();
+            wait_ms.store(static_cast<int>(elapsed), std::memory_order_release);
+            wait_parked.store(
+                (aura::serve::mf_mailbox::g_mf_mailbox_stats.recv_waits.load() != w0) ? 1 : 0,
+                std::memory_order_release);
+            recv_wait.store(r.has_value() ? 1 : -1, std::memory_order_release);
+        } else {
+            recv_wait.store(-2, std::memory_order_release);
+        }
+    };
+    auto a = spawn_agent_with_mailbox(sched, std::move(as));
+    CHECK(a.ok, "4721: self spawn ok");
+    self_fiber.store(a.id);
+    self_mb = a.mailbox;
+    published.store(1, std::memory_order_release);
+
+    const auto spin_until = [](const std::atomic<int>& flag) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (flag.load(std::memory_order_acquire) == 0 &&
+               std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        return flag.load(std::memory_order_acquire) != 0;
+    };
+
+    CHECK(spin_until(ready_recv), "4721: body reached the recv arm");
+    // Queue the AC2 message while the body is about to call recv(#f).
+    aura::serve::mf_mailbox::MailMessage pre;
+    pre.payload = "4721-pre";
+    pre.to_fiber = a.id;
+    const auto pre_st =
+        a.mailbox ? a.mailbox->push(std::move(pre)) : aura::serve::mf_mailbox::PushStatus::Closed;
+    CHECK(pre_st == aura::serve::mf_mailbox::PushStatus::Ok,
+          "4721 AC2 pre: main-thread push into the soft-window body is Ok");
+    pre_queued.store(1, std::memory_order_release);
+
+    CHECK(spin_until(ready_wait), "4721: body reached the wait recv arm");
+    // Queue the AC3 message BEFORE the :wait #t call (handoff shape).
+    aura::serve::mf_mailbox::MailMessage wake;
+    wake.payload = "4721-wake";
+    wake.to_fiber = a.id;
+    const auto wake_st =
+        a.mailbox ? a.mailbox->push(std::move(wake)) : aura::serve::mf_mailbox::PushStatus::Closed;
+    CHECK(wake_st == aura::serve::mf_mailbox::PushStatus::Ok,
+          "4721 AC3 queue: main-thread push to a soft-window body is Ok");
+    wake_queued.store(1, std::memory_order_release);
+
+    const auto join_dl = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (recv_wait.load(std::memory_order_acquire) == -1 &&
+           std::chrono::steady_clock::now() < join_dl)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+    CHECK(soft_depth.load(std::memory_order_acquire) > 0,
+          "4721: body enters with the soft window live (depth>0)");
+    CHECK(soft_real.load(std::memory_order_acquire) == 0,
+          "4721: soft window has no REAL Guard frame");
+    CHECK(soft_steal_safe.load(std::memory_order_acquire) == 0,
+          "4721: soft window stays steal-unsafe (#2118/#2184 kept)");
+    CHECK(soft_deliverable.load(std::memory_order_acquire) == 1,
+          "4721: soft window is mailbox-deliverable");
+    CHECK(send_status.load(std::memory_order_acquire) ==
+              static_cast<int>(aura::serve::mf_mailbox::PushStatus::Ok),
+          "4721 AC1: in-body send to idle peer is Ok (was Backpressure)");
+    CHECK(recv_now.load(std::memory_order_acquire) == 1,
+          "4721 AC2: in-body recv sees the queued message (was empty)");
+    CHECK(recv_wait.load(std::memory_order_acquire) == 1,
+          "4721 AC3: in-body recv(:wait #t) delivers the queued message");
+    CHECK(wait_parked.load(std::memory_order_acquire) == 0,
+          "4721 AC3: no park attempt inside the soft window (recv_waits delta 0)");
+    CHECK(wait_ms.load(std::memory_order_acquire) >= 0 &&
+              wait_ms.load(std::memory_order_acquire) < 500,
+          "4721 AC3: delivery is immediate, no hot spin");
+
+    // AC1 peer face: the top level (no boundary) recvs what the body sent.
+    CHECK(peer->mailbox != nullptr, "4721: peer mailbox attached");
+    std::optional<aura::serve::mf_mailbox::MailMessage> peer_msg;
+    if (peer->mailbox)
+        peer_msg = peer->mailbox->recv(/*wait=*/false, /*timeout_ms=*/0, peer->id);
+    CHECK(peer_msg.has_value() && peer_msg->payload == "4721-from-a",
+          "4721 AC1: peer mailbox holds the in-body payload");
+
+    // AC4: a REAL Guard keeps both faces deferred.
+    {
+        bool gok = true;
+        auto guard = Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), 1, &gok);
+        CHECK(guard.has_value(), "4721 AC4: real Guard acquired");
+        if (guard) {
+            CHECK(aura_evaluator_mutation_boundary_this_fiber_real() != 0,
+                  "4721 AC4: real Guard => this_fiber_real");
+            auto& rb = *peer->mailbox;
+            aura::serve::mf_mailbox::MailMessage m4;
+            m4.payload = "4721-guarded";
+            m4.to_fiber = peer->id;
+            CHECK(rb.push(std::move(m4)) == aura::serve::mf_mailbox::PushStatus::Backpressure,
+                  "4721 AC4: push under a real Guard still defers");
+            CHECK(!rb.recv(/*wait=*/false, /*timeout_ms=*/0, peer->id).has_value(),
+                  "4721 AC4: recv under a real Guard still empty");
+        }
+    }
+
+    release.store(1, std::memory_order_release);
+    const auto joined = aura::orch::join_agents(std::span<aura::orch::AgentHandle>(&a, 1), 3000);
+    CHECK(joined.status != aura::serve::JoinStatus::Timeout, "4721: self join completed");
+    sched.stop();
+    io.join();
+}
+
+static void ac4721_source() {
+    std::println("\n--- #4721 AC5: source wiring ---");
+    auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    auto fh = read_file("src/serve/fiber.h");
+    CHECK(mb.find("aura_evaluator_mutation_boundary_this_fiber_real") != std::string::npos,
+          "4721: mailbox gates use the real-frame ABI");
+    CHECK(mb.find("is_mailbox_deliverable") != std::string::npos,
+          "4721: delivery gate uses real depth");
+    CHECK(fm.find("orch_soft_frame") != std::string::npos &&
+              fm.find("aura_evaluator_mutation_stack_real_depth_from_ptr") != std::string::npos,
+          "4721: real-depth ABI walks orch_soft_frame");
+    CHECK(fh.find("real_depth") != std::string::npos, "4721: snapshot carries real_depth");
+    CHECK(read_file("tests/orch/test_issue_4721.cpp").empty(), "4721: no test_issue file");
+}
+
 static void ac5_source() {
     std::println("\n--- AC5: source wiring ---");
     auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
@@ -356,6 +587,8 @@ int run_test_orch_agent_mutation_boundary() {
     ac3_nested_no_leak();
     ac4_query();
     ac4085_soft_boundary_real_write_takes_workspace();
+    ac4721_soft_window_mailbox_usable();
+    ac4721_source();
     ac5_source();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

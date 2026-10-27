@@ -1,0 +1,80 @@
+{
+  "issue": 4721,
+  "title": "Issue #4721: the orch:spawn-agent soft body window (#2118 orch_soft_frame checkpoint — no workspace_mtx_, no rollback snapshot) is no longer conflated with a real MutationBoundaryGuard by the messaging gates: an agent body can send to a peer, recv queued mail (including with :wait #t, delivered without parking), while a REAL Guard keeps #2188 Policy A, the #2849/#3613 sender defer and the #2680/#2312 delivery defer intact. Steal safety (#2118/#2184) is unchanged.",
+  "ok": "OK: Issue #4721 in-body mailbox - real-vs-soft boundary split on MutationCheckpoint::orch_soft_frame keys the push/broadcast target gate (is_mailbox_deliverable), recv Policy A/try_pop, the mailbox BoundarySafe residual and the sender defer, so an agent body's own mailbox is usable; real Guards still defer and the soft window still cannot park",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "Issue #4721",
+        "aura_evaluator_mutation_stack_real_depth_from_ptr",
+        "orch_soft_frame",
+        "aura_evaluator_mutation_boundary_this_fiber_real",
+        "aura_evaluator_mutation_boundary_held_nonlocal"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/serve/fiber.h",
+      "contains": [
+        "Issue #4721",
+        "real_depth",
+        "aura_evaluator_mutation_stack_real_depth_from_ptr",
+        "aura_evaluator_mutation_boundary_this_fiber_real",
+        "aura_evaluator_mutation_boundary_held_nonlocal",
+        "is_mailbox_deliverable"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/multi_fiber_mailbox.h",
+      "contains": [
+        "Issue #4721",
+        "aura_evaluator_mutation_boundary_this_fiber_real",
+        "aura_evaluator_mutation_boundary_held_nonlocal",
+        "is_mailbox_deliverable",
+        "soft_orch_no_park"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/serve/steal_safety.cpp",
+      "contains": [
+        "Issue #4721",
+        "skip |= steal_invariant_mask(StealInvariant::BoundarySafe)"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/fiber_bridge.cpp",
+      "contains": [
+        "Issue #4721",
+        "aura_evaluator_mutation_boundary_this_fiber_real",
+        "aura_evaluator_mutation_boundary_held_nonlocal",
+        "aura_evaluator_mutation_stack_real_depth_from_ptr"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/serve/test_orch_agent_mutation_boundary.cpp",
+      "contains": [
+        "ac4721_soft_window_mailbox_usable",
+        "4721 AC1: in-body send to idle peer is Ok (was Backpressure)",
+        "4721 AC2: in-body recv sees the queued message (was empty)",
+        "4721 AC3: in-body recv(:wait #t) delivers the queued message",
+        "4721 AC3: no park attempt inside the soft window (recv_waits delta 0)",
+        "4721 AC4: push under a real Guard still defers",
+        "4721: soft window stays steal-unsafe (#2118/#2184 kept)"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/orch/test_issue_4721.cpp",
+        "tests/issues/test_issue_4721.cpp",
+        "docs/design/4721-body-mailbox.md"
+      ]
+    }
+  ]
+}

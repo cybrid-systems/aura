@@ -2219,6 +2219,57 @@ extern "C" int aura_evaluator_mutation_boundary_held() {
     return 0;
 }
 
+// Issue #4721: the orch agent-body window (#2118/#2515) is a soft frame on
+// the per-fiber mutation stack: a steal-visibility mark with NO
+// workspace_mtx_ hold and NO rollback checkpoint. `aura_evaluator_mutation_
+// boundary_held()` above must keep reporting it as held (steal / GC /
+// hot-update all rely on that), but the MESSAGING gates must not: with
+// depth>0 from the soft window alone, every in-body recv returned empty
+// (#2188 Policy A) and every in-body send returned Backpressure
+// (#2849/#3613 sender gate), so an agent body could not use its own
+// mailbox at all (#4721).
+//
+// The split below is the same "real vs soft" split #4089 already uses for
+// the outermost type-authority, keyed on MutationCheckpoint::orch_soft_frame.
+extern "C" std::size_t
+aura_evaluator_mutation_stack_real_depth_from_ptr(void* mutation_stack_storage) noexcept {
+    if (mutation_stack_storage == nullptr)
+        return 0;
+    using C = Evaluator::MutationCheckpoint;
+    const auto* stack = static_cast<const std::vector<C>*>(mutation_stack_storage);
+    std::size_t real = 0;
+    for (const auto& cp : *stack) {
+        if (!cp.orch_soft_frame)
+            ++real;
+    }
+    return real;
+}
+
+// This-fiber truth: any REAL frame anywhere in this fiber's mutation stack.
+// A real Guard nested above soft frames leaves real_depth >= 1, so the
+// gates below keep their pre-#4721 behavior for genuine mutation windows
+// (including a mutate:* dispatch inside an agent body).
+extern "C" int aura_evaluator_mutation_boundary_this_fiber_real() noexcept {
+    for (const auto& cp : Evaluator::active_mutation_stack_static()) {
+        if (!cp.orch_soft_frame)
+            return 1;
+    }
+    return 0;
+}
+
+// Non-local truth: outermost Guard flag on the shared Evaluator (any fiber,
+// #2114) or the #2849 process-wide live-Guard count. Deliberately EXCLUDES
+// this fiber's own depth so the soft orch window does not read as a
+// boundary; a real Guard on this fiber is covered by this_fiber_real().
+extern "C" int aura_evaluator_mutation_boundary_held_nonlocal() noexcept {
+    auto* ev = Evaluator::yield_hook_evaluator();
+    if (ev && ev->mutation_boundary_held())
+        return 1;
+    if (g_process_mutation_boundary_held_count.load(std::memory_order_acquire) > 0)
+        return 1;
+    return 0;
+}
+
 // Issue #1518: wire arena auto live_compact soft-gate to mutation boundary.
 // Static init once: first call from any TU that links fiber mutation.
 namespace {

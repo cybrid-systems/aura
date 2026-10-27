@@ -70,7 +70,9 @@ def try_pop_ordering_errors(text: str) -> list[str]:
     if tp < 0:
         return ["AC2: try_pop body not found"]
     win = text[tp : tp + 1600]
-    skip = win.find("mutation_boundary_depth() > 0")
+    # Issue #4721: the Guard-skip keys on the real-frame ABI (soft orch body
+    # window holds no workspace_mtx_, so it must not skip the pop).
+    skip = win.find("mutation_boundary_this_fiber_real() != 0")
     scope = win.find("AuditScope")
     if skip < 0 or scope < 0 or skip > scope:
         return ["AC2: try_pop Guard-skip must precede AuditScope/mu_"]
@@ -82,7 +84,9 @@ def recv_ordering_errors(text: str) -> list[str]:
     rv = text.find("std::optional<MailMessage> recv(bool wait, int timeout_ms,")
     if rv < 0:
         return ["AC2: recv body not found"]
-    win = text[rv : rv + 2600]
+    # Issue #4721 added two lines of Policy-A rationale; the ordering is
+    # unchanged, the window just needs headroom for the real-frame ABI line.
+    win = text[rv : rv + 3200]
     holds = win.find("this_fiber_holds")
     scope = win.find("AuditScope")
     if holds < 0 or scope < 0 or holds > scope:

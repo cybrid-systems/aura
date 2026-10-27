@@ -1282,8 +1282,16 @@ inline void clear_recv_boundary_reject_window() noexcept {
 note_mailbox_deferred_under_boundary(MultiFiberMailboxStats* local_stats = nullptr,
                                      std::string_view scope_id = {}) noexcept {
     // Production defaults: push under live boundary always Backpressure.
-    if (!(aura_evaluator_mutation_boundary_depth() > 0 ||
-          aura_evaluator_mutation_boundary_held() != 0))
+    // Issue #4721: "live boundary" here means a REAL one. The orch agent-body
+    // soft window (#2118) pushes a marker frame with no workspace_mtx_ and no
+    // rollback checkpoint, so a body sending to a peer neither inverts
+    // Workspace→Mailbox nor exposes mid-mutation state — keying this gate on
+    // raw depth made every in-body orch:agent-send return Backpressure.
+    // this_fiber_real() keeps a real Guard (and a nested mutate:* inside a
+    // body) deferring; held_nonlocal() keeps the #2849/#3613 cross-fiber and
+    // outermost-Guard faces unchanged.
+    if (!(aura_evaluator_mutation_boundary_this_fiber_real() != 0 ||
+          aura_evaluator_mutation_boundary_held_nonlocal() != 0))
         return false;
     g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
@@ -1736,7 +1744,13 @@ public:
                 if (a && a->id() == msg.to_fiber) {
                     target = a;
                     snap = a->mutation_safety_snapshot();
-                    if (!a->is_at_mutation_boundary_safe(snap)) {
+                    // Issue #4721: deliverability is REAL-frame truth. The
+                    // #2118 soft orch window stays steal-unsafe
+                    // (is_at_mutation_boundary_safe unchanged) but must not
+                    // block delivery: an agent body parked in recv is the
+                    // mailbox's primary consumer, and the window holds no
+                    // workspace_mtx_ so no lock inversion is possible here.
+                    if (!a->is_mailbox_deliverable(snap)) {
                         // Issue #2312 defer + #2378 depth/SLA (not dropped).
                         // Issue #3775: attribute deferred_depth to mailbox scope.
                         note_mailbox_mutation_hold_defer(bp_scope_id_);
@@ -1846,7 +1860,8 @@ public:
             if (!a)
                 continue;
             const auto snap = a->mutation_safety_snapshot();
-            if (!a->is_at_mutation_boundary_safe(snap)) {
+            // Issue #4721: same real-vs-soft split as push().
+            if (!a->is_mailbox_deliverable(snap)) {
                 // Issue #2312 / #2378: whole fan-out deferred (depth SLA).
                 // Issue #3775: attribute deferred_depth to mailbox scope.
                 note_mailbox_mutation_hold_defer(bp_scope_id_);
@@ -1905,7 +1920,9 @@ public:
 
     [[nodiscard]] bool try_pop(MailMessage& out) {
         // Issue #3763: this-fiber Guard must not take mu_ (Workspace→Mailbox).
-        if (aura_evaluator_mutation_boundary_depth() > 0)
+        // Issue #4721: real Guard only — the soft orch body window holds no
+        // workspace_mtx_, so popping from it cannot invert the lock order.
+        if (aura_evaluator_mutation_boundary_this_fiber_real() != 0)
             return false;
         ::aura::compiler::lock_order::AuditScope mailbox_rank(
             ::aura::compiler::lock_order::Level::Mailbox);
@@ -1974,7 +1991,10 @@ public:
             //                   || aura_evaluator_mutation_boundary_held() != 0
             // Issue #3692: process-wide held is the *push* defer signal.
             // Issue #3732: recv Policy A is this_fiber_holds only.
-            const bool this_fiber_holds = aura_evaluator_mutation_boundary_depth() > 0;
+            // Issue #4721: and "holds" means a REAL Guard frame. The orch
+            // agent-body soft window is why every in-body orch:agent-recv
+            // came back empty=#t even with a message queued.
+            const bool this_fiber_holds = aura_evaluator_mutation_boundary_this_fiber_real() != 0;
             if (this_fiber_holds) {
                 g_mf_mailbox_stats.recv_rejected_in_mutation_boundary.fetch_add(
                     1, std::memory_order_relaxed);
@@ -2028,8 +2048,18 @@ public:
                 if (closed_.load(std::memory_order_relaxed))
                     return std::nullopt;
             }
-            if (!wait || timeout_ms == 0) {
-                if (timeout_ms == 0)
+            // Issue #4721: inside the soft orch agent-body window (depth>0
+            // through orch_soft_frame checkpoints only) the baseline agent
+            // contract "do not blocking-recv under Guard" still holds and
+            // Fiber::yield keeps rejecting the soft-only hold (#2200/#4514),
+            // so a wait here would hot-spin. Deliver whatever is queued and
+            // report empty without parking; hosts poll. Before #4721 this
+            // same path returned empty WITHOUT even looking at the queue,
+            // which is why an in-body orch:agent-recv never saw its mail.
+            const bool soft_orch_no_park =
+                !this_fiber_holds && aura_evaluator_mutation_boundary_depth() > 0;
+            if (!wait || timeout_ms == 0 || soft_orch_no_park) {
+                if (timeout_ms == 0 && !soft_orch_no_park)
                     g_mf_mailbox_stats.recv_timeouts.fetch_add(1, std::memory_order_relaxed);
                 return std::nullopt;
             }
