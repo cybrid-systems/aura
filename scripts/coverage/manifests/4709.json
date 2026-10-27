@@ -1,0 +1,35 @@
+{
+  "issue": 4709,
+  "title": "Issue #4709: a global hash key string must survive concurrent mutate:rebind + eval-current from >=2 running fibers (key read back with length 0/3/8 or missing before #4706 parked the fiber's tree-walker root segment).",
+  "ok": "OK: Issue #4709 hash key string under rebind fibers - a 9-char key of a global stats hash stays intact under 4 CLI fiber threads and a serve-async session with 2 workers (parked fiber root segments stay mark-visible)",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "tests/python/test_regression.py",
+      "contains": [
+        "Issue #4709",
+        "test_fiber_hash_key_survives_rebind_4709",
+        "--worker-threads=2",
+        "(map string-length (hash-keys stats))"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "Issue #4706",
+        "collect_tw_root_segment(set->frames",
+        "g_tw_parked",
+        "aura_tw_roots_detach"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/locked_string_heap.hh",
+      "contains": [
+        "release_unmarked",
+        "seen[i]"
+      ]
+    }
+  ]
+}
