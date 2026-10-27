@@ -6356,6 +6356,19 @@ extern "C" void aura_jit_tier_self_cell_swap_4682(int64_t* idx, int64_t* word) n
     *word = pw;
 }
 
+// The tier worker thread owns a private AuraJIT. AuraJIT::init() resets the
+// process runtime (hash tables, string / float pools, closure cache) for a
+// fresh session; done from the worker it wiped every live hash table of the
+// running program (and raced the main thread). The worker suppresses that
+// reset for its own thread.
+static thread_local bool g_runtime_reset_suppressed = false;
+extern "C" void aura_jit_suppress_runtime_reset_this_thread(int on) noexcept {
+    g_runtime_reset_suppressed = on != 0;
+}
+extern "C" int aura_jit_runtime_reset_suppressed_this_thread(void) noexcept {
+    return g_runtime_reset_suppressed ? 1 : 0;
+}
+
 extern "C" int64_t aura_top_cell_get(int64_t cell_index) {
     if (cell_index >= 0 && cell_index == g_tier_self_cell_idx_4682)
         return g_tier_self_cell_word_4682;

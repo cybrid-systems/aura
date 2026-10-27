@@ -130,6 +130,7 @@ extern "C" int aura_jit_deopt_frame_host_armed(void) noexcept;
 extern "C" std::int64_t aura_jit_exchange_native_self_id(std::int64_t id) noexcept;
 extern "C" void aura_jit_set_linear_env_none(void);
 extern "C" void aura_jit_tier_self_cell_swap_4682(std::int64_t* idx, std::int64_t* word) noexcept;
+extern "C" void aura_jit_suppress_runtime_reset_this_thread(int on) noexcept;
 
 [[nodiscard]] static aura::diag::Diagnostic hygiene_expand_deny_diag_4078() {
     const char* why = aura_macro_hygiene_last_limit_reason_string();
@@ -11510,6 +11511,9 @@ public:
 
     private:
         void run_() {
+            // A private JIT must not reset the live process runtime (its
+            // init() clears every hash table / string pool otherwise).
+            aura_jit_suppress_runtime_reset_this_thread(1);
             std::unique_ptr<aura::jit::AuraJIT> jit;
             for (;;) {
                 std::unique_ptr<TierJob4682> job;

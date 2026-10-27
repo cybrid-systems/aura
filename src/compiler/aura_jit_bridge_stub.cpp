@@ -421,6 +421,7 @@ extern "C" __attribute__((weak)) std::int64_t
 aura_jit_exchange_native_self_id(std::int64_t) noexcept {
     return -1;
 }
+extern "C" __attribute__((weak)) void aura_jit_suppress_runtime_reset_this_thread(int) noexcept {}
 extern "C" __attribute__((weak)) void aura_jit_tier_self_cell_swap_4682(std::int64_t*,
                                                                         std::int64_t*) noexcept {}
 // Issue #4600 §3 (phase 3): light links never OSR (no host, no stats) —
