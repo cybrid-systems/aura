@@ -91,6 +91,8 @@ set(AURA_EVALUATOR_SOURCE_FILES
     src/compiler/evaluator_primitives_control.cpp
     src/compiler/evaluator_primitives_char.cpp
     src/compiler/evaluator_primitives_mutation.cpp
+    # Issue #4715: per-fiber COW overlay primitives (fiber:overlay-*).
+    src/compiler/evaluator_primitives_fiber_cow.cpp
     # Issue #2078: AgentNameTable is header-only with inline methods
     # (src/compiler/agent_name_table.h). Not compiled separately to
     # avoid C++20 modules "declarations in both fragments" conflict.

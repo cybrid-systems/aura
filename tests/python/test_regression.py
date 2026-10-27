@@ -5392,3 +5392,193 @@ subprocess.run(
 )
 
 sys.exit(1 if (snippet_rc != 0 or failed_s > 0) else 0)
+
+
+def _run_aura_4715(program, *, runs=1, timeout=180):
+    """Issue #4715: run an overlay program on the CLI thread backend."""
+    env = os.environ.copy()
+    env["AURA_TIER_JIT"] = "0"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env["AURA_SANDBOX"] = "off"
+    env.pop("AURA_SOFT", None)
+    env.pop("AURA_FORCE_IR", None)
+    fd, path = tempfile.mkstemp(suffix=".aura", prefix="aura-4715-")
+    outs = []
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(program)
+        for attempt in range(runs):
+            r = subprocess.run([AURA, path], capture_output=True, text=True, timeout=timeout, env=env, cwd=str(REPO))
+            assert r.returncode == 0, f"#4715 run {attempt}: rc={r.returncode} err={str(r.stderr)[-600:]!r}"
+            lines = [ln.strip() for ln in (r.stdout or "").splitlines() if ln.strip()]
+            assert lines, f"#4715 run {attempt}: empty stdout err={str(r.stderr)[-600:]!r}"
+            outs.append(lines[-1])
+    finally:
+        os.remove(path)
+    return outs
+
+
+def test_fiber_cow_overlay_disjoint_commit_4715():
+    """Issue #4715 AC1: two fibers defining disjoint names both commit.
+
+    Each body opens a private overlay (fiber:overlay-begin), writes a name the
+    other never touches, and commits. The commit is the fast-forward case (the
+    workspace mutation epoch did not move), so both bindings reach the shared
+    top env and the main body reads both through the same overlay-get path
+    (overlay miss -> committed env lookup). The stats row pins commits=2,
+    conflicts=0 so a vacuous pass (overlay never opened) cannot go green.
+    """
+    program = """
+(define (cow-body name val)
+  (fiber:overlay-begin)
+  (fiber:overlay-define name val)
+  (if (error? (fiber:overlay-commit)) 0 1))
+(define fa (fiber:spawn (lambda () (cow-body "cow-a" 7))))
+(define fb (fiber:spawn (lambda () (cow-body "cow-b" 9))))
+(display (list (+ (fiber:join fa) (fiber:join fb))
+               (fiber:overlay-get "cow-a" -1)
+               (fiber:overlay-get "cow-b" -1)
+               (fiber:overlay-report)))
+(newline)
+"""
+    out = _run_aura_4715(program, runs=2)
+    for attempt, line in enumerate(out):
+        assert line.startswith("(2 7 9 "), (
+            f"#4715 disjoint commit run {attempt}: both private defines must commit; got {line!r}"
+        )
+        assert "commits=2" in line and "conflicts=0" in line, (
+            f"#4715 disjoint commit run {attempt}: overlay stats missing the 2-commit row: {line!r}"
+        )
+    tu = (REPO / "src/compiler/evaluator_primitives_fiber_cow.cpp").read_text(encoding="utf-8")
+    hh = (REPO / "src/compiler/fiber_cow_overlay.hh").read_text(encoding="utf-8")
+    assert "fiber:overlay-commit" in tu and "ev.top_env().bind(name, make_cell(ci))" in tu, (
+        "#4715: the commit primitive no longer applies the overlay into the shared env"
+    )
+    assert "commit_seq > ov.base_seq" in hh, "#4715: the write-write conflict scan (commit-log sequence) is gone"
+
+
+def test_fiber_cow_overlay_same_name_conflict_4715():
+    """Issue #4715 AC1 (second half): same-name write-write is deterministic.
+
+    Arm A (overlapping bases): the main body opens an overlay and holds a
+    private cow-shared=10 while a spawned body opens its own overlay from the
+    SAME base, commits cow-shared=20, and wins. The main commit then sees
+    commit_seq > base_seq and reports fiber:cow-conflict: cow-shared: nothing
+    is applied, the survivor stays one whole write, and the report row pins
+    conflicts=1 / commits=1.
+
+    Arm B (serialized siblings, CLI thread backend): the second body begins
+    after the first body committed, so its base already contains the write and
+    it must NOT be reported as a conflict (last writer wins). This keeps the
+    guard from passing by over-reporting.
+    """
+    arm_a = """
+(define (cow-writer val)
+  (fiber:overlay-begin)
+  (fiber:overlay-define "cow-shared" val)
+  (if (error? (fiber:overlay-commit)) 0 1))
+(fiber:overlay-begin)
+(fiber:overlay-define "cow-shared" 10)
+(define cow-f (fiber:spawn (lambda () (cow-writer 20))))
+(define cow-won (fiber:join cow-f))
+(define cow-lost (if (error? (fiber:overlay-commit)) 0 1))
+(display (list cow-won cow-lost
+               (fiber:overlay-get "cow-shared" -1)
+               (fiber:overlay-report)))
+(newline)
+"""
+    line = _run_aura_4715(arm_a, runs=3)[2]
+    assert line.startswith("(1 0 20 "), (
+        f"#4715 conflict arm A: fiber must win and the stale main commit must conflict; got {line!r}"
+    )
+    assert "conflicts=1" in line and "commits=1" in line, (
+        f"#4715 conflict arm A: stats must record one commit + one conflict: {line!r}"
+    )
+    arm_b = """
+(define (cow-writer val)
+  (fiber:overlay-begin)
+  (fiber:overlay-define "cow-shared" val)
+  (if (error? (fiber:overlay-commit)) 0 1))
+(define cow-f1 (fiber:spawn (lambda () (cow-writer 10))))
+(define cow-f2 (fiber:spawn (lambda () (cow-writer 20))))
+(display (list (+ (fiber:join cow-f1) (fiber:join cow-f2))
+               (fiber:overlay-get "cow-shared" -1)
+               (fiber:overlay-report)))
+(newline)
+"""
+    serial = _run_aura_4715(arm_b, runs=2)
+    for attempt, line_b in enumerate(serial):
+        assert line_b.startswith("(2 "), (
+            f"#4715 conflict arm B run {attempt}: serialized siblings must both commit; got {line_b!r}"
+        )
+        winner = line_b.split()[1].rstrip(")")
+        assert winner in {"10", "20"}, (
+            f"#4715 conflict arm B run {attempt}: survivor must be one whole write; got {line_b!r}"
+        )
+        assert "conflicts=0" in line_b and "commits=2" in line_b, (
+            f"#4715 conflict arm B run {attempt}: no false conflict for a base that already saw the write: {line_b!r}"
+        )
+    tu = (REPO / "src/compiler/evaluator_primitives_fiber_cow.cpp").read_text(encoding="utf-8")
+    assert "fiber:cow-conflict: " in tu, (
+        "#4715: the deterministic conflict error shape (fiber:cow-conflict: <name>) is gone"
+    )
+
+
+def test_fiber_cow_overlay_rollback_single_fiber_4715():
+    """Issue #4715 AC3: rollback drops the overlay; single-body semantics hold.
+
+    A main-thread overlay defines one name and rebinds another, then rolls
+    back: neither reaches the shared env, plain define/set! still work
+    unchanged, and the stats row shows active=0 (no overlay left behind).
+    """
+    program = """
+(define cow-keep 41)
+(fiber:overlay-begin)
+(fiber:overlay-define "cow-drop" 1)
+(fiber:overlay-set! "cow-keep" 99)
+(define cow-before (fiber:overlay-pending))
+(define cow-rolled (fiber:overlay-rollback))
+(display (list cow-before cow-rolled
+               (fiber:overlay-get "cow-keep" -1)
+               (fiber:overlay-get "cow-drop" -1)
+               (begin (set! cow-keep 42) cow-keep)
+               (fiber:overlay-report)))
+(newline)
+"""
+    line = _run_aura_4715(program)[0]
+    assert line.startswith("(2 #t 41 -1 42 "), (
+        f"#4715 rollback: private writes must not reach the shared env; got {line!r}"
+    )
+    assert "rollbacks=1" in line and "active=0" in line, (
+        f"#4715 rollback: overlay must be dropped, not left active: {line!r}"
+    )
+
+
+def test_fiber_cow_overlay_torn_read_4715():
+    """Issue #4715 AC2: a concurrent committer is seen old-or-new, never torn.
+
+    A fiber commits cow-v=1 while the main body reads the same binding through
+    fiber:overlay-get in a loop. Every read copies one committed EvalValue, so
+    the observed version must be 0 or 1 - a torn value (a partially applied
+    binding) fails the read count below.
+    """
+    program = """
+(define cow-v 0)
+(define (cow-committer)
+  (fiber:overlay-begin)
+  (fiber:overlay-define "cow-v" 1)
+  (fiber:overlay-commit)
+  1)
+(define fc (fiber:spawn (lambda () (cow-committer))))
+(define (cow-read i acc)
+  (if (< i 50)
+      (let ((v (fiber:overlay-get "cow-v" -1)))
+        (if (or (= v 0) (= v 1)) (cow-read (+ i 1) (+ acc 1)) acc))
+      acc))
+(display (list (cow-read 0 0) (fiber:join fc) (fiber:overlay-get "cow-v" -1)))
+(newline)
+"""
+    line = _run_aura_4715(program)[0]
+    assert line.startswith("(50 1 1)"), (
+        f"#4715 torn read: every read must see 0 or 1 and the commit must land; got {line!r}"
+    )

@@ -1802,6 +1802,8 @@ namespace primitives_detail {
             mev);
     void register_jit_arena_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     void register_messaging_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    // Issue #4715: per-fiber COW overlay for env bindings (fiber:overlay-*).
+    void register_fiber_cow_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     void register_git_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     void register_network_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     void register_auto_evolve_primitives(std::function<void(std::string, PrimFn)> add,
@@ -1958,6 +1960,11 @@ export class Evaluator {
                                                      Evaluator& ev);
     friend void
     primitives_detail::register_messaging_primitives(std::function<void(std::string, PrimFn)> add,
+                                                     Evaluator& ev);
+    // Issue #4715: overlay commit appends top-env bindings under the registry
+    // lock, so the entry point owns the same friend access as messaging.
+    friend void
+    primitives_detail::register_fiber_cow_primitives(std::function<void(std::string, PrimFn)> add,
                                                      Evaluator& ev);
     friend void
     primitives_detail::register_git_primitives(std::function<void(std::string, PrimFn)> add,

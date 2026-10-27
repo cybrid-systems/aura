@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**476** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**485** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -10,8 +10,8 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 55 primitives (12%)
-- **core**: 386 primitives (81%)
+- **mutation-safety**: 55 primitives (11%)
+- **core**: 395 primitives (81%)
 - **internal-observable**: 34 primitives (7%)
 - **convenience**: 1 primitives (0%)
 
@@ -98,10 +98,19 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 
-## Fiber: (5)
+## Fiber: (14)
 
 - `fiber:cancel` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:join` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `fiber:overlay-begin` *[core]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-commit` *[core]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-define` *[core]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-get` *[core]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-has` *[core]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-pending` *[core]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-report` *[core]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-rollback` *[core]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-set!` *[core]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
 - `fiber:spawn` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:spawn-backend` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:yield` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -682,7 +691,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (386)
+### Core builtins (must remain primitive) (395)
 
 - `%base64-decode` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` — `src/compiler/evaluator_primitives_char.cpp`
@@ -802,6 +811,15 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `ffi:unpin-buffer` — `src/compiler/ffi_primitives_impl.cpp`
 - `fiber:cancel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:join` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `fiber:overlay-begin` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-commit` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-define` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-get` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-has` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-pending` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-report` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-rollback` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-set!` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
 - `fiber:spawn` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:spawn-backend` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:yield` — `src/compiler/evaluator_primitives_messaging.cpp`

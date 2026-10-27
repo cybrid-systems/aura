@@ -27,13 +27,22 @@
 //         overlap == 2 in the SAME commit that removes the mutex.
 //   AC14: #4720 control — the same sampler observes 2 spinning std::threads
 //         runnable in one sample (probe is not vacuous).
+//   AC15: #4715 overlay data layer — disjoint per-fiber overlays both commit
+//         (fast-forward path, private writes invisible until commit).
+//   AC16: #4715 same-name write-write — deterministic single winner, the
+//         loser applies nothing, 5 identical rounds.
+//   AC17: #4715 rollback drops the overlay and applies nothing.
+//   AC18: #4715 moved base epoch takes the per-binding merge path and still
+//         reports a same-binding conflict between two same-base overlays.
 
 #include "test_harness.hpp"
+#include "compiler/fiber_cow_overlay.hh" // Issue #4715
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <dirent.h>
@@ -44,6 +53,7 @@
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
+#include <unordered_map>
 #include <vector>
 
 import std;
@@ -676,10 +686,136 @@ static void ac14_sampler_control_two_runnable() {
           "AC14: both spinners R in >=95% of samples (sampler not vacuous)");
 }
 
+// ── Issue #4715: per-fiber COW overlay for env bindings (data layer) ──
+// The evaluator face (fiber:overlay-*) is exercised at runtime by
+// tests/python/test_regression.py::test_fiber_cow_overlay_*_4715. These
+// rows pin the data-layer contract directly so the overlay can be reused by
+// the workspace-node overlay without re-testing the protocol:
+//   AC15 disjoint per-fiber overlays both commit on the fast-forward path.
+//   AC16 same-name write-write is a deterministic single-winner conflict
+//        with NO partial apply (5 identical rounds).
+//   AC17 rollback drops the overlay and applies nothing.
+//   AC18 a moved base epoch takes the per-binding merge path and still
+//        reports a write-write conflict between two same-base overlays.
+void ac15_cow_overlay_disjoint_commit() {
+    std::println("--- #4715 AC1: disjoint per-fiber overlays both commit");
+    using Store = aura::compiler::cow::OverlayRegistry<int>;
+    Store reg;
+    std::unordered_map<std::string, int> shared;
+    auto apply = [&shared](const std::string& n, const int& v) { shared[n] = v; };
+    const void* owner = "ac15";
+    constexpr std::uint64_t epoch = 7;
+    const auto base_a = reg.begin(owner, 1, epoch);
+    const auto base_b = reg.begin(owner, 2, epoch);
+    CHECK(base_a == epoch && base_b == epoch, "AC15: both overlays snapshot the same base epoch");
+    CHECK(reg.write(owner, 1, "cow-a", 7, epoch), "AC15: fiber 1 private define");
+    CHECK(reg.write(owner, 2, "cow-b", 9, epoch), "AC15: fiber 2 private define");
+    CHECK(shared.empty(), "AC15: private writes are invisible before commit");
+    const auto ra = reg.commit(owner, 1, epoch, apply);
+    const auto rb = reg.commit(owner, 2, epoch, apply);
+    CHECK(ra.ok && ra.applied == 1, "AC15: fiber 1 commit applies its binding");
+    CHECK(rb.ok && rb.applied == 1, "AC15: fiber 2 commit applies its binding");
+    CHECK(ra.fast_forward && rb.fast_forward, "AC15: unchanged base takes the fast-forward path");
+    CHECK(shared.size() == 2 && shared["cow-a"] == 7 && shared["cow-b"] == 9,
+          "AC15: both disjoint names reached the shared env");
+    const auto st = reg.stats(owner);
+    CHECK(st.commits == 2 && st.conflicts == 0 && st.active == 0,
+          "AC15: stats record 2 commits, 0 conflicts, no overlay left open");
+}
+
+void ac16_cow_overlay_same_name_conflict() {
+    std::println("--- #4715 AC1: same-name write-write is deterministic");
+    using Store = aura::compiler::cow::OverlayRegistry<int>;
+    const void* owner = "ac16";
+    constexpr std::uint64_t epoch = 11;
+    std::size_t rounds = 0;
+    for (int run = 0; run < 5; ++run) {
+        Store reg;
+        std::unordered_map<std::string, int> shared;
+        auto apply = [&shared](const std::string& n, const int& v) { shared[n] = v; };
+        reg.begin(owner, 1, epoch);
+        reg.begin(owner, 2, epoch);
+        reg.write(owner, 1, "cow-shared", 10, epoch);
+        reg.write(owner, 2, "cow-shared", 20, epoch);
+        const auto first = reg.commit(owner, 1, epoch, apply);
+        const auto second = reg.commit(owner, 2, epoch, apply);
+        CHECK(first.ok && first.applied == 1, "AC16: first committer wins the binding");
+        CHECK(!second.ok && second.conflict == "cow-shared" && second.applied == 0,
+              "AC16: sibling commit from the same base reports the conflicting name");
+        CHECK(shared.size() == 1 && shared["cow-shared"] == 10,
+              "AC16: the loser applies nothing (no partial / merged write)");
+        const auto st = reg.stats(owner);
+        CHECK(st.commits == 1 && st.conflicts == 1,
+              "AC16: exactly one commit and one conflict recorded");
+        ++rounds;
+    }
+    CHECK(rounds == 5, "AC16: 5 rounds all produced the same verdict, not a race");
+}
+
+void ac17_cow_overlay_rollback() {
+    std::println("--- #4715 AC3: rollback drops the overlay, applies nothing");
+    using Store = aura::compiler::cow::OverlayRegistry<int>;
+    Store reg;
+    std::unordered_map<std::string, int> shared;
+    auto apply = [&shared](const std::string& n, const int& v) { shared[n] = v; };
+    const void* owner = "ac17";
+    constexpr std::uint64_t epoch = 3;
+    reg.begin(owner, 9, epoch);
+    reg.write(owner, 9, "cow-drop", 1, epoch);
+    reg.write(owner, 9, "cow-keep", 2, epoch);
+    CHECK(reg.pending(owner, 9) == 2, "AC17: two private bindings pending");
+    CHECK(reg.rollback(owner, 9), "AC17: rollback drops the open overlay");
+    CHECK(reg.pending(owner, 9) == 0 && !reg.active(owner, 9),
+          "AC17: no overlay state is left behind");
+    const auto res = reg.commit(owner, 9, epoch, apply);
+    CHECK(!res.ok && res.applied == 0 && shared.empty(),
+          "AC17: a commit after rollback applies nothing");
+    const auto st = reg.stats(owner);
+    CHECK(st.rollbacks == 1 && st.commits == 0, "AC17: stats record the rollback");
+}
+
+void ac18_cow_overlay_moved_base_merge() {
+    std::println("--- #4715 AC2: moved base takes the per-binding merge path");
+    using Store = aura::compiler::cow::OverlayRegistry<int>;
+    const void* owner = "ac18";
+    constexpr std::uint64_t base_epoch = 5;
+    constexpr std::uint64_t moved_epoch = 9;
+    {
+        Store reg;
+        std::unordered_map<std::string, int> shared;
+        auto apply = [&shared](const std::string& n, const int& v) { shared[n] = v; };
+        reg.begin(owner, 1, base_epoch);
+        reg.write(owner, 1, "cow-moved", 4, base_epoch);
+        const auto res = reg.commit(owner, 1, moved_epoch, apply);
+        CHECK(res.ok && !res.fast_forward && res.applied == 1,
+              "AC18: an unmoved binding still merges when the base epoch moved");
+        CHECK(shared.size() == 1 && shared["cow-moved"] == 4,
+              "AC18: per-binding merge applied the binding");
+        const auto st = reg.stats(owner);
+        CHECK(st.merged == 1 && st.fast_forward == 0, "AC18: stats record the merged path");
+    }
+    {
+        Store reg;
+        std::unordered_map<std::string, int> shared;
+        auto apply = [&shared](const std::string& n, const int& v) { shared[n] = v; };
+        reg.begin(owner, 1, base_epoch);
+        reg.begin(owner, 2, base_epoch);
+        reg.write(owner, 1, "cow-moved", 4, base_epoch);
+        reg.write(owner, 2, "cow-moved", 5, base_epoch);
+        const auto first = reg.commit(owner, 1, moved_epoch, apply);
+        const auto second = reg.commit(owner, 2, moved_epoch, apply);
+        CHECK(first.ok, "AC18: sibling 1 merges after the epoch move");
+        CHECK(!second.ok && second.conflict == "cow-moved",
+              "AC18: sibling 2 still conflicts on the same binding after the epoch move");
+        CHECK(shared["cow-moved"] == 4, "AC18: survivor is one whole write");
+    }
+}
+
 } // namespace
 
 int run_test_fiber_spawn_cli() {
     std::println("=== Issue #2656 / #2685 / #2686: CLI denseness fiber:spawn ===");
+    std::println("=== Issue #4715: per-fiber COW overlay for env bindings ===");
     ac1_positive_id();
     ac2_join_payload();
     ac3_backend_thread();
@@ -694,6 +830,10 @@ int run_test_fiber_spawn_cli() {
     ac12_source_cite();
     ac13_serial_pin_two_cpu_bound_fibers();
     ac14_sampler_control_two_runnable();
+    ac15_cow_overlay_disjoint_commit();
+    ac16_cow_overlay_same_name_conflict();
+    ac17_cow_overlay_rollback();
+    ac18_cow_overlay_moved_base_merge();
     std::println("\n=== #2656/#2685/#2686/#3394/#4131/#4720: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;

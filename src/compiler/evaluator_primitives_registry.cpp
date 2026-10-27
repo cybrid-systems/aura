@@ -173,6 +173,12 @@ void Evaluator::register_all_primitives() {
     // Issue #1381: workspace FlatAST + AOT meta + mutation log binary persist
     primitives_detail::register_persist_primitives(prim_registrar(), *this);
 
+    // Issue #4715: per-fiber COW overlay for env bindings (fiber:overlay-*).
+    // Registered in the always-on EDSL group: an overlay is language
+    // semantics, not an observability extra, and the Strict-sandbox gate is
+    // the fiber capability (same as fiber:spawn).
+    primitives_detail::register_fiber_cow_primitives(prim_registrar(), *this);
+
     primitives_detail::register_eval_primitives(prim_registrar(), *this, mev,
                                                 [this]() { defuse_index_destroy(&defuse_index_); });
 
