@@ -1,6 +1,7 @@
 module;
 #include <bit>
 
+#include "core/fiber_context.hh" // Issue #4716: fiber-local execution context
 #include "jit_typed_mutation_stats.h"
 #include "castop_typed_meta.h" // Issue #2624 Phase A: CastOp src/dst typed meta side table
 #include "typed_mutation_audit.h" // Issue #3140 Phase C: last_type_linear_commit_proof_stamp_v_read() for epoch_or_mid plumbing
@@ -23,13 +24,18 @@ import aura.compiler.ir_soa;        // #2254 g_soa_only_path_total_atomic etc.
 
 namespace aura::compiler {
 
+// Issue #4716: #4681 call-slot scratch is lower-call scoped state, not a
+// per-thread cache: a lower that yields (macro/IR re-entry inside the walk)
+// and resumes on another worker must see its own cells, and a sibling lower
+// on the same worker must not adopt them. Both live in the running fiber's
+// context (the scratch vector itself is owned by CompilerService).
 const CallSlotCells4681*& call_slot_cells_4681() noexcept {
-    static thread_local const CallSlotCells4681* p = nullptr;
-    return p;
+    return reinterpret_cast<const CallSlotCells4681*&>(
+        aura::core::fiber_ctx::active().lower_call_slot_cells);
 }
 std::vector<std::string>*& call_slot_hits_4681() noexcept {
-    static thread_local std::vector<std::string>* p = nullptr;
-    return p;
+    return reinterpret_cast<std::vector<std::string>*&>(
+        aura::core::fiber_ctx::active().lower_call_slot_hits);
 }
 
 using namespace aura::ir;

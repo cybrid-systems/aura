@@ -903,7 +903,9 @@ static void ac3290_1_resume_no_bypass() {
     const auto fc = read_file("src/serve/fiber.cpp");
     const auto resume_pos = fc.find("void Fiber::resume()");
     CHECK(resume_pos != std::string::npos, "3290 AC1: Fiber::resume present");
-    const auto resume_win = fc.substr(resume_pos, 6000);
+    // Issue #4716: the resume head grew (fiber execution-context
+    // attach/detach), pushing ::swapcontext past 6000 chars.
+    const auto resume_win = fc.substr(resume_pos, 8000);
     CHECK(resume_win.find("check_and_enforce_resume_invariants()") != std::string::npos,
           "3290 AC1: resume calls consolidated invariant check");
     const auto chk = resume_win.find("check_and_enforce_resume_invariants()");

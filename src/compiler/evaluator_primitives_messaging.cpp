@@ -6,6 +6,7 @@ module;
 #include "runtime_shared.h"
 #include "messaging_bridge.h"
 #include "security_capabilities.h"
+#include "core/fiber_context.hh" // Issue #4716: fiber-local execution context
 #include "serve/fiber.h"
 #include "serve/scheduler.h"
 #include "serve/multi_fiber_mailbox.h"
@@ -206,7 +207,16 @@ namespace {
     // denseness (shared Evaluator). Issue #4053: http-post unlocks via the
     // same TLS through DensenessBodyLockWaitGuard (messaging_bridge hooks).
     std::mutex s_cli_thread_fiber_body_mtx;
-    thread_local std::unique_lock<std::mutex>* s_tls_cli_body_lock = nullptr;
+    // Issue #4716: the owning unique_lock is EXECUTION CONTEXT — the body
+    // that holds the mutex parks on a fiber:join / channel wait and resumes
+    // on another worker, and it must still find its own lock to unlock /
+    // relock around the wait. A bare thread_local either lost the pointer
+    // (UAF'd the #4054 way) or let a sibling fiber on the same worker unlock
+    // a lock it does not own. It lives in the running fiber's context.
+    std::unique_lock<std::mutex>*& s_tls_cli_body_lock() noexcept {
+        return reinterpret_cast<std::unique_lock<std::mutex>*&>(
+            aura::core::fiber_ctx::active().cli_body_lock);
+    }
 
     // ── Issue #4699: cooperative-yield body-mutex handoff ─────────────
     //
@@ -308,9 +318,9 @@ namespace {
         std::unique_lock<std::mutex>* lock = nullptr;
         bool released = false;
         explicit CliBodyYieldHandoff(bool wait_for_takeover) {
-            if (!s_tls_cli_body_lock || !s_tls_cli_body_lock->owns_lock())
+            if (!s_tls_cli_body_lock() || !s_tls_cli_body_lock()->owns_lock())
                 return;
-            lock = s_tls_cli_body_lock;
+            lock = s_tls_cli_body_lock();
             // Another body can take the turn over. A body counts itself in
             // the pending registry, the CLI main / the root program does
             // not.
@@ -342,7 +352,7 @@ namespace {
             lock->unlock();
             // Clear the TLS slot while unlocked: a sibling body on this
             // OS thread must not observe our unlocked lock (#4054).
-            s_tls_cli_body_lock = nullptr;
+            s_tls_cli_body_lock() = nullptr;
             released = true;
             if (!wait_for_takeover || !sibling_alive)
                 return;
@@ -376,7 +386,7 @@ namespace {
             if (!released || !lock)
                 return;
             cli_body_lock_acquire(*lock);
-            s_tls_cli_body_lock = lock;
+            s_tls_cli_body_lock() = lock;
         }
         CliBodyYieldHandoff(const CliBodyYieldHandoff&) = delete;
         CliBodyYieldHandoff& operator=(const CliBodyYieldHandoff&) = delete;
@@ -410,12 +420,12 @@ namespace {
         std::unique_lock<std::mutex>* lock = nullptr;
         bool unlocked = false;
         CliBodyLockJoinGuard() {
-            if (s_tls_cli_body_lock && s_tls_cli_body_lock->owns_lock()) {
-                lock = s_tls_cli_body_lock;
+            if (s_tls_cli_body_lock() && s_tls_cli_body_lock()->owns_lock()) {
+                lock = s_tls_cli_body_lock();
                 lock->unlock();
                 // Clear TLS while unlocked so a sibling denseness fiber on
                 // this OS thread does not observe our unlocked lock.
-                s_tls_cli_body_lock = nullptr;
+                s_tls_cli_body_lock() = nullptr;
                 unlocked = true;
             }
         }
@@ -424,7 +434,7 @@ namespace {
                 // Issue #4699: tracked acquire - the takeover publish
                 // wakes a yielding sibling that waits for its turn.
                 cli_body_lock_acquire(*lock);
-                s_tls_cli_body_lock = lock;
+                s_tls_cli_body_lock() = lock;
             }
         }
         CliBodyLockJoinGuard(const CliBodyLockJoinGuard&) = delete;
@@ -725,10 +735,10 @@ namespace {
     void denseness_body_unlock_hook(void** lock_out, bool* unlocked_out) {
         *lock_out = nullptr;
         *unlocked_out = false;
-        if (s_tls_cli_body_lock && s_tls_cli_body_lock->owns_lock()) {
-            *lock_out = s_tls_cli_body_lock;
-            s_tls_cli_body_lock->unlock();
-            s_tls_cli_body_lock = nullptr; // #4054: sibling-safe across yield
+        if (s_tls_cli_body_lock() && s_tls_cli_body_lock()->owns_lock()) {
+            *lock_out = s_tls_cli_body_lock();
+            s_tls_cli_body_lock()->unlock();
+            s_tls_cli_body_lock() = nullptr; // #4054: sibling-safe across yield
             *unlocked_out = true;
         }
     }
@@ -739,7 +749,7 @@ namespace {
             if (l && !l->owns_lock()) {
                 // Issue #4699: tracked acquire (takeover publish).
                 cli_body_lock_acquire(*l);
-                s_tls_cli_body_lock = l; // republish after wait
+                s_tls_cli_body_lock() = l; // republish after wait
             }
         }
     }
@@ -751,12 +761,12 @@ namespace {
     // already unlock. A thread that already holds the lock (the fiber
     // body, or an outer guard) gets nullptr and must not lock again.
     void* cli_main_body_lock_acquire_impl() {
-        if (s_tls_cli_body_lock && s_tls_cli_body_lock->owns_lock())
+        if (s_tls_cli_body_lock() && s_tls_cli_body_lock()->owns_lock())
             return nullptr;
         auto* lk = new std::unique_lock<std::mutex>(s_cli_thread_fiber_body_mtx, std::defer_lock);
         // Issue #4699: tracked acquire (takeover publish).
         cli_body_lock_acquire(*lk);
-        s_tls_cli_body_lock = lk;
+        s_tls_cli_body_lock() = lk;
         return lk;
     }
 
@@ -765,8 +775,8 @@ namespace {
             return;
         auto* lk = static_cast<std::unique_lock<std::mutex>*>(p);
         // #4054: clear TLS only when it still names this lock.
-        if (s_tls_cli_body_lock == lk)
-            s_tls_cli_body_lock = nullptr;
+        if (s_tls_cli_body_lock() == lk)
+            s_tls_cli_body_lock() = nullptr;
         delete lk;
     }
 
@@ -1493,11 +1503,11 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                 explicit TlsBodyLockScope(std::unique_lock<std::mutex>* c) noexcept
                     : cur(c) {
                     if (cur)
-                        s_tls_cli_body_lock = cur;
+                        s_tls_cli_body_lock() = cur;
                 }
                 ~TlsBodyLockScope() noexcept {
-                    if (cur && s_tls_cli_body_lock == cur)
-                        s_tls_cli_body_lock = nullptr;
+                    if (cur && s_tls_cli_body_lock() == cur)
+                        s_tls_cli_body_lock() = nullptr;
                 }
                 TlsBodyLockScope(const TlsBodyLockScope&) = delete;
                 TlsBodyLockScope& operator=(const TlsBodyLockScope&) = delete;

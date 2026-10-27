@@ -1,0 +1,166 @@
+{
+  "issue": 4716,
+  "title": "Issue #4716: remaining thread_local evaluator context is fiber-local — one Context per fiber (IR active interpreter, Guard eval identity, macro hygiene depth/limits, recursive TypeRegistry lock stack, quota tenant, CLI body lock, pipeline cascade roots, PCV checkpoint depth), swapped through a thread_local cached pointer at resume/detach on the #4713 pattern.",
+  "ok": "OK: Issue #4716 fiber-local execution context - every audited (b) item lives in the running fiber's Context, a thread_local cached pointer is swapped at Fiber::resume/detach, plain threads keep a per-thread fallback, and contexts survive a cross-worker handoff",
+  "checks": [
+    {
+      "ac": "AC6",
+      "path": "src/core/fiber_context.hh",
+      "contains": [
+        "Issue #4716",
+        "struct Context",
+        "extern thread_local Context* t_ctx_cur",
+        "aura_fiber_ctx_attach",
+        "aura_fiber_ctx_detach",
+        "aura_fiber_ctx_create",
+        "inline Context& active()"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/core/fiber_context.cpp",
+      "contains": [
+        "thread_local Context* t_ctx_cur",
+        "aura_fiber_ctx_attach",
+        "aura_fiber_ctx_detach",
+        "aura_fiber_ctx_create",
+        "aura_fiber_ctx_destroy",
+        "plain_context"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/serve/fiber.cpp",
+      "contains": [
+        "aura_fiber_ctx_create(id_)",
+        "aura_fiber_ctx_attach(",
+        "aura_fiber_ctx_detach()",
+        "aura_fiber_ctx_destroy("
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/serve/fiber.h",
+      "contains": [
+        "Issue #4716",
+        "void* fiber_ctx_ = nullptr"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/core/resource_quota.hh",
+      "contains": [
+        "Issue #4716",
+        "fiber_ctx::active().quota_tenant",
+        "set_current_quota_tenant"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/gc_hooks.h",
+      "contains": [
+        "Issue #4716",
+        "aura_fiber_eval_identity_get",
+        "aura_fiber_eval_identity_set",
+        "current_eval_identity"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/fiber_context.cpp",
+      "contains": [
+        "aura_fiber_eval_identity_get",
+        "active().eval_identity"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/persistent_child_vector.hh",
+      "contains": [
+        "Issue #4716",
+        "pcv_checkpoint_live",
+        "fiber_ctx::active()"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/core/type_impl.cpp",
+      "contains": [
+        "Issue #4716",
+        "treg_lock_frames()",
+        "treg_lock_top()",
+        "fiber_ctx"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/macro_expansion.cpp",
+      "contains": [
+        "Issue #4716",
+        "macro_inner_ckpt",
+        "macro_depth",
+        "macro_effective_max_depth",
+        "macro_allow_rest_hygiene",
+        "macro_force_hygienic",
+        "macro_max_gensym_map",
+        "macro_max_violations",
+        "aura_macro_hygiene_ctx_probe"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/compiler/ir_executor.ixx",
+      "contains": [
+        "Issue #4716",
+        "static IRInterpreter*& t_active()",
+        "fiber_context.hh"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/compiler/ir_executor_impl.cpp",
+      "contains": [
+        "Issue #4716",
+        "fiber_ctx::active().ir_active",
+        "IRInterpreter*& IRInterpreter::t_active()"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "src/compiler/evaluator_primitives_messaging.cpp",
+      "contains": [
+        "Issue #4716",
+        "cli_body_lock",
+        "s_tls_cli_body_lock()"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "path": "src/compiler/lowering_impl.cpp",
+      "contains": [
+        "Issue #4716",
+        "lower_call_slot_cells",
+        "lower_call_slot_hits"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "path": "src/compiler/dirty_propagation.ixx",
+      "contains": [
+        "Issue #4716",
+        "fiber_ctx::active().cascade_roots",
+        "t_pipeline_cascade_roots()"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "path": "tests/compiler/test_macro_fiber_hygiene.cpp",
+      "contains": [
+        "Issue #4716",
+        "ac4716_fiber_execution_context",
+        "fiber-local evaluator execution context",
+        "=== Results: {} passed, {} failed ==="
+      ]
+    }
+  ]
+}

@@ -81,6 +81,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include "core/fiber_context.hh" // Issue #4716: fiber-local execution context
 #include <concepts>
 #include <cstddef>
 #include <cstdlib>
@@ -234,17 +235,20 @@ inline void pcv_set_stale_span_exclusive_enabled(bool on) noexcept {
 #endif
 
 // Issue #3233: MutationCheckpoint children_ snapshot is a live observer
-// (must COW). Thread-local depth: enter on snapshot, exit on boundary exit.
-inline thread_local std::uint32_t g_pcv_checkpoint_live_tls{0};
+// (must COW). Issue #4716: the depth is EXECUTION CONTEXT — a checkpoint
+// opened inside a fiber that yields must still read live (and must not make
+// a sibling fiber's snapshot appear live), so it lives in the running
+// fiber's context instead of a thread_local.
 inline void pcv_checkpoint_live_enter() noexcept {
-    ++g_pcv_checkpoint_live_tls;
+    ++aura::core::fiber_ctx::active().pcv_checkpoint_live;
 }
 inline void pcv_checkpoint_live_exit() noexcept {
-    if (g_pcv_checkpoint_live_tls > 0)
-        --g_pcv_checkpoint_live_tls;
+    auto& live = aura::core::fiber_ctx::active().pcv_checkpoint_live;
+    if (live > 0)
+        --live;
 }
 [[nodiscard]] inline bool pcv_checkpoint_children_live() noexcept {
-    return g_pcv_checkpoint_live_tls != 0;
+    return aura::core::fiber_ctx::active().pcv_checkpoint_live != 0;
 }
 // Sentinel for an un-captured SafePCVSpan (default-constructed or empty
 // children_safe). captured_node_id() == kPcvSpanNoOwner means callers must

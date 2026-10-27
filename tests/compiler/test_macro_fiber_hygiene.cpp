@@ -35,6 +35,10 @@
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "core/fiber_context.hh"           // Issue #4716: fiber-local execution context
+#include "core/gc_hooks.h"                 // Issue #4716: #3617 identity mirror
+#include "core/persistent_child_vector.hh" // Issue #4716: #3233 checkpoint depth
+#include "core/resource_quota.hh"          // Issue #4716: #3049 admission tenant
 #include "core/transparent_string_hash.hh"
 
 #include <atomic>
@@ -53,6 +57,12 @@ import aura.compiler.evaluator;
 import aura.compiler.macro_expansion;
 import aura.compiler.service;
 import aura.compiler.value;
+
+// Issue #4716: macro hygiene context probe (macro_expansion.cpp): slot 0
+// depth, 1 effective max depth, 2 allow-rest, 3 force-hygienic, 4 max gensym
+// map, 5 max violations per fiber.
+extern "C" std::int64_t aura_macro_hygiene_ctx_probe(int slot) noexcept;
+extern "C" void aura_macro_hygiene_ctx_probe_set(int slot, std::int64_t v) noexcept;
 
 namespace {
 
@@ -437,15 +447,21 @@ static void ac12_self_evo_enforcement_2243() {
     CHECK(cap_src.find("max_violations_per_fiber") != std::string::npos,
           "AC12: MacroSelfEvoPolicy has max_violations_per_fiber field");
 
-    // Source-cite: macro_expansion.cpp — thread_local mirrors + guard +
+    // Source-cite: macro_expansion.cpp — per-expand policy mirrors + guard +
     // 2 new file-scope atomic counters (decl + 2 gate-site bumps).
+    // Issue #4716: the three mirrors are no longer bare thread_locals — they
+    // live in the running fiber's execution context (a yield mid-walk must
+    // keep THIS walk's policy), so the pin is the accessor + its ctx slot.
     auto me_src = read_file("src/compiler/macro_expansion.cpp");
-    CHECK(me_src.find("thread_local bool s_force_hygienic") != std::string::npos,
-          "AC12: macro_expansion.cpp has thread_local s_force_hygienic mirror");
-    CHECK(me_src.find("thread_local std::uint32_t s_max_gensym_map_size") != std::string::npos,
-          "AC12: macro_expansion.cpp has thread_local s_max_gensym_map_size mirror");
-    CHECK(me_src.find("thread_local std::uint32_t s_max_violations_per_fiber") != std::string::npos,
-          "AC12: macro_expansion.cpp has thread_local s_max_violations_per_fiber mirror");
+    CHECK(me_src.find("bool& s_force_hygienic()") != std::string::npos &&
+              me_src.find("active().macro_force_hygienic") != std::string::npos,
+          "AC12: macro_expansion.cpp has fiber-local s_force_hygienic mirror");
+    CHECK(me_src.find("s_max_gensym_map_size()") != std::string::npos &&
+              me_src.find("active().macro_max_gensym_map") != std::string::npos,
+          "AC12: macro_expansion.cpp has fiber-local s_max_gensym_map_size mirror");
+    CHECK(me_src.find("s_max_violations_per_fiber()") != std::string::npos &&
+              me_src.find("active().macro_max_violations") != std::string::npos,
+          "AC12: macro_expansion.cpp has fiber-local s_max_violations_per_fiber mirror");
     CHECK(me_src.find("TopLevelMacroCapGuard") != std::string::npos,
           "AC12: macro_expansion.cpp has TopLevelMacroCapGuard");
     CHECK(me_src.find("g_macro_self_evo_force_hygienic_denied_total") != std::string::npos,
@@ -609,6 +625,229 @@ static void ac3575_fiber_hygiene_map_cap() {
           "3575 AC4: no docs/design/");
 }
 
+// ── Issue #4716: fiber-local evaluator execution context ──
+// Every (b) item below used to be a bare thread_local. A fiber that yields
+// inside one of those regions parks its ucontext and is resumed on another
+// worker, so the value either strands on the yielding thread or is
+// overwritten by a sibling fiber on the same OS thread. The context is now
+// per fiber (#4713 pattern: process-owned segment + thread_local cached
+// pointer swapped at resume/detach). These ACs drive the REAL accessors —
+// the same ones the evaluator now uses — across an attach/detach switch that
+// simulates exactly that yield/resume handoff.
+static void ac4716_fiber_execution_context() {
+    std::println("\n=== Issue #4716: fiber-local evaluator execution context ===");
+    const auto passed0 = g_passed;
+    const auto failed0 = g_failed;
+
+    auto* ctx_a = aura::core::fiber_ctx::aura_fiber_ctx_create(4716);
+    auto* ctx_b = aura::core::fiber_ctx::aura_fiber_ctx_create(4717);
+    CHECK(ctx_a != nullptr && ctx_b != nullptr, "4716: contexts created");
+
+    // AC1: the quota tenant is per-fiber. A fiber binds its tenant, yields
+    // (detach), a sibling runs on the same worker, then A resumes.
+    {
+        std::println("\n--- AC1: quota tenant is per-fiber ---");
+        CHECK(aura::core::resource_quota::current_quota_tenant() == 0,
+              "4716 AC1: plain thread baseline 0");
+        aura::core::fiber_ctx::aura_fiber_ctx_attach(ctx_a);
+        aura::core::resource_quota::set_current_quota_tenant(7);
+        CHECK(aura::core::resource_quota::current_quota_tenant() == 7, "4716 AC1: A binds 7");
+        aura::core::fiber_ctx::aura_fiber_ctx_attach(ctx_b); // A yields, B runs
+        CHECK(aura::core::resource_quota::current_quota_tenant() == 0,
+              "4716 AC1: sibling B does not inherit A's tenant");
+        aura::core::resource_quota::set_current_quota_tenant(11);
+        CHECK(aura::core::resource_quota::current_quota_tenant() == 11, "4716 AC1: B binds 11");
+        CHECK(aura::core::fiber_ctx::aura_fiber_ctx_detach() == ctx_b, "4716 AC1: B detaches");
+        CHECK(aura::core::resource_quota::current_quota_tenant() == 7,
+              "4716 AC1: A still owns 7 after the switch");
+        CHECK(aura::core::fiber_ctx::aura_fiber_ctx_detach() == ctx_a, "4716 AC1: A detaches");
+        CHECK(aura::core::resource_quota::current_quota_tenant() == 0,
+              "4716 AC1: plain thread unchanged");
+    }
+
+    // AC2: the #3617 Guard evaluator identity is per-fiber (C face used by
+    // arena densify proof stamping).
+    {
+        std::println("\n--- AC2: evaluator identity is per-fiber ---");
+        int a_token = 0;
+        int b_token = 0;
+        aura::core::fiber_ctx::aura_fiber_ctx_attach(ctx_a);
+        aura::gc_hooks::set_current_eval_identity(&a_token);
+        CHECK(aura::gc_hooks::current_eval_identity() == &a_token, "4716 AC2: A stamps");
+        aura::core::fiber_ctx::aura_fiber_ctx_attach(ctx_b);
+        CHECK(aura::gc_hooks::current_eval_identity() == nullptr,
+              "4716 AC2: B sees no borrowed identity");
+        aura::gc_hooks::set_current_eval_identity(&b_token);
+        (void)aura::core::fiber_ctx::aura_fiber_ctx_detach();
+        CHECK(aura::gc_hooks::current_eval_identity() == &a_token,
+              "4716 AC2: A resumes with its own identity");
+        aura::gc_hooks::set_current_eval_identity(nullptr);
+        (void)aura::core::fiber_ctx::aura_fiber_ctx_detach();
+        CHECK(aura::gc_hooks::current_eval_identity() == nullptr, "4716 AC2: plain cleared");
+    }
+
+    // AC3: the #3233 PCV checkpoint depth is per-fiber: a checkpoint opened
+    // before the yield still reads live after resume, and a sibling fiber
+    // never sees a foreign checkpoint as live.
+    {
+        std::println("\n--- AC3: PCV checkpoint depth is per-fiber ---");
+        aura::core::fiber_ctx::aura_fiber_ctx_attach(ctx_a);
+        aura::ast::pcv_checkpoint_live_enter();
+        CHECK(aura::ast::pcv_checkpoint_children_live(), "4716 AC3: A live");
+        aura::core::fiber_ctx::aura_fiber_ctx_attach(ctx_b);
+        CHECK(!aura::ast::pcv_checkpoint_children_live(),
+              "4716 AC3: sibling B sees no foreign live checkpoint");
+        (void)aura::core::fiber_ctx::aura_fiber_ctx_detach();
+        CHECK(aura::ast::pcv_checkpoint_children_live(), "4716 AC3: A live after resume");
+        aura::ast::pcv_checkpoint_live_exit();
+        CHECK(!aura::ast::pcv_checkpoint_children_live(), "4716 AC3: A exits clean");
+        (void)aura::core::fiber_ctx::aura_fiber_ctx_detach();
+    }
+
+    // AC4: the #4404 recursive TypeRegistry lock stack is per-fiber. A frame
+    // pushed before the yield stays A's (depth + tag), B starts at 0, and A's
+    // unlock still finds its own frame — the #4404 cross-fiber hazard.
+    {
+        std::println("\n--- AC4: type-registry lock stack is per-fiber ---");
+        static int lock_tag_a = 0;
+        aura::core::fiber_ctx::aura_fiber_ctx_attach(ctx_a);
+        CHECK(aura::core::fiber_ctx::aura_fiber_ctx_treg_depth_probe() == 0, "4716 AC4: A depth 0");
+        aura::core::fiber_ctx::aura_fiber_ctx_treg_push_probe(&lock_tag_a); // A "holds"
+        CHECK(aura::core::fiber_ctx::aura_fiber_ctx_treg_depth_probe() == 1, "4716 AC4: A depth 1");
+        aura::core::fiber_ctx::aura_fiber_ctx_attach(ctx_b);
+        CHECK(aura::core::fiber_ctx::aura_fiber_ctx_treg_depth_probe() == 0,
+              "4716 AC4: sibling B depth 0");
+        (void)aura::core::fiber_ctx::aura_fiber_ctx_detach();
+        CHECK(aura::core::fiber_ctx::aura_fiber_ctx_treg_depth_probe() == 1,
+              "4716 AC4: A still holds its frame");
+        aura::core::fiber_ctx::aura_fiber_ctx_treg_pop_probe(&lock_tag_a);
+        CHECK(aura::core::fiber_ctx::aura_fiber_ctx_treg_depth_probe() == 0,
+              "4716 AC4: A releases");
+        (void)aura::core::fiber_ctx::aura_fiber_ctx_detach();
+    }
+
+    // AC5: macro hygiene depth + the MacroSelfEvo policy mirrors are
+    // per-fiber (the expand that installed them can yield mid-walk).
+    {
+        std::println("\n--- AC5: macro hygiene depth/limits are per-fiber ---");
+        aura::core::fiber_ctx::aura_fiber_ctx_attach(ctx_a);
+        aura_macro_hygiene_ctx_probe_set(0, 3);  // depth
+        aura_macro_hygiene_ctx_probe_set(1, 64); // effective max depth
+        aura_macro_hygiene_ctx_probe_set(4, 9);  // max gensym map
+        aura::core::fiber_ctx::aura_fiber_ctx_attach(ctx_b);
+        CHECK(aura_macro_hygiene_ctx_probe(1) > 0 && aura_macro_hygiene_ctx_probe(1) != 64,
+              "4716 AC5: sibling B keeps the default depth limit");
+        CHECK(aura_macro_hygiene_ctx_probe(0) == 0, "4716 AC5: sibling B depth 0");
+        CHECK(aura_macro_hygiene_ctx_probe(4) == 0, "4716 AC5: sibling B no gensym cap");
+        (void)aura::core::fiber_ctx::aura_fiber_ctx_detach();
+        CHECK(aura_macro_hygiene_ctx_probe(0) == 3, "4716 AC5: A depth restored");
+        CHECK(aura_macro_hygiene_ctx_probe(1) == 64, "4716 AC5: A limit restored");
+        CHECK(aura_macro_hygiene_ctx_probe(4) == 9, "4716 AC5: A gensym cap restored");
+        aura_macro_hygiene_ctx_probe_set(0, 0);
+        aura_macro_hygiene_ctx_probe_set(1, 0);
+        aura_macro_hygiene_ctx_probe_set(4, 0);
+        (void)aura::core::fiber_ctx::aura_fiber_ctx_detach();
+    }
+
+    // AC6: a context survives a REAL cross-worker handoff: thread T1 attaches
+    // A, binds, detaches; thread T2 attaches the same handle and observes the
+    // values. Nothing lives in a thread_local, so the migration is lossless.
+    {
+        std::println("\n--- AC6: cross-worker handoff is lossless ---");
+        int a_token = 0;
+        std::thread t1([ctx_a, &a_token]() {
+            aura::core::fiber_ctx::aura_fiber_ctx_attach(ctx_a);
+            aura::core::resource_quota::set_current_quota_tenant(21);
+            aura::gc_hooks::set_current_eval_identity(&a_token);
+            aura::ast::pcv_checkpoint_live_enter();
+            (void)aura::core::fiber_ctx::aura_fiber_ctx_detach();
+        });
+        t1.join();
+        std::int64_t seen_tenant = 0;
+        std::int64_t seen_live = 0;
+        std::thread t2([ctx_a, &a_token, &seen_tenant, &seen_live]() {
+            aura::core::fiber_ctx::aura_fiber_ctx_attach(ctx_a);
+            seen_tenant =
+                static_cast<std::int64_t>(aura::core::resource_quota::current_quota_tenant());
+            seen_live = aura::ast::pcv_checkpoint_children_live() ? 1 : 0;
+            CHECK(aura::gc_hooks::current_eval_identity() == &a_token,
+                  "4716 AC6: identity survived the worker handoff");
+            (void)aura::core::fiber_ctx::aura_fiber_ctx_detach();
+        });
+        t2.join();
+        CHECK(seen_tenant == 21, "4716 AC6: tenant survived the worker handoff");
+        CHECK(seen_live == 1, "4716 AC6: checkpoint depth survived the handoff");
+        aura::core::fiber_ctx::aura_fiber_ctx_attach(ctx_a);
+        aura::ast::pcv_checkpoint_live_exit();
+        (void)aura::core::fiber_ctx::aura_fiber_ctx_detach();
+    }
+
+    // AC7: two OS threads, one context each, hammering the real accessors:
+    // values must never bleed across contexts (the thread_local version
+    // failed whenever a sibling wrote the same slot between a set and a get).
+    {
+        std::println("\n--- AC7: concurrent contexts never bleed ---");
+        constexpr int kIters = 2000;
+        std::atomic<int> mismatches{0};
+        auto worker = [&mismatches](aura::core::fiber_ctx::Context* ctx, std::uint64_t base) {
+            aura::core::fiber_ctx::aura_fiber_ctx_attach(ctx);
+            for (int i = 0; i < kIters; ++i) {
+                const auto want = base + static_cast<std::uint64_t>(i);
+                aura::core::resource_quota::set_current_quota_tenant(want);
+                std::this_thread::yield();
+                if (aura::core::resource_quota::current_quota_tenant() != want)
+                    mismatches.fetch_add(1, std::memory_order_relaxed);
+            }
+            (void)aura::core::fiber_ctx::aura_fiber_ctx_detach();
+        };
+        std::thread w1(worker, ctx_a, 100000ULL);
+        std::thread w2(worker, ctx_b, 200000ULL);
+        w1.join();
+        w2.join();
+        CHECK(mismatches.load() == 0, "4716 AC7: no cross-context bleed over 4000 sets");
+    }
+
+    // AC8: attach accounting + destroy drops a stale cached pointer (a fiber
+    // reclaimed while parked never detaches).
+    {
+        std::println("\n--- AC8: attach accounting + destroy hygiene ---");
+        const auto a0 = aura::core::fiber_ctx::aura_fiber_ctx_attach_total();
+        const auto d0 = aura::core::fiber_ctx::aura_fiber_ctx_detach_total();
+        auto* ctx_c = aura::core::fiber_ctx::aura_fiber_ctx_create(4718);
+        aura::core::fiber_ctx::aura_fiber_ctx_attach(ctx_c);
+        aura::core::fiber_ctx::aura_fiber_ctx_destroy(ctx_c); // no detach first
+        CHECK(aura::core::fiber_ctx::aura_fiber_ctx_attach_total() == a0 + 1,
+              "4716 AC8: attach counted");
+        CHECK(aura::core::fiber_ctx::aura_fiber_ctx_detach_total() == d0,
+              "4716 AC8: destroy did not fabricate a detach");
+        CHECK(aura::core::resource_quota::current_quota_tenant() == 0,
+              "4716 AC8: destroy dropped the cached pointer (plain fallback)");
+    }
+
+    // AC9: the converted paths still expand macros end-to-end. The hygiene
+    // accessors above are read by the rename/ceiling gates, so a broken
+    // redirect would refuse or corrupt this expansion.
+    {
+        std::println("\n--- AC9: macro expansion through the converted accessors ---");
+        CompilerService cs;
+        auto r = cs.eval("(defmacro (d4716 y) (e4716 y)) (defmacro (e4716 y) (+ y y)) "
+                         "(d4716 21)");
+        CHECK(r && is_int(*r) && as_int(*r) == 42, "4716 AC9: expansion value 42");
+        // The depth mirror is a "last known depth" diagnostic (not restored
+        // to 0 by design, #2806), so the isolation check is the OTHER
+        // direction: the expansion ran on the plain context and must not
+        // have written into a fiber's context.
+        aura::core::fiber_ctx::aura_fiber_ctx_attach(ctx_a);
+        CHECK(aura_macro_hygiene_ctx_probe(0) == 0,
+              "4716 AC9: expansion did not leak depth into a fiber context");
+        (void)aura::core::fiber_ctx::aura_fiber_ctx_detach();
+    }
+
+    aura::core::fiber_ctx::aura_fiber_ctx_destroy(ctx_a);
+    aura::core::fiber_ctx::aura_fiber_ctx_destroy(ctx_b);
+    std::println("\n=== Results: {} passed, {} failed ===", g_passed - passed0, g_failed - failed0);
+}
+
 } // namespace
 
 int main() {
@@ -623,6 +862,7 @@ int main() {
     ac12_self_evo_enforcement_2243();
     ac3341_per_fiber_last_limit_reason();
     ac3575_fiber_hygiene_map_cap();
+    ac4716_fiber_execution_context();
     if (g_failed)
         return 1;
     std::println("macro fiber hygiene (#2097 + #2174 + #2241 + #2243 + #3341 + #3575): OK ({} "
