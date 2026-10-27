@@ -827,6 +827,16 @@ bool ShapeProfiler::is_stable(FnKey fn) const {
     return it != shards_[si].profiles.end() && it->second.is_stable && !it->second.mega;
 }
 
+bool ShapeProfiler::has_profile(FnKey fn) const {
+    // Issue #4510: presence probe for the invalidate arm. A define whose
+    // shape was never tracked (tier-JIT faces never call record_shape) still
+    // needs the invalidate arm to drop its native and stamp the proof.
+    const std::size_t si = shard_index(fn);
+    const_cast<ShapeProfiler*>(this)->flush_tls_records();
+    auto lock = shared_lock_shard_(si);
+    return shards_[si].profiles.find(fn) != shards_[si].profiles.end();
+}
+
 ShapeID ShapeProfiler::dominant_shape(FnKey fn) const {
     const std::size_t si = shard_index(fn);
     {

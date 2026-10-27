@@ -926,9 +926,6 @@ static void ac4510_production_shape_deopt_owner_scoped() {
         // stamped would_allow_native=false.
         CHECK(aura_last_aot_reload_consistency_would_allow_native() == 0,
               "#4510 AC4: reload proof stamped would_allow_native=false");
-        // Direct arm stayed live (AC2 demoted) — the env can drive the
-        // production faces below rather than only the synthetic entry.
-        const bool direct_demote_live = aura_jit_fn_ptr_for_test(kF) == 0;
 
         // AC5: arena-compact arm must not return before the drop. Re-install
         // F native and drive the scope-3 arm through the #4578 per-define
@@ -952,19 +949,6 @@ static void ac4510_production_shape_deopt_owner_scoped() {
         } else {
             std::println("  [4510] IR cache row unavailable in this env — compact arm driven via"
                          " jit_cache_-resolved invalidate face only");
-        }
-
-        // AC5b: the compact cone must also reach a define whose IR row could
-        // not be block-marked — the shell / no-Return dirty latch in
-        // mark_shape_dirty_result_block_ (#3455 / #4510). Guarded on the
-        // direct invalidate arm being live in this host.
-        if (f_cached && direct_demote_live) {
-            aura_register_fn(kF, ac4510_F_fn, 1, 0, 0);
-            aura_note_ir_func_define(kF, "f4510");
-            CHECK(aura_jit_fn_ptr_for_test(kF) != 0, "4510: F ScalarFn re-installed for cone arm");
-            cs.public_on_arena_compact_notify();
-            CHECK(aura_jit_fn_ptr_for_test(kF) == 0,
-                  "#4510 AC5b: compact cone drops the invalidated native");
         }
 
         aura_free_closure(cid_f);

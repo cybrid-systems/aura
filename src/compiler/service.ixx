@@ -20667,7 +20667,14 @@ public:
         aura::compiler::feedback::reset_name(name);
         auto fn_key = shape::make_fn_key(session_id_, name);
         // Issue #4567: do not seed SHAPE_INT when the profile is empty.
+        const bool had_profile = shape_profiler_.has_profile(fn_key);
         const bool needs_deopt = shape_profiler_.invalidate(fn_key);
+        // Issue #4510: a define whose shape was never tracked (tier-JIT
+        // faces never call record_shape) must still run the invalidate arm —
+        // otherwise a pre-invalidate native, the peer soft-stale bits and
+        // the reload proof all survive the shape flip.
+        if (!had_profile)
+            on_shape_deopt_hook(fn_key, /*version=*/0, shape::kShapeDirtyScopeInvalidate);
         bool in_jit_cache = false;
         {
             std::shared_lock cache_read(jit_cache_mtx_);

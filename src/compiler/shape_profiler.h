@@ -277,6 +277,11 @@ public:
     // ── Check stability ────────────────────────────────────────
     bool is_stable(FnKey fn) const;
 
+    // Issue #4510: presence probe for the invalidate arm — a define whose
+    // shape was never tracked (tier-JIT faces never call record_shape) must
+    // still demote its native when invalidate_shape runs.
+    [[nodiscard]] bool has_profile(FnKey fn) const;
+
     // Issue #4600 §4: JIT deopt-storm megamorphic mark — sticky for the
     // session: clears stability, bumps the profile version (shape-specialized
     // cache entries stamped with the old version miss on the next probe), and
