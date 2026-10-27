@@ -304,9 +304,13 @@ export class TypeEnv {
         bool is_poly = false;
         std::vector<aura::core::TypeId> type_args;
     };
-    std::vector<std::unordered_map<std::string, Binding, aura::core::TransparentStringHash,
-                                   std::equal_to<>>>
-        scopes_;
+    using ScopeMap = std::unordered_map<std::string, Binding, aura::core::TransparentStringHash,
+                                        std::equal_to<>>;
+    std::vector<ScopeMap> scopes_;
+    // Issue #4682: shared read-only primitive layer under the outermost
+    // scope (consulted after every scope, before host_fallback_). Replaces
+    // replaying ~300 primitive binds into each new engine.
+    std::shared_ptr<const ScopeMap> base_;
     // Issue #4682 fix 3: host top_env names read as host_fallback_type_
     // when no scope binds them (same answer as seeding each one into the
     // outermost scope, without O(host names) binds per engine).
@@ -331,6 +335,12 @@ public:
     // Issue #4557: outermost-scope bindings (name, bound type), for the
     // shared primitive-environment cache. Replayed through bind().
     std::vector<std::pair<std::string, aura::core::TypeId>> top_bindings() const;
+    // Issue #4682: snapshot the outermost scope as a shareable base layer,
+    // and install one (the outermost scope must still be empty).
+    std::shared_ptr<const void> snapshot_top_as_base() const;
+    void set_base(std::shared_ptr<const void> base) noexcept {
+        base_ = std::static_pointer_cast<const ScopeMap>(std::move(base));
+    }
 };
 
 // ── Constraint System ────────────────────────────────────

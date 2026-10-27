@@ -318,10 +318,24 @@ std::vector<std::pair<std::string, TypeId>> TypeEnv::top_bindings() const {
     std::vector<std::pair<std::string, TypeId>> out;
     if (scopes_.empty())
         return out;
-    out.reserve(scopes_.front().size());
+    out.reserve(scopes_.front().size() + (base_ ? base_->size() : 0));
     for (const auto& [n, b] : scopes_.front())
         out.emplace_back(n, b.type);
+    if (base_)
+        for (const auto& [n, b] : *base_)
+            if (!scopes_.front().contains(n))
+                out.emplace_back(n, b.type);
     return out;
+}
+
+std::shared_ptr<const void> TypeEnv::snapshot_top_as_base() const {
+    auto m = std::make_shared<ScopeMap>();
+    if (base_)
+        *m = *base_;
+    if (!scopes_.empty())
+        for (const auto& [n, b] : scopes_.front())
+            (*m)[n] = b;
+    return m;
 }
 
 TypeId TypeEnv::lookup(const std::string& name) {
@@ -339,6 +353,11 @@ TypeId TypeEnv::lookup(const std::string& name) {
             return f->second.type;
         }
     }
+    if (base_) {
+        auto f = base_->find(name);
+        if (f != base_->end())
+            return f->second.is_poly ? reg_.instantiate_forall(f->second.type, {}) : f->second.type;
+    }
     if (host_fallback_ && host_fallback_->contains(name))
         return host_fallback_type_;
     return TypeId{}; // invalid = not found
@@ -348,6 +367,8 @@ bool TypeEnv::is_bound(const std::string& name) const {
     for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it)
         if (it->count(name))
             return true;
+    if (base_ && base_->contains(name))
+        return true;
     return host_fallback_ && host_fallback_->contains(name);
 }
 
@@ -355,9 +376,16 @@ void TypeEnv::collect_names(std::vector<std::string>& out) const {
     for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it)
         for (auto& [name, _] : *it)
             out.push_back(name);
+    const auto in_front = [&](const std::string& name) {
+        return !scopes_.empty() && scopes_.front().contains(name);
+    };
+    if (base_)
+        for (const auto& [name, _] : *base_)
+            if (!in_front(name))
+                out.push_back(name);
     if (host_fallback_) {
         for (const auto& name : *host_fallback_) {
-            if (scopes_.empty() || !scopes_.front().contains(name))
+            if (!in_front(name) && !(base_ && base_->contains(name)))
                 out.push_back(name);
         }
     }
@@ -4280,8 +4308,8 @@ namespace {
     // set-code makes one engine per define, so rebuilding it per engine
     // grew the registry (and every O(registry) pass) with the workspace.
     struct PrimEnvCache {
-        std::vector<std::pair<std::string, TypeId>> binds;
-        std::vector<TypeId> cs_vars; // made by cs_.fresh_var() (unnamed)
+        std::shared_ptr<const void> base; // TypeEnv base layer (#4682)
+        std::vector<TypeId> cs_vars;      // made by cs_.fresh_var() (unnamed)
     };
 } // namespace
 
@@ -4290,15 +4318,14 @@ void InferenceEngine::init_primitive_env() {
         const auto* c = static_cast<const PrimEnvCache*>(cached.get());
         for (auto v : c->cs_vars)
             cs_.adopt_var(v, /*unnamed=*/true);
-        for (const auto& [n, t] : c->binds)
-            env_.bind(n, t);
+        env_.set_base(c->base);
         return;
     }
     auto fresh = std::make_shared<PrimEnvCache>();
     cs_.fresh_log_ = &fresh->cs_vars;
     init_primitive_env_uncached();
     cs_.fresh_log_ = nullptr;
-    fresh->binds = env_.top_bindings();
+    fresh->base = env_.snapshot_top_as_base();
     reg_.set_prim_env_cache(std::shared_ptr<const void>(std::move(fresh)));
 }
 
