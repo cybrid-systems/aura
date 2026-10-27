@@ -1269,6 +1269,11 @@ Fiber::Fiber(Func func, size_t stack_size)
     // either sees the fiber in the registry or sees it via
     // g_current_fiber on the same-fiber path).
     register_fiber_in_registry(this);
+    // Issue #4713: register this fiber's tree-walker root segment with the
+    // process-level registry at spawn (not at first yield), so a reclaim on
+    // any thread can mark it for the fiber's whole life. It starts quiescent
+    // (kTwQuiescent), which is exactly right before the first resume.
+    tw_roots_ = aura_tw_roots_new();
     g_fiber_init_aura_result_ok.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -1461,6 +1466,11 @@ void Fiber::release_done_resources() noexcept {
     if (!done_release_state_.compare_exchange_strong(expected, 1, std::memory_order_acq_rel,
                                                      std::memory_order_acquire))
         return;
+    // Issue #4713: drop the root segment from the process registry BEFORE the
+    // stack is unmapped — a reclaim on another thread may hold a snapshot of
+    // it, and the segment's frame pointers point into this stack.
+    aura_tw_roots_free(tw_roots_);
+    tw_roots_ = nullptr;
     unmap_stack();
     func_ = nullptr;
     done_release_state_.store(2, std::memory_order_release);
@@ -1471,9 +1481,9 @@ bool Fiber::done_resources_released() const noexcept {
 }
 
 Fiber::~Fiber() {
-    // Issue #4706: drop a root segment parked by a fiber that never resumed
-    // — the process-wide registry must not keep pointing into a stack that
-    // is about to go away.
+    // Issue #4713: unregister this fiber's root segment — the process-wide
+    // registry must not keep pointing into a stack that is about to go away
+    // (a fiber destroyed while parked never resumes).
     aura_tw_roots_free(tw_roots_);
     tw_roots_ = nullptr;
     // Issue #2726: unregister Fiber* from the process-wide registry
@@ -1671,10 +1681,12 @@ void Fiber::resume() {
     // noted again.
     aura_fiber_reconcile_boundary_audit_on_resume(this);
 
-    // Issue #4706: install the fiber's walker root segment on this thread
-    // (Fiber::yield detached it on the thread the fiber last ran on).
+    // Issue #4713: point this thread at the fiber's registered root segment
+    // (the segment itself never moves; see the resume handshake in
+    // aura_tw_roots_attach).
+    if (!tw_roots_)
+        tw_roots_ = aura_tw_roots_new();
     aura_tw_roots_attach(tw_roots_);
-    tw_roots_ = nullptr;
 
     // Swap from worker's loop context to fiber's context
     if (::swapcontext(&wctx->uctx, &ctx_) == -1) {
@@ -1870,9 +1882,10 @@ void Fiber::yield() {
     if (g_fiber_yield_checkpoint_)
         g_fiber_yield_checkpoint_(static_cast<uint8_t>(YieldReason::Explicit));
 
-    // Issue #4706: park this fiber's tree-walker root segment with the
-    // fiber before the swap; the resuming thread may be a different one.
-    fb->tw_roots_ = aura_tw_roots_detach();
+    // Issue #4713: the segment stays with the fiber; this only drops the
+    // thread's cached pointer and publishes the segment quiescent, so the
+    // resuming thread (possibly a different one) sees it markable.
+    (void)aura_tw_roots_detach();
     // Swap from fiber's context back to worker's loop context
     if (::swapcontext(&fb->ctx_, &wctx->uctx) == -1) {
         std::fprintf(stderr, "fiber: yield swapcontext failed: %s\n", std::strerror(errno));
@@ -1984,9 +1997,10 @@ void Fiber::yield(YieldReason reason) {
     if (g_fiber_yield_checkpoint_)
         g_fiber_yield_checkpoint_(static_cast<uint8_t>(reason));
 
-    // Issue #4706: park this fiber's tree-walker root segment with the
-    // fiber before the swap; the resuming thread may be a different one.
-    fb->tw_roots_ = aura_tw_roots_detach();
+    // Issue #4713: the segment stays with the fiber; this only drops the
+    // thread's cached pointer and publishes the segment quiescent, so the
+    // resuming thread (possibly a different one) sees it markable.
+    (void)aura_tw_roots_detach();
     // Swap from fiber's context back to worker's loop context
     if (::swapcontext(&fb->ctx_, &wctx->uctx) == -1) {
         std::fprintf(stderr, "fiber: yield swapcontext failed: %s\n", std::strerror(errno));

@@ -111,11 +111,11 @@ def main() -> int:
     must(has(pin, "struct Live {};"), "AC2: TwPinSpan exposes the Live tag")
     must(
         has(pin, "TwPinSpan(Live, const types::EvalValue* data, const std::size_t* n_live)")
-        and has(pin, "g_tw_spans.push_back(TwSpanRoot{data, n_live, 0});"),
+        and has(pin, "tw_spans().push_back(TwSpanRoot{data, n_live, 0});"),
         "AC2: the live-count pin registers the live count with the span root",
     )
     must(
-        has(pin, "g_tw_spans.push_back(TwSpanRoot{data, nullptr, n});"),
+        has(pin, "tw_spans().push_back(TwSpanRoot{data, nullptr, n});"),
         "AC2: the fixed-count pin keeps the fixed count",
     )
 
@@ -126,8 +126,13 @@ def main() -> int:
         "(void)reclaim_tw_unreachable(envs, held);",
     )
     must(bool(reclaim), "AC3: the reclaim root collector found")
+    # Issue #4713: the span marking moved into the shared segment collector
+    # (the reclaim calls it for its own and every registered fiber segment);
+    # the live count is still what bounds the rooted prefix.
     must(
-        has(reclaim, "const auto n = sp.count();") and has(reclaim, "for (std::size_t i = 0; i < n; ++i)"),
+        has(reclaim, "collect_tw_root_segment(self_cur->frames")
+        and has(efl, "const auto n = sp.count();")
+        and has(efl, "for (std::size_t i = 0; i < n; ++i)"),
         "AC3: the reclaim root collector reads the live count",
     )
     inflight = _between(

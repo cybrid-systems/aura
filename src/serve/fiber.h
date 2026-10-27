@@ -54,16 +54,29 @@ extern "C" void aura_fiber_release_pending_body(void* evaluator, std::uint64_t f
 // id: the serve layer owns the root/release pair around the body call.
 extern "C" void aura_fiber_root_pending_body_latest(void* evaluator) noexcept;
 extern "C" void aura_fiber_release_pending_body_latest(void* evaluator) noexcept;
-// Issue #4706: tree-walker root segment hand-off across a fiber context
-// switch. The walker's root stacks (env frames / pinned results / pinned
-// vectors / pinned spans) live in thread_locals, but a serve fiber can be
-// resumed on a different worker thread than the one it yielded on (steal /
-// migration). Detaching the segment at Fiber::yield and attaching it at
-// Fiber::resume keeps every push/pop pair on the fiber that owns it; the
-// parked segment stays process-visible so a reclaim on another thread still
-// marks it. Without this, a migrated fiber left a stranded Env** in the old
-// thread's TLS and the next reclaim there SIGSEGV'd in
-// Evaluator::maybe_reclaim_tw_unreachable.
+// Issue #4713: tree-walker safepoint (walker opcode back-edge / yield / join
+// wait). A collector that requested an epoch parks the calling fiber here
+// until the mark+sweep is done; one atomic load when no epoch is in flight.
+extern "C" void aura_tw_safepoint() noexcept;
+// Issue #4713: observability — reclaims that ran with registered fiber
+// segments, and foreign fiber segments such a reclaim marked (a non-zero
+// cross count proves the multi-fiber mark path ran instead of the old
+// #2738 bail-out). Read by (query:tw-root-reclaims) /
+// (query:tw-root-cross-marks).
+extern "C" std::uint64_t aura_tw_registry_reclaim_total() noexcept;
+extern "C" std::uint64_t aura_tw_registry_cross_marks_total() noexcept;
+// Issue #4706 / #4713: tree-walker roots across a fiber context switch.
+// The walker's root stacks (env frames / pinned results / pinned vectors /
+// pinned spans) used to be thread_locals, which stranded a migrated fiber's
+// Env** in the yielding thread (SIGSEGV in
+// Evaluator::maybe_reclaim_tw_unreachable). Since #4713 the segment is
+// per-fiber and lives in a process-level registry: it is created on spawn
+// (aura_tw_roots_new), the running thread only caches a pointer to it
+// (attach on resume / detach at yield), and it is dropped on finish
+// (aura_tw_roots_free). A reclaim on any thread marks every registered
+// segment, parking a RUNNING body at its next safepoint instead of bailing
+// on the old "more than one walker thread" guard.
+extern "C" void* aura_tw_roots_new() noexcept;
 extern "C" void* aura_tw_roots_detach() noexcept;
 extern "C" void aura_tw_roots_attach(void* state) noexcept;
 extern "C" void aura_tw_roots_free(void* state) noexcept;
@@ -1407,9 +1420,11 @@ private:
     // patterns allowed.
     std::atomic<void*> mutation_stack_storage_{nullptr};
     std::atomic<void*> yield_checkpoint_storage_{nullptr};
-    // Issue #4706: the tree-walker root segment parked by Fiber::yield on
-    // the thread the fiber last ran on, reinstalled by Fiber::resume on the
-    // thread that runs it next. Owned by the fiber; freed in ~Fiber.
+    // Issue #4713: this fiber's tree-walker root segment in the process
+    // registry. Created in the constructor, installed by Fiber::resume on the
+    // thread that runs the fiber, released by Fiber::yield, and unregistered
+    // in ~Fiber. The segment itself never moves, so a push/pop pair can never
+    // straddle two threads (the #4706 failure).
     void* tw_roots_ = nullptr;
     // Issue #2727: per-Fiber evaluator identity (set on Guard enter,
     // cleared on Guard exit / cancel). Replaces the prior

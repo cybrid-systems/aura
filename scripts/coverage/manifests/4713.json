@@ -1,0 +1,84 @@
+{
+  "issue": 4713,
+  "title": "Issue #4713: fiber-aware GC root registry + safepoints \u2014 a fiber owns a registered tree-walker root segment from spawn to finish, a collector stops the world at walker/yield safepoints and marks every segment, and the #2738 g_tw_frame_threads>1 bail-out is gone.",
+  "ok": "OK: Issue #4713 fiber root registry - per-fiber registered root segments, STW safepoints at the walker back-edge/yield/resume, every segment marked by a reclaim, reclaim runs with >1 running fiber thread",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "Issue #4713",
+        "struct TwRootSet",
+        "g_tw_registry",
+        "tw_current_roots",
+        "tw_frames()",
+        "aura_tw_roots_new",
+        "aura_tw_roots_attach",
+        "aura_tw_roots_detach",
+        "aura_tw_roots_free"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/serve/fiber.cpp",
+      "contains": [
+        "tw_roots_ = aura_tw_roots_new();",
+        "(void)aura_tw_roots_detach();",
+        "aura_tw_roots_attach(tw_roots_);",
+        "aura_tw_roots_free(tw_roots_);"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/serve/fiber.h",
+      "contains": [
+        "aura_tw_roots_new",
+        "void* tw_roots_ = nullptr"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "kTwQuiescent",
+        "parked_epoch",
+        "tw_stw_safepoint",
+        "tw_stw_begin",
+        "tw_stw_end",
+        "g_tw_stw_epoch",
+        "g_tw_stw_release",
+        "g_tw_registry_cross_marks",
+        "tw_stw_safepoint();"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/fiber.h",
+      "contains": [
+        "aura_tw_safepoint",
+        "aura_tw_registry_reclaim_total",
+        "aura_tw_registry_cross_marks_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "query:tw-root-reclaims",
+        "query:tw-root-cross-marks",
+        "aura_tw_registry_cross_marks_total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/python/test_regression.py",
+      "contains": [
+        "Issue #4713",
+        "test_fiber_gc_root_registry_4713",
+        "--worker-threads=4",
+        "query:tw-root-cross-marks",
+        "g_tw_frame_threads > 1"
+      ]
+    }
+  ]
+}

@@ -841,65 +841,184 @@ struct TwFrame {
     std::optional<Env>* tail = nullptr;
     std::vector<std::unique_ptr<Env>>* pinned = nullptr;
 };
-thread_local std::vector<TwFrame> g_tw_frames;
-thread_local std::vector<const EvalResult*> g_tw_results;
-thread_local std::vector<const std::vector<types::EvalValue>*> g_tw_vecs;
-// Issue #2738: the walker roots above are thread_local. With thread-backend
-// fibers another thread's frames, pinned results and primitive vectors
-// (e.g. the while primitive's pred/body closures) are invisible to a
-// reclaim started here, so it would erase closures that thread still
-// holds. Count threads with a live walker frame; reclaim only when this
-// thread is the only one.
-std::atomic<int> g_tw_frame_threads{0};
+// ── Issue #4713: per-fiber root segments in a process registry ─────────
+//
+// #4459/#4599 pinned the tree-walker's roots (env frames, pinned results,
+// pinned vectors, pinned spans) in thread_locals. #4706 moved a fiber's
+// slice of those stacks into the fiber (Issue #4706) at yield and back on
+// fixed the stranded-const-Env** SIGSEGV, but the segment still lived in
+// TLS: a reclaim on another thread could not see a RUNNING fiber's roots,
+// so it had to stay off whenever two threads walked at once (#2738's
+// multi-walker-thread early return).
+//
+// The segment is now per-fiber and stable for the fiber's whole life:
+// created on spawn (aura_tw_roots_new), registered process-wide, dropped on
+// finish (aura_tw_roots_free). A thread's thread_locals only cache a POINTER
+// to the segment it currently runs, swapped at attach/detach, so a push/pop
+// pair can never straddle two threads and no stack content moves.
+//
+// Marking a foreign segment needs it to be quiescent. The owner publishes
+// that from one atomic, parked_epoch:
+//   * kTwQuiescent (all-ones) — the owner is not executing this segment
+//     (yielded, or blocked in a join / channel wait); any epoch may read it.
+//   * E — the owner certified the segment stable at epoch E and is spinning
+//     until the collector releases E. Published at a safepoint: the walker's
+//     opcode back-edge, fiber yield, or the resume/attach handshake.
+// The collector bumps g_tw_stw_epoch to E, waits (bounded) for every
+// registered fiber segment to publish parked_epoch >= E, marks, sweeps and
+// releases g_tw_stw_release to E. On timeout it releases WITHOUT sweeping,
+// so a body stuck in one long primitive costs a skipped reclaim, never
+// correctness.
+constexpr std::uint64_t kTwQuiescent = ~static_cast<std::uint64_t>(0);
 
-struct TwPinResult {
-    explicit TwPinResult(const EvalResult& r) { g_tw_results.push_back(&r); }
-    ~TwPinResult() {
-        if (!g_tw_results.empty())
-            g_tw_results.pop_back();
-    }
-    TwPinResult(const TwPinResult&) = delete;
-};
-
-struct TwPinMany {
-    explicit TwPinMany(const std::vector<types::EvalValue>& v) { g_tw_vecs.push_back(&v); }
-    ~TwPinMany() {
-        if (!g_tw_vecs.empty())
-            g_tw_vecs.pop_back();
-    }
-    TwPinMany(const TwPinMany&) = delete;
-};
-
-// Issue #4599: a stack argument buffer is not a std::vector, so the
-// reclaim mark would miss it. Pin the span for the duration of the prim.
 struct TwSpanRoot {
     const types::EvalValue* data = nullptr;
     // Issue #4611: a live count lets a partially filled buffer stay a
-    // root. `n_live` points at the caller's counter; the reclaim reads
-    // the CURRENT value, so an argument that is already evaluated is
-    // rooted even while a later argument is still being evaluated.
-    // `n_fixed` is the fallback for a fixed-size pin.
+    // root. n_live points at the caller's counter; the reclaim reads the
+    // CURRENT value, so an argument that is already evaluated is rooted
+    // even while a later argument is still being evaluated. n_fixed is the
+    // fallback for a fixed-size pin.
     const std::size_t* n_live = nullptr;
     std::size_t n_fixed = 0;
     [[nodiscard]] std::size_t count() const noexcept {
         return n_live != nullptr ? *n_live : n_fixed;
     }
 };
-thread_local std::vector<TwSpanRoot> g_tw_spans;
+
+struct TwRootSet {
+    std::vector<TwFrame> frames;
+    std::vector<const EvalResult*> results;
+    std::vector<const std::vector<types::EvalValue>*> vecs;
+    std::vector<TwSpanRoot> spans;
+    // Issue #4713: ownership/quiescence publication (see the note above).
+    std::atomic<std::uint64_t> parked_epoch{kTwQuiescent};
+    // Issue #4713: set by aura_tw_roots_free before the owning fiber's stack
+    // is unmapped, so a collector that already snapshotted this segment does
+    // not dereference frame pointers into gone memory.
+    std::atomic<bool> dead{false};
+    bool fiber_owned = false;
+
+    [[nodiscard]] bool empty() const noexcept {
+        return frames.empty() && results.empty() && vecs.empty() && spans.empty();
+    }
+};
+
+namespace {
+
+    constexpr auto kTwStwWaitBudget = std::chrono::milliseconds(60);
+    constexpr auto kTwStwInflightBudget = std::chrono::milliseconds(250);
+
+    std::mutex g_tw_reg_mu;
+    std::vector<std::shared_ptr<TwRootSet>> g_tw_registry;
+    std::atomic<std::uint64_t> g_tw_stw_epoch{0};
+    std::atomic<std::uint64_t> g_tw_stw_release{0};
+    std::mutex g_tw_collect_mu;
+    // Issue #4713: plain (non-fiber) threads inside the walker keep the
+    // #2738 conservative skip — they never reach a fiber park hook, so a
+    // collector cannot certify their segment.
+    std::atomic<int> g_tw_plain_walkers{0};
+    std::atomic<std::uint64_t> g_tw_registry_reclaims{0};
+    std::atomic<std::uint64_t> g_tw_registry_cross_marks{0};
+
+    // Issue #4713: this thread's plain segment. Registered lazily on the
+    // first walk and dropped at thread exit so the registry never keeps a
+    // pointer into a dead thread's storage.
+    struct TwThreadDefaultSeg {
+        TwRootSet* seg = nullptr;
+        bool walking = false;
+        ~TwThreadDefaultSeg() {
+            if (!seg)
+                return;
+            std::lock_guard<std::mutex> lk(g_tw_reg_mu);
+            std::erase_if(g_tw_registry, [s = seg](const std::shared_ptr<TwRootSet>& sp) {
+                return sp.get() == s;
+            });
+        }
+    };
+
+    thread_local TwRootSet* t_tw_cur = nullptr;
+    thread_local TwThreadDefaultSeg t_tw_default;
+    thread_local std::vector<TwRootSet*> t_tw_prev;
+    thread_local bool t_tw_stw_owner = false;
+
+    TwRootSet& tw_new_segment(bool fiber_owned) {
+        auto sp = std::make_shared<TwRootSet>();
+        sp->fiber_owned = fiber_owned;
+        TwRootSet* raw = sp.get();
+        std::lock_guard<std::mutex> lk(g_tw_reg_mu);
+        g_tw_registry.push_back(std::move(sp));
+        return *raw;
+    }
+
+    TwRootSet& tw_default_roots() {
+        if (!t_tw_default.seg)
+            t_tw_default.seg = &tw_new_segment(false);
+        return *t_tw_default.seg;
+    }
+
+    void tw_mark_plain_walking(bool walking) {
+        if (t_tw_default.walking == walking)
+            return;
+        t_tw_default.walking = walking;
+        g_tw_plain_walkers.fetch_add(walking ? 1 : -1, std::memory_order_acq_rel);
+    }
+
+} // namespace
+
+// Issue #4713: the segment this thread's pushes/pops land in — the fiber
+// segment while a fiber body runs, the thread's plain segment otherwise.
+TwRootSet& tw_current_roots() {
+    if (t_tw_cur)
+        return *t_tw_cur;
+    return tw_default_roots();
+}
+
+std::vector<TwFrame>& tw_frames() {
+    return tw_current_roots().frames;
+}
+std::vector<const EvalResult*>& tw_results() {
+    return tw_current_roots().results;
+}
+std::vector<const std::vector<types::EvalValue>*>& tw_vecs() {
+    return tw_current_roots().vecs;
+}
+std::vector<TwSpanRoot>& tw_spans() {
+    return tw_current_roots().spans;
+}
+
+struct TwPinResult {
+    explicit TwPinResult(const EvalResult& r) { tw_results().push_back(&r); }
+    ~TwPinResult() {
+        if (!tw_results().empty())
+            tw_results().pop_back();
+    }
+    TwPinResult(const TwPinResult&) = delete;
+};
+
+struct TwPinMany {
+    explicit TwPinMany(const std::vector<types::EvalValue>& v) { tw_vecs().push_back(&v); }
+    ~TwPinMany() {
+        if (!tw_vecs().empty())
+            tw_vecs().pop_back();
+    }
+    TwPinMany(const TwPinMany&) = delete;
+};
+// Issue #4599: a stack argument buffer is not a std::vector, so the
+// reclaim mark would miss it. Pin the span for the duration of the prim.
 
 
 struct TwPinSpan {
     explicit TwPinSpan(const types::EvalValue* data, std::size_t n) {
-        g_tw_spans.push_back(TwSpanRoot{data, nullptr, n});
+        tw_spans().push_back(TwSpanRoot{data, nullptr, n});
     }
     // Live-count pin: the rooted prefix follows the caller's counter.
     struct Live {};
     TwPinSpan(Live, const types::EvalValue* data, const std::size_t* n_live) {
-        g_tw_spans.push_back(TwSpanRoot{data, n_live, 0});
+        tw_spans().push_back(TwSpanRoot{data, n_live, 0});
     }
     ~TwPinSpan() {
-        if (!g_tw_spans.empty())
-            g_tw_spans.pop_back();
+        if (!tw_spans().empty())
+            tw_spans().pop_back();
     }
     TwPinSpan(const TwPinSpan&) = delete;
 };
@@ -1016,70 +1135,20 @@ struct TwCallMeta {
 // drop a foreign pin when nesting ever goes out of LIFO order.
 Evaluator::TwVecPin::TwVecPin(const std::vector<types::EvalValue>& v)
     : v_(&v) {
-    g_tw_vecs.push_back(&v);
+    tw_vecs().push_back(&v);
 }
 Evaluator::TwVecPin::~TwVecPin() {
     if (!v_)
         return;
-    for (auto it = g_tw_vecs.rbegin(); it != g_tw_vecs.rend(); ++it) {
+    for (auto it = tw_vecs().rbegin(); it != tw_vecs().rend(); ++it) {
         if (*it == v_) {
-            g_tw_vecs.erase(std::next(it).base());
+            tw_vecs().erase(std::next(it).base());
             break;
         }
     }
 }
 
-// ── Issue #4706: the walker root segment travels with the fiber ───────
-//
-// g_tw_frames / g_tw_results / g_tw_vecs / g_tw_spans are thread_local,
-// but a serve fiber is a ucontext that can be resumed on a DIFFERENT
-// worker thread than the one it yielded on (steal / migration, or an
-// affinity change between two resumes). The two halves of a push/pop pair
-// then landed on different threads: the yielding thread kept the entry
-// forever — a const Env** into a fiber stack that died with the fiber, or
-// a frame that a later pop slid off somebody else's stack — and the next
-// tree-walker reclaim on the yielding thread dereferenced the stranded
-// Env** and died in maybe_reclaim_tw_unreachable (SIGSEGV under
-// --serve-async with two fibers yielding while allocating; the CLI thread
-// backend never moves a fiber, which is why it was fine).
-//
-// Fiber::yield detaches this thread's root SEGMENT into the fiber and
-// Fiber::resume attaches it again on whichever worker runs the fiber
-// next, so a push/pop pair can never straddle two threads.
-//
-// A parked segment is also registered process-wide: a reclaim started on
-// another thread must still mark it, otherwise it would erase closures the
-// parked fiber references and hand the resumed fiber a dead closure id
-// (the #2738 hole, now covered without disabling reclaim). A parked fiber
-// mutates nothing, so its frame pointers are stable while it sits in the
-// registry; the registry lock is held across the walk.
 namespace {
-
-    struct TwRootSet {
-        std::vector<TwFrame> frames;
-        std::vector<const EvalResult*> results;
-        std::vector<const std::vector<types::EvalValue>*> vecs;
-        std::vector<TwSpanRoot> spans;
-
-        [[nodiscard]] bool empty() const noexcept {
-            return frames.empty() && results.empty() && vecs.empty() && spans.empty();
-        }
-    };
-
-    // Where the running fiber's segment starts in each thread-local stack. A
-    // worker thread can already hold outer tree-walker frames when a fiber
-    // attaches, so the base is per attach/detach pair (LIFO per thread: the
-    // pair always runs on one thread, resume and yield being the same slice).
-    struct TwRootBase {
-        std::size_t frames = 0;
-        std::size_t results = 0;
-        std::size_t vecs = 0;
-        std::size_t spans = 0;
-    };
-    thread_local std::vector<TwRootBase> g_tw_bases;
-
-    std::shared_mutex g_tw_parked_mu;
-    std::unordered_set<const TwRootSet*> g_tw_parked;
 
     // Mark roots of one segment: env pointers for the reclaim, values for the
     // pinned results / vectors / spans.
@@ -1159,82 +1228,169 @@ namespace {
         }
     }
 
+    // Issue #4713: park this thread's fiber segment for a collector that
+    // requested a newer epoch. Fast path (no epoch in flight): one atomic
+    // load + compare; the fiber's own segment is the only one that parks.
+    void tw_stw_safepoint() noexcept {
+        if (t_tw_stw_owner)
+            return;
+        TwRootSet* set = t_tw_cur;
+        if (!set)
+            return; // plain segment: the #2738 guard covers it, no STW part
+        const std::uint64_t e = g_tw_stw_epoch.load(std::memory_order_acquire);
+        if (e <= set->parked_epoch.load(std::memory_order_relaxed))
+            return;
+        set->parked_epoch.store(e, std::memory_order_release);
+        while (g_tw_stw_release.load(std::memory_order_acquire) < e)
+            std::this_thread::yield();
+    }
+
+    // Issue #4713: one collector at a time. A concurrent collector would wait
+    // on this one for an epoch the first can never release, so the second
+    // skips instead (reclaim is opportunistic).
+    struct TwStwHandle {
+        std::vector<std::shared_ptr<TwRootSet>> snapshot;
+        std::uint64_t epoch = 0;
+        bool ok = false;
+        bool requested = false;
+    };
+
+    void tw_stw_end(TwStwHandle& h);
+
+    bool tw_stw_begin(TwStwHandle& h, std::chrono::milliseconds budget) {
+        if (!g_tw_collect_mu.try_lock())
+            return false;
+        {
+            std::lock_guard<std::mutex> lk(g_tw_reg_mu);
+            h.snapshot = g_tw_registry;
+        }
+        TwRootSet* self_cur = t_tw_cur;
+        TwRootSet* self_def = t_tw_default.seg;
+        h.epoch = g_tw_stw_epoch.fetch_add(1, std::memory_order_acq_rel) + 1;
+        h.requested = true;
+        // This thread must never park on its own epoch.
+        t_tw_stw_owner = true;
+        const auto t0 = std::chrono::steady_clock::now();
+        bool ready = true;
+        for (const auto& sp : h.snapshot) {
+            TwRootSet* set = sp.get();
+            if (set == self_cur || set == self_def || !set->fiber_owned)
+                continue;
+            if (set->dead.load(std::memory_order_acquire))
+                continue;
+            while (set->parked_epoch.load(std::memory_order_acquire) < h.epoch) {
+                if (std::chrono::steady_clock::now() - t0 > budget) {
+                    ready = false;
+                    break;
+                }
+                std::this_thread::yield();
+            }
+            if (!ready)
+                break;
+        }
+        h.ok = ready;
+        if (!ready)
+            tw_stw_end(h);
+        return h.ok;
+    }
+
+    void tw_stw_end(TwStwHandle& h) {
+        if (h.epoch == 0)
+            return;
+        t_tw_stw_owner = false;
+        g_tw_stw_release.store(h.epoch, std::memory_order_release);
+        h.epoch = 0;
+        g_tw_collect_mu.unlock();
+    }
+
 } // namespace
 
-// Issue #4706: Fiber::yield hands the running fiber's segment over here
-// before it swaps to the worker loop. Returns nullptr when the fiber holds
-// no roots (the common case), so the hot path stays allocation-free.
-extern "C" void* aura_tw_roots_detach() noexcept {
-    TwRootBase base{};
-    if (!g_tw_bases.empty()) {
-        base = g_tw_bases.back();
-        g_tw_bases.pop_back();
-    }
-    const bool had_frames = !g_tw_frames.empty();
-    auto set = std::make_unique<TwRootSet>();
-    const auto take = [](auto& from, auto& to, std::size_t keep) {
-        if (from.size() <= keep)
-            return;
-        const auto first = from.begin() + static_cast<std::ptrdiff_t>(keep);
-        to.assign(std::make_move_iterator(first), std::make_move_iterator(from.end()));
-        from.resize(keep);
-    };
-    take(g_tw_frames, set->frames, base.frames);
-    take(g_tw_results, set->results, base.results);
-    take(g_tw_vecs, set->vecs, base.vecs);
-    take(g_tw_spans, set->spans, base.spans);
-    // Mirror TwFrameReg: the segment contributed this thread's frame count
-    // only when it started at the bottom of the thread's frame stack.
-    if (base.frames == 0 && had_frames)
-        g_tw_frame_threads.fetch_sub(1, std::memory_order_acq_rel);
-    if (set->empty())
+// Issue #4713: a fiber's root segment, registered on spawn so a reclaim on
+// any thread can see it. The handle is stable for the fiber's whole life.
+extern "C" void* aura_tw_roots_new() noexcept {
+    // A fiber with no segment simply has no registered roots; the reclaim
+    // then treats it exactly as before #4713 (nothing to mark). Only the
+    // registry allocation can fail here.
+    try {
+        return &tw_new_segment(true);
+    } catch (const std::bad_alloc&) {
         return nullptr;
-    {
-        std::unique_lock<std::shared_mutex> parked_lock(g_tw_parked_mu);
-        g_tw_parked.insert(set.get());
     }
-    return set.release();
 }
 
-// Issue #4706: Fiber::resume reinstalls the segment on the thread that is
-// about to run the fiber. The move and the registry drop happen under the
-// exclusive lock, so a concurrent reclaim sees the segment in the registry
-// or in this thread's stacks — never half-moved.
+// Issue #4713: install the fiber's segment on the thread that is about to run
+// it. The handshake publishes quiescence at the CURRENT epoch, re-reads to
+// make sure no request raced the publish, and waits for the release before
+// the body mutates the segment again — so a collector that observed this
+// segment markable cannot still be reading it while we run.
 extern "C" void aura_tw_roots_attach(void* state) noexcept {
-    g_tw_bases.push_back(
-        TwRootBase{g_tw_frames.size(), g_tw_results.size(), g_tw_vecs.size(), g_tw_spans.size()});
-    if (!state)
-        return;
+    t_tw_prev.push_back(t_tw_cur);
     auto* set = static_cast<TwRootSet*>(state);
-    std::unique_lock<std::shared_mutex> parked_lock(g_tw_parked_mu);
-    if (!set->frames.empty()) {
-        if (g_tw_frames.empty())
-            g_tw_frame_threads.fetch_add(1, std::memory_order_acq_rel);
-        g_tw_frames.insert(g_tw_frames.end(), std::make_move_iterator(set->frames.begin()),
-                           std::make_move_iterator(set->frames.end()));
+    if (!set) {
+        t_tw_cur = nullptr;
+        return;
     }
-    g_tw_results.insert(g_tw_results.end(), std::make_move_iterator(set->results.begin()),
-                        std::make_move_iterator(set->results.end()));
-    g_tw_vecs.insert(g_tw_vecs.end(), std::make_move_iterator(set->vecs.begin()),
-                     std::make_move_iterator(set->vecs.end()));
-    g_tw_spans.insert(g_tw_spans.end(), std::make_move_iterator(set->spans.begin()),
-                      std::make_move_iterator(set->spans.end()));
-    g_tw_parked.erase(set);
-    parked_lock.unlock();
-    delete set;
+    for (;;) {
+        const std::uint64_t e = g_tw_stw_epoch.load(std::memory_order_acquire);
+        set->parked_epoch.store(e, std::memory_order_release);
+        if (g_tw_stw_epoch.load(std::memory_order_acquire) == e) {
+            while (g_tw_stw_release.load(std::memory_order_acquire) < e)
+                std::this_thread::yield();
+            break;
+        }
+    }
+    t_tw_cur = set;
 }
 
-// Issue #4706: a fiber destroyed while parked (never resumed) drops its
-// segment from the registry before the stack it points into goes away.
+// Issue #4713: the fiber is parked (yield / join / channel wait). Its segment
+// stays where it is — only the cached thread pointer moves back — so nothing
+// can be stranded on the yielding thread. kTwQuiescent makes the segment
+// markable at any epoch.
+extern "C" void* aura_tw_roots_detach() noexcept {
+    TwRootSet* set = t_tw_cur;
+    if (!t_tw_prev.empty()) {
+        t_tw_cur = t_tw_prev.back();
+        t_tw_prev.pop_back();
+    } else {
+        t_tw_cur = nullptr;
+    }
+    if (!set)
+        return nullptr;
+    set->parked_epoch.store(kTwQuiescent, std::memory_order_release);
+    return set->fiber_owned ? set : nullptr;
+}
+
+// Issue #4713: drop the segment of a fiber that is finishing or was destroyed
+// while parked, so the registry never points into a stack that is gone.
 extern "C" void aura_tw_roots_free(void* state) noexcept {
     if (!state)
         return;
     auto* set = static_cast<TwRootSet*>(state);
-    {
-        std::unique_lock<std::shared_mutex> parked_lock(g_tw_parked_mu);
-        g_tw_parked.erase(set);
-    }
-    delete set;
+    if (t_tw_cur == set)
+        t_tw_cur = nullptr;
+    // Before the registry drop: a collector that already holds a snapshot
+    // must not walk frame pointers into a stack that is about to be unmapped.
+    set->dead.store(true, std::memory_order_release);
+    std::lock_guard<std::mutex> lk(g_tw_reg_mu);
+    std::erase_if(g_tw_registry,
+                  [set](const std::shared_ptr<TwRootSet>& sp) { return sp.get() == set; });
+}
+
+// Issue #4713: safepoint face for the walker back-edge / fiber yield /
+// join-wait loops (C linkage so serve/ can poll without the module).
+extern "C" void aura_tw_safepoint() noexcept {
+    tw_stw_safepoint();
+}
+
+// Issue #4713: observability — reclaims that ran with registered fiber
+// segments, and foreign segments marked by one (proves the cross-thread mark
+// path actually executes; used by the issue's AC probe).
+extern "C" std::uint64_t aura_tw_registry_reclaim_total() noexcept {
+    return g_tw_registry_reclaims.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_tw_registry_cross_marks_total() noexcept {
+    return g_tw_registry_cross_marks.load(std::memory_order_relaxed);
 }
 
 void Evaluator::maybe_reclaim_tw_unreachable() {
@@ -1247,49 +1403,48 @@ void Evaluator::maybe_reclaim_tw_unreachable() {
     if (tw_closure_allocs_ < tw_closure_allocs_trigger_ &&
         file_heap_allocs_since_reclaim_ < file_heap_allocs_trigger_)
         return;
-    // Issue #2738: another thread's walker roots are not visible here.
-    if (g_tw_frame_threads.load(std::memory_order_acquire) > 1)
+    // Issue #4713: the #2738 guard survives only for PLAIN (non-fiber)
+    // threads inside the walker — they never reach a fiber park hook, so a
+    // collector cannot certify them. Fiber segments certify through the
+    // process registry (parked_epoch / kTwQuiescent), so reclaim now runs
+    // with more than one RUNNING fiber thread.
+    const int self_plain = (t_tw_cur == nullptr && t_tw_default.walking) ? 1 : 0;
+    if (g_tw_plain_walkers.load(std::memory_order_acquire) > self_plain)
         return;
+    TwStwHandle stw;
+    if (!tw_stw_begin(stw, kTwStwWaitBudget)) {
+        // Issue #4713: a running body did not park inside the budget (or
+        // another collector owns the epoch). Do not retry at the very next
+        // opcode — that would stall every back-edge behind the same body for
+        // a full budget each time. Postpone by one trigger interval instead.
+        if (stw.requested)
+            file_heap_allocs_since_reclaim_ = 0;
+        return;
+    }
     std::vector<const Env*> envs;
-    envs.reserve(g_tw_frames.size() * 2 + 4);
-    for (const auto& fr : g_tw_frames) {
-        if (fr.current && *fr.current)
-            envs.push_back(*fr.current);
-        if (fr.tail && fr.tail->has_value())
-            envs.push_back(&**fr.tail);
-        if (!fr.pinned)
-            continue;
-        for (const auto& p : *fr.pinned) {
-            if (p)
-                envs.push_back(p.get());
-        }
-    }
     std::vector<types::EvalValue> held;
-    for (const EvalResult* r : g_tw_results) {
-        if (r && *r)
-            held.push_back(**r);
+    TwRootSet* self_cur = t_tw_cur;
+    TwRootSet* self_def = t_tw_default.seg;
+    if (self_cur) {
+        envs.reserve(self_cur->frames.size() * 2 + 4);
+        collect_tw_root_segment(self_cur->frames, self_cur->results, self_cur->vecs,
+                                self_cur->spans, envs, held);
     }
-    for (const auto* many : g_tw_vecs) {
-        if (!many)
+    if (self_def && self_def != self_cur)
+        collect_tw_root_segment(self_def->frames, self_def->results, self_def->vecs,
+                                self_def->spans, envs, held);
+    // Issue #4713: every registered fiber segment is parked at a safepoint (or
+    // quiescent) for the length of this epoch, so marking it here cannot race
+    // the owner's push/pop. This replaces #4706's parked-only set — a RUNNING
+    // fiber is covered too.
+    for (const auto& sp : stw.snapshot) {
+        TwRootSet* set = sp.get();
+        if (set == self_cur || set == self_def || !set->fiber_owned)
             continue;
-        for (const auto& v : *many)
-            held.push_back(v);
-    }
-    for (const auto& sp : g_tw_spans) {
-        if (!sp.data)
+        if (set->dead.load(std::memory_order_acquire))
             continue;
-        const auto n = sp.count();
-        for (std::size_t i = 0; i < n; ++i)
-            held.push_back(sp.data[i]);
-    }
-    // Issue #4706: a parked fiber's segment is detached from every
-    // thread's TLS, so it must be marked from the registry. A parked
-    // fiber mutates nothing; the shared lock keeps its frames stable
-    // while the segment is copied.
-    {
-        std::shared_lock<std::shared_mutex> parked_rlock(g_tw_parked_mu);
-        for (const TwRootSet* set : g_tw_parked)
-            collect_tw_root_segment(set->frames, set->results, set->vecs, set->spans, envs, held);
+        collect_tw_root_segment(set->frames, set->results, set->vecs, set->spans, envs, held);
+        g_tw_registry_cross_marks.fetch_add(1, std::memory_order_relaxed);
     }
     // Issue #4617: the symmetric direction of #4481. IR code that calls a
     // tree-walked file-level procedure by name is suspended mid-frame while
@@ -1307,6 +1462,9 @@ void Evaluator::maybe_reclaim_tw_unreachable() {
             held.push_back(types::EvalValue(raw));
     }
     (void)reclaim_tw_unreachable(envs, held);
+    g_tw_registry_reclaims.fetch_add(1, std::memory_order_relaxed);
+    // Issue #4713: release every parked fiber only after the sweep.
+    tw_stw_end(stw);
 }
 
 void Evaluator::collect_tw_inflight_roots(std::vector<types::EvalValue>& out) {
@@ -1319,7 +1477,7 @@ void Evaluator::collect_tw_inflight_roots(std::vector<types::EvalValue>& out) {
     // chain were treated as unreachable and erased ("cannot call: value",
     // #4481 reopen). Same-thread roots only, mirroring
     // maybe_reclaim_tw_unreachable's collection.
-    for (const auto& fr : g_tw_frames) {
+    for (const auto& fr : tw_frames()) {
         if (fr.current && *fr.current) {
             for (const auto& b : (*fr.current)->bindings())
                 out.push_back(b.second);
@@ -1343,29 +1501,42 @@ void Evaluator::collect_tw_inflight_roots(std::vector<types::EvalValue>& out) {
                 out.push_back(b.second);
         }
     }
-    for (const EvalResult* r : g_tw_results) {
+    for (const EvalResult* r : tw_results()) {
         if (r && *r)
             out.push_back(**r);
     }
-    for (const auto* many : g_tw_vecs) {
+    for (const auto* many : tw_vecs()) {
         if (!many)
             continue;
         for (const auto& v : *many)
             out.push_back(v);
     }
-    for (const auto& sp : g_tw_spans) {
+    for (const auto& sp : tw_spans()) {
         if (!sp.data)
             continue;
         const auto n = sp.count();
         for (std::size_t i = 0; i < n; ++i)
             out.push_back(sp.data[i]);
     }
-    // Issue #4706: same for a parked fiber's detached segment — its envs
-    // and pins are live for an IR-side sweep too.
+    // Issue #4713: same for another fiber's segment — its envs and pins are
+    // live for an IR-side sweep too. Segments are parked for the length of
+    // the epoch, so the read cannot race the owner's push/pop; a body that
+    // does not park inside the (longer) budget is skipped rather than raced.
     {
-        std::shared_lock<std::shared_mutex> parked_rlock(g_tw_parked_mu);
-        for (const TwRootSet* set : g_tw_parked)
-            collect_tw_root_values(set->frames, set->results, set->vecs, set->spans, out);
+        TwStwHandle stw;
+        if (tw_stw_begin(stw, kTwStwInflightBudget)) {
+            TwRootSet* self_cur = t_tw_cur;
+            TwRootSet* self_def = t_tw_default.seg;
+            for (const auto& sp : stw.snapshot) {
+                TwRootSet* set = sp.get();
+                if (set == self_cur || set == self_def || !set->fiber_owned)
+                    continue;
+                if (set->dead.load(std::memory_order_acquire))
+                    continue;
+                collect_tw_root_values(set->frames, set->results, set->vecs, set->spans, out);
+            }
+            tw_stw_end(stw);
+        }
     }
 }
 
@@ -6439,15 +6610,17 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
 
         struct TwFrameReg {
             TwFrameReg(const Env** c, std::optional<Env>* t, std::vector<std::unique_ptr<Env>>* p) {
-                if (g_tw_frames.empty())
-                    g_tw_frame_threads.fetch_add(1, std::memory_order_acq_rel);
-                g_tw_frames.push_back(TwFrame{c, t, p});
+                // Issue #4713: only PLAIN (non-fiber) threads are counted —
+                // fiber segments certify through the process registry.
+                if (tw_frames().empty() && t_tw_cur == nullptr)
+                    tw_mark_plain_walking(true);
+                tw_frames().push_back(TwFrame{c, t, p});
             }
             ~TwFrameReg() {
-                if (!g_tw_frames.empty()) {
-                    g_tw_frames.pop_back();
-                    if (g_tw_frames.empty())
-                        g_tw_frame_threads.fetch_sub(1, std::memory_order_acq_rel);
+                if (!tw_frames().empty()) {
+                    tw_frames().pop_back();
+                    if (tw_frames().empty() && t_tw_cur == nullptr)
+                        tw_mark_plain_walking(false);
                 }
             }
             TwFrameReg(const TwFrameReg&) = delete;
@@ -6565,6 +6738,11 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
             // Issue #4459: between opcodes, after the poll. Nested bodies
             // see outer envs via g_tw_frames, so the go loop under display
             // reclaims the previous iteration's closure.
+            // Issue #4713: safepoint before the reclaim consult. A collector
+            // on another thread parks this body here (one atomic load when no
+            // epoch is in flight); this back-edge is what lets the reclaim run
+            // with several fibers running at once.
+            tw_stw_safepoint();
             if (tw_reclaim_due())
                 maybe_reclaim_tw_unreachable();
             current_flat_ = f;
