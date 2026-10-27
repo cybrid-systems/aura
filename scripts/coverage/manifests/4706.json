@@ -1,0 +1,69 @@
+{
+  "issue": 4706,
+  "title": "Issue #4706: a serve fiber carries its tree-walker root segment across a context switch, so a migrated fiber cannot strand an Env** in the yielding thread's TLS (SIGSEGV in Evaluator::maybe_reclaim_tw_unreachable).",
+  "ok": "OK: Issue #4706 serve-async multi-thread tree-walker root hand-off - fiber root segments travel with the fiber and parked segments stay mark-visible",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "Issue #4706",
+        "struct TwRootSet",
+        "aura_tw_roots_detach",
+        "aura_tw_roots_attach",
+        "aura_tw_roots_free",
+        "g_tw_bases"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/serve/fiber.cpp",
+      "contains": [
+        "Issue #4706",
+        "aura_tw_roots_attach(tw_roots_)",
+        "fb->tw_roots_ = aura_tw_roots_detach()",
+        "aura_tw_roots_free(tw_roots_)"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/serve/fiber.h",
+      "contains": [
+        "Issue #4706",
+        "aura_tw_roots_detach",
+        "aura_tw_roots_attach",
+        "aura_tw_roots_free",
+        "void* tw_roots_ = nullptr"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/fiber_bridge.cpp",
+      "contains": [
+        "Issue #4706",
+        "aura_tw_roots_detach",
+        "aura_tw_roots_attach",
+        "aura_tw_roots_free"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "g_tw_parked",
+        "collect_tw_root_segment(set->frames",
+        "collect_tw_root_values(set->frames",
+        "const auto n = sp.count();"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/python/test_regression.py",
+      "contains": [
+        "Issue #4706",
+        "test_serve_async_two_fiber_yield_reclaim_4706",
+        "--worker-threads=2"
+      ]
+    }
+  ]
+}

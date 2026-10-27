@@ -1029,6 +1029,214 @@ Evaluator::TwVecPin::~TwVecPin() {
     }
 }
 
+// ── Issue #4706: the walker root segment travels with the fiber ───────
+//
+// g_tw_frames / g_tw_results / g_tw_vecs / g_tw_spans are thread_local,
+// but a serve fiber is a ucontext that can be resumed on a DIFFERENT
+// worker thread than the one it yielded on (steal / migration, or an
+// affinity change between two resumes). The two halves of a push/pop pair
+// then landed on different threads: the yielding thread kept the entry
+// forever — a const Env** into a fiber stack that died with the fiber, or
+// a frame that a later pop slid off somebody else's stack — and the next
+// tree-walker reclaim on the yielding thread dereferenced the stranded
+// Env** and died in maybe_reclaim_tw_unreachable (SIGSEGV under
+// --serve-async with two fibers yielding while allocating; the CLI thread
+// backend never moves a fiber, which is why it was fine).
+//
+// Fiber::yield detaches this thread's root SEGMENT into the fiber and
+// Fiber::resume attaches it again on whichever worker runs the fiber
+// next, so a push/pop pair can never straddle two threads.
+//
+// A parked segment is also registered process-wide: a reclaim started on
+// another thread must still mark it, otherwise it would erase closures the
+// parked fiber references and hand the resumed fiber a dead closure id
+// (the #2738 hole, now covered without disabling reclaim). A parked fiber
+// mutates nothing, so its frame pointers are stable while it sits in the
+// registry; the registry lock is held across the walk.
+namespace {
+
+    struct TwRootSet {
+        std::vector<TwFrame> frames;
+        std::vector<const EvalResult*> results;
+        std::vector<const std::vector<types::EvalValue>*> vecs;
+        std::vector<TwSpanRoot> spans;
+
+        [[nodiscard]] bool empty() const noexcept {
+            return frames.empty() && results.empty() && vecs.empty() && spans.empty();
+        }
+    };
+
+    // Where the running fiber's segment starts in each thread-local stack. A
+    // worker thread can already hold outer tree-walker frames when a fiber
+    // attaches, so the base is per attach/detach pair (LIFO per thread: the
+    // pair always runs on one thread, resume and yield being the same slice).
+    struct TwRootBase {
+        std::size_t frames = 0;
+        std::size_t results = 0;
+        std::size_t vecs = 0;
+        std::size_t spans = 0;
+    };
+    thread_local std::vector<TwRootBase> g_tw_bases;
+
+    std::shared_mutex g_tw_parked_mu;
+    std::unordered_set<const TwRootSet*> g_tw_parked;
+
+    // Mark roots of one segment: env pointers for the reclaim, values for the
+    // pinned results / vectors / spans.
+    template <class Frames, class Results, class Vecs, class Spans>
+    void collect_tw_root_segment(const Frames& frames, const Results& results, const Vecs& vecs,
+                                 const Spans& spans, std::vector<const Env*>& envs,
+                                 std::vector<types::EvalValue>& held) {
+        for (const auto& fr : frames) {
+            if (fr.current && *fr.current)
+                envs.push_back(*fr.current);
+            if (fr.tail && fr.tail->has_value())
+                envs.push_back(&**fr.tail);
+            if (!fr.pinned)
+                continue;
+            for (const auto& p : *fr.pinned) {
+                if (p)
+                    envs.push_back(p.get());
+            }
+        }
+        for (const EvalResult* r : results) {
+            if (r && *r)
+                held.push_back(**r);
+        }
+        for (const auto* many : vecs) {
+            if (!many)
+                continue;
+            for (const auto& v : *many)
+                held.push_back(v);
+        }
+        for (const auto& sp : spans) {
+            if (!sp.data)
+                continue;
+            const auto n = sp.count();
+            for (std::size_t i = 0; i < n; ++i)
+                held.push_back(sp.data[i]);
+        }
+    }
+
+    // Flattened form for the IR-side sweep (#4481): envs expanded to bindings.
+    template <class Frames, class Results, class Vecs, class Spans>
+    void collect_tw_root_values(const Frames& frames, const Results& results, const Vecs& vecs,
+                                const Spans& spans, std::vector<types::EvalValue>& out) {
+        const auto add_env = [&out](const Env* e) {
+            if (!e)
+                return;
+            for (const auto& b : e->bindings())
+                out.push_back(b.second);
+            for (const auto& b : e->bindings_symid())
+                out.push_back(b.second);
+        };
+        for (const auto& fr : frames) {
+            if (fr.current && *fr.current)
+                add_env(*fr.current);
+            if (fr.tail && fr.tail->has_value())
+                add_env(&**fr.tail);
+            if (!fr.pinned)
+                continue;
+            for (const auto& p : *fr.pinned)
+                add_env(p.get());
+        }
+        for (const EvalResult* r : results) {
+            if (r && *r)
+                out.push_back(**r);
+        }
+        for (const auto* many : vecs) {
+            if (!many)
+                continue;
+            for (const auto& v : *many)
+                out.push_back(v);
+        }
+        for (const auto& sp : spans) {
+            if (!sp.data)
+                continue;
+            const auto n = sp.count();
+            for (std::size_t i = 0; i < n; ++i)
+                out.push_back(sp.data[i]);
+        }
+    }
+
+} // namespace
+
+// Issue #4706: Fiber::yield hands the running fiber's segment over here
+// before it swaps to the worker loop. Returns nullptr when the fiber holds
+// no roots (the common case), so the hot path stays allocation-free.
+extern "C" void* aura_tw_roots_detach() noexcept {
+    TwRootBase base{};
+    if (!g_tw_bases.empty()) {
+        base = g_tw_bases.back();
+        g_tw_bases.pop_back();
+    }
+    const bool had_frames = !g_tw_frames.empty();
+    auto set = std::make_unique<TwRootSet>();
+    const auto take = [](auto& from, auto& to, std::size_t keep) {
+        if (from.size() <= keep)
+            return;
+        const auto first = from.begin() + static_cast<std::ptrdiff_t>(keep);
+        to.assign(std::make_move_iterator(first), std::make_move_iterator(from.end()));
+        from.resize(keep);
+    };
+    take(g_tw_frames, set->frames, base.frames);
+    take(g_tw_results, set->results, base.results);
+    take(g_tw_vecs, set->vecs, base.vecs);
+    take(g_tw_spans, set->spans, base.spans);
+    // Mirror TwFrameReg: the segment contributed this thread's frame count
+    // only when it started at the bottom of the thread's frame stack.
+    if (base.frames == 0 && had_frames)
+        g_tw_frame_threads.fetch_sub(1, std::memory_order_acq_rel);
+    if (set->empty())
+        return nullptr;
+    {
+        std::unique_lock<std::shared_mutex> parked_lock(g_tw_parked_mu);
+        g_tw_parked.insert(set.get());
+    }
+    return set.release();
+}
+
+// Issue #4706: Fiber::resume reinstalls the segment on the thread that is
+// about to run the fiber. The move and the registry drop happen under the
+// exclusive lock, so a concurrent reclaim sees the segment in the registry
+// or in this thread's stacks — never half-moved.
+extern "C" void aura_tw_roots_attach(void* state) noexcept {
+    g_tw_bases.push_back(
+        TwRootBase{g_tw_frames.size(), g_tw_results.size(), g_tw_vecs.size(), g_tw_spans.size()});
+    if (!state)
+        return;
+    auto* set = static_cast<TwRootSet*>(state);
+    std::unique_lock<std::shared_mutex> parked_lock(g_tw_parked_mu);
+    if (!set->frames.empty()) {
+        if (g_tw_frames.empty())
+            g_tw_frame_threads.fetch_add(1, std::memory_order_acq_rel);
+        g_tw_frames.insert(g_tw_frames.end(), std::make_move_iterator(set->frames.begin()),
+                           std::make_move_iterator(set->frames.end()));
+    }
+    g_tw_results.insert(g_tw_results.end(), std::make_move_iterator(set->results.begin()),
+                        std::make_move_iterator(set->results.end()));
+    g_tw_vecs.insert(g_tw_vecs.end(), std::make_move_iterator(set->vecs.begin()),
+                     std::make_move_iterator(set->vecs.end()));
+    g_tw_spans.insert(g_tw_spans.end(), std::make_move_iterator(set->spans.begin()),
+                      std::make_move_iterator(set->spans.end()));
+    g_tw_parked.erase(set);
+    parked_lock.unlock();
+    delete set;
+}
+
+// Issue #4706: a fiber destroyed while parked (never resumed) drops its
+// segment from the registry before the stack it points into goes away.
+extern "C" void aura_tw_roots_free(void* state) noexcept {
+    if (!state)
+        return;
+    auto* set = static_cast<TwRootSet*>(state);
+    {
+        std::unique_lock<std::shared_mutex> parked_lock(g_tw_parked_mu);
+        g_tw_parked.erase(set);
+    }
+    delete set;
+}
+
 void Evaluator::maybe_reclaim_tw_unreachable() {
     // Issue #4474: dynamic triggers — after a mark, the next reclaim waits
     // for allocations proportional to the live set found (live/32, floored
@@ -1073,6 +1281,15 @@ void Evaluator::maybe_reclaim_tw_unreachable() {
         const auto n = sp.count();
         for (std::size_t i = 0; i < n; ++i)
             held.push_back(sp.data[i]);
+    }
+    // Issue #4706: a parked fiber's segment is detached from every
+    // thread's TLS, so it must be marked from the registry. A parked
+    // fiber mutates nothing; the shared lock keeps its frames stable
+    // while the segment is copied.
+    {
+        std::shared_lock<std::shared_mutex> parked_rlock(g_tw_parked_mu);
+        for (const TwRootSet* set : g_tw_parked)
+            collect_tw_root_segment(set->frames, set->results, set->vecs, set->spans, envs, held);
     }
     // Issue #4617: the symmetric direction of #4481. IR code that calls a
     // tree-walked file-level procedure by name is suspended mid-frame while
@@ -1142,6 +1359,13 @@ void Evaluator::collect_tw_inflight_roots(std::vector<types::EvalValue>& out) {
         const auto n = sp.count();
         for (std::size_t i = 0; i < n; ++i)
             out.push_back(sp.data[i]);
+    }
+    // Issue #4706: same for a parked fiber's detached segment — its envs
+    // and pins are live for an IR-side sweep too.
+    {
+        std::shared_lock<std::shared_mutex> parked_rlock(g_tw_parked_mu);
+        for (const TwRootSet* set : g_tw_parked)
+            collect_tw_root_values(set->frames, set->results, set->vecs, set->spans, out);
     }
 }
 
