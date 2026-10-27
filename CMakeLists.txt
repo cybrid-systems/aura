@@ -518,7 +518,6 @@ target_sources(test_ir PRIVATE
     src/core/ast_impl.cpp
     src/core/ast_stability.cpp
     src/core/type_impl.cpp
-    src/core/fiber_context.cpp
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
     src/compiler/value_impl.cpp
     ${AURA_EVALUATOR_SOURCE_FILES}
