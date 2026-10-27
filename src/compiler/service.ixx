@@ -20449,7 +20449,11 @@ public:
             return false;
         auto& entry = it->second;
         if (entry.irs.empty()) {
-            // Source-only shell — nothing lowered to dirty yet.
+            // Source-only shell — no lowered block to mark. Latch the entry
+            // dirty anyway: the ArenaCompact cone (#3455 / #4510) is derived
+            // from any_block_dirty(), and a shell row must still reach the
+            // scope-3 arm so a re-published native is dropped.
+            entry.dirty = true;
             metrics_.irsoa_dirty_cascade_savings.fetch_add(1, std::memory_order_relaxed);
             return true;
         }
@@ -20486,6 +20490,8 @@ public:
         }
         if (!result_blocks.empty())
             entry.mark_blocks_dirty(func_idx, std::span<const std::uint32_t>(result_blocks));
+        else
+            entry.dirty = true; // no Return mapped — latch for the compact cone
         metrics_.irsoa_dirty_cascade_savings.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
