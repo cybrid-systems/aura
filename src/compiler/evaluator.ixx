@@ -2199,6 +2199,22 @@ public:
     std::pmr::vector<Pair>& pairs() { return pairs_; }
     std::span<const std::string> keyword_table() const { return keyword_table_; }
     std::vector<std::string>& keyword_table() { return keyword_table_; }
+    // Issue #4727: symbol atoms (index = as_symbol_idx(make_symbol)).
+    std::span<const std::string> symbol_table() const { return symbol_table_; }
+    std::vector<std::string>& symbol_table() { return symbol_table_; }
+    // Issue #4727: intern a quoted identifier atom. Name identity is the
+    // contract: (eq? 'high (workspace-returned 'high)) must be #t, so the
+    // lookup keys on the text, never on a pool-local SymId. Thread-safe —
+    // the tier's native code and fiber bodies both intern.
+    [[nodiscard]] types::EvalValue intern_symbol(std::string_view name) {
+        std::lock_guard lock(symbol_table_mtx_);
+        if (auto it = symbol_index_.find(name); it != symbol_index_.end())
+            return types::make_symbol(it->second);
+        auto sidx = static_cast<std::uint64_t>(symbol_table_.size());
+        symbol_table_.emplace_back(name);
+        symbol_index_.emplace(symbol_table_.back(), sidx);
+        return types::make_symbol(sidx);
+    }
     // Issue #4321: intern :foo. Reuse an existing slot so identity
     // (eq? of a keyword a primitive already pushed) holds. The leading
     // ':' stays in the table, matching eval_flat.
@@ -5991,8 +6007,12 @@ private:
     [[nodiscard]] types::EvalValue
     build_ast_lifecycle_hash(std::span<const std::pair<std::string, types::EvalValue>> kv);
     // (apply_closure and expand_macro removed — use eval_flat directly)
+    // Issue #4727: datum=true converts a quoted datum (identifier atoms
+    // become interned symbols); the default keeps the macro-argument data
+    // shape eval_data_as_code consumes.
     [[nodiscard]] EvalValue ast_to_data(const aura::ast::FlatAST& flat,
-                                        const aura::ast::StringPool& pool, aura::ast::NodeId nid);
+                                        const aura::ast::StringPool& pool, aura::ast::NodeId nid,
+                                        bool datum = false);
     [[nodiscard]] ast::NodeId data_to_flat(const types::EvalValue& data, aura::ast::FlatAST& flat,
                                            aura::ast::StringPool& pool, int depth = 0);
     [[nodiscard]] EvalResult eval_data_as_code(const types::EvalValue& data, const Env& env,
@@ -7856,7 +7876,24 @@ private:
         TcoReuseGuard& operator=(const TcoReuseGuard&) = delete;
     };
     std::vector<std::string> keyword_table_; // keyword name strings (indexed by KeywordRef)
-    std::size_t eval_depth_ = 0;             // recursion counter for friendly stack overflow
+    // Issue #4727: interned symbol atoms. A quoted identifier atom evaluates
+    // to make_symbol(idx) with idx a slot here — global to the evaluator, so
+    // two workspace COW layers (separate StringPools, so the same name has
+    // different SymIds) still produce the SAME symbol value. Name-keyed (not
+    // SymId-keyed) because SymId is pool-local: that pool-locality is the
+    // #4727 bug (quoted symbols were string_heap_ indices, and
+    // string_intern_by_sym_ is keyed by the pool-local SymId, so a
+    // workspace atom and the caller's literal got different indices ->
+    // eq? #f). Symbol identity must not depend on any pool.
+    std::vector<std::string> symbol_table_;
+    // O(log n) name -> slot index; std::less<> gives heterogeneous lookup on
+    // string_view so intern() does not allocate a temporary key.
+    std::map<std::string, std::uint64_t, std::less<>> symbol_index_;
+    // Symbols are interned from the JIT'd path and from fiber bodies, so the
+    // table append + index insert are serialized (keyword_table_ predates
+    // that requirement; atoms are far more frequent than keywords).
+    mutable std::mutex symbol_table_mtx_;
+    std::size_t eval_depth_ = 0; // recursion counter for friendly stack overflow
     // Issue #4456 vs try-catch contract (#try-catch-error regression net):
     // outside a try body, display consumes an error-valued argument (prints
     // and returns void, so a later begin form still runs). Inside a try
@@ -18239,11 +18276,12 @@ private:
 
 
 // Pair-aware value formatting (recursively prints lists)
-export inline std::string
-format_value(const types::EvalValue& v, std::span<const std::string> heap,
-             std::span<const Pair> pairs, int depth = 0, const Primitives* primitives = nullptr,
-             std::span<const std::string> keywords = {},
-             std::span<const std::vector<types::EvalValue>> vectors = {}) {
+export inline std::string format_value(const types::EvalValue& v, std::span<const std::string> heap,
+                                       std::span<const Pair> pairs, int depth = 0,
+                                       const Primitives* primitives = nullptr,
+                                       std::span<const std::string> keywords = {},
+                                       std::span<const std::vector<types::EvalValue>> vectors = {},
+                                       std::span<const std::string> symbols = {}) {
     const int max_depth = 64;
     if (depth > max_depth)
         return "...";
@@ -18272,6 +18310,13 @@ format_value(const types::EvalValue& v, std::span<const std::string> heap,
         }
         return std::format("<string[{}]>", types::as_string_idx(v));
     }
+    // Issue #4727: symbol atoms format as their bare interned name.
+    if (types::is_symbol(v)) {
+        auto sidx = types::as_symbol_idx(v);
+        if (!symbols.empty() && sidx < symbols.size())
+            return symbols[sidx];
+        return std::format("<symbol[{}]>", sidx);
+    }
     if (types::is_keyword(v)) {
         auto kidx = types::as_keyword_idx(v);
         if (!keywords.empty() && kidx < keywords.size())
@@ -18293,7 +18338,7 @@ format_value(const types::EvalValue& v, std::span<const std::string> heap,
                 break;
             }
             elements.push_back(format_value(pairs[cidx].car, heap, pairs, depth + 1, primitives,
-                                            keywords, vectors));
+                                            keywords, vectors, symbols));
             current = pairs[cidx].cdr;
             if (elements.size() > 256) {
                 elements.push_back("...");
@@ -18321,7 +18366,8 @@ format_value(const types::EvalValue& v, std::span<const std::string> heap,
         } else {
             if (!elements.empty())
                 result += " . ";
-            result += format_value(current, heap, pairs, depth + 1, primitives, keywords, vectors);
+            result += format_value(current, heap, pairs, depth + 1, primitives, keywords, vectors,
+                                   symbols);
         }
         result += ")";
         return result;
@@ -18337,7 +18383,8 @@ format_value(const types::EvalValue& v, std::span<const std::string> heap,
         for (std::size_t i = 0; i < elems.size(); ++i) {
             if (i > 0)
                 out += ' ';
-            out += format_value(elems[i], heap, pairs, depth + 1, primitives, keywords, vectors);
+            out += format_value(elems[i], heap, pairs, depth + 1, primitives, keywords, vectors,
+                                symbols);
         }
         out += ')';
         return out;

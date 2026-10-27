@@ -15,6 +15,9 @@
  *                 distinct from '() (#4502 step 4),
  *                 kind 8 = boxed Float, kind 9 = boxed String (payload =
  *                 pool index, up to 2^56). No range comparisons.
+ *                 kind 10 = interned Symbol (payload = symbol-table index,
+ *                 ABI-additive: kind 10 was unassigned, so every existing
+ *                 encoding above keeps its exact bits — Issue #4727).
  * Change anything here => bump AURA_VALUE_ABI; static_asserts in
  * value_tags.h and runtime.c keep the copies honest. */
 #ifndef AURA_VALUE_ABI_H
@@ -38,6 +41,10 @@
 #define AURA_KIND_UNSPEC 3
 #define AURA_KIND_FLOAT 8
 #define AURA_KIND_STRING 9
+/* Issue #4727: interned symbol atom. Same immediate shape as String; the
+ * payload indexes the evaluator-global symbol table, so two symbols with
+ * the same name share one payload and eq? is bit identity. */
+#define AURA_KIND_SYMBOL 10
 
 #define AURA_V_FALSE 3LL
 #define AURA_V_TRUE 7LL
@@ -45,6 +52,7 @@
 #define AURA_V_UNSPEC 15LL
 #define AURA_FLOAT_LOW8 35LL  /* AURA_IMM_LOW8(AURA_KIND_FLOAT) */
 #define AURA_STRING_LOW8 39LL /* AURA_IMM_LOW8(AURA_KIND_STRING) */
+#define AURA_SYMBOL_LOW8 43LL /* AURA_IMM_LOW8(AURA_KIND_SYMBOL) */
 
 #define AURA_FIXNUM_MAX ((long long)((1ULL << 62) - 1))
 #define AURA_FIXNUM_MIN (-AURA_FIXNUM_MAX - 1)
@@ -58,9 +66,12 @@
      ((long long)(v)) == AURA_V_VOID || ((long long)(v)) == AURA_V_UNSPEC)
 #define AURA_IS_FLOAT(v) ((((long long)(v)) & 0xFF) == AURA_FLOAT_LOW8)
 #define AURA_IS_STRING(v) ((((long long)(v)) & 0xFF) == AURA_STRING_LOW8)
+#define AURA_IS_SYMBOL(v) ((((long long)(v)) & 0xFF) == AURA_SYMBOL_LOW8)
 #define AURA_FLOAT_IDX(v) ((long long)AURA_IMM_PAYLOAD(v))
 #define AURA_STRING_IDX(v) ((long long)AURA_IMM_PAYLOAD(v))
+#define AURA_SYMBOL_IDX(v) ((long long)AURA_IMM_PAYLOAD(v))
 #define AURA_MAKE_FLOAT(i) AURA_IMM(AURA_KIND_FLOAT, (i))
 #define AURA_MAKE_STRING(i) AURA_IMM(AURA_KIND_STRING, (i))
+#define AURA_MAKE_SYMBOL(i) AURA_IMM(AURA_KIND_SYMBOL, (i))
 
 #endif /* AURA_VALUE_ABI_H */

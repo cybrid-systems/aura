@@ -437,6 +437,11 @@ private:
     // string of the same text (add_string dedups). Cache them apart so
     // ":find" the string and :find the keyword do not alias.
     std::unordered_map<std::uint32_t, EvalValue> const_keyword_cache_;
+    // Issue #4727: ConstString operands[2]==2 is a symbol atom. Cached apart
+    // from strings/keywords: the value is make_symbol(symbol-table slot), not
+    // a string-heap index. Identity is the evaluator-global table's, so a
+    // name compiled in two modules (or a workspace layer) still compares eq?.
+    std::unordered_map<std::uint32_t, EvalValue> const_symbol_cache_;
 
     // Explicit call stack: replaces C++ recursion for closure calls.
     // deque so a nested call_closure can push while run_function still

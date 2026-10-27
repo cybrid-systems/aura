@@ -1,0 +1,43 @@
+; Issue #4727: a quoted symbol returned from workspace code (set-code +
+; eval-current) is an interned symbol, not a string. symbol? is #t and it is
+; eq? to the same literal in the loaded program — which is what makes
+; eq? / memv dispatch on an evolved policy's symbolic tags work. Holds with
+; the tier on and off (AURA_TIER_JIT=1/0) and after mutate:rebind.
+(define *fails* 0)
+(define *n* 0)
+(define (check! ok msg)
+  (set! *n* (+ *n* 1))
+  (if (not ok)
+      (begin (set! *fails* (+ *fails* 1))
+             (display "  FAIL: ") (display msg) (newline))))
+
+; The workspace body returns a quoted tag, exactly the EDSL-policy shape.
+(set-code "(define (ws-level x) (if (> x 1) 'high 'low))")
+(eval-current)
+(define v (ws-level 2))
+(check! (symbol? v) "workspace atom is a symbol")
+(check! (not (string? v)) "workspace atom is not a string")
+(check! (eq? v 'high) "workspace atom eq? to the caller literal")
+(check! (equal? v 'high) "workspace atom equal? to the caller literal")
+(check! (eq? (ws-level 0) 'low) "other branch atom eq? too")
+(check! (equal? (symbol->string v) "high") "symbol->string names the atom")
+(check! (equal? (string->symbol "high") "high") "string->symbol keeps the name text")
+(check! (eq? (car '(high low)) 'high) "atom inside a quoted list is a symbol")
+(check! (= (if (memv v '(high low)) 1 0) 1) "memv dispatch finds the atom")
+(check! (= (if (eq? v 'low) 1 0) 0) "eq? dispatch does not mis-fire")
+
+; A rebind changes the tag the policy returns: the NEW literal must still be
+; the same interned symbol the caller's literal is (dispatch keeps working
+; across the evolution instead of silently going #f).
+(mutate:rebind "ws-level" "(lambda (x) (if (> x 1) 'top 'bottom))" "issue-4727-tag-swap")
+(check! (eq? (ws-level 2) 'top) "rebound atom eq? to the caller literal")
+(check! (eq? (ws-level 0) 'bottom) "rebound other branch eq? too")
+(check! (= (if (memv (ws-level 2) '(top bottom)) 1 0) 1) "memv after rebind")
+
+; Display/write of an atom is its bare name (a symbol is not a quoted string).
+(check! (equal? (format "~a" (ws-level 2)) "top") "display names the atom")
+
+(if (= *fails* 0)
+    (begin (display "OK-workspace-symbol-4727 ") (display *n*) (display " checks") (newline))
+    (begin (display "workspace_symbol_intern_4727: ") (display (- *n* *fails*))
+           (display "/") (display *n*) (newline) (exit 1)))

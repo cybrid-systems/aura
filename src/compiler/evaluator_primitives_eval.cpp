@@ -1459,7 +1459,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // Format result as string
         auto formatted =
             aura::compiler::format_value(result, ev.string_heap_, ev.pairs_, 0, &ev.primitives_,
-                                         ev.keyword_table(), ev.vector_heap_);
+                                         ev.keyword_table(), ev.vector_heap_, ev.symbol_table_);
         const auto ris = static_cast<std::uint64_t>(ev.push_string_heap(std::move(formatted)));
         return make_string(ris);
     });

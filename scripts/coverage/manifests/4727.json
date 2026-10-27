@@ -1,0 +1,142 @@
+{
+  "issue": 4727,
+  "title": "Issue #4727: a quoted identifier atom materialized from workspace code (set-code + eval-current) is an interned symbol — symbol? #t and eq? to the same literal in the loaded program, under AURA_TIER_JIT on/off and after mutate:rebind — because the atom is interned by NAME in an evaluator-global symbol table (ImmKind 10) instead of being a string_heap_ index keyed by a pool-local SymId.",
+  "ok": "OK: Issue #4727 interned workspace symbols - quoted atoms are ImmKind 10 symbols interned by name in the evaluator-global symbol table, so symbol? is #t, eq?/equal? to the caller's literal is #t across workspace COW layers and both tier faces, memv dispatch finds them, and a mutate:rebind tag swap keeps identity",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "lib/aura_value_abi.h",
+      "contains": [
+        "AURA_KIND_SYMBOL 10",
+        "AURA_SYMBOL_LOW8 43LL",
+        "AURA_IS_SYMBOL(v)",
+        "AURA_MAKE_SYMBOL(i)",
+        "Issue #4727"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/value_tags.h",
+      "contains": [
+        "kImmKindSymbol = AURA_KIND_SYMBOL",
+        "make_symbol_raw_v2",
+        "is_symbol_raw_v2",
+        "symbol_idx_raw_v2",
+        "#4727: symbol must not alias string/float low bytes"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/value.ixx",
+      "contains": [
+        "make_symbol(std::uint64_t idx)",
+        "is_symbol(const EvalValue& v)",
+        "as_symbol_idx",
+        "Issue #4727: interned symbols"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "intern_symbol(std::string_view name)",
+        "std::vector<std::string> symbol_table_",
+        "symbol_index_",
+        "#4727 bug (quoted symbols were string_heap_ indices",
+        "std::map<std::string, std::uint64_t, std::less<>> symbol_index_"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "the datum flag marks a quoted-datum conversion",
+        "aura::ast::NodeId nid, bool datum",
+        "return intern_symbol(name);",
+        "/*datum=*/true",
+        "car_val = ident_text_value(car_val);"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/lowering_impl.cpp",
+      "contains": [
+        "operands[2]==2 interns a SYMBOL atom",
+        "/*symbol=*/2"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "paths": [
+        "src/compiler/ir_executor_impl.cpp",
+        "src/compiler/ir_executor.ixx"
+      ],
+      "contains": [
+        "const_symbol_cache_",
+        "ops[2] == 2",
+        "context_.evaluator->intern_symbol(content)"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "paths": [
+        "src/compiler/aura_jit.cpp",
+        "src/compiler/aura_jit_runtime.cpp"
+      ],
+      "contains": [
+        "aura_intern_symbol",
+        "fn_intern_symbol",
+        "aura_symbol_name",
+        "is_symbol_raw_v2",
+        "aura_set_symbol_hooks"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "Issue #4727: JIT quoted-symbol atoms intern",
+        "aura_set_symbol_hooks",
+        "evp->intern_symbol("
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_core.cpp",
+      "contains": [
+        "Issue #4727: quoted identifier atoms are first-class interned",
+        "types::is_symbol(a[0])"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_runtime.cpp",
+      "contains": [
+        "Issue #4727: symbol atom prints its interned name",
+        "Issue #4727 deliberately adds NO conversion primitives"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "lib/std/string.aura",
+      "contains": [
+        "Issue #4727: a quoted identifier atom is a distinct interned symbol kind",
+        "(define (symbol->string s)",
+        "(if (symbol? s) (format \"~a\" s) (string-append s \"\"))"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/suite/workspace_symbol_intern_4727.aura",
+      "contains": [
+        "(set-code",
+        "(eval-current)",
+        "(symbol? v)",
+        "(eq? v 'high)",
+        "(mutate:rebind \"ws-level\"",
+        "memv",
+        "OK-workspace-symbol-4727"
+      ]
+    }
+  ]
+}

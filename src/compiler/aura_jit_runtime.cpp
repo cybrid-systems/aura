@@ -767,6 +767,7 @@ extern "C" void aura_set_lock_hooks(void (*lock_read)(void*), void (*unlock_read
 
 extern "C" void aura_clear_top_cell_getter_if_user(void* user);
 extern "C" void aura_clear_keyword_hooks_if_user(void* user);
+extern "C" void aura_clear_symbol_hooks_if_user(void* user); // Issue #4727
 extern "C" void aura_clear_jit_error_display_if_user(void* user);
 extern "C" void aura_register_evaluator_runtime_hook_clearer(void (*fn)(void*));
 
@@ -780,6 +781,7 @@ static void clear_evaluator_runtime_hooks_impl(void* user) {
     }
     aura_clear_top_cell_getter_if_user(user);
     aura_clear_keyword_hooks_if_user(user);
+    aura_clear_symbol_hooks_if_user(user); // Issue #4727
     aura_clear_jit_error_display_if_user(user);
 }
 
@@ -6451,6 +6453,68 @@ int64_t aura_intern_keyword(const char* name) {
     return fn(user, name ? name : "");
 }
 
+// Issue #4727: JIT quoted-symbol atoms. Mirrors the keyword hooks: the
+// intern callback goes through Evaluator::intern_symbol (name-keyed, global
+// to the evaluator), so a symbol compiled into native code and the same
+// literal in the walker are the SAME value — that is what makes eq? #t
+// across the tier face and a workspace layer.
+namespace {
+    struct SymbolHooks {
+        int64_t (*intern)(void*, const char*) = nullptr;
+        const char* (*name)(void*, int64_t) = nullptr;
+        void* user = nullptr;
+    };
+    SymbolHooks g_symbol_hooks;
+    std::mutex g_symbol_hooks_mtx;
+} // namespace
+
+extern "C" void aura_set_symbol_hooks(int64_t (*intern)(void*, const char*),
+                                      const char* (*name)(void*, int64_t), void* user_data) {
+    std::lock_guard<std::mutex> lock(g_symbol_hooks_mtx);
+    g_symbol_hooks.intern = intern;
+    g_symbol_hooks.name = name;
+    g_symbol_hooks.user = user_data;
+}
+
+extern "C" void aura_clear_symbol_hooks_if_user(void* user) {
+    if (!user)
+        return;
+    std::lock_guard<std::mutex> lock(g_symbol_hooks_mtx);
+    if (g_symbol_hooks.user == user)
+        g_symbol_hooks = {};
+}
+
+extern "C" int64_t aura_intern_symbol(const char* name) {
+    int64_t (*fn)(void*, const char*) = nullptr;
+    void* user = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_symbol_hooks_mtx);
+        fn = g_symbol_hooks.intern;
+        user = g_symbol_hooks.user;
+    }
+    if (!fn)
+        return 0;
+    return fn(user, name ? name : "");
+}
+
+extern "C" const char* aura_symbol_name(int64_t idx) {
+    static thread_local std::string tls;
+    const char* (*fn)(void*, int64_t) = nullptr;
+    void* user = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_symbol_hooks_mtx);
+        fn = g_symbol_hooks.name;
+        user = g_symbol_hooks.user;
+    }
+    if (!fn || idx < 0)
+        return nullptr;
+    const char* s = fn(user, idx);
+    if (!s)
+        return nullptr;
+    tls = s;
+    return tls.c_str();
+}
+
 extern "C" const char* aura_keyword_name(int64_t idx) {
     static thread_local std::string tls;
     const char* (*fn)(void*, int64_t) = nullptr;
@@ -7518,6 +7582,19 @@ void aura_display_value(int64_t val, int64_t write_mode) {
         // Issue #4468: same shortest spelling as the tree-walker printer.
         const auto s = aura::compiler::format_float_shortest(aura_float_ref(val));
         fputs(s.c_str(), stdout);
+        fflush(stdout);
+        return;
+    }
+    // Issue #4727: symbol atom (ImmKind 10). Print the interned name; the
+    // raw word would be an unreadable 0x??.. . write mode is the same text
+    // (R7RS write of a symbol is its bare name).
+    if (aura::compiler::types::is_symbol_raw_v2(val)) {
+        const auto sidx = static_cast<int64_t>(aura::compiler::types::symbol_idx_raw_v2(val));
+        const char* s = aura_symbol_name(sidx);
+        if (s && s[0] != '\0')
+            fputs(s, stdout);
+        else
+            fprintf(stdout, "<symbol[%lld]>", static_cast<long long>(sidx));
         fflush(stdout);
         return;
     }

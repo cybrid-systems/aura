@@ -1887,15 +1887,21 @@ static std::uint32_t lower_flat_expr(
                 if (cv.tag == NodeTag::LiteralFloat || cv.tag == NodeTag::LiteralString) {
                     return lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
                 }
-                // Issue #2568: quoted symbols are data (string-heap names), not
-                // variable lookups. Falling through to lower_flat_expr on a
-                // Variable emitted a free-var load that returned 0 for unbound
-                // names — so `(define d 'commit)` bound fixnum 0 under IR.
+                // Issue #2568: quoted symbols are data, not variable lookups.
+                // Falling through to lower_flat_expr on a Variable emitted a
+                // free-var load that returned 0 for unbound names — so
+                // `(define d 'commit)` bound fixnum 0 under IR.
+                //
+                // Issue #4727: operands[2]==2 interns a SYMBOL atom (the
+                // evaluator-global symbol table), matching the tree-walker's
+                // datum conversion. The IR keeps only the name; identity is
+                // resolved at materialization, so two compilation units (and
+                // a workspace layer's own StringPool) still agree on eq?.
                 if (cv.tag == NodeTag::Variable) {
                     auto s = pool.resolve(cv.sym_id);
                     auto si = state.module.add_string(std::string(s));
                     auto slot = state.alloc_local();
-                    state.emit(IROpcode::ConstString, slot, si, 0);
+                    state.emit(IROpcode::ConstString, slot, si, /*symbol=*/2);
                     return slot;
                 }
             }
@@ -1940,12 +1946,13 @@ static std::uint32_t lower_flat_expr(
                 if (nv.tag == NodeTag::LiteralFloat || nv.tag == NodeTag::LiteralString) {
                     return lower_flat_expr(state, flat, pool, nid, cache, cache_hits);
                 }
-                // Issue #2568: symbol atoms inside quoted lists are strings.
+                // Issue #2568 / #4727: symbol atoms inside quoted lists are
+                // interned symbols (operands[2]==2), same as the atom case.
                 if (nv.tag == NodeTag::Variable) {
                     auto s = pool.resolve(nv.sym_id);
                     auto si = state.module.add_string(std::string(s));
                     auto slot = state.alloc_local();
-                    state.emit(IROpcode::ConstString, slot, si, 0);
+                    state.emit(IROpcode::ConstString, slot, si, /*symbol=*/2);
                     return slot;
                 }
                 // Lists: Pair or Call as data
