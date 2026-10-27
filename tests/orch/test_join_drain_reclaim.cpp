@@ -10802,7 +10802,10 @@ int run_test_join_drain_reclaim() {
                 "inline serve::JoinResult join_agent(AgentHandle& h, JoinPolicy policy)");
             CHECK(ja != std::string::npos, "3930 AC4: join_agent present");
             if (ja != std::string::npos) {
-                const auto snip = spawn.substr(ja, 900);
+                // Issue #4724 added the join budget-origin comment block at
+                // the top of join_agent, pushing the import_proxy gate past
+                // the old 900-char window (pin-only; the gate is unchanged).
+                const auto snip = spawn.substr(ja, 1700);
                 CHECK(snip.find("if (h.import_proxy)") != std::string::npos,
                       "3930 AC4: join_agent snip gates import_proxy");
                 CHECK(snip.find("reserved_memory_bytes == 0") == std::string::npos,

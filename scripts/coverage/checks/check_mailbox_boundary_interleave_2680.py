@@ -100,7 +100,10 @@ def main() -> int:
         "AC2",
         mb,
     )
-    must("this_fiber_holds = aura_evaluator_mutation_boundary_depth() > 0", "AC2 #3692", mb)
+    # Issue #4721: this-fiber truth is the real-frame ABI (the soft orch
+    # body window keeps the #3692 split but must not empty an in-body recv).
+    must("this_fiber_holds =", "AC2 #3692", mb)
+    must("aura_evaluator_mutation_boundary_this_fiber_real() != 0", "AC2 #3692", mb)
     must("process_held = aura_evaluator_mutation_boundary_held() != 0", "AC2 #3692", mb)
     # Hooks must be defined in evaluator_fiber_mutation.cpp (the C ABI shim
     # authority module).

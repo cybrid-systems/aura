@@ -3629,9 +3629,12 @@ static void ac3763_2_recv_try_pop_under_guard() {
         CHECK(p_holds != std::string::npos && p_mu != std::string::npos && p_holds < p_mu,
               "3763 AC2: this_fiber_holds before mu_ in recv");
     }
+    // Issue #4721: try_pop now keys on the REAL-frame ABI (the soft orch
+    // body window holds no workspace_mtx_, so it must not skip the pop).
     CHECK(mb.find("try_pop") != std::string::npos &&
-              mb.find("if (aura_evaluator_mutation_boundary_depth() > 0)") != std::string::npos,
-          "3763 AC2: try_pop Guard-skips mu_");
+              mb.find("if (aura_evaluator_mutation_boundary_this_fiber_real() != 0)") !=
+                  std::string::npos,
+          "3763 AC2: try_pop Guard-skips mu_ (real-frame truth, #4721)");
     CHECK(read_file_3613("tests/compiler/test_issue_3763.cpp").empty(), "3763 AC2: no invent");
     aura::compiler::typed_audit::apply_dev_audit_defaults();
 }

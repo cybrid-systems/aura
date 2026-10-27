@@ -50,6 +50,21 @@ __attribute__((weak)) int aura_evaluator_mutation_boundary_held() {
     return 0;
 }
 
+// Issue #4721: real-vs-soft boundary split for the messaging gates (weak
+// stubs). Light-link hosts have no Evaluator, hence no mutation stack:
+// nothing is "real", and the soft-only window cannot exist — both 0 keeps
+// every gate on its pre-#4721 quiet path.
+__attribute__((weak)) std::size_t
+aura_evaluator_mutation_stack_real_depth_from_ptr(void* /*mutation_stack_storage*/) noexcept {
+    return 0;
+}
+__attribute__((weak)) int aura_evaluator_mutation_boundary_this_fiber_real() noexcept {
+    return 0;
+}
+__attribute__((weak)) int aura_evaluator_mutation_boundary_held_nonlocal() noexcept {
+    return 0;
+}
+
 // Issue #2849: process-wide held enter/exit weak no-ops (Evaluator not linked).
 __attribute__((weak)) void aura_process_mutation_boundary_held_enter() noexcept {}
 __attribute__((weak)) void aura_process_mutation_boundary_held_exit() noexcept {}

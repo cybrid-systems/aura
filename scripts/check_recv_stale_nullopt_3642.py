@@ -58,7 +58,9 @@ def main() -> int:
     if sig < 0 or rstart < 0:
         fails.append("AC1: 4-arg recv overload missing")
     else:
-        window = mb[rstart : sig + 3600]
+        # Issue #4721 added real-frame Policy-A rationale inside recv; the
+        # stale branch offsets move, the ordering contract does not.
+        window = mb[rstart : sig + 4400]
         if "if (maybe_clear_stale_held_ref_on_recv(out, &local_stats_)) {" not in window:
             fails.append("AC1: recv stale branch missing")
         if "*stale_handoff = true;" not in window:
