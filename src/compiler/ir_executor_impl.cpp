@@ -15,6 +15,7 @@ module;
 #include <utility>
 #include <variant>
 #include <vector>
+#include "core/fiber_context.hh" // Issue #4716: fiber-local execution context
 #include "runtime_shared.h"
 #include "aura_jit_bridge.h" // #2129: aura_get_aot_live_linear_state_fingerprint
 #include "observability_logger.h"
@@ -487,7 +488,14 @@ static bool ir_call_is_tail(const IRFunction& func, std::uint32_t block_idx, std
     return false;
 }
 
-thread_local IRInterpreter* IRInterpreter::t_active_ = nullptr;
+// Issue #4716: the active interpreter is execution context, not a
+// per-thread cache: a fiber that yields inside IR execution (deopt guard
+// exit, tree-walker callee, channel wait) and resumes on another worker must
+// still see its own interpreter. The slot lives in the running fiber's
+// context; the thread_local is only the cached context pointer.
+IRInterpreter*& IRInterpreter::t_active() noexcept {
+    return reinterpret_cast<IRInterpreter*&>(aura::core::fiber_ctx::active().ir_active);
+}
 
 EvalResult IRInterpreter::drain_call_stack(std::size_t base) {
     // Issue #4600 §3: publish this instance for the duration of the drain.

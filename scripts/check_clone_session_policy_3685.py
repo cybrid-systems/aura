@@ -60,7 +60,7 @@ def main() -> int:
         "CloneSessionPolicy session{};" in me
         and "session = top_cap_guard.session;" in me
         and "chk.effective.allow_rest_hygiene" in me
-        and "s_force_hygienic = chk.effective.force_hygienic;" in me
+        and "s_force_hygienic() = chk.effective.force_hygienic;" in me
     )
     report("AC3", good, "guard captures at arm; TLS mirrors stay diagnostics")
 

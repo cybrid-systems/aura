@@ -16,8 +16,9 @@
 #include "runtime_production_abi.h"           // Issue #3325: production multi-worker latch
 #include "steal_safety.h"                     // Issue #3826: Ready residual sticky gate
 #include "aura_platform.h"
-#include "core/gc_hooks.h"      // Issue #1364
-#include "core/lifetime_pin.hh" // Issue #3023: post-join linear_roots unpin
+#include "core/gc_hooks.h"       // Issue #1364
+#include "core/lifetime_pin.hh"  // Issue #3023: post-join linear_roots unpin
+#include "core/fiber_context.hh" // Issue #4716: per-fiber evaluator execution context
 #include <unordered_map> // Issue #2726: process-wide Fiber* registry for cross-fiber cancel lookup
 
 #include <sys/mman.h>
@@ -1274,6 +1275,11 @@ Fiber::Fiber(Func func, size_t stack_size)
     // any thread can mark it for the fiber's whole life. It starts quiescent
     // (kTwQuiescent), which is exactly right before the first resume.
     tw_roots_ = aura_tw_roots_new();
+    // Issue #4716: the fiber's evaluator EXECUTION CONTEXT is created here
+    // (not at first resume) so a body that is spawned and immediately parked
+    // still owns its own context. nullptr on OOM -> the body runs on the
+    // thread's plain fallback context (degraded, never crashes).
+    fiber_ctx_ = aura::core::fiber_ctx::aura_fiber_ctx_create(id_);
     g_fiber_init_aura_result_ok.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -1471,6 +1477,13 @@ void Fiber::release_done_resources() noexcept {
     // it, and the segment's frame pointers point into this stack.
     aura_tw_roots_free(tw_roots_);
     tw_roots_ = nullptr;
+    // Issue #4716: drop the fiber's execution context with the stack it
+    // belongs to. A body that is still parked never resumes, so the cached
+    // pointer (if any thread still had it) is dropped defensively inside
+    // destroy.
+    aura::core::fiber_ctx::aura_fiber_ctx_destroy(
+        static_cast<aura::core::fiber_ctx::Context*>(fiber_ctx_));
+    fiber_ctx_ = nullptr;
     unmap_stack();
     func_ = nullptr;
     done_release_state_.store(2, std::memory_order_release);
@@ -1486,6 +1499,11 @@ Fiber::~Fiber() {
     // (a fiber destroyed while parked never resumes).
     aura_tw_roots_free(tw_roots_);
     tw_roots_ = nullptr;
+    // Issue #4716: idempotent with release_done_resources (whichever runs
+    // first wins; the other sees nullptr).
+    aura::core::fiber_ctx::aura_fiber_ctx_destroy(
+        static_cast<aura::core::fiber_ctx::Context*>(fiber_ctx_));
+    fiber_ctx_ = nullptr;
     // Issue #2726: unregister Fiber* from the process-wide registry
     // first (before any teardown that might race an in-flight
     // force-degrade reference). After this point, any concurrent
@@ -1646,6 +1664,15 @@ void Fiber::resume() {
     // Issue #2491: install TenantScope from assigned_tenant_id (when set
     // + production sandbox active). Bridge is a C-linkage shim that the
     // Evaluator module overrides; weak no-op when not linked.
+    // Issue #4716: install this fiber's evaluator execution context BEFORE
+    // the tenant install / mutation-stack sync, so every item the resume
+    // path (re)binds lands in the FIBER's context, not in the worker's
+    // plain fallback. The pointer swap is the whole mechanism: the values
+    // never move between threads.
+    if (!fiber_ctx_)
+        fiber_ctx_ = aura::core::fiber_ctx::aura_fiber_ctx_create(id_);
+    aura::core::fiber_ctx::aura_fiber_ctx_attach(
+        static_cast<aura::core::fiber_ctx::Context*>(fiber_ctx_));
     aura_fiber_install_tenant_scope_for_resume(this);
     // Issue #2184 / #2346 / #2518 / #2677: post-sync resume invariant.
     // #2677 consolidation: single call site checks BOTH resume-safety-ticket
@@ -1660,6 +1687,9 @@ void Fiber::resume() {
         if (g_fiber_setter_)
             g_fiber_setter_(prev_fiber_void);
         g_current_fiber = prev;
+        // Issue #4716: this resume never ran the body — drop the context
+        // pointer so the worker keeps running on its plain fallback.
+        (void)aura::core::fiber_ctx::aura_fiber_ctx_detach();
         return;
     }
     // Issue #485: transfer mutation stack + bump migration stats.
@@ -1701,6 +1731,12 @@ void Fiber::resume() {
     // worker. Restores the previous principal so a subsequent resume of a
     // different fiber on the same worker starts from a clean baseline.
     aura_fiber_release_tenant_scope_after_yield();
+    // Issue #4716: control is back on the worker, and the TenantScope has
+    // already restored its snapshot into the FIBER's context, so this is the
+    // point where the cached pointer goes back to the worker's fallback. A
+    // later resume of this fiber (possibly on another worker) attaches the
+    // same context again.
+    (void)aura::core::fiber_ctx::aura_fiber_ctx_detach();
 
     // Issue #453: panic checkpoint transfer on fiber migration.
     // After the resume returns, check whether a pending panic

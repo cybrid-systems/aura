@@ -1521,12 +1521,20 @@ inline void notify_fiber_safe_compact() noexcept {
 // (evaluator_mutation_boundary.cpp) alongside the per-Fiber field;
 // steal-complete restamps pass the explicit evaluator id instead (they may
 // run on the thief's thread).
-inline thread_local void* g_current_eval_identity = nullptr;
+// Issue #4716: this mirror is EXECUTION CONTEXT, not a per-thread cache.
+// The Guard that stamps it can yield inside the mutation boundary and
+// resume on another worker; a bare thread_local then either loses the
+// identity or attributes one fiber's proof to a sibling. It now lives in
+// the running fiber's context (core/fiber_context.hh). The header keeps its
+// no-STL contract by going through a C face — the read is off the
+// allocation hot path (densify Moving-window completion only).
+extern "C" void* aura_fiber_eval_identity_get() noexcept;
+extern "C" void aura_fiber_eval_identity_set(void* id) noexcept;
 inline void set_current_eval_identity(void* id) noexcept {
-    g_current_eval_identity = id;
+    aura_fiber_eval_identity_set(id);
 }
 [[nodiscard]] inline void* current_eval_identity() noexcept {
-    return g_current_eval_identity;
+    return aura_fiber_eval_identity_get();
 }
 
 } // namespace aura::gc_hooks

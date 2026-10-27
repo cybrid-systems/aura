@@ -1,25 +1,35 @@
 module;
-#include "compiler/hash_meta.h" // FNV constants (#901)
+#include "compiler/hash_meta.h"  // FNV constants (#901)
+#include "core/fiber_context.hh" // Issue #4716: fiber-local execution context
 
 module aura.core.type;
 import std;
 
 namespace {
 
-struct TregLockFrame {
-    const void* lock = nullptr;
-    int unique_depth = 0;
-    int shared_skip = 0;
-};
+using aura::core::fiber_ctx::TregLockFrame;
+constexpr int kTregLockFrameCap = aura::core::fiber_ctx::kTregLockFrameCap;
 
-constexpr int kTregLockFrameCap = 8;
-thread_local TregLockFrame g_treg_lock_frames[kTregLockFrameCap];
-thread_local int g_treg_lock_top = 0;
+// Issue #4716: the recursive lock stack is EXECUTION CONTEXT. A fiber that
+// yields while holding the registry lock (a mutation boundary / mailbox wait
+// inside register_*) must resume with its own unique_depth, and a sibling
+// fiber on the same OS thread must see depth 0 — otherwise the sibling's
+// lock() would bump the parked fiber's depth and its unlock() would release
+// a mutex it does not own. Frames live in the running fiber's context.
+TregLockFrame* treg_lock_frames() noexcept {
+    return aura::core::fiber_ctx::active().treg_frames;
+}
+
+int& treg_lock_top() noexcept {
+    return aura::core::fiber_ctx::active().treg_top;
+}
 
 TregLockFrame* treg_lock_frame(const void* lock) noexcept {
-    for (int i = g_treg_lock_top - 1; i >= 0; --i) {
-        if (g_treg_lock_frames[i].lock == lock)
-            return &g_treg_lock_frames[i];
+    TregLockFrame* frames = treg_lock_frames();
+    const int top = treg_lock_top();
+    for (int i = top - 1; i >= 0; --i) {
+        if (frames[i].lock == lock)
+            return &frames[i];
     }
     return nullptr;
 }
@@ -37,11 +47,12 @@ void TypeRegistry::TypeRegistryLock::lock() {
         return;
     }
     mu_.lock();
-    if (g_treg_lock_top >= kTregLockFrameCap) {
+    int& top = treg_lock_top();
+    if (top >= kTregLockFrameCap) {
         mu_.unlock();
         std::abort();
     }
-    g_treg_lock_frames[g_treg_lock_top++] = TregLockFrame{this, 1, 0};
+    treg_lock_frames()[top++] = TregLockFrame{this, 1, 0};
 }
 
 void TypeRegistry::TypeRegistryLock::unlock() {
@@ -54,10 +65,12 @@ void TypeRegistry::TypeRegistryLock::unlock() {
     }
     if (frame->shared_skip != 0)
         std::abort();
-    const int idx = static_cast<int>(frame - g_treg_lock_frames);
-    for (int i = idx; i < g_treg_lock_top - 1; ++i)
-        g_treg_lock_frames[i] = g_treg_lock_frames[i + 1];
-    --g_treg_lock_top;
+    TregLockFrame* frames = treg_lock_frames();
+    int& top = treg_lock_top();
+    const int idx = static_cast<int>(frame - frames);
+    for (int i = idx; i < top - 1; ++i)
+        frames[i] = frames[i + 1];
+    --top;
     mu_.unlock();
 }
 

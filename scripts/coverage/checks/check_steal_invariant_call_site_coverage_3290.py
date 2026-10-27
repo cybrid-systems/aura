@@ -91,7 +91,9 @@ def main() -> int:
     lint3072 = _read("scripts/coverage/checks/check_steal_enqueue_sole_gate_3072.py")
 
     # ── G1: resume path enters the invariant check before swapcontext ──
-    resume = _function_window(fc, "void Fiber::resume()", 6000)
+    # Issue #4716: the resume head grew (fiber execution-context
+    # attach/detach), pushing the ::swapcontext site past 6000 chars.
+    resume = _function_window(fc, "void Fiber::resume()", 8000)
     must("check_and_enforce_resume_invariants" in resume, "G1: Fiber::resume calls the consolidated invariant check")
     sw = resume.find("::swapcontext")
     chk = resume.find("check_and_enforce_resume_invariants()")

@@ -8,6 +8,7 @@ module;
 #include <cstdint>
 #include <cstdlib>                    // Issue #2101: getenv / strtol for runtime depth/pass caps
 #include "core/capability_model.hh"   // Issue #2023: MacroSelfEvo gate
+#include "core/fiber_context.hh"      // Issue #4716: fiber-local execution context
 #include "core/sandbox.hh"            // Issue #2023: is_sandbox_active
 #include "core/security_event.hh"     // Issue #3543: MacroHygiene SE kind
 #include "core/security_event_wal.hh" // Issue #3543: emit_security_event_durable
@@ -124,15 +125,20 @@ namespace aura::compiler::macro_exp {
 // for the Guard dtor.
 namespace {
     struct InnerExpandCkptFrame;
-    thread_local InnerExpandCkptFrame* g_inner_expand_ckpt = nullptr;
+    // Issue #4716: the checkpoint stack head is EXECUTION CONTEXT — the
+    // expand that installed the checkpoint can yield (its body evaluates)
+    // and resume on another worker, and a sibling fiber's expand must not
+    // see (or restore) this walk's snapshot. It lives in the running
+    // fiber's context; the frames themselves stay on the walk's stack.
+    InnerExpandCkptFrame*& g_inner_expand_ckpt() noexcept;
 
     struct InnerExpandCkptFrame {
         bool owned = false;
         bool consumed = false;
         InnerExpandCkptFrame* prev = nullptr;
         explicit InnerExpandCkptFrame(bool production) noexcept {
-            prev = g_inner_expand_ckpt;
-            g_inner_expand_ckpt = this;
+            prev = g_inner_expand_ckpt();
+            g_inner_expand_ckpt() = this;
             if (production)
                 owned = install_macro_expand_checkpoint() != 0;
         }
@@ -145,23 +151,28 @@ namespace {
         ~InnerExpandCkptFrame() {
             if (owned && !consumed)
                 aura_evaluator_commit_macro_expand_checkpoint();
-            g_inner_expand_ckpt = prev;
+            g_inner_expand_ckpt() = prev;
         }
         InnerExpandCkptFrame(const InnerExpandCkptFrame&) = delete;
         InnerExpandCkptFrame& operator=(const InnerExpandCkptFrame&) = delete;
     };
+
+    InnerExpandCkptFrame*& g_inner_expand_ckpt() noexcept {
+        return reinterpret_cast<InnerExpandCkptFrame*&>(
+            aura::core::fiber_ctx::active().macro_inner_ckpt);
+    }
 } // namespace
 
 // Issue #4077: restore is legal only when this frame's save returned
 // owned. Nested and Guard-owned frames report false.
 [[nodiscard]] static bool expand_inner_checkpoint_owned() noexcept {
-    return g_inner_expand_ckpt != nullptr && g_inner_expand_ckpt->owned &&
-           !g_inner_expand_ckpt->consumed;
+    return g_inner_expand_ckpt() != nullptr && g_inner_expand_ckpt()->owned &&
+           !g_inner_expand_ckpt()->consumed;
 }
 
 static void restore_owned_inner_expand_checkpoint() noexcept {
-    if (g_inner_expand_ckpt != nullptr)
-        g_inner_expand_ckpt->restore_if_owned();
+    if (g_inner_expand_ckpt() != nullptr)
+        g_inner_expand_ckpt()->restore_if_owned();
 }
 
 // Issue #3470: inner expand deny codes that must roll back qq-unwrap
@@ -352,23 +363,92 @@ namespace detail {
 // Depth-as-parameter is correct for both threads and fibers.
 // Residual TLS mirror kept only for non-clone diagnostics that still
 // observe "last known depth on this OS thread" (not authority).
-thread_local int s_hygiene_depth = 0;
+// Issue #4716: every hygiene mirror below is EXECUTION CONTEXT, not a
+// per-thread cache: a fiber that yields mid-walk and resumes on another
+// worker must keep ITS expand's depth / limits (and a sibling fiber on the
+// same worker must not observe them). They live in the running fiber's
+// context; plain threads read their per-thread fallback context, so
+// non-fiber behavior is unchanged.
+int& s_hygiene_depth() noexcept {
+    return aura::core::fiber_ctx::active().macro_depth;
+}
 
 // Issue #2023: MacroSelfEvo policy depth for this expand (set by
 // macro_expand_all / top-level clone). Always ≤ MAX_HYGIENE_DEPTH.
 // Default = hard limit so unconstrained paths keep historical behaviour.
-thread_local int s_effective_max_depth = MAX_HYGIENE_DEPTH;
+int& s_effective_max_depth() noexcept {
+    auto& ctx = aura::core::fiber_ctx::active();
+    if (ctx.macro_effective_max_depth == 0)
+        ctx.macro_effective_max_depth = MAX_HYGIENE_DEPTH; // default = hard limit
+    return ctx.macro_effective_max_depth;
+}
 // Issue #2023: when false, rest-param hygiene gensym is skipped.
-thread_local bool s_allow_rest_hygiene = true;
+bool& s_allow_rest_hygiene() noexcept {
+    return aura::core::fiber_ctx::active().macro_allow_rest_hygiene;
+}
 
 // Issue #2243: per-tenant / per-call mirrors of the 3 MacroSelfEvo policy
 // knobs (force_hygienic, max_gensym_map_size, max_violations_per_fiber).
 // Read inside clone_macro_body fallback paths + name_map insert guards;
 // written from TopLevelMacroCapGuard ctor, restored in dtor so recursion
 // stays consistent.
-thread_local bool s_force_hygienic = false;
-thread_local std::uint32_t s_max_gensym_map_size = 0;
-thread_local std::uint32_t s_max_violations_per_fiber = 0;
+bool& s_force_hygienic() noexcept {
+    return aura::core::fiber_ctx::active().macro_force_hygienic;
+}
+std::uint32_t& s_max_gensym_map_size() noexcept {
+    return aura::core::fiber_ctx::active().macro_max_gensym_map;
+}
+std::uint32_t& s_max_violations_per_fiber() noexcept {
+    return aura::core::fiber_ctx::active().macro_max_violations;
+}
+
+// Issue #4716 observability / AC probe: the hygiene depth + MacroSelfEvo
+// policy the RUNNING context sees. Slots: 0 depth, 1 effective max depth,
+// 2 allow-rest, 3 force-hygienic, 4 max gensym map, 5 max violations.
+// Tests attach two contexts and prove a switch isolates both directions.
+extern "C" std::int64_t aura_macro_hygiene_ctx_probe(int slot) noexcept {
+    switch (slot) {
+        case 0:
+            return s_hygiene_depth();
+        case 1:
+            return s_effective_max_depth();
+        case 2:
+            return s_allow_rest_hygiene() ? 1 : 0;
+        case 3:
+            return s_force_hygienic() ? 1 : 0;
+        case 4:
+            return static_cast<std::int64_t>(s_max_gensym_map_size());
+        case 5:
+            return static_cast<std::int64_t>(s_max_violations_per_fiber());
+        default:
+            return -1;
+    }
+}
+
+extern "C" void aura_macro_hygiene_ctx_probe_set(int slot, std::int64_t v) noexcept {
+    switch (slot) {
+        case 0:
+            s_hygiene_depth() = static_cast<int>(v);
+            break;
+        case 1:
+            s_effective_max_depth() = static_cast<int>(v);
+            break;
+        case 2:
+            s_allow_rest_hygiene() = (v != 0);
+            break;
+        case 3:
+            s_force_hygienic() = (v != 0);
+            break;
+        case 4:
+            s_max_gensym_map_size() = static_cast<std::uint32_t>(v);
+            break;
+        case 5:
+            s_max_violations_per_fiber() = static_cast<std::uint32_t>(v);
+            break;
+        default:
+            break;
+    }
+}
 // Issue #2804: process-wide test override for gensym-map ceiling. When
 // non-zero, rename_binding_pre / rename_binding use this instead of the
 // TLS s_max_gensym_map_size (TopLevelMacroCapGuard overwrites TLS from
@@ -1979,7 +2059,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     if (hygiene_depth == 0)
         retire_own_fiber_pre_walk_deny();
     // Issue #2806: residual TLS mirror for diagnostics only (not authority).
-    s_hygiene_depth = hygiene_depth;
+    s_hygiene_depth() = hygiene_depth;
     // Issue #2171: capture cross-flat status at top-level entry so the
     // success-path exit can call ensure_cross_flat_expand_consistency()
     // exactly once per top-level clone (recursive calls walk the same
@@ -2200,8 +2280,8 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                 return;
             }
             armed = true;
-            prev_depth = s_effective_max_depth;
-            prev_rest = s_allow_rest_hygiene;
+            prev_depth = s_effective_max_depth();
+            prev_rest = s_allow_rest_hygiene();
             // Issue #2101 / #3028: capability may only tighten further under
             // the process-wide runtime depth cap. Session limit is a member
             // (explicit authority); TLS is a diagnostic mirror only.
@@ -2210,16 +2290,16 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                 if (chk.effective.max_depth > 0)
                     cap_d = static_cast<int>(chk.effective.max_depth);
                 session_depth_limit = combine_depth_limit(cap_d);
-                s_effective_max_depth = session_depth_limit;
+                s_effective_max_depth() = session_depth_limit;
             }
-            s_allow_rest_hygiene = chk.effective.allow_rest_hygiene;
+            s_allow_rest_hygiene() = chk.effective.allow_rest_hygiene;
             // Issue #2243: thread 3 new MacroSelfEvo knobs through for the
             // duration of this expand + push the per-fiber violation budget
             // into the C-linkage helper used by the per-fiber hygiene gate.
-            s_force_hygienic = chk.effective.force_hygienic;
-            s_max_gensym_map_size = chk.effective.max_gensym_map_size;
-            s_max_violations_per_fiber = chk.effective.max_violations_per_fiber;
-            aura_macro_self_evo_set_fiber_violation_budget(s_max_violations_per_fiber);
+            s_force_hygienic() = chk.effective.force_hygienic;
+            s_max_gensym_map_size() = chk.effective.max_gensym_map_size;
+            s_max_violations_per_fiber() = chk.effective.max_violations_per_fiber;
+            aura_macro_self_evo_set_fiber_violation_budget(s_max_violations_per_fiber());
             session =
                 CloneSessionPolicy{chk.effective.allow_rest_hygiene,
                                    chk.effective.max_gensym_map_size, chk.effective.force_hygienic};
@@ -2227,13 +2307,13 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         ~TopLevelMacroCapGuard() noexcept {
             if (!armed)
                 return;
-            s_effective_max_depth = prev_depth;
-            s_allow_rest_hygiene = prev_rest;
+            s_effective_max_depth() = prev_depth;
+            s_allow_rest_hygiene() = prev_rest;
             // Issue #2243: restore the 3 new knobs to default-off so nested
             // expand / macro_expand_all doesn't leak outer-tenant limits.
-            s_force_hygienic = false;
-            s_max_gensym_map_size = 0;
-            s_max_violations_per_fiber = 0;
+            s_force_hygienic() = false;
+            s_max_gensym_map_size() = 0;
+            s_max_violations_per_fiber() = 0;
             aura_macro_self_evo_set_fiber_violation_budget(0);
         }
         TopLevelMacroCapGuard(const TopLevelMacroCapGuard&) = delete;
@@ -4092,14 +4172,14 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
             int prev_depth;
             bool prev_rest;
             DepthPolicyGuard(int d, bool rest) noexcept
-                : prev_depth(s_effective_max_depth)
-                , prev_rest(s_allow_rest_hygiene) {
-                s_effective_max_depth = d;
-                s_allow_rest_hygiene = rest;
+                : prev_depth(s_effective_max_depth())
+                , prev_rest(s_allow_rest_hygiene()) {
+                s_effective_max_depth() = d;
+                s_allow_rest_hygiene() = rest;
             }
             ~DepthPolicyGuard() noexcept {
-                s_effective_max_depth = prev_depth;
-                s_allow_rest_hygiene = prev_rest;
+                s_effective_max_depth() = prev_depth;
+                s_allow_rest_hygiene() = prev_rest;
             }
             DepthPolicyGuard(const DepthPolicyGuard&) = delete;
             DepthPolicyGuard& operator=(const DepthPolicyGuard&) = delete;

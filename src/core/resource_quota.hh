@@ -15,6 +15,7 @@
 #include <limits>
 #include <memory>
 
+#include "core/fiber_context.hh"      // Issue #4716: fiber-local execution context
 #include "core/provenance_tracker.hh" // Issue #3630: multi_tenant_env_active arm consult
 #include <mutex>
 #include <optional>
@@ -32,16 +33,21 @@ inline constexpr int kQuotaPerTenantIssue = 3049;
 
 using TenantId = std::uint64_t;
 
-// Issue #3049: TLS admission tenant (0 = unkeyed / process-global).
+// Issue #3049: admission tenant (0 = unkeyed / process-global).
 // Scheduler / orch read this (or Fiber::assigned_tenant_id) at reserve.
 // Tests set it explicitly. Soft / off never consults the map.
-inline thread_local TenantId t_quota_tenant = 0;
-
+//
+// Issue #4716: this is EXECUTION CONTEXT, not a per-thread cache. A fiber
+// that yields inside a mutation boundary and resumes on another worker must
+// still charge its own tenant, and a sibling fiber on the same worker must
+// never inherit it. The slot therefore lives in the running fiber's
+// context (core/fiber_context.hh); a plain thread reads/writes its
+// per-thread fallback context, so non-fiber behavior is unchanged.
 [[nodiscard]] inline TenantId current_quota_tenant() noexcept {
-    return t_quota_tenant;
+    return aura::core::fiber_ctx::active().quota_tenant;
 }
 inline void set_current_quota_tenant(TenantId t) noexcept {
-    t_quota_tenant = t;
+    aura::core::fiber_ctx::active().quota_tenant = t;
 }
 
 // -1 unknown / no override, 0 off, 1 on.

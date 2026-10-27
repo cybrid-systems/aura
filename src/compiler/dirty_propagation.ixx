@@ -3,6 +3,7 @@
 
 module;
 
+#include "core/fiber_context.hh"           // Issue #4716: fiber-local execution context
 #include "core/transparent_string_hash.hh" // #2247 dual-graph string maps
 #include "compiler/typed_mutation_audit.h" // Issue #3065: Production/Full cone persist gate
 
@@ -279,7 +280,14 @@ inline std::mutex g_pipeline_cascade_mtx;
 // Optional pipeline dep graph for DirtyAwarePass auto-cascade (#1575 AC2).
 // Issue #3264: atomic pointer — release store / acquire load.
 inline std::atomic<const DepGraph*> g_pipeline_dep_graph{nullptr};
-inline thread_local std::vector<NodeId> t_pipeline_cascade_roots{};
+// Issue #4716: the cascade-root list belongs to the pipeline drain that is
+// running, not to the OS thread: a drain that yields (IR/JIT callback into
+// the evaluator) and resumes on another worker must flush ITS roots, and a
+// sibling drain on the same worker must not inherit them. Lives in the
+// running fiber's context.
+inline std::vector<NodeId>& t_pipeline_cascade_roots() noexcept {
+    return aura::core::fiber_ctx::active().cascade_roots;
+}
 
 inline void set_pipeline_dep_graph(const DepGraph* g) noexcept {
     std::lock_guard<std::mutex> lock(g_pipeline_cascade_mtx);
@@ -291,11 +299,11 @@ inline void set_pipeline_dep_graph(const DepGraph* g) noexcept {
 }
 
 inline void note_pipeline_cascade_root(NodeId root) {
-    t_pipeline_cascade_roots.push_back(root);
+    t_pipeline_cascade_roots().push_back(root);
 }
 
 inline void clear_pipeline_cascade_roots() noexcept {
-    t_pipeline_cascade_roots.clear();
+    t_pipeline_cascade_roots().clear();
 }
 
 // ── BFS cascade (#1575 AC1) ────────────────────────────────────
@@ -412,12 +420,12 @@ inline std::size_t cascade_mark_dirty_many(DirtySet& set, std::span<const NodeId
 inline std::size_t flush_pipeline_cascade_roots() {
     std::lock_guard<std::mutex> lock(g_pipeline_cascade_mtx);
     const DepGraph* graph = g_pipeline_dep_graph.load(std::memory_order_acquire);
-    if (t_pipeline_cascade_roots.empty()) {
+    if (t_pipeline_cascade_roots().empty()) {
         (void)flush_dirty_skip_subtree_to_metrics();
         return 0; // Issue #3264: empty-root flush is zero extra
     }
     if (!graph) {
-        cascade_roots_dropped_no_dep_graph_total.fetch_add(t_pipeline_cascade_roots.size(),
+        cascade_roots_dropped_no_dep_graph_total.fetch_add(t_pipeline_cascade_roots().size(),
                                                            std::memory_order_relaxed);
         // Full/production: preserve roots until a graph is registered.
         // Soft/Off: drop after counting (legacy).
@@ -425,14 +433,14 @@ inline std::size_t flush_pipeline_cascade_roots() {
                           aura::compiler::typed_audit::get_strategy() ==
                               aura::compiler::typed_audit::AuditStrategy::Full;
         if (!hard)
-            t_pipeline_cascade_roots.clear();
+            t_pipeline_cascade_roots().clear();
         (void)flush_dirty_skip_subtree_to_metrics();
         return 0;
     }
     std::size_t n = 0;
-    for (NodeId r : t_pipeline_cascade_roots)
+    for (NodeId r : t_pipeline_cascade_roots())
         n += cascade_mark_dirty(g_global_dirty, r, *graph);
-    t_pipeline_cascade_roots.clear();
+    t_pipeline_cascade_roots().clear();
     (void)flush_dirty_skip_subtree_to_metrics();
     return n;
 }
@@ -733,7 +741,7 @@ inline void pull_cascade_ast_dirty_into(std::vector<NodeId>& out) {
             out.push_back(decode_ast_dep_node(d));
     }
     // Also scan pending pipeline cascade roots not yet flushed.
-    for (NodeId r : t_pipeline_cascade_roots) {
+    for (NodeId r : t_pipeline_cascade_roots()) {
         if (is_ast_dep_node(r))
             out.push_back(decode_ast_dep_node(r));
     }
@@ -758,7 +766,7 @@ inline std::size_t mirror_type_affected_to_cascade(std::span<const NodeId> affec
         std::unordered_set<NodeId> owned(t_mirror_owned_deps.begin(), t_mirror_owned_deps.end());
         for (NodeId dep : t_mirror_owned_deps)
             g_global_dirty.sparse.erase(dep);
-        std::erase_if(t_pipeline_cascade_roots, [&](NodeId r) { return owned.contains(r); });
+        std::erase_if(t_pipeline_cascade_roots(), [&](NodeId r) { return owned.contains(r); });
     }
     t_mirror_owned_deps.clear();
     t_last_type_cone_ast.clear();

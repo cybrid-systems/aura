@@ -124,7 +124,9 @@ def main() -> int:
     must("evaluate_residual_hard_and_bits", "AC6 source-cite", test)
     must("aura_fiber_evaluator_id_for_steal_safety(stolen)", "AC6 identity source-cite", test)
     must("set_current_eval_identity", "AC6 Guard-enter mirror", mb)
-    must("g_current_eval_identity", "AC6 TLS", hooks)
+    # Issue #4716: the mirror is fiber-local execution context now, reached
+    # through the C face (gc_hooks.h keeps its no-STL contract).
+    must("aura_fiber_eval_identity_get", "AC6 fiber-local identity mirror", hooks)
     must("stamp_lifetime_consistency_proof_for", "AC6 arena keyed stamp", arena)
     must("stamp_lifetime_consistency_proof_for", "AC6 steal-complete keyed stamp", efm)
     must("check_steal_eval_keyed_residual_3617", "AC6 build.py", build)

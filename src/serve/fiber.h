@@ -1426,6 +1426,15 @@ private:
     // in ~Fiber. The segment itself never moves, so a push/pop pair can never
     // straddle two threads (the #4706 failure).
     void* tw_roots_ = nullptr;
+    // Issue #4716: this fiber's evaluator EXECUTION CONTEXT (IRInterpreter
+    // active pointer, Guard eval identity, macro hygiene depth/limits, the
+    // recursive TypeRegistry lock stack, the quota tenant, the CLI body
+    // lock, pipeline cascade roots, PCV checkpoint depth). Created at spawn
+    // like tw_roots_, installed by Fiber::resume on the thread that runs the
+    // body, and dropped when control returns to the worker. The values never
+    // move between threads, so a lock frame / tenant bound before a yield is
+    // still the fiber's own after a cross-worker resume (#4716 stress AC).
+    void* fiber_ctx_ = nullptr;
     // Issue #2727: per-Fiber evaluator identity (set on Guard enter,
     // cleared on Guard exit / cancel). Replaces the prior
     // mutation_stack_ptr() proxy (see #2721 follow-up note). Atomic

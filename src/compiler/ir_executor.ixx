@@ -11,6 +11,7 @@ module;
 #include <utility>
 #include <variant>
 #include <vector>
+#include "core/fiber_context.hh" // Issue #4716: fiber-local execution context
 #include "observability_metrics.h"
 #include "value_tags.h" // kClosureIdHighBit #907
 export module aura.compiler.ir_executor;
@@ -217,7 +218,10 @@ public:
     // cell_heap_ and runtime_closures_ are per-instance, so a fresh
     // interpreter cannot resolve a resumed frame's captures (it degrades
     // every CellGet to void and the body then calls a non-procedure).
-    static IRInterpreter* active_instance() noexcept { return t_active_; }
+    // Issue #4716: fiber-local active interpreter (was a bare
+    // thread_local, which stranded the deopt-resume target when the frame
+    // set yielded and resumed on another worker — #4600 / #4617).
+    static IRInterpreter* active_instance() noexcept { return t_active(); }
     [[nodiscard]] const aura::ir::IRModule* module_ptr() const noexcept { return &module_; }
 
     // Issue #272: invoke a runtime closure by id (full IR path).
@@ -387,14 +391,17 @@ private:
     // Issue #4600 §3: active-instance chain for resume_deopt_frame. Set by
     // drain_call_stack (the single place frames execute), so a JIT deopt
     // host invoked from inside a running frame sees its owner.
-    static thread_local IRInterpreter* t_active_;
+    // Issue #4716: the slot lives in the running fiber's execution
+    // context (core/fiber_context.hh); a plain thread gets its per-thread
+    // fallback context, so non-fiber semantics are unchanged.
+    static IRInterpreter*& t_active() noexcept;
     struct ActiveInstanceGuard {
         IRInterpreter* prev = nullptr;
         explicit ActiveInstanceGuard(IRInterpreter* self) noexcept
-            : prev(t_active_) {
-            t_active_ = self;
+            : prev(t_active()) {
+            t_active() = self;
         }
-        ~ActiveInstanceGuard() { t_active_ = prev; }
+        ~ActiveInstanceGuard() { t_active() = prev; }
         ActiveInstanceGuard(const ActiveInstanceGuard&) = delete;
         ActiveInstanceGuard& operator=(const ActiveInstanceGuard&) = delete;
     };

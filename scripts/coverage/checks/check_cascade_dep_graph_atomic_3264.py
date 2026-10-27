@@ -71,7 +71,9 @@ def main() -> int:
     must("cascade-roots-dropped-no-dep-graph-total", "AC3 query key", obs)
     must("ac3264_3_dropped_counter", "AC3 test", skip)
 
-    must("t_pipeline_cascade_roots.empty()", "AC4 empty", fwin)
+    # Issue #4716: the cascade roots are fiber-local, so the site reads the
+    # accessor form rather than a bare thread_local name.
+    must("t_pipeline_cascade_roots().empty()", "AC4 empty", fwin)
     must("zero extra", "AC4 comment", fwin)
     must("ac3264_4_quiet_empty_zero_extra", "AC4 test", skip)
 

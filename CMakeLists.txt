@@ -172,6 +172,7 @@ target_sources(aura PRIVATE
     src/core/ast_stability.cpp
     src/core/mutation_impl.cpp
     src/core/type_impl.cpp
+    src/core/fiber_context.cpp
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
     src/compiler/value_impl.cpp
     # Issue #1559: present_batch / draw_batch engine (header-based, non-module).
@@ -492,6 +493,7 @@ add_library(aura_serve_fiber_objects OBJECT
     src/serve/gc_coordinator.cpp
     src/compiler/fiber_bridge.cpp
     src/compiler/messaging_bridge_impl.cpp
+    src/core/fiber_context.cpp # Issue #4716: fiber.cpp references aura_fiber_ctx_*
     src/exec/execution_adapter.cpp
     src/exec/combinators.cpp
 )
@@ -514,6 +516,7 @@ target_sources(test_ir PRIVATE
     src/core/ast_impl.cpp
     src/core/ast_stability.cpp
     src/core/type_impl.cpp
+    src/core/fiber_context.cpp
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
     src/compiler/value_impl.cpp
     ${AURA_EVALUATOR_SOURCE_FILES}
@@ -705,6 +708,7 @@ add_library(aura_test_objects SHARED
     src/core/contract_handler.cpp
     src/core/mutation_impl.cpp
     src/core/type_impl.cpp
+    src/core/fiber_context.cpp
     src/compiler/value_impl.cpp
     src/parser/lexer_impl.cpp
     src/parser/parser_impl.cpp
@@ -1015,6 +1019,7 @@ target_sources(test_gc_evaluator_integration PRIVATE
     src/core/ast_impl.cpp
     src/core/ast_stability.cpp
     src/core/type_impl.cpp
+    src/core/fiber_context.cpp
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
     src/compiler/value_impl.cpp
     ${AURA_EVALUATOR_SOURCE_FILES}
@@ -1459,6 +1464,7 @@ target_sources(issue_212_bench PRIVATE
     src/core/ast_impl.cpp
     src/core/ast_stability.cpp
     src/core/type_impl.cpp
+    src/core/fiber_context.cpp
     src/compiler/value_impl.cpp
     src/compiler/constant_folding_impl.cpp
     src/compiler/type_checker_impl.cpp
