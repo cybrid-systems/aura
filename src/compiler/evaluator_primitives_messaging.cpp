@@ -797,6 +797,9 @@ namespace {
         aura::messaging::g_denseness_body_relock_after_wait = &denseness_body_relock_hook;
         aura::messaging::g_cli_main_body_lock_acquire = &cli_main_body_lock_acquire_impl;
         aura::messaging::g_cli_main_body_lock_release = &cli_main_body_lock_release_impl;
+        // Issue #4722: name the thread-backend body to orch recv/reply
+        // (#4061 reply gate) — scheduler fibers use g_current_fiber.
+        aura::messaging::g_cli_body_fiber_id = &current_fiber_body_id;
     }
 
 } // namespace

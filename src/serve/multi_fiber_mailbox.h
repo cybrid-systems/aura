@@ -53,6 +53,7 @@
 #include "compiler/lock_order_audit.h"             // Issue #2316: lock-order audit
 #include "compiler/mutation_concurrency_health.hh" // #2903/#2958 wait SLO
 #include "compiler/mutation_hold_budget.h"         // #2958 live outermost holder
+#include "compiler/messaging_bridge.h"             // #4722 wait-lock drop
 
 #include <algorithm>
 #include <atomic>
@@ -2106,6 +2107,18 @@ public:
                 }
                 g_current_fiber->set_state(FiberState::Running);
             } else {
+                // Issue #4722: no scheduler fiber on this thread — the caller is a
+                // CLI denseness body (fiber:spawn thread backend) or a host thread.
+                // A thread-backend body holds the #4048/#4356 denseness body mutex
+                // (and the #4711 eval mutex) for the whole apply_closure, so the
+                // 1 ms poll below would starve every sibling fiber — including an
+                // in-process responder that is waiting to serve this very recv —
+                // for the full wait budget (orch:agent-ask then reports timeout
+                // with the request still queued). Drop M1 then M0 across the wait
+                // exactly like fiber:join / read-line / http-post (#2869/#4053),
+                // and re-take M0 before M1 on resume. Null hooks (no body lock on
+                // this thread) make this a two-branch no-op.
+                ::aura::messaging::DensenessBodyLockWaitGuard unblock_body_for_wait;
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
         }

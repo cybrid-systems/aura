@@ -153,6 +153,15 @@ using CliMainBodyLockReleaseFn = void (*)(void*);
 extern CliMainBodyLockAcquireFn g_cli_main_body_lock_acquire;
 extern CliMainBodyLockReleaseFn g_cli_main_body_lock_release;
 
+// Issue #4722: identity of the fiber body running on this thread for the
+// CLI thread backend (fiber:spawn without a scheduler). Scheduler fibers
+// answer through aura::serve::g_current_fiber; the thread backend has no
+// Fiber object, so orch recv/reply could not name the consumer and the
+// #4061 production reply gate saw replier==0. Wired by
+// evaluator_primitives_messaging.cpp (the TLS owner); 0 outside a body.
+using CliBodyFiberIdFn = std::int64_t (*)();
+extern CliBodyFiberIdFn g_cli_body_fiber_id;
+
 // Issue #4711: single lock order — body mutex (M0) then eval mutex (M1).
 //
 // CompilerService::eval holds M0 (CliMainEvalBodyLock, #4356/#4674) and then

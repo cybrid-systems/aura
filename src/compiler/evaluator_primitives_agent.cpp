@@ -6055,6 +6055,25 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"payload", make_string(pidx)},  {"schema", make_int(1588)},
                 {"schema-2011", make_int(2011)},
             };
+            // Issue #4722: the delivered request carried no usable correlation
+            // handle — a responder had to parse the legacy "ask:<id>:<body>"
+            // payload prefix by hand (the repro's string-ref loop) and the
+            // #2538 typed id that agent_ask already stamped on the MailMessage
+            // was dropped here. Expose it as a real key, plus the mail kind so
+            // a responder can tell an ask from a reply/normal message.
+            // The payload prefix stays dual-written (agent_ask /
+            // agent_reply still format it) for #2231/#2401 compatibility:
+            // existing responders that parse it keep working; new ones should
+            // read correlation-id.
+            if (msg->correlation_id != 0)
+                kv.push_back(
+                    {"correlation-id", make_int(static_cast<std::int64_t>(msg->correlation_id))});
+            const char* mail_kind_name = "normal";
+            if (msg->kind == aura::serve::mf_mailbox::MailKind::Ask)
+                mail_kind_name = "ask";
+            else if (msg->kind == aura::serve::mf_mailbox::MailKind::Reply)
+                mail_kind_name = "reply";
+            kv.push_back({"kind", make_string(ev.push_string_heap(mail_kind_name))});
             return build_orch_hash(kv);
         });
 
