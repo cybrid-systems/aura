@@ -27,6 +27,10 @@ aura::messaging::DensenessBodyRelockFn aura::messaging::g_denseness_body_relock_
     nullptr;
 aura::messaging::CliMainBodyLockAcquireFn aura::messaging::g_cli_main_body_lock_acquire = nullptr;
 aura::messaging::CliMainBodyLockReleaseFn aura::messaging::g_cli_main_body_lock_release = nullptr;
+// Issue #4711: eval-mutex release across a blocking wait (single lock order
+// body mutex -> eval mutex). Wired by CompilerService::eval.
+aura::messaging::EvalMutexWaitReleaseFn aura::messaging::g_eval_mutex_wait_release = nullptr;
+aura::messaging::EvalMutexWaitReacquireFn aura::messaging::g_eval_mutex_wait_reacquire = nullptr;
 aura::messaging::ThreadPoolEnqueueFn aura::messaging::g_thread_pool_enqueue = nullptr;
 aura::messaging::EvalAsyncFn aura::messaging::g_eval_async = nullptr;
 aura::messaging::GetMetricsFn aura::messaging::g_get_scheduler_metrics;

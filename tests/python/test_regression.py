@@ -7,6 +7,7 @@ import resource
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from _aura_harness import AURA_BIN as AURA
@@ -4532,6 +4533,99 @@ def test_fiber_result_root_4710():
         "#4710: both reclaims (tree-walker + file-mode) must consult the fiber-result roots"
     )
     print("  ✅ test_fiber_result_root_4710 (fiber result hash survives to fiber:join)")
+def test_fiber_lock_order_inversion_4711():
+    """Issue #4711: eval mutex vs CLI body lock lock-order inversion.
+
+    CompilerService::eval takes the CLI body mutex M0 (CliMainEvalBodyLock,
+    #4356/#4674) and then the eval mutex M1 (eval_mutex_, #1431). The
+    fiber:join wait dropped M0 across the wait and re-took it on resume
+    while STILL holding M1 — an M1 -> M0 acquisition against eval()'s
+    M0 -> M1. TSan reported lock-order-inversion on every CLI fiber
+    program, and the pair deadlocks for real once a fiber body holds M0
+    and enters eval (eval-current / the JIT recompile hook) while the
+    joiner re-takes M0 under M1.
+
+    The fix drops M1 across the wait too and re-takes it AFTER M0, so one
+    order holds everywhere: M0 -> M1.
+
+    Runtime rows: (a) the issue's 4-fiber spawn/join program still joins
+    every fiber; (b) a fiber body that evaluates the workspace while the
+    main thread joins it finishes promptly — that is the body-side path
+    which needs M1 while holding M0, i.e. the deadlock shape the issue
+    names, and the join must not fall back to its 200s ceiling. Source
+    rows pin the single order so this guard cannot pass vacuously.
+    """
+    env = os.environ.copy()
+    env["AURA_SANDBOX"] = "off"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env["AURA_TIER_JIT"] = "0"
+
+    def _run(src, timeout_s=120):
+        with tempfile.NamedTemporaryFile("w", suffix=".aura", delete=False) as fh:
+            fh.write(src)
+            path = fh.name
+        try:
+            return subprocess.run([AURA, path], capture_output=True, text=True, timeout=timeout_s, env=env)
+        finally:
+            os.unlink(path)
+
+    # (a) Issue repro: 4 spawned bodies, every one joined.
+    repro = (
+        '(define (mk i) (let ((h (make-hash))) (hash-set! h "n" i) h))\n'
+        "(define fs (map (lambda (i) (fiber:spawn (lambda () (mk i)))) (list 0 1 2 3)))\n"
+        "(display (length (map fiber:join fs)))\n"
+        "(newline)\n"
+    )
+    r = _run(repro)
+    assert r.returncode == 0, f"#4711: repro exited {r.returncode}: {(r.stderr or '')[-400:]!r}"
+    assert r.stdout.strip() == "4", f"#4711: expected 4 joined fibers, got {r.stdout!r}"
+    assert "fiber:join] WARN" not in (r.stderr or ""), (
+        f"#4711: a join degraded to the 200s timeout path: {(r.stderr or '')[-400:]!r}"
+    )
+
+    # (b) Fiber body evaluates the workspace (the M0 holder that wants M1
+    # for an eval that goes through CompilerService::eval) while main joins
+    # it. The pre-#4711 shape wedged here: main held M1 and re-took M0 on
+    # resume, the body held M0 and needed M1. A prompt, rc=0 completion is
+    # the pass; the 120s subprocess timeout is the deadlock detector.
+    body_eval = (
+        '(set-code "(define (plus1 x) (+ x 1))")\n'
+        "(define fid (fiber:spawn (lambda () (eval-current))))\n"
+        "(display (fiber:join fid))\n"
+        "(newline)\n"
+    )
+    t0 = time.monotonic()
+    r = _run(body_eval)
+    elapsed = time.monotonic() - t0
+    assert elapsed < 30, f"#4711: the join took {elapsed:.1f}s (200s ceiling path)"
+    assert r.returncode == 0, f"#4711: fiber body eval-under-join exited {r.returncode}: {(r.stderr or '')[-400:]!r}"
+    assert "fiber:join] WARN" not in (r.stderr or ""), (
+        f"#4711: the join did not hand M1 to the body: {(r.stderr or '')[-400:]!r}"
+    )
+
+    # Source contract: eval() takes M0 then M1 and publishes M1 for the
+    # wait hooks; every M0 wait guard drops M1 first and re-takes it last.
+    svc = (REPO / "src/compiler/service.ixx").read_text(encoding="utf-8")
+    i_body = svc.find("aura::messaging::CliMainEvalBodyLock cli_body_lock;")
+    i_lock = svc.find("std::unique_lock<std::recursive_mutex> lock(eval_mutex_);")
+    i_pub = svc.find("EvalMutexWaitPublishScope eval_mutex_wait_scope(eval_mutex_);")
+    assert i_body != -1 and i_lock != -1 and i_pub != -1, "#4711: eval() lost the M0 -> M1 order or the M1 wait publish"
+    assert i_body < i_lock < i_pub, "#4711: eval() must take M0, then M1, then publish M1 for the wait hooks"
+    msg = (REPO / "src/compiler/evaluator_primitives_messaging.cpp").read_text(encoding="utf-8")
+    for guard in ("struct CliBodyLockJoinGuard {", "struct CliBodyYieldHandoff {"):
+        g = msg.find(guard)
+        assert g != -1, f"#4711: {guard} is gone"
+        e = msg.find("EvalMutexWaitLockGuard eval_wait_lock;", g)
+        b = msg.find("std::unique_lock<std::mutex>* lock = nullptr;", g)
+        assert -1 < e < b, (
+            f"#4711: {guard} must drop the eval mutex first and re-take it last (declared before the body-lock member)"
+        )
+    hdr = (REPO / "src/compiler/messaging_bridge.h").read_text(encoding="utf-8")
+    g = hdr.find("struct DensenessBodyLockWaitGuard {")
+    assert g != -1, "#4711: DensenessBodyLockWaitGuard is gone"
+    e = hdr.find("EvalMutexWaitLockGuard eval_lock;", g)
+    b = hdr.find("void* lock = nullptr;", g)
+    assert -1 < e < b, "#4711: DensenessBodyLockWaitGuard must drop the eval mutex first"
 
 
 for tf in [
@@ -4592,6 +4686,7 @@ for tf in [
     test_file_mode_pair_list_corruption_4629,
     test_exit_quiesce_4705,
     test_fiber_result_root_4710,
+    test_fiber_lock_order_inversion_4711,
 ]:
     try:
         tf()
