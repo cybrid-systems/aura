@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**475** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**476** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -11,7 +11,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 55 primitives (12%)
-- **core**: 385 primitives (81%)
+- **core**: 386 primitives (81%)
 - **internal-observable**: 34 primitives (7%)
 - **convenience**: 1 primitives (0%)
 
@@ -98,8 +98,9 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 
-## Fiber: (4)
+## Fiber: (5)
 
+- `fiber:cancel` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:join` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:spawn` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:spawn-backend` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -681,7 +682,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (385)
+### Core builtins (must remain primitive) (386)
 
 - `%base64-decode` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` — `src/compiler/evaluator_primitives_char.cpp`
@@ -799,6 +800,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `f64vector-sum` — `src/compiler/evaluator_primitives_char.cpp`
 - `ffi:pin-buffer` — `src/compiler/ffi_primitives_impl.cpp`
 - `ffi:unpin-buffer` — `src/compiler/ffi_primitives_impl.cpp`
+- `fiber:cancel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:join` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:spawn` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:spawn-backend` — `src/compiler/evaluator_primitives_messaging.cpp`
