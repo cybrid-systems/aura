@@ -3862,6 +3862,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             aura::orch::AgentSpec spec;
             spec.name = name;
             spec.body = std::move(body);
+            // Issue #4725: pin the closure until the fiber body applies it.
+            spec.body_evaluator = static_cast<void*>(&ev);
+            spec.body_closure_id = cid.value_or(0);
             spec.attach_mailbox = attach_mailbox;
             spec.mailbox_high_water = high_water;
             spec.keepalive_interval_ms = keepalive_interval_ms;
@@ -4523,6 +4526,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             aura::orch::AgentSpec spec;
             spec.name = name;
             spec.body = std::move(body);
+            // Issue #4725: pin the closure until the fiber body applies it
+            // (the #4713 reclaim can otherwise erase it while it is pending).
+            spec.body_evaluator = static_cast<void*>(&ev);
+            spec.body_closure_id = cid.value_or(0);
             spec.attach_mailbox = attach_mailbox;
             spec.mailbox_high_water = high_water;
             spec.keepalive_interval_ms = keepalive_interval_ms;
@@ -4990,6 +4997,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             std::string addr_path;
             std::optional<std::int64_t> addr_child;
             bool tree_join = false;
+            bool caller_drain = false; // Issue #4724: explicit :drain-ms wins
             for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 auto& val = a[i + 1];
@@ -5001,6 +5009,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 } else if ((k == "drain-ms" || k == "drain_ms") && types::is_int(val)) {
                     policy.drain_ms =
                         static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                    caller_drain = true;
                 } else if ((k == "wait-reclaimed-ms" || k == "wait_reclaimed_ms") &&
                            types::is_int(val)) {
                     policy.wait_reclaimed_ms =
@@ -5024,6 +5033,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     tree_join = types::as_bool(val);
                 }
             }
+            // Issue #4724: :timeout-ms bounds the WHOLE call. Fold the
+            // cancel/drain window into the caller deadline instead of
+            // stacking the 2 s default after it (3000 ms -> 5002 ms). An
+            // explicit :drain-ms keeps its own window (host opt-in).
+            if (policy.primary_ms.has_value() && !caller_drain)
+                policy.total_budget_ms = policy.primary_ms;
             auto* scope = resolve_scope_addr(*root, addr_path, addr_child);
             if (!scope) {
                 return make_scope_addr_fail(2588, "invalid-path",
@@ -6508,6 +6523,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                             // via join/status only (#1669 class B).
                         }
                     };
+                    // Issue #4725: same pending-body pin as orch:scope-spawn
+                    // -- the one-shot closure is a tree-walker temporary and
+                    // the #4713 reclaim could erase it before apply.
+                    spec.body_evaluator = static_cast<void*>(&ev);
+                    spec.body_closure_id = cid;
                     spec.attach_mailbox = true;
                     spec.mailbox_high_water = 256;
                     spec.mutation_boundary = false;

@@ -40,6 +40,7 @@
 
 #include <atomic>
 #include <format>
+#include <fstream>
 #include <print>
 #include <string>
 
@@ -56,6 +57,17 @@ using aura::orch::find_agent_scope;
 using aura::orch::reset_all_agent_scopes_for_test;
 using aura::test::g_failed;
 using aura::test::g_passed;
+
+static std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
 
 int run_test_scope_join_tree_visibility() {
     // ── Issue #3671: join-all publishes tree_settled; production
@@ -184,6 +196,164 @@ int run_test_scope_join_tree_visibility() {
             CHECK(deny_v.empty(), "3671 AC3: no deny-detail (no deny interned)");
             CHECK(ok_v, "3671 AC3: ok=#t (settled join, no deny)");
         }
+    }
+    // ── Issue #4725 / #4726 / #4724: scope waiter wake + cancel budget ──
+    {
+        std::println("\n--- #4725 AC1: yield waiters survive orch:supervise-batch ---");
+        reset_all_agent_scopes_for_test();
+        // The reported repro runs on the Soft face; the production
+        // region-key admit gate (#4238) would reject six unkeyed scope
+        // spawns before the waiter wake is exercised. Dev defaults here,
+        // production restored by the member tail (#3671 AC1-AC3 above
+        // already pinned the production face).
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        CompilerService cs;
+        // Repro shape from the issue: six scope tasks cooperatively wait on a
+        // parent flag (fiber:yield), spawned AFTER a batch/workflow run. The
+        // first K (= batch size) used to be silently dropped: the spawn site
+        // released the body closure temporary, no fiber root segment
+        // referenced it, and the #4713 tree-walker reclaim erased it before
+        // the worker fiber reached apply_spawn_closure_maybe_locked
+        // (agent_cid_live() false -> body never ran) while join-all still
+        // reported ok. #4725 AC2 pins the closure from spawn until apply.
+        const std::string waiter_prog = R"AURA((define BB (hash))
+(define (bb! k v) (hash-set! BB k v) v)
+(define (bbg k) (if (hash-has-key? BB k) (hash-ref BB k) #f))
+(define (st n) (if (equal? (bbg n) "done") "d" "x"))
+(define (mk n)
+  (orch:scope-spawn (string-append "w" n)
+    (lambda ()
+      (let wait ((i 0))
+        (cond ((equal? (bbg "go") "go") (bb! n "done"))
+              ((> i 200000) (bb! n "aborted"))
+              (else (fiber:yield) (wait (+ i 1))))))))
+__PREFIX__
+(for-each mk (list "1" "2" "3" "4" "5" "6"))
+(bb! "go" "go")
+(define j (orch:scope-join-all :timeout-ms 10000))
+(string-append (hash-ref j "status") ":" (st "1") (st "2") (st "3") (st "4") (st "5") (st "6"))
+)AURA";
+        auto run_waiters = [&](std::string_view prefix) -> std::string {
+            std::string prog = waiter_prog;
+            const auto marker = prog.find("__PREFIX__");
+            if (marker == std::string::npos)
+                return {};
+            prog.replace(marker, std::string("__PREFIX__").size(), prefix);
+            auto r = cs.eval(prog);
+            if (!r || !is_string(*r))
+                return {};
+            const auto idx = as_string_idx(*r);
+            const auto heap = cs.evaluator().string_heap();
+            if (idx >= heap.size())
+                return {};
+            return std::string(heap[idx]);
+        };
+        const std::string supervise_prefix =
+            "(orch:supervise-batch (list (lambda () 1) (lambda () 2)) "
+            "(orch:compose-workflow (quote collect-all) :max-retries 0) :watch-scope #f)";
+        int supervised_ok = 0;
+        for (int run = 0; run < 5; ++run) {
+            const auto got = run_waiters(supervise_prefix);
+            if (got == "ok:dddddd")
+                ++supervised_ok;
+            else
+                std::println("  #4725 run {} -> {}", run, got);
+        }
+        CHECK(supervised_ok == 5,
+              "4725 AC1: all six yield waiters ran after supervise-batch (5/5 runs)");
+
+        std::println("\n--- #4726 AC1: yield waiters survive orch:run-workflow ---");
+        // Same contract on the workflow entry (the issue saw it 1-in-4 as a
+        // join timeout with no waiter body ever running). Five runs pin the
+        // deterministic post-fix behavior.
+        const std::string workflow_prefix =
+            "(orch:run-workflow (vector (hash \"tasks\" (vector (lambda () 1) (lambda () 2))) "
+            "(hash \"tasks\" (vector (lambda () 3)))))";
+        int workflow_ok = 0;
+        for (int run = 0; run < 5; ++run) {
+            const auto got = run_waiters(workflow_prefix);
+            if (got == "ok:dddddd")
+                ++workflow_ok;
+            else
+                std::println("  #4726 run {} -> {}", run, got);
+        }
+        CHECK(workflow_ok == 5,
+              "4726 AC1: all six yield waiters ran after run-workflow (5/5 runs)");
+
+        std::println("\n--- #4725 AC2: pending-body closure pin (source-cite) ---");
+        const auto spawn_src = read_file("src/orch/agent_spawn.h");
+        const auto prim_src_scope = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(spawn_src.find("aura_fiber_root_pending_body(pin_ev, pin_cid, pin_token)") !=
+                  std::string::npos,
+              "4725 AC2: spawn roots the pending body closure before any admit allocation");
+        CHECK(spawn_src.find("aura_fiber_release_pending_body(ev, token)") != std::string::npos,
+              "4725 AC2: body guard releases the pending-body pin after apply");
+        CHECK(spawn_src.find("pending_body_pin.handed_off = true;") != std::string::npos,
+              "4725 AC2: spawn hands the pin to the body (deny paths release it)");
+        CHECK(spawn_src.find("std::uint64_t body_closure_id = 0;") != std::string::npos,
+              "4725 AC2: AgentSpec carries the body closure id");
+        CHECK(prim_src_scope.find("spec.body_closure_id = cid.value_or(0);") != std::string::npos,
+              "4725 AC2: scope-spawn / spawn-agent stamp the closure id");
+
+        std::println("\n--- #4724 AC1: cancel-all + join-all :timeout-ms budget ---");
+        // (a) scope-cancel-all reports 2 and the yield-looping bodies STOP at
+        // their next fiber:yield (the safepoint now observes Fiber::request_cancel,
+        // not only (fiber:cancel f)); join-all then settles quickly instead of
+        // timing out after the drain window.
+        const auto cancel_prog = R"AURA((define BB (hash))
+(define (spin n) (if (> n 0) (begin (fiber:yield) (spin (- n 1))) (quote done)))
+(orch:scope-spawn "exec-1" (lambda () (begin (spin 100000000) (hash-set! BB "exec1" (quote ran)) 1)))
+(orch:scope-spawn "exec-2" (lambda () (begin (spin 100000000) (hash-set! BB "exec2" (quote ran)) 1)))
+(define ca (orch:scope-cancel-all))
+(define t0 (monotonic-ms))
+(define j (orch:scope-join-all :timeout-ms 400))
+(string-append
+  (if (equal? (hash-ref ca "cancelled-count") 2) "2" "x")
+  ":" (if (equal? (hash-ref j "status") "ok") "ok" "no")
+  ":" (if (hash-has-key? BB "exec1") "ran" "stopped")
+  ":" (if (< (- (monotonic-ms) t0) 1500) "fast" "slow"))
+)AURA";
+        auto cancel_r = cs.eval(cancel_prog);
+        std::string cancel_got;
+        if (cancel_r && is_string(*cancel_r)) {
+            const auto idx = as_string_idx(*cancel_r);
+            const auto heap = cs.evaluator().string_heap();
+            if (idx < heap.size())
+                cancel_got = std::string(heap[idx]);
+        }
+        std::println("  #4724 cancel probe -> {}", cancel_got);
+        CHECK(cancel_got == "2:ok:stopped:fast",
+              "4724 AC1: cancel-all stops yield-looping bodies and join-all settles");
+        // (b) :timeout-ms bounds the WHOLE join: the 2 s default drain no
+        // longer stacks after the deadline (3000 ms used to take 5002 ms).
+        const auto budget_prog = R"AURA((define BB (hash))
+(define (spin n) (if (> n 0) (begin (fiber:yield) (spin (- n 1))) (quote done)))
+(orch:scope-spawn "slow" (lambda () (begin (spin 100000000) 1)))
+(define t0 (monotonic-ms))
+(define j (orch:scope-join-all :timeout-ms 400))
+(define ms (- (monotonic-ms) t0))
+(orch:scope-cancel-all)
+(orch:scope-join-all :timeout-ms 2000)
+(string-append (if (equal? (hash-ref j "status") "timeout") "timeout" "other")
+               ":" (if (< ms 1500) "bounded" "overrun"))
+)AURA";
+        auto budget_r = cs.eval(budget_prog);
+        std::string budget_got;
+        if (budget_r && is_string(*budget_r)) {
+            const auto idx = as_string_idx(*budget_r);
+            const auto heap = cs.evaluator().string_heap();
+            if (idx < heap.size())
+                budget_got = std::string(heap[idx]);
+        }
+        std::println("  #4724 budget probe -> {}", budget_got);
+        CHECK(budget_got == "timeout:bounded",
+              "4724 AC1: :timeout-ms bounds join-all primary+drain");
+        const auto msg_src_cancel = read_file("src/compiler/evaluator_primitives_messaging.cpp");
+        CHECK(msg_src_cancel.find("g_current_fiber->is_cancel_requested()") != std::string::npos,
+              "4724 AC1: yield safepoint observes the fiber cancel flag");
+        CHECK(read_file("tests/orch/test_issue_4725.cpp").empty() &&
+                  read_file("tests/issues/test_issue_4725.cpp").empty(),
+              "4725 AC3: no test_issue_4725.cpp");
     }
     aura::compiler::typed_audit::apply_dev_audit_defaults();
 

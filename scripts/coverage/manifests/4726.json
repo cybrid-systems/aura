@@ -1,0 +1,40 @@
+{
+  "issue": 4726,
+  "title": "Issue #4726: the same pending-body pin removes the intermittent post-orch:run-workflow waiter loss (join-all no longer times out with every waiter body never applied).",
+  "ok": "OK: Issue #4726 workflow waiter pin - the shared pending-body closure root covers the run-workflow entry, five consecutive runs all six waiters done, no test_issue_* file",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "Issue #4725 / #4726",
+        "aura_fiber_root_pending_body(pin_ev, pin_cid, pin_token)",
+        "next_orch_pending_body_token"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "spec.body_closure_id = cid.value_or(0);"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/orch/test_scope_join_tree_visibility.cpp",
+      "contains": [
+        "4726 AC1: yield waiters survive orch:run-workflow",
+        "workflow_prefix",
+        "orch:run-workflow",
+        "workflow_ok == 5"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/orch/test_issue_4726.cpp",
+        "tests/issues/test_issue_4726.cpp"
+      ]
+    }
+  ]
+}

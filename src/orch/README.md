@@ -701,6 +701,20 @@ Semantics:
    table first, then `AgentScope::find` (#3442) — resolve fallback, not a
    second owning put. The scope does not duplicate reservation ownership.
 
+6. **join-all budget (#4724)** — `:timeout-ms` bounds the WHOLE call
+   (primary wait + the cancel/drain that follows a non-Ok join); the 2 s
+   default drain is folded into that deadline unless `:drain-ms` is
+   passed explicitly. `orch:scope-cancel-all` arms `Fiber::request_cancel`,
+   which the `fiber:yield` safepoint consumes, so a cooperatively
+   yielding body stops at its next yield (a body that never yields is
+   only reclaimed by the documented #2153 limitation).
+7. **spawn pins its body closure (#4725 / #4726)** — `orch:scope-spawn` /
+   `orch:spawn-agent` hand the closure id to `AgentSpec`, and
+   `spawn_agent_with_mailbox` pins it through the evaluator pinned-closure
+   watermark (#4697 / #4698 SSOT) from the spawn call until the body has
+   applied it. Without that pin a spawn issued right after
+   `orch:supervise-batch` / `orch:run-workflow` could lose its first K
+   bodies to the #4713 tree-walker reclaim while join-all reported ok.
 Hash results (AC3):
 - `orch:scope-spawn` → `{ok, id, name, schema=2588, schema-2083, schema-2161, status}`
 - `orch:scope-watch` → `{ok, alive, stalled, cancelled, done, closed, restart-count, policy, schema=2588, schema-2161, schema-2229}`

@@ -1,0 +1,55 @@
+{
+  "issue": 4725,
+  "title": "Issue #4725: a scope task spawned after orch:supervise-batch keeps its body closure alive until the worker fiber applies it (the #4713 tree-walker reclaim no longer erases a pending body, so the first K yield-waiting tasks run instead of being silently dropped while join-all reports ok).",
+  "ok": "OK: Issue #4725 scope waiter pin - spawn_agent_with_mailbox roots the pending body closure from spawn until the body applies it (keyed #4697 watermark), all six yield waiters run after supervise-batch, no test_issue_* file",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "Issue #4725 / #4726",
+        "next_orch_pending_body_token",
+        "aura_fiber_root_pending_body(pin_ev, pin_cid, pin_token)",
+        "pending_body_pin.handed_off = true;",
+        "aura_fiber_release_pending_body(ev, token)",
+        "std::uint64_t body_closure_id = 0;"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "Issue #4725",
+        "spec.body_evaluator = static_cast<void*>(&ev);",
+        "spec.body_closure_id = cid.value_or(0);"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/orch/test_scope_join_tree_visibility.cpp",
+      "contains": [
+        "4725 AC1",
+        "4725 AC2",
+        "run_waiters",
+        "ok:dddddd",
+        "supervise_prefix",
+        "agent_cid_live"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/orch/test_scope_join_tree_visibility.cpp",
+      "contains": [
+        "4725 AC3: no test_issue_4725.cpp"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/orch/test_issue_4725.cpp",
+        "tests/issues/test_issue_4725.cpp",
+        "docs/design/4725-scope-waiter-pin.md"
+      ]
+    }
+  ]
+}

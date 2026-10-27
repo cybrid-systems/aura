@@ -1,0 +1,53 @@
+{
+  "issue": 4724,
+  "title": "Issue #4724: orch:scope-cancel-all stops yield-looping bodies (the fiber:yield safepoint observes Fiber::request_cancel) and orch:scope-join-all :timeout-ms bounds primary+drain instead of returning after timeout+drain_ms.",
+  "ok": "OK: Issue #4724 cancel safepoint + join budget - request_cancel observed at fiber:yield, cancelled bodies stop, :timeout-ms bounds the whole join (400 ms probe, no 2 s drain tail), no test_issue_* file",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_messaging.cpp",
+      "contains": [
+        "Issue #4724",
+        "bool cancelled = fiber_cancel_take(current_fiber_body_id());",
+        "g_current_fiber->is_cancel_requested()"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "Issue #4724: total wall-clock budget",
+        "total_budget_ms",
+        "budgeted_drain_ms",
+        "Issue #4724: wall-clock origin"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "Issue #4724",
+        "policy.total_budget_ms = policy.primary_ms;",
+        "caller_drain"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/orch/test_scope_join_tree_visibility.cpp",
+      "contains": [
+        "4724 AC1",
+        "2:ok:stopped:fast",
+        "timeout:bounded",
+        "cancel_prog",
+        "budget_prog"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/orch/test_issue_4724.cpp",
+        "tests/issues/test_issue_4724.cpp"
+      ]
+    }
+  ]
+}
