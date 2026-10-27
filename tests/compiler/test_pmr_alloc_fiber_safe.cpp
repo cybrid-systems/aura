@@ -10,15 +10,24 @@
 //   AC5: push_string_heap / cons take alloc_storage_lock_
 //   AC6 (#2997): 8-thread list via slot_lookup_fast; lock-hold samples
 //   AC7 (#2997): list-ref / member / math still work (no allow on those)
+//   AC1-AC5 (#4714): per-fiber string nursery takes no lock on the fast
+//                    path (measured, with a bound-heap control), promotion
+//                    on publish is copy-on-send under ONE narrow lock, the
+//                    promotion cost is measured, a 10k-entry hash joins in
+//                    < 2 ms, and an unpublishing exit drops the arena.
 
 #include "test_harness.hpp"
+#include "compiler/fiber_alloc_arena.hh" // Issue #4714: fresh-heap control
 #include "compiler/observability_metrics.h"
 #include "compiler/prim_heap_quota.hh"
 
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
+#include <cstdio>
 #include <fstream>
+#include <optional>
 #include <print>
 #include <span>
 #include <string>
@@ -1389,6 +1398,275 @@ static void ac4611_prim_call_arg_rooting() {
           "4611 AC6: the pinned buffer publishes each evaluated argument");
 }
 
+
+// ── Issue #4714: per-fiber string nursery + promotion on publish ──
+// The arena mints with no lock (unbound LockedStringHeap, per the #4543
+// mint contract), promotion deep-copies a batch into the shared heap
+// under ONE narrow lock (copy-on-send), and an unpublishing exit drops
+// the whole arena. AC1 is a MEASUREMENT: the counter increments inside
+// LockedStringHeap::Guard, and a bound-heap control proves it fires.
+static std::size_t rss_kb_4714() {
+    std::ifstream in("/proc/self/status");
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.rfind("VmRSS:", 0) == 0) {
+            std::size_t kb = 0;
+            std::sscanf(line.c_str() + 6, "%zu", &kb);
+            return kb;
+        }
+    }
+    return 0;
+}
+
+static void ac4714_fiber_string_arena() {
+    std::println("\n--- #4714 AC1: per-fiber string nursery takes no lock on the fast path ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    constexpr int kFibers = 2;
+    constexpr int kIters = 4000;
+    constexpr int kWarm = 64;
+    const std::uint64_t base_fid = 471400;
+    const auto content = [](int f, int i) {
+        return "s" + std::to_string(f) + "-" + std::to_string(i);
+    };
+
+    std::atomic<int> warmed{0};
+    std::atomic<bool> go{false};
+    std::atomic<int> errors{0};
+    std::vector<std::thread> ts;
+    ts.reserve(kFibers);
+    for (int f = 0; f < kFibers; ++f) {
+        ts.emplace_back([&ev, &warmed, &go, &errors, f, base_fid] {
+            try {
+                const std::uint64_t fid = base_fid + static_cast<std::uint64_t>(f);
+                for (int i = 0; i < kWarm; ++i)
+                    (void)ev.fiber_arena_mint(fid,
+                                              "s" + std::to_string(f) + "-" + std::to_string(i));
+                warmed.fetch_add(1, std::memory_order_acq_rel);
+                while (!go.load(std::memory_order_acquire))
+                    std::this_thread::yield();
+                for (int i = kWarm; i < kIters; ++i)
+                    (void)ev.fiber_arena_mint(fid,
+                                              "s" + std::to_string(f) + "-" + std::to_string(i));
+            } catch (...) {
+                errors.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+    }
+    while (warmed.load(std::memory_order_acquire) < kFibers)
+        std::this_thread::yield();
+    // Steady state: every thread has resolved its arena once, so the
+    // window below must not touch ANY lock.
+    const auto mints0 = ev.fiber_arena_fast_path_mints();
+    const auto locks0 = ev.fiber_arena_fast_path_locks();
+    const auto table0 = ev.fiber_arena_table_locks();
+    go.store(true, std::memory_order_release);
+    for (auto& t : ts)
+        t.join();
+    const auto mints_d = ev.fiber_arena_fast_path_mints() - mints0;
+    const auto locks_d = ev.fiber_arena_fast_path_locks() - locks0;
+    const auto table_d = ev.fiber_arena_table_locks() - table0;
+    const auto want =
+        static_cast<std::uint64_t>(kFibers) * static_cast<std::uint64_t>(kIters - kWarm);
+    CHECK(errors.load() == 0, "4714 AC1: 0 errors under 2-fiber concurrent nursery mint");
+    CHECK(mints_d == want, "4714 AC1: both fibers minted on the fast path (got " +
+                               std::to_string(mints_d) + ", want " + std::to_string(want) + ")");
+    CHECK(locks_d == 0, "4714 AC1: steady-state nursery mints take NO heap lock (observed " +
+                            std::to_string(locks_d) + ")");
+    CHECK(table_d == 0, "4714 AC1: steady-state nursery mints take NO arena-table lock (observed " +
+                            std::to_string(table_d) + ")");
+    CHECK(
+        ev.fiber_arena_control_lock_delta() > 0,
+        "4714 AC1: the lock observer fires for a bound heap (control, so the 0 above is measured)");
+    CHECK(ev.fiber_arena_size(base_fid) == static_cast<std::size_t>(kIters),
+          "4714 AC1: fiber 0 nursery has one slot per mint");
+    CHECK(ev.fiber_arena_string(base_fid, 1) == content(0, 1),
+          "4714 AC1: fiber 0 slot 1 content is intact");
+    CHECK(ev.fiber_arena_string(base_fid + 1, static_cast<std::size_t>(kIters) - 1) ==
+              content(1, kIters - 1),
+          "4714 AC1: fiber 1 last slot content is intact");
+
+    std::println("\n--- #4714 AC2: promotion on publish is copy-on-send (one narrow lock) ---");
+    const auto pl0 = ev.fiber_arena_promote_locks();
+    const auto ps0 = ev.fiber_arena_promoted_strings();
+    const auto remap0 = ev.publish_fiber_string_arena(base_fid);
+    CHECK(remap0.size() == static_cast<std::size_t>(kIters),
+          "4714 AC2: the whole fiber-0 nursery is promoted (got " + std::to_string(remap0.size()) +
+              ")");
+    CHECK(ev.fiber_arena_promote_locks() - pl0 == 1,
+          "4714 AC2: the batch takes exactly ONE shared-heap lock (got " +
+              std::to_string(ev.fiber_arena_promote_locks() - pl0) + ")");
+    CHECK(ev.fiber_arena_promoted_strings() - ps0 == static_cast<std::uint64_t>(kIters),
+          "4714 AC2: every slot is counted as promoted");
+    bool content_ok = true;
+    std::string first_bad;
+    for (int i = 0; i < kIters; i += 251) {
+        const auto got = ev.copy_string_heap_at(remap0[static_cast<std::size_t>(i)]);
+        if (got != content(0, i)) {
+            content_ok = false;
+            first_bad =
+                "slot " + std::to_string(i) + " want '" + content(0, i) + "' got '" + got + "'";
+            break;
+        }
+    }
+    CHECK(content_ok, "4714 AC2: promoted slots read back byte-identical from shared old space (" +
+                          first_bad + ")");
+    CHECK(ev.fiber_arena_count() == 1,
+          "4714 AC2: publishing fiber 0 dropped only its own arena (count " +
+              std::to_string(ev.fiber_arena_count()) + ")");
+    const auto remap1 = ev.publish_fiber_string_arena(base_fid + 1);
+    CHECK(remap1.size() == static_cast<std::size_t>(kIters),
+          "4714 AC2: fiber 1 nursery is promoted too");
+    CHECK(ev.fiber_arena_count() == 0, "4714 AC2: both arenas are dropped after publish");
+    CHECK(ev.publish_fiber_string_arena(base_fid).empty(),
+          "4714 AC2: a re-publish of a dropped arena copies no delta");
+    const auto tail_ok =
+        !remap1.empty() && ev.copy_string_heap_at(remap1.back()) == content(1, kIters - 1);
+    CHECK(tail_ok, "4714 AC2: the promoted tail reads back intact");
+
+    std::println("\n--- #4714 AC3: promotion cost + a 10k-entry hash join ---");
+    const std::uint64_t fid10k = 471420;
+    const auto tn0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < 10000; ++i)
+        (void)ev.fiber_arena_mint(fid10k, "key-" + std::to_string(i));
+    const auto mint_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                             std::chrono::steady_clock::now() - tn0)
+                             .count();
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto remap10k = ev.publish_fiber_string_arena(fid10k);
+    const auto promote_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0)
+            .count();
+    CHECK(remap10k.size() == 10000, "4714 AC3: 10000 nursery strings promoted");
+    const auto key10k_ok =
+        remap10k.size() == 10000 && ev.copy_string_heap_at(remap10k.back()) == "key-9999";
+    CHECK(key10k_ok, "4714 AC3: the 10000th promoted key reads back intact");
+    // The issue's hard bound is the join row below; promotion cost is a
+    // MEASUREMENT with a loose regression bound (the shared old-space
+    // heap carries the #4608 free list + #4548 code-point index of the
+    // earlier ACs, so a post-churn batch is slower than a fresh heap).
+    CHECK(promote_us < 10000, "4714 AC3: 10k-string promotion completes (measured " +
+                                  std::to_string(promote_us) + " us, regression bound 10 ms)");
+    // Control: the same batch into a fresh heap (no free list / no
+    // code-point cache) isolates the shared heap's steady-state cost.
+    long long fresh_us = -1;
+    {
+        ::aura::compiler::FiberStringArena fresh;
+        for (int i = 0; i < 10000; ++i)
+            (void)fresh.mint("key-" + std::to_string(i));
+        ::aura::compiler::LockedStringHeap target(std::pmr::new_delete_resource(), nullptr);
+        const auto tf0 = std::chrono::steady_clock::now();
+        const auto r = fresh.publish_into(target);
+        fresh_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                       std::chrono::steady_clock::now() - tf0)
+                       .count();
+        CHECK(r.remap.size() == 10000 && target.size() == 10000,
+              "4714 AC3: the fresh-heap control promotes the same 10k batch");
+    }
+    std::println(
+        "    4714 AC3: 10k nursery mints = {} us, promotion = {} us (fresh-heap control {} us, "
+        "RSS {} KiB)",
+        mint_us, promote_us, fresh_us, rss_kb_4714());
+
+    // The hard row: join of a 10k-entry hash. The body returns an
+    // already-built 10k hash, so the measured window is the join + the
+    // result transfer (a body that BUILDS 10k entries inside the window
+    // would measure the build, not the join).
+    auto rdef = cs.eval("(define (mk4714 n) (let ((h (hash)))"
+                        " (let loop ((i 0)) (if (< i n) (begin (hash-set! h i i)"
+                        " (loop (+ i 1))) h))))");
+    CHECK(rdef.has_value(), "4714 AC3: the 10k-hash builder defines");
+    auto rp = cs.eval("(define h4714 (mk4714 10000))");
+    const auto probe = [&cs](const char* src) -> std::string {
+        auto r = cs.eval(src);
+        if (!r)
+            return "error: " + r.error().format();
+        if (is_int(*r))
+            return std::to_string(as_int(*r));
+        if (is_bool(*r))
+            return as_bool(*r) ? "#t" : "#f";
+        return "non-scalar";
+    };
+    std::println("    4714 AC3 probe (mk4714 100) = {}", probe("(hash-length (mk4714 100))"));
+    std::println("    4714 AC3 probe (mk4714 1000) = {}", probe("(hash-length (mk4714 1000))"));
+    std::println("    4714 AC3 probe h4714 = {}", probe("(hash-length h4714)"));
+    std::println("    4714 AC3 probe hash? h4714 = {}", probe("(hash? h4714)"));
+    auto rpl = cs.eval("(hash-length h4714)");
+    CHECK(rpl && is_int(*rpl) && as_int(*rpl) == 10000,
+          "4714 AC3: the parent builds a 10k-entry hash (hash-length " +
+              (rpl && is_int(*rpl) ? std::to_string(as_int(*rpl)) : std::string("no result")) +
+              ")");
+    const auto backend = cs.eval("(fiber:spawn-backend)");
+    auto rf = cs.eval("(define f4714 (fiber:spawn (lambda () h4714)))");
+    const auto spawned = rf.has_value() && is_int(*rf);
+    CHECK(spawned,
+          "4714 AC3: the 10k-entry hash fiber spawns (backend " +
+              (backend && is_int(*backend) ? std::to_string(as_int(*backend)) : std::string("?")) +
+              ", got " +
+              (rf ? (is_int(*rf) ? std::to_string(as_int(*rf)) : std::string("non-int"))
+                  : std::string("no result")) +
+              ")");
+    bool join_ok = false;
+    long long join_us = 0;
+    long long join_len = -1;
+    if (spawned) {
+        const auto tj0 = std::chrono::steady_clock::now();
+        auto rj = cs.eval("(hash-length (fiber:join f4714))");
+        join_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                      std::chrono::steady_clock::now() - tj0)
+                      .count();
+        join_ok = rj && is_int(*rj);
+        if (join_ok)
+            join_len = as_int(*rj);
+    }
+    CHECK(join_ok && join_len == 10000,
+          "4714 AC3: fiber:join returns the 10k-entry hash (got " +
+              (join_ok ? std::to_string(join_len) : std::string("no result")) + ")");
+    CHECK(join_ok && join_us < 2000, "4714 AC3: join of the 10k-entry hash < 2 ms (measured " +
+                                         std::to_string(join_us) + " us)");
+    std::println("    4714 AC3: fiber:join of a 10k-entry hash = {} us", join_us);
+
+    std::println("\n--- #4714 AC4: fiber exit without publish drops the arena wholesale ---");
+    const auto rss0 = rss_kb_4714();
+    const std::uint64_t fidDrop = 471430;
+    for (int i = 0; i < 100000; ++i)
+        (void)ev.fiber_arena_mint(fidDrop, "drop-" + std::to_string(i));
+    const auto rss1 = rss_kb_4714();
+    const auto td0 = std::chrono::steady_clock::now();
+    ev.drop_fiber_string_arena(fidDrop);
+    const auto drop_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                             std::chrono::steady_clock::now() - td0)
+                             .count();
+    CHECK(ev.fiber_arena_count() == 0, "4714 AC4: drop removes the arena from the table");
+    CHECK(drop_us < 5000, "4714 AC4: 100k-slot arena release is wholesale (measured " +
+                              std::to_string(drop_us) + " us)");
+    std::println("    4714 AC4: 100k slots held {} KiB, released in {} us (RSS {} -> {} KiB)",
+                 rss1 - rss0, drop_us, rss1, rss_kb_4714());
+    CHECK(ev.fiber_arena_string(fidDrop, 0).empty(), "4714 AC4: the dropped arena is unreachable");
+
+    std::println("\n--- #4714 AC5: source cites ---");
+    const auto arena_src = read_file("src/compiler/fiber_alloc_arena.hh");
+    CHECK(arena_src.find("class FiberStringArena") != std::string::npos &&
+              arena_src.find("PromoteResult publish_into(LockedStringHeap& shared)") !=
+                  std::string::npos,
+          "4714 AC5: the nursery has its own class + the copy-on-send publish");
+    CHECK(arena_src.find("mu_ is null: the mint contract's unlocked path.") != std::string::npos,
+          "4714 AC5: the fast path is the documented unbound-heap path");
+    const auto heap_src = read_file("src/compiler/locked_string_heap.hh");
+    CHECK(heap_src.find("set_lock_observer") != std::string::npos &&
+              heap_src.find("obs->fetch_add(1") != std::string::npos,
+          "4714 AC5: LockedStringHeap counts a lock only when the Guard takes it");
+    const auto evsrc = read_file("src/compiler/evaluator.ixx");
+    CHECK(evsrc.find("fiber_arena_mint") != std::string::npos &&
+              evsrc.find("publish_fiber_string_arena") != std::string::npos &&
+              evsrc.find("fiber_string_arenas_") != std::string::npos,
+          "4714 AC5: the Evaluator owns the nursery table + the publish API");
+    const auto msgsrc = read_file("src/compiler/evaluator_primitives_messaging.cpp");
+    CHECK(msgsrc.find("publish_fiber_string_arena(static_cast<std::uint64_t>(fid))") !=
+              std::string::npos,
+          "4714 AC5: the fiber completion publishes BEFORE the result is marked ready");
+}
+
 int run_test_pmr_alloc_fiber_safe() {
     std::println("=== Issue #2651: PMR / string_heap concurrent alloc safety ===");
     ac1_concurrent_push_string();
@@ -1410,6 +1688,7 @@ int run_test_pmr_alloc_fiber_safe() {
     ac4350_4474_top_level_capture();
     ac4599_call_resolve_cache();
     ac4611_prim_call_arg_rooting();
+    ac4714_fiber_string_arena();
     std::println("\n=== #2651/#2997: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
