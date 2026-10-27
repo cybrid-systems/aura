@@ -4662,6 +4662,59 @@ def test_fiber_cancel_4708():
 (display (fiber:cancel g)) (newline)
 (display (error? (fiber:join g))) (newline)
 """
+
+
+def test_fiber_hash_key_survives_rebind_4709():
+    """Issue #4709: a hash key string must survive rebind + eval-current fibers.
+
+    Reported on main 572beb276 / 7d0a4e9f3 (JIT off and on): in the
+    aura-harness swarm (4 worker fibers, each periodically running
+    (mutate:rebind "pol-<w>" ...) + (eval-current)) a 9-char key of a
+    global stats hash ("join-void") read back with length 0, 3 or 8, or
+    vanished. It needed >=2 fibers and a rebind, and a (display) near the
+    insert hid it -- i.e. a reclaim frees the string slot under a live
+    hash entry (#4608 recycles unreachable string slots: an empty length
+    is the released slot, 3/8 a re-minted one).
+
+    The fix that makes the invariant hold on this base is #4706: a serve
+    fiber's tree-walker root segment (the fiber body's Env chain, pinned
+    arg vectors/spans) travels with the fiber across a context switch and
+    a PARKED segment stays mark-visible to a reclaim started on another
+    worker thread (g_tw_parked consulted by
+    Evaluator::maybe_reclaim_tw_unreachable). Before that, a parked
+    fiber's env -- and hence a hash only it referenced -- was invisible
+    while another thread swept, so its key slot was released and reused.
+
+    Rows: the CLI thread-backend and a real serve-async session with
+    --worker-threads=2 both run the issue's shape (4 fibers, per-fiber
+    rebind of its own policy var, eval-current, then re-read the key
+    length) and require the key to stay 9 chars with its value intact.
+    The source rows pin the parked-segment marking so this guard cannot
+    pass vacuously.
+    """
+    key = "join-void"
+    assert len(key) == 9
+    program = r"""(set-code "(define (pol-0 x) (+ x 0))\n(define (pol-1 x) (+ x 1))\n(define (pol-2 x) (+ x 2))\n(define (pol-3 x) (+ x 3))")
+(eval-current)
+(define stats (make-hash))
+(hash-set! stats "join-void" 0)
+(define (worker w)
+  (let loop ((i 0))
+    (if (< i 30)
+        (begin
+          (hash-set! stats (string-append "join-void") (+ 1 (hash-ref stats "join-void" 0)))
+          (mutate:rebind (string-append "pol-" (number->string w)) "(lambda (x) (+ x 1))" "p")
+          (eval-current)
+          (loop (+ i 1)))
+        w)))
+(define fs (list (fiber:spawn (lambda () (worker 0)))
+                 (fiber:spawn (lambda () (worker 1)))
+                 (fiber:spawn (lambda () (worker 2)))
+                 (fiber:spawn (lambda () (worker 3)))))
+(map fiber:join fs)
+(list (map string-length (hash-keys stats)) (hash-ref stats "join-void" -1))
+"""
+    want = "((9) 120)"
     env = os.environ.copy()
     env["AURA_TIER_JIT"] = "0"
     env["AURA_PIPELINE_STRICT"] = "0"
@@ -4763,6 +4816,70 @@ def test_fiber_cancel_4708():
     print(
         "  OK test_fiber_cancel_4708 ((fiber:cancel f) raises fiber-cancelled at the next yield: catch runs, join returns)"
     )
+    fd, path = tempfile.mkstemp(suffix=".aura", prefix="aura-4709-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(program)
+        # (a) CLI thread backend: 4 fiber threads, one global hash.
+        for attempt in range(3):
+            r = subprocess.run([AURA, path], capture_output=True, text=True, timeout=180, env=env, cwd=str(REPO))
+            assert r.returncode == 0, f"#4709 cli run {attempt}: rc={r.returncode} err={(r.stderr or '')[-400:]!r}"
+            lines = [ln.strip() for ln in (r.stdout or "").splitlines() if ln.strip()]
+            assert lines and lines[-1] == want, (
+                f"#4709 cli run {attempt}: expected {want!r} got {lines[-1] if lines else None!r} "
+                f"(a live hash key's string slot was released/re-minted)"
+            )
+        # (b) serve-async, 2 worker threads: fibers are stackful contexts
+        # that park at eval-current/yield, the shape #4706 had to root.
+        # The process can linger on stdin EOF after the response (the
+        # scheduler waits on epoll), so kill it once the reply is in --
+        # the assertion is on the reply, not the exit path.
+        request = json.dumps({"cmd": "exec", "code": program}) + "\n"
+        try:
+            r = subprocess.run(
+                [AURA, "--serve-async", "--worker-threads=2"],
+                input=request,
+                capture_output=True,
+                text=True,
+                timeout=45,
+                env=env,
+            )
+            out, err = r.stdout or "", r.stderr or ""
+        except subprocess.TimeoutExpired as exc:
+            # A serve-async session can linger on stdin EOF after it has
+            # replied (the scheduler waits on epoll); run() killed it. The
+            # assertion is on the reply, not the exit path.
+            out = exc.stdout or ""
+            err = exc.stderr or ""
+            if isinstance(out, bytes):
+                out = out.decode("utf-8", "replace")
+            if isinstance(err, bytes):
+                err = err.decode("utf-8", "replace")
+        assert f'"value":"{want}"' in out, (
+            f"#4709 serve-async: expected value {want!r}; stdout={out[-400:]!r} stderr={err[-400:]!r}"
+        )
+        for banner in ("AURA CRASH", "SIGSEGV", "invalid closure", "corrupt string key"):
+            assert banner not in out and banner not in err, (
+                f"#4709 serve-async: {banner!r} while rebind/eval-current ran under 4 fibers: {err[-400:]!r}"
+            )
+    finally:
+        os.remove(path)
+    # Source cites: the parked-segment registry is what keeps a suspended
+    # fiber's env (and a hash only it references) mark-visible, and the
+    # string release must honour the mark (#4608).
+    flat = (REPO / "src/compiler/evaluator_eval_flat.cpp").read_text(encoding="utf-8")
+    assert "Issue #4706" in flat, "#4709: the parked tree-walker root segment citation is gone"
+    assert "collect_tw_root_segment(set->frames" in flat, (
+        "#4709: maybe_reclaim_tw_unreachable no longer marks parked fiber segments"
+    )
+    assert "g_tw_parked" in flat and "aura_tw_roots_detach" in flat, (
+        "#4709: the fiber root segment no longer detaches/parks at yield"
+    )
+    heap = (REPO / "src/compiler/locked_string_heap.hh").read_text(encoding="utf-8")
+    assert "release_unmarked" in heap and "seen[i]" in heap, (
+        "#4709: the string slot release no longer consults the mark"
+    )
+    print("  OK test_fiber_hash_key_survives_rebind_4709 (global hash key stays 9 chars under 4 rebind fibers)")
 
 
 for tf in [
@@ -4825,6 +4942,7 @@ for tf in [
     test_fiber_result_root_4710,
     test_fiber_lock_order_inversion_4711,
     test_fiber_cancel_4708,
+    test_fiber_hash_key_survives_rebind_4709,
 ]:
     try:
         tf()
