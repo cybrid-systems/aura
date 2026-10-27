@@ -149,7 +149,7 @@ Evaluator::Evaluator() {
         this);
     primitives_.set_string_heap(&string_heap_);
     primitives_.set_error_sink(&error_values_, &primitive_error_count_);
-    // Issue #2652: reserve string_heap_[0] as immortal empty string so
+    // Issue #2652: reserve string slot 0 as the immortal empty string so
     // make_string(0) / default error causes stay a stable empty sentinel
     // (never confused with a corrupted non-empty key that became "").
     // Use push_string_heap (not bare push_back) — #1668 dead-heap audit.

@@ -295,7 +295,7 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
         const auto pidx = as_string_idx(a[0]);
         if (pidx >= ev.string_heap_.size())
             return make_bool(false);
-        const std::string path = ev.string_heap_[pidx];
+        const std::string path = ev.string_at(pidx);
         // Issue #4399: fence before the workspace snapshot and before
         // ios::trunc. Deny → #f and zero host bytes. ofstream uses the
         // resolved path (tenant root when the policy is active; the
@@ -392,7 +392,7 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
         const auto pidx = as_string_idx(a[0]);
         if (pidx >= ev.string_heap_.size())
             return make_bool(false);
-        const std::string path = ev.string_heap_[pidx];
+        const std::string path = ev.string_at(pidx);
         // Issue #4400: fence before any host read. Deny → #f, no load_blob,
         // no set-code. load_blob uses the resolved path (tenant root when
         // the policy is active; the caller string on passthrough).
@@ -517,7 +517,7 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
         const auto pidx = as_string_idx(a[0]);
         if (pidx >= ev.string_heap_.size())
             return make_bool(false);
-        const std::string path = ev.string_heap_[pidx];
+        const std::string path = ev.string_at(pidx);
         // Issue #4560: same host-path fence as serialize-workspace /
         // deserialize-workspace. Deny → #f, no load_blob, IsolationDeny
         // tenant-path-escape. Open the resolved path (tenant root when the

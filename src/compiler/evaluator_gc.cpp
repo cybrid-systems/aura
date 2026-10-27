@@ -198,7 +198,7 @@ std::size_t Evaluator::compact_strings(const std::vector<bool>& live_mask) {
             live_mask.empty() ? true : (i < live_mask.size() ? live_mask[i] : false);
         if (is_live) {
             string_remap_.push_back(new_idx);
-            new_strings.push_back(std::move(string_heap_[i]));
+            new_strings.push_back(std::move(mutable_string_at(i)));
             // Issue #4428: the owner record is index-parallel. Move it with
             // the live slot (missing tail stays never-stamped).
             const std::uint64_t stamp =

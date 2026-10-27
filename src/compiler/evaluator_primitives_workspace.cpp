@@ -158,7 +158,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                     err_msg = "workspace:rollback-to: name string index out of range";
                 } else {
                     // Copy name under lock (stable identity for match).
-                    const std::string target = ev.string_heap_[name_idx];
+                    const std::string target = ev.string_at(name_idx);
                     const auto names_n = ev.snapshot_names_.size();
                     const auto sources_n = ev.snapshot_sources_.size();
                     const bool diverged = names_n != sources_n;
@@ -352,7 +352,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         if (a.size() >= 1 && is_string(a[0])) {
             const auto sidx = as_string_idx(a[0]);
             if (sidx < ev.string_heap_.size())
-                name = ev.string_heap_[sidx];
+                name = ev.string_at(sidx);
         }
         if (name.empty())
             name = "ws-" + std::to_string(wt->size());
@@ -445,7 +445,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         auto name_idx = as_string_idx(a[0]);
         if (name_idx >= ev.string_heap_.size())
             return make_void();
-        const auto& name = ev.string_heap_[name_idx];
+        const auto& name = ev.string_at(name_idx);
         // Prefer the active workspace layer's flat + pool when
         // a WorkspaceTree exists (so (workspace :switch) actually
         // changes where lookups go). If the tree is missing or
@@ -641,7 +641,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                 auto idx = as_string_idx(a[0]);
                 if (idx >= ev.string_heap_.size())
                     return make_bool(false);
-                const auto& s = ev.string_heap_[idx];
+                const auto& s = ev.string_at(idx);
                 if (s == "single-writer" || s == "SingleWriter")
                     return apply(Evaluator::ConcurrentMutationPolicy::SingleWriter);
                 if (s == "scoped-parallel" || s == "ScopedParallel")
@@ -833,7 +833,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             if (is_string(src)) {
                 auto sidx = as_string_idx(src);
                 if (sidx < ev.string_heap_.size())
-                    source = ev.string_heap_[sidx];
+                    source = ev.string_at(sidx);
             }
         }
         ev.workspace_flat_ = saved_flat;
@@ -856,7 +856,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         auto sym_idx = as_string_idx(a[1]);
         if (sym_idx >= ev.string_heap_.size())
             return make_bool(false);
-        auto sym_name = ev.string_heap_[sym_idx];
+        auto sym_name = ev.string_at(sym_idx);
 
         // Get source from the source workspace
         auto source = get_ws_source(src_id);
@@ -1079,7 +1079,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                 if (is_string(src)) {
                     auto sidx = as_string_idx(src);
                     if (sidx < ev.string_heap_.size())
-                        parent_source = ev.string_heap_[sidx];
+                        parent_source = ev.string_at(sidx);
                 }
             }
 
@@ -1272,7 +1272,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                 if (is_string(src)) {
                     auto sidx = as_string_idx(src);
                     if (sidx < ev.string_heap_.size())
-                        parent_source = ev.string_heap_[sidx];
+                        parent_source = ev.string_at(sidx);
                 }
             }
             auto parent_names = extract_defines(parent_source);
@@ -1311,7 +1311,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         if (a.size() >= 4 && is_string(a[3])) {
             auto sidx = as_string_idx(a[3]);
             if (sidx < ev.string_heap_.size())
-                strategy = ev.string_heap_[sidx];
+                strategy = ev.string_at(sidx);
         }
         auto base_source = get_ws_source(base_id);
         auto ours_source = get_ws_source(ours_id);

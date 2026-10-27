@@ -143,10 +143,10 @@ void register_type_primitives(PrimRegistrar add, Evaluator& ev) {
         if (name_idx >= ev.string_heap_.size() || params_idx >= ev.string_heap_.size() ||
             ret_idx >= ev.string_heap_.size())
             return make_bool(false);
-        ev.declared_type_sigs_[ev.string_heap_[name_idx]] = {
-            .type_str = ev.string_heap_[params_idx] + "|" + ev.string_heap_[ret_idx],
-            .module_file = "",
-            .resolved = false};
+        ev.declared_type_sigs_[ev.string_at(name_idx)] = {.type_str = ev.string_at(params_idx) +
+                                                                      "|" + ev.string_at(ret_idx),
+                                                          .module_file = "",
+                                                          .resolved = false};
         return make_bool(true);
     });
 
@@ -160,7 +160,7 @@ void register_type_primitives(PrimRegistrar add, Evaluator& ev) {
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_bool(false);
-        const std::string caller = ev.string_heap_[idx];
+        const std::string caller = ev.string_at(idx);
         // Issue #4399: fence before any read or .aura-type write. Deny →
         // #f, zero bytes. An active allow is already a lexical absolute
         // under the caller tenant root. resolve_module_path realpaths
@@ -327,7 +327,7 @@ void register_type_primitives(PrimRegistrar add, Evaluator& ev) {
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_bool(false);
-        const std::string caller = ev.string_heap_[idx];
+        const std::string caller = ev.string_at(idx);
         // Issue #4414: same fence as generate-type-sigs. Active policy uses
         // the gated absolute only — resolve_module_path would search CWD /
         // AURA_PATH / ../lib. Deny → #f, zero read of both files.
@@ -523,8 +523,8 @@ void register_hot_swap_primitives(PrimRegistrar add, Evaluator& ev) {
             // No callback set — hot-swap not available in this context
             return make_bool(false);
         }
-        const std::string& name = ev.string_heap_[ni];
-        const std::string& new_source = ev.string_heap_[si];
+        const std::string& name = ev.string_at(ni);
+        const std::string& new_source = ev.string_at(si);
         bool ok = false;
         try {
             ok = ev.hot_swap_fn_(name, new_source);

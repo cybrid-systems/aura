@@ -68,7 +68,7 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_bool(false);
-        auto msg = ev.string_heap_[idx];
+        auto msg = ev.string_at(idx);
 
         // Build diagnosis result as list: (cause target fix-type fix-data explanation)
         auto make_diag = [&](const std::string& cause, const std::string& target,
@@ -233,7 +233,7 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
         auto code_idx = as_string_idx(a[0]);
         if (code_idx >= ev.string_heap_.size())
             return make_bool(false);
-        auto code = ev.string_heap_[code_idx];
+        auto code = ev.string_at(code_idx);
 
         // Extract fix-type (3rd element of diagnose result)
         // diagnose returns: (cause target fix-type fix-data explanation)
@@ -243,7 +243,7 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
                     if (is_string(ev.pairs_[as_pair_idx(p)].car)) {
                         auto si = as_string_idx(ev.pairs_[as_pair_idx(p)].car);
                         if (si < ev.string_heap_.size())
-                            return ev.string_heap_[si];
+                            return ev.string_at(si);
                     }
                     return "";
                 }
@@ -346,7 +346,7 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
             auto type_idx = as_string_idx(a[1]);
             if (type_idx >= ev.string_heap_.size())
                 return make_bool(false);
-            auto new_type = ev.string_heap_[type_idx];
+            auto new_type = ev.string_at(type_idx);
 
             // Check compatibility based on node tag
             switch (nv.tag) {
@@ -465,7 +465,7 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
                     cause_denied = true;
                     return {};
                 }
-                return ev.string_heap_[si];
+                return ev.string_at(si);
             };
             if (is_string(v))
                 return take(as_string_idx(v));
@@ -491,7 +491,7 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
                 ev.note_agent_recovery_result(5, false, false, false);
                 return make_result(false, 5, "bad-args", "", make_void());
             }
-            code = ev.string_heap_[ci];
+            code = ev.string_at(ci);
             err_msg = ev.last_mutate_error();
             if (err_msg.empty()) {
                 ev.note_agent_recovery_result(5, false, false, false);
@@ -515,7 +515,7 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
                 ev.note_agent_recovery_result(5, false, false, false);
                 return make_result(false, 5, "bad-args", "", make_void());
             }
-            code = ev.string_heap_[ci];
+            code = ev.string_at(ci);
         }
 
         // Guard + panic checkpoint (safe recovery window).
@@ -564,7 +564,7 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
                     if (is_string(ev.pairs_[as_pair_idx(p)].car)) {
                         auto si = as_string_idx(ev.pairs_[as_pair_idx(p)].car);
                         if (si < ev.string_heap_.size())
-                            return ev.string_heap_[si];
+                            return ev.string_at(si);
                     }
                     return "";
                 }

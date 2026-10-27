@@ -543,7 +543,7 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return ev.make_merr("bad-arg", "string index out of range");
-        const std::string& name = ev.string_heap_[idx];
+        const std::string& name = ev.string_at(idx);
         if (name != "coverage-greedy" && name != "bug-fix-priority" && name != "minimal-mutation") {
             return ev.make_merr(
                 "unknown-strategy",
@@ -589,7 +589,7 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_void();
-        const std::string& name = ev.string_heap_[idx];
+        const std::string& name = ev.string_at(idx);
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             if (name == "coverage-greedy")
@@ -740,14 +740,14 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
         if (name_idx >= ev.string_heap_.size() || pat_idx >= ev.string_heap_.size())
             return make_bool(false);
 
-        std::string name = ev.string_heap_[name_idx];
-        std::string pattern = ev.string_heap_[pat_idx];
+        std::string name = ev.string_at(name_idx);
+        std::string pattern = ev.string_at(pat_idx);
         std::vector<std::string> params;
         for (std::size_t i = 2; i < a.size(); ++i) {
             if (is_string(a[i])) {
                 auto pidx = as_string_idx(a[i]);
                 if (pidx < ev.string_heap_.size())
-                    params.push_back(ev.string_heap_[pidx]);
+                    params.push_back(ev.string_at(pidx));
             }
         }
 
@@ -782,7 +782,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
         auto name_idx = as_string_idx(a[0]);
         if (name_idx >= ev.string_heap_.size())
             return make_void();
-        std::string name = ev.string_heap_[name_idx];
+        std::string name = ev.string_at(name_idx);
 
         // Find template
         int ti = -1;
@@ -805,7 +805,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                 if (is_string(a[i + 1])) {
                     auto vidx = as_string_idx(a[i + 1]);
                     if (vidx < ev.string_heap_.size())
-                        subst[pnames[i]] = ev.string_heap_[vidx];
+                        subst[pnames[i]] = ev.string_at(vidx);
                 }
             }
         }
@@ -887,8 +887,8 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
         if (name_idx >= ev.string_heap_.size() || sig_idx >= ev.string_heap_.size())
             return make_void();
 
-        std::string name = ev.string_heap_[name_idx];
-        std::string sig = ev.string_heap_[sig_idx];
+        std::string name = ev.string_at(name_idx);
+        std::string sig = ev.string_at(sig_idx);
         std::string prompt_text;
         std::string model = "deepseek-chat";
         std::string examples_text;
@@ -901,20 +901,20 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
             auto k_idx = as_string_idx(a[i]);
             if (k_idx >= ev.string_heap_.size())
                 continue;
-            std::string key = ev.string_heap_[k_idx];
+            std::string key = ev.string_at(k_idx);
 
             if (key == ":prompt" && is_string(a[i + 1])) {
                 auto pidx = as_string_idx(a[i + 1]);
                 if (pidx < ev.string_heap_.size())
-                    prompt_text = ev.string_heap_[pidx];
+                    prompt_text = ev.string_at(pidx);
             } else if (key == ":model" && is_string(a[i + 1])) {
                 auto midx = as_string_idx(a[i + 1]);
                 if (midx < ev.string_heap_.size())
-                    model = ev.string_heap_[midx];
+                    model = ev.string_at(midx);
             } else if (key == ":examples" && is_string(a[i + 1])) {
                 auto eidx = as_string_idx(a[i + 1]);
                 if (eidx < ev.string_heap_.size())
-                    examples_text = ev.string_heap_[eidx];
+                    examples_text = ev.string_at(eidx);
             } else if (key == ":max-attempts" && is_int(a[i + 1])) {
                 max_attempts = static_cast<int>(as_int(a[i + 1]));
             }
@@ -937,7 +937,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
             if (is_string(kr)) {
                 auto ai = as_string_idx(kr);
                 if (ai < ev.string_heap_.size())
-                    api_key = ev.string_heap_[ai];
+                    api_key = ev.string_at(ai);
             }
         }
         if (api_key.empty())
@@ -955,8 +955,8 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
             auto ur = (*getenv_fn)({make_string(uidx)});
             if (is_string(ur)) {
                 auto ui = as_string_idx(ur);
-                if (ui < ev.string_heap_.size() && !ev.string_heap_[ui].empty())
-                    api_url = ev.string_heap_[ui];
+                if (ui < ev.string_heap_.size() && !ev.string_at(ui).empty())
+                    api_url = ev.string_at(ui);
             }
         }
 
@@ -988,7 +988,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
             auto resp = (*http_fn)({make_string(ui2), make_string(bi), make_string(ki)});
             // Scrub key material from the heap after the call.
             if (ki < ev.string_heap_.size()) {
-                auto& slot = ev.string_heap_[ki];
+                auto& slot = ev.mutable_string_at(ki);
                 std::fill(slot.begin(), slot.end(), '\0');
                 slot.clear();
                 ev.string_heap_.note_write(ki); // Issue #4548
@@ -998,7 +998,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
             auto ri = as_string_idx(resp);
             if (ri >= ev.string_heap_.size())
                 continue;
-            auto& response = ev.string_heap_[ri];
+            auto& response = ev.mutable_string_at(ri);
 
             // Issue #1715: extract choices[0].message.content via json-parse +
             // hash-ref structure walk (replaces prior substring content scan).
@@ -1027,7 +1027,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                                     if (is_string(content)) {
                                         auto sidx = as_string_idx(content);
                                         if (sidx < ev.string_heap_.size()) {
-                                            code = ev.string_heap_[sidx];
+                                            code = ev.string_at(sidx);
                                             if (code.size() > kMaxSynthCodeBytes)
                                                 code.resize(kMaxSynthCodeBytes);
                                         }
@@ -1109,7 +1109,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
             auto name_idx = as_string_idx(a[0]);
             if (name_idx >= ev.string_heap_.size())
                 return make_void();
-            std::string fn_name = ev.string_heap_[name_idx];
+            std::string fn_name = ev.string_at(name_idx);
             int pop_size = 8;
             int generations = 3;
             double mutation_rate = 0.3;
@@ -1124,7 +1124,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                 if (is_string(a[i])) {
                     auto k_idx = as_string_idx(a[i]);
                     if (k_idx < ev.string_heap_.size())
-                        key = ev.string_heap_[k_idx];
+                        key = ev.string_at(k_idx);
                 } else if (types::is_keyword(a[i])) {
                     auto k_idx = types::as_keyword_idx(a[i]);
                     if (k_idx < ev.keyword_table_.size())
@@ -1143,7 +1143,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                 else if ((key == ":fitness" || key == ":benchmark") && is_string(a[i + 1])) {
                     auto fi = as_string_idx(a[i + 1]);
                     if (fi < ev.string_heap_.size())
-                        fitness_expr = ev.string_heap_[fi];
+                        fitness_expr = ev.string_at(fi);
                 }
             }
             if (pop_size < 2)
@@ -1180,7 +1180,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
             auto cs_idx = as_string_idx(cs_result);
             if (cs_idx >= ev.string_heap_.size())
                 return make_void();
-            std::string baseline = ev.string_heap_[cs_idx];
+            std::string baseline = ev.string_at(cs_idx);
 
             // Issue #4267: classify a probe result into a comparable token so
             // candidates score by matching the baseline's observed behavior
@@ -1201,7 +1201,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                 if (is_string(v)) {
                     auto si = as_string_idx(v);
                     if (si < ev.string_heap_.size())
-                        return "s" + ev.string_heap_[si];
+                        return "s" + ev.string_at(si);
                     return "S";
                 }
                 if (is_pair(v)) {
@@ -1331,7 +1331,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                         if (probe_slot >= ev.string_heap_.size()) {
                             probe_slot = ev.string_heap_.mint(call_src);
                         } else {
-                            ev.string_heap_[probe_slot] = call_src;
+                            ev.mutable_string_at(probe_slot) = call_src;
                             ev.string_heap_.note_write(probe_slot); // Issue #4548
                         }
                     }
@@ -1511,7 +1511,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                                                     if (is_string(src)) {
                                                         auto si = as_string_idx(src);
                                                         if (si < ev.string_heap_.size())
-                                                            variant = ev.string_heap_[si];
+                                                            variant = ev.string_at(si);
                                                     }
                                                 }
                                             }
@@ -1805,7 +1805,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 if (slot >= ev.string_heap_.size()) {
                     slot = ev.string_heap_.mint(s);
                 } else {
-                    ev.string_heap_[slot] = s;
+                    ev.mutable_string_at(slot) = s;
                     ev.string_heap_.note_write(slot); // Issue #4548
                 }
                 // Issue #4370: never hand the reused slot to a closure.
@@ -1820,7 +1820,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 };
                 fresh = ev.string_heap_.size();
                 for (std::size_t i = 0; i < ev.string_heap_.size(); ++i) {
-                    if (!is_slot(i) && ev.string_heap_[i] == s) {
+                    if (!is_slot(i) && ev.string_at(i) == s) {
                         fresh = i;
                         break;
                     }
@@ -3652,7 +3652,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     // string keeps the process-bucket default.
                     const auto sid = types::as_string_idx(val);
                     if (sid < ev.string_heap_.size())
-                        bp_scope_id = ev.string_heap_[sid];
+                        bp_scope_id = ev.string_at(sid);
                 } else if ((k == "producer-bp-budget" || k == "producer_bp_budget") &&
                            types::is_int(val)) {
                     // Issue #2925: consecutive BP self-throttle (0 = off).
@@ -4439,7 +4439,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 } else if ((k == "bp-scope-id" || k == "bp_scope_id") && types::is_string(val)) {
                     const auto sid = types::as_string_idx(val);
                     if (sid < ev.string_heap_.size())
-                        bp_scope_id = ev.string_heap_[sid];
+                        bp_scope_id = ev.string_at(sid);
                 } else if ((k == "producer-bp-budget" || k == "producer_bp_budget") &&
                            types::is_int(val)) {
                     producer_bp_budget =
@@ -8089,7 +8089,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         const auto name_idx = types::as_string_idx(a[0]);
         if (name_idx >= ev.string_heap_.size())
             return types::make_string(0);
-        const auto& name = ev.string_heap_[name_idx];
+        const auto& name = ev.string_at(name_idx);
         // Issue #3727 / #3729: export a scope-spawned name via
         // resolve_aura_agent. Token stages on Evaluator::handoff_tokens_
         // (bounded). Process g_handoff_token_stash is hash→Evaluator*
@@ -8121,7 +8121,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         const auto hash_idx = types::as_string_idx(a[0]);
         if (hash_idx >= ev.string_heap_.size())
             return types::make_string(0);
-        const auto& hash = ev.string_heap_[hash_idx];
+        const auto& hash = ev.string_at(hash_idx);
         aura::orch::HandoffToken tok;
         bool took = ev.handoff_tokens_ && ev.handoff_tokens_->take(hash, tok);
         if (!took) {
@@ -8199,7 +8199,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             const auto hash_idx = types::as_string_idx(a[0]);
             if (hash_idx >= ev.string_heap_.size())
                 return make_invalid_hash();
-            const auto& hash = ev.string_heap_[hash_idx];
+            const auto& hash = ev.string_at(hash_idx);
             aura::orch::HandoffToken tok_snapshot;
             auto* src = handoff_stash_src(hash);
             if (!src || !src->handoff_tokens_ || !src->handoff_tokens_->peek(hash, tok_snapshot)) {

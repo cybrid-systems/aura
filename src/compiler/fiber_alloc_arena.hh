@@ -31,9 +31,15 @@
 // A string value is a 56-bit payload (value_tags.h AURA_MAKE_STRING) that
 // indexes the ONE shared string_heap_; the low byte is the kind tag and is
 // fully used (AURA_STRING_LOW8). There is no spare bit in the value
-// encoding, and the shared heap is read at ~307 direct `string_heap_[idx]`
-// sites, so a second index space cannot be introduced without migrating
-// every read site. This header therefore keeps ownership in a SIDE TABLE
+// encoding, and the shared heap was read at ~309 direct slot-indexing sites
+// (issue #4714 follow-up migrated them to Evaluator::string_at()), so a
+// second index space cannot be introduced without migrating
+// every read site (issue #4714 follow-up: those 309 reads now go through
+// Evaluator::string_at(), the one place the index space is decoded — see
+// lib/aura_value_abi.h AURA_STR_SPACE_SHIFT — so a peer space is expressible;
+// what still blocks a per-fiber space is LIFETIME, not the tag layout: a
+// minted payload reaches shared pairs_/cells_ before the fiber publishes).
+// This header therefore keeps ownership in a SIDE TABLE
 // (FiberArenaTable: fiber id -> arena, and per-arena local->shared remap
 // after promotion) instead of tagging values. Rationale: the tag would have
 // to be consulted by every reader; the side table is only consulted by the
@@ -43,7 +49,7 @@
 // The `push_string_heap` hot path still mints into the shared heap under
 // alloc_storage_lock_. Routing it through the nursery requires the
 // index-space migration above (a tagged payload bit + a shared accessor
-// replacing the direct `string_heap_[idx]` reads), because a value minted
+// replacing the direct slot-indexing reads), because a value minted
 // into a nursery index is indistinguishable from a shared index once it
 // reaches an arbitrary reader. This arena + the publish hook is the
 // prerequisite slice: the fast path, the copy-on-send promotion, the

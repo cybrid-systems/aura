@@ -7,6 +7,9 @@
 module;
 #include "compiler/locked_string_heap.hh" // Issue #4543
 #include "compiler/fiber_alloc_arena.hh"  // Issue #4714: per-fiber string nursery
+// Issue #4714: the string payload index-space codec (AURA_STR_*). Same SSOT
+// as lib/runtime.c and the AOT preamble; C, so it is safe in the fragment.
+#include "../../lib/aura_value_abi.h"
 
 #include "../core/persistent_child_vector.hh"
 #include "../core/layout_stamp.hh" // Issue #2170: LayoutStamp decls in evaluator
@@ -5844,7 +5847,7 @@ public:
     [[nodiscard]] std::size_t compact_pairs(const std::vector<bool>& live_mask);
     void clear_pair_remap() noexcept { pair_remap_.clear(); }
     // Issue #2001: compact string_heap_ + build string_remap_.
-    // `live_mask[i]` is true if string_heap_[i] is live (keep).
+    // `live_mask[i]` is true if string_at(i) is live (keep).
     // Strings not in live_mask are removed and remapped to -1.
     // Returns # strings after compact. Empty live_mask → identity
     // (all strings treated as live).
@@ -10258,7 +10261,7 @@ public:
     // access the private string_heap_ directly, so
     // they use this wrapper.
     [[nodiscard]] std::size_t string_heap_size() const noexcept { return string_heap_.size(); }
-    const std::string& string_heap_at(std::size_t idx) const { return string_heap_[idx]; }
+    const std::string& string_heap_at(std::size_t idx) const { return string_at(idx); }
     // Issue #2001: public pairs_ size getter (companion to string_heap_size)
     // for tests + observability. Live pair count post-compact.
     [[nodiscard]] std::size_t pairs_size() const noexcept { return pairs_.size(); }
@@ -10298,6 +10301,129 @@ public:
     void note_apply_closure_mtx_lookup() noexcept {
         apply_closure_mtx_lookup_total_.fetch_add(1, std::memory_order_relaxed);
     }
+    // ── Issue #4714: the string index-space decision (ONE place) ───
+    // Every "payload -> string bytes" read in the engine goes through
+    // string_at() / string_at_or(); no other member indexes a string heap
+    // with a value payload (the pre-#4714 code had
+    // 309 direct `string_heap_[idx]` readers, i.e. 309 copies of the
+    // implicit "payload == shared index" assumption). The encoding is
+    //     payload = (space << AURA_STR_SPACE_SHIFT) | slot
+    // documented in lib/aura_value_abi.h: space 0 is string_heap_ and is
+    // bit-identical to the pre-#4714 encoding for every reachable slot,
+    // so no tag predicate, AOT preamble or JIT site changes.
+    //
+    // A space >= 1 must be a PERMANENT peer heap (registered for the
+    // Evaluator's lifetime): a per-fiber nursery cannot be one, because a
+    // minted payload reaches shared pairs_/cells_/env frames immediately
+    // and would dangle when the fiber exits. Hence space 0 is the only
+    // production space and the peer slots are a test/diagnostic door for
+    // the decode itself.
+    static constexpr unsigned kStringSpaceCount = 4;
+    static constexpr unsigned kStringSpaceMax = kStringSpaceCount - 1;
+    std::atomic<::aura::compiler::LockedStringHeap*> string_spaces_[kStringSpaceCount] = {
+        nullptr, nullptr, nullptr, nullptr};
+    mutable std::atomic<std::uint64_t> string_space_nonzero_reads_{0};
+    mutable std::atomic<std::uint64_t> string_space_unknown_reads_{0};
+
+    // Issue #4714: the codec's constants, exported so a test can build a
+    // value for a peer space without including lib/aura_value_abi.h (a test
+    // TU that includes it would duplicate the module's `types` names).
+    [[nodiscard]] static constexpr unsigned string_space_shift() noexcept {
+        return AURA_STR_SPACE_SHIFT;
+    }
+    [[nodiscard]] static constexpr std::uint64_t string_slot_mask() noexcept {
+        return AURA_STR_SLOT_MASK;
+    }
+    // payload domain: what string_at()/string_at_or() decode
+    [[nodiscard]] static constexpr std::uint64_t
+    make_spaced_string_payload(unsigned space, std::uint64_t slot) noexcept {
+        return (static_cast<std::uint64_t>(space) << AURA_STR_SPACE_SHIFT) |
+               (slot & AURA_STR_SLOT_MASK);
+    }
+    // value domain: the tagged immediate (kind 9 + the payload above)
+    [[nodiscard]] static constexpr std::int64_t
+    make_spaced_string_value(unsigned space, std::uint64_t slot) noexcept {
+        return AURA_MAKE_STRING_SPACED(space, slot);
+    }
+    [[nodiscard]] static const std::string& string_empty_sentinel() noexcept {
+        static const std::string kEmpty;
+        return kEmpty;
+    }
+    [[nodiscard]] const ::aura::compiler::LockedStringHeap*
+    string_space_heap(unsigned space) const noexcept {
+        if (space == 0)
+            return &string_heap_;
+        if (space > kStringSpaceMax)
+            return nullptr;
+        return string_spaces_[space].load(std::memory_order_acquire);
+    }
+    // Install a permanent peer heap for space 1..3 (test/diagnostic door).
+    // The heap must outlive this Evaluator: the caller owns that lifetime.
+    void register_string_space(unsigned space, ::aura::compiler::LockedStringHeap* heap) noexcept {
+        if (space == 0 || space > kStringSpaceMax)
+            return;
+        string_spaces_[space].store(heap, std::memory_order_release);
+    }
+    [[nodiscard]] std::uint64_t string_space_nonzero_reads() const noexcept {
+        return string_space_nonzero_reads_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t string_space_unknown_reads() const noexcept {
+        return string_space_unknown_reads_.load(std::memory_order_relaxed);
+    }
+    // Cold half of string_at(): a non-zero space (never taken by a
+    // production mint today, so it must not cost the space-0 fast path a
+    // counter update).
+    [[nodiscard]] const std::string& string_at_spaced(unsigned space, std::uint64_t slot) const {
+        string_space_nonzero_reads_.fetch_add(1, std::memory_order_relaxed);
+        auto* heap = string_space_heap(space);
+        if (heap == nullptr || slot >= heap->size()) [[unlikely]] {
+            string_space_unknown_reads_.fetch_add(1, std::memory_order_relaxed);
+            return string_empty_sentinel();
+        }
+        return (*heap)[static_cast<std::size_t>(slot)];
+    }
+    // Payload -> bytes, no lock (an entry is immutable once minted; growth
+    // only appends, the same contract every pre-#4714 reader relied on).
+    [[nodiscard]] const std::string& string_at(std::uint64_t payload) const {
+        const auto space = static_cast<unsigned>(payload >> AURA_STR_SPACE_SHIFT);
+        if (space == 0) [[likely]]
+            return string_heap_[static_cast<std::size_t>(payload)];
+        return string_at_spaced(space, payload & AURA_STR_SLOT_MASK);
+    }
+    // Bounds-checked payload -> owned copy: the
+    // `string_at_or(idx)` idiom the
+    // primitives used before #4714, with the index-space decode inside.
+    [[nodiscard]] std::string string_at_or(std::uint64_t payload,
+                                           std::string_view fallback = {}) const {
+        const auto space = static_cast<unsigned>(payload >> AURA_STR_SPACE_SHIFT);
+        if (space == 0) [[likely]] {
+            const auto slot = static_cast<std::size_t>(payload);
+            if (slot >= string_heap_.size()) [[unlikely]]
+                return std::string(fallback);
+            return string_heap_[slot];
+        }
+        const auto slot = payload & AURA_STR_SLOT_MASK;
+        auto* heap = string_space_heap(space);
+        if (heap == nullptr || slot >= heap->size()) [[unlikely]] {
+            string_space_unknown_reads_.fetch_add(1, std::memory_order_relaxed);
+            return std::string(fallback);
+        }
+        string_space_nonzero_reads_.fetch_add(1, std::memory_order_relaxed);
+        return (*heap)[static_cast<std::size_t>(slot)];
+    }
+    // In-place content writers (string-fill! / string-set! / agent slot
+    // reuse): the caller holds alloc_storage_lock_ or owns the slot, as
+    // before #4714.
+    [[nodiscard]] std::string& mutable_string_at(std::uint64_t payload) {
+        return string_heap_[static_cast<std::size_t>(payload & AURA_STR_SLOT_MASK)];
+    }
+    void set_string_at(std::uint64_t payload, std::string v) {
+        std::lock_guard lock(alloc_storage_lock_);
+        const auto slot = static_cast<std::size_t>(payload & AURA_STR_SLOT_MASK);
+        string_heap_[slot] = std::move(v);
+        string_heap_.note_write(slot);
+    }
+
     // Issue #2651 / #1397: always serialize string_heap_ growth.
     // Issue #4543: string_heap_ is a LockedStringHeap — mint() takes
     // alloc_storage_lock_, appends, runs the #4428 tenant stamp hook and
@@ -10396,7 +10522,7 @@ public:
         std::lock_guard lock(alloc_storage_lock_);
         if (idx >= string_heap_.size())
             return {};
-        return string_heap_[idx];
+        return string_at(idx);
     }
     // Issue #4320: string-ref reads one byte under the same lock.
     // Copying the whole heap string made a multi-thousand-step walk
@@ -10405,7 +10531,7 @@ public:
         std::lock_guard lock(alloc_storage_lock_);
         if (idx >= string_heap_.size())
             return -1;
-        const auto& s = string_heap_[idx];
+        const auto& s = string_at(idx);
         if (pos >= s.size())
             return -1;
         return static_cast<int>(static_cast<unsigned char>(s[pos]));
@@ -16033,7 +16159,7 @@ public:
                 // Soft/Off returns inside the consult.
                 if (!inrange_string_tenant_allows(sidx, /*required_effects=*/0, "file-mode"))
                     return "file-mode: cross-tenant string slot read denied (#4505)";
-                return string_heap_[sidx];
+                return string_at(sidx);
             }
         }
         return "<error>";

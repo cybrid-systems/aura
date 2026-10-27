@@ -618,7 +618,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
                     if (!inrange_string_tenant_allows(si, /*required_effects=*/0, "file-mode"))
                         why = "file-mode: cross-tenant string slot read denied (#4505)";
                     else
-                        why = string_heap_[si];
+                        why = string_at(si);
                 }
             }
         }

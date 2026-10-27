@@ -266,7 +266,7 @@ void ObservabilityPrims::register_eval_p0(PrimRegistrar add, Evaluator& ev) {
         if (ki >= ev.string_heap_.size())
             return make_int(0);
         const auto limit = static_cast<std::uint64_t>(as_int(a[1]));
-        const auto& kind = ev.string_heap_[ki];
+        const auto& kind = ev.string_at(ki);
         if (kind == "memory")
             ev.set_resource_quota_memory(limit);
         else if (kind == "fibers")
@@ -296,7 +296,7 @@ void ObservabilityPrims::register_eval_p1(PrimRegistrar add, Evaluator& ev) {
             const auto ki = as_string_idx(a[0]);
             if (ki >= ev.string_heap_.size())
                 return make_int(0);
-            const auto& kind = ev.string_heap_[ki];
+            const auto& kind = ev.string_at(ki);
             if (kind == "memory")
                 return make_int(static_cast<std::int64_t>(ev.resource_quota_memory()));
             if (kind == "fibers")
@@ -323,7 +323,7 @@ void ObservabilityPrims::register_eval_p1(PrimRegistrar add, Evaluator& ev) {
         if (ki >= ev.string_heap_.size())
             return make_bool(false);
         const auto current = static_cast<std::uint64_t>(as_int(a[1]));
-        const auto& kind = ev.string_heap_[ki];
+        const auto& kind = ev.string_at(ki);
         std::uint64_t limit = 0;
         if (kind == "memory")
             limit = ev.resource_quota_memory();
@@ -474,7 +474,7 @@ void ObservabilityPrims::register_eval_p2(PrimRegistrar add, Evaluator& ev) {
             const auto idx = as_string_idx(a[0]);
             if (idx >= ev.string_heap_.size())
                 return make_void();
-            const std::string name = ev.string_heap_[idx];
+            const std::string name = ev.string_at(idx);
 
             // Freeze categories — keep in sync with check_primitive_surface.py
             auto blocked_category = [](std::string_view n) -> const char* {
@@ -587,7 +587,7 @@ void ObservabilityPrims::register_eval_p3(PrimRegistrar add, Evaluator& ev) {
             const auto idx = as_string_idx(a[0]);
             if (idx >= ev.string_heap_.size())
                 return make_void();
-            const auto& category = ev.string_heap_[idx];
+            const auto& category = ev.string_at(idx);
             EvalValue result = make_void();
             for (std::size_t slot = ev.primitives_.slot_count(); slot-- > 0;) {
                 const auto& pm = ev.primitives_.meta_for_slot(slot);
@@ -630,7 +630,7 @@ void ObservabilityPrims::register_eval_p3(PrimRegistrar add, Evaluator& ev) {
             const auto idx = as_string_idx(a[0]);
             if (idx >= ev.string_heap_.size())
                 return make_bool(false);
-            const auto& name = ev.string_heap_[idx];
+            const auto& name = ev.string_at(idx);
             const auto slot = ev.primitives_.slot_for_name(name);
             if (slot >= ev.primitives_.slot_count())
                 return make_bool(false);
@@ -769,7 +769,7 @@ void ObservabilityPrims::register_eval_p5(PrimRegistrar add, Evaluator& ev) {
             const auto idx = as_string_idx(a[0]);
             if (idx >= ev.string_heap_.size())
                 return make_void();
-            const auto sk = generate_primitive_skeleton(ev.string_heap_[idx]);
+            const auto sk = generate_primitive_skeleton(ev.string_at(idx));
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                 m->primitive_skeleton_generations_total.fetch_add(1, std::memory_order_relaxed);
             auto build_hash =
@@ -2227,7 +2227,7 @@ void ObservabilityPrims::register_eval_p12(PrimRegistrar add, Evaluator& ev) {
         if (!a.empty() && aura::compiler::types::is_string(a[0])) {
             const auto idx = aura::compiler::types::as_string_idx(a[0]);
             if (idx < ev.string_heap_.size()) {
-                const auto& name = ev.string_heap_[idx];
+                const auto& name = ev.string_at(idx);
                 // Build the meta hash for the requested name.
                 // Whether or not the primitive exists, we return
                 // the meta shape so the Agent can introspect —

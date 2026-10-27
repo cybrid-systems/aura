@@ -1,7 +1,7 @@
 {
   "issue": 4714,
   "title": "Issue #4714: per-fiber string nursery with copy-on-send promotion - the fast path takes no lock (measured), a publish deep-copies the batch into shared old space under ONE narrow lock, and an unpublishing fiber exit releases the arena wholesale",
-  "ok": "OK: Issue #4714 per-fiber string arena - 2 fibers mint concurrently with 0 heap locks and 0 table locks on the steady-state path (Guard-observed, with a bound-heap control), promotion on publish is one lock per batch, the 10k promotion cost is measured (2.1 ms into the churned shared heap, 1.2 ms into a fresh one), a 10k-entry fiber:join is under 2 ms, and an unpublishing exit drops the arena in O(chunks)",
+  "ok": "OK: Issue #4714 per-fiber string arena - 2 fibers mint concurrently with 0 heap locks and 0 table locks on the steady-state path (Guard-observed, with a bound-heap control), promotion on publish is one lock per batch, the 10k promotion cost is measured (2.1 ms into the churned shared heap, 1.2 ms into a fresh one), a 10k-entry fiber:join is under 2 ms, and an unpublishing exit drops the arena in O(chunks); follow-up AC7-AC11: the String payload carries an index-space id in payload bits 48..55 (space 0 = the legacy shared heap, bit-identical for every reachable slot, ABI stays 4 and no tag predicate moves), all 309 direct heap readers now go through Evaluator::string_at()/string_at_or()/mutable_string_at() (0 direct indexes left outside the accessor), and a registered peer space resolves through the same accessor",
   "checks": [
     {
       "ac": "AC1",
@@ -61,6 +61,61 @@
         "4714 AC3: join of the 10k-entry hash < 2 ms",
         "4714 AC3: the fresh-heap control promotes the same 10k batch",
         "4714 AC4: 100k-slot arena release is wholesale"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "lib/aura_value_abi.h",
+      "contains": [
+        "Issue #4714: string payload index spaces",
+        "AURA_STR_SPACE_SHIFT 48",
+        "AURA_MAKE_STRING_SPACED",
+        "AURA_STRING_SPACE(v)",
+        "AURA_STRING_SLOT(v)",
+        "AURA_VALUE_ABI stays 4"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "src/compiler/value_tags.h",
+      "contains": [
+        "string_space_raw_v2",
+        "string_slot_raw_v2",
+        "make_string_spaced_raw_v2",
+        "spaced string roundtrip keeps the String tag",
+        "space 0 is the legacy shared heap for every reachable slot"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "Issue #4714: the string index-space decision",
+        "const std::string& string_at(std::uint64_t payload) const",
+        "std::string string_at_or(std::uint64_t payload",
+        "std::string& mutable_string_at(std::uint64_t payload)",
+        "register_string_space",
+        "string_space_nonzero_reads",
+        "string_space_unknown_reads"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "path": "tests/compiler/test_pmr_alloc_fiber_safe.cpp",
+      "contains": [
+        "4714S AC1: a space-0 payload still reads the shared heap",
+        "4714S AC2: string_at() decodes the space",
+        "4714S AC2: an unregistered space fails closed to empty",
+        "4714S AC3: no direct heap index left in",
+        "ac4714s_string_space_accessor"
+      ]
+    },
+    {
+      "ac": "AC11",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "string_at_or(",
+        "string_at("
       ]
     }
   ]

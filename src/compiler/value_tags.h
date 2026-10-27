@@ -334,6 +334,23 @@ inline constexpr bool is_string_raw_v2(std::int64_t v) noexcept {
 inline constexpr std::uint64_t string_idx_raw_v2(std::int64_t v) noexcept {
     return AURA_IMM_PAYLOAD(v);
 }
+// Issue #4714: two-index-space payload decode. The String payload is
+// (space << 48) | slot, space 0 = the shared Evaluator string heap. The
+// reader side of this codec lives in Evaluator::string_at(); these helpers
+// only name the fields (AURA_STR_SPACE_SHIFT is the ABI SSOT copy).
+inline constexpr unsigned kStringSpaceShift = AURA_STR_SPACE_SHIFT;
+inline constexpr std::uint64_t kStringSpaceMask = AURA_STR_SPACE_MASK;
+inline constexpr std::uint64_t kStringSlotMask = AURA_STR_SLOT_MASK;
+inline constexpr std::int64_t make_string_spaced_raw_v2(unsigned space,
+                                                        std::uint64_t slot) noexcept {
+    return AURA_MAKE_STRING_SPACED(space, slot);
+}
+inline constexpr unsigned string_space_raw_v2(std::int64_t v) noexcept {
+    return AURA_STRING_SPACE(v);
+}
+inline constexpr std::uint64_t string_slot_raw_v2(std::int64_t v) noexcept {
+    return AURA_STRING_SLOT(v);
+}
 inline constexpr std::int64_t make_float_raw_v2(std::uint64_t idx) noexcept {
     return AURA_MAKE_FLOAT(idx);
 }
@@ -377,6 +394,18 @@ static_assert(float_idx_raw_v2(make_float_raw_v2((1ULL << 56) - 1)) == (1ULL << 
 static_assert(string_idx_raw_v2(make_string_raw_v2((1ULL << 56) - 1)) == (1ULL << 56) - 1 &&
                   is_string_raw_v2(make_string_raw_v2((1ULL << 56) - 1)),
               "string index up to 2^56 keeps its type");
+// Issue #4714: space 0 is bit-identical to the pre-#4714 encoding, and a
+// non-zero space is still a String (the tag low byte is untouched).
+static_assert(string_space_raw_v2(make_string_raw_v2(0)) == 0 &&
+                  string_space_raw_v2(make_string_raw_v2(kStringSlotMask)) == 0,
+              "space 0 is the legacy shared heap for every reachable slot");
+static_assert(string_slot_raw_v2(make_string_raw_v2(kStringSlotMask)) == kStringSlotMask,
+              "space 0 slot roundtrip");
+static_assert(string_space_raw_v2(make_string_spaced_raw_v2(1, 7)) == 1 &&
+                  string_slot_raw_v2(make_string_spaced_raw_v2(1, 7)) == 7 &&
+                  is_string_raw_v2(make_string_spaced_raw_v2(1, 7)) &&
+                  string_space_raw_v2(make_string_spaced_raw_v2(3, kStringSlotMask)) == 3,
+              "spaced string roundtrip keeps the String tag");
 
 // Issue #571 / #1622: pure constexpr classifier (no atomics) for
 // compile-time dispatch validation and static_assert tables.

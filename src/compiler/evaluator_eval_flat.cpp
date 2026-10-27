@@ -2481,7 +2481,7 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
                     return it->second;
             } else {
                 for (std::size_t i = 0; i < string_heap_.size(); ++i) {
-                    if (string_heap_[i] == name)
+                    if (string_at(i) == name)
                         return make_string(static_cast<std::int64_t>(i));
                 }
             }
@@ -2721,7 +2721,7 @@ ast::NodeId Evaluator::data_to_flat(const types::EvalValue& data, aura::ast::Fla
         auto idx = as_string_idx(data);
         if (idx < string_heap_.size()) {
             // Strings in code context are variable references
-            auto name = string_heap_[idx];
+            auto name = string_at(idx);
             auto sid = pool.intern(name);
             return flat.add_variable(sid);
         }
@@ -2747,7 +2747,7 @@ ast::NodeId Evaluator::data_to_flat(const types::EvalValue& data, aura::ast::Fla
 
         if (is_string(car_data)) {
             auto fn_idx = as_string_idx(car_data);
-            auto fn_name = fn_idx < string_heap_.size() ? string_heap_[fn_idx] : "";
+            auto fn_name = string_at_or(fn_idx);
 
             // Quote: (quote expr)
             if (fn_name == "quote" && is_pair(cdr_data)) {
@@ -2788,14 +2788,14 @@ ast::NodeId Evaluator::data_to_flat(const types::EvalValue& data, aura::ast::Fla
                         auto tnp = as_pair_idx(type_name_data);
                         if (is_string(pairs_[tnp].car)) {
                             auto ti = as_string_idx(pairs_[tnp].car);
-                            auto ts = ti < string_heap_.size() ? string_heap_[ti] : "";
+                            auto ts = string_at_or(ti);
                             type_name_val = pool.intern(ts);
                             auto rest = pairs_[tnp].cdr;
                             while (is_pair(rest)) {
                                 auto rp = as_pair_idx(rest);
                                 if (is_string(pairs_[rp].car)) {
                                     auto pi = as_string_idx(pairs_[rp].car);
-                                    auto ps = pi < string_heap_.size() ? string_heap_[pi] : "";
+                                    auto ps = string_at_or(pi);
                                     params.push_back(pool.intern(ps));
                                 }
                                 rest = pairs_[rp].cdr;
@@ -2803,7 +2803,7 @@ ast::NodeId Evaluator::data_to_flat(const types::EvalValue& data, aura::ast::Fla
                         }
                     } else if (is_string(type_name_data)) {
                         auto ti = as_string_idx(type_name_data);
-                        auto ts = ti < string_heap_.size() ? string_heap_[ti] : "";
+                        auto ts = string_at_or(ti);
                         type_name_val = pool.intern(ts);
                     }
 
@@ -2820,15 +2820,14 @@ ast::NodeId Evaluator::data_to_flat(const types::EvalValue& data, aura::ast::Fla
                                 // Handle (quote Name) format
                                 if (is_string(ctor_car)) {
                                     auto ci = as_string_idx(ctor_car);
-                                    auto cs = ci < string_heap_.size() ? string_heap_[ci] : "";
+                                    auto cs = string_at_or(ci);
                                     if (cs == "quote" && is_pair(pairs_[ctor_pair].cdr)) {
                                         // (quote Some) — extract "Some" from cdr
                                         auto qcdr = as_pair_idx(pairs_[ctor_pair].cdr);
                                         auto name_val = pairs_[qcdr].car;
                                         if (is_string(name_val)) {
                                             auto ni = as_string_idx(name_val);
-                                            auto ns =
-                                                ni < string_heap_.size() ? string_heap_[ni] : "";
+                                            auto ns = string_at_or(ni);
                                             auto ctor_var = flat.add_variable(pool.intern(ns));
                                             ctors.push_back(flat.add_quote(ctor_var));
                                         }
@@ -2901,7 +2900,7 @@ ast::NodeId Evaluator::data_to_flat(const types::EvalValue& data, aura::ast::Fla
                         auto arg = pairs_[ap].car;
                         if (is_string(arg)) {
                             auto aidx = as_string_idx(arg);
-                            auto astr = aidx < string_heap_.size() ? string_heap_[aidx] : "";
+                            auto astr = string_at_or(aidx);
                             params.push_back(pool.intern(astr));
                         }
                         args_data = pairs_[ap].cdr;
@@ -2928,7 +2927,7 @@ ast::NodeId Evaluator::data_to_flat(const types::EvalValue& data, aura::ast::Fla
 
                     if (is_string(name_data) && is_pair(val_rest)) {
                         auto ni = as_string_idx(name_data);
-                        auto ns = ni < string_heap_.size() ? string_heap_[ni] : "";
+                        auto ns = string_at_or(ni);
                         auto vp = as_pair_idx(val_rest);
                         auto val_node = data_to_flat(pairs_[vp].car, flat, pool, depth + 1);
                         return flat.add_define(pool.intern(ns), val_node);
@@ -2994,7 +2993,7 @@ ast::NodeId Evaluator::data_to_flat(const types::EvalValue& data, aura::ast::Fla
                     auto val_rest = pairs_[np].cdr;
                     if (is_string(name_val) && is_pair(val_rest)) {
                         auto ni = as_string_idx(name_val);
-                        auto ns = ni < string_heap_.size() ? string_heap_[ni] : "";
+                        auto ns = string_at_or(ni);
                         auto vp = as_pair_idx(val_rest);
                         auto val_node = data_to_flat(pairs_[vp].car, flat, pool, depth + 1);
                         return flat.add_set(pool.intern(ns), val_node);
@@ -3025,7 +3024,7 @@ ast::NodeId Evaluator::data_to_flat(const types::EvalValue& data, aura::ast::Fla
             if (is_string(arg_data)) {
                 auto sidx = as_string_idx(arg_data);
                 if (sidx < string_heap_.size()) {
-                    auto name = string_heap_[sidx];
+                    auto name = string_at(sidx);
                     auto ssid = pool.intern(name);
                     // Issue #334 (Cycle 1): use add_variable
                     // instead of add_literalstring. In a macro
@@ -3115,7 +3114,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
     // Handle special forms by name
     if (types::is_string(car_val)) {
         auto fn_idx = types::as_string_idx(car_val);
-        auto fn_name = fn_idx < string_heap_.size() ? string_heap_[fn_idx] : "";
+        auto fn_name = string_at_or(fn_idx);
 
         // ── if: (if cond then else) ──
         if (fn_name == "if") {
@@ -3204,7 +3203,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                     auto arg_data = pairs_[ap].car;
                     if (types::is_string(arg_data)) {
                         auto aidx = types::as_string_idx(arg_data);
-                        auto astr = aidx < string_heap_.size() ? string_heap_[aidx] : "";
+                        auto astr = string_at_or(aidx);
                         param_syms.push_back(pool->intern(astr));
                     }
                     args_data = pairs_[ap].cdr;
@@ -3336,8 +3335,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                     auto val = eval_data_as_code(pairs_[val_pair].car, env, flat, pool);
                     if (val) {
                         auto name_idx = types::as_string_idx(name_val);
-                        auto name_str =
-                            name_idx < string_heap_.size() ? string_heap_[name_idx] : "";
+                        auto name_str = string_at_or(name_idx);
                         auto ci = alloc_cell(make_void());
                         const_cast<Env&>(env).bind(name_str, make_cell(ci));
                         cells_[ci] = *val;
@@ -3361,7 +3359,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                                 static_cast<CompilerMetrics*>(compiler_metrics_)))
                             return eval_flat_commit_readiness_refused();
                         auto ni = types::as_string_idx(fn_name_data);
-                        auto fn_str = ni < string_heap_.size() ? string_heap_[ni] : "";
+                        auto fn_str = string_at_or(ni);
 
                         // Extract param names from (arg1 arg2 ...)
                         std::vector<ast::SymId> param_syms;
@@ -3371,7 +3369,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                             auto arg_data = pairs_[ap].car;
                             if (types::is_string(arg_data)) {
                                 auto aidx = types::as_string_idx(arg_data);
-                                auto astr = aidx < string_heap_.size() ? string_heap_[aidx] : "";
+                                auto astr = string_at_or(aidx);
                                 param_syms.push_back(pool->intern(astr));
                             }
                             args_data = pairs_[ap].cdr;
@@ -3443,8 +3441,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                                                  flat, pool);
                     if (val) {
                         auto name_idx = types::as_string_idx(name_val);
-                        auto name_str =
-                            name_idx < string_heap_.size() ? string_heap_[name_idx] : "";
+                        auto name_str = string_at_or(name_idx);
                         auto cell_idx = const_cast<Env&>(env).lookup_cell_index(name_str);
                         if (cell_idx && *cell_idx < cells_.size()) {
                             cells_[*cell_idx] = *val;
@@ -3472,8 +3469,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         auto val_expr = pairs_[types::as_pair_idx(binding_pair)].cdr;
                         if (types::is_string(name_val) && types::is_pair(val_expr)) {
                             auto name_idx = types::as_string_idx(name_val);
-                            auto name_str =
-                                name_idx < string_heap_.size() ? string_heap_[name_idx] : "";
+                            auto name_str = string_at_or(name_idx);
                             auto val = eval_data_as_code(pairs_[types::as_pair_idx(val_expr)].car,
                                                          env, flat, pool);
                             if (!val)
@@ -3877,7 +3873,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                                       "batch :rebind: string index out of range"});
     auto& flat = *workspace_flat_;
-    auto name = string_heap_[name_idx];
+    auto name = string_at(name_idx);
     auto sym = canonical_pool()->intern(name);
     aura::ast::NodeId old_define = aura::ast::NULL_NODE;
     for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
@@ -3933,7 +3929,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
     }
     // Issue #1685 / #1687: snapshot + re-resolve after parse_to_flat.
     const auto size_before_parse = static_cast<std::size_t>(flat.size());
-    auto pr = aura::parser::parse_to_flat(string_heap_[code_idx], flat, *workspace_pool_);
+    auto pr = aura::parser::parse_to_flat(string_at(code_idx), flat, *workspace_pool_);
     if (!pr.success || pr.root == aura::ast::NULL_NODE)
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::ParseError,
                                                       "batch :rebind: parse failed for new code"});
@@ -3950,8 +3946,8 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
                 aura::diag::ErrorKind::ParseError, "batch :rebind: define form has no body"});
         new_value = root_v.child(0);
     }
-    std::string summary = (a.size() > 2 && is_string(a[2])) ? string_heap_[as_string_idx(a[2])]
-                                                            : "batch rebind " + name;
+    std::string summary =
+        (a.size() > 2 && is_string(a[2])) ? string_at(as_string_idx(a[2])) : "batch rebind " + name;
     // Issue #3374: new-body subtree walk (#2792 twin for the lockless
     // path). The pre-parse gate above only probes old_define (destination);
     // a macro-introduced body can still be rebound onto a normal Define,
@@ -4098,7 +4094,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
     // the pre-batch body, so the following eval-current specialised the
     // identity back over the new closure.
     if (update_function_source_fn_) {
-        std::string body_src = string_heap_[code_idx];
+        std::string body_src = string_at(code_idx);
         if (body_src.find("(define ") != 0 && body_src.find("(define\t") != 0 &&
             body_src.find("(define\n") != 0) {
             body_src = "(define " + name + " " + body_src + ")";
@@ -4213,7 +4209,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_value(std::span<const types
             auto new_val = static_cast<std::int64_t>(as_int(a[1]));
             std::uint64_t old_val = static_cast<std::uint64_t>(nv.int_value);
             auto mid = flat.add_mutation_with_rollback(
-                node, "replace-value", "Int", "Int", string_heap_[sum_idx],
+                node, "replace-value", "Int", "Int", string_at(sum_idx),
                 aura::ast::MutationStatus::Committed, 0, old_val,
                 static_cast<std::uint64_t>(new_val), true);
             flat.set_int(node, new_val);
@@ -4235,7 +4231,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_value(std::span<const types
             std::uint64_t new_bits = std::bit_cast<std::uint64_t>(new_val);
             std::uint64_t old_bits = std::bit_cast<std::uint64_t>(nv.float_value);
             auto mid = flat.add_mutation_with_rollback(
-                node, "replace-value", "Float", "Float", string_heap_[sum_idx],
+                node, "replace-value", "Float", "Float", string_at(sum_idx),
                 aura::ast::MutationStatus::Committed,
                 static_cast<std::uint32_t>(aura::ast::MutationSoAField::FloatVal), old_bits,
                 new_bits, true);
@@ -4255,11 +4251,11 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_value(std::span<const types
                 return std::unexpected(aura::diag::Diagnostic{
                     aura::diag::ErrorKind::InternalError,
                     "batch :replace-value: new value string index out of range"});
-            auto new_name = string_heap_[new_sym_idx];
+            auto new_name = string_at(new_sym_idx);
             auto new_sym = workspace_pool_->intern(new_name);
             std::uint64_t old_val = nv.sym_id;
             auto mid = flat.add_mutation_with_rollback(
-                node, "replace-value", "Sym", "Sym", string_heap_[sum_idx],
+                node, "replace-value", "Sym", "Sym", string_at(sum_idx),
                 aura::ast::MutationStatus::Committed,
                 static_cast<std::uint32_t>(aura::ast::MutationSoAField::SymId), old_val, new_sym,
                 true);
@@ -4334,7 +4330,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_tweak_literal(std::span<const types
     auto old_val = v.int_value;
     std::string summary =
         (a.size() > 2 && is_string(a[2]))
-            ? string_heap_[as_string_idx(a[2])]
+            ? string_at(as_string_idx(a[2]))
             : "tweak-literal " + std::to_string(old_val) + "->" + std::to_string(new_val);
     // Issue #2799: log as Committed at write time (inside outer atomic-batch
     // Guard). On batch abort, abort_batch_workspace → rollback_since →
@@ -4476,7 +4472,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_insert_child(std::span<const types:
             note_boundary_macro_allow_latch();
         }
     }
-    auto pr = aura::parser::parse_to_flat(string_heap_[code_idx], flat, *workspace_pool_);
+    auto pr = aura::parser::parse_to_flat(string_at(code_idx), flat, *workspace_pool_);
     if (!pr.success || pr.root == aura::ast::NULL_NODE) {
         std::string parse_err = "batch :insert-child: parse failed";
         if (!pr.errors.empty()) {
@@ -4502,7 +4498,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_insert_child(std::span<const types:
                                                       std::string("batch :insert-child: ") +
                                                           std::string(result.error().message)});
     std::string summary = (a.size() > 3 && is_string(a[3]))
-                              ? string_heap_[as_string_idx(a[3])]
+                              ? string_at(as_string_idx(a[3]))
                               : "insert child at " + std::to_string(pos);
     flat.add_structural_mutation_log_entry(parent, pos, aura::ast::NULL_NODE, pr.root,
                                            "insert-child");
@@ -4530,7 +4526,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_set_body(std::span<const types::Eva
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::InternalError, "batch :set-body: string index out of range"});
     auto& flat = *workspace_flat_;
-    auto name = string_heap_[name_idx];
+    auto name = string_at(name_idx);
     auto sym = canonical_pool()->intern(name);
     aura::ast::NodeId target = aura::ast::NULL_NODE;
     aura::ast::NodeId lambda_id = aura::ast::NULL_NODE;
@@ -4593,7 +4589,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_set_body(std::span<const types::Eva
     // Issue #1687: capture size before parse; re-resolve BOTH Define and
     // Lambda (double-stale NodeId risk, sibling of #1685 rebind path).
     const auto size_before_parse = static_cast<std::size_t>(flat.size());
-    auto pr = aura::parser::parse_to_flat(string_heap_[code_idx], flat, *workspace_pool_);
+    auto pr = aura::parser::parse_to_flat(string_at(code_idx), flat, *workspace_pool_);
     if (!pr.success || pr.root == aura::ast::NULL_NODE)
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::ParseError, "batch :set-body: parse failed for new body"});
@@ -4738,12 +4734,12 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :replace-pattern: string index out of range"});
     auto& flat = *workspace_flat_;
-    auto pattern_str = string_heap_[pattern_idx];
-    std::string repl_template = string_heap_[repl_idx];
+    auto pattern_str = string_at(pattern_idx);
+    std::string repl_template = string_at(repl_idx);
     std::string summary = "batch replace-pattern";
     for (std::size_t ai = 2; ai < a.size(); ++ai) {
         if (is_string(a[ai]))
-            summary = string_heap_[as_string_idx(a[ai])];
+            summary = string_at(as_string_idx(a[ai]));
     }
     // Issue #2802: local arena isolates pattern flat/pool from shared
     // temp_arena_ (and from sibling sub-ops in the same atomic-batch).
@@ -5072,9 +5068,9 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_subtree(std::span<const typ
             note_boundary_macro_allow_latch();
         }
     }
-    auto new_code = string_heap_[code_idx];
+    auto new_code = string_at(code_idx);
     std::string summary =
-        (a.size() > 2 && is_string(a[2])) ? string_heap_[as_string_idx(a[2])] : "replace-subtree";
+        (a.size() > 2 && is_string(a[2])) ? string_at(as_string_idx(a[2])) : "replace-subtree";
     auto parent_id = flat.parent_of(target);
     std::uint32_t child_idx = 0;
     bool found_slot = false;
@@ -5263,7 +5259,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_splice(std::span<const types::EvalV
     if (a.size() >= 4 && is_string(a[a.size() - 1])) {
         auto sidx = as_string_idx(a[a.size() - 1]);
         if (sidx < string_heap_.size())
-            summary = string_heap_[sidx];
+            summary = string_at(sidx);
     }
     EvalValue result_list = make_void();
     std::uint32_t insert_pos = pos;
@@ -5272,7 +5268,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_splice(std::span<const types::EvalV
         if (cidx >= string_heap_.size())
             continue;
         const auto size_before_parse = static_cast<std::size_t>(flat.size());
-        auto pr = aura::parser::parse_to_flat(string_heap_[cidx], flat, *workspace_pool_);
+        auto pr = aura::parser::parse_to_flat(string_at(cidx), flat, *workspace_pool_);
         if (!pr.success || pr.root == aura::ast::NULL_NODE)
             continue;
         // Parent is user-supplied insert target — no child edge to re-derive.
@@ -5284,8 +5280,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_splice(std::span<const types::EvalV
         // installed splice root (public mutate:splice parity).
         if (parent_was_macro_spl)
             primitives_detail::propagate_macro_introduced_marker(*this, flat, pr.root);
-        flat.add_mutation(parent, "splice", std::to_string(insert_pos), string_heap_[cidx],
-                          summary);
+        flat.add_mutation(parent, "splice", std::to_string(insert_pos), string_at(cidx), summary);
         flat.mark_dirty_upward_fast(parent);
         auto pid = pairs_.size();
         pairs_.push_back({make_int(static_cast<std::int64_t>(pr.root)), result_list});
@@ -5351,7 +5346,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_wrap(std::span<const types::EvalVal
             note_boundary_macro_allow_latch();
         }
     }
-    std::string summary = (a.size() > 2 && is_string(a[2])) ? string_heap_[as_string_idx(a[2])]
+    std::string summary = (a.size() > 2 && is_string(a[2])) ? string_at(as_string_idx(a[2]))
                                                             : "wrap node " + std::to_string(node);
     auto parent_of_target = flat.parent_of(node);
     int child_idx_in_parent = -1;
@@ -5368,7 +5363,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_wrap(std::span<const types::EvalVal
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :wrap: node " + std::to_string(node) + " has no parent"});
-    auto tmpl = string_heap_[tmpl_idx];
+    auto tmpl = string_at(tmpl_idx);
     auto sentinel_pos = tmpl.find('_');
     if (sentinel_pos == std::string::npos)
         return std::unexpected(
@@ -5470,12 +5465,12 @@ EvalResult Evaluator::eval_flat_apply_mutate_rename_symbol(std::span<const types
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :rename-symbol: string index out of range"});
     auto& flat = *workspace_flat_;
-    auto old_name = string_heap_[old_name_idx];
-    auto new_name = string_heap_[new_name_idx];
+    auto old_name = string_at(old_name_idx);
+    auto new_name = string_at(new_name_idx);
     auto old_sym = workspace_pool_->intern(old_name);
     auto new_sym = workspace_pool_->intern(new_name);
     std::string summary = (a.size() > 2 && is_string(a[2]))
-                              ? string_heap_[as_string_idx(a[2])]
+                              ? string_at(as_string_idx(a[2]))
                               : "rename " + old_name + " -> " + new_name;
     // Issue #2961 / Issue #3213: reject if any MacroIntroduced / MacroDef
     // would be renamed unless :allow-macro? #t or global allow. Soft/Off:
@@ -5670,7 +5665,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_move_node(std::span<const types::Ev
     // a real move) so the bool-false heuristic never mis-classifies this.
     if (cur_parent == new_parent && static_cast<std::uint32_t>(cur_idx) == new_pos)
         return make_bool(true);
-    std::string summary = (a.size() > 3 && is_string(a[3])) ? string_heap_[as_string_idx(a[3])]
+    std::string summary = (a.size() > 3 && is_string(a[3])) ? string_at(as_string_idx(a[3]))
                                                             : "move node " + std::to_string(node);
     // Issue #2803: try_move_child reattaches on insert failure so partial
     // detach cannot leave a NULL_NODE hole / dangling node.
@@ -5736,7 +5731,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_inline_call(std::span<const types::
             aura::diag::ErrorKind::TypeError,
             "batch :inline-call: node " + std::to_string(call_id) + " is not a call"});
     std::string summary = (a.size() > 1 && is_string(a[1]))
-                              ? string_heap_[as_string_idx(a[1])]
+                              ? string_at(as_string_idx(a[1]))
                               : "inline call " + std::to_string(call_id);
     auto func_node = cv.child(0);
     auto fv = flat.get(func_node);
@@ -7803,7 +7798,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             if (is_string(*cap_result)) {
                                 auto sidx = as_string_idx(*cap_result);
                                 if (sidx < string_heap_.size())
-                                    caps.push_back(string_heap_[sidx]);
+                                    caps.push_back(string_at(sidx));
                             } else if (is_pair(*cap_result)) {
                                 auto cidx = as_pair_idx(*cap_result);
                                 while (cidx < pairs_.size()) {
@@ -7811,7 +7806,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                     if (is_string(pr.car)) {
                                         auto sidx2 = as_string_idx(pr.car);
                                         if (sidx2 < string_heap_.size())
-                                            caps.push_back(string_heap_[sidx2]);
+                                            caps.push_back(string_at(sidx2));
                                     }
                                     break;
                                 }
@@ -7849,7 +7844,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             if (is_string(*arg_result)) {
                                 auto sidx = as_string_idx(*arg_result);
                                 if (sidx < string_heap_.size())
-                                    cap_name = string_heap_[sidx];
+                                    cap_name = string_at(sidx);
                             }
                             auto val = eval_env.lookup("%cap:" + cap_name);
                             return val.has_value() ? make_bool(true) : make_bool(false);
@@ -8578,7 +8573,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     }
                     // Functor instantiation: callee is a %functor marker
                     if (is_string(*fn) && as_string_idx(*fn) < string_heap_.size() &&
-                        string_heap_[as_string_idx(*fn)] == "%functor") {
+                        string_at(as_string_idx(*fn)) == "%functor") {
                         auto callee_v = f->get(v.child(0));
                         if (callee_v.tag == aura::ast::NodeTag::Variable) {
                             auto tpl_name = std::string(p->resolve(callee_v.sym_id));
@@ -8957,7 +8952,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         else if (is_float(*fn))
                             callee_name = std::to_string(as_float(*fn));
                         else if (is_string(*fn))
-                            callee_name = "\"" + string_heap_[as_string_idx(*fn)] + "\"";
+                            callee_name = "\"" + string_at(as_string_idx(*fn)) + "\"";
                         else
                             callee_name = "value";
                     }
@@ -10964,7 +10959,7 @@ std::int64_t Evaluator::capture_workspace_snapshot_under_lock(std::string_view n
     auto src_idx = types::as_string_idx(src);
     if (src_idx >= string_heap_.size())
         return -1;
-    auto source = string_heap_[src_idx];
+    auto source = string_at(src_idx);
     workspace_flat_->recycle_dead_nodes();
     FlatSnapshot fs;
     try {

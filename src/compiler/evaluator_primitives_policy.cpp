@@ -89,7 +89,7 @@ void register_policy_primitives(PrimRegistrar add, Evaluator& ev) {
                         EvalValue kev(ht->keys()[i]);
                         if (is_string(kev)) {
                             auto kidx = as_string_idx(kev);
-                            if (kidx < ev.string_heap_.size() && ev.string_heap_[kidx] == k) {
+                            if (kidx < ev.string_heap_.size() && ev.string_at(kidx) == k) {
                                 return EvalValue(ht->values()[i]);
                             }
                         }
@@ -164,7 +164,7 @@ void register_policy_primitives(PrimRegistrar add, Evaluator& ev) {
         if (types::is_string(cap_val)) {
             auto sidx = types::as_string_idx(cap_val);
             if (sidx < ev.string_heap_.size())
-                caps.push_back(ev.string_heap_[sidx]);
+                caps.push_back(ev.string_at(sidx));
         } else if (types::is_pair(cap_val)) {
             auto cidx = types::as_pair_idx(cap_val);
             while (cidx < ev.pairs_.size()) {
@@ -172,7 +172,7 @@ void register_policy_primitives(PrimRegistrar add, Evaluator& ev) {
                 if (types::is_string(p.car)) {
                     auto sidx2 = types::as_string_idx(p.car);
                     if (sidx2 < ev.string_heap_.size())
-                        caps.push_back(ev.string_heap_[sidx2]);
+                        caps.push_back(ev.string_at(sidx2));
                 }
                 if (types::is_int(p.cdr) && types::as_int(p.cdr) == 0)
                     break;
@@ -216,7 +216,7 @@ void register_policy_primitives(PrimRegistrar add, Evaluator& ev) {
         const auto sidx = types::as_string_idx(a[0]);
         if (sidx >= ev.string_heap_.size())
             return types::make_bool(false);
-        return types::make_bool(ev.has_capability(ev.string_heap_[sidx]));
+        return types::make_bool(ev.has_capability(ev.string_at(sidx)));
     });
 
     add("check-capability", [&ev](std::span<const EvalValue> a) -> EvalValue {
@@ -228,7 +228,7 @@ void register_policy_primitives(PrimRegistrar add, Evaluator& ev) {
         auto sidx = types::as_string_idx(a[0]);
         std::string needed;
         if (sidx < ev.string_heap_.size())
-            needed = ev.string_heap_[sidx];
+            needed = ev.string_at(sidx);
         // Check each capability context in reverse order for proper scoping
         for (auto it = ev.capability_stack_.rbegin(); it != ev.capability_stack_.rend(); ++it) {
             for (auto& c : *it) {

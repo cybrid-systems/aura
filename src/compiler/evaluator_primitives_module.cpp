@@ -81,7 +81,7 @@ void register_module_primitives(PrimRegistrar add, Evaluator& ev) {
         auto name_idx = as_string_idx(a[1]);
         if (mod_idx >= ev.modules_.size() || name_idx >= ev.string_heap_.size())
             return make_void();
-        auto result = ev.modules_[mod_idx]->lookup(std::string(ev.string_heap_[name_idx]));
+        auto result = ev.modules_[mod_idx]->lookup(std::string(ev.string_at(name_idx)));
         if (!result)
             return make_void();
         // Issue #229 fix: deref cell sentinel

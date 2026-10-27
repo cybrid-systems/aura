@@ -144,7 +144,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
                     ev.primitive_error_counter_ptr());
             }
             if (idx < ev.string_heap_.size())
-                s = ev.string_heap_[idx];
+                s = ev.string_at(idx);
         } else if (is_int(a[0])) {
             s = std::to_string(as_int(a[0]));
         }
@@ -303,7 +303,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
                 ev.primitive_error_counter_ptr());
         static const char kAlphabet[] =
             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        const std::string& data = ev.string_heap_[idx];
+        const std::string& data = ev.string_at(idx);
         std::string out;
         out.reserve((data.size() + 2) / 3 * 4);
         std::size_t i = 0;
@@ -349,7 +349,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
                 ev.string_heap_, ev.error_values_,
                 "%base64-decode: cross-tenant string slot read denied (#4505)",
                 ev.primitive_error_counter_ptr());
-        const std::string& in = ev.string_heap_[idx];
+        const std::string& in = ev.string_at(idx);
         auto b64val = [](unsigned char c) -> int {
             if (c >= 'A' && c <= 'Z')
                 return c - 'A';
@@ -398,7 +398,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
                                         "%hex-encode: cross-tenant string slot read denied (#4505)",
                                         ev.primitive_error_counter_ptr());
         static const char kHex[] = "0123456789abcdef";
-        const std::string& data = ev.string_heap_[idx];
+        const std::string& data = ev.string_at(idx);
         std::string out;
         out.reserve(data.size() * 2);
         for (unsigned char c : data) {
@@ -421,7 +421,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_primitive_error(ev.string_heap_, ev.error_values_,
                                         "%hex-decode: cross-tenant string slot read denied (#4505)",
                                         ev.primitive_error_counter_ptr());
-        const std::string& in = ev.string_heap_[idx];
+        const std::string& in = ev.string_at(idx);
         auto hexval = [](unsigned char c) -> int {
             if (c >= '0' && c <= '9')
                 return c - '0';
@@ -481,9 +481,9 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             return -1;
         const auto idx = static_cast<std::size_t>(types::as_string_idx(v));
         std::lock_guard lock(ev.alloc_storage_lock_);
-        if (idx >= ev.string_heap_.size() || ev.string_heap_[idx].size() % 8 != 0)
+        if (idx >= ev.string_heap_.size() || ev.string_at(idx).size() % 8 != 0)
             return -1;
-        return static_cast<std::int64_t>(ev.string_heap_[idx].size());
+        return static_cast<std::int64_t>(ev.string_at(idx).size());
     };
     // Issue #4597: 1 = live 'f64 view (data/n set), 0 = not an f64 view,
     // -1 = a view whose owner was freed or closed. Caller holds
@@ -598,14 +598,14 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
                 return make_float(data[static_cast<std::size_t>(i)]);
             }
             const auto idx = static_cast<std::size_t>(types::as_string_idx(a[0]));
-            if (idx >= ev.string_heap_.size() || ev.string_heap_[idx].size() % 8 != 0)
+            if (idx >= ev.string_heap_.size() || ev.string_at(idx).size() % 8 != 0)
                 return f64err("f64vector-ref: expected (f64vector index)");
             // Issue #4518: the returned double is the payload — compare the
             // intern stamp under the storage lock (same shape as the #4428
             // f64vector-set! gate) before any byte is copied out.
             if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "f64vector-ref"))
                 return f64err("f64vector-ref: cross-tenant string slot read denied (#4505)");
-            const auto& s = ev.string_heap_[idx];
+            const auto& s = ev.string_at(idx);
             const auto n = static_cast<std::int64_t>(s.size() / 8);
             if (i < 0 || i >= n)
                 return f64err(
@@ -625,12 +625,12 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             // re-acquires. Refuse when idx is past the (shrunk) heap — or
             // the slot no longer holds a %8 payload — before operator[];
             // inrange_string_tenant_allows does not check the heap length.
-            if (idx >= ev.string_heap_.size() || ev.string_heap_[idx].size() % 8 != 0)
+            if (idx >= ev.string_heap_.size() || ev.string_at(idx).size() % 8 != 0)
                 return f64err("f64vector-set!: expected (f64vector index number)");
             if (!ev.inrange_string_tenant_allows(idx, aura::compiler::security::kEffectMutate,
                                                  "f64vector-set!"))
                 return f64err("f64vector-set!: cross-tenant slot write denied (#4428)");
-            auto& s = ev.string_heap_[idx];
+            auto& s = ev.mutable_string_at(idx);
             const auto i = as_int(a[1]);
             const auto n = static_cast<std::int64_t>(s.size() / 8);
             if (i < 0 || i >= n)
@@ -645,7 +645,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         if (a.size() < 2)
             return f64err("f64vector-dot: expected two f64vectors");
         // Issue #4509: validate both sides and run the MAC scan under
-        // alloc_storage_lock_ — the loop previously held &string_heap_[idx]
+        // alloc_storage_lock_ — the loop previously held &string_at(idx)
         // for the whole dot while a concurrent mint (push_string_heap) could
         // reallocate the heap and free the buffer under it. The pointers
         // stay inside the locked region; nothing is published.
@@ -665,14 +665,14 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             if (!is_string(v))
                 return "f64vector-dot: expected two f64vectors";
             const auto idx = static_cast<std::size_t>(types::as_string_idx(v));
-            if (idx >= ev.string_heap_.size() || ev.string_heap_[idx].size() % 8 != 0)
+            if (idx >= ev.string_heap_.size() || ev.string_at(idx).size() % 8 != 0)
                 return "f64vector-dot: expected two f64vectors";
             // Issue #4518: the MAC result leaks element values, so a string
             // slot needs the intern-stamp compare before any byte is scanned.
             if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "f64vector-dot"))
                 return "f64vector-dot: cross-tenant string slot read denied (#4505)";
-            p = reinterpret_cast<const double*>(ev.string_heap_[idx].data());
-            n = static_cast<std::int64_t>(ev.string_heap_[idx].size() / 8);
+            p = reinterpret_cast<const double*>(ev.string_at(idx).data());
+            n = static_cast<std::int64_t>(ev.string_at(idx).size() / 8);
             return {};
         };
         const double* xp = nullptr;
@@ -746,7 +746,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             // first, exactly like the f64vector-set! write gate (#4428).
             if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "bytes->f64vector"))
                 return f64err("bytes->f64vector: cross-tenant string slot read denied (#4505)");
-            src = ev.string_heap_[idx];
+            src = ev.string_at(idx);
         }
         return from_bytes(a, src, 8, "bytes->f64vector");
     });
@@ -766,7 +766,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
                                                      "f32-bytes->f64vector"))
                     return f64err(
                         "f32-bytes->f64vector: cross-tenant string slot read denied (#4505)");
-                src = ev.string_heap_[idx];
+                src = ev.string_at(idx);
             }
             return from_bytes(a, src, 4, "f32-bytes->f64vector");
         });
@@ -781,7 +781,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         // intern stamp before any byte is copied out.
         if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "bytes-i32-ref"))
             return f64err("bytes-i32-ref: cross-tenant string slot read denied (#4505)");
-        const auto& s = ev.string_heap_[idx];
+        const auto& s = ev.string_at(idx);
         const auto off = as_int(a[1]);
         if (off < 0 || static_cast<std::size_t>(off) + 4 > s.size())
             return f64err("bytes-i32-ref: offset out of range");
@@ -1070,7 +1070,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             return false;
         }
         idx = static_cast<std::size_t>(types::as_string_idx(v));
-        if (idx >= ev.string_heap_.size() || ev.string_heap_[idx].size() % 8 != 0) {
+        if (idx >= ev.string_heap_.size() || ev.string_at(idx).size() % 8 != 0) {
             err = std::format("{}: destination must be an f64vector", who);
             return false;
         }
@@ -1112,7 +1112,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
                     return f64err("c-view-copy!: dst-index must be a non-negative integer");
                 dst_off = as_int(a[2]);
             }
-            auto& s = ev.string_heap_[idx];
+            auto& s = ev.mutable_string_at(idx);
             const auto n = static_cast<std::int64_t>(s.size() / 8);
             if (dst_off + static_cast<std::int64_t>(m.count) > n)
                 return f64err(
@@ -1179,7 +1179,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             std::string err;
             if (!f64_dst_gate(a[1], "c-view-read-consistent!", idx, err))
                 return f64err(std::move(err));
-            auto& s = ev.string_heap_[idx];
+            auto& s = ev.mutable_string_at(idx);
             if (s.size() / 8 < m.count)
                 return f64err(std::format(
                     "c-view-read-consistent!: destination length {} is shorter than the view "
@@ -1216,7 +1216,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             return false;
         }
         idx = static_cast<std::size_t>(types::as_string_idx(v));
-        if (idx >= ev.string_heap_.size() || ev.string_heap_[idx].size() % 8 != 0) {
+        if (idx >= ev.string_heap_.size() || ev.string_at(idx).size() % 8 != 0) {
             err = std::format("{}: expected an f64vector", who);
             return false;
         }
@@ -1235,7 +1235,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         std::string err;
         if (!f64_src(a[0], "f64vector-sum", idx, err))
             return f64err(std::move(err));
-        const auto& s = ev.string_heap_[idx];
+        const auto& s = ev.string_at(idx);
         double acc = 0.0;
         for (std::size_t k = 0, n = s.size() / 8; k < n; ++k)
             acc += rd(s, k);
@@ -1252,7 +1252,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             std::string err;
             if (!f64_src(a[0], "f64vector-max-index", idx, err))
                 return f64err(std::move(err));
-            const auto& s = ev.string_heap_[idx];
+            const auto& s = ev.string_at(idx);
             std::int64_t best = -1;
             double bv = 0.0;
             for (std::size_t k = 0, n = s.size() / 8; k < n; ++k) {
@@ -1277,9 +1277,9 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
                 !f64_src(a[1], "f64vector-sub!", xi, err) ||
                 !f64_src(a[2], "f64vector-sub!", yi, err))
                 return f64err(std::move(err));
-            auto& d = ev.string_heap_[di];
-            const auto& x = ev.string_heap_[xi];
-            const auto& y = ev.string_heap_[yi];
+            auto& d = ev.mutable_string_at(di);
+            const auto& x = ev.string_at(xi);
+            const auto& y = ev.string_at(yi);
             if (x.size() != d.size() || y.size() != d.size())
                 return f64err("f64vector-sub!: lengths differ");
             for (std::size_t k = 0, n = d.size() / 8; k < n; ++k) {
@@ -1302,8 +1302,8 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             if (!f64_dst_gate(a[0], "f64vector-ewma!", di, err) ||
                 !f64_src(a[1], "f64vector-ewma!", xi, err))
                 return f64err(std::move(err));
-            auto& d = ev.string_heap_[di];
-            const auto& x = ev.string_heap_[xi];
+            auto& d = ev.mutable_string_at(di);
+            const auto& x = ev.string_at(xi);
             if (x.size() != d.size())
                 return f64err("f64vector-ewma!: lengths differ");
             for (std::size_t k = 0, n = d.size() / 8; k < n; ++k) {
