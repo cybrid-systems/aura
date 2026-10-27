@@ -4631,6 +4631,230 @@ def test_fiber_lock_order_inversion_4711():
     assert -1 < e < b, "#4711: DensenessBodyLockWaitGuard must drop the eval mutex first"
 
 
+def test_fiber_cancel_4708():
+    """Issue #4708: (fiber:cancel f) raises at the fiber's next safepoint.
+
+    There was no way to cancel ONE fiber by handle. aura-harness polled a
+    shared 'stop' flag between turns: a worker stopped mid-turn kept its
+    claim, and a fiber blocked/parked inside a body could not be stopped
+    at all. (orch:scope-cancel-all) is scope-wide, not per-fiber.
+
+    Runtime rows:
+      (a) CLI thread backend: a body that yields forever is cancelled from
+          the main thread; the body catches the 'fiber-cancelled'
+          condition with (try ... (catch (e) ...)) and the catch handler's
+          own value is what fiber:join returns -- well under the 200s
+          join ceiling.
+      (b) with no catch, the cancel condition is the body result, so
+          fiber:join returns an error value instead of hanging.
+      (c) serve-async scheduler backend: the same program in one session,
+          where the target lives on the scheduler's ready queue instead of
+          a std::thread.
+    Source rows pin the primitive and every safepoint (fiber:yield, the
+    two fiber-parking channel loops, both fiber:join waits) so the guard
+    cannot pass vacuously.
+    """
+    program = r"""(define (spin) (let l ((i 0)) (begin (fiber:yield) (l (+ i 1)))))
+(define f (fiber:spawn (lambda () (try (spin) (catch (e) (list "caught" e))))))
+(display (fiber:cancel f)) (newline)
+(display (fiber:join f)) (newline)
+(define g (fiber:spawn (lambda () (spin))))
+(display (fiber:cancel g)) (newline)
+(display (error? (fiber:join g))) (newline)
+"""
+    env = os.environ.copy()
+    env["AURA_TIER_JIT"] = "0"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env["AURA_SANDBOX"] = "off"
+    env.pop("AURA_SOFT", None)
+    env.pop("AURA_FORCE_IR", None)
+    fd, path = tempfile.mkstemp(suffix=".aura", prefix="aura-4708-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(program)
+        t0 = time.monotonic()
+        r = subprocess.run([AURA, path], capture_output=True, text=True, timeout=120, env=env, cwd=str(REPO))
+        elapsed = time.monotonic() - t0
+    finally:
+        os.remove(path)
+    out = r.stdout or ""
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    assert r.returncode == 0, f"#4708: rc={r.returncode} err={(r.stderr or '')[-400:]!r} out={out[-300:]!r}"
+    assert elapsed < 30, f"#4708: cancel+join took {elapsed:.1f}s (fell back to the 200s ceiling path)"
+    assert len(lines) >= 4, f"#4708: short stdout {out!r}"
+    assert lines[0] == "#t", f"#4708: (fiber:cancel f) on a live fiber returned {lines[0]!r}, expected #t"
+    assert "caught" in lines[1] and "fiber-cancelled" in lines[1], (
+        f"#4708: the cancelled body did not catch the cancel condition; join returned {lines[1]!r}"
+    )
+    assert lines[2] == "#t", f"#4708: (fiber:cancel g) on a live fiber returned {lines[2]!r}"
+    assert lines[3] == "#t", (
+        f"#4708: an uncaught cancel must be an error value from fiber:join; (error? join) = {lines[3]!r}"
+    )
+
+    # (c) scheduler backend: same program through one --serve-async session.
+    define = (
+        "(define (spin) (let l ((i 0)) (begin (fiber:yield) (l (+ i 1)))))"
+        '(define (spawn-spin) (fiber:spawn (lambda () (try (spin) (catch (e) (list "caught" e))))))'
+    )
+    body = "(let ((h (spawn-spin))) (list (fiber:cancel h) (fiber:join h)))"
+    requests = json.dumps({"cmd": "exec", "code": define}) + "\n" + json.dumps({"cmd": "exec", "code": body}) + "\n"
+    t0 = time.monotonic()
+    rs = subprocess.run(
+        [AURA, "--serve-async", "--worker-threads=2"],
+        input=requests,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=env,
+    )
+    elapsed_s = time.monotonic() - t0
+    sout = rs.stdout or ""
+    serr = rs.stderr or ""
+    assert rs.returncode == 0, f"#4708 serve-async rc={rs.returncode}: {serr[-500:]!r}"
+    assert elapsed_s < 60, f"#4708 serve-async took {elapsed_s:.1f}s (cancelled fiber never observed the request)"
+    assert "fiber-cancelled" in sout and "caught" in sout, (
+        f"#4708 serve-async: the scheduler fiber did not observe the cancel; stdout={sout[-400:]!r} stderr={serr[-300:]!r}"
+    )
+
+    # (d) the OTHER safepoint class: a fiber PARKED in a channel prim must
+    # observe the cancel too (the wake is a 1-byte eventfd nudge), so a
+    # body blocked in channel:recv cannot pin its claim forever.
+    ch_define = (
+        '(define (blocked-recv) (try (let ((ch (channel:create))) (channel:recv ch)) (catch (e) (list "caught" e))))'
+    )
+    ch_body = "(let ((h (fiber:spawn (lambda () (blocked-recv))))) (list (fiber:cancel h) (fiber:join h)))"
+    ch_requests = (
+        json.dumps({"cmd": "exec", "code": ch_define}) + "\n" + json.dumps({"cmd": "exec", "code": ch_body}) + "\n"
+    )
+    t0 = time.monotonic()
+    rc_run = subprocess.run(
+        [AURA, "--serve-async", "--worker-threads=2"],
+        input=ch_requests,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=env,
+    )
+    elapsed_c = time.monotonic() - t0
+    cout = rc_run.stdout or ""
+    cerr = rc_run.stderr or ""
+    assert rc_run.returncode == 0, f"#4708 parked-recv rc={rc_run.returncode}: {cerr[-500:]!r}"
+    assert elapsed_c < 90, f"#4708 parked-recv took {elapsed_c:.1f}s (a parked fiber ignored the cancel)"
+    assert "fiber-cancelled" in cout and "caught" in cout, (
+        f"#4708 parked-recv: the parked channel fiber did not observe the cancel; stdout={cout[-400:]!r}"
+    )
+
+    # Source rows: the primitive + one safepoint per parking/waiting site.
+    msg = (REPO / "src/compiler/evaluator_primitives_messaging.cpp").read_text(encoding="utf-8")
+    assert 'add("fiber:cancel"' in msg, "#4708: the (fiber:cancel f) primitive is gone"
+    assert "target->request_cancel();" in msg, (
+        "#4708: the scheduler backend no longer forwards to Fiber::request_cancel"
+    )
+    y = msg.find('add("fiber:yield"')
+    assert y != -1 and msg.find("fiber_cancel_safepoint(", y) != -1, (
+        "#4708: fiber:yield lost its cancellation safepoint"
+    )
+    assert msg.count("fiber_cancel_take(static_cast<int64_t>(fiber->id()))") == 2, (
+        "#4708: both fiber-parking channel loops (send + recv) must take the cancel request"
+    )
+    assert msg.count("fiber_cancel_take(current_fiber_body_id())") >= 2, (
+        "#4708: both fiber:join waits (scheduler joiner + cv wait) must observe a cancelled joiner"
+    )
+    print(
+        "  OK test_fiber_cancel_4708 ((fiber:cancel f) raises fiber-cancelled at the next yield: catch runs, join returns)"
+    )
+
+
+for tf in [
+    test_jit_soundness_4567,
+    test_type_feedback_4568,
+    test_jit_assumption_invalidation_4569,
+    test_jit_prologue_word_and_storm_4600,
+    test_jit_osr_tail_4600,
+    test_jit_invalidation_walltime_4600,
+    test_jit_reuse_lowering_4600,
+    test_jit_l1_4570,
+    test_jit_mixed_compare_4570,
+    test_jit_self_call_4601,
+    test_jit_l2_4571,
+    test_jit_general_call_4603,
+    test_jit_call_path_4572,
+    test_jit_redefine_4604,
+    test_jit_scalar_pairs_4573,
+    test_jit_float_pair_fields_4605,
+    test_jit_tier_differential_4574,
+    test_jit_unbound_callee_4607,
+    test_jit_non_callable_callee_4636,
+    test_workspace_set_global_4618,
+    test_ir_call_depth_limit_4620,
+    test_cfunc_budget_4555,
+    test_nary_map_for_each_4616,
+    test_rebind_cascade_linear_4615,
+    test_tier_jit_default_on_4679,
+    test_tc_infer_flat_in_rebind_count_4682,
+    test_tw_reclaim_ir_frame_roots_4617,
+    test_jit,
+    test_mutation_sequences,
+    test_freeze_load,
+    test_freeze_multi_expr,
+    test_freeze_empty,
+    test_emit_binary,
+    test_aot,
+    test_aura_type_auto_load,
+    test_aura_type_no_sig,
+    test_aura_type_multi_func,
+    test_aura_type_different_types,
+    test_aura_type_cross_module,
+    test_generate_type_sigs,
+    test_module_chain_5,
+    test_cross_session,
+    test_fuzz_edsl,
+    test_char_literal_form_split_4622,
+    test_while_when_error_propagation_4619,
+    test_workspace_rest_params_4621,
+    test_named_let_bind_list_repeat_4623,
+    test_callback_diagnostic_4624,
+    test_workspace_inline_callback_4626,
+    test_sweep_set_fold_prov_index_4625,
+    test_member_structural_equality_4628,
+    test_aot_multi_call_site_4640,
+    test_aot_assoc_matches_evaluator_4640,
+    test_file_mode_equal_fresh_list_corruption_4627,
+    test_file_mode_pair_list_corruption_4629,
+    test_exit_quiesce_4705,
+    test_fiber_result_root_4710,
+    test_fiber_lock_order_inversion_4711,
+    test_fiber_cancel_4708,
+]:
+    try:
+        tf()
+        passed_s += 1
+    except Exception as e:
+        print(f"  ❌ {tf.__name__}: {e}")
+        failed_s += 1
+
+print(f"  Subprocess tests: {passed_s}/{passed_s + failed_s} passed")
+
+# Cleanup freeze/emit files
+for f in [
+    "/tmp/aura-test-freeze.aura",
+    "/tmp/aura-test-freeze2.aura",
+    "/tmp/aura-test-empty.aura",
+    "/tmp/aura-test-out.o.ir",
+]:
+    if os.path.exists(f):
+        os.remove(f)
+for f in ["/tmp/aura-test-out", "/tmp/aura-aot-compare", "/tmp/aura-aot-runtime"]:
+    if os.path.exists(f):
+        os.remove(f)
+
+
+# Fixture snippets share /tmp seeds — keep serial (jobs=1).
+# No skips allowed: every regression fixture must pass. The two former
+# KNOWN_SKIP cases (ast-viz-dot-mutation / colony-search) failed with
+# unbound module free vars after require/mutate; those module-capture
+# bugs were fixed in-tree (#2566 nested-require module env inject), so
+# the entries were removed 2026-09-04 and the cases run for real again.
 def test_serve_async_two_fiber_yield_reclaim_4706():
     """Issue #4706: serve-async SIGSEGV with two fibers yielding while allocating.
 
