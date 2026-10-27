@@ -11532,7 +11532,23 @@ public:
                 aura::jit::ScalarFn p = nullptr;
                 bool raw_ok = false;
                 std::uint64_t lowered_n = 0;
-                {
+                // Content-addressed reuse: a body whose flat form was already
+                // compiled by this worker (rebind back to an earlier body,
+                // set-code reload) reuses that native code. The key is the
+                // full codegen input, so a hit is exact; names differ per
+                // job and the worker never frees code, so the pointer stays
+                // valid.
+                std::string key = code_key_(job->fn);
+                auto hit = code_cache_.find(key);
+                if (hit != code_cache_.end()) {
+                    p = hit->second.fn;
+                    raw_ok = true;
+                    lowered_n = hit->second.self_lowered;
+                    if (lowered_n < job->self_calls)
+                        p = nullptr;
+                    if (tier_jit_trace_4682_())
+                        std::fprintf(stderr, "[tier4682] %s cache hit\n", job->name.c_str());
+                } else {
                     // available() is false until the first compile() runs init().
                     const auto before =
                         jit->metrics().l1_self_call_total.load(std::memory_order_relaxed);
@@ -11549,6 +11565,8 @@ public:
                         jit->metrics().l1_self_call_total.load(std::memory_order_relaxed) - before;
                     raw_ok = p != nullptr;
                     lowered_n = lowered;
+                    if (p)
+                        code_cache_.emplace(std::move(key), CachedCode_{p, lowered});
                     if (p && lowered < job->self_calls)
                         p = nullptr;
                 }
@@ -11581,6 +11599,46 @@ public:
             }
             idle_cv_.notify_all();
         }
+        struct CachedCode_ {
+            aura::jit::ScalarFn fn;
+            std::uint64_t self_lowered;
+        };
+        // Every FlatFunction / FlatInstruction field that reaches codegen,
+        // except the per-job symbol name and provenance.
+        static std::string code_key_(const aura::jit::FlatFunction& fn) {
+            std::vector<std::uint32_t> k;
+            k.reserve(16);
+            k.insert(k.end(),
+                     {fn.entry_block, fn.local_count, fn.arg_count, fn.num_blocks, fn.num_callees,
+                      fn.region, fn.linear_ownership_state, fn.source_marker, fn.env_count,
+                      static_cast<std::uint32_t>(fn.func_id_map != nullptr),
+                      static_cast<std::uint32_t>(fn.const_tags != nullptr),
+                      static_cast<std::uint32_t>(fn.shape_map != nullptr),
+                      static_cast<std::uint32_t>(fn.escape_map != nullptr)});
+            for (std::uint32_t i = 0; fn.func_id_map && i < fn.num_callees; ++i)
+                k.push_back(fn.func_id_map[i]);
+            for (std::uint32_t i = 0; i < fn.local_count; ++i) {
+                k.push_back((fn.const_tags ? fn.const_tags[i] : 0u) |
+                            (fn.shape_map ? std::uint32_t{fn.shape_map[i]} << 8 : 0u) |
+                            (fn.escape_map ? std::uint32_t{fn.escape_map[i]} << 16 : 0u));
+            }
+            for (std::uint32_t b = 0; b < fn.num_blocks; ++b) {
+                const auto& blk = fn.blocks[b];
+                k.push_back(blk.id);
+                k.push_back(blk.num_instructions);
+                for (std::uint32_t i = 0; i < blk.num_instructions; ++i) {
+                    const auto& in = blk.instructions[i];
+                    k.insert(k.end(), {in.opcode, in.ops[0], in.ops[1], in.ops[2], in.ops[3],
+                                       in.shape_id, in.narrow_evidence, in.type_id,
+                                       std::uint32_t{in.linear_ownership_state} |
+                                           (std::uint32_t{in.dirty} << 8) |
+                                           (std::uint32_t{in.source_marker} << 16)});
+                }
+            }
+            return std::string(reinterpret_cast<const char*>(k.data()),
+                               k.size() * sizeof(std::uint32_t));
+        }
+        std::unordered_map<std::string, CachedCode_> code_cache_; // worker thread only
         std::mutex mu_;
         std::condition_variable cv_;
         std::condition_variable idle_cv_;
@@ -12721,6 +12779,8 @@ public:
         std::string name;
     };
     std::unordered_map<std::int64_t, TwTierEntry4682> tw_tier_4682_;
+    // name -> (self cell index, closure word last stored there)
+    std::unordered_map<std::string, std::pair<std::uint32_t, types::EvalValue>> tw_self_cell_4682_;
     std::thread::id tw_tier_thread_4682_ = std::this_thread::get_id();
 
     static std::optional<types::EvalValue>
@@ -12777,11 +12837,35 @@ public:
                                      in.operands[1], in.operands[2], in.operands[3]);
             }
         }
-        const auto ci = static_cast<std::uint32_t>(evaluator_.cells().size());
-        evaluator_.cells().push_back(self_word);
+        // One self cell per define name, reused across rebinds: the cell
+        // index is baked into the lowered body, so a stable index keeps a
+        // rebind back to an earlier body byte-identical (worker code-cache
+        // hit) and stops a cell leak per recompile. Only the current top
+        // binding of `name` runs native (tw_tier_self_bound_4682_), so the
+        // previous closure word in the cell is dead.
+        auto& cells = evaluator_.cells();
+        auto sc = tw_self_cell_4682_.find(name);
+        // The cell must still hold the word this map stored (a workspace
+        // reset may have reused the index for another value).
+        const bool reuse = sc != tw_self_cell_4682_.end() && sc->second.first < cells.size() &&
+                           cells[sc->second.first] == sc->second.second;
+        const auto ci = reuse ? sc->second.first : static_cast<std::uint32_t>(cells.size());
+        types::EvalValue prev{};
+        if (reuse) {
+            prev = cells[ci];
+            cells[ci] = self_word;
+        } else {
+            cells.push_back(self_word);
+        }
         auto job = tier_snapshot_4682_(ir_mod, self_word, slot, name, ci);
-        if (!job && evaluator_.cells().size() == ci + 1u)
-            evaluator_.cells().pop_back();
+        if (!job) {
+            if (reuse)
+                cells[ci] = prev;
+            else if (cells.size() == ci + 1u)
+                cells.pop_back();
+        } else {
+            tw_self_cell_4682_[name] = {ci, self_word};
+        }
         return job;
     }
 
