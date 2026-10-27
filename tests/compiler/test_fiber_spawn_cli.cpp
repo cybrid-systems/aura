@@ -21,18 +21,30 @@
 //   AC10: #4131 ordinary oneshot unchanged (clean exit 0)
 //   AC11: #4131 default-disposition SIGTERM still prompt (no TERM handler)
 //   AC12: #4131 source-cite: main.cpp oneshot reset; no sigaction(SIGTERM)
+//   AC13: #4720 serial pin — two CPU-bound CLI thread fibers are never
+//         simultaneously runnable (max 1 across 200 /proc samples). #4707
+//         removes the body mutex; P4 (#4717) MUST FLIP this AC to expect
+//         overlap == 2 in the SAME commit that removes the mutex.
+//   AC14: #4720 control — the same sampler observes 2 spinning std::threads
+//         runnable in one sample (probe is not vacuous).
 
 #include "test_harness.hpp"
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
+#include <dirent.h>
 #include <fstream>
 #include <print>
 #include <string>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 
 import std;
 import aura.compiler.service;
@@ -458,6 +470,212 @@ static void ac12_source_cite() {
           "AC12: no SIGTERM handler installed — prompt default death; serve face untouched");
 }
 
+// ── #4720 / #4717: serial pin for CLI thread-fiber BODIES ─────────────
+// Today every thread-backend fiber body is serialized on
+// s_cli_thread_fiber_body_mtx (complete_fiber,
+// src/compiler/evaluator_primitives_messaging.cpp). Issue #4707 removes
+// that body mutex; P4 (#4717) MUST FLIP ac13 (expect overlap == 2) in the
+// SAME commit that removes it. Until then this pin is the regression
+// tripwire that keeps two CPU-bound bodies from overlapping on the shared
+// CLI Evaluator.
+//
+// Probe: sample /proc/<pid>/task/<tid>/stat (field 3, state) for every
+// non-main task. A parked sibling sits in pthread_mutex_lock (futex, S),
+// so the maximum number of R tasks over 200 samples must stay 1. Sampling
+// starts only after BOTH workers exist and one is R (a body is really
+// executing), and stops long before the first body (fib 28) finishes, so
+// the thread-exit hand-off window cannot inject a transient 2. AC14
+// proves the sampler is not vacuous with two concurrent std::thread
+// spinners.
+static constexpr int kPinSamples4720 = 200;
+
+static char proc_task_state_4720(const std::string& task_dir) {
+    std::ifstream in(task_dir + "/stat");
+    std::string line;
+    if (!in || !std::getline(in, line))
+        return '\0';
+    // Field 3 is the state char, after the LAST ')' of "(comm)".
+    const auto rp = line.rfind(')');
+    if (rp == std::string::npos || rp + 2 >= line.size())
+        return '\0';
+    return line[rp + 2];
+}
+
+static std::vector<long> proc_tids_4720(long pid) {
+    std::vector<long> tids;
+    const std::string dir = "/proc/" + std::to_string(pid) + "/task";
+    DIR* d = ::opendir(dir.c_str());
+    if (!d)
+        return tids;
+    while (const dirent* e = ::readdir(d)) {
+        if (e->d_name[0] < '0' || e->d_name[0] > '9')
+            continue;
+        tids.push_back(std::strtol(e->d_name, nullptr, 10));
+    }
+    ::closedir(d);
+    std::sort(tids.begin(), tids.end());
+    return tids;
+}
+
+// Count R-state tasks among tids (a task may vanish mid-walk: skipped).
+static int runnable_count_4720(long pid, const std::vector<long>& tids) {
+    int r = 0;
+    for (const long tid : tids) {
+        const auto dir = "/proc/" + std::to_string(pid) + "/task/" + std::to_string(tid);
+        if (proc_task_state_4720(dir) == 'R')
+            ++r;
+    }
+    return r;
+}
+
+// Fork + exec the pin program. AURA_PIPELINE_STRICT=0: the oneshot strict
+// SOA pipeline (Issue #2213 face) refuses to lower a fiber:spawn call
+// today ("tree-walker fallback forbidden in production pipeline"), so the
+// pin runs the CLI's tree-walker face. The body scheduler and body mutex
+// under test live in complete_fiber (evaluator_primitives_messaging.cpp)
+// and are identical on both faces — fiber:spawn-backend is still 2.
+static pid_t spawn_4720_pin_child(const std::string& bin, const std::string& file) {
+    ::fflush(nullptr);
+    const pid_t pid = ::fork();
+    if (pid != 0)
+        return pid;
+    ::setenv("AURA_PIPELINE_STRICT", "0", 1);
+    ::freopen("/dev/null", "w", stdout);
+    ::freopen("/dev/null", "w", stderr);
+    ::execl(bin.c_str(), bin.c_str(), file.c_str(), static_cast<char*>(nullptr));
+    ::_exit(127);
+}
+
+static void ac13_serial_pin_two_cpu_bound_fibers() {
+    std::println("\n--- #4720 AC13: CLI thread fibers — max 1 runnable body ---");
+    const auto bin = aura_bin_path_4131();
+    CHECK(!bin.empty(), "AC13: aura binary resolved beside the test binary");
+    if (bin.empty())
+        return;
+    // fib 28 / fib 29: pure CPU work with no yield primitive, so a running
+    // body holds the body mutex start->finish across the whole window.
+    const auto prog = write_4131_program(
+        "aura_4720_pin",
+        "(begin\n"
+        "  (define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))\n"
+        "  (define a (fiber:spawn (lambda () (fib 28))))\n"
+        "  (define b (fiber:spawn (lambda () (fib 29))))\n"
+        "  (display (fiber:join a)) (display \" \") (display (fiber:join b)) (newline))\n");
+    CHECK(!prog.empty(), "AC13: pin program written");
+    if (prog.empty())
+        return;
+    const pid_t pid = spawn_4720_pin_child(bin, prog);
+    CHECK(pid > 0, "AC13: CLI child spawned");
+    if (pid <= 0)
+        return;
+    CHECK(wait_4131_executed(pid, 15000), "AC13: child reached the aura image");
+
+    // Start gate: both worker threads exist AND one body is runnable, so a
+    // vacuous window (fibers not spawned yet / all parked) cannot pass.
+    const auto start_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    bool started = false;
+    while (std::chrono::steady_clock::now() < start_deadline) {
+        if (::kill(pid, 0) != 0)
+            break; // died before both bodies ran — reported below
+        std::vector<long> fibers;
+        for (const long tid : proc_tids_4720(pid)) {
+            if (tid != pid)
+                fibers.push_back(tid);
+        }
+        if (fibers.size() >= 2 && runnable_count_4720(pid, fibers) >= 1) {
+            started = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(started, "AC13: both fiber workers live + a body runnable (valid window)");
+
+    int samples = 0;
+    int max_runnable = 0;
+    int samples_runnable = 0;
+    int max_fiber_tasks = 0;
+    bool window_closed = false;
+    if (started) {
+        while (samples < kPinSamples4720) {
+            std::vector<long> fibers;
+            for (const long tid : proc_tids_4720(pid)) {
+                if (tid != pid)
+                    fibers.push_back(tid);
+            }
+            if (fibers.size() < 2) {
+                window_closed = true;
+                break;
+            }
+            const int r = runnable_count_4720(pid, fibers);
+            max_runnable = std::max(max_runnable, r);
+            if (r >= 1)
+                ++samples_runnable;
+            max_fiber_tasks = std::max(max_fiber_tasks, static_cast<int>(fibers.size()));
+            ++samples;
+        }
+    }
+    // The bodies are seconds long; the pin only needs the steady-state
+    // window, so stop them unconditionally (SIGKILL cannot be ignored).
+    ::kill(pid, SIGKILL);
+    ::waitpid(pid, nullptr, 0);
+
+    std::println("  #4720 pin evidence: samples={} max_concurrent_runnable={} "
+                 "samples_runnable={} max_fiber_tasks={} window_closed={}",
+                 samples, max_runnable, samples_runnable, max_fiber_tasks, window_closed);
+    CHECK(samples == kPinSamples4720, "AC13: collected all 200 samples inside the body window");
+    CHECK(!window_closed, "AC13: CLI stayed alive for the whole sample window");
+    CHECK(max_fiber_tasks == 2, "AC13: exactly two fiber worker tasks (thread backend)");
+    CHECK(samples_runnable >= kPinSamples4720 - 10,
+          "AC13: a fiber body was runnable in >=95% of samples (probe not idle)");
+    CHECK(max_runnable <= 1, "AC13: max concurrent runnable fiber bodies == 1 (body mutex)");
+}
+
+static void ac14_sampler_control_two_runnable() {
+    std::println("\n--- #4720 AC14: control — sampler sees 2 co-runnable threads ---");
+    std::atomic<bool> stop{false};
+    std::atomic<long> tids[2];
+    tids[0].store(0);
+    tids[1].store(0);
+    const auto spin = [&stop, &tids](int idx) {
+        tids[idx].store(static_cast<long>(::syscall(SYS_gettid)), std::memory_order_release);
+        while (!stop.load(std::memory_order_relaxed)) {
+            // busy CPU loop — keep this thread in state R
+        }
+    };
+    std::thread t0(spin, 0);
+    std::thread t1(spin, 1);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while ((tids[0].load(std::memory_order_acquire) == 0 ||
+            tids[1].load(std::memory_order_acquire) == 0) &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    const std::vector<long> pair{tids[0].load(std::memory_order_acquire),
+                                 tids[1].load(std::memory_order_acquire)};
+    const bool have_both = pair[0] > 0 && pair[1] > 0;
+    int samples = 0;
+    int max_runnable = 0;
+    int samples_both = 0;
+    if (have_both) {
+        for (; samples < kPinSamples4720; ++samples) {
+            const int r = runnable_count_4720(static_cast<long>(::getpid()), pair);
+            max_runnable = std::max(max_runnable, r);
+            if (r == 2)
+                ++samples_both;
+        }
+    }
+    stop.store(true, std::memory_order_relaxed);
+    t0.join();
+    t1.join();
+    std::println("  #4720 control evidence: samples={} max_concurrent_runnable={} samples_both={}",
+                 samples, max_runnable, samples_both);
+    CHECK(have_both, "AC14: both spinner tids published");
+    CHECK(samples == kPinSamples4720, "AC14: collected all control samples");
+    CHECK(max_runnable == 2, "AC14: sampler observes 2 simultaneously runnable tasks");
+    CHECK(samples_both >= kPinSamples4720 - 10,
+          "AC14: both spinners R in >=95% of samples (sampler not vacuous)");
+}
+
 } // namespace
 
 int run_test_fiber_spawn_cli() {
@@ -474,7 +692,9 @@ int run_test_fiber_spawn_cli() {
     ac10_ordinary_program_unchanged();
     ac11_oneshot_sigterm_default_still_prompt();
     ac12_source_cite();
-    std::println("\n=== #2656/#2685/#2686/#3394/#4131: {} passed, {} failed ===", g_passed,
+    ac13_serial_pin_two_cpu_bound_fibers();
+    ac14_sampler_control_two_runnable();
+    std::println("\n=== #2656/#2685/#2686/#3394/#4131/#4720: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
 }
