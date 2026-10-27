@@ -1,0 +1,34 @@
+{
+  "issue": 4708,
+  "title": "Issue #4708: (fiber:cancel f) cancels ONE fiber by handle - the request is observed at the next cooperative safepoint (fiber:yield, the fiber-parking channel prims, both fiber:join waits) and raises a catchable fiber-cancelled condition, so try/catch cleanup runs and the join cannot fall back to the 200s ceiling.",
+  "ok": "OK: Issue #4708 single-fiber cancellation - (fiber:cancel f) raises a catchable fiber-cancelled condition at the next safepoint and the join returns",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_messaging.cpp",
+      "contains": [
+        "Issue #4708",
+        "add(\"fiber:cancel\"",
+        "target->request_cancel();",
+        "fiber_cancel_request(fid)"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_messaging.cpp",
+      "contains": [
+        "fiber_cancel_safepoint(",
+        "fiber_cancel_take(static_cast<int64_t>(fiber->id()))",
+        "fiber_cancel_take(current_fiber_body_id())"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/python/test_regression.py",
+      "contains": [
+        "test_fiber_cancel_4708",
+        "Issue #4708"
+      ]
+    }
+  ]
+}
