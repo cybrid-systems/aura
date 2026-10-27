@@ -97,7 +97,8 @@ def main() -> int:
 
     # ── AC1: shell jail fence after the Exec choke, before the child fork ──
     sh_eff = shell_body.find('require_effect(kEffectExec, "shell")')
-    sh_jail = shell_body.find('check_tenant_exec_jail(ev.string_heap_[idx], jail_root, "shell")')
+    # Issue #4714 follow-up: the jailed argv is read through string_at().
+    sh_jail = shell_body.find('check_tenant_exec_jail(ev.string_at(idx), jail_root, "shell")')
     sh_fork = shell_body.find("::fork()")
     must(sh_eff != -1, "AC1: shell require_effect(Exec) present")
     must(sh_jail != -1, 'AC1: check_tenant_exec_jail(..., "shell") present')

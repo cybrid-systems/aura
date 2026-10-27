@@ -74,4 +74,40 @@
 #define AURA_MAKE_STRING(i) AURA_IMM(AURA_KIND_STRING, (i))
 #define AURA_MAKE_SYMBOL(i) AURA_IMM(AURA_KIND_SYMBOL, (i))
 
+/* Issue #4714: string payload index spaces (in-band; AURA_VALUE_ABI stays 4).
+ *
+ * A String payload is 56 bits (kind 9 occupies the whole low byte, so there
+ * is no spare tag bit for a second index space without changing what
+ * AURA_IS_STRING means for every existing reader). The payload is therefore
+ * read as
+ *     payload = (space << AURA_STR_SPACE_SHIFT) | slot,  slot < 2^48
+ * where space 0 is the one legacy shared string heap (Evaluator::
+ * string_heap_). Every value minted before #4714 has payload < 2^48 because
+ * a heap of 2^48 std::string slots is far past the addressable memory of any
+ * machine this runs on, so space 0 keeps the exact bits it always had and
+ * AURA_STRING_IDX(v) is still the shared index for every such value.
+ *
+ * Why not a kind/owner bit: AURA_IS_STRING / AURA_IS_FLOAT / AURA_IS_SYMBOL
+ * compare the whole low byte, so a second String kind (say 11) would make
+ * every existing is_string / string? / string-length / hash / tenant gate
+ * site disagree with the encoder unless every one of them is edited in the
+ * same commit - 1431 references to the heap object alone. A payload field is
+ * invisible to every tag predicate: no reader changes behaviour on a space-0
+ * value, and the AOT preamble (AURA_VALUE_ABI_TEXT) and the JIT emit the
+ * identical immediates.
+ *
+ * A non-zero space must index a heap that outlives every value that can
+ * reach it (space 0's heap lives as long as the Evaluator). A per-fiber
+ * nursery that dies at fiber exit cannot be a space: any minted string is
+ * stored into shared structures (pairs_, cells_, env frames) immediately, so
+ * a payload can outlive its owner and the reclaim only traces space 0. */
+#define AURA_STR_SPACE_SHIFT 48
+#define AURA_STR_SPACE_MASK 0xFFULL
+#define AURA_STR_SLOT_MASK ((1ULL << AURA_STR_SPACE_SHIFT) - 1)
+#define AURA_STRING_SPACE(v) ((unsigned)(AURA_IMM_PAYLOAD(v) >> AURA_STR_SPACE_SHIFT))
+#define AURA_STRING_SLOT(v) (AURA_IMM_PAYLOAD(v) & AURA_STR_SLOT_MASK)
+#define AURA_MAKE_STRING_SPACED(space, slot)                                                       \
+    AURA_IMM(AURA_KIND_STRING,                                                                     \
+             ((((unsigned long long)(space)) << AURA_STR_SPACE_SHIFT) | (unsigned long long)(slot)))
+
 #endif /* AURA_VALUE_ABI_H */

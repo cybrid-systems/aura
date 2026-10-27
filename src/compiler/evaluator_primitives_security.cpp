@@ -255,7 +255,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         const auto bits = static_cast<std::uint16_t>(as_int(a[1]));
         const auto tenant = a.size() >= 3 && is_int(a[2]) ? static_cast<std::uint64_t>(as_int(a[2]))
                                                           : ev.capability_tenant_id();
-        const auto& name = ev.string_heap_[sidx];
+        const auto& name = ev.string_at(sidx);
         const bool granted = ev.grant_effect_capability(tenant, name, bits, 0);
         // Issue #3459: report refusal — no MSE seed on a dropped base
         // grant, no unconditional #t after a #3090 mid-refuse / policy
@@ -362,10 +362,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         const auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_void();
-        ev.grant_capability(ev.string_heap_[idx]);
+        ev.grant_capability(ev.string_at(idx));
         // Issue #3459 hygiene: report a dropped write. Dedup-already-held
         // still reads held → #t.
-        if (!ev.has_capability(ev.string_heap_[idx]))
+        if (!ev.has_capability(ev.string_at(idx)))
             return make_primitive_error(ev.string_heap_, ev.error_values_,
                                         "security:grant-capability!: grant did not land",
                                         ev.primitive_error_counter_ptr());
@@ -4745,7 +4745,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         const auto sidx = as_string_idx(a[0]);
         if (sidx >= ev.string_heap_.size())
             return make_bool(false);
-        const auto& path = ev.string_heap_[sidx];
+        const auto& path = ev.string_at(sidx);
         // Issue #4641: production face = the authority triple (bool sandbox OR
         // effect mode != 0) — the same predicate the sibling
         // security:grant-effect! / security:set-effect-sandbox-mode! gates
@@ -5232,7 +5232,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             if (filt_reason) {
                 const auto sidx = as_string_idx(a[5]);
                 if (sidx < ev.string_heap_.size())
-                    want_reason = ev.string_heap_[sidx];
+                    want_reason = ev.string_at(sidx);
             }
             // Issue #4018: tenant auth before ring / WAL scan.
             if (!audit_query_authorize_tenant(ev, filt_tenant, want_tenant))
@@ -6576,7 +6576,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     const auto sidx = as_string_idx(arg);
                     if (sidx >= ev.string_heap_.size())
                         continue;
-                    const auto& s = ev.string_heap_[sidx];
+                    const auto& s = ev.string_at(sidx);
                     if (s == "durable" || s == ":durable")
                         want_durable = true;
                 }

@@ -1010,7 +1010,7 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
             auto i0 = types::as_string_idx(a[0]);
             auto i1 = types::as_string_idx(a[1]);
             if (i0 < ev.string_heap_.size() && i1 < ev.string_heap_.size() &&
-                ev.string_heap_[i0] == ev.string_heap_[i1])
+                ev.string_at(i0) == ev.string_at(i1))
                 return make_int(1);
             auto eidx = ev.error_values_.size();
             ev.error_values_.push_back(a[0]);
@@ -1026,7 +1026,7 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         auto out_idx = as_string_idx(a[0]);
         if (out_idx >= ev.string_heap_.size())
             return make_bool(false);
-        auto norm_out = ev.string_heap_[out_idx];
+        auto norm_out = ev.string_at(out_idx);
         // Strip surrounding quotes
         if (!norm_out.empty() && (norm_out[0] == '"' || norm_out[0] == '\''))
             norm_out = norm_out.substr(1);
@@ -1051,7 +1051,7 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
             if (is_string(p.car)) {
                 auto kw_idx = as_string_idx(p.car);
                 if (kw_idx < ev.string_heap_.size()) {
-                    auto& kw = ev.string_heap_[kw_idx];
+                    auto& kw = ev.mutable_string_at(kw_idx);
                     if (!kw.empty() && norm_out.find(kw) != std::string::npos) {
                         // Guard: for error-like output with short keywords
                         if (is_error_like && kw.size() <= 5) {

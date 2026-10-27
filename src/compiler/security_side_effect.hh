@@ -98,7 +98,7 @@ infer_required_effects_from_name(std::string_view name) noexcept {
     // Issue #4036: sibling mutators resolved to kEffectNone and skipped the
     // dispatch choke entirely — zero-cap write. set-car!/set-cdr! reach the
     // process-global g_pair_slots (cross-Evaluator) in the idx >= pairs_
-    // else-branch; string-fill! overwrites string_heap_[idx] in place;
+    // else-branch; string-fill! overwrites the string-heap slot in place;
     // closure:free! freed any in-range JIT closure id (process-global id
     // space, cross-tenant free). Same choke, same grant model: infer stamps
     // Mutate at add(); dispatch require_effect enforces on every call. Do

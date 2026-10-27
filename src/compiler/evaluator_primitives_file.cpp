@@ -122,7 +122,7 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_void();
-        auto& path = ev.string_heap_[idx];
+        auto& path = ev.mutable_string_at(idx);
         // Issue #1163/#1171: deny sensitive paths; open with O_NOFOLLOW to
         // collapse lstat+open TOCTOU (symlink swap between check and open).
         if (path_is_denied(path))
@@ -172,7 +172,7 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_void();
-        auto& path = ev.string_heap_[idx];
+        auto& path = ev.mutable_string_at(idx);
         // Issue #1163: refuse /proc/self/mem and other process-memory paths.
         if (path_is_denied(path))
             return make_void();
@@ -191,7 +191,7 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
                 // reach the host buffer; deny leaves the file untouched.
                 if (!ev.inrange_string_tenant_allows(cidx, kEffectWrite, "write-file"))
                     return make_void();
-                content = ev.string_heap_[cidx];
+                content = ev.string_at(cidx);
             }
         } else if (is_int(a[1])) {
             content = std::to_string(as_int(a[1]));
@@ -265,7 +265,7 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
                                auto idx = as_string_idx(a[0]);
                                if (idx >= ev.string_heap_.size())
                                    return make_int(0);
-                               auto& path = ev.string_heap_[idx];
+                               auto& path = ev.mutable_string_at(idx);
                                if (path_is_denied(path))
                                    return make_int(0);
                                // Issue #3835: Restricted+MT / Strict tenant root (mirror
@@ -287,8 +287,8 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         auto sidx = as_string_idx(a[0]), didx = as_string_idx(a[1]);
         if (sidx >= ev.string_heap_.size() || didx >= ev.string_heap_.size())
             return make_void();
-        auto& src_path = ev.string_heap_[sidx];
-        auto& dst_path = ev.string_heap_[didx];
+        auto& src_path = ev.mutable_string_at(sidx);
+        auto& dst_path = ev.mutable_string_at(didx);
         // Issue #1165: validate both source and destination paths.
         if (path_is_denied(src_path) || path_is_denied(dst_path))
             return make_void();
@@ -347,7 +347,7 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
                                auto idx = as_string_idx(a[0]);
                                if (idx >= ev.string_heap_.size())
                                    return make_int(0);
-                               auto& path = ev.string_heap_[idx];
+                               auto& path = ev.mutable_string_at(idx);
                                // Issue #1164: deny sensitive paths; refuse directories (no rmdir
                                // cascade); use unlinkat AT_FDCWD without following final symlink
                                // where possible.
@@ -376,7 +376,7 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_int(0);
-        auto& path = ev.string_heap_[idx];
+        auto& path = ev.mutable_string_at(idx);
         if (path_is_denied(path))
             return make_int(0);
         // Issue #3835: Restricted+MT / Strict tenant root (mirror write-file).
@@ -420,7 +420,7 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         // exec face); on allow the exec child chdir's under the caller's
         // tenant root (relative-only contract).
         std::string jail_root;
-        if (!ev.check_tenant_exec_jail(ev.string_heap_[idx], jail_root, "shell"))
+        if (!ev.check_tenant_exec_jail(ev.string_at(idx), jail_root, "shell"))
             return make_int(-1);
         // Issue #1582: fork+exec via /bin/sh -c, then WEXITSTATUS.
         // ::system() returns raw waitpid status (exit_code << 8 + signal),
@@ -454,8 +454,7 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
             // all three at /dev/null after the jail, before exec.
             if (!jail_root.empty() && !::aura::compiler::security::null_child_stdio_all())
                 ::_exit(127);
-            ::execl("/bin/sh", "sh", "-c", ev.string_heap_[idx].c_str(),
-                    static_cast<char*>(nullptr));
+            ::execl("/bin/sh", "sh", "-c", ev.string_at(idx).c_str(), static_cast<char*>(nullptr));
             ::_exit(127);
         }
         if (jail_sv[1] >= 0)
@@ -499,7 +498,7 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
             // command bytes reach argv.
             if (!ev.inrange_string_tenant_allows(idx, kEffectExec, "command-output"))
                 return make_void();
-            auto& cmd = ev.string_heap_[idx];
+            auto& cmd = ev.mutable_string_at(idx);
             // Issue #4233: Restricted+MT / Strict tenant FS jail — same
             // fence as shell above (IsolationDeny tenant-path-escape, zero
             // exec). popen gives no pre-exec hook for the child chdir, so
@@ -588,7 +587,7 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
                                auto idx = as_string_idx(a[0]);
                                if (idx >= ev.string_heap_.size())
                                    return make_void();
-                               auto& dir_path = ev.string_heap_[idx];
+                               auto& dir_path = ev.mutable_string_at(idx);
                                if (path_is_denied(dir_path))
                                    return make_void();
                                // Issue #3835: Restricted+MT / Strict tenant root (mirror

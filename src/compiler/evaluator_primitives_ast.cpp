@@ -371,7 +371,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             if (a.size() >= 1 && is_string(a[0])) {
                 auto name_idx = as_string_idx(a[0]);
                 if (name_idx < ev.string_heap_.size())
-                    name = ev.string_heap_[name_idx];
+                    name = ev.string_at(name_idx);
             }
 
             // (#107 part 6) Take a direct deep copy of the workspace's
@@ -1576,7 +1576,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         auto sidx = as_string_idx(a[0]);
         if (sidx >= ev.string_heap_.size())
             return make_bool(false);
-        const std::string& blob = ev.string_heap_[sidx];
+        const std::string& blob = ev.string_at(sidx);
         // Accept v1 minimum; v2 is larger.
         if (blob.size() < aura::ast::FlatAST::kStableRefSerializedSizeV1)
             return make_bool(false);

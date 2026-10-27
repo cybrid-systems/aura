@@ -1,0 +1,44 @@
+;; expect: OK-4714S strings resolve through one payload accessor
+; Issue #4714 follow-up (Row 2 prerequisite): the String payload is
+; (space << 48) | slot, space 0 being the shared string heap, and every
+; payload -> bytes read in the engine now goes through
+; Evaluator::string_at(). This CLI repro drives the migrated readers from
+; the language in file mode (no tree-walker constructs, so it runs in the
+; production pipeline): string construction (push_string_heap),
+; string-append / string-length / substring / equal? / string->number,
+; and a 2000-element recursive build so the accessor is exercised on a
+; heap that grew past its initial capacity.
+; The two-fiber production mint path (0 heap locks, 0 table locks,
+; measured) is AC1 of test_pmr_alloc_fiber_safe.cpp, not this file:
+; fiber:spawn needs the tree walker, which the production pipeline denies.
+(define *fails* 0)
+(define *passes* 0)
+(define (check name got want)
+  (if (equal? got want)
+      (set! *passes* (+ *passes* 1))
+      (begin (set! *fails* (+ *fails* 1))
+             (display "  FAIL: ") (display name) (display " got ") (display got)
+             (display " want ") (display want) (newline))))
+
+(define (mk i) (string-append "s" (number->string i)))
+(check "mk" (mk 42) "s42")
+(check "string-length" (string-length (mk 4714)) 5)
+(check "equal?" (equal? (mk 7) (string-append "s" "7")) #t)
+(check "substring" (substring (mk 4714) 1 3) "47")
+(check "string->number" (string->number (substring (mk 4714) 1 3)) 47)
+
+; 1..100: 9 one-digit + 90 two-digit + 1 three-digit, each + 1 for the "s"
+(define (len-sum n acc)
+  (if (= n 0) acc (len-sum (- n 1) (+ acc (string-length (mk n))))))
+(check "100 strings" (len-sum 100 0) 292)
+
+; 2000 mints: the heap grows past its initial capacity, and every read
+; below re-decodes the payload (digits 1..2000 = 9 + 180 + 2700 + 4004).
+(check "2000 strings" (len-sum 2000 0) 8893)
+(check "last string" (mk 2000) "s2000")
+(check "first string" (mk 1) "s1")
+
+(if (> *fails* 0)
+    (begin (display "FAIL-4714S strings\n") (exit 1)))
+(display "OK-4714S strings through one accessor") (display " passes=") (display *passes*)
+(newline)

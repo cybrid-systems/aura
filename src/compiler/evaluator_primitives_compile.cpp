@@ -2342,7 +2342,7 @@ void CompilePrims::register_compile_p24(PrimRegistrar add, Evaluator& ev) {
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_void();
-        const auto& reason_name = ev.string_heap_[idx];
+        const auto& reason_name = ev.string_at(idx);
         std::uint8_t mask = 0;
         if (reason_name == "general")
             mask = 0x01;
@@ -2418,7 +2418,7 @@ void CompilePrims::register_compile_p25(PrimRegistrar add, Evaluator& ev) {
         if (idx >= ev.string_heap_.size())
             return make_int(0);
         return make_int(
-            static_cast<std::int64_t>(ev.get_dirty_block_count_fn_(ev.string_heap_[idx].c_str())));
+            static_cast<std::int64_t>(ev.get_dirty_block_count_fn_(ev.string_at(idx).c_str())));
     });
 
     // (compile:func-block-dirty-count name func-idx) —
@@ -2439,7 +2439,7 @@ void CompilePrims::register_compile_p25(PrimRegistrar add, Evaluator& ev) {
         if (!ev.get_func_dirty_block_count_fn_)
             return make_int(0);
         return make_int(static_cast<std::int64_t>(ev.get_func_dirty_block_count_fn_(
-            ev.string_heap_[idx].c_str(), static_cast<std::size_t>(fidx))));
+            ev.string_at(idx).c_str(), static_cast<std::size_t>(fidx))));
     });
 }
 
@@ -2465,7 +2465,7 @@ void CompilePrims::register_compile_p26(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         if (!ev.is_block_dirty_fn_)
             return make_bool(false);
-        return make_bool(ev.is_block_dirty_fn_(ev.string_heap_[idx].c_str(),
+        return make_bool(ev.is_block_dirty_fn_(ev.string_at(idx).c_str(),
                                                static_cast<std::size_t>(fidx),
                                                static_cast<std::uint32_t>(bidx)));
     });
@@ -2509,7 +2509,7 @@ void CompilePrims::register_compile_p26(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         if (!ev.mark_block_dirty_fn_)
             return make_bool(false);
-        const auto* name = ev.string_heap_[idx].c_str();
+        const auto* name = ev.string_at(idx).c_str();
         const auto fi = static_cast<std::size_t>(fidx);
         const auto bi = static_cast<std::uint32_t>(bidx);
         return run_compile_dirty_under_guard(
@@ -2554,7 +2554,7 @@ void CompilePrims::register_compile_p26(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         if (!ev.clear_block_dirty_fn_)
             return make_bool(false);
-        const auto* name = ev.string_heap_[idx].c_str();
+        const auto* name = ev.string_at(idx).c_str();
         const auto fi = static_cast<std::size_t>(fidx);
         const auto bi = static_cast<std::uint32_t>(bidx);
         return run_compile_dirty_under_guard(
@@ -2579,7 +2579,7 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
         if (!ev.is_instruction_dirty_fn_)
             return make_bool(false);
         return make_bool(ev.is_instruction_dirty_fn_(
-            ev.string_heap_[idx].c_str(), static_cast<std::size_t>(as_int(a[1])),
+            ev.string_at(idx).c_str(), static_cast<std::size_t>(as_int(a[1])),
             static_cast<std::uint32_t>(as_int(a[2])), static_cast<std::uint32_t>(as_int(a[3]))));
     });
 
@@ -2612,7 +2612,7 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         if (!ev.mark_instruction_dirty_fn_)
             return make_bool(false);
-        const auto* name = ev.string_heap_[idx].c_str();
+        const auto* name = ev.string_at(idx).c_str();
         const auto fi = static_cast<std::size_t>(as_int(a[1]));
         const auto bi = static_cast<std::uint32_t>(as_int(a[2]));
         const auto ii = static_cast<std::uint32_t>(as_int(a[3]));
@@ -2647,7 +2647,7 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         if (!ev.clear_instruction_dirty_fn_)
             return make_bool(false);
-        const auto* name = ev.string_heap_[idx].c_str();
+        const auto* name = ev.string_at(idx).c_str();
         const auto func_idx = static_cast<std::size_t>(as_int(a[1]));
         const auto block_idx = static_cast<std::uint32_t>(as_int(a[2]));
         const auto instr_idx = static_cast<std::uint32_t>(as_int(a[3]));
@@ -3072,7 +3072,7 @@ void CompilePrims::register_compile_p29(PrimRegistrar add, Evaluator& ev) {
         if (idx >= ev.string_heap_.size())
             return make_bool(false);
         // Issue #1839 / #1855 / #1898: pin compiler_service_ (rebind-safe).
-        const std::string fname = ev.string_heap_[idx];
+        const std::string fname = ev.string_at(idx);
         return with_compiler_service_pin(
             ev,
             [&](CompilerService& svc) -> EvalValue {
@@ -3367,7 +3367,7 @@ void CompilePrims::register_compile_p32(PrimRegistrar add, Evaluator& ev) {
         if (text_idx >= ev.string_heap_.size())
             return make_int(0);
         // Issue #1771: shared line parser.
-        const auto marked = parse_verify_node_id_lines(ev.string_heap_[text_idx], *ws, ev,
+        const auto marked = parse_verify_node_id_lines(ev.string_at(text_idx), *ws, ev,
                                                        aura::ast::FlatAST::kCoverageFeedbackDirty);
         if (marked > 0) {
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
@@ -3399,7 +3399,7 @@ void CompilePrims::register_compile_p33(PrimRegistrar add, Evaluator& ev) {
         if (text_idx >= ev.string_heap_.size())
             return make_int(0);
         // Issue #1771: shared line parser.
-        const auto marked = parse_verify_node_id_lines(ev.string_heap_[text_idx], *ws, ev,
+        const auto marked = parse_verify_node_id_lines(ev.string_at(text_idx), *ws, ev,
                                                        aura::ast::FlatAST::kAssertFailureDirty);
         if (marked > 0) {
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
@@ -3423,7 +3423,7 @@ void CompilePrims::register_compile_p33(PrimRegistrar add, Evaluator& ev) {
             return make_int(0);
         // Issue #1771: shared line parser (no auto-trigger metric — #802 BC).
         const auto marked = parse_verify_node_id_lines(
-            ev.string_heap_[text_idx], *ws, ev, aura::ast::FlatAST::kFormalCounterexampleDirty);
+            ev.string_at(text_idx), *ws, ev, aura::ast::FlatAST::kFormalCounterexampleDirty);
         if (marked > 0)
             ev.bump_sv_self_evo_feedback_parse();
         return make_int(static_cast<std::int64_t>(marked));
@@ -3519,7 +3519,7 @@ void CompilePrims::register_compile_p36(PrimRegistrar add, Evaluator& ev) {
                 return make_void();
             auto text_idx = as_string_idx(a[0]);
             if (text_idx < ev.string_heap_.size()) {
-                const std::string& text = ev.string_heap_[text_idx];
+                const std::string& text = ev.string_at(text_idx);
                 std::size_t i = 0;
                 while (i < text.size()) {
                     std::size_t j = i;
@@ -4366,7 +4366,7 @@ void CompilePrims::register_compile_p45(PrimRegistrar add, Evaluator& ev) {
             auto sym_idx = as_string_idx(a[0]);
             std::string sym_name;
             if (sym_idx < ev.string_heap_.size()) {
-                sym_name = ev.string_heap_[sym_idx];
+                sym_name = ev.string_at(sym_idx);
             } else {
                 return ev.make_merr("bad-arg", "symbol name string index out of range");
             }
@@ -4749,7 +4749,7 @@ void CompilePrims::register_compile_p49(PrimRegistrar add, Evaluator& ev) {
         if (name_idx >= ev.string_heap_.size())
             return make_void();
         auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
-        const std::string idx_name = ev.string_heap_[name_idx];
+        const std::string idx_name = ev.string_at(name_idx);
         const auto caller_node_id = narg.id;
         // Issue #3040: stamp + require_effect_on_ref / for_node_id before Guard.
         if (!gate_compile_node_effect(ev, "compile:per-defuse-index-add", narg))
@@ -4834,7 +4834,7 @@ void CompilePrims::register_compile_p49(PrimRegistrar add, Evaluator& ev) {
         if (name_idx >= ev.string_heap_.size())
             return make_void();
         auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
-        const std::string idx_name = ev.string_heap_[name_idx];
+        const std::string idx_name = ev.string_at(name_idx);
         using aura::compiler::per_defuse_index::DefUseIndex;
         auto callers = svc->per_defuse_index_tracker().get_callers(DefUseIndex{idx_name});
         std::vector<std::pair<std::string, EvalValue>> kv;
@@ -5260,7 +5260,7 @@ void CompilePrims::register_compile_p54(PrimRegistrar add, Evaluator& ev) {
         auto sidx = as_string_idx(a[0]);
         std::string name;
         if (sidx < ev.string_heap_.size())
-            name = ev.string_heap_[sidx];
+            name = ev.string_at(sidx);
         else
             return ev.make_merr("bad-arg", "type name string index out of range");
         // Issue #1837 / #1850 / #1898: ensure + pin type_registry_ so a
@@ -5309,7 +5309,7 @@ void CompilePrims::register_compile_p55(PrimRegistrar add, Evaluator& ev) {
         auto sidx = as_string_idx(a[0]);
         std::string name;
         if (sidx < ev.string_heap_.size())
-            name = ev.string_heap_[sidx];
+            name = ev.string_at(sidx);
         else
             return make_int(0);
         if (!ev.type_registry_)
@@ -5330,7 +5330,7 @@ void CompilePrims::register_compile_p55(PrimRegistrar add, Evaluator& ev) {
         auto sidx = as_string_idx(a[0]);
         std::string name;
         if (sidx < ev.string_heap_.size())
-            name = ev.string_heap_[sidx];
+            name = ev.string_at(sidx);
         else
             return make_int(0);
         if (!ev.type_registry_)
@@ -5353,9 +5353,9 @@ void CompilePrims::register_compile_p55(PrimRegistrar add, Evaluator& ev) {
         auto bsx = as_string_idx(a[1]);
         std::string an, bn;
         if (asx < ev.string_heap_.size())
-            an = ev.string_heap_[asx];
+            an = ev.string_at(asx);
         if (bsx < ev.string_heap_.size())
-            bn = ev.string_heap_[bsx];
+            bn = ev.string_at(bsx);
         if (!ev.type_registry_)
             return make_int(0);
         auto& reg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
@@ -5432,9 +5432,9 @@ void CompilePrims::register_compile_p56(PrimRegistrar add, Evaluator& ev) {
             auto to_sx = as_string_idx(a[1]);
             std::string from_name, to_name;
             if (from_sx < ev.string_heap_.size())
-                from_name = ev.string_heap_[from_sx];
+                from_name = ev.string_at(from_sx);
             if (to_sx < ev.string_heap_.size())
-                to_name = ev.string_heap_[to_sx];
+                to_name = ev.string_at(to_sx);
             if (!ev.type_registry_)
                 return make_int(0);
             auto& reg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
@@ -5472,9 +5472,9 @@ void CompilePrims::register_compile_p57(PrimRegistrar add, Evaluator& ev) {
             auto to_sx = as_string_idx(a[1]);
             std::string from_name, to_name;
             if (from_sx < ev.string_heap_.size())
-                from_name = ev.string_heap_[from_sx];
+                from_name = ev.string_at(from_sx);
             if (to_sx < ev.string_heap_.size())
-                to_name = ev.string_heap_[to_sx];
+                to_name = ev.string_at(to_sx);
             if (!ev.type_registry_)
                 return empty_str();
             auto& reg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
@@ -6000,7 +6000,7 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
             auto idx = as_string_idx(a[0]);
             if (idx >= ev.string_heap_.size())
                 return make_bool(false);
-            p = parse_gradual_permissiveness(ev.string_heap_[idx]);
+            p = parse_gradual_permissiveness(ev.string_at(idx));
         } else {
             return make_bool(false);
         }
@@ -6028,7 +6028,7 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
             auto idx = as_string_idx(a[0]);
             if (idx >= ev.string_heap_.size())
                 return make_bool(false);
-            t = parse_typecheck_metrics_tier(ev.string_heap_[idx]);
+            t = parse_typecheck_metrics_tier(ev.string_at(idx));
         } else {
             return make_bool(false);
         }

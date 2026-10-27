@@ -414,7 +414,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 }
                 bool fresh_alloc = true;
 
-                auto pr = aura::parser::parse_to_flat(ev.string_heap_[idx], *flat_ptr, *pool_ptr);
+                auto pr = aura::parser::parse_to_flat(ev.string_at(idx), *flat_ptr, *pool_ptr);
                 if (!pr.success || pr.root == aura::ast::NULL_NODE) {
                     // Return structured parse error: ("parse" "message")
                     std::string err;
@@ -445,7 +445,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 // TypeChecker so the next typecheck rebuilds against new AST.
                 ev.invalidate_persistent_typechecker();
                 // Issue #1381 / #2920: stamp source cache (valid until next mutate).
-                set_code_src = ev.string_heap_[idx];
+                set_code_src = ev.string_at(idx);
                 ev.note_workspace_source_text(set_code_src);
                 // Issue #211: invalidate the (tag, arity) index
                 // when the workspace changes. (The set_workspace_flat
@@ -631,7 +631,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         auto name_idx = as_string_idx(a[0]);
         if (name_idx >= ev.string_heap_.size())
             return make_bool(false);
-        auto name = ev.string_heap_[name_idx];
+        auto name = ev.string_at(name_idx);
         return make_bool(ev.is_define_dirty_fn_(name));
     });
 
@@ -644,7 +644,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         auto name_idx = as_string_idx(a[0]);
         if (name_idx >= ev.string_heap_.size())
             return make_void();
-        auto name = ev.string_heap_[name_idx];
+        auto name = ev.string_at(name_idx);
         auto names = ev.get_dependents_fn_(name);
         EvalValue list = make_void();
         for (auto it = names.rbegin(); it != names.rend(); ++it) {
@@ -680,7 +680,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                                         "eval: cross-tenant string denied by "
                                         "WorkspaceIsolationPolicy",
                                         ev.primitive_error_counter_ptr());
-        auto code = ev.string_heap_[sidx];
+        auto code = ev.string_at(sidx);
         // Issue #4359: a stack flat dies when eval returns, and the
         // closure still holds that pointer. Callers then hang or abort.
         // Keep the program for the Evaluator lifetime.
@@ -810,7 +810,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_void();
-        auto& path = ev.string_heap_[idx];
+        auto& path = ev.mutable_string_at(idx);
 
         // Issue #2485 / #1163 / #2487: refuse dangerous / sensitive paths
         // (/proc/self/mem, /dev/mem, /proc/kcore, …) via shared
@@ -1443,7 +1443,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
     add("eval:async", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_void();
-        auto& code = ev.string_heap_[as_string_idx(a[0])];
+        auto& code = ev.mutable_string_at(as_string_idx(a[0]));
         if (aura::messaging::g_eval_async) {
             // Thread pool path: offload to background
             auto result_str = aura::messaging::g_eval_async(code);
@@ -1641,7 +1641,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return mev("bad-arg", "string index out of range");
-        auto name = ev.string_heap_[idx];
+        auto name = ev.string_at(idx);
         // Phase 2.5.0: route via ev.canonical_pool() (== workspace_pool, explicit).
         auto sym = ev.canonical_pool()->intern(name);
 
@@ -1796,7 +1796,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         if (!a.empty() && is_string(a[0])) {
             auto idx = as_string_idx(a[0]);
             if (idx < ev.string_heap_.size())
-                filter = ev.string_heap_[idx];
+                filter = ev.string_at(idx);
         }
 
         auto& flat = *ev.workspace_flat_;

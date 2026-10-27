@@ -1162,7 +1162,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         const auto i = as_string_idx(v);
         if (i >= ev.string_heap_.size())
             return fallback;
-        return ev.string_heap_[i];
+        return ev.string_at(i);
     };
 
     // — wrap + tenant + cow at minimum. Soft keeps the historical v1
@@ -2269,7 +2269,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                    auto new_val = static_cast<std::uint64_t>(ev.string_heap_.size()); // placeholder
 
                    // Simple type ID mapping based on well-known type names
-                   auto type_str = ev.string_heap_[type_idx];
+                   auto type_str = ev.string_at(type_idx);
                    std::uint32_t new_tid = 0;
                    if (type_str == "Int")
                        new_tid = 1;
@@ -2285,7 +2285,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                        new_tid = 0; // unknown → Dyn
 
                    auto mid = flat.add_mutation_with_rollback(
-                       node, "replace-type", old_type_str, ev.string_heap_[type_idx],
+                       node, "replace-type", old_type_str, ev.string_at(type_idx),
                        "replace type annotation", aura::ast::MutationStatus::Committed, 1, old_val,
                        new_tid, true);
                    // Actually apply the type change
@@ -2393,7 +2393,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     old_val = static_cast<std::uint64_t>(nv.int_value);
                     // Issue #2793: log + write under Guard; abort marks RolledBack.
                     auto mid = flat.add_mutation_with_rollback(
-                        node, "replace-value", "Int", "Int", ev.string_heap_[sum_idx],
+                        node, "replace-value", "Int", "Int", ev.string_at(sum_idx),
                         aura::ast::MutationStatus::Committed,
                         static_cast<std::uint32_t>(aura::ast::MutationSoAField::IntVal), old_val,
                         static_cast<std::uint64_t>(new_val), true);
@@ -2425,7 +2425,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     std::uint64_t old_bits;
                     old_bits = std::bit_cast<std::uint64_t>(nv.float_value);
                     auto mid = flat.add_mutation_with_rollback(
-                        node, "replace-value", "Float", "Float", ev.string_heap_[sum_idx],
+                        node, "replace-value", "Float", "Float", ev.string_at(sum_idx),
                         aura::ast::MutationStatus::Committed,
                         static_cast<std::uint32_t>(aura::ast::MutationSoAField::FloatVal), old_bits,
                         new_bits, true);
@@ -2450,11 +2450,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         ok = false;
                         return ev.make_merr("bad-arg", "new value string index out of range");
                     }
-                    auto new_name = ev.string_heap_[new_sym_idx];
+                    auto new_name = ev.string_at(new_sym_idx);
                     old_val = nv.sym_id;
                     auto new_sym = ev.workspace_pool_->intern(new_name);
                     auto mid = flat.add_mutation_with_rollback(
-                        node, "replace-value", "Sym", "Sym", ev.string_heap_[sum_idx],
+                        node, "replace-value", "Sym", "Sym", ev.string_at(sum_idx),
                         aura::ast::MutationStatus::Committed,
                         static_cast<std::uint32_t>(aura::ast::MutationSoAField::SymId), old_val,
                         new_sym, true);
@@ -2551,8 +2551,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 return *err;
             }
 
-            auto mid = flat.add_mutation(node, ev.string_heap_[op_idx], "<runtime>", "<runtime>",
-                                         ev.string_heap_[sum_idx]);
+            auto mid = flat.add_mutation(node, ev.string_at(op_idx), "<runtime>", "<runtime>",
+                                         ev.string_at(sum_idx));
             // Issue #3131: allowed MacroIntroduced record-patch still
             // propagates marker + dirty bit so audit / cache invalidation
             // stays consistent with structural prims (parity with
@@ -2615,7 +2615,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 ok = false;
                 return mev("bad-arg", "template string index out of range");
             }
-            std::string repl_template = ev.string_heap_[template_idx];
+            std::string repl_template = ev.string_at(template_idx);
 
             // Optional [ppa-hint] and [summary] before the template.
             std::size_t pred_end = a.size() - 1;
@@ -2624,7 +2624,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             if (a.size() >= 3 && is_string(a[a.size() - 2])) {
                 auto sidx = as_string_idx(a[a.size() - 2]);
                 if (sidx < ev.string_heap_.size()) {
-                    summary = ev.string_heap_[sidx];
+                    summary = ev.string_at(sidx);
                     pred_end = a.size() - 2;
                     if (a.size() >= 4 && is_int(a[a.size() - 3]))
                         ppa_hint =
@@ -2661,7 +2661,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     ok = false;
                     return mev("bad-arg", "predicate field/value out of range");
                 }
-                predicates.push_back({ev.keyword_table_[kidx], ev.string_heap_[sidx]});
+                predicates.push_back({ev.keyword_table_[kidx], ev.string_at(sidx)});
             }
             if (predicates.empty()) {
                 ok = false;
@@ -3175,7 +3175,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             auto template_idx = as_string_idx(a.back());
             if (template_idx >= ev.string_heap_.size())
                 return mev("bad-arg", "template string index out of range");
-            std::string repl_template = ev.string_heap_[template_idx];
+            std::string repl_template = ev.string_at(template_idx);
 
             // Walk backwards parsing optional kwargs (:validate, :hygiene-keep)
             // and optional summary string before the template.
@@ -3199,7 +3199,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     auto sidx = as_string_idx(type_arg);
                     if (sidx >= ev.string_heap_.size())
                         return mev("bad-arg", ":validate type index out of range");
-                    validate_type = ev.string_heap_[sidx];
+                    validate_type = ev.string_at(sidx);
                     kw_end -= 2;
                 } else if (kw == ":hygiene-keep") {
                     EvalValue mode_arg = a[kw_end];
@@ -3226,7 +3226,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             if (pred_end > 0 && is_string(a[pred_end - 1])) {
                 auto sidx = as_string_idx(a[pred_end - 1]);
                 if (sidx < ev.string_heap_.size()) {
-                    summary = ev.string_heap_[sidx];
+                    summary = ev.string_at(sidx);
                     pred_end -= 1;
                 }
             }
@@ -3251,7 +3251,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 auto sidx2 = as_string_idx(p.cdr);
                 if (kidx2 >= ev.keyword_table_.size() || sidx2 >= ev.string_heap_.size())
                     return mev("bad-arg", "predicate field/value out of range");
-                predicates.push_back({ev.keyword_table_[kidx2], ev.string_heap_[sidx2]});
+                predicates.push_back({ev.keyword_table_[kidx2], ev.string_at(sidx2)});
             }
 
             // Collect matches (same predicate scan as query-and-replace).
@@ -3646,7 +3646,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             auto idx = as_string_idx(a[0]);
             if (idx >= ev.string_heap_.size())
                 return make_bool(false);
-            const auto& s = ev.string_heap_[idx];
+            const auto& s = ev.string_at(idx);
             if (s == "disabled" || s == "off" || s == "false") {
                 ev.set_stale_ref_policy(aura::compiler::Evaluator::StaleRefPolicy::Disabled);
                 return make_bool(true);
@@ -3827,7 +3827,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             auto idx = as_string_idx(a[0]);
             if (idx >= ev.string_heap_.size())
                 return make_bool(false);
-            const auto& s = ev.string_heap_[idx];
+            const auto& s = ev.string_at(idx);
             if (s == "lazy" || s == "default") {
                 ev.set_pattern_index_policy(Evaluator::PatternIndexPolicy::Lazy);
                 return make_bool(true);
@@ -4151,7 +4151,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (a.size() >= 4 && is_string(a[3])) {
             auto vidx = as_string_idx(a[3]);
             if (vidx < ev.string_heap_.size())
-                validate_type = ev.string_heap_[vidx];
+                validate_type = ev.string_at(vidx);
         }
         if (!validate_type.empty()) {
             auto validate_fn = ev.primitives_.lookup("mutate:validate-against-schema");
@@ -4208,7 +4208,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return mev("bad-arg", "string index out of range");
         }
         auto& flat = *ev.workspace_flat_;
-        auto name = ev.string_heap_[name_idx];
+        auto name = ev.string_at(name_idx);
         // Phase 2.5.0: route via ev.canonical_pool() (== workspace_pool, explicit).
         auto sym = ev.canonical_pool()->intern(name);
 
@@ -4280,7 +4280,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // so append-mode parse_to_flat does not leak into free_list / size.
             const auto size_before_add_parse = static_cast<std::size_t>(flat.size());
             auto pr_add =
-                aura::parser::parse_to_flat(ev.string_heap_[code_idx], flat, *ev.workspace_pool_);
+                aura::parser::parse_to_flat(ev.string_at(code_idx), flat, *ev.workspace_pool_);
             if (!pr_add.success || pr_add.root == aura::ast::NULL_NODE) {
                 std::string parse_err;
                 if (!pr_add.errors.empty()) {
@@ -4370,8 +4370,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         };
         auto pr = [&] {
             aura::compiler::phase_stats::Scope phase_parse(aura::compiler::phase_stats::Parse);
-            return aura::parser::parse_to_flat(ev.string_heap_[code_idx], flat,
-                                               *ev.workspace_pool_);
+            return aura::parser::parse_to_flat(ev.string_at(code_idx), flat, *ev.workspace_pool_);
         }();
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             std::string parse_err;
@@ -4598,7 +4597,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // cascade so full re-lower / cascade never parses multi-define install
         // text under this name (sibling lambdas would steal the #0 body).
         if (ev.update_function_source_fn_) {
-            std::string body_src = ev.string_heap_[code_idx];
+            std::string body_src = ev.string_at(code_idx);
             // Bare lambda / expr → wrap as (define name …). Full define form kept.
             if (body_src.find("(define ") != 0 && body_src.find("(define\t") != 0 &&
                 body_src.find("(define\n") != 0) {
@@ -4906,7 +4905,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return mev("bad-arg", "string index out of range");
         }
         auto& flat = *ev.workspace_flat_;
-        auto name = ev.string_heap_[name_idx];
+        auto name = ev.string_at(name_idx);
         // Phase 2.5.0: route via ev.canonical_pool() (== workspace_pool, explicit).
         auto sym = ev.canonical_pool()->intern(name);
 
@@ -4967,8 +4966,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         (void)flat.free_orphan_nodes_from(
                             static_cast<aura::ast::NodeId>(size_before_parse));
                 };
-                auto pr = aura::parser::parse_to_flat(ev.string_heap_[code_idx], flat,
-                                                      *ev.workspace_pool_);
+                auto pr =
+                    aura::parser::parse_to_flat(ev.string_at(code_idx), flat, *ev.workspace_pool_);
                 if (!pr.success || pr.root == aura::ast::NULL_NODE) {
                     std::string parse_err;
                     if (!pr.errors.empty()) {
@@ -5445,7 +5444,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
             // Parse child code INTO workspace (append mode — all IDs stay valid)
             auto pr =
-                aura::parser::parse_to_flat(ev.string_heap_[code_idx], flat, *ev.workspace_pool_);
+                aura::parser::parse_to_flat(ev.string_at(code_idx), flat, *ev.workspace_pool_);
             if (!pr.success || pr.root == aura::ast::NULL_NODE) {
                 std::string parse_err;
                 if (!pr.errors.empty()) {
@@ -5667,8 +5666,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         }
         auto& flat = *ev.workspace_flat_;
 
-        auto pattern_str = ev.string_heap_[pattern_idx];
-        std::string repl_template = ev.string_heap_[repl_idx];
+        auto pattern_str = ev.string_at(pattern_idx);
+        std::string repl_template = ev.string_at(repl_idx);
         // Issue #482 / #1374: shared QueryMatcher with query:pattern.
         // Keywords aligned with query:pattern:
         //   :nested-arity [#t|#f]  — Kleene (default #t after #1374)
@@ -6299,7 +6298,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 return *err;
             }
 
-            auto new_code = ev.string_heap_[code_idx];
+            auto new_code = ev.string_at(code_idx);
             std::string summary =
                 (a.size() > 2 && is_string(a[2])) ? safe_str(a[2]) : "replace-subtree";
 
@@ -7537,7 +7536,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             auto idx = as_string_idx(v);
             if (idx >= ev.string_heap_.size())
                 return false;
-            owned.push_back(ev.string_heap_[idx]);
+            owned.push_back(ev.string_at(idx));
             return true;
         };
 
@@ -7666,7 +7665,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             if (a.size() >= 4 && is_string(a[a.size() - 1])) {
                 auto sidx = as_string_idx(a[a.size() - 1]);
                 if (sidx < ev.string_heap_.size())
-                    summary = ev.string_heap_[sidx];
+                    summary = ev.string_at(sidx);
             }
 
             if (code_args.empty()) {
@@ -7686,7 +7685,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 // Issue #1699: snapshot size before each append-parse.
                 const auto size_before_parse = static_cast<std::size_t>(flat.size());
                 auto pr =
-                    aura::parser::parse_to_flat(ev.string_heap_[cidx], flat, *ev.workspace_pool_);
+                    aura::parser::parse_to_flat(ev.string_at(cidx), flat, *ev.workspace_pool_);
                 if (!pr.success || pr.root == aura::ast::NULL_NODE)
                     continue;
                 // Parent is the insert target (user-supplied), not re-derivable
@@ -7701,8 +7700,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 if (allow_macro_spl && parent_was_macro_spl)
                     propagate_macro_introduced_marker(ev, flat, pr.root);
 
-                flat.add_mutation(parent, "splice", std::to_string(insert_pos),
-                                  ev.string_heap_[cidx], summary);
+                flat.add_mutation(parent, "splice", std::to_string(insert_pos), ev.string_at(cidx),
+                                  summary);
                 ev.workspace_flat_->mark_dirty_upward(parent);
 
                 auto pid = ev.pairs_.size();
@@ -7802,7 +7801,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                       ? safe_str(a[2])
                                       : "wrap node " + std::to_string(node);
 
-            auto tmpl = ev.string_heap_[tmpl_idx];
+            auto tmpl = ev.string_at(tmpl_idx);
 
             // Issue #1700 / #1689: parent via parent_of + attached index
             // (not O(N×C) scan). Captured before parse; re-derived after.
@@ -7985,7 +7984,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 }
             }
 
-            auto new_name = ev.string_heap_[name_idx];
+            auto new_name = ev.string_at(name_idx);
             std::string summary =
                 (a.size() > 2 && is_string(a[2])) ? safe_str(a[2]) : "extract " + new_name;
 
@@ -8274,8 +8273,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (old_name_idx >= ev.string_heap_.size() || new_name_idx >= ev.string_heap_.size())
             return ev.make_merr("bad-arg", "string index out of range");
         auto& flat = *ev.workspace_flat_;
-        auto old_name = ev.string_heap_[old_name_idx];
-        auto new_name = ev.string_heap_[new_name_idx];
+        auto old_name = ev.string_at(old_name_idx);
+        auto new_name = ev.string_at(new_name_idx);
         auto old_sym = ev.workspace_pool_->intern(old_name);
         auto new_sym = ev.workspace_pool_->intern(new_name);
 
@@ -8627,7 +8626,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     return *err;
             }
 
-            auto new_name = ev.string_heap_[name_idx];
+            auto new_name = ev.string_at(name_idx);
             std::string summary =
                 (a.size() > 2 && is_string(a[2])) ? safe_str(a[2]) : "extract " + new_name;
 
@@ -9149,7 +9148,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                    auto strategy_idx = as_string_idx(a[0]);
                    if (strategy_idx >= ev.string_heap_.size())
                        return make_bool(false);
-                   const auto& strategy = ev.string_heap_[strategy_idx];
+                   const auto& strategy = ev.string_at(strategy_idx);
                    auto payload_idx = as_string_idx(a[2]);
                    if (payload_idx >= ev.string_heap_.size())
                        return make_bool(false);
@@ -9317,7 +9316,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             if (is_string(v)) {
                 auto i = as_string_idx(v);
                 if (i < ev.string_heap_.size())
-                    return ev.string_heap_[i];
+                    return ev.string_at(i);
                 return {};
             }
             auto k = kw_name(v);
@@ -9893,7 +9892,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     ke.val = keys[i];
                     if (is_string(ke)) {
                         const auto si = as_string_idx(ke);
-                        if (si < ev.string_heap_.size() && ev.string_heap_[si] == "schema")
+                        if (si < ev.string_heap_.size() && ev.string_at(si) == "schema")
                             continue;
                     }
                     meta[i] = fp;

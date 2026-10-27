@@ -96,7 +96,7 @@ void register_test_primitives(PrimRegistrar add, Evaluator& ev) {
             if (is_string(ev.pairs_[idx].car)) {
                 auto sid = as_string_idx(ev.pairs_[idx].car);
                 if (sid < ev.string_heap_.size())
-                    suite_name = ev.string_heap_[sid];
+                    suite_name = ev.string_at(sid);
             }
 
             // Walk and evaluate each stored check form

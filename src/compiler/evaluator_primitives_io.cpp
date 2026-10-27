@@ -343,7 +343,7 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
                                                    aura::compiler::security::kEffectExec),
                         "git-diff"))
                     return make_void();
-                if (ev.string_heap_[mi] == "staged") {
+                if (ev.string_at(mi) == "staged") {
                     staged = true;
                 }
             }
@@ -464,7 +464,7 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
                                            aura::compiler::security::kEffectExec),
                 "git-commit"))
             return make_int(-1);
-        const std::string& msg = ev.string_heap_[mi];
+        const std::string& msg = ev.string_at(mi);
         int rc = -1;
         if (!jail_root.empty())
             return make_int(
@@ -581,7 +581,7 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
                                                aura::compiler::security::kEffectExec),
                     "git-stage"))
                 return make_int(-1);
-            std::string p(ev.string_heap_[si]);
+            std::string p(ev.string_at(si));
             if (!jail_root.empty()) {
                 std::string resolved;
                 if (!ev.check_tenant_host_path(p, resolved, "git-stage"))
@@ -780,7 +780,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_void();
         if (!ev.inrange_string_tenant_allows(nidx, aura::compiler::security::kEffectNone, "getenv"))
             return make_void();
-        auto name = ev.string_heap_[nidx];
+        auto name = ev.string_at(nidx);
         auto* val = ::getenv(name.c_str());
         // Issue #4494: unset → #f (R7RS get-environment-variable), so the
         // (or (getenv "X") default) idiom falls back. Void was truthy.
@@ -830,7 +830,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             if (!ev.inrange_string_tenant_allows(uidx, aura::compiler::security::kEffectNetwork,
                                                  "http-get"))
                 return make_void();
-            const auto& url = ev.string_heap_[uidx];
+            const auto& url = ev.string_at(uidx);
             // Issue #4382: scheme jail — only http/https under the tenant
             // jail; file:// and other schemes deny IsolationDeny
             // tenant-path-escape with zero perform.
@@ -897,13 +897,13 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 return make_void();
         }
 
-        auto& curl_url = ev.string_heap_[uidx];
-        auto& curl_body = ev.string_heap_[bidx];
+        auto& curl_url = ev.mutable_string_at(uidx);
+        auto& curl_body = ev.mutable_string_at(bidx);
         std::string auth;
         if (a.size() >= 3 && types::is_string(a[2])) {
             const auto aidx = types::as_string_idx(a[2]);
             if (aidx < ev.string_heap_.size())
-                auth = ev.string_heap_[aidx];
+                auth = ev.string_at(aidx);
         }
         // Issue #4382: scheme jail — same fence as http-get, before the
         // async / libcurl / CLI paths (zero perform / zero exec on deny).
@@ -933,15 +933,15 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         // Try native libcurl (synchronous, default path)
         std::string result;
         if (get_curl().load()) {
-            auto& curl_url = ev.string_heap_[types::as_string_idx(a[0])];
-            auto& curl_body = ev.string_heap_[types::as_string_idx(a[1])];
+            auto& curl_url = ev.mutable_string_at(types::as_string_idx(a[0]));
+            auto& curl_body = ev.mutable_string_at(types::as_string_idx(a[1]));
 
             CURL* curl = get_curl().easy_init();
             if (curl) {
                 struct curl_slist* headers = nullptr;
                 headers = get_curl().slist_append(headers, "Content-Type: application/json");
                 if (a.size() >= 3 && types::is_string(a[2])) {
-                    auto& auth = ev.string_heap_[types::as_string_idx(a[2])];
+                    auto& auth = ev.mutable_string_at(types::as_string_idx(a[2]));
                     headers = get_curl().slist_append(
                         headers, (std::string("Authorization: Bearer ") + auth).c_str());
                 }
@@ -979,12 +979,12 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
 
         if (result.empty()) {
             // ── fallback: pipe+fork+exec curl CLI ──
-            auto& url = ev.string_heap_[types::as_string_idx(a[0])];
-            auto& body = ev.string_heap_[types::as_string_idx(a[1])];
+            auto& url = ev.mutable_string_at(types::as_string_idx(a[0]));
+            auto& body = ev.mutable_string_at(types::as_string_idx(a[1]));
             std::string auth_hdr;
             if (a.size() >= 3 && types::is_string(a[2]))
                 auth_hdr = std::string("Authorization: Bearer ") +
-                           ev.string_heap_[types::as_string_idx(a[2])];
+                           ev.string_at(types::as_string_idx(a[2]));
             int in[2], out[2];
             if (::pipe(in) < 0 || ::pipe(out) < 0)
                 return make_void();
@@ -1070,7 +1070,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         if (!ev.inrange_string_tenant_allows(hidx, aura::compiler::security::kEffectNetwork,
                                              "tcp-connect"))
             return make_void();
-        auto host = ev.string_heap_[hidx];
+        auto host = ev.string_at(hidx);
         auto port_str = std::to_string(types::as_int(a[1]));
         struct addrinfo hints{}, *res;
         hints.ai_family = AF_UNSPEC;
@@ -1238,7 +1238,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             return types::make_int(-1);
         if (!minted_fd_tenant_allows(ev, fd, "tcp-send"))
             return types::make_int(-1);
-        auto& data = ev.string_heap_[sidx];
+        auto& data = ev.mutable_string_at(sidx);
         auto sent = ::send(fd, data.data(), data.size(), MSG_NOSIGNAL);
         return types::make_int(static_cast<std::int64_t>(sent));
     });
@@ -1323,7 +1323,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         auto sidx = as_string_idx(a[0]);
         if (sidx >= ev.string_heap_.size())
             return make_int(-1);
-        const auto& path = ev.string_heap_[sidx];
+        const auto& path = ev.string_at(sidx);
         if (aura::compiler::security::path_is_denied(path))
             return make_int(-1);
         // Issue #3802: Restricted+MT / Strict → resolve under tenant root.
@@ -1419,7 +1419,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 }
             }
         }
-        const auto& s = ev.string_heap_[sidx];
+        const auto& s = ev.string_at(sidx);
         auto n = ::write(fd, s.data(), s.size());
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
             m->sys_write_calls.fetch_add(1, std::memory_order_relaxed);

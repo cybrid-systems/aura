@@ -57,7 +57,9 @@ def main() -> int:
     # AC1 write-file
     a = file_src.find('add("write-file"')
     w1 = file_src[a : a + 4000] if a >= 0 else ""
-    must_ordered("AC1", fence_pos(w1, "write-file"), "content = ev.string_heap_[cidx]", w1)
+    # Issue #4714 follow-up: reads go through Evaluator::string_at(); the
+    # marker follows the accessor, not the raw heap index.
+    must_ordered("AC1", fence_pos(w1, "write-file"), "content = ev.string_at(cidx)", w1)
     if "kEffectWrite" not in w1:
         fails.append("AC1: write-file fence must use the already-required kEffectWrite")
 
@@ -69,12 +71,12 @@ def main() -> int:
     # AC3 command-output
     a = file_src.find('"command-output"')
     w3 = file_src[a : a + 3200] if a >= 0 else ""
-    must_ordered("AC3", fence_pos(w3, "command-output"), "auto& cmd = ev.string_heap_[idx]", w3)
+    must_ordered("AC3", fence_pos(w3, "command-output"), "auto& cmd = ev.mutable_string_at(idx)", w3)
 
     # AC4 sys-write (io.cpp)
     a = io_src.find('defer_std_host_prim("sys-write"')
     w4 = io_src[a : a + 3000] if a >= 0 else ""
-    must_ordered("AC4", fence_pos(w4, "sys-write"), "const auto& s = ev.string_heap_[sidx]", w4)
+    must_ordered("AC4", fence_pos(w4, "sys-write"), "const auto& s = ev.string_at(sidx)", w4)
 
     # AC5 http-get
     a = io_src.find('"http-get"')
@@ -93,7 +95,7 @@ def main() -> int:
     # AC7 tcp-send
     a = io_src.find('defer_std_host_prim("tcp-send"')
     w7 = io_src[a : a + 2600] if a >= 0 else ""
-    must_ordered("AC7", fence_pos(w7, "tcp-send"), "auto& data = ev.string_heap_[sidx]", w7)
+    must_ordered("AC7", fence_pos(w7, "tcp-send"), "auto& data = ev.mutable_string_at(sidx)", w7)
 
     # AC8 white-box arm + no design doc
     for marker in (

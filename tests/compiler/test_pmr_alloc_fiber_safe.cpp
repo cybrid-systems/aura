@@ -10,6 +10,11 @@
 //   AC5: push_string_heap / cons take alloc_storage_lock_
 //   AC6 (#2997): 8-thread list via slot_lookup_fast; lock-hold samples
 //   AC7 (#2997): list-ref / member / math still work (no allow on those)
+//   AC1-AC3 (#4714S): the string payload's index space is decoded in ONE
+//                    place (Evaluator::string_at), space 0 is bit-identical
+//                    to the pre-#4714 encoding, a registered peer space
+//                    resolves through the same accessor, and no reader file
+//                    indexes the heap directly any more.
 //   AC1-AC5 (#4714): per-fiber string nursery takes no lock on the fast
 //                    path (measured, with a bound-heap control), promotion
 //                    on publish is copy-on-send under ONE narrow lock, the
@@ -27,6 +32,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <memory_resource>
 #include <optional>
 #include <print>
 #include <span>
@@ -234,10 +240,16 @@ static void ac6_concurrent_list_ctor() {
     CHECK(samples == 0 || samples >= static_cast<std::uint64_t>(kThreads),
           "AC4: lock-hold samples recorded");
 
+    // Issue #4727: symbols are their own interned atom (kind 10), so a quoted
+    // symbol no longer has bit identity with the String it used to be. The
+    // stats hash is keyed by Strings (build_engine_metrics_hash inserts the
+    // C++ field name), so the key must be a String literal - with 'lock-hold-ns
+    // this lookup misses and both checks below were red at the base commit.
     auto qhold =
-        cs.eval("(hash-ref (engine:metrics \"query:prim-heap-quota-stats\") 'lock-hold-ns)");
+        cs.eval("(hash-ref (engine:metrics \"query:prim-heap-quota-stats\") \"lock-hold-ns\")");
     CHECK(qhold && is_int(*qhold) && as_int(*qhold) >= 0, "AC4: query lock-hold-ns");
-    auto qrec = cs.eval("(hash-ref (engine:metrics \"query:prim-heap-quota-stats\") 'recommend)");
+    auto qrec =
+        cs.eval("(hash-ref (engine:metrics \"query:prim-heap-quota-stats\") \"recommend\")");
     CHECK(qrec && is_int(*qrec), "AC4: query recommend");
 }
 
@@ -1667,6 +1679,85 @@ static void ac4714_fiber_string_arena() {
           "4714 AC5: the fiber completion publishes BEFORE the result is marked ready");
 }
 
+// ── #4714 follow-up: the payload index space is decoded in ONE place ──
+// Row 2 of #4714 ("production mints leave the shared lock") needs a second
+// index space only if a reader can tell spaces apart. The migration below
+// is the part that is provable today: every payload->bytes read in the
+// engine goes through Evaluator::string_at(), so the decode exists once,
+// and space 0 stays bit-identical to the pre-#4714 encoding (an additive
+// change: no tag predicate, AOT preamble or JIT immediate moves).
+static void ac4714s_string_space_accessor() {
+    std::println("\n--- #4714S: two-index-space payload + one read accessor ---");
+    // Declared before the service so the peer heap outlives the Evaluator
+    // that holds a registered pointer to it.
+    aura::compiler::LockedStringHeap peer(std::pmr::new_delete_resource());
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+
+    // The codec's own constants, read back through the Evaluator (the same
+    // AURA_STR_* macros the engine compiles with: no duplicated literal).
+    CHECK(ev.string_space_shift() == 48u, "4714S AC1: the space id is the top payload byte");
+    CHECK(ev.string_slot_mask() == (1ULL << 48) - 1, "4714S AC1: the slot mask covers 48 bits");
+    CHECK(ev.make_spaced_string_payload(0, 123456789ULL) == 123456789ULL,
+          "4714S AC1: space 0 is bit-identical to a plain slot index");
+    CHECK(ev.make_spaced_string_payload(1, 7) == (1ULL << 48) + 7,
+          "4714S AC1: space 1 sets only the top payload byte");
+    CHECK(is_string(EvalValue{ev.make_spaced_string_value(1, 7)}) &&
+              !is_float(EvalValue{ev.make_spaced_string_value(1, 7)}),
+          "4714S AC1: a spaced value keeps the String tag and no other kind");
+
+    const auto shared = static_cast<std::uint64_t>(ev.push_string_heap("space0-alpha"));
+    CHECK(ev.string_at(shared) == "space0-alpha",
+          "4714S AC1: a space-0 payload still reads the shared heap");
+    CHECK(ev.string_at_or(shared) == "space0-alpha",
+          "4714S AC1: the bounds-checked accessor returns in-range bytes");
+    CHECK(ev.string_at_or(shared + 1000000ULL, "oob") == "oob",
+          "4714S AC1: the bounds-checked accessor falls back out of range");
+
+    const auto p0 = static_cast<std::uint64_t>(peer.mint("space1-alpha"));
+    (void)peer.mint("space1-beta");
+    ev.register_string_space(1, &peer);
+    // A space-1 String value: same kind byte, space id in the top payload byte.
+    const auto payload1 = ev.make_spaced_string_payload(1, p0);
+    CHECK(is_string(EvalValue{ev.make_spaced_string_value(1, p0)}),
+          "4714S AC2: a space-1 value still classifies as String");
+    CHECK((payload1 >> ev.string_space_shift()) == 1u, "4714S AC2: the space id is recoverable");
+    const auto nz0 = ev.string_space_nonzero_reads();
+    CHECK(ev.string_at(payload1) == "space1-alpha",
+          "4714S AC2: string_at() decodes the space (no reader knows the index space)");
+    CHECK(ev.string_at(ev.make_spaced_string_payload(1, 1)) == "space1-beta",
+          "4714S AC2: the second peer slot resolves through the same door");
+    CHECK(ev.string_space_nonzero_reads() - nz0 == 2,
+          "4714S AC2: two non-zero-space resolutions are counted");
+    const auto unk0 = ev.string_space_unknown_reads();
+    CHECK(ev.string_at(ev.make_spaced_string_payload(3, 0)).empty(),
+          "4714S AC2: an unregistered space fails closed to empty");
+    CHECK(ev.string_space_unknown_reads() - unk0 == 1,
+          "4714S AC2: the unregistered space is counted");
+    CHECK(ev.string_at_or(ev.make_spaced_string_payload(1, 999), "fb") == "fb",
+          "4714S AC2: an out-of-range peer slot falls back instead of reading OOB");
+
+    const char* kReaderFiles[] = {
+        "src/compiler/evaluator_eval_flat.cpp",
+        "src/compiler/evaluator_primitives_agent.cpp",
+        "src/compiler/evaluator_primitives_mutate.cpp",
+        "src/compiler/evaluator_primitives_char.cpp",
+        "src/compiler/evaluator_primitives_io.cpp",
+        "src/compiler/evaluator_primitives_compile.cpp",
+    };
+    for (const auto* f : kReaderFiles) {
+        const auto src = read_file(f);
+        CHECK(!src.empty(), std::string("4714S AC3: source is readable: ") + f);
+        CHECK(src.find("string_heap_[") == std::string::npos,
+              std::string("4714S AC3: no direct heap index left in ") + f);
+        CHECK(src.find("string_at(") != std::string::npos,
+              std::string("4714S AC3: reads go through the accessor in ") + f);
+    }
+    const auto evsrc = read_file("src/compiler/evaluator.ixx");
+    CHECK(evsrc.find("Issue #4714: the string index-space decision") != std::string::npos,
+          "4714S AC3: the accessor block is the documented one decision point");
+}
+
 int run_test_pmr_alloc_fiber_safe() {
     std::println("=== Issue #2651: PMR / string_heap concurrent alloc safety ===");
     ac1_concurrent_push_string();
@@ -1689,6 +1780,7 @@ int run_test_pmr_alloc_fiber_safe() {
     ac4599_call_resolve_cache();
     ac4611_prim_call_arg_rooting();
     ac4714_fiber_string_arena();
+    ac4714s_string_space_accessor();
     std::println("\n=== #2651/#2997: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

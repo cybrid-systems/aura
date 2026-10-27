@@ -201,7 +201,7 @@ void ObservabilityPrims::register_jit_p0(PrimRegistrar add, Evaluator& ev) {
         // hook isn't installed, default to false (never deopt).
         if (!ev.get_jit_unhandled_count_fn_)
             return make_bool(false);
-        auto count = ev.get_jit_unhandled_count_fn_(ev.string_heap_[idx].c_str());
+        auto count = ev.get_jit_unhandled_count_fn_(ev.string_at(idx).c_str());
         return make_bool(count > threshold);
     });
 
@@ -2067,7 +2067,7 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
             if (is_string(v)) {
                 auto sidx = as_string_idx(v);
                 if (sidx < ev.string_heap_.size())
-                    return ev.string_heap_[sidx];
+                    return ev.string_at(sidx);
                 return {};
             }
             // Keywords used as group tags: :jit / jit
@@ -2143,7 +2143,7 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
             auto sidx = as_string_idx(a[0]);
             if (sidx >= ev.string_heap_.size())
                 return make_void();
-            const std::string& name = ev.string_heap_[sidx];
+            const std::string& name = ev.string_at(sidx);
             const auto rest = a.size() > 1 ? a.subspan(1) : std::span<const EvalValue>{};
             if (auto fn = ObservabilityPrims::lookup_stats_impl(name))
                 return (*fn)(rest);
@@ -2302,7 +2302,7 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
         if (is_string(v)) {
             auto sidx = as_string_idx(v);
             if (sidx < ev.string_heap_.size())
-                return ev.string_heap_[sidx];
+                return ev.string_at(sidx);
         }
         return {};
     };
@@ -5747,7 +5747,7 @@ void ObservabilityPrims::register_jit_p31(PrimRegistrar add, Evaluator& ev) {
         // Issue #1368: lazy bind only if host has not already wired metrics
         if (ev.compiler_metrics())
             aura_ensure_aot_metrics(ev.compiler_metrics());
-        const std::string& path = ev.string_heap_[path_idx];
+        const std::string& path = ev.string_at(path_idx);
         // Issue #1367: use this Evaluator's AotState (region/version isolation)
         const bool ok = aura_reload_aot_module_for_eval(&ev, path.c_str(), version);
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {

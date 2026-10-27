@@ -173,7 +173,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 if (types::is_string(src)) {
                     auto sidx = types::as_string_idx(src);
                     if (sidx < ev.string_heap_.size())
-                        saved_src = ev.string_heap_[sidx];
+                        saved_src = ev.string_at(sidx);
                 }
             }
         }
@@ -270,7 +270,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             // referencing old indices aren't returned after the heap shrinks.
             // Without this, the next LiteralString eval returns a stale
             // cached String EvalValue pointing past the end of ev.string_heap_,
-            // and ev.string_heap_[idx] is UB (segfault on .data() access).
+            // and ev.string_at(idx) is UB (segfault on .data() access).
             ev.short_str_cache_.clear();
             ev.clear_sym_intern(); // Issue #3457: heap indices die with string_heap_
             ev.string_heap_.clear();
@@ -469,7 +469,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         auto sidx = types::as_string_idx(a[0]);
         if (sidx >= ev.string_heap_.size())
             return types::make_bool(false);
-        return types::make_bool(ev.gc_module(ev.string_heap_[sidx]));
+        return types::make_bool(ev.gc_module(ev.string_at(sidx)));
     });
 
     // (gc-module-count) — Number of modules currently in the module cache.
@@ -1010,7 +1010,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             return with_arena_compact_idle([&] {
                 if (a.size() == 1 && is_string(a[0])) {
                     auto idx = as_string_idx(a[0]);
-                    const auto& name = ev.string_heap_[idx];
+                    const auto& name = ev.string_at(idx);
                     return make_int(
                         static_cast<std::int64_t>(ev.arena_group_->adaptive_compact(name)));
                 }
@@ -1040,8 +1040,8 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             auto pidx = as_string_idx(a[1]);
             if (nidx >= ev.string_heap_.size() || pidx >= ev.string_heap_.size())
                 return make_int(0);
-            const auto& name = ev.string_heap_[nidx];
-            const auto& policy = ev.string_heap_[pidx];
+            const auto& name = ev.string_at(nidx);
+            const auto& policy = ev.string_at(pidx);
             aura::ast::ArenaGroup::CompactPolicy p;
             if (policy == "force")
                 p = aura::ast::ArenaGroup::CompactPolicy::Force;
@@ -1069,7 +1069,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                         auto idx = as_string_idx(a[0]);
                         if (idx >= ev.string_heap_.size())
                             return make_bool(false);
-                        const auto& name = ev.string_heap_[idx];
+                        const auto& name = ev.string_at(idx);
                         return make_bool(ev.arena_group_->should_auto_compact(name));
                     });
     // (arena:adaptive-stats) — Issue #335: returns the

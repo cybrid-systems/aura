@@ -839,19 +839,19 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         auto& bridge = aura::messaging::g_messaging_bridge;
         if (!bridge.send)
             return make_bool(false);
-        auto target = ev.string_heap_[as_string_idx(a[0])];
+        auto target = ev.string_at(as_string_idx(a[0]));
         // If message is already a string, send directly (backward compat, efficient).
         // Otherwise, JSON-encode it.
         std::string msg;
         if (is_string(a[1])) {
-            msg = ev.string_heap_[as_string_idx(a[1])];
+            msg = ev.string_at(as_string_idx(a[1]));
         } else {
             // Use json-encode primitive to serialize
             auto json_fn = ev.primitives_.lookup("json-encode");
             if (json_fn) {
                 auto result = (*json_fn)({a[1]});
                 if (is_string(result))
-                    msg = ev.string_heap_[as_string_idx(result)];
+                    msg = ev.string_at(as_string_idx(result));
             }
         }
         if (msg.empty())
@@ -870,13 +870,13 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_int(0);
         std::string msg;
         if (is_string(a[0])) {
-            msg = ev.string_heap_[as_string_idx(a[0])];
+            msg = ev.string_at(as_string_idx(a[0]));
         } else {
             auto json_fn = ev.primitives_.lookup("json-encode");
             if (json_fn) {
                 auto result = (*json_fn)({a[0]});
                 if (is_string(result))
-                    msg = ev.string_heap_[as_string_idx(result)];
+                    msg = ev.string_at(as_string_idx(result));
             }
         }
         if (msg.empty())
@@ -953,13 +953,13 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         std::string msg;
         if (is_string(a[0])) {
-            msg = ev.string_heap_[as_string_idx(a[0])];
+            msg = ev.string_at(as_string_idx(a[0]));
         } else {
             auto json_fn = ev.primitives_.lookup("json-encode");
             if (json_fn) {
                 auto result = (*json_fn)({a[0]});
                 if (is_string(result))
-                    msg = ev.string_heap_[as_string_idx(result)];
+                    msg = ev.string_at(as_string_idx(result));
             }
         }
         if (msg.empty())
@@ -971,7 +971,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
     add("session-active?", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]) || !aura::messaging::g_session_exists)
             return make_bool(false);
-        auto id = ev.string_heap_[as_string_idx(a[0])];
+        auto id = ev.string_at(as_string_idx(a[0]));
         return make_bool(aura::messaging::g_session_exists(id));
     });
 
@@ -1760,7 +1760,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
     add("session:create", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
-        auto& name = ev.string_heap_[as_string_idx(a[0])];
+        auto& name = ev.mutable_string_at(as_string_idx(a[0]));
         if (!aura::messaging::g_session_create || !(*aura::messaging::g_session_create))
             return make_bool(false);
         return make_bool((*aura::messaging::g_session_create)(name));
@@ -1775,7 +1775,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         // local merr removed; now centralized make_merr (phase complete)
         if (a.empty() || !is_string(a[0]))
             return ev.make_merr("bad-arg", "usage: (agent:spawn name)");
-        auto& name = ev.string_heap_[as_string_idx(a[0])];
+        auto& name = ev.mutable_string_at(as_string_idx(a[0]));
         if (name.empty())
             return ev.make_merr("bad-arg", "agent name must not be empty");
 
@@ -2213,7 +2213,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                                         "channel:send: message must be a string",
                                         ev.primitive_error_counter_ptr());
         auto ch_id = static_cast<std::size_t>(as_int(a[0]));
-        auto msg = ev.string_heap_[as_string_idx(a[1])]; // copy before wait
+        auto msg = ev.string_at(as_string_idx(a[1])); // copy before wait
         // Issue #2483: release channels_mtx_ before blocking — holding it
         // across cv.wait deadlocks concurrent channel:recv on the same
         // Evaluator (recv needs the global map lock to look up the channel).
