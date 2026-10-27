@@ -470,6 +470,15 @@ Aura entry point:
 
 Defaults: `stall_timeout_ms=0`, `watch_scope=true`. Optional `:region-keys`
 is host-supplied only (#4000); omitting it keeps `region_key=0` Serialized.
+
+Issue #4723: the default `:watch-scope #t` arm spawns the closures as
+batch-child `AgentSpec` bodies (empty Phase A, #3726), so `ok-count` /
+`err-count` / `status` are projected from a per-body outcome tally and the
+prim **joins the child on every face** (Soft included) before returning:
+`status=partial` when a body errored, `status=timeout` + `ok=#f` when a body
+is still live after the wait budget (`max(:stall-timeout-ms,
+kDefaultJoinDrainMs)`). A body that never applied (closure reclaimed / gate
+skip) counts as an error, never as a silent ok.
 Soft / sandbox=off never hard-denies beyond the existing `watch_all` /
 `parallel_intend` gates (AC6). Issue #3495: the Aura prim calls
 `apply_workflow` (policy hash is not dropped; `residual-action` is the

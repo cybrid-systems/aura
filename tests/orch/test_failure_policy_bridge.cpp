@@ -110,6 +110,8 @@ static void ac4237_run_added_tests();
 static void ac4401_run_added_tests();
 // Issue #4444: retire idle supervise-batch / run-workflow children.
 static void ac4444_run_added_tests();
+// Issue #4723: default :watch-scope runs the batch and reports real counts.
+static void ac4723_run_added_tests();
 // #3206 production-face toggle (defined mid-file; the #2539 AC2 dev-face
 // pin and the #3052 AC4 both-face fixture below call it before its
 // definition point).
@@ -428,6 +430,12 @@ int run_test_failure_policy_bridge() {
               "AC6: no registry / conduct_parallel callables");
     }
 
+    // Issue #4723: default :watch-scope must report what the bodies did.
+    // Runs first: the TU-local orch scheduler (OrchSchedHolder) auto-stops
+    // after ~3 idle ticks and ensure() never restarts it, so the runtime ACs
+    // need the pristine scheduler this member creates. Later ACs behave
+    // exactly as before (they create/consume the same holder).
+    ac4723_run_added_tests();
     // Issue #4050: watch-scope child join + one-shot body clock (extend-in-place).
     ac4050_run_added_tests();
     // Issue #2852: supervised-batch apply sugar (per #81967 extend-in-place).
@@ -3123,6 +3131,136 @@ static void ac4444_source_cite() {
 static void ac4444_run_added_tests() {
     ac4444_pending_child_stays_until_idle();
     ac4444_source_cite();
+}
+
+
+// ── Issue #4723: default :watch-scope must run the batch and report it ──
+//
+// The watch arm's Phase A is empty by design (#3726 / #4050): the closures
+// are AgentSpec bodies owned by the batch child, so BatchResult carries
+// ok-count/err-count = 0 and status Ok no matter what those bodies did — and
+// the child join used to be production-only, so the prim returned before the
+// bodies ran. Default :watch-scope therefore reported ok / ok-count=0 /
+// err-count=0 with no side effects while a failing task stayed invisible.
+// The fix tallies each body's real outcome and joins the child in every mode.
+
+static std::string ac4723_eval_str(aura::compiler::CompilerService& cs, const std::string& prog) {
+    using aura::compiler::types::as_string_idx;
+    using aura::compiler::types::is_string;
+    auto r = cs.eval(prog);
+    if (!r || !is_string(*r))
+        return {};
+    const auto idx = as_string_idx(*r);
+    const auto heap = cs.evaluator().string_heap();
+    if (idx >= heap.size())
+        return {};
+    return std::string(heap[idx]);
+}
+
+static void ac4723_1_default_watch_reports_failure() {
+    std::println("\n--- #4723 AC1: default :watch-scope reports partial 1/1 + ran bodies ---");
+    using aura::compiler::CompilerService;
+    using aura::orch::reset_all_agent_scopes_for_test;
+    reset_all_agent_scopes_for_test();
+    // #3586: the first multi-worker Scheduler::run() in this member needs the
+    // production bootstrap or AURA_SANDBOX=off; these ACs pin the Soft face.
+    Ac4050SoftEnv soft_env;
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    // No apply_dev_audit_defaults() here: it rewrites the process-wide face
+    // that later production ACs in this member re-latch (the prim's TU copy
+    // would stay dev). The member harness already applied dev defaults.
+    CompilerService cs;
+    // No :watch-scope kwarg — the default arm is the reported one. The first
+    // body spins long enough that a pre-fix fire-and-forget return cannot
+    // have applied the hash-set! yet, so the side effect doubles as proof
+    // that the prim waited.
+    const auto got = ac4723_eval_str(cs, R"AURA(
+(define (hg h k) (try (hash-ref h k) (catch (e) "-")))
+(define (spin n) (if (= n 0) 0 (spin (- n 1))))
+(define H (hash))
+(define pol (orch:compose-workflow (quote collect-all)))
+(define h (orch:supervise-batch
+            (list (lambda () (spin 20000) (hash-set! H "a" 1) 1)
+                  (lambda () (error "boom")))
+            pol))
+(string-append (if (hash-ref h "ok") "ok" "notok") ":"
+               (hg h "status") ":"
+               (if (equal? (hg h "ok-count") 1) "1" "x") ":"
+               (if (equal? (hg h "err-count") 1) "1" "x") ":"
+               (if (hash-ref h "watch-scope") "w" "n") ":"
+               (if (hash-has-key? H "a") "ran" "norun"))
+)AURA");
+    CHECK(got == "notok:partial:1:1:w:ran",
+          "4723 AC1: default watch -> ok=#f status=partial ok-count=1 err-count=1 (got '" + got +
+              "')");
+    reset_all_agent_scopes_for_test();
+}
+
+static void ac4723_2_success_counts() {
+    std::println("\n--- #4723 AC2: green watch batch reports real ok-count ---");
+    using aura::compiler::CompilerService;
+    using aura::orch::reset_all_agent_scopes_for_test;
+    reset_all_agent_scopes_for_test();
+    Ac4050SoftEnv soft_env;
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    // No apply_dev_audit_defaults() here: it rewrites the process-wide face
+    // that later production ACs in this member re-latch (the prim's TU copy
+    // would stay dev). The member harness already applied dev defaults.
+    CompilerService cs;
+    const auto got = ac4723_eval_str(cs, R"AURA(
+(define (hg h k) (try (hash-ref h k) (catch (e) "-")))
+(define pol (orch:compose-workflow (quote collect-all)))
+(define h (orch:supervise-batch
+            (list (lambda () 1) (lambda () 2) (lambda () 3))
+            pol :watch-scope #t))
+(string-append (if (hash-ref h "ok") "ok" "notok") ":"
+               (hg h "status") ":"
+               (if (equal? (hg h "ok-count") 3) "3" "x") ":"
+               (if (equal? (hg h "err-count") 0) "0" "x"))
+)AURA");
+    CHECK(got == "ok:ok:3:0",
+          "4723 AC2: watch ok=#t status=ok ok-count=3 err-count=0 (got '" + got + "')");
+    reset_all_agent_scopes_for_test();
+}
+
+static void ac4723_3_source_cite() {
+    std::println("\n--- #4723 AC3: tally + unconditional join cited; no new query key ---");
+    const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto test = read_file("tests/orch/test_failure_policy_bridge.cpp");
+    CHECK(agent.find("Issue #4723") != std::string::npos, "4723 AC3: prim cites #4723");
+    CHECK(agent.find("struct SuperviseTally") != std::string::npos,
+          "4723 AC3: per-body outcome tally");
+    CHECK(agent.find("tally->ok.fetch_add(1") != std::string::npos, "4723 AC3: body records ok");
+    CHECK(agent.find("tally->err.fetch_add(1") != std::string::npos,
+          "4723 AC3: body records err (incl. closure-dead / throw)");
+    CHECK(agent.find("watch_incomplete") != std::string::npos,
+          "4723 AC3: unsettled slots are not a success");
+    CHECK(agent.find("r.batch.status = BatchStatus::Timeout;") != std::string::npos,
+          "4723 AC3: unsettled batch refuses with timeout");
+    CHECK(agent.find("r.batch.ok_count = watch_ok_count;") != std::string::npos,
+          "4723 AC3: watch counts projected onto the batch face");
+    CHECK(agent.find("watch_join_budget_ms") != std::string::npos,
+          "4723 AC3: join budget = max(stall-timeout-ms, default drain)");
+    // The production-only guard on the watch join is the bug: the default
+    // (Soft / dev) face returned before any body ran.
+    CHECK(agent.find("if (watch_scope && "
+                     "aura::compiler::typed_audit::production_defaults_active()) {") ==
+              std::string::npos,
+          "4723 AC3: watch join is unconditional");
+    CHECK(agent.find("query:4723") == std::string::npos, "4723 AC3: no new query key");
+    CHECK(test.find("ac4723_1_default_watch_reports_failure") != std::string::npos,
+          "4723 AC3: runtime ACs live in this file");
+    CHECK(!read_file("scripts/coverage/manifests/4723.json").empty(),
+          "4723 AC3: manifest SSOT present");
+    CHECK(read_file("tests/orch/test_issue_4723.cpp").empty(), "4723 AC3: no test_issue_4723.cpp");
+    CHECK(read_file("docs/design/4723-watch-scope-join.md").empty(),
+          "4723 AC3: no docs/design/4723-*");
+}
+
+static void ac4723_run_added_tests() {
+    ac4723_1_default_watch_reports_failure();
+    ac4723_2_success_counts();
+    ac4723_3_source_cite();
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
