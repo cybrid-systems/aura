@@ -1,0 +1,20 @@
+; JIT/tier invalidation while running: fibers keep calling a hot workspace
+; policy while another fiber rebinds it; callers must always see a valid
+; binding (old or new, never an error) and the final one after joins.
+(require "std/mutate" all:)
+(set-code "(define pol-0 (lambda () 0))")
+(eval-current)
+(define errs 0)
+(define (caller k) (let l ((t 0) (s 0)) (if (< t k)
+  (begin (fiber:yield) (l (+ t 1) (+ s (try (pol-0) (catch (e) (begin (set! errs (+ errs 1)) 0))))))
+  s)))
+(define (rebinder k) (let l ((t 1)) (if (< t k)
+  (begin (mutate:rebind "pol-0" (string-append "(lambda () " (number->string t) ")") "rb")
+         (eval-current) (fiber:yield) (l (+ t 1))) t)))
+(define cs (list (fiber:spawn (lambda () (caller 200))) (fiber:spawn (lambda () (caller 200)))))
+(define r (fiber:spawn (lambda () (rebinder 40))))
+(define rj (fiber:join r))
+(define sums (map fiber:join cs))
+(if (and (= errs 0) (= rj 40) (= (pol-0) 39) (= 2 (length (filter number? sums))))
+    (begin (display "OK-fiberrebindrunning") (newline))
+    (begin (display "fiber_rebind_while_running: errs=") (display errs) (display " final=") (display (pol-0)) (newline) (exit 1)))
