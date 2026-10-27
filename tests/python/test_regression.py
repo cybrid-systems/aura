@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Regression tests for recently fixed P0 issues and new features."""
 
+import json
 import os
 import re
 import resource
@@ -4710,12 +4711,74 @@ for f in ["/tmp/aura-test-out", "/tmp/aura-aot-compare", "/tmp/aura-aot-runtime"
     if os.path.exists(f):
         os.remove(f)
 
+
 # Fixture snippets share /tmp seeds — keep serial (jobs=1).
 # No skips allowed: every regression fixture must pass. The two former
 # KNOWN_SKIP cases (ast-viz-dot-mutation / colony-search) failed with
 # unbound module free vars after require/mutate; those module-capture
 # bugs were fixed in-tree (#2566 nested-require module env inject), so
 # the entries were removed 2026-09-04 and the cases run for real again.
+def test_serve_async_two_fiber_yield_reclaim_4706():
+    """Issue #4706: serve-async SIGSEGV with two fibers yielding while allocating.
+
+    The tree-walker root stacks (g_tw_frames / g_tw_results / g_tw_vecs /
+    g_tw_spans) are thread_local. A serve fiber is a ucontext that can be
+    resumed on a DIFFERENT worker thread than the one it yielded on, and a
+    fiber yields with live walker frames (the fiber body's eval_flat_body
+    frame plus the enclosing let frames — measured: 2 frames detached at
+    every yield of the issue's own program). Pre-fix those frames stayed in
+    the yielding thread's TLS: the pops then ran on the resuming thread
+    (sliding somebody else's frame off), the yielding thread kept a
+    const Env** into a fiber stack that died with the fiber, and the next
+    reclaim there dereferenced it — SIGSEGV in
+    Evaluator::maybe_reclaim_tw_unreachable (si_addr = the stale pointer).
+    The CLI thread backend never moves a fiber, which is why it was fine.
+
+    Fiber::yield now detaches the running fiber's root segment into the
+    fiber and Fiber::resume attaches it on whichever worker runs it next,
+    with the parked segment registered process-wide so another thread's
+    reclaim still marks it.
+
+    This runs the issue's own program end to end through one
+    `aura --serve-async` session (define, then the two-fiber join) and
+    asserts the expected (50 50) result, a clean exit, and no crash
+    banner. Any regression of the reclaim path shows up here as a
+    signal death or a missing result line.
+    """
+    define = (
+        '(define (wf k) (let l ((t 0)) (if (< t k) (begin (string-split "a b c" " ") (fiber:yield) (l (+ t 1))) t)))'
+    )
+    let_form = "(list (fiber:join (fiber:spawn (lambda () (wf 50)))) (fiber:join (fiber:spawn (lambda () (wf 50)))))"
+    # Two requests to ONE session, exactly as the issue reports. Closing
+    # stdin after the second line ends the session cleanly (rc 0).
+    requests = json.dumps({"cmd": "exec", "code": define}) + "\n" + json.dumps({"cmd": "exec", "code": let_form}) + "\n"
+    env = os.environ.copy()
+    env["AURA_TIER_JIT"] = "0"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env["AURA_SANDBOX"] = "off"
+    env.pop("AURA_SOFT", None)
+    # Multi-worker so fibers can genuinely be resumed by another worker
+    # (the Soft default auto-pins to one); the issue's crash needs the
+    # cross-thread resume or a same-thread pop/skip mismatch.
+    r = subprocess.run(
+        [AURA, "--serve-async", "--worker-threads=2"],
+        input=requests,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=env,
+    )
+    err = r.stderr or ""
+    out = r.stdout or ""
+    assert r.returncode == 0, f"serve-async died (rc={r.returncode}); stderr tail={err[-600:]!r}"
+    assert '"value":"(50 50)"' in out, f"missing (50 50) result; stdout={out[-400:]!r} stderr={err[-400:]!r}"
+    for banner in ("si_addr", "maybe_reclaim_tw_unreachable", "SIGSEGV", "Segmentation fault"):
+        assert banner not in err, f"reclaim crash banner {banner!r} in stderr: {err[-600:]!r}"
+    print(
+        "  OK test_serve_async_two_fiber_yield_reclaim_4706 (two fibers yielding while allocating: (50 50), clean exit)"
+    )
+
+
 specs: list[SnippetSpec] = []
 for case in load_regression_cases():
     specs.append(

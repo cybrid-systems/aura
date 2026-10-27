@@ -309,6 +309,15 @@ __attribute__((weak, used)) void aura_fiber_root_pending_body_latest(void* evalu
 __attribute__((weak, used)) void aura_fiber_release_pending_body_latest(void* evaluator) noexcept {
     (void)evaluator;
 }
+// Issue #4706: tree-walker root segment hand-off (strong definitions in
+// evaluator_eval_flat.cpp). Without the evaluator module there are no
+// walker roots, so detach reports an empty segment and attach/free are
+// no-ops; the fiber path then behaves exactly as before.
+__attribute__((weak, used)) void* aura_tw_roots_detach() noexcept {
+    return nullptr;
+}
+__attribute__((weak, used)) void aura_tw_roots_attach(void* /*state*/) noexcept {}
+__attribute__((weak, used)) void aura_tw_roots_free(void* /*state*/) noexcept {}
 
 // Issue #1880 / #2118: orch agent body try_acquire (strong defs in evaluator_fiber_mutation.cpp).
 __attribute__((weak, used)) int aura_orch_agent_body_try_acquire() {
