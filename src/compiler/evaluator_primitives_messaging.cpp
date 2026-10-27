@@ -1510,8 +1510,21 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #1291: wait until spawn path publishes the real fid
             // AND registers s_fiber_results[fid] (g_fiber_spawn may run
             // the body before returning / before register).
+            bool arena_published = false;
             for (int spin = 0; spin < 200000; ++spin) {
                 const int64_t fid = fid_holder->load(std::memory_order_acquire);
+                if (fid != 0 && !arena_published) {
+                    // Issue #4714: copy-on-send. Promote the fiber's
+                    // private string nursery into shared old space (one
+                    // narrow lock) BEFORE the result is marked ready, so
+                    // no joiner can observe a nursery-owned value.
+                    // Deliberately outside s_fiber_results_mtx: the #4710
+                    // result-root provider takes that mutex while the
+                    // reclaim holds alloc_storage_lock_, and promoting
+                    // under it would invert that order.
+                    (void)ev.publish_fiber_string_arena(static_cast<std::uint64_t>(fid));
+                    arena_published = true;
+                }
                 if (fid != 0) {
                     std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
                     auto it = s_fiber_results.find(fid);

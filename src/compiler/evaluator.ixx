@@ -6,6 +6,7 @@
 // with `import std;`.
 module;
 #include "compiler/locked_string_heap.hh" // Issue #4543
+#include "compiler/fiber_alloc_arena.hh"  // Issue #4714: per-fiber string nursery
 
 #include "../core/persistent_child_vector.hh"
 #include "../core/layout_stamp.hh" // Issue #2170: LayoutStamp decls in evaluator
@@ -7603,6 +7604,12 @@ private:
     // pair_slot_tenants_ (0 = never stamped, else tenant+1). Writers hold
     // alloc_storage_lock_ (push_string_heap and the user string constructors).
     std::vector<std::uint64_t> string_slot_tenants_;
+    // Issue #4714: per-fiber string nurseries (fiber id -> arena). A
+    // fiber mints into its own unbound heap (no alloc_storage_lock_);
+    // publish deep-copies into string_heap_ under one narrow lock, and
+    // an unpublishing exit drops the arena wholesale. Owner tagging is
+    // this side table, not a value bit: see fiber_alloc_arena.hh.
+    mutable ::aura::compiler::FiberArenaTable fiber_string_arenas_;
     // Short string cache: ≤6 byte strings are deduplicated via this hash
     // (avoids redundant string_heap_ pushes and enables faster equal?)
     std::unordered_map<std::string, types::EvalValue, aura::core::TransparentStringHash,
@@ -10255,10 +10262,88 @@ public:
     // push_back → pmr::vector / monotonic_buffer_resource corruption
     // (SIGSEGV in allocate/deallocate / construct_at — H9).
     std::int32_t push_string_heap(const std::string& s) {
+        // mint() takes alloc_storage_lock_ for the append (#2651/#4543);
+        // the per-fiber nursery (#4714) is a separate, unbound heap.
         return static_cast<std::int32_t>(string_heap_.mint(s));
     }
     std::int32_t push_string_heap(std::string&& s) {
         return static_cast<std::int32_t>(string_heap_.mint(std::move(s)));
+    }
+
+    // ── Issue #4714: per-fiber string nursery ───────────────────────
+    // Fast path: one TLS-resolved arena (no table mutex after the first
+    // mint per fiber) and an unbound heap mint (no alloc_storage_lock_).
+    // Publishes are copy-on-send: publish_fiber_string_arena deep-copies
+    // the delta into string_heap_ under ONE narrow lock and drops the
+    // nursery with the fiber.
+    //
+    // The TLS cache is keyed on the table epoch, so a publish/drop that
+    // erases this fiber's arena invalidates the cached pointer instead
+    // of letting the next mint touch freed memory.
+    std::uint64_t fiber_arena_mint(std::uint64_t fiber_id, std::string s) {
+        struct TlsArena {
+            const Evaluator* owner = nullptr;
+            std::uint64_t fiber_id = 0;
+            std::uint64_t epoch = 0;
+            ::aura::compiler::FiberStringArena* arena = nullptr;
+        };
+        static thread_local TlsArena tls;
+        const auto epoch = fiber_string_arenas_.epoch();
+        if (tls.owner != this || tls.fiber_id != fiber_id || tls.epoch != epoch) {
+            fiber_arena_stats::table_locks().fetch_add(1, std::memory_order_relaxed);
+            tls.owner = this;
+            tls.fiber_id = fiber_id;
+            tls.epoch = epoch;
+            tls.arena = &fiber_string_arenas_.get_or_create(fiber_id);
+        }
+        return tls.arena->mint(std::move(s));
+    }
+    [[nodiscard]] std::size_t fiber_arena_size(std::uint64_t fiber_id) {
+        auto* a = fiber_string_arenas_.find(fiber_id);
+        return a ? a->size() : 0;
+    }
+    [[nodiscard]] std::string fiber_arena_string(std::uint64_t fiber_id, std::size_t local) {
+        auto* a = fiber_string_arenas_.find(fiber_id);
+        if (!a || local >= a->size())
+            return {};
+        return a->at(local);
+    }
+    // Copy-on-send into shared old space; returns the delta remap
+    // (local slot - first_local -> shared string_heap_ index).
+    std::vector<std::uint64_t> publish_fiber_string_arena(std::uint64_t fiber_id) {
+        return fiber_string_arenas_.publish_and_drop(string_heap_, fiber_id).remap;
+    }
+    void drop_fiber_string_arena(std::uint64_t fiber_id) { fiber_string_arenas_.drop(fiber_id); }
+    [[nodiscard]] std::size_t fiber_arena_count() const { return fiber_string_arenas_.size(); }
+    [[nodiscard]] std::uint64_t fiber_arena_fast_path_mints() const noexcept {
+        return fiber_arena_stats::fast_path_mints().load(std::memory_order_relaxed);
+    }
+    // Locks observed ON a nursery mint (inside LockedStringHeap::Guard).
+    [[nodiscard]] std::uint64_t fiber_arena_fast_path_locks() const noexcept {
+        return fiber_arena_stats::fast_path_locks().load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t fiber_arena_table_locks() const noexcept {
+        return fiber_arena_stats::table_locks().load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t fiber_arena_promote_locks() const noexcept {
+        return fiber_arena_stats::promote_locks().load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t fiber_arena_promoted_strings() const noexcept {
+        return fiber_arena_stats::promoted_strings().load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t fiber_arena_dropped() const noexcept {
+        return fiber_arena_stats::dropped_arenas().load(std::memory_order_relaxed);
+    }
+    // Proves the #4714 observer is live: mint into a heap that IS bound to
+    // a mutex and report how many lock acquisitions the Guard observed.
+    // A nonzero result makes the arena's 0 a measurement, not a dead hook.
+    std::uint64_t fiber_arena_control_lock_delta() {
+        std::atomic<std::uint64_t> observed{0};
+        ::aura::compiler::LockedStringHeap control(std::pmr::new_delete_resource(),
+                                                   &alloc_storage_lock_);
+        control.set_lock_observer(&observed);
+        (void)control.mint(std::string("4714-control"));
+        return observed.load(std::memory_order_relaxed);
     }
     // Issue #2652: snapshot string under alloc_storage_lock_ so concurrent
     // push_back cannot reallocate while display/hash/compare holds a ref.

@@ -38,6 +38,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -81,6 +82,15 @@ public:
     }
     [[nodiscard]] std::recursive_mutex* mutex() const noexcept { return mu_; }
 
+    // Issue #4714: optional measurement hook. Every Guard that ACTUALLY
+    // takes the mutex increments the bound counter, so a per-fiber
+    // (unbound, mu_ == nullptr) nursery can prove it never locks instead
+    // of asserting it by construction. Null = no measurement.
+    void set_lock_observer(std::atomic<std::uint64_t>* obs) noexcept { lock_observer_ = obs; }
+    [[nodiscard]] std::atomic<std::uint64_t>* lock_observer() const noexcept {
+        return lock_observer_;
+    }
+
     // The only growth path. Returns the index of the new string.
     //
     // Issue #4608: a slot that the reclaim proved unreachable is
@@ -89,7 +99,22 @@ public:
     // string until exit (~70 bytes per string: the slot object, the
     // #4428 owner record and the vector's growth slack).
     template <class... Args> std::uint64_t mint(Args&&... args) {
-        Guard g(mu_);
+        Guard g(mu_, lock_observer_);
+        return mint_locked_impl(std::forward<Args>(args)...);
+    }
+
+    // Issue #4714: the append half of mint() WITHOUT taking the mutex.
+    // The caller holds mutex() for the whole batch (copy-on-send
+    // promotion deep-copies N nursery strings under one acquisition; N
+    // recursive re-locks cost ~60 ns each and dominated the batch).
+    // Same obligation as unsafe_storage(): hold the lock, or the heap is
+    // unbound (single-owner).
+    template <class... Args> std::uint64_t mint_locked(Args&&... args) {
+        return mint_locked_impl(std::forward<Args>(args)...);
+    }
+
+private:
+    template <class... Args> std::uint64_t mint_locked_impl(Args&&... args) {
         if (!free_slots_.empty()) {
             // Reuse a released slot. The swap drops the old content
             // (and its heap buffer) with the temporary, so a reused
@@ -123,6 +148,7 @@ public:
         return static_cast<std::uint64_t>(idx);
     }
 
+public:
     // ── Issue #4608: slot release / reuse ───────────────────────────
     // A string value is an index into this heap, so a slot may only
     // be recycled when no live value references it any more. The
@@ -134,7 +160,7 @@ public:
     // the mark" (a concurrent mint may pop a free slot; such a slot
     // holds a live string again and must not be released).
     [[nodiscard]] std::vector<std::uint8_t> free_slot_snapshot() const {
-        Guard g(mu_);
+        Guard g(mu_, lock_observer_);
         return slot_free_;
     }
 
@@ -145,7 +171,7 @@ public:
     // number of slots that are still live after the release.
     std::size_t release_unmarked(const std::vector<std::uint8_t>& seen,
                                  const std::vector<std::uint8_t>& free_at_mark) {
-        Guard g(mu_);
+        Guard g(mu_, lock_observer_);
         const auto n = std::min(seen.size(), v_.size());
         std::size_t live = 0;
         for (std::size_t i = 1; i < n; ++i) {
@@ -219,14 +245,14 @@ public:
     // In-place content write to slot idx (same size or not): drop every
     // cached index. Call with or without the lock held.
     void note_write(size_type /*idx*/) noexcept {
-        Guard g(mu_);
+        Guard g(mu_, lock_observer_);
         ++write_gen_;
     }
     [[nodiscard]] std::uint64_t write_generation() const noexcept { return write_gen_; }
 
     // Code points in slot i; npos when i is out of range.
     [[nodiscard]] std::size_t code_point_count(size_type i) const {
-        Guard g(mu_);
+        Guard g(mu_, lock_observer_);
         if (i >= v_.size())
             return npos;
         const auto& s = v_[i];
@@ -236,7 +262,7 @@ public:
     }
     // Code point at character index cp of slot i; -1 when out of range.
     [[nodiscard]] int code_point_at(size_type i, std::size_t cp) const {
-        Guard g(mu_);
+        Guard g(mu_, lock_observer_);
         if (i >= v_.size())
             return -1;
         const auto& s = v_[i];
@@ -255,7 +281,7 @@ public:
     // start >= end is "". Only the slice is copied. False when i is out
     // of range.
     bool code_point_slice(size_type i, std::size_t start, std::size_t end, std::string& out) const {
-        Guard g(mu_);
+        Guard g(mu_, lock_observer_);
         if (i >= v_.size())
             return false;
         const auto& s = v_[i];
@@ -282,32 +308,32 @@ public:
     // Issue #4608: the free list is index-parallel to the heap, so a
     // shrink drops the free slots past the new end.
     void resize(size_type n) {
-        Guard g(mu_);
+        Guard g(mu_, lock_observer_);
         ++write_gen_;
         v_.resize(n);
         slot_free_.resize(n, 0);
         std::erase_if(free_slots_, [n](size_type i) { return i >= n; });
     }
     void clear() noexcept {
-        Guard g(mu_);
+        Guard g(mu_, lock_observer_);
         ++write_gen_;
         v_.clear();
         slot_free_.clear();
         free_slots_.clear();
     }
     void shrink_to_fit() {
-        Guard g(mu_);
+        Guard g(mu_, lock_observer_);
         v_.shrink_to_fit();
     }
     void reserve(size_type n) {
-        Guard g(mu_);
+        Guard g(mu_, lock_observer_);
         v_.reserve(n);
     }
     // GC compaction: install the rebuilt heap.
     // Issue #4608: the rebuilt heap has no free slots (the compaction
     // already dropped the dead ones), so the free list is reset.
     void replace(Vec&& v) {
-        Guard g(mu_);
+        Guard g(mu_, lock_observer_);
         ++write_gen_;
         v_ = std::move(v);
         slot_free_.assign(v_.size(), 0);
@@ -408,10 +434,17 @@ private:
 
     struct Guard {
         std::recursive_mutex* m;
-        explicit Guard(std::recursive_mutex* mm)
-            : m(mm) {
-            if (m)
+        std::atomic<std::uint64_t>* obs;
+        Guard(std::recursive_mutex* mm, std::atomic<std::uint64_t>* o)
+            : m(mm)
+            , obs(o) {
+            if (m) {
                 m->lock();
+                // Issue #4714: measured AFTER the acquire so the counter
+                // can only over-count, never under-count, a lock.
+                if (obs)
+                    obs->fetch_add(1, std::memory_order_relaxed);
+            }
         }
         ~Guard() {
             if (m)
@@ -428,6 +461,8 @@ private:
 
     Vec v_;
     std::recursive_mutex* mu_ = nullptr;
+    // Issue #4714: lock-observation hook (null = unmeasured).
+    std::atomic<std::uint64_t>* lock_observer_ = nullptr;
     MintHook hook_ = nullptr;
     void* hook_ctx_ = nullptr;
     // Issue #4608: reusable slots (the reclaim hands the slots it

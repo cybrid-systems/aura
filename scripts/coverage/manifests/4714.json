@@ -1,0 +1,67 @@
+{
+  "issue": 4714,
+  "title": "Issue #4714: per-fiber string nursery with copy-on-send promotion - the fast path takes no lock (measured), a publish deep-copies the batch into shared old space under ONE narrow lock, and an unpublishing fiber exit releases the arena wholesale",
+  "ok": "OK: Issue #4714 per-fiber string arena - 2 fibers mint concurrently with 0 heap locks and 0 table locks on the steady-state path (Guard-observed, with a bound-heap control), promotion on publish is one lock per batch, the 10k promotion cost is measured (2.1 ms into the churned shared heap, 1.2 ms into a fresh one), a 10k-entry fiber:join is under 2 ms, and an unpublishing exit drops the arena in O(chunks)",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_pmr_alloc_fiber_safe.cpp",
+      "contains": [
+        "Issue #4714",
+        "ac4714_fiber_string_arena",
+        "4714 AC1: steady-state nursery mints take NO heap lock",
+        "fiber_arena_fast_path_locks",
+        "fiber_arena_table_locks",
+        "fiber_arena_control_lock_delta"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/fiber_alloc_arena.hh",
+      "contains": [
+        "class FiberStringArena",
+        "PromoteResult publish_into(LockedStringHeap& shared)",
+        "mu_ is null: the mint contract's unlocked path.",
+        "Issue #4714"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/locked_string_heap.hh",
+      "contains": [
+        "set_lock_observer",
+        "obs->fetch_add(1",
+        "Issue #4714: optional measurement hook"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_messaging.cpp",
+      "contains": [
+        "Issue #4714: copy-on-send",
+        "publish_fiber_string_arena(static_cast<std::uint64_t>(fid))",
+        "arena_published"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "fiber_string_arenas_",
+        "fiber_arena_mint",
+        "publish_fiber_string_arena",
+        "fiber_arena_control_lock_delta"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_pmr_alloc_fiber_safe.cpp",
+      "contains": [
+        "4714 AC3: 10k-string promotion completes",
+        "4714 AC3: join of the 10k-entry hash < 2 ms",
+        "4714 AC3: the fresh-heap control promotes the same 10k batch",
+        "4714 AC4: 100k-slot arena release is wholesale"
+      ]
+    }
+  ]
+}
