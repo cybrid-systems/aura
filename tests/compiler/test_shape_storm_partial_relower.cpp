@@ -928,14 +928,16 @@ static void ac4510_production_shape_deopt_owner_scoped() {
               "#4510 AC4: reload proof stamped would_allow_native=false");
 
         // AC5: arena-compact arm must not return before the drop. Re-install
-        // F native; the compact cone needs F's IR cache row block-dirty (the
-        // invalidate mark above), so only the cached face drives scope 3.
+        // F native and drive the scope-3 arm through the #4578 per-define
+        // compact entry: the cone notify is a dirty∪relocated-cone driver
+        // (#3455), so it only reaches defines whose IR row is block-dirty
+        // and would make this arm-level AC depend on cone state (CI red).
         if (f_cached) {
             aura_register_fn(kF, ac4510_F_fn, 1, 0, 0);
             aura_note_ir_func_define(kF, "f4510");
             CHECK(aura_jit_fn_ptr_for_test(kF) != 0,
                   "4510: F ScalarFn re-installed for compact arm");
-            cs.public_on_arena_compact_notify();
+            cs.public_arena_compact_deopt_for_test("f4510");
             CHECK(aura_jit_fn_ptr_for_test(kF) == 0,
                   "#4510 AC5: arena-compact arm drops the native before returning");
             CHECK(aura_get_current_bridge_epoch() == bridge0,
