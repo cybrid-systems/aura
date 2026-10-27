@@ -1,0 +1,101 @@
+{
+  "issue": 4715,
+  "title": "Issue #4715: per-fiber COW overlay for env bindings - a body opens a private overlay (base = workspace COW mutation epoch + commit-log sequence), defines/set! stay private, commit merges fast-forward when the base did not move else per-binding, write-write on the same binding is a deterministic fiber:cow-conflict, rollback drops the overlay and leaves the shared env untouched.",
+  "ok": "OK: Issue #4715 per-fiber COW env overlay - disjoint defines commit, same-name write-write is a deterministic conflict (first commit claims the binding, no partial apply), rollback leaves the shared env untouched, a concurrent committer is observed old-or-new (never torn), and the fiber capability gate carries Strict sandbox semantics",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_fiber_spawn_cli.cpp",
+      "contains": [
+        "Issue #4715",
+        "ac15_cow_overlay_disjoint_commit",
+        "ac16_cow_overlay_same_name_conflict",
+        "ac17_cow_overlay_rollback",
+        "ac18_cow_overlay_moved_base_merge",
+        "AC16: exactly one commit and one conflict recorded",
+        "AC18: sibling 2 still conflicts on the same binding after the epoch move"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/fiber_cow_overlay.hh",
+      "contains": [
+        "Issue #4715",
+        "class OverlayRegistry",
+        "commit_seq > ov.base_seq",
+        "std::sort(names.begin(), names.end())",
+        "res.fast_forward = (ov.base_epoch == current_epoch)",
+        "Rollback by policy: the loser applies nothing."
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_fiber_cow.cpp",
+      "contains": [
+        "Issue #4715",
+        "fiber:overlay-begin",
+        "fiber:overlay-define",
+        "fiber:overlay-commit",
+        "fiber:overlay-rollback",
+        "fiber:cow-conflict: ",
+        "ev.top_env().bind(name, make_cell(ci))",
+        "kCapFiber"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_fiber_cow.cpp",
+      "contains": [
+        "fiber:overlay-get",
+        "if (auto committed = ev.top_env().lookup(name))",
+        "copies one EvalValue",
+        "kThreadKeyDomain"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_registry.cpp",
+      "contains": [
+        "Issue #4715",
+        "register_fiber_cow_primitives"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "register_fiber_cow_primitives",
+        "Issue #4715"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/python/test_regression.py",
+      "contains": [
+        "Issue #4715",
+        "test_fiber_cow_overlay_disjoint_commit_4715",
+        "test_fiber_cow_overlay_same_name_conflict_4715",
+        "conflicts=1",
+        "commits=2"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/python/test_regression.py",
+      "contains": [
+        "test_fiber_cow_overlay_torn_read_4715",
+        "#4715 torn read",
+        "never torn"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/python/test_regression.py",
+      "contains": [
+        "test_fiber_cow_overlay_rollback_single_fiber_4715",
+        "rollbacks=1",
+        "active=0"
+      ]
+    }
+  ]
+}

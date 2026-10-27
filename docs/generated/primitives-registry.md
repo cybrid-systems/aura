@@ -4,7 +4,7 @@
 
 Central orchestration: `src/compiler/evaluator_primitives_registry.cpp` → `Evaluator::register_all_primitives()`.
 
-Scanned registrations in `src/**/*.cpp`: **476** (see [primitives.md](primitives.md) for the full name list).
+Scanned registrations in `src/**/*.cpp`: **485** (see [primitives.md](primitives.md) for the full name list).
 
 ## Agent discovery entry points
 
@@ -44,11 +44,12 @@ These are the `primitives_detail::register_*_primitives` calls in the central re
 21. `register_mutate_primitives`
 22. `register_workspace_primitives`
 23. `register_persist_primitives`
-24. `register_eval_primitives`
-25. `register_eval_observability_primitives`
-26. `register_stdlib_review_primitives`
-27. `register_security_primitives`
-28. `register_verify_tool_primitives`
+24. `register_fiber_cow_primitives`
+25. `register_eval_primitives`
+26. `register_eval_observability_primitives`
+27. `register_stdlib_review_primitives`
+28. `register_security_primitives`
+29. `register_verify_tool_primitives`
 
 ## Fiber / mutation integration (for Agents)
 
