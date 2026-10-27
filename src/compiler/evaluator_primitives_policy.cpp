@@ -134,9 +134,8 @@ void register_policy_primitives(PrimRegistrar add, Evaluator& ev) {
         // If #f was passed (or empty), the policy stays at defaults.
 
         // Reset cooldown so the new policy starts fresh.
-        ev.last_auto_gc_eval_depth_ = 0;
-        ev.sample_counter_ = 0;
-        ev.last_warn_level_.clear();
+        ev.last_auto_gc_eval_depth_ctx() = 0;
+        ev.sample_counter_.store(0, std::memory_order_relaxed);
 
         return ev.build_policy_hash(prev);
     });

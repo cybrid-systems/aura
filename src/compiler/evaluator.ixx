@@ -10,6 +10,7 @@ module;
 // Issue #4714: the string payload index-space codec (AURA_STR_*). Same SSOT
 // as lib/runtime.c and the AOT preamble; C, so it is safe in the fragment.
 #include "../../lib/aura_value_abi.h"
+#include "core/fiber_context.hh"          // Issue #4717: per-body eval context
 
 #include "../core/persistent_child_vector.hh"
 #include "../core/layout_stamp.hh" // Issue #2170: LayoutStamp decls in evaluator
@@ -3289,7 +3290,11 @@ public:
     // when eval returned a diagnostic. Its source location can name an
     // earlier procedure body; main resumes after this form.
     [[nodiscard]] aura::diag::SourceLocation file_resume_form() const noexcept {
-        return file_resume_form_;
+        aura::diag::SourceLocation l;
+        l.line = eval_ctx().file_resume_line;
+        l.column = eval_ctx().file_resume_column;
+        l.file_id = eval_ctx().file_resume_file_id;
+        return l;
     }
     // Phase 2: EDSL IR cache V2 hooks (set by CompilerService on init)
     void set_dirty_batch_fn(std::function<void(bool)> fn) { dirty_batch_fn_ = std::move(fn); }
@@ -4086,14 +4091,18 @@ public:
     // docs-archive-pre-2026-06) for the dual-workspace rationale.
     void set_current_flat(ast::FlatAST* f) {
         std::lock_guard<std::mutex> lock(mutate_target_mu_);
-        current_flat_ = f;
+        current_flat_.store(f, std::memory_order_relaxed);
     }
     void set_current_pool(ast::StringPool* p) {
         std::lock_guard<std::mutex> lock(mutate_target_mu_);
-        current_pool_ = p;
+        current_pool_.store(p, std::memory_order_relaxed);
     }
-    ast::FlatAST* current_flat() const { return current_flat_; }
-    ast::StringPool* current_pool() const { return current_pool_; }
+    // Issue #4717: relaxed atomics. These are the service-set "per-eval
+    // current source" hint (set once before user code runs, re-stamped by
+    // eval_flat_body); with bodies running concurrently the plain pointers
+    // were a TSan data race. Values are whole pointers, so relaxed is enough.
+    ast::FlatAST* current_flat() const { return current_flat_.load(std::memory_order_relaxed); }
+    ast::StringPool* current_pool() const { return current_pool_.load(std::memory_order_relaxed); }
 
     // Issue #145 follow-up / Phase 2.5.0 prep: canonical pool accessor.
     // For now, the canonical pool is the workspace pool — it is the
@@ -5121,8 +5130,9 @@ public:
     // counted by the window at all, so numeric loops never drive marks.
     void note_live_set_for_reclaim_trigger(const std::size_t live_objects,
                                            const std::uint64_t mints_since_mark) noexcept
-        post(tw_closure_allocs_trigger_ >= kReclaimTriggerFloor &&
-             tw_closure_allocs_trigger_ <= reclaim_trigger_ceiling_for(live_objects) &&
+        post(tw_closure_allocs_trigger_.load(std::memory_order_relaxed) >= kReclaimTriggerFloor &&
+             tw_closure_allocs_trigger_.load(std::memory_order_relaxed) <=
+                 reclaim_trigger_ceiling_for(live_objects) &&
              file_heap_allocs_trigger_ >= kReclaimTriggerFloor &&
              file_heap_allocs_trigger_ <= reclaim_trigger_ceiling_for(live_objects));
     // The dynamic trigger (live/32 from the last mark) — read by the IR
@@ -5131,13 +5141,15 @@ public:
     // the reader-side post pins the floor only.
     [[nodiscard]] std::uint32_t file_heap_allocs_trigger() const noexcept
         post(r : r >= kReclaimTriggerFloor) {
-        return file_heap_allocs_trigger_;
+        return file_heap_allocs_trigger_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint32_t file_heap_allocs_trigger_for_test() const noexcept
         post(r : r >= kReclaimTriggerFloor) {
-        return file_heap_allocs_trigger_;
+        return file_heap_allocs_trigger_.load(std::memory_order_relaxed);
     }
-    void note_tw_closure_alloc() noexcept { ++tw_closure_allocs_; }
+    void note_tw_closure_alloc() noexcept {
+        tw_closure_allocs_.fetch_add(1, std::memory_order_relaxed);
+    }
     // Issue #4697: pending thread-fiber body roots (CLI thread backend).
     // The tree-walker reclaim (reclaim_tw_unreachable) keeps every closure
     // whose id is below this watermark and erases the rest, so raising the
@@ -5217,8 +5229,9 @@ public:
     // Issue #4599 follow-up: the per-opcode call site checks the same
     // counters the function opens with, so an idle trip is two loads.
     [[nodiscard]] bool tw_reclaim_due() const noexcept {
-        return tw_closure_allocs_ >= tw_closure_allocs_trigger_ ||
-               file_heap_allocs_since_reclaim_ >= file_heap_allocs_trigger_;
+        return tw_closure_allocs_.load(std::memory_order_relaxed) >= tw_closure_allocs_trigger_ ||
+               file_heap_allocs_since_reclaim_.load(std::memory_order_relaxed) >=
+                   file_heap_allocs_trigger_;
     }
     // Issue #4481: TW-side in-flight roots (call-env bindings, pinned arg
     // vectors, live results) for reclaim_file_mode_unreachable — an IR
@@ -5258,12 +5271,14 @@ public:
     // Indices at or past the new sizes are gone.
     void note_file_heap_truncated(std::size_t pairs_n, std::size_t cells_n);
     [[nodiscard]] std::uint32_t file_heap_allocs_since_reclaim() const noexcept {
-        return file_heap_allocs_since_reclaim_;
+        return file_heap_allocs_since_reclaim_.load(std::memory_order_relaxed);
     }
-    void reset_file_heap_allocs_since_reclaim() noexcept { file_heap_allocs_since_reclaim_ = 0; }
+    void reset_file_heap_allocs_since_reclaim() noexcept {
+        file_heap_allocs_since_reclaim_.store(0, std::memory_order_relaxed);
+    }
     // Issue #4525: completed file-mode reclaim run count (test/benchmark face).
     [[nodiscard]] std::uint64_t file_heap_reclaim_runs_for_test() const noexcept {
-        return file_heap_reclaim_runs_;
+        return file_heap_reclaim_runs_.load(std::memory_order_relaxed);
     }
 
     void
@@ -5979,7 +5994,7 @@ private:
         // so push_back never returns the buffer; the freelist stops
         // the vector (and its buffer) from tracking a file-mode loop.
         std::lock_guard lock(alloc_storage_lock_);
-        ++file_heap_allocs_since_reclaim_;
+        file_heap_allocs_since_reclaim_.fetch_add(1, std::memory_order_relaxed);
         while (!cell_reuse_eval_.empty()) {
             const auto id = cell_reuse_eval_.back();
             cell_reuse_eval_.pop_back();
@@ -6106,9 +6121,10 @@ private:
     // atomic: concurrent set/get across fibers (mutate:set-agent-fingerprint).
     std::atomic<std::uint64_t> current_agent_fingerprint_{0};
     ast::StringPool* workspace_pool_ = nullptr;
-    ast::FlatAST* current_flat_ =
-        nullptr; // per-eval source-being-evaluated (set by CompilerService eval paths)
-    ast::StringPool* current_pool_ = nullptr;
+    // Issue #4717: relaxed atomics (see current_flat()/current_pool()).
+    std::atomic<ast::FlatAST*> current_flat_{
+        nullptr}; // per-eval source-being-evaluated (set by CompilerService eval paths)
+    std::atomic<ast::StringPool*> current_pool_{nullptr};
     // Issue #211: (tag, arity) index for the query:pattern
     // primitive. Built on demand, cached for the lifetime
     // of the workspace (invalidated when workspace_flat_
@@ -6309,10 +6325,25 @@ private:
     // Issue #4465: outermost eval_flat while that flag is on. Only a direct
     // child of this begin turns an escaped primitive error into a diagnostic.
     // Nested begins and module bodies keep the error value (#2570).
-    const ast::FlatAST* file_diag_root_flat_ = nullptr;
-    ast::NodeId file_diag_root_id_ = ast::NULL_NODE;
+    // Issue #4717: the file-diag root and the resume form are outermost-eval
+    // state of the RUNNING BODY, so they live in its fiber Context. Two CLI
+    // thread-backend bodies used to arm/reset these on the shared Evaluator.
+    const ast::FlatAST* file_diag_root_flat() const noexcept {
+        return static_cast<const ast::FlatAST*>(eval_ctx().file_diag_root_flat);
+    }
+    void set_file_diag_root_flat(const ast::FlatAST* f) noexcept {
+        eval_ctx().file_diag_root_flat = f;
+    }
+    [[nodiscard]] ast::NodeId file_diag_root_id() const noexcept {
+        return static_cast<ast::NodeId>(eval_ctx().file_diag_root_id);
+    }
+    void set_file_diag_root_id(ast::NodeId id) noexcept { eval_ctx().file_diag_root_id = id; }
     // Issue #4471: start of the file-root child that returned the diagnostic.
-    aura::diag::SourceLocation file_resume_form_{};
+    void set_file_resume_form(const aura::diag::SourceLocation& l) noexcept {
+        eval_ctx().file_resume_line = l.line;
+        eval_ctx().file_resume_column = l.column;
+        eval_ctx().file_resume_file_id = l.file_id;
+    }
     // Set by load_module_file on cannot-resolve / parse error. The require
     // form reads it once. Cleared at the next load.
     std::string last_module_load_failure_;
@@ -7732,34 +7763,69 @@ private:
         }
     };
     FloatLiteralIntern float_intern_by_node_;
-    const aura::ast::FlatAST* float_intern_flat_ = nullptr;
-    void bind_float_intern_flat(const aura::ast::FlatAST* f) noexcept {
-        if (float_intern_flat_ == f)
-            return;
-        float_intern_by_node_.clear();
-        float_intern_flat_ = f;
-        clear_name_res_cache();
+    // Issue #4717: which pool/flat this BODY is bound to is per-body state
+    // (fiber Context). The intern tables stay shared read-mostly; their own
+    // concurrency is #4719.
+    [[nodiscard]] const ast::StringPool*& sym_intern_pool_ctx() noexcept {
+        return reinterpret_cast<const ast::StringPool*&>(eval_ctx().sym_intern_pool);
     }
-    const ast::StringPool* sym_intern_pool_ = nullptr;
-    std::uint64_t intern_pool_gen_ = 0;
+    [[nodiscard]] std::uint64_t& intern_pool_gen_ctx() noexcept {
+        return eval_ctx().intern_pool_gen;
+    }
+    [[nodiscard]] const aura::ast::FlatAST*& float_intern_flat_ctx() noexcept {
+        return reinterpret_cast<const aura::ast::FlatAST*&>(eval_ctx().float_intern_flat);
+    }
+    // Issue #4717: the intern TABLES are shared read-mostly EvalShared state.
+    // Which pool/flat the tables are keyed for is tracked by these atomics
+    // (EvalShared) so a sibling body that is bound to the SAME pool does not
+    // re-clear the tables on its first visit (that clear was one data race
+    // per body pair). A genuine pool change still clears under the mutex;
+    // concurrent lookups during such a change remain #4719's scope.
+    mutable std::mutex intern_cache_mtx_;
+    std::atomic<const ast::StringPool*> sym_intern_pool_shared_{nullptr};
+    std::atomic<std::uint64_t> intern_pool_gen_shared_{0};
+    std::atomic<const aura::ast::FlatAST*> float_intern_flat_shared_{nullptr};
+    void bind_float_intern_flat(const aura::ast::FlatAST* f) noexcept {
+        if (float_intern_flat_shared_.load(std::memory_order_acquire) != f) {
+            std::lock_guard<std::mutex> lock(intern_cache_mtx_);
+            if (float_intern_flat_shared_.load(std::memory_order_relaxed) != f) {
+                float_intern_by_node_.clear();
+                clear_name_res_cache();
+                float_intern_flat_shared_.store(f, std::memory_order_release);
+            }
+        }
+        float_intern_flat_ctx() = f;
+    }
     void bind_sym_intern_pool(const ast::StringPool* p) noexcept {
         const auto gen = p ? p->intern_epoch() : 0;
-        if (sym_intern_pool_ == p && intern_pool_gen_ == gen)
-            return;
-        string_intern_by_sym_.clear();
-        keyword_intern_by_sym_.clear();
-        clear_name_res_cache();
-        sym_intern_pool_ = p;
-        intern_pool_gen_ = gen;
+        const bool same = sym_intern_pool_shared_.load(std::memory_order_acquire) == p &&
+                          intern_pool_gen_shared_.load(std::memory_order_relaxed) == gen;
+        if (!same) {
+            std::lock_guard<std::mutex> lock(intern_cache_mtx_);
+            if (sym_intern_pool_shared_.load(std::memory_order_relaxed) != p ||
+                intern_pool_gen_shared_.load(std::memory_order_relaxed) != gen) {
+                string_intern_by_sym_.clear();
+                keyword_intern_by_sym_.clear();
+                clear_name_res_cache();
+                sym_intern_pool_shared_.store(p, std::memory_order_release);
+                intern_pool_gen_shared_.store(gen, std::memory_order_relaxed);
+            }
+        }
+        sym_intern_pool_ctx() = p;
+        intern_pool_gen_ctx() = gen;
     }
     void clear_sym_intern() noexcept {
+        std::lock_guard<std::mutex> lock(intern_cache_mtx_);
         string_intern_by_sym_.clear();
         keyword_intern_by_sym_.clear();
         float_intern_by_node_.clear(); // Issue #4524: flat-scoped float literal intern
         clear_name_res_cache();
-        sym_intern_pool_ = nullptr;
-        intern_pool_gen_ = 0;
-        float_intern_flat_ = nullptr;
+        sym_intern_pool_shared_.store(nullptr, std::memory_order_relaxed);
+        intern_pool_gen_shared_.store(0, std::memory_order_relaxed);
+        float_intern_flat_shared_.store(nullptr, std::memory_order_relaxed);
+        sym_intern_pool_ctx() = nullptr;
+        intern_pool_gen_ctx() = 0;
+        float_intern_flat_ctx() = nullptr;
     }
     // Issue #4599: host-only name resolution, keyed by node id. Not a FlatAST
     // column. Misses are not stored. Cell ids are re-read; values are not
@@ -7793,13 +7859,33 @@ private:
         std::uint8_t nchild = 0;
         std::array<aura::ast::NodeId, 8> child{};
     };
-    std::vector<NameResEntry> name_res_by_node_;
+    // Issue #4717: the #4599 name-resolution memo is per-body state. Two CLI
+    // thread-backend bodies used to resize/write/read ONE vector.
+    std::vector<NameResEntry>& name_res_by_node() {
+        auto& c = eval_ctx();
+        if (!c.name_res_cache) {
+            c.name_res_cache = std::shared_ptr<void>(new std::vector<NameResEntry>(), [](void* p) {
+                delete static_cast<std::vector<NameResEntry>*>(p);
+            });
+        }
+        return *static_cast<std::vector<NameResEntry>*>(c.name_res_cache.get());
+    }
     // 0 unknown, 1 raw value, 2 cell. Flat-scoped, cleared with the name cache.
-    std::vector<std::uint8_t> let_bind_kind_;
+    // Issue #4717: per-body let-binding kind memo (see name_res_by_node()).
+    std::vector<std::uint8_t>& let_bind_kind() {
+        auto& c = eval_ctx();
+        if (!c.let_bind_kind_cache) {
+            c.let_bind_kind_cache =
+                std::shared_ptr<void>(new std::vector<std::uint8_t>(), [](void* p) {
+                    delete static_cast<std::vector<std::uint8_t>*>(p);
+                });
+        }
+        return *static_cast<std::vector<std::uint8_t>*>(c.let_bind_kind_cache.get());
+    }
     std::uint64_t top_bind_gen_ = 1;
     void clear_name_res_cache() noexcept {
-        name_res_by_node_.clear();
-        let_bind_kind_.clear();
+        name_res_by_node().clear();
+        let_bind_kind().clear();
     }
     [[nodiscard]] std::optional<EvalResult> try_eval_flat_hot(aura::ast::FlatAST& flat,
                                                               aura::ast::StringPool& pool,
@@ -7824,56 +7910,35 @@ private:
                                 std::span<const aura::ast::NodeId> clauses);
     [[nodiscard]] std::uint8_t let_bind_kind_cached(aura::ast::FlatAST& flat, aura::ast::NodeId id,
                                                     aura::ast::SymId name, aura::ast::NodeId body);
-    // Issue #4599: self-TCO reuses the call frame. ClosureId 0 is a live id,
-    // so the bool is the sentinel. Nested eval_flat saves and restores it.
-    bool tco_reuse_live_ = false;
-    ClosureId tco_reuse_cid_ = 0;
-    const Env* tco_reuse_env_ = nullptr;
-    std::uint32_t tco_reuse_n_ = 0;
-    std::uint64_t tco_reuse_bridge_ = 0;
-    std::uint64_t tco_reuse_defuse_ = 0;
-    std::uint64_t tco_reuse_env_gen_ = 0;
-    std::array<aura::ast::SymId, 8> tco_reuse_syms_{};
+    // Issue #4717 (P4 keystone of #4707): the running body's execution
+    // context. Shared read-only state (code/IR, prim table, interned
+    // symbols, JIT code cache, promoted old space) stays here on the
+    // Evaluator; state that describes WHICH BODY is executing lives in the
+    // fiber Context, so two bodies driving one Evaluator never clobber it.
+    // Plain (non-fiber) threads get their per-thread fallback Context, so
+    // single-threaded semantics are unchanged.
+    [[nodiscard]] aura::core::fiber_ctx::Context& eval_ctx() const noexcept {
+        return aura::core::fiber_ctx::active();
+    }
+    // Issue #4599 self-TCO frame-reuse stamp is per-body state (#4717).
+    [[nodiscard]] aura::core::fiber_ctx::Context::TcoReuseState& tco_reuse_ctx() noexcept {
+        return eval_ctx().tco;
+    }
     struct TcoReuseGuard {
-        Evaluator* ev;
-        bool live;
-        ClosureId cid;
-        const Env* envp;
-        std::uint32_t n;
-        std::uint64_t bridge;
-        std::uint64_t defuse;
-        std::uint64_t env_gen;
-        std::array<aura::ast::SymId, 8> syms;
-        // Issue #4599 follow-up: a non-live stamp has no meaningful payload
-        // (every field is only read behind tco_reuse_live_), so the common
-        // nested-eval case restores just the flag instead of copying the
-        // whole stamp (8 SymIds + 7 counters) on every eval_flat_body entry.
+        aura::core::fiber_ctx::Context::TcoReuseState* st;
+        aura::core::fiber_ctx::Context::TcoReuseState saved;
+        // Issue #4599 follow-up: a non-live stamp has no meaningful payload,
+        // so the common nested-eval case restores just the flag instead of
+        // copying the whole stamp on every eval_flat_body entry.
         explicit TcoReuseGuard(Evaluator* e) noexcept
-            : ev(e)
-            , live(e->tco_reuse_live_) {
-            if (!live)
-                return;
-            cid = e->tco_reuse_cid_;
-            envp = e->tco_reuse_env_;
-            n = e->tco_reuse_n_;
-            bridge = e->tco_reuse_bridge_;
-            defuse = e->tco_reuse_defuse_;
-            env_gen = e->tco_reuse_env_gen_;
-            syms = e->tco_reuse_syms_;
-        }
+            : st(&e->tco_reuse_ctx())
+            , saved(*st) {}
         ~TcoReuseGuard() {
-            if (!live) {
-                ev->tco_reuse_live_ = false;
+            if (!saved.live) {
+                st->live = false;
                 return;
             }
-            ev->tco_reuse_live_ = live;
-            ev->tco_reuse_cid_ = cid;
-            ev->tco_reuse_env_ = envp;
-            ev->tco_reuse_n_ = n;
-            ev->tco_reuse_bridge_ = bridge;
-            ev->tco_reuse_defuse_ = defuse;
-            ev->tco_reuse_env_gen_ = env_gen;
-            ev->tco_reuse_syms_ = syms;
+            *st = saved;
         }
         TcoReuseGuard(const TcoReuseGuard&) = delete;
         TcoReuseGuard& operator=(const TcoReuseGuard&) = delete;
@@ -7896,21 +7961,29 @@ private:
     // table append + index insert are serialized (keyword_table_ predates
     // that requirement; atoms are far more frequent than keywords).
     mutable std::mutex symbol_table_mtx_;
-    std::size_t eval_depth_ = 0; // recursion counter for friendly stack overflow
+    // Issue #4717: per-body execution counters (fiber Context). They were
+    // shared Evaluator members, so two bodies raced them.
+    [[nodiscard]] std::size_t& eval_depth_ctx() noexcept { return eval_ctx().eval_depth; }
+    [[nodiscard]] std::size_t& last_gc_temp_eval_depth_ctx() noexcept {
+        return eval_ctx().last_gc_temp_eval_depth;
+    }
+    [[nodiscard]] std::size_t& last_auto_gc_eval_depth_ctx() noexcept {
+        return eval_ctx().last_auto_gc_eval_depth;
+    }
+    [[nodiscard]] int& try_body_depth_ctx() noexcept { return eval_ctx().try_body_depth; }
     // Issue #4456 vs try-catch contract (#try-catch-error regression net):
     // outside a try body, display consumes an error-valued argument (prints
     // and returns void, so a later begin form still runs). Inside a try
     // body, the pre-#4456 face returns: the error-valued argument must
     // propagate so the catch fires. Depth-counted for nesting.
-    int try_body_depth_ = 0;
     static constexpr std::size_t MAX_EVAL_DEPTH = 50000;
 
     // ── Memory pressure observability (Issue #69) ───────────────
     // eval_depth_ snapshot at the last (gc-temp) call. Used by
     // memory-pressure to decide whether to suggest "gc-temp" in the
     // suggestions vector (only if no recent gc-temp call, i.e.
-    // eval_depth_ - last_gc_temp_eval_depth_ > 100).
-    std::size_t last_gc_temp_eval_depth_ = 0;
+    // eval_depth - last_gc_temp_eval_depth > 100).
+    // (Both counters now live in the fiber Context, #4717.)
 
     // ── Memory pressure governance (P1) ─────────────────────
     // Policy is configured by (set-memory-policy hash). Default: no
@@ -7931,12 +8004,13 @@ private:
     // these fields remain for policy-reset observers / single-thread
     // mirrors only — do not read them as the ground truth under
     // multi-worker serve.
-    // Last eval_depth_ at which auto-gc fired (for cooldown).
-    std::size_t last_auto_gc_eval_depth_ = 0;
+    // Last eval depth at which auto-gc fired (for cooldown).
+    // (Per-body in the fiber Context, #4717.)
     // Counter to implement "sample every N evals".
-    std::size_t sample_counter_ = 0;
+    std::atomic<std::size_t> sample_counter_{0};
     // Last logged warning level (so we don't spam the same warning).
-    std::string last_warn_level_;
+    // Issue #4717: the write-only last_warn_level_ mirror was removed;
+    // concurrent bodies raced its std::string assign and nothing read it.
 
     std::vector<std::vector<types::EvalValue>> vector_heap_;
     // Issue #4298: owner record parallel to vector_heap_. Same encoding as
@@ -7964,13 +8038,13 @@ private:
     // Issue #4613: the number of hash tables this evaluator published
     // (the runtime door that pairs with hash_tables_released_).
     std::uint64_t hash_tables_minted_total_ = 0;
-    std::uint32_t file_heap_allocs_since_reclaim_ = 0;
+    std::atomic<std::uint32_t> file_heap_allocs_since_reclaim_{0};
     // Issue #4525: file-mode reclaim run count (spike/benchmark observability;
     // counts completed whole-heap marks in reclaim_tw_unreachable).
-    std::uint64_t file_heap_reclaim_runs_ = 0;
+    std::atomic<std::uint64_t> file_heap_reclaim_runs_{0};
     // Issue #4459: tree-walker Lambda / named-let allocations since
     // the last file-mode sweep. alloc_cell also bumps the heap counter.
-    std::uint32_t tw_closure_allocs_ = 0;
+    std::atomic<std::uint32_t> tw_closure_allocs_{0};
     // Issue #4474: dynamic reclaim triggers — after a mark, the next
     // reclaim fires after allocations proportional to the live set the
     // mark found (live/32, floored at 128, capped by the heap-scaled
@@ -7978,8 +8052,8 @@ private:
     // and reclaim_trigger_ceiling_for), so a large live heap amortizes
     // the full-heap mark instead of paying it every 128 allocations.
     // Skipped reclaims reset both to the 128 floor.
-    std::uint32_t tw_closure_allocs_trigger_ = kReclaimTriggerFloor;
-    std::uint32_t file_heap_allocs_trigger_ = kReclaimTriggerFloor;
+    std::atomic<std::uint32_t> tw_closure_allocs_trigger_{kReclaimTriggerFloor};
+    std::atomic<std::uint32_t> file_heap_allocs_trigger_{kReclaimTriggerFloor};
     bool file_reclaim_active_ = false;
     // Issue #4580: shared across registering threads — register_active_closure
     // and the flat-eval sites draw the id BEFORE taking the closures shard
@@ -8732,7 +8806,7 @@ public:
         if (string_slot_tenants_.size() <= idx)
             string_slot_tenants_.resize(idx + 1, 0);
         string_slot_tenants_[idx] = capability_tenant_id_ + 1;
-        ++file_heap_allocs_since_reclaim_;
+        file_heap_allocs_since_reclaim_.fetch_add(1, std::memory_order_relaxed);
     }
     // Issue #4608: release the string slots the reclaim proved
     // unreachable. seen_string[i] != 0 means slot i is still
@@ -8821,7 +8895,8 @@ public:
         // bytes-between-marks budget the same as for the other heaps.
         const std::uint64_t bytes = FlatHashTable::total_bytes(ht->capacity);
         const std::uint64_t units = (bytes + kReclaimWindowUnitBytes - 1) / kReclaimWindowUnitBytes;
-        file_heap_allocs_since_reclaim_ += static_cast<std::uint32_t>(units > 0 ? units : 1);
+        file_heap_allocs_since_reclaim_.fetch_add(static_cast<std::uint32_t>(units > 0 ? units : 1),
+                                                  std::memory_order_relaxed);
         ++hash_tables_minted_total_;
         return hidx;
     }

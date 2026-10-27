@@ -978,7 +978,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // Default options preserve compact single-line output (#2921).
         //
         // Use an enum to distinguish "user asked for :workspace" (even if
-        // ev.workspace_flat_ is null) from "no preference" (use ev.current_flat_).
+        // ev.workspace_flat_ is null) from "no preference" (use ev.current_flat()).
         // This matters because ev.workspace_flat_ is null until (set-code ...) is
         // called, and the test expects a different result in that case.
         enum class Source { Default, Workspace };
@@ -1006,8 +1006,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 pool = ev.workspace_pool_;
                 break;
             case Source::Default:
-                flat = ev.current_flat_;
-                pool = ev.current_pool_;
+                flat = ev.current_flat();
+                pool = ev.current_pool();
                 break;
         }
         if (!flat || !pool)

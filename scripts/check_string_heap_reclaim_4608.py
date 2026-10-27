@@ -167,7 +167,10 @@ def main() -> int:
         "void note_inrange_string_mint(std::size_t idx) noexcept",
         "// Issue #4543: test read of the #4428 owner record",
     )
-    must("++file_heap_allocs_since_reclaim_;" in mint_hook, "AC3: a string mint counts toward the reclaim window")
+    must(
+        "file_heap_allocs_since_reclaim_.fetch_add(1, std::memory_order_relaxed);" in mint_hook,
+        "AC3: a string mint counts toward the reclaim window",
+    )
     must("release_unreachable_string_slots(" in ixx, "AC3: the evaluator exposes the release")
     must("string_slot_tenants_[i] = 0;" in ixx, "AC3: the release resets the #4428 owner record")
     must("string_heap_live_size()" in ixx, "AC3: the live-slot accessor exists (runtime door)")

@@ -1,0 +1,68 @@
+{
+  "issue": 4717,
+  "title": "Issue #4717 (P4 keystone of #4707): split the Evaluator into a shared read-mostly core (code/IR, prim table, interned symbols, JIT code cache, promoted old space) and a per-body EvalContext (fiber Context: self-TCO stamp, eval depth, try depth, file-diag root/resume form); the whole-body mutex shrinks to a narrow CLI-main commit lock and bodies run concurrently.",
+  "ok": "OK: Issue #4717 evaluator split - the thread-backend body no longer takes the CLI body mutex, per-body execution state lives in the fiber Context, and AC13 (#4720) observes two CPU-bound bodies runnable in one sample (the two-body ThreadSanitizer run is clean for this surface; the remaining string-heap report is #4714b)",
+  "checks": [
+    {
+      "ac": "AC13",
+      "path": "tests/compiler/test_fiber_spawn_cli.cpp",
+      "contains": [
+        "#4717",
+        "max concurrent runnable fiber bodies == 2",
+        "ac19_eval_split_source_cite",
+        "AC19: thread-backend body takes no whole-body lock",
+        "AC19: self-TCO stamp is fiber-local state"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/core/fiber_context.hh",
+      "contains": [
+        "Issue #4717",
+        "struct TcoReuseState",
+        "std::size_t eval_depth = 0;",
+        "try_body_depth",
+        "file_diag_root_flat"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "Issue #4717",
+        "Context& eval_ctx()",
+        "TcoReuseState& tco_reuse_ctx()",
+        "eval_depth_ctx()",
+        "set_file_resume_form"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "tco_reuse_ctx()",
+        "eval_depth_ctx()",
+        "set_file_diag_root_flat",
+        "try_body_depth_ctx()"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_messaging.cpp",
+      "contains": [
+        "Issue #4717",
+        "s_cli_commit_mtx",
+        "the NARROW commit",
+        "whole-body serialization is gone"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_memory.cpp",
+      "contains": [
+        "last_gc_temp_eval_depth_ctx()",
+        "eval_depth_ctx()"
+      ]
+    }
+  ]
+}

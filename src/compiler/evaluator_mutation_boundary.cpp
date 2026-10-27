@@ -8541,10 +8541,11 @@ std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
         known_slots.push_back(reinterpret_cast<void**>(&mutate_target_flat_));
     if (mutate_target_pool_)
         known_slots.push_back(reinterpret_cast<void**>(&mutate_target_pool_));
-    if (current_flat_)
-        known_slots.push_back(reinterpret_cast<void**>(&current_flat_));
-    if (current_pool_)
-        known_slots.push_back(reinterpret_cast<void**>(&current_pool_));
+    // Issue #4717: current_flat/current_pool are relaxed ATOMICS now, so
+    // they cannot be handed to the remap as void** slots. They are a
+    // "current source" hint re-stamped at the top of every eval_flat_body
+    // loop iteration, so a moved AST self-heals there; they are not GC
+    // values and were never the authority for a live object's address.
     // Issue #2935 residual: WorkspaceTree layer slots may hold the same
     // arena-allocated FlatAST/StringPool (or parent pointers) as the
     // Evaluator members — densify must rewrite every external void** that
