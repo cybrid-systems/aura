@@ -1,0 +1,43 @@
+{
+  "issue": 4710,
+  "title": "Issue #4710: a finished-but-unjoined fiber's result is a GC root - the fiber:join registry value survives both evaluator reclaims, so the returned hash is neither emptied nor aliased to a sibling fiber's table.",
+  "ok": "OK: Issue #4710 fiber:join results are GC roots - the tree-walker and file-mode reclaims mark the fiber-result registry, so a returned hash keeps its own table until the join fetches it",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/fiber_result_roots.hh",
+      "contains": [
+        "Issue #4710",
+        "inline void install(",
+        "inline std::size_t collect(",
+        "g_collector"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_messaging.cpp",
+      "contains": [
+        "Issue #4710",
+        "collect_fiber_result_roots",
+        "fiber_result_roots::install",
+        "s_fiber_results_mtx"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_gc.cpp",
+      "contains": [
+        "Issue #4710",
+        "fiber_result_roots::collect"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/python/test_regression.py",
+      "contains": [
+        "test_fiber_result_root_4710",
+        "Issue #4710"
+      ]
+    }
+  ]
+}

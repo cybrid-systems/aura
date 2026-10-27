@@ -15,6 +15,7 @@ module;
 #include "core/provenance_tracker.hh"    // Issue #2026 / #2197: validate_linear_provenance
 #include "coercion_provenance_policy.hh" // Issue #2197: note_provenance_miss force-audit
 #include "lock_order_audit.h"            // Issue #2354: Closures rank
+#include "fiber_result_roots.hh"         // Issue #4710: fiber:join result roots
 #include "typed_mutation_audit.h"        // Issue #2984: compact vs proof linear_root_count
 
 module aura.compiler.evaluator;
@@ -1584,6 +1585,18 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         for (const auto& e : snap.entries)
             roots.push_back(e.value);
     }
+    // Issue #4710: fiber:join result roots (finished-but-unjoined
+    // fibers), the mirror of the tree-walker reclaim's hook. The
+    // messaging partition installs the provider once its primitives are
+    // registered; a program with no fibers pays one empty vector.
+    {
+        std::vector<std::int64_t> fiber_results;
+        if (fiber_result_roots::collect(fiber_results) > 0) {
+            roots.reserve(roots.size() + fiber_results.size());
+            for (const auto raw : fiber_results)
+                roots.push_back(EvalValue(raw));
+        }
+    }
 
     const std::size_t n_pairs = pairs_.size();
     const std::size_t n_vecs = vector_heap_.size();
@@ -1906,6 +1919,21 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     }
     for (const auto& h : held)
         work.push_back(h);
+    // Issue #4710: a finished-but-unjoined fiber's result lives ONLY in
+    // the messaging partition's fiber:join registry (s_fiber_results),
+    // which this walk cannot name. Without it the mark proved the
+    // result's (hash) table unreachable, freed it, and the next mint
+    // reused the slot before the joiner read it: an empty table (-1) or
+    // another fiber's table (alias). The provider appears once the
+    // messaging primitives are registered.
+    {
+        std::vector<std::int64_t> fiber_results;
+        if (fiber_result_roots::collect(fiber_results) > 0) {
+            work.reserve(work.size() + fiber_results.size());
+            for (const auto raw : fiber_results)
+                work.push_back(EvalValue(raw));
+        }
+    }
     // Issue #4608: the intern caches hold string indices (symbol
     // names, quote literals, keywords). They are roots: a cached
     // index must never be released under the cache.
