@@ -149,7 +149,19 @@ namespace {
     std::optional<EvalValue> fiber_cancel_safepoint(Heap& string_heap,
                                                     std::vector<EvalValue>& error_values,
                                                     std::atomic<std::uint64_t>* error_counter) {
-        if (!fiber_cancel_take(current_fiber_body_id()))
+        bool cancelled = fiber_cancel_take(current_fiber_body_id());
+        // Issue #4724: orch:scope-cancel-all (and watch_all stall-cancel)
+        // arm Fiber::request_cancel(), a different surface from the
+        // (fiber:cancel f) pending map above. The cooperative safepoint is
+        // the one place a body observes cancellation, so both faces must be
+        // consumed here: otherwise a scope body that keeps calling
+        // fiber:yield ran to completion and the following scope-join-all
+        // timed out on it (cancel reported cancelled-count but stopped
+        // nothing).
+        if (!cancelled && aura::serve::g_current_fiber != nullptr &&
+            aura::serve::g_current_fiber->is_cancel_requested())
+            cancelled = true;
+        if (!cancelled)
             return std::nullopt;
         return fiber_cancel_condition_value(string_heap, error_values, error_counter);
     }

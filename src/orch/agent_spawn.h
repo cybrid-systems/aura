@@ -585,7 +585,24 @@ struct JoinPolicy {
     std::optional<std::uint64_t> primary_ms{};
     std::uint64_t drain_ms = kDefaultJoinDrainMs;
     std::optional<std::uint64_t> wait_reclaimed_ms{};
+    // Issue #4724: total wall-clock budget for the WHOLE join call
+    // (primary wait + cancel/drain). The Aura orch:scope-join-all
+    // surface sets it from :timeout-ms when the caller did not pass an
+    // explicit :drain-ms, so :timeout-ms 3000 no longer returns after
+    // 3000 + drain (5000 ms). nullopt = unset -> the historical
+    // primary_ms + drain_ms contract, unchanged for C++ callers.
+    std::optional<std::uint64_t> total_budget_ms{};
 };
+
+// Issue #4725: process-unique pairing key for the #4697 keyed pending-body
+// root on the orch spawn path. The key only matches a root with its
+// release (the pin itself is the evaluator closure watermark), so it must
+// not collide with CLI-thread fiber ids (0x4000_0000 | seq) or with the
+// small scheduler Fiber ids; this range is reserved for the pairing.
+inline std::uint64_t next_orch_pending_body_token() noexcept {
+    static std::atomic<std::uint64_t> seq{0x2000'0000'0000'0000ull};
+    return seq.fetch_add(1, std::memory_order_relaxed);
+}
 
 // Issue #3012: documented mild deadline hosts should pass when the
 // Reclaimed hash carries must-wait-reclaimed=1. Not auto-injected
@@ -2288,6 +2305,17 @@ struct AgentSpec {
     // running → Alive. Host-declared keepalive / max_no_yield_ms
     // contracts keep the normal stall path (flag stays false there).
     bool body_clock_from_fiber = false;
+    // Issue #4725: the Aura closure this spec body will apply (set by the
+    // orch prims; 0 / nullptr for C++ hosts with a plain std::function
+    // body). The closure is a tree-walker temporary that the spawn site
+    // drops on return, and since #4713 the reclaim runs with every fiber
+    // thread, so it can erase the closure BEFORE the worker fiber reaches
+    // apply_closure -- the body then never ran while join reported Ok (the
+    // silently-lost scope task). spawn_agent_with_mailbox pins the id from
+    // the spawn call until the body has applied it, reusing the
+    // #4697/#4698 pinned-closure watermark (one SSOT, no second root model).
+    void* body_evaluator = nullptr;
+    std::uint64_t body_closure_id = 0;
 };
 
 // Issue #3250: RestartN fuel is a copyable AgentSpec body stored by
@@ -2617,6 +2645,32 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
 [[nodiscard]] inline AgentHandle spawn_agent_with_mailbox(serve::Scheduler& sched, AgentSpec spec) {
     AgentHandle h;
     h.name = std::move(spec.name);
+    // Issue #4725 / #4726: pin the pending body closure BEFORE any admit-path
+    // allocation below. The Aura spawn prims drop the closure temporary on
+    // return and no fiber root segment references it; the #4713 reclaim on
+    // this (or any) thread could erase it before the worker fiber applied
+    // it, so the body silently never ran and join reported Ok. The pin is
+    // the same evaluator watermark #4697/#4698 use, held until the body has
+    // applied the closure. Zero cost for a spec without an Aura closure.
+    void* const pin_ev = spec.body_evaluator;
+    const std::uint64_t pin_cid = spec.body_closure_id;
+    std::uint64_t pin_token = 0;
+    if (pin_ev != nullptr && pin_cid != 0) {
+        pin_token = next_orch_pending_body_token();
+        aura_fiber_root_pending_body(pin_ev, pin_cid, pin_token);
+    }
+    // Every early return below (quota / BP / tenant / schedule deny,
+    // Scheduler::spawn nullptr) releases the pin here; the spawn-success
+    // path hands it to the body guard instead.
+    struct OrchPendingBodyPinHold {
+        void* ev;
+        std::uint64_t token;
+        bool handed_off = false;
+        ~OrchPendingBodyPinHold() {
+            if (!handed_off && ev != nullptr && token != 0)
+                aura_fiber_release_pending_body(ev, token);
+        }
+    } pending_body_pin{pin_ev, pin_token, false};
     // Issue #4280: keep the admitted key on the handle. Name-table put
     // moves `h`; the Scope plane still reads AgentSpec::region_key.
     h.region_key = spec.region_key;
@@ -2973,7 +3027,20 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
     h.body_acquire_rejected_slot = body_acq_rej;
     serve::Fiber* f =
         sched.spawn([body = std::move(body), mb, attach, live, coop,
-                     progress_clock = want_progress_clock, register_soft, body_acq_rej]() mutable {
+                     progress_clock = want_progress_clock, register_soft, body_acq_rej,
+                     pin_ev = pending_body_pin.ev, pin_token = pending_body_pin.token]() mutable {
+            // Issue #4725: release the pending-body pin once the body has been
+            // applied -- also on the try_acquire skip path and when the
+            // closure is no longer live. Declared first so it runs LAST: the
+            // pin covers the whole body application, not just its entry.
+            struct OrchPendingBodyPinRelease {
+                void* ev;
+                std::uint64_t token;
+                ~OrchPendingBodyPinRelease() {
+                    if (ev != nullptr && token != 0)
+                        aura_fiber_release_pending_body(ev, token);
+                }
+            } pin_release{pin_ev, pin_token};
             // Issue #2540: register fiber-local coop state for agent_poll().
             struct CoopReg {
                 std::uint64_t fid = 0;
@@ -3070,6 +3137,8 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
         finalize_spawn_quota_reject(h);
         return h;
     }
+    // Issue #4725: a fiber exists, so the body guard owns the release now.
+    pending_body_pin.handed_off = true;
     // Issue #3942: NOTE — an earlier cut bound the fiber's primary
     // mailbox here (right after Scheduler::spawn returned) so the
     // steal-complete walk would see it. That shape wrote the fiber's
@@ -4455,6 +4524,23 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
 // Issue #2008 / #2159: stop helper → join body (primary) → join helper (short drain).
 // Issue #2153: JoinPolicy controls primary timeout + secondary drain_ms.
 [[nodiscard]] inline serve::JoinResult join_agent(AgentHandle& h, JoinPolicy policy) {
+    // Issue #4724: same total-budget origin/clamp for policy.total_budget_ms:
+    // the caller total budget bounds the primary wait AND the cancel/drain
+    // that follows a non-Ok join (previously :timeout-ms 3000 returned
+    // after 3000 + drain_ms = 5000 ms). Unset budget keeps the historical
+    // primary_ms + drain_ms contract byte-for-byte.
+    const auto join_t0 = std::chrono::steady_clock::now();
+    const auto budgeted_drain_ms = [&policy, join_t0]() -> std::uint64_t {
+        if (!policy.total_budget_ms.has_value())
+            return policy.drain_ms;
+        const auto used =
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                           std::chrono::steady_clock::now() - join_t0)
+                                           .count());
+        if (used >= *policy.total_budget_ms)
+            return 0;
+        return std::min<std::uint64_t>(policy.drain_ms, *policy.total_budget_ms - used);
+    };
     if (!h.ok || !h.fiber) {
         serve::JoinResult r;
         r.status = serve::JoinStatus::Invalid;
@@ -4486,7 +4572,7 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
     // drain window (default 2s); residual metric if body still live (tight
     // non-yielding loop). Reservation release remains idempotent (#2009).
     if (jr.status != serve::JoinStatus::Ok)
-        cancel_and_drain_fiber(h.fiber, policy.drain_ms);
+        cancel_and_drain_fiber(h.fiber, budgeted_drain_ms());
     // Issue #2159: join helper after body (short drain; no host-thread leak).
     {
         const auto helper_drain = policy.drain_ms == 0
@@ -4599,6 +4685,23 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
 // Issue #2153: JoinPolicy for primary + secondary drain.
 [[nodiscard]] inline serve::JoinResult join_agents(std::span<AgentHandle> agents,
                                                    JoinPolicy policy) {
+    // Issue #4724: wall-clock origin + clamp for policy.total_budget_ms:
+    // the caller total budget bounds the primary wait AND the cancel/drain
+    // that follows a non-Ok join (previously :timeout-ms 3000 returned
+    // after 3000 + drain_ms = 5000 ms). Unset budget keeps the historical
+    // primary_ms + drain_ms contract byte-for-byte.
+    const auto join_t0 = std::chrono::steady_clock::now();
+    const auto budgeted_drain_ms = [&policy, join_t0]() -> std::uint64_t {
+        if (!policy.total_budget_ms.has_value())
+            return policy.drain_ms;
+        const auto used =
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                           std::chrono::steady_clock::now() - join_t0)
+                                           .count());
+        if (used >= *policy.total_budget_ms)
+            return 0;
+        return std::min<std::uint64_t>(policy.drain_ms, *policy.total_budget_ms - used);
+    };
     for (auto& a : agents) {
         if (a.import_proxy) // Issue #3930: proxy is not a join owner
             continue;
@@ -4627,7 +4730,7 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
         g_orch_module_stats.join_fail_total.fetch_add(1, std::memory_order_relaxed);
     // Issue #2082 / #2153: On non-Ok batch join, cancel + drain before release.
     if (jr.status != serve::JoinStatus::Ok)
-        cancel_and_drain_fibers(std::span<serve::Fiber* const>(fibers), policy.drain_ms);
+        cancel_and_drain_fibers(std::span<serve::Fiber* const>(fibers), budgeted_drain_ms());
     // Issue #2159: join keepalive helpers after bodies.
     {
         const auto helper_drain = policy.drain_ms == 0
