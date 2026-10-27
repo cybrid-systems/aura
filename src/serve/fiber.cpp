@@ -1471,6 +1471,11 @@ bool Fiber::done_resources_released() const noexcept {
 }
 
 Fiber::~Fiber() {
+    // Issue #4706: drop a root segment parked by a fiber that never resumed
+    // — the process-wide registry must not keep pointing into a stack that
+    // is about to go away.
+    aura_tw_roots_free(tw_roots_);
+    tw_roots_ = nullptr;
     // Issue #2726: unregister Fiber* from the process-wide registry
     // first (before any teardown that might race an in-flight
     // force-degrade reference). After this point, any concurrent
@@ -1666,6 +1671,11 @@ void Fiber::resume() {
     // noted again.
     aura_fiber_reconcile_boundary_audit_on_resume(this);
 
+    // Issue #4706: install the fiber's walker root segment on this thread
+    // (Fiber::yield detached it on the thread the fiber last ran on).
+    aura_tw_roots_attach(tw_roots_);
+    tw_roots_ = nullptr;
+
     // Swap from worker's loop context to fiber's context
     if (::swapcontext(&wctx->uctx, &ctx_) == -1) {
         std::fprintf(stderr, "fiber[%lu]: resume swapcontext failed: %s\n", (unsigned long)id_,
@@ -1860,6 +1870,9 @@ void Fiber::yield() {
     if (g_fiber_yield_checkpoint_)
         g_fiber_yield_checkpoint_(static_cast<uint8_t>(YieldReason::Explicit));
 
+    // Issue #4706: park this fiber's tree-walker root segment with the
+    // fiber before the swap; the resuming thread may be a different one.
+    fb->tw_roots_ = aura_tw_roots_detach();
     // Swap from fiber's context back to worker's loop context
     if (::swapcontext(&fb->ctx_, &wctx->uctx) == -1) {
         std::fprintf(stderr, "fiber: yield swapcontext failed: %s\n", std::strerror(errno));
@@ -1971,6 +1984,9 @@ void Fiber::yield(YieldReason reason) {
     if (g_fiber_yield_checkpoint_)
         g_fiber_yield_checkpoint_(static_cast<uint8_t>(reason));
 
+    // Issue #4706: park this fiber's tree-walker root segment with the
+    // fiber before the swap; the resuming thread may be a different one.
+    fb->tw_roots_ = aura_tw_roots_detach();
     // Swap from fiber's context back to worker's loop context
     if (::swapcontext(&fb->ctx_, &wctx->uctx) == -1) {
         std::fprintf(stderr, "fiber: yield swapcontext failed: %s\n", std::strerror(errno));
