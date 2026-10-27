@@ -54,6 +54,7 @@ using aura::orch::ReplyResult;
 using aura::orch::spawn_agent_with_mailbox;
 using aura::serve::SchedRunner;
 using aura::serve::Scheduler;
+using aura::serve::mf_mailbox::MailKind;
 using aura::serve::mf_mailbox::MailMessage;
 using aura::serve::mf_mailbox::MailPriority;
 using aura::serve::mf_mailbox::MultiFiberMailbox;
@@ -471,6 +472,132 @@ int run_test_agent_ask() {
               "4040: BP status");
         CHECK(spawn_src.find("out.status = \"handoff-required\"") != std::string::npos,
               "4040: handoff status");
+    }
+
+    // ── Issue #4722: an in-process responder answers inside the ask window ──
+    // The request must reach the responder while the ask is pending, the
+    // delivered message must carry a usable correlation handle, and the
+    // reply must resolve instead of unknown-corr / timeout.
+    {
+        std::println("\n=== Issue #4722: in-process responder answers the ask ===");
+        // AC1 runs on the production face: that is where agent_reply reads the
+        // replier identity (#4061 gate) and where the CLI thread backend used
+        // to answer 0 (no Fiber object).
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        {
+            Scheduler sched(1);
+            SchedRunner runner(sched);
+            AgentSpec spec;
+            spec.name = "fiber-4722";
+            spec.attach_mailbox = true;
+            spec.mailbox_high_water = 16;
+            spec.keepalive_interval_ms = 0;
+            spec.mutation_boundary = false;
+            spec.body = [] {};
+            auto h = spawn_agent_with_mailbox(sched, spec);
+            CHECK(h.ok && h.mailbox, "4722 AC1: responder target spawned");
+
+            std::atomic<bool> ask_done{false};
+            std::atomic<bool> answered{false};
+            std::atomic<std::uint64_t> seen_corr{0};
+            std::atomic<bool> seen_ask_kind{false};
+            AskResult r{};
+            // Responder is a plain fiber that consumes the agent's mailbox — the
+            // :attach-mailbox / shared-mailbox server shape from the repro, not
+            // the agent body.
+            sched.spawn([&] {
+                for (int i = 0; i < 2000000 && !ask_done.load(std::memory_order_acquire); ++i) {
+                    auto rec = aura::orch::agent_recv_result(h, /*wait=*/false, /*timeout_ms=*/0);
+                    if (rec.ok && rec.message) {
+                        seen_corr.store(rec.message->correlation_id, std::memory_order_release);
+                        seen_ask_kind.store(rec.message->kind == MailKind::Ask,
+                                            std::memory_order_release);
+                        auto rr = agent_reply(rec.message->correlation_id, "pong");
+                        answered.store(rr.ok, std::memory_order_release);
+                        return;
+                    }
+                    aura::serve::Fiber::yield();
+                }
+            });
+            sched.spawn([&] {
+                r = agent_ask(h, "ping", /*timeout_ms=*/5000);
+                ask_done.store(true, std::memory_order_release);
+            });
+            for (int i = 0; i < 3000 && !ask_done.load(std::memory_order_acquire); ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+
+            std::println("  fiber-responder status={} ok={} payload='{}' corr={} answered={}",
+                         r.status, r.ok, r.payload, r.correlation_id, answered.load());
+            CHECK(ask_done.load(std::memory_order_acquire), "4722 AC1: ask returns (no hang)");
+            CHECK(r.ok && r.status == "ok", "4722 AC1: responder reply resolves the ask");
+            CHECK(r.payload == "pong", "4722 AC1: ask carries the reply payload");
+            CHECK(answered.load(std::memory_order_acquire), "4722 AC1: agent_reply ok");
+            CHECK(seen_corr.load(std::memory_order_acquire) == r.correlation_id,
+                  "4722 AC1: delivered request carries the ask correlation id");
+            CHECK(seen_ask_kind.load(std::memory_order_acquire),
+                  "4722 AC1: delivered request is MailKind::Ask");
+            cleanup_handle(h);
+        }
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+
+        // AC2: the Aura face end-to-end — a responder answers from the
+        // correlation-id/kind keys (no payload-prefix parse) and the asker has
+        // the reply pong in the same process. Runs the CLI thread backend.
+        {
+            auto code = cs.eval(R"(
+                (orch:spawn-agent "aura-4722" (lambda () 0) :attach-mailbox #t)
+                (define srv-4722
+                  (fiber:spawn
+                    (lambda ()
+                      (let loop ((n 0))
+                        (let ((m (orch:agent-recv "aura-4722" :wait #f)))
+                          (if (hash-ref m "ok")
+                              (if (equal? (hash-ref m "kind") "ask")
+                                  (orch:agent-reply (hash-ref m "correlation-id") "pong")
+                                  #f)
+                              (if (< n 400000)
+                                  (begin (fiber:yield) (loop (+ n 1)))
+                                  #f)))))))
+                (define ask-4722 (orch:agent-ask "aura-4722" "ping" :timeout-ms 4000))
+                (define code-4722
+                  (if (and (hash-ref ask-4722 "ok")
+                           (string=? (hash-ref ask-4722 "payload") "pong"))
+                      1 0))
+                (fiber:join srv-4722)
+                code-4722
+            )");
+            const auto code_v = code && is_int(*code) ? as_int(*code) : -1;
+            CHECK(code_v == 1,
+                  std::format("4722 AC2: Aura responder answers via correlation-id/kind (code {})",
+                              code_v));
+        }
+
+        // AC3: source-cite — the wait yields the CLI body/eval locks, the
+        // per-ask mailbox wakes a parked asker, and the reply gate accepts the
+        // fiber that consumed the ask. No new test_issue_4722.cpp.
+        {
+            const auto mb_src = read_file("src/serve/multi_fiber_mailbox.h");
+            CHECK(mb_src.find("Issue #4722") != std::string::npos, "4722 AC3: mailbox cite");
+            CHECK(mb_src.find("DensenessBodyLockWaitGuard unblock_body_for_wait") !=
+                      std::string::npos,
+                  "4722 AC3: host-thread wait drops the denseness body lock");
+            const auto spawn_src = read_file("src/orch/agent_spawn.h");
+            CHECK(spawn_src.find("Issue #4722") != std::string::npos, "4722 AC3: ask cite");
+            CHECK(spawn_src.find("reply_attach{reply_mb.get(), asker_fiber}") != std::string::npos,
+                  "4722 AC3: per-ask mailbox attaches the asker");
+            CHECK(spawn_src.find("note_ask_delivered_to") != std::string::npos,
+                  "4722 AC3: delivery receipt recorded on the pop");
+            CHECK(spawn_src.find("route.delivered_to") != std::string::npos,
+                  "4722 AC3: reply gate accepts the receipt holder");
+            const auto prim_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            CHECK(prim_src.find("mail_kind_name") != std::string::npos,
+                  "4722 AC3: recv hash stamps kind");
+            CHECK(prim_src.find("stays dual-written") != std::string::npos,
+                  "4722 AC3: legacy ask:<id>: prefix documented as compatibility");
+            CHECK(read_file("tests/orch/test_issue_4722.cpp").empty(),
+                  "4722 AC3: no test_issue_4722.cpp");
+            CHECK(true, "4722 AC3: source-cite complete");
+        }
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

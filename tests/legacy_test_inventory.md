@@ -1892,7 +1892,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — Issue #2939 — dep-closure reverify (BFS over var_to_constraints_) to
 - `tests/compiler/test_adt_exhaustiveness_production_hard.cpp` (—) [domain_suite, theme_compiler] — test_adt_exhaustiveness_production_hard.cpp -- source-cite AC for Issue #3559
 - `tests/compiler/test_adt_hard_gate_exhaustiveness.cpp` (—) [domain_suite, theme_compiler] — AC1: Full hard-gate + non-exhaustive inject → adt_ok=false; suite fails;
-- `tests/orch/test_agent_ask.cpp` (—) [domain_suite, theme_orch] — AC1 (#2231/#2401): Target uses agent_reply → agent_ask returns ok +
+- `tests/orch/test_agent_ask.cpp` (—) [large, domain_suite, theme_orch] — AC1 (#2231/#2401): Target uses agent_reply → agent_ask returns ok +
 - `tests/compiler/test_aot_stats_null_metrics.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1835/#1843 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_ast_ops_stats_workspace_lock.cpp` (—) [domain_suite, theme_core] — Issue #1729/#1851/#1852 (#1978 renamed): issue# moved from filename to header.
 - `tests/serve/test_atomic_mark_bitvector.cpp` (—) [domain_suite, theme_serve] — AC1: multi-thread concurrent set same/adjacent bits → all set (no lost update)

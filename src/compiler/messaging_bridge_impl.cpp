@@ -27,6 +27,8 @@ aura::messaging::DensenessBodyRelockFn aura::messaging::g_denseness_body_relock_
     nullptr;
 aura::messaging::CliMainBodyLockAcquireFn aura::messaging::g_cli_main_body_lock_acquire = nullptr;
 aura::messaging::CliMainBodyLockReleaseFn aura::messaging::g_cli_main_body_lock_release = nullptr;
+// Issue #4722: CLI thread-backend body identity (0 outside a body).
+aura::messaging::CliBodyFiberIdFn aura::messaging::g_cli_body_fiber_id = nullptr;
 // Issue #4711: eval-mutex release across a blocking wait (single lock order
 // body mutex -> eval mutex). Wired by CompilerService::eval.
 aura::messaging::EvalMutexWaitReleaseFn aura::messaging::g_eval_mutex_wait_release = nullptr;

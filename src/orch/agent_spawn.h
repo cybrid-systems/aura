@@ -5086,6 +5086,26 @@ struct RecvResult {
     std::optional<serve::mf_mailbox::MailMessage> message;
 };
 
+// Issue #4722: the identity of the fiber that is consuming / replying on
+// THIS thread. Scheduler fibers answer through g_current_fiber; the CLI
+// thread backend (fiber:spawn without a scheduler, --load oneshot) has no
+// Fiber object and answers through the messaging bridge's body-id hook.
+// 0 = host thread / outside any fiber body (no identity to compare).
+[[nodiscard]] inline std::uint64_t orch_current_fiber_id() noexcept {
+    if (serve::g_current_fiber != nullptr)
+        return serve::g_current_fiber->id();
+    if (aura::messaging::g_cli_body_fiber_id != nullptr) {
+        const auto id = aura::messaging::g_cli_body_fiber_id();
+        if (id > 0)
+            return static_cast<std::uint64_t>(id);
+    }
+    return 0;
+}
+
+// Issue #4722: delivery receipt writer (defined with the pending-ask table
+// below, declared here because agent_recv_result pops before that table).
+inline void note_ask_delivered_to(std::uint64_t corr_id, std::uint64_t fiber_id) noexcept;
+
 // Blocking/non-blocking recv on agent mailbox — typed status SSOT.
 // Issue #1881: bump empty/timeout path (recv_empty) as well as success.
 [[nodiscard]] inline RecvResult agent_recv_result(AgentHandle& h, bool wait = true,
@@ -5149,6 +5169,12 @@ struct RecvResult {
             g_orch_module_stats.agents_recv.fetch_add(1, std::memory_order_relaxed);
             out.ok = true;
             out.status = "ok";
+            // Issue #4722: record who consumed an ask (delivery receipt) so the
+            // #4061 production reply gate can accept that exact responder
+            // without widening to "any fiber that knows the corr". A forger
+            // that never popped the ask leaves delivered_to == 0.
+            if (m->kind == serve::mf_mailbox::MailKind::Ask && m->correlation_id != 0)
+                note_ask_delivered_to(m->correlation_id, orch_current_fiber_id());
             out.message = std::move(m);
         } else {
             // Defensive #3565: keep the message for the Aura flag path;
@@ -5230,6 +5256,14 @@ struct AskEnvelope {
 struct PendingAskRoute {
     std::shared_ptr<serve::mf_mailbox::MultiFiberMailbox> mailbox;
     std::uint64_t target_fiber = 0;
+    // Issue #4722: fiber that actually consumed the ask from the target's
+    // mailbox (delivery receipt). The #4061 production gate compares the
+    // REPLIER against target_fiber only, which refuses a legitimate
+    // in-process responder that is not the agent body but did receive the
+    // request (the :attach-mailbox / shared-mailbox responder pattern). The
+    // receipt is written by agent_recv_result on the pop, so a forger that
+    // never received the ask still has delivered_to == 0 and stays refused.
+    std::uint64_t delivered_to = 0;
     PendingAskRoute() = default;
     PendingAskRoute(std::shared_ptr<serve::mf_mailbox::MultiFiberMailbox> mb,
                     std::uint64_t fiber = 0)
@@ -5238,6 +5272,7 @@ struct PendingAskRoute {
     PendingAskRoute& operator=(std::shared_ptr<serve::mf_mailbox::MultiFiberMailbox> mb) {
         mailbox = std::move(mb);
         target_fiber = 0;
+        delivered_to = 0;
         return *this;
     }
 };
@@ -5247,6 +5282,19 @@ struct PendingAskRoute {
 // NOT AgentRegistry / global agent map (#1966).
 inline std::mutex g_pending_ask_mu;
 inline std::unordered_map<std::uint64_t, PendingAskRoute> g_pending_asks;
+
+// Issue #4722: record the fiber that popped the ask from the target mailbox.
+// Best-effort by design (the asker may already have timed out and erased the
+// row): a missing row is not an error, and a later duplicate pop of the same
+// corr just overwrites with the same consumer.
+inline void note_ask_delivered_to(std::uint64_t corr_id, std::uint64_t fiber_id) noexcept {
+    if (corr_id == 0 || fiber_id == 0)
+        return;
+    std::lock_guard<std::mutex> lock(g_pending_ask_mu);
+    auto it = g_pending_asks.find(corr_id);
+    if (it != g_pending_asks.end())
+        it->second.delivered_to = fiber_id;
+}
 
 [[nodiscard]] inline std::string format_ask_prefix(std::uint64_t corr_id) {
     std::string p;
@@ -5375,13 +5423,21 @@ agent_reply(std::uint64_t corr_id, std::string_view body,
         }
         // Issue #4061: production only. Soft / Off does not read the
         // fiber and still delivers by corr. Mismatch leaves the row.
+        // Issue #4722: the target is not the only legitimate replier — an
+        // in-process responder fiber (shared / :attach-mailbox consumer) that
+        // RECEIVED this ask is the requester's chosen server. Accept the
+        // receipt holder too; delivered_to is written by agent_recv_result on
+        // the actual pop, so a fiber that never received the ask (and the
+        // #4061 forged-reply fixture) still has delivered_to == 0 and fails.
+        // Identity goes through orch_current_fiber_id() so the CLI thread
+        // backend (no Fiber object) names its body instead of reporting 0.
         if (aura::compiler::typed_audit::production_defaults_active()) {
-            std::uint64_t replier = 0;
-            if (serve::g_current_fiber)
-                replier = serve::g_current_fiber->id();
-            else if (from && from->ok)
+            std::uint64_t replier = orch_current_fiber_id();
+            if (replier == 0 && from && from->ok)
                 replier = from->id;
-            if (replier == 0 || replier != it->second.target_fiber) {
+            const auto route = it->second;
+            if (replier == 0 || (replier != route.target_fiber &&
+                                 (route.delivered_to == 0 || replier != route.delivered_to))) {
                 out.status = "reply-not-target";
                 g_orch_module_stats.agent_reply_fail_total.fetch_add(1, std::memory_order_relaxed);
                 return out;
@@ -5518,6 +5574,33 @@ agent_reply(AgentHandle& self, std::uint64_t corr_id, std::string_view body,
     out.correlation_id = corr_id;
     // Fresh reply mailbox so unrelated traffic doesn't interleave.
     auto reply_mb = std::make_shared<serve::mf_mailbox::MultiFiberMailbox>(/*high_water=*/16);
+    // Issue #4722: attach the asker for the ask window only. A per-ask
+    // mailbox has no attacher, so MultiFiberMailbox::push's
+    // notify_all_unlocked walk found nobody to wake: a reply landing while
+    // agent_ask was parked stayed invisible until the park deadline, and the
+    // deadline check (now >= deadline) then reported "timeout" with the
+    // reply already queued — after which the responder's agent_reply hit
+    // "unknown-corr" because the pending row died with the ask. Attach makes
+    // push write the asker's eventfd + mark it Ready, so the IO thread
+    // re-enqueues it and the very next recv pops the reply. Detach on every
+    // exit path (RAII) restores the pre-ask fiber↔mailbox binding.
+    auto* asker_fiber = serve::g_current_fiber;
+    struct AskReplyAttach {
+        serve::mf_mailbox::MultiFiberMailbox* mb = nullptr;
+        serve::Fiber* fiber = nullptr;
+        AskReplyAttach(serve::mf_mailbox::MultiFiberMailbox* m, serve::Fiber* f)
+            : mb(m)
+            , fiber(f) {
+            if (mb != nullptr && fiber != nullptr)
+                mb->attach(fiber);
+        }
+        ~AskReplyAttach() {
+            if (mb != nullptr && fiber != nullptr)
+                mb->detach(fiber);
+        }
+        AskReplyAttach(const AskReplyAttach&) = delete;
+        AskReplyAttach& operator=(const AskReplyAttach&) = delete;
+    } reply_attach{reply_mb.get(), asker_fiber};
     // Issue #4384: the ask target is the replier. Stamp its scope so a
     // later reply push notes that gauge. Empty stays unset (production
     // push then refuses the process bucket). Explicit "-" is copied.
@@ -5548,7 +5631,6 @@ agent_reply(AgentHandle& self, std::uint64_t corr_id, std::string_view body,
     // have no steal — no registration without a current fiber. Depth-
     // counted with the recv-park registration; this ask-window entry is
     // what keeps the reply mailbox visible between park/resume cycles.
-    auto* asker_fiber = serve::g_current_fiber;
     struct ParkedReplyGuard {
         std::uint64_t fid = 0;
         serve::mf_mailbox::MultiFiberMailbox* mb = nullptr;

@@ -1,0 +1,84 @@
+{
+  "issue": 4722,
+  "title": "Issue #4722: orch:agent-ask can be answered by an in-process responder — a blocking mailbox wait yields the CLI denseness body/eval locks so the responder runs inside the ask window, the per-ask mailbox attaches the asker so a reply push wakes the park instead of waiting out the deadline, the delivered message exposes correlation-id + kind (the ask:<id>: prefix stays dual-written for #2231/#2401 compatibility), and the #4061 production reply gate accepts the fiber that actually consumed the ask (delivery receipt) without accepting a forger.",
+  "ok": "OK: Issue #4722 in-process agent-ask - receiver runs during the ask window, correlation-id/kind on orch:agent-recv, reply from the delivery-receipt holder resolves the ask, timeout/unknown-corr/reply-not-target gone, no test_issue_4722.cpp",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/multi_fiber_mailbox.h",
+      "contains": [
+        "Issue #4722",
+        "DensenessBodyLockWaitGuard unblock_body_for_wait",
+        "compiler/messaging_bridge.h"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "Issue #4722",
+        "AskReplyAttach",
+        "reply_attach{reply_mb.get(), asker_fiber}",
+        "note_ask_delivered_to",
+        "delivered_to",
+        "orch_current_fiber_id",
+        "route.delivered_to"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/messaging_bridge.h",
+      "contains": [
+        "Issue #4722",
+        "CliBodyFiberIdFn",
+        "g_cli_body_fiber_id"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/messaging_bridge_impl.cpp",
+      "contains": [
+        "Issue #4722",
+        "g_cli_body_fiber_id"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_messaging.cpp",
+      "contains": [
+        "Issue #4722",
+        "g_cli_body_fiber_id = &current_fiber_body_id"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "Issue #4722",
+        "correlation-id",
+        "mail_kind_name",
+        "stays dual-written"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/orch/test_agent_ask.cpp",
+      "contains": [
+        "Issue #4722: in-process responder answers the ask",
+        "4722 AC1: responder reply resolves the ask",
+        "4722 AC1: delivered request carries the ask correlation id",
+        "4722 AC2: Aura responder answers via correlation-id/kind",
+        "4722 AC3: reply gate accepts the receipt holder",
+        "4722 AC3: no test_issue_4722.cpp"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/orch/test_issue_4722.cpp",
+        "tests/issues/test_issue_4722.cpp",
+        "docs/design/4722-in-process-agent-ask.md"
+      ]
+    }
+  ]
+}
