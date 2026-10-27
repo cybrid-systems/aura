@@ -5086,6 +5086,7 @@ int64_t aura_lookup_fn_by_name(const char* name, int64_t* out_local_count, int64
                                int64_t* out_env_count);
 void aura_closure_set_name(int64_t closure_id, const char* name);
 void aura_reset_runtime();
+int aura_jit_runtime_reset_suppressed_this_thread(void) noexcept;
 void aura_set_prim_dispatcher(int64_t (*fn)(int64_t, int64_t*, int32_t));
 void aura_set_hash_dispatchers(int64_t (*)(int64_t, int64_t),
                                int64_t (*)(int64_t, int64_t, int64_t),
@@ -5641,8 +5642,10 @@ struct AuraJIT::Impl {
         reg("fflush", (void*)fflush);
         reg("fputc", (void*)fputc);
 
-        // Reset runtime state for fresh session
-        aura_reset_runtime();
+        // Reset runtime state for fresh session (not from a thread that
+        // builds a private JIT next to a live program: the tier worker).
+        if (!aura_jit_runtime_reset_suppressed_this_thread())
+            aura_reset_runtime();
 
         return true;
     }
