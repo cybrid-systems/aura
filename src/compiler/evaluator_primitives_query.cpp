@@ -2547,6 +2547,23 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_int(static_cast<std::int64_t>(requests + waits + deferred));
         });
 
+    // Issue #4713: tree-walker root registry observability. The reclaim now
+    // runs while several fiber threads are alive (process-level root
+    // registry + STW safepoints), so these expose (a) how many reclaims ran
+    // and (b) how many FOREIGN fiber segments a reclaim actually marked. A
+    // non-zero cross count is the proof that the old "#2738: another thread
+    // walks, bail" path is gone rather than merely unused.
+    ObservabilityPrims::register_stats_impl(
+        "query:tw-root-reclaims", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            return make_int(static_cast<std::int64_t>(aura_tw_registry_reclaim_total()));
+        });
+    ObservabilityPrims::register_stats_impl(
+        "query:tw-root-cross-marks", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            return make_int(static_cast<std::int64_t>(aura_tw_registry_cross_marks_total()));
+        });
+
     // Issue #443: query:verify-tool-stats. Returns the
     // sum of the 3 external simulator tool-calling
     // observability counters:

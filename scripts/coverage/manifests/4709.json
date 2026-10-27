@@ -17,9 +17,9 @@
       "ac": "AC2",
       "path": "src/compiler/evaluator_eval_flat.cpp",
       "contains": [
-        "Issue #4706",
+        "Issue #4713",
+        "g_tw_registry",
         "collect_tw_root_segment(set->frames",
-        "g_tw_parked",
         "aura_tw_roots_detach"
       ]
     },

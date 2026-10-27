@@ -313,8 +313,20 @@ __attribute__((weak, used)) void aura_fiber_release_pending_body_latest(void* ev
 // evaluator_eval_flat.cpp). Without the evaluator module there are no
 // walker roots, so detach reports an empty segment and attach/free are
 // no-ops; the fiber path then behaves exactly as before.
+// Issue #4713: a fiber's root segment lives in the evaluator's process
+// registry; without the evaluator there is nothing to register.
+__attribute__((weak, used)) void* aura_tw_roots_new() noexcept {
+    return nullptr;
+}
 __attribute__((weak, used)) void* aura_tw_roots_detach() noexcept {
     return nullptr;
+}
+__attribute__((weak, used)) void aura_tw_safepoint() noexcept {}
+__attribute__((weak, used)) std::uint64_t aura_tw_registry_reclaim_total() noexcept {
+    return 0;
+}
+__attribute__((weak, used)) std::uint64_t aura_tw_registry_cross_marks_total() noexcept {
+    return 0;
 }
 __attribute__((weak, used)) void aura_tw_roots_attach(void* /*state*/) noexcept {}
 __attribute__((weak, used)) void aura_tw_roots_free(void* /*state*/) noexcept {}

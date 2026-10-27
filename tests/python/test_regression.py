@@ -4692,6 +4692,196 @@ def test_serve_async_two_fiber_yield_reclaim_4706():
     )
 
 
+def test_fiber_gc_root_registry_4713():
+    """Issue #4713: process-level fiber GC root registry + STW safepoints.
+
+    A fiber's tree-walker roots (env frames / pinned results / pinned
+    vectors / pinned spans) lived in thread_locals, and #4706 could only
+    carry a PARKED fiber's segment across a context switch. So the reclaim
+    kept the #2738 early return: as soon as two threads walked at once it
+    returned before marking anything, and a multi-fiber churn grew the file
+    heap until the joiners drained it.
+
+    Now every fiber owns a root segment for its whole life: created at
+    spawn (aura_tw_roots_new), registered process-wide, dropped when the
+    fiber finishes (aura_tw_roots_free). The thread_locals only cache a
+    pointer to the segment the thread is running, swapped at attach/detach,
+    so a push/pop pair can never straddle two threads. A collector requests
+    a stop-the-world epoch, parks running bodies at a safepoint (walker
+    opcode back-edge / yield / resume handshake), marks every registered
+    segment, sweeps, then releases; a body that does not park inside the
+    budget only costs a skipped reclaim.
+
+    Rows:
+      (a) 32 fibers churn cons cells (CLI backend) and every joined hash
+          still carries its own id -- no segment was swept from under a
+          live body -- and a reclaim ran across the churn;
+      (b) a real --serve-async session with 4 worker threads runs 8 fibers
+          concurrently and (stats:get "query:tw-root-cross-marks") > 0, so a
+          reclaim really did mark a FOREIGN, RUNNING fiber segment. The old
+          multi-walker-thread guard could never produce a non-zero count;
+      (c) the 32-fiber churn's peak RSS stays within 4x the single-fiber
+          churn above the idle floor, which fails when the other fibers'
+          live sets are invisible to the sweeper.
+
+    Known base flakiness (NOT this issue): under --serve-async, sessions
+    with >=16 fibers can hang with every worker idle after the spawn wave,
+    and stdin-EOF session exit is unreliable; both reproduce on the
+    pre-#4713 parent binary (235bcfa6b), so the multi-worker arm stays at 8
+    fibers and tolerates a session that has to be stopped after its rows
+    were produced. The 32-fiber / RSS rows run on the CLI backend, which
+    exits deterministically.
+    """
+    iters = 300
+
+    def defs():
+        return (
+            "(define (mk-cells n) (let loop ((i 0) (a (list))) "
+            "(if (< i n) (loop (+ i 1) (cons i a)) a)))\n"
+            "(define (churn id) (let loop ((j 0) (h (make-hash))) "
+            f"(if (< j {iters}) (begin (mk-cells 32) "
+            '(hash-set! h "id" id) (loop (+ j 1) h)) h)))\n'
+            "(define (spawn-n n) (let loop ((i 0) (a (list))) "
+            "(if (< i n) (loop (+ i 1) "
+            "(cons (fiber:spawn (lambda () (churn i))) a)) a)))\n"
+        )
+
+    def display_rows(out):
+        disps = []
+        for ln in (out or "").splitlines():
+            ln = ln.strip()
+            if not ln:
+                continue
+            if ln.startswith("{"):
+                try:
+                    obj = json.loads(ln)
+                except json.JSONDecodeError:
+                    continue
+                if obj.get("display"):
+                    disps.append(obj["display"].strip())
+            else:
+                disps.append(ln)
+        return disps
+
+    def peak_kb():
+        return resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+
+    env = os.environ.copy()
+    env["AURA_TIER_JIT"] = "0"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env["AURA_SANDBOX"] = "off"
+    env.pop("AURA_SOFT", None)
+    env.pop("AURA_FORCE_IR", None)
+
+    def session(nfib, timeout=60):
+        reqs = [
+            defs(),
+            f"(define fs (spawn-n {nfib}))",
+            "(define hs (map fiber:join fs))",
+            '(display (map (lambda (h) (hash-ref h "id" -1)) hs)) (newline)',
+            '(display (list (stats:get "query:tw-root-reclaims") (stats:get "query:tw-root-cross-marks"))) (newline)',
+        ]
+        payload = "".join(json.dumps({"cmd": "exec", "code": c}) + "\n" for c in reqs)
+        fd, path = tempfile.mkstemp(suffix=".req", prefix="aura-4713-")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(payload)
+            with open(path, encoding="utf-8") as fh:
+                try:
+                    r = subprocess.run(
+                        [AURA, "--serve-async", "--worker-threads=4"],
+                        stdin=fh,
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout,
+                        env=env,
+                        cwd=str(REPO),
+                    )
+                    return r.returncode, r.stdout or "", r.stderr or "", peak_kb()
+                except subprocess.TimeoutExpired as e:
+                    # Base flakiness: the session answered but did not exit
+                    # on stdin EOF. The rows we need are already produced.
+                    out = e.stdout or ""
+                    if isinstance(out, bytes):
+                        out = out.decode("utf-8", "replace")
+                    return -9, out, "", peak_kb()
+        finally:
+            os.unlink(path)
+
+    def file_run(nfib):
+        prog = (
+            defs()
+            + f"(define fs (spawn-n {nfib}))\n"
+            + '(display (map (lambda (h) (hash-ref h "id" -1)) (map fiber:join fs))) (newline)\n'
+            + '(display (list (stats:get "query:tw-root-reclaims") '
+            + '(stats:get "query:tw-root-cross-marks"))) (newline)\n'
+        )
+        fd, path = tempfile.mkstemp(suffix=".aura", prefix="aura-4713-")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(prog)
+            r = subprocess.run([AURA, path], capture_output=True, text=True, timeout=180, env=env, cwd=str(REPO))
+            return r.returncode, r.stdout or "", r.stderr or "", peak_kb()
+        finally:
+            os.unlink(path)
+
+    # Source rows: the registry and the safepoint must exist, and the #2738
+    # multi-walker-thread bail-out must be gone (the whole point of the
+    # registry: a reclaim now runs with several fibers running).
+    flat = (REPO / "src" / "compiler" / "evaluator_eval_flat.cpp").read_text(encoding="utf-8")
+    assert "g_tw_frame_threads > 1" not in flat, "#4713: the #2738 >1-walker-thread reclaim bail-out is back"
+    for needle in (
+        "Issue #4713",
+        "struct TwRootSet",
+        "g_tw_registry",
+        "parked_epoch",
+        "tw_stw_safepoint",
+        "tw_stw_begin",
+    ):
+        assert needle in flat, f"#4713: {needle!r} missing from the walker root registry"
+
+    want1 = "(0)"
+    rc1, out1, err1, rss1 = file_run(1)
+    assert rc1 == 0, f"#4713 one-fiber churn rc={rc1} err={err1[-400:]!r}"
+    r1 = display_rows(out1)
+    assert r1 and r1[0] == want1, f"#4713 one-fiber ids corrupted: {r1[:1]!r}"
+
+    want32 = "(" + " ".join(str(i) for i in reversed(range(32))) + ")"
+    rc32, out32, err32, rss32 = file_run(32)
+    assert rc32 == 0, f"#4713 32-fiber churn rc={rc32} err={err32[-400:]!r}"
+    r32 = display_rows(out32)
+    assert len(r32) >= 2, f"#4713 short stdout {out32!r} err={err32[-400:]!r}"
+    assert r32[0] == want32, f"#4713 joined hashes corrupted: {r32[0]!r} != {want32!r}"
+    stats32 = [int(x) for x in re.findall(r"-?\d+", r32[1])]
+    assert len(stats32) == 2, f"#4713 stats row unparsed: {r32[1]!r}"
+    assert stats32[0] > 0, f"#4713 no reclaim ran across the 32-fiber churn ({r32[1]!r})"
+    single = max(rss1, 1)
+    bound = 4 * single + 200_000
+    assert rss32 <= bound, f"#4713 32-fiber churn RSS not bounded: peak={rss32}KB bound={bound}KB (single={rss1}KB)"
+
+    want8 = "(" + " ".join(str(i) for i in reversed(range(8))) + ")"
+    _rc8, out8, err8, _rss8 = session(8)
+    for banner in ("si_addr", "maybe_reclaim_tw_unreachable", "SIGSEGV", "Segmentation fault"):
+        assert banner not in err8, f"#4713 reclaim crash banner {banner!r}: {err8[-600:]!r}"
+    r8 = display_rows(out8)
+    assert len(r8) >= 2, f"#4713 short session stdout {out8!r} err={err8[-400:]!r}"
+    assert r8[0] == want8, f"#4713 session joined hashes corrupted: {r8[0]!r} != {want8!r}"
+    stats8 = [int(x) for x in re.findall(r"-?\d+", r8[1])]
+    assert len(stats8) == 2, f"#4713 session stats row unparsed: {r8[1]!r}"
+    reclaims, cross = stats8
+    assert reclaims > 0, f"#4713 no tree-walker reclaim ran in the 8-fiber session ({r8[1]!r})"
+    assert cross > 0, (
+        f"#4713 no FOREIGN fiber root segment was marked by a reclaim "
+        f"({r8[1]!r}) -- the #2738 multi-walker-thread bail-out is back"
+    )
+    print(
+        "  OK test_fiber_gc_root_registry_4713 "
+        f"(32 fibers intact, reclaims={stats32[0]}, rss single={rss1}KB "
+        f"32-fiber={rss32}KB bound={bound}KB; serve 8 fibers reclaims={reclaims} "
+        f"cross-marks={cross})"
+    )
+
+
 def test_fiber_cancel_4708():
     """Issue #4708: (fiber:cancel f) raises at the fiber's next safepoint.
 
@@ -4939,8 +5129,8 @@ def test_fiber_hash_key_survives_rebind_4709():
     assert "collect_tw_root_segment(set->frames" in flat, (
         "#4709: maybe_reclaim_tw_unreachable no longer marks parked fiber segments"
     )
-    assert "g_tw_parked" in flat and "aura_tw_roots_detach" in flat, (
-        "#4709: the fiber root segment no longer detaches/parks at yield"
+    assert "g_tw_registry" in flat and "aura_tw_roots_detach" in flat, (
+        "#4709: the fiber root segment is no longer registered/detached"
     )
     heap = (REPO / "src/compiler/locked_string_heap.hh").read_text(encoding="utf-8")
     assert "release_unmarked" in heap and "seen[i]" in heap, (
@@ -5102,6 +5292,7 @@ for tf in [
     test_fiber_hash_key_survives_rebind_4709,
     test_fiber_sibling_define_dispatch_4712,
     test_serve_async_two_fiber_yield_reclaim_4706,
+    test_fiber_gc_root_registry_4713,
 ]:
     try:
         tf()
