@@ -153,7 +153,46 @@ using CliMainBodyLockReleaseFn = void (*)(void*);
 extern CliMainBodyLockAcquireFn g_cli_main_body_lock_acquire;
 extern CliMainBodyLockReleaseFn g_cli_main_body_lock_release;
 
+// Issue #4711: single lock order — body mutex (M0) then eval mutex (M1).
+//
+// CompilerService::eval holds M0 (CliMainEvalBodyLock, #4356/#4674) and then
+// M1 (eval_mutex_, #1431). Every blocking wait that drops M0 across the wait
+// (fiber:join, read-line, http-post, channel park) re-takes it on resume, and
+// that resume runs with M1 still held -> an M1 -> M0 acquisition against
+// eval()'s M0 -> M1 (TSan lock-order-inversion) and a real deadlock the
+// moment a fiber body holds M0 and enters eval (eval-current / the JIT
+// recompile hook) while the joiner re-takes M0 under M1.
+//
+// The wait therefore releases M1 too and re-acquires it AFTER M0 (the wait
+// guard owns M0 in its destructor body, so the eval-mutex guard must be
+// declared FIRST — members are destroyed last-to-first). One order holds on
+// every path: M0 -> M1. Release order across the wait is the reverse
+// (M1, then M0).
+using EvalMutexWaitReleaseFn = void* (*)();
+using EvalMutexWaitReacquireFn = void (*)(void*);
+extern EvalMutexWaitReleaseFn g_eval_mutex_wait_release;
+extern EvalMutexWaitReacquireFn g_eval_mutex_wait_reacquire;
+
+// Issue #4711: drop the eval mutex for a blocking wait (#4711 above).
+// Null hook (no eval in flight on this thread) = no-op.
+struct EvalMutexWaitLockGuard {
+    void* token = nullptr;
+    EvalMutexWaitLockGuard() {
+        if (g_eval_mutex_wait_release)
+            token = g_eval_mutex_wait_release();
+    }
+    ~EvalMutexWaitLockGuard() {
+        if (token && g_eval_mutex_wait_reacquire)
+            g_eval_mutex_wait_reacquire(token);
+    }
+    EvalMutexWaitLockGuard(const EvalMutexWaitLockGuard&) = delete;
+    EvalMutexWaitLockGuard& operator=(const EvalMutexWaitLockGuard&) = delete;
+};
+
 struct DensenessBodyLockWaitGuard {
+    // Issue #4711: declared before the body lock fields so it is destroyed
+    // LAST — the eval mutex (M1) comes back after the body mutex (M0).
+    EvalMutexWaitLockGuard eval_lock;
     void* lock = nullptr; // opaque std::unique_lock<std::mutex>*
     bool unlocked = false;
     DensenessBodyLockWaitGuard() {

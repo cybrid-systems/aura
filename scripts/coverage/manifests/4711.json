@@ -1,0 +1,64 @@
+{
+  "issue": 4711,
+  "title": "Issue #4711: TSan lock-order inversion between the eval mutex (M1) and the CLI body lock (M0) re-acquired in ~CliBodyLockJoinGuard.",
+  "ok": "OK: Issue #4711 single lock order body mutex -> eval mutex - blocking waits drop the eval mutex and re-take it after the body mutex (no M1 -> M0 edge)",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "Issue #4711: eval-mutex (M1) release across a blocking wait",
+        "std::unique_lock<std::recursive_mutex> lock(eval_mutex_)",
+        "EvalMutexWaitPublishScope eval_mutex_wait_scope(eval_mutex_)",
+        "eval_mutex_wait_release_impl",
+        "eval_mutex_wait_reacquire_impl",
+        "wire_eval_mutex_wait_hooks"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/messaging_bridge.h",
+      "contains": [
+        "EvalMutexWaitLockGuard",
+        "g_eval_mutex_wait_release",
+        "g_eval_mutex_wait_reacquire",
+        "destroyed"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/messaging_bridge_impl.cpp",
+      "contains": [
+        "g_eval_mutex_wait_release = nullptr",
+        "g_eval_mutex_wait_reacquire = nullptr"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_messaging.cpp",
+      "contains": [
+        "struct CliBodyLockJoinGuard {",
+        "struct CliBodyYieldHandoff {",
+        "EvalMutexWaitLockGuard eval_wait_lock;",
+        "Issue #4711"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/python/test_regression.py",
+      "contains": [
+        "def test_fiber_lock_order_inversion_4711",
+        "#4711: expected 4 joined fibers",
+        "#4711: eval() must take M0, then M1, then publish M1 for the wait hooks",
+        "test_fiber_lock_order_inversion_4711,"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "-Wno-error=tsan"
+      ]
+    }
+  ]
+}
