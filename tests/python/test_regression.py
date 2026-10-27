@@ -4631,6 +4631,67 @@ def test_fiber_lock_order_inversion_4711():
     assert -1 < e < b, "#4711: DensenessBodyLockWaitGuard must drop the eval mutex first"
 
 
+def test_serve_async_two_fiber_yield_reclaim_4706():
+    """Issue #4706: serve-async SIGSEGV with two fibers yielding while allocating.
+
+    The tree-walker root stacks (g_tw_frames / g_tw_results / g_tw_vecs /
+    g_tw_spans) are thread_local. A serve fiber is a ucontext that can be
+    resumed on a DIFFERENT worker thread than the one it yielded on, and a
+    fiber yields with live walker frames (the fiber body's eval_flat_body
+    frame plus the enclosing let frames — measured: 2 frames detached at
+    every yield of the issue's own program). Pre-fix those frames stayed in
+    the yielding thread's TLS: the pops then ran on the resuming thread
+    (sliding somebody else's frame off), the yielding thread kept a
+    const Env** into a fiber stack that died with the fiber, and the next
+    reclaim there dereferenced it — SIGSEGV in
+    Evaluator::maybe_reclaim_tw_unreachable (si_addr = the stale pointer).
+    The CLI thread backend never moves a fiber, which is why it was fine.
+
+    Fiber::yield now detaches the running fiber's root segment into the
+    fiber and Fiber::resume attaches it on whichever worker runs it next,
+    with the parked segment registered process-wide so another thread's
+    reclaim still marks it.
+
+    This runs the issue's own program end to end through one
+    `aura --serve-async` session (define, then the two-fiber join) and
+    asserts the expected (50 50) result, a clean exit, and no crash
+    banner. Any regression of the reclaim path shows up here as a
+    signal death or a missing result line.
+    """
+    define = (
+        '(define (wf k) (let l ((t 0)) (if (< t k) (begin (string-split "a b c" " ") (fiber:yield) (l (+ t 1))) t)))'
+    )
+    let_form = "(list (fiber:join (fiber:spawn (lambda () (wf 50)))) (fiber:join (fiber:spawn (lambda () (wf 50)))))"
+    # Two requests to ONE session, exactly as the issue reports. Closing
+    # stdin after the second line ends the session cleanly (rc 0).
+    requests = json.dumps({"cmd": "exec", "code": define}) + "\n" + json.dumps({"cmd": "exec", "code": let_form}) + "\n"
+    env = os.environ.copy()
+    env["AURA_TIER_JIT"] = "0"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env["AURA_SANDBOX"] = "off"
+    env.pop("AURA_SOFT", None)
+    # Multi-worker so fibers can genuinely be resumed by another worker
+    # (the Soft default auto-pins to one); the issue's crash needs the
+    # cross-thread resume or a same-thread pop/skip mismatch.
+    r = subprocess.run(
+        [AURA, "--serve-async", "--worker-threads=2"],
+        input=requests,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=env,
+    )
+    err = r.stderr or ""
+    out = r.stdout or ""
+    assert r.returncode == 0, f"serve-async died (rc={r.returncode}); stderr tail={err[-600:]!r}"
+    assert '"value":"(50 50)"' in out, f"missing (50 50) result; stdout={out[-400:]!r} stderr={err[-400:]!r}"
+    for banner in ("si_addr", "maybe_reclaim_tw_unreachable", "SIGSEGV", "Segmentation fault"):
+        assert banner not in err, f"reclaim crash banner {banner!r} in stderr: {err[-600:]!r}"
+    print(
+        "  OK test_serve_async_two_fiber_yield_reclaim_4706 (two fibers yielding while allocating: (50 50), clean exit)"
+    )
+
+
 def test_fiber_cancel_4708():
     """Issue #4708: (fiber:cancel f) raises at the fiber's next safepoint.
 
@@ -4765,6 +4826,129 @@ def test_fiber_cancel_4708():
     )
 
 
+def test_fiber_hash_key_survives_rebind_4709():
+    """Issue #4709: a hash key string must survive rebind + eval-current fibers.
+
+    Reported on main 572beb276 / 7d0a4e9f3 (JIT off and on): in the
+    aura-harness swarm (4 worker fibers, each periodically running
+    (mutate:rebind "pol-<w>" ...) + (eval-current)) a 9-char key of a
+    global stats hash ("join-void") read back with length 0, 3 or 8, or
+    vanished. It needed >=2 fibers and a rebind, and a (display) near the
+    insert hid it -- i.e. a reclaim frees the string slot under a live
+    hash entry (#4608 recycles unreachable string slots: an empty length
+    is the released slot, 3/8 a re-minted one).
+
+    The fix that makes the invariant hold on this base is #4706: a serve
+    fiber's tree-walker root segment (the fiber body's Env chain, pinned
+    arg vectors/spans) travels with the fiber across a context switch and
+    a PARKED segment stays mark-visible to a reclaim started on another
+    worker thread (g_tw_parked consulted by
+    Evaluator::maybe_reclaim_tw_unreachable). Before that, a parked
+    fiber's env -- and hence a hash only it referenced -- was invisible
+    while another thread swept, so its key slot was released and reused.
+
+    Rows: the CLI thread-backend and a real serve-async session with
+    --worker-threads=2 both run the issue's shape (4 fibers, per-fiber
+    rebind of its own policy var, eval-current, then re-read the key
+    length) and require the key to stay 9 chars with its value intact.
+    The source rows pin the parked-segment marking so this guard cannot
+    pass vacuously.
+    """
+    key = "join-void"
+    assert len(key) == 9
+    program = r"""(set-code "(define (pol-0 x) (+ x 0))\n(define (pol-1 x) (+ x 1))\n(define (pol-2 x) (+ x 2))\n(define (pol-3 x) (+ x 3))")
+(eval-current)
+(define stats (make-hash))
+(hash-set! stats "join-void" 0)
+(define (worker w)
+  (let loop ((i 0))
+    (if (< i 30)
+        (begin
+          (hash-set! stats (string-append "join-void") (+ 1 (hash-ref stats "join-void" 0)))
+          (mutate:rebind (string-append "pol-" (number->string w)) "(lambda (x) (+ x 1))" "p")
+          (eval-current)
+          (loop (+ i 1)))
+        w)))
+(define fs (list (fiber:spawn (lambda () (worker 0)))
+                 (fiber:spawn (lambda () (worker 1)))
+                 (fiber:spawn (lambda () (worker 2)))
+                 (fiber:spawn (lambda () (worker 3)))))
+(map fiber:join fs)
+(list (map string-length (hash-keys stats)) (hash-ref stats "join-void" -1))
+"""
+    want = "((9) 120)"
+    env = os.environ.copy()
+    env["AURA_TIER_JIT"] = "0"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env["AURA_SANDBOX"] = "off"
+    env.pop("AURA_SOFT", None)
+    env.pop("AURA_FORCE_IR", None)
+    fd, path = tempfile.mkstemp(suffix=".aura", prefix="aura-4709-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(program)
+        # (a) CLI thread backend: 4 fiber threads, one global hash.
+        for attempt in range(3):
+            r = subprocess.run([AURA, path], capture_output=True, text=True, timeout=180, env=env, cwd=str(REPO))
+            assert r.returncode == 0, f"#4709 cli run {attempt}: rc={r.returncode} err={(r.stderr or '')[-400:]!r}"
+            lines = [ln.strip() for ln in (r.stdout or "").splitlines() if ln.strip()]
+            assert lines and lines[-1] == want, (
+                f"#4709 cli run {attempt}: expected {want!r} got {lines[-1] if lines else None!r} "
+                f"(a live hash key's string slot was released/re-minted)"
+            )
+        # (b) serve-async, 2 worker threads: fibers are stackful contexts
+        # that park at eval-current/yield, the shape #4706 had to root.
+        # The process can linger on stdin EOF after the response (the
+        # scheduler waits on epoll), so kill it once the reply is in --
+        # the assertion is on the reply, not the exit path.
+        request = json.dumps({"cmd": "exec", "code": program}) + "\n"
+        try:
+            r = subprocess.run(
+                [AURA, "--serve-async", "--worker-threads=2"],
+                input=request,
+                capture_output=True,
+                text=True,
+                timeout=45,
+                env=env,
+            )
+            out, err = r.stdout or "", r.stderr or ""
+        except subprocess.TimeoutExpired as exc:
+            # A serve-async session can linger on stdin EOF after it has
+            # replied (the scheduler waits on epoll); run() killed it. The
+            # assertion is on the reply, not the exit path.
+            out = exc.stdout or ""
+            err = exc.stderr or ""
+            if isinstance(out, bytes):
+                out = out.decode("utf-8", "replace")
+            if isinstance(err, bytes):
+                err = err.decode("utf-8", "replace")
+        assert f'"value":"{want}"' in out, (
+            f"#4709 serve-async: expected value {want!r}; stdout={out[-400:]!r} stderr={err[-400:]!r}"
+        )
+        for banner in ("AURA CRASH", "SIGSEGV", "invalid closure", "corrupt string key"):
+            assert banner not in out and banner not in err, (
+                f"#4709 serve-async: {banner!r} while rebind/eval-current ran under 4 fibers: {err[-400:]!r}"
+            )
+    finally:
+        os.remove(path)
+    # Source cites: the parked-segment registry is what keeps a suspended
+    # fiber's env (and a hash only it references) mark-visible, and the
+    # string release must honour the mark (#4608).
+    flat = (REPO / "src/compiler/evaluator_eval_flat.cpp").read_text(encoding="utf-8")
+    assert "Issue #4706" in flat, "#4709: the parked tree-walker root segment citation is gone"
+    assert "collect_tw_root_segment(set->frames" in flat, (
+        "#4709: maybe_reclaim_tw_unreachable no longer marks parked fiber segments"
+    )
+    assert "g_tw_parked" in flat and "aura_tw_roots_detach" in flat, (
+        "#4709: the fiber root segment no longer detaches/parks at yield"
+    )
+    heap = (REPO / "src/compiler/locked_string_heap.hh").read_text(encoding="utf-8")
+    assert "release_unmarked" in heap and "seen[i]" in heap, (
+        "#4709: the string slot release no longer consults the mark"
+    )
+    print("  OK test_fiber_hash_key_survives_rebind_4709 (global hash key stays 9 chars under 4 rebind fibers)")
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -4825,156 +5009,7 @@ for tf in [
     test_fiber_result_root_4710,
     test_fiber_lock_order_inversion_4711,
     test_fiber_cancel_4708,
-]:
-    try:
-        tf()
-        passed_s += 1
-    except Exception as e:
-        print(f"  ❌ {tf.__name__}: {e}")
-        failed_s += 1
-
-print(f"  Subprocess tests: {passed_s}/{passed_s + failed_s} passed")
-
-# Cleanup freeze/emit files
-for f in [
-    "/tmp/aura-test-freeze.aura",
-    "/tmp/aura-test-freeze2.aura",
-    "/tmp/aura-test-empty.aura",
-    "/tmp/aura-test-out.o.ir",
-]:
-    if os.path.exists(f):
-        os.remove(f)
-for f in ["/tmp/aura-test-out", "/tmp/aura-aot-compare", "/tmp/aura-aot-runtime"]:
-    if os.path.exists(f):
-        os.remove(f)
-
-
-# Fixture snippets share /tmp seeds — keep serial (jobs=1).
-# No skips allowed: every regression fixture must pass. The two former
-# KNOWN_SKIP cases (ast-viz-dot-mutation / colony-search) failed with
-# unbound module free vars after require/mutate; those module-capture
-# bugs were fixed in-tree (#2566 nested-require module env inject), so
-# the entries were removed 2026-09-04 and the cases run for real again.
-def test_serve_async_two_fiber_yield_reclaim_4706():
-    """Issue #4706: serve-async SIGSEGV with two fibers yielding while allocating.
-
-    The tree-walker root stacks (g_tw_frames / g_tw_results / g_tw_vecs /
-    g_tw_spans) are thread_local. A serve fiber is a ucontext that can be
-    resumed on a DIFFERENT worker thread than the one it yielded on, and a
-    fiber yields with live walker frames (the fiber body's eval_flat_body
-    frame plus the enclosing let frames — measured: 2 frames detached at
-    every yield of the issue's own program). Pre-fix those frames stayed in
-    the yielding thread's TLS: the pops then ran on the resuming thread
-    (sliding somebody else's frame off), the yielding thread kept a
-    const Env** into a fiber stack that died with the fiber, and the next
-    reclaim there dereferenced it — SIGSEGV in
-    Evaluator::maybe_reclaim_tw_unreachable (si_addr = the stale pointer).
-    The CLI thread backend never moves a fiber, which is why it was fine.
-
-    Fiber::yield now detaches the running fiber's root segment into the
-    fiber and Fiber::resume attaches it on whichever worker runs it next,
-    with the parked segment registered process-wide so another thread's
-    reclaim still marks it.
-
-    This runs the issue's own program end to end through one
-    `aura --serve-async` session (define, then the two-fiber join) and
-    asserts the expected (50 50) result, a clean exit, and no crash
-    banner. Any regression of the reclaim path shows up here as a
-    signal death or a missing result line.
-    """
-    define = (
-        '(define (wf k) (let l ((t 0)) (if (< t k) (begin (string-split "a b c" " ") (fiber:yield) (l (+ t 1))) t)))'
-    )
-    let_form = "(list (fiber:join (fiber:spawn (lambda () (wf 50)))) (fiber:join (fiber:spawn (lambda () (wf 50)))))"
-    # Two requests to ONE session, exactly as the issue reports. Closing
-    # stdin after the second line ends the session cleanly (rc 0).
-    requests = json.dumps({"cmd": "exec", "code": define}) + "\n" + json.dumps({"cmd": "exec", "code": let_form}) + "\n"
-    env = os.environ.copy()
-    env["AURA_TIER_JIT"] = "0"
-    env["AURA_PIPELINE_STRICT"] = "0"
-    env["AURA_SANDBOX"] = "off"
-    env.pop("AURA_SOFT", None)
-    # Multi-worker so fibers can genuinely be resumed by another worker
-    # (the Soft default auto-pins to one); the issue's crash needs the
-    # cross-thread resume or a same-thread pop/skip mismatch.
-    r = subprocess.run(
-        [AURA, "--serve-async", "--worker-threads=2"],
-        input=requests,
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env=env,
-    )
-    err = r.stderr or ""
-    out = r.stdout or ""
-    assert r.returncode == 0, f"serve-async died (rc={r.returncode}); stderr tail={err[-600:]!r}"
-    assert '"value":"(50 50)"' in out, f"missing (50 50) result; stdout={out[-400:]!r} stderr={err[-400:]!r}"
-    for banner in ("si_addr", "maybe_reclaim_tw_unreachable", "SIGSEGV", "Segmentation fault"):
-        assert banner not in err, f"reclaim crash banner {banner!r} in stderr: {err[-600:]!r}"
-    print(
-        "  OK test_serve_async_two_fiber_yield_reclaim_4706 (two fibers yielding while allocating: (50 50), clean exit)"
-    )
-
-
-for tf in [
-    test_jit_soundness_4567,
-    test_type_feedback_4568,
-    test_jit_assumption_invalidation_4569,
-    test_jit_prologue_word_and_storm_4600,
-    test_jit_osr_tail_4600,
-    test_jit_invalidation_walltime_4600,
-    test_jit_reuse_lowering_4600,
-    test_jit_l1_4570,
-    test_jit_mixed_compare_4570,
-    test_jit_self_call_4601,
-    test_jit_l2_4571,
-    test_jit_general_call_4603,
-    test_jit_call_path_4572,
-    test_jit_redefine_4604,
-    test_jit_scalar_pairs_4573,
-    test_jit_float_pair_fields_4605,
-    test_jit_tier_differential_4574,
-    test_jit_unbound_callee_4607,
-    test_jit_non_callable_callee_4636,
-    test_workspace_set_global_4618,
-    test_ir_call_depth_limit_4620,
-    test_cfunc_budget_4555,
-    test_nary_map_for_each_4616,
-    test_rebind_cascade_linear_4615,
-    test_tier_jit_default_on_4679,
-    test_tc_infer_flat_in_rebind_count_4682,
-    test_tw_reclaim_ir_frame_roots_4617,
-    test_jit,
-    test_mutation_sequences,
-    test_freeze_load,
-    test_freeze_multi_expr,
-    test_freeze_empty,
-    test_emit_binary,
-    test_aot,
-    test_aura_type_auto_load,
-    test_aura_type_no_sig,
-    test_aura_type_multi_func,
-    test_aura_type_different_types,
-    test_aura_type_cross_module,
-    test_generate_type_sigs,
-    test_module_chain_5,
-    test_cross_session,
-    test_fuzz_edsl,
-    test_char_literal_form_split_4622,
-    test_while_when_error_propagation_4619,
-    test_workspace_rest_params_4621,
-    test_named_let_bind_list_repeat_4623,
-    test_callback_diagnostic_4624,
-    test_workspace_inline_callback_4626,
-    test_sweep_set_fold_prov_index_4625,
-    test_member_structural_equality_4628,
-    test_aot_multi_call_site_4640,
-    test_aot_assoc_matches_evaluator_4640,
-    test_file_mode_equal_fresh_list_corruption_4627,
-    test_file_mode_pair_list_corruption_4629,
-    test_exit_quiesce_4705,
-    test_fiber_result_root_4710,
-    test_fiber_lock_order_inversion_4711,
+    test_fiber_hash_key_survives_rebind_4709,
     test_serve_async_two_fiber_yield_reclaim_4706,
 ]:
     try:
