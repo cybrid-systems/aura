@@ -202,8 +202,8 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             destroy_defuse_index();
             ev.modules_.clear();
             ev.module_cache_.clear();
-            ev.current_flat_ = nullptr;
-            ev.current_pool_ = nullptr;
+            ev.current_flat_.store(nullptr, std::memory_order_relaxed);
+            ev.current_pool_.store(nullptr, std::memory_order_relaxed);
             ev.workspace_flat_ = nullptr;
             ev.workspace_pool_ = nullptr;
         }
@@ -323,13 +323,13 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             destroy_defuse_index();
             ev.modules_.clear();
             ev.module_cache_.clear();
-            ev.current_flat_ = nullptr;
-            ev.current_pool_ = nullptr;
+            ev.current_flat_.store(nullptr, std::memory_order_relaxed);
+            ev.current_pool_.store(nullptr, std::memory_order_relaxed);
             ev.workspace_flat_ = nullptr;
             ev.workspace_pool_ = nullptr;
             // Record the eval-depth snapshot so memory-pressure won't keep
             // suggesting "gc-temp" right after a gc-heap.
-            ev.last_gc_temp_eval_depth_ = ev.eval_depth_;
+            ev.last_gc_temp_eval_depth_ctx() = ev.eval_depth_ctx();
         }
         for (const auto& fp : native_fins)
             FFIRuntime::run_native_finalizer(fp.first, fp.second);
@@ -389,7 +389,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         ev.temp_arena_->reset();
         // Record the eval-depth snapshot so memory-pressure knows
         // when to suggest "gc-temp" again.
-        ev.last_gc_temp_eval_depth_ = ev.eval_depth_;
+        ev.last_gc_temp_eval_depth_ctx() = ev.eval_depth_ctx();
 
         // Clear heap vectors.
         // NOTE: ev.pairs_ and ev.string_heap_ are NOT cleared — result lists are
@@ -1655,7 +1655,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 suggestions.push_back(make_string(sidx));
             }
         }
-        if (ev.eval_depth_ - ev.last_gc_temp_eval_depth_ >
+        if (ev.eval_depth_ctx() - ev.last_gc_temp_eval_depth_ctx() >
             ev.memory_policy_.recent_gc_temp_window) {
             auto sidx = ev.string_heap_.mint("gc-temp");
             suggestions.push_back(make_string(sidx));

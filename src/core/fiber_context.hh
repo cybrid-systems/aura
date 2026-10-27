@@ -22,7 +22,9 @@
 #ifndef AURA_CORE_FIBER_CONTEXT_HH
 #define AURA_CORE_FIBER_CONTEXT_HH
 
+#include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace aura::core::fiber_ctx {
@@ -69,6 +71,49 @@ struct Context {
     // lowering_impl.cpp: #4681 call-slot scratch (lower-call scoped).
     const void* lower_call_slot_cells = nullptr;
     void* lower_call_slot_hits = nullptr;
+    // Issue #4717 (P4 keystone of #4707): per-body evaluator execution
+    // state. These were Evaluator members, so two fiber bodies driving one
+    // Evaluator clobbered each other's self-TCO frame-reuse stamp and
+    // counted each other's eval depth. They describe the RUNNING BODY, not
+    // the shared code/IR/heap, so they belong to the fiber Context.
+    std::size_t eval_depth = 0;
+    std::size_t last_gc_temp_eval_depth = 0;
+    std::size_t last_auto_gc_eval_depth = 0;
+    // Issue #4599 self-TCO frame reuse, one stamp per running body.
+    struct TcoReuseState {
+        bool live = false;
+        std::uint64_t cid = 0;
+        const void* env = nullptr;
+        std::uint32_t n = 0;
+        std::uint64_t bridge = 0;
+        std::uint64_t defuse = 0;
+        std::uint64_t env_gen = 0;
+        std::uint32_t syms[8] = {};
+    };
+    TcoReuseState tco;
+    // Issue #4717: file-mode outermost-eval bookkeeping (#4465/#4471) and the
+    // nested try-body depth (#4456). All three are per-body execution state;
+    // they used to be shared Evaluator members.
+    const void* file_diag_root_flat = nullptr;
+    std::uint32_t file_diag_root_id = 0;
+    std::uint32_t file_resume_line = 0;
+    std::uint32_t file_resume_column = 0;
+    std::uint32_t file_resume_file_id = 0;
+    int try_body_depth = 0;
+    // Issue #4717: the pool/flat the body's intern lookups are bound to.
+    // The intern TABLES are shared read-mostly data (#4719); which pool they
+    // are currently keyed for is per-body execution state.
+    const void* sym_intern_pool = nullptr;
+    std::uint64_t intern_pool_gen = 0;
+    const void* float_intern_flat = nullptr;
+    // Issue #4717: the #4599 name-resolution memo (#NameResEntry, keyed by
+    // node id) is a per-body cache: two bodies writing/reading one vector
+    // raced. Type-erased so this core header stays compiler-type free; the
+    // evaluator installs a typed deleter.
+    std::shared_ptr<void> name_res_cache;
+    // Issue #4717: #4595 let-binding kind memo, also node-id keyed and
+    // per-body for the same reason.
+    std::shared_ptr<void> let_bind_kind_cache;
     // Observability: owning fiber id (0 = plain thread fallback).
     std::uint64_t owner_fiber = 0;
 };

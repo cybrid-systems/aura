@@ -204,12 +204,13 @@ namespace {
     std::atomic<std::uint64_t> g_thread_fiber_dtor_join_total{0};
     std::atomic<std::uint64_t> g_thread_fiber_dtor_abandon_total{0};
 
-    // Issue #2738: CLI thread-fallback fibers share one Evaluator (string_heap_,
-    // env, FlatAST readers outside MutationBoundary). Concurrent apply_closure
-    // races those structures even when rebind/eval-current take workspace_mtx_.
-    // Serialize the entire fiber body on the thread backend only; serve-async
-    // scheduler fibers keep their own isolation. Product semantics of dual-name
-    // rebind still hold (both bindings apply; no SIGABRT).
+    // Issue #2738 -> #4717: this was the WHOLE-BODY serialization mutex for
+    // CLI thread-fallback fibers (they share one Evaluator). Issue #4717
+    // removed that: bodies run concurrently, and the state they touch is
+    // either per-body (fiber Context) or individually guarded. The mutex
+    // survives as the NARROW commit lock the CLI MAIN thread takes around a
+    // top-level form (the last writer that is not a fiber). A body never
+    // acquires it, so bodies no longer serialize on it.
     //
     // Issue #2869: the body mutex must NOT be held while fiber:join waits for
     // a child on the same thread backend — the child needs that mutex to run.
@@ -218,7 +219,7 @@ namespace {
     // the wait. Issue #4048 also sets this under Soft Ready --serve-async
     // denseness (shared Evaluator). Issue #4053: http-post unlocks via the
     // same TLS through DensenessBodyLockWaitGuard (messaging_bridge hooks).
-    std::mutex s_cli_thread_fiber_body_mtx;
+    std::mutex s_cli_commit_mtx;
     // Issue #4716: the owning unique_lock is EXECUTION CONTEXT — the body
     // that holds the mutex parks on a fiber:join / channel wait and resumes
     // on another worker, and it must still find its own lock to unlock /
@@ -767,7 +768,7 @@ namespace {
     }
 
     // Issue #4356: CLI main does not run inside complete_fiber, so it never
-    // took s_cli_thread_fiber_body_mtx. read-line then pushed string_heap_
+    // took s_cli_commit_mtx. read-line then pushed string_heap_
     // while a thread fiber mutated the same Evaluator. Acquire publishes
     // this unique_lock in the TLS slot the join / denseness wait hooks
     // already unlock. A thread that already holds the lock (the fiber
@@ -775,7 +776,7 @@ namespace {
     void* cli_main_body_lock_acquire_impl() {
         if (s_tls_cli_body_lock() && s_tls_cli_body_lock()->owns_lock())
             return nullptr;
-        auto* lk = new std::unique_lock<std::mutex>(s_cli_thread_fiber_body_mtx, std::defer_lock);
+        auto* lk = new std::unique_lock<std::mutex>(s_cli_commit_mtx, std::defer_lock);
         // Issue #4699: tracked acquire (takeover publish).
         cli_body_lock_acquire(*lk);
         s_tls_cli_body_lock() = lk;
@@ -1495,38 +1496,18 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                 FiberBodyIdScope& operator=(const FiberBodyIdScope&) = delete;
             } body_id_scope(fid_holder->load(std::memory_order_acquire));
             CliBodyDoneScope body_done_scope;
-            std::unique_lock<std::mutex> body_lock(s_cli_thread_fiber_body_mtx, std::defer_lock);
-            // Issue #4048: serialize denseness bodies for BOTH backends.
-            // Soft Ready --serve-async denseness fibers share the session
-            // Evaluator (complete_fiber captures &ev). Multi-worker affinity
-            // pins help, but the parent may still run on another worker
-            // until the first join yield — concurrent apply_closure races
-            // TLS/heap and hangs the session. Always take the body mutex;
-            // fiber:join / async http-post DensenessBodyLockWaitGuard unlocks
-            // across the wait so siblings can overlap (#2869 / #4053).
-            // Issue #4699: tracked acquire - the takeover publish wakes a
-            // yielding sibling that waits for its turn (the CLI thread
-            // backend has no scheduler to do the hand-off).
-            cli_body_lock_acquire(body_lock);
-            // Issue #4054: do NOT save/restore a prev TLS pointer across the
-            // denseness body. Cooperative Soft fibers share one OS thread;
-            // restoring prev after a sibling has published (or after wait
-            // cleared TLS) either wipes the sibling or reinstalls a dangling
-            // unique_lock*. Clear only if we still own the slot.
-            struct TlsBodyLockScope {
-                std::unique_lock<std::mutex>* cur;
-                explicit TlsBodyLockScope(std::unique_lock<std::mutex>* c) noexcept
-                    : cur(c) {
-                    if (cur)
-                        s_tls_cli_body_lock() = cur;
-                }
-                ~TlsBodyLockScope() noexcept {
-                    if (cur && s_tls_cli_body_lock() == cur)
-                        s_tls_cli_body_lock() = nullptr;
-                }
-                TlsBodyLockScope(const TlsBodyLockScope&) = delete;
-                TlsBodyLockScope& operator=(const TlsBodyLockScope&) = delete;
-            } tls_scope(body_lock.owns_lock() ? &body_lock : nullptr);
+            // Issue #4717 (P4 keystone of #4707): the fiber body NO LONGER
+            // takes s_cli_commit_mtx (it was the whole-body mutex). The
+            // whole-body serialization is gone: two bodies on the thread
+            // backend run concurrently. Everything they used to rely on the
+            // outer lock for is now either per-body (fiber Context: self-TCO
+            // stamp, eval depth, file-diag root) or has its own guard
+            // (env_frames_ 16-way shards, alloc_storage_lock_, workspace_mtx_,
+            // s_fiber_results_mtx). The mutex survives as the NARROW commit
+            // lock the CLI main thread takes around a top-level form
+            // (cli_main_body_lock_acquire_impl); a body never touches it, so
+            // the wait/join handoff helpers below become no-ops on the body
+            // path (s_tls_cli_body_lock() stays null).
             *result_ptr = ev.apply_closure(cid, {});
             // Issue #4699: publish the body end so a sibling body that is
             // waiting for its turn (a cooperative yield) does not stall on
@@ -2008,7 +1989,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             // true on notify).
             //
             // Issue #2869: if this join runs inside a thread-backend
-            // fiber body that holds s_cli_thread_fiber_body_mtx,
+            // fiber body that holds s_cli_commit_mtx,
             // release it for the wait so the child can acquire the
             // mutex and complete. Relock after wakeup (RAII).
             CliBodyLockJoinGuard body_join_guard;

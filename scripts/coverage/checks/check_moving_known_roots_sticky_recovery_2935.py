@@ -70,7 +70,7 @@ def main() -> int:
     must("parent_pool_", "AC1 residual inventory", mb)
     must("workspace_flat_", "AC1 inventory", mb)
     must("mutate_target_flat_", "AC1 inventory", mb)
-    must("current_flat_", "AC1 inventory", mb)
+    must("current_flat", "AC1 inventory", mb)
     must("root_remap_registered_slots_snapshot", "AC1 RootRemap", mb)
     must("register_external_root_slot_for_densify_all", "AC1 register all", mb)
     must("if (aura::ast::moving_compact_enabled())", "AC1 gated", mb)

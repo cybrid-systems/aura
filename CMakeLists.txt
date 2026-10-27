@@ -515,6 +515,11 @@ target_sources(test_ir PRIVATE
     src/core/mutation_impl.cpp
     src/serve/thread_pool.cpp
     $<TARGET_OBJECTS:aura_serve_fiber_objects>
+    # Issue #4717: src/core/fiber_context.cpp is provided by
+    # aura_serve_fiber_objects above. Listing it here as well compiled a
+    # SECOND definition into test_ir and the link failed with "multiple
+    # definition of aura_fiber_ctx_*" (TSan tree, #4716 follow-up) - and
+    # would have split the one process-wide t_ctx_cur if it had linked.
     src/core/ast_impl.cpp
     src/core/ast_stability.cpp
     src/core/type_impl.cpp

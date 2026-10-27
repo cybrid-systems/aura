@@ -21,10 +21,9 @@
 //   AC10: #4131 ordinary oneshot unchanged (clean exit 0)
 //   AC11: #4131 default-disposition SIGTERM still prompt (no TERM handler)
 //   AC12: #4131 source-cite: main.cpp oneshot reset; no sigaction(SIGTERM)
-//   AC13: #4720 serial pin — two CPU-bound CLI thread fibers are never
-//         simultaneously runnable (max 1 across 200 /proc samples). #4707
-//         removes the body mutex; P4 (#4717) MUST FLIP this AC to expect
-//         overlap == 2 in the SAME commit that removes the mutex.
+//   AC13: #4720 serial pin — FLIPPED by #4717: two CPU-bound CLI thread
+//         fibers ARE simultaneously runnable (max 2 across 200 /proc
+//         samples). Pre-#4717 the body mutex held it at 1.
 //   AC14: #4720 control — the same sampler observes 2 spinning std::threads
 //         runnable in one sample (probe is not vacuous).
 //   AC15: #4715 overlay data layer — disjoint per-fiber overlays both commit
@@ -34,6 +33,9 @@
 //   AC17: #4715 rollback drops the overlay and applies nothing.
 //   AC18: #4715 moved base epoch takes the per-binding merge path and still
 //         reports a same-binding conflict between two same-base overlays.
+//   AC19: #4717 source-cite — the thread-backend body no longer takes the
+//         CLI body/commit lock, and the per-body eval state (self-TCO stamp,
+//         eval depth) lives in the fiber Context.
 
 #include "test_harness.hpp"
 #include "compiler/fiber_cow_overlay.hh" // Issue #4715
@@ -490,8 +492,9 @@ static void ac12_source_cite() {
 // CLI Evaluator.
 //
 // Probe: sample /proc/<pid>/task/<tid>/stat (field 3, state) for every
-// non-main task. A parked sibling sits in pthread_mutex_lock (futex, S),
-// so the maximum number of R tasks over 200 samples must stay 1. Sampling
+// non-main task. Before #4717 a parked sibling sat in pthread_mutex_lock
+// (futex, S) and the maximum number of R tasks over 200 samples stayed 1;
+// with the body mutex gone both bodies are R in the same sample. Sampling
 // starts only after BOTH workers exist and one is R (a body is really
 // executing), and stops long before the first body (fib 28) finishes, so
 // the thread-exit hand-off window cannot inject a transient 2. AC14
@@ -637,7 +640,10 @@ static void ac13_serial_pin_two_cpu_bound_fibers() {
     CHECK(max_fiber_tasks == 2, "AC13: exactly two fiber worker tasks (thread backend)");
     CHECK(samples_runnable >= kPinSamples4720 - 10,
           "AC13: a fiber body was runnable in >=95% of samples (probe not idle)");
-    CHECK(max_runnable <= 1, "AC13: max concurrent runnable fiber bodies == 1 (body mutex)");
+    // #4717 flipped this from <= 1: the whole-body mutex is gone, so both
+    // CPU-bound bodies are runnable in the same sample.
+    CHECK(max_runnable == 2,
+          "AC13: max concurrent runnable fiber bodies == 2 (body mutex removed)");
 }
 
 static void ac14_sampler_control_two_runnable() {
@@ -811,6 +817,27 @@ void ac18_cow_overlay_moved_base_merge() {
     }
 }
 
+// ── #4717: the evaluator split cite ─────────────────────────────────
+// P4 splits the shared body state: the thread-backend body no longer takes
+// the CLI body/commit lock (the lock shrinks to the CLI main's commit
+// window), and the per-body execution state (self-TCO stamp, eval depth)
+// lives in the running fiber's Context (fiber_ctx::active()), not on the
+// shared Evaluator.
+static void ac19_eval_split_source_cite() {
+    std::println("\n--- #4717 AC19: body mutex removed + per-body eval context ---");
+    const auto msg = read_file("src/compiler/evaluator_primitives_messaging.cpp");
+    CHECK(msg.find("#4717") != std::string::npos, "AC19: messaging cites #4717");
+    CHECK(msg.find("cli_body_lock_acquire(body_lock)") == std::string::npos,
+          "AC19: thread-backend body takes no whole-body lock");
+    const auto ctx = read_file("src/core/fiber_context.hh");
+    CHECK(ctx.find("#4717") != std::string::npos, "AC19: fiber_context cites #4717");
+    CHECK(ctx.find("TcoReuseState") != std::string::npos,
+          "AC19: self-TCO stamp is fiber-local state");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(flat.find("tco_reuse_ctx()") != std::string::npos,
+          "AC19: eval_flat stamps the fiber context, not the shared Evaluator");
+}
+
 } // namespace
 
 int run_test_fiber_spawn_cli() {
@@ -834,8 +861,9 @@ int run_test_fiber_spawn_cli() {
     ac16_cow_overlay_same_name_conflict();
     ac17_cow_overlay_rollback();
     ac18_cow_overlay_moved_base_merge();
-    std::println("\n=== #2656/#2685/#2686/#3394/#4131/#4720: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    ac19_eval_split_source_cite();
+    std::println("\n=== #2656/#2685/#2686/#3394/#4131/#4720/#4717: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

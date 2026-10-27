@@ -725,7 +725,7 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         // Issue #4588: inside a try, return the error so catch sees it.
         // The tree walker returns before this call; IR display does not.
         if (is_error(a[0])) {
-            if (ev.try_body_depth_ > 0)
+            if (ev.try_body_depth_ctx() > 0)
                 return a[0];
             // Issue #4691: a foreign cause is the reader deny shape, not
             // a stderr dump of the other principal's bytes.

@@ -1728,8 +1728,8 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         }
         // Issue #4525: capture the burst rate the mark fired on before
         // the reset — note_live_set uses it to detect allocation bursts.
-        const auto mints_at_mark = file_heap_allocs_since_reclaim_;
-        file_heap_allocs_since_reclaim_ = 0;
+        const auto mints_at_mark = file_heap_allocs_since_reclaim_.load(std::memory_order_relaxed);
+        file_heap_allocs_since_reclaim_.store(0, std::memory_order_relaxed);
         // Issue #4474: the mark just walked the heap — scale the next
         // reclaim triggers from the reachable set (live/32, clamped).
         // Issue #4608: the live string slots count too — the string
@@ -1792,9 +1792,11 @@ void Evaluator::note_live_set_for_reclaim_trigger(const std::size_t live_objects
     tw_closure_allocs_trigger_ = clamped;
     file_heap_allocs_trigger_ = clamped;
     // Issue #4474: window invariants (assertion face of the decl-site post).
-    contract_assert(tw_closure_allocs_trigger_ >= kReclaimTriggerFloor &&
-                    tw_closure_allocs_trigger_ <= ceiling);
-    contract_assert(file_heap_allocs_trigger_ == tw_closure_allocs_trigger_);
+    contract_assert(tw_closure_allocs_trigger_.load(std::memory_order_relaxed) >=
+                        kReclaimTriggerFloor &&
+                    tw_closure_allocs_trigger_.load(std::memory_order_relaxed) <= ceiling);
+    contract_assert(file_heap_allocs_trigger_ ==
+                    tw_closure_allocs_trigger_.load(std::memory_order_relaxed));
 }
 
 bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
@@ -1806,7 +1808,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     if (file_reclaim_active_ || aura::gc_hooks::should_defer_destructive_gc() ||
         has_panic_checkpoint() ||
         aura::core::envframe_lifetime::should_block_compact_for_guards()) {
-        tw_closure_allocs_ = 0;
+        tw_closure_allocs_.store(0, std::memory_order_relaxed);
         reset_file_heap_allocs_since_reclaim();
         // Issue #4474: nothing was learned about the heap — back to the
         // floor so a deferred/guarded window keeps the #4459 cadence.
@@ -2193,8 +2195,8 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         }
         // Issue #4525: capture the burst rate the mark fired on before
         // the reset — note_live_set uses it to detect allocation bursts.
-        const auto mints_at_mark = file_heap_allocs_since_reclaim_;
-        file_heap_allocs_since_reclaim_ = 0;
+        const auto mints_at_mark = file_heap_allocs_since_reclaim_.load(std::memory_order_relaxed);
+        file_heap_allocs_since_reclaim_.store(0, std::memory_order_relaxed);
         // Issue #4474: the mark just walked the heap — scale the next
         // reclaim triggers from the reachable set (live/32, clamped).
         // Issue #4608: the live string slots count too — the string
@@ -2204,7 +2206,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         note_live_set_for_reclaim_trigger(
             live_pairs + live_vecs + live_cells + live_strings + live_hash_units, mints_at_mark);
     }
-    tw_closure_allocs_ = 0;
+    tw_closure_allocs_.store(0, std::memory_order_relaxed);
     // Issue #4525: benchmark observability — a full whole-heap mark ran.
     ++file_heap_reclaim_runs_;
     // Issue #4597: same finalizer pass as file-mode reclaim. The suite's

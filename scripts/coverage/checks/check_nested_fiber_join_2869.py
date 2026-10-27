@@ -45,8 +45,10 @@ def main() -> int:
     # AC1 — TLS body lock for nested join unlock
     must("#2869", "AC1", msg)
     must("s_tls_cli_body_lock", "AC1", msg)
-    must("s_cli_thread_fiber_body_mtx", "AC1", msg)
-    must("TlsBodyLockScope", "AC1", msg)
+    # Issue #4717: the whole-body mutex is gone for bodies; the TLS body-lock
+    # pointer + the narrow CLI-main commit lock remain.
+    must("s_cli_commit_mtx", "AC1", msg)
+    must("#4717", "AC1", msg)
 
     # AC2 — join guard unlocks / relocks
     must("CliBodyLockJoinGuard", "AC2", msg)

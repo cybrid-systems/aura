@@ -1402,8 +1402,8 @@ void Evaluator::maybe_reclaim_tw_unreachable() {
     // note_live_set_for_reclaim_trigger), so a large live heap amortizes
     // the full-heap mark instead of paying it every 128 allocations. The
     // floor keeps the #4459 small-heap cadence unchanged.
-    if (tw_closure_allocs_ < tw_closure_allocs_trigger_ &&
-        file_heap_allocs_since_reclaim_ < file_heap_allocs_trigger_)
+    if (tw_closure_allocs_.load(std::memory_order_relaxed) < tw_closure_allocs_trigger_ &&
+        file_heap_allocs_since_reclaim_.load(std::memory_order_relaxed) < file_heap_allocs_trigger_)
         return;
     // Issue #4713: the #2738 guard survives only for PLAIN (non-fiber)
     // threads inside the walker — they never reach a fiber park hook, so a
@@ -1420,7 +1420,7 @@ void Evaluator::maybe_reclaim_tw_unreachable() {
         // opcode — that would stall every back-edge behind the same body for
         // a full budget each time. Postpone by one trigger interval instead.
         if (stw.requested)
-            file_heap_allocs_since_reclaim_ = 0;
+            file_heap_allocs_since_reclaim_.store(0, std::memory_order_relaxed);
         return;
     }
     std::vector<const Env*> envs;
@@ -3583,7 +3583,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
             // Evaluate macro body (quasiquote-expanded template)
             // → produces data (a list).
             auto template_result =
-                eval_flat(*md.flat, md.pool ? *md.pool : *current_pool_, md.body_id, tail_env);
+                eval_flat(*md.flat, md.pool ? *md.pool : *current_pool(), md.body_id, tail_env);
             if (!template_result)
                 return template_result;
             TwPinResult pin_template(template_result);
@@ -3654,7 +3654,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                     for (std::size_t i = 0; i < cargs.size() && i < cl.params.size(); ++i)
                         tail_env.bind_symid(cl.params[i], std::move(cargs[i]));
                     if (cl.body_id != aura::ast::NULL_NODE && cl.flat)
-                        return eval_flat(*cl.flat, cl.pool ? *cl.pool : *current_pool_, cl.body_id,
+                        return eval_flat(*cl.flat, cl.pool ? *cl.pool : *current_pool(), cl.body_id,
                                          tail_env);
                     return make_void();
                 }
@@ -3719,7 +3719,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
             for (std::size_t i = 0; i < cargs.size() && i < cl.params.size(); ++i)
                 tail_env.bind_symid(cl.params[i], std::move(cargs[i]));
             if (cl.body_id != aura::ast::NULL_NODE && cl.flat)
-                return eval_flat(*cl.flat, cl.pool ? *cl.pool : *current_pool_, cl.body_id,
+                return eval_flat(*cl.flat, cl.pool ? *cl.pool : *current_pool(), cl.body_id,
                                  tail_env);
         }
     }
@@ -6091,12 +6091,12 @@ std::uint8_t Evaluator::let_bind_kind_cached(aura::ast::FlatAST& flat, aura::ast
     if (aura::serve::g_current_fiber != nullptr)
         return kind_of();
     const auto uid = static_cast<std::uint32_t>(id);
-    if (uid < let_bind_kind_.size() && let_bind_kind_[uid] != 0)
-        return let_bind_kind_[uid];
+    if (uid < let_bind_kind().size() && let_bind_kind()[uid] != 0)
+        return let_bind_kind()[uid];
     const auto k = kind_of();
-    if (let_bind_kind_.size() <= uid)
-        let_bind_kind_.resize(static_cast<std::size_t>(uid) + 1, 0);
-    let_bind_kind_[uid] = k;
+    if (let_bind_kind().size() <= uid)
+        let_bind_kind().resize(static_cast<std::size_t>(uid) + 1, 0);
+    let_bind_kind()[uid] = k;
     return k;
 }
 
@@ -6118,9 +6118,9 @@ void Evaluator::remember_resolved_var(aura::ast::NodeId id, aura::ast::SymId sym
     const auto* cap = env.cap_snapshot().get();
     auto store = [&](NameResEntry::Kind k, std::uint32_t aux) {
         const auto uid = static_cast<std::uint32_t>(id);
-        if (name_res_by_node_.size() <= uid)
-            name_res_by_node_.resize(static_cast<std::size_t>(uid) + 1);
-        auto& e = name_res_by_node_[uid];
+        if (name_res_by_node().size() <= uid)
+            name_res_by_node().resize(static_cast<std::size_t>(uid) + 1);
+        auto& e = name_res_by_node()[uid];
         if (e.kind == NameResEntry::Kind::PrimCall)
             return;
         e.kind = k;
@@ -6212,9 +6212,9 @@ void Evaluator::remember_prim_call(aura::ast::NodeId call_id, aura::ast::NodeId 
         return;
     const auto* cap = env.cap_snapshot().get();
     const auto uid = static_cast<std::uint32_t>(call_id);
-    if (name_res_by_node_.size() <= uid)
-        name_res_by_node_.resize(static_cast<std::size_t>(uid) + 1);
-    auto& e = name_res_by_node_[uid];
+    if (name_res_by_node().size() <= uid)
+        name_res_by_node().resize(static_cast<std::size_t>(uid) + 1);
+    auto& e = name_res_by_node()[uid];
     e.kind = NameResEntry::Kind::PrimCall;
     e.sym = sym;
     e.aux = slot;
@@ -6226,9 +6226,9 @@ void Evaluator::remember_prim_call(aura::ast::NodeId call_id, aura::ast::NodeId 
     if (callee_id == aura::ast::NULL_NODE)
         return;
     const auto cid = static_cast<std::uint32_t>(callee_id);
-    if (name_res_by_node_.size() <= cid)
-        name_res_by_node_.resize(static_cast<std::size_t>(cid) + 1);
-    auto& cv = name_res_by_node_[cid];
+    if (name_res_by_node().size() <= cid)
+        name_res_by_node().resize(static_cast<std::size_t>(cid) + 1);
+    auto& cv = name_res_by_node()[cid];
     if (cv.kind == NameResEntry::Kind::PrimCall)
         return;
     cv.kind = NameResEntry::Kind::Prim;
@@ -6285,9 +6285,9 @@ void Evaluator::remember_call_no_prim(aura::ast::NodeId id, aura::ast::SymId sym
             return;
     }
     const auto uid = static_cast<std::uint32_t>(id);
-    if (name_res_by_node_.size() <= uid)
-        name_res_by_node_.resize(static_cast<std::size_t>(uid) + 1);
-    auto& e = name_res_by_node_[uid];
+    if (name_res_by_node().size() <= uid)
+        name_res_by_node().resize(static_cast<std::size_t>(uid) + 1);
+    auto& e = name_res_by_node()[uid];
     if (e.kind == NameResEntry::Kind::PrimCall)
         return;
     e.kind = NameResEntry::Kind::CallNoPrim;
@@ -6310,9 +6310,9 @@ void Evaluator::remember_short_circuit(aura::ast::NodeId id, aura::ast::SymId sy
     if (clauses.empty() || clauses.size() > 8)
         return;
     const auto uid = static_cast<std::uint32_t>(id);
-    if (name_res_by_node_.size() <= uid)
-        name_res_by_node_.resize(static_cast<std::size_t>(uid) + 1);
-    auto& e = name_res_by_node_[uid];
+    if (name_res_by_node().size() <= uid)
+        name_res_by_node().resize(static_cast<std::size_t>(uid) + 1);
+    auto& e = name_res_by_node()[uid];
     if (e.kind == NameResEntry::Kind::PrimCall)
         return;
     e.kind = NameResEntry::Kind::ShortCircuit;
@@ -6371,9 +6371,9 @@ std::optional<EvalResult> Evaluator::try_eval_flat_hot(aura::ast::FlatAST& flat,
         if (aura::serve::g_current_fiber != nullptr || env.parent() != nullptr)
             return std::nullopt;
         const auto uid = static_cast<std::uint32_t>(id);
-        if (uid >= name_res_by_node_.size())
+        if (uid >= name_res_by_node().size())
             return std::nullopt;
-        const auto e = name_res_by_node_[uid];
+        const auto e = name_res_by_node()[uid];
         if (e.sym != sym || e.top_gen != top_bind_gen_ || e.cap != env.cap_snapshot().get())
             return std::nullopt;
         if (e.kind == NameResEntry::Kind::Prim)
@@ -6403,9 +6403,9 @@ std::optional<EvalResult> Evaluator::try_eval_flat_hot(aura::ast::FlatAST& flat,
     if (!env.binding_mirrors_aligned())
         return std::nullopt;
     const auto uid = static_cast<std::uint32_t>(id);
-    if (uid >= name_res_by_node_.size())
+    if (uid >= name_res_by_node().size())
         return std::nullopt;
-    const auto e = name_res_by_node_[uid];
+    const auto e = name_res_by_node()[uid];
     if (e.kind != NameResEntry::Kind::PrimCall || e.nchild == 0 || e.nchild > 8)
         return std::nullopt;
     if (e.top_gen != top_bind_gen_ || e.cap != env.cap_snapshot().get())
@@ -6448,7 +6448,7 @@ std::optional<EvalResult> Evaluator::try_eval_flat_hot(aura::ast::FlatAST& flat,
             return ar;
         // Issue #4596 / #4456: error? observes; display escapes only in try.
         if (is_error(*ar) && !is_string(*ar) && cname != "error?" &&
-            (cname != "display" || try_body_depth_ > 0))
+            (cname != "display" || try_body_depth_ctx() > 0))
             return ar;
         buf[i] = std::move(*ar);
         // Publish the freshly rooted argument before the next argument
@@ -6506,11 +6506,13 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
     } guard{c_stack_depth};
     // Issue #4465: arm only the outermost eval. Nested module eval keeps
     // its error value so load_module_file still fail-closes (#2570).
-    const bool arm_file_diag = require_failure_is_diagnostic_ && file_diag_root_flat_ == nullptr;
+    // Issue #4717: per-body (fiber Context) — two bodies each arm their own
+    // outermost file-diag root instead of clobbering one shared slot.
+    const bool arm_file_diag = require_failure_is_diagnostic_ && file_diag_root_flat() == nullptr;
     if (arm_file_diag) {
-        file_diag_root_flat_ = &flat;
-        file_diag_root_id_ = id;
-        file_resume_form_ = {};
+        set_file_diag_root_flat(&flat);
+        set_file_diag_root_id(id);
+        set_file_resume_form({});
     }
     struct FileDiagGuard {
         Evaluator* ev;
@@ -6518,8 +6520,8 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
         ~FileDiagGuard() {
             if (!armed)
                 return;
-            ev->file_diag_root_flat_ = nullptr;
-            ev->file_diag_root_id_ = ast::NULL_NODE;
+            ev->set_file_diag_root_flat(nullptr);
+            ev->set_file_diag_root_id(ast::NULL_NODE);
         }
     } file_diag_guard{this, arm_file_diag};
     auto result = eval_flat_body(flat, pool, id, env);
@@ -6540,6 +6542,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
     // Issue #4599: a nested eval (the (f1 1) inside the loop begin) must
     // not clobber the caller's self-TCO stamp. continue stays in this frame.
     TcoReuseGuard tco_reuse_guard(this);
+    // Issue #4717: the self-TCO stamp is per-body state (fiber Context).
+    auto& tco = tco_reuse_ctx();
     // Issue #3401: production (NDEBUG) builds skip the function-scope
     // try/catch — every error path inside the TCO loop already returns
     // std::unexpected(Diagnostic), so the catch only adds C-stack frame
@@ -6568,8 +6572,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
             if (tail_env.has_value() && current_env == &*tail_env) {
                 // Issue #4599: the stamp addresses this optional. After the
                 // move, the next emplace reuses the storage.
-                if (tco_reuse_live_ && tco_reuse_env_ == &*tail_env)
-                    tco_reuse_live_ = false;
+                if (tco.live && tco.env == &*tail_env)
+                    tco.live = false;
                 tco_pinned.push_back(std::make_unique<Env>(std::move(*tail_env)));
                 tail_env.reset();
                 current_env = tco_pinned.back().get();
@@ -6590,7 +6594,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
         thread_local std::string t_last_warn_level;
         if (++t_sample_counter >= memory_policy_.sample_every) {
             t_sample_counter = 0;
-            sample_counter_ = t_sample_counter; // mirror for policy reset observers
+            sample_counter_.store(t_sample_counter, std::memory_order_relaxed);
             // Snapshot arena state. Inline rather than refactoring into
             // a shared helper to avoid std::function capture-lifetime issues.
             struct Snap {
@@ -6639,15 +6643,13 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     "[memory-pressure] WARNING: level={} overall-pct={} total-used={:.1f}MB", level,
                     overall, total_used);
                 t_last_warn_level = level;
-                last_warn_level_ = level;
             } else if (level == "low" || level == "medium") {
                 t_last_warn_level = level;
-                last_warn_level_ = level;
             }
 
             // Auto-gc: only at critical AND policy enabled AND cooldown elapsed.
             if (memory_policy_.auto_gc && level == "critical" &&
-                eval_depth_ - t_last_auto_gc_eval_depth > memory_policy_.cooldown_evals) {
+                eval_depth_ctx() - t_last_auto_gc_eval_depth > memory_policy_.cooldown_evals) {
                 // Find top arena (highest used-pct, then largest used, then name asc).
                 std::string top_name;
                 int top_pct = 0;
@@ -6665,8 +6667,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                  "[memory-pressure] AUTO-GC: freeing arena '{}' ({}% full)",
                                  top_name, top_pct);
                     gc_module(top_name);
-                    t_last_auto_gc_eval_depth = eval_depth_;
-                    last_auto_gc_eval_depth_ = eval_depth_;
+                    t_last_auto_gc_eval_depth = eval_depth_ctx();
+                    last_auto_gc_eval_depth_ctx() = eval_depth_ctx();
                 }
             }
         }
@@ -6808,8 +6810,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
             tw_stw_safepoint();
             if (tw_reclaim_due())
                 maybe_reclaim_tw_unreachable();
-            current_flat_ = f;
-            current_pool_ = p;
+            current_flat_.store(f, std::memory_order_relaxed);
+            current_pool_.store(p, std::memory_order_relaxed);
             // Issue #3457: SymId intern is pool-local. TCO / nested
             // eval / a fresh CompilerService::eval snippet swap `p`.
             bind_sym_intern_pool(p);
@@ -7939,11 +7941,11 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             // Issue #4456 vs try-catch contract: mark the body
                             // so display's arg-error consumption is suspended
                             // here — the error must reach this try's catch.
-                            ++try_body_depth_;
+                            ++try_body_depth_ctx();
                             struct TryBodyScope {
                                 int& d;
                                 ~TryBodyScope() { --d; }
-                            } try_body_scope{try_body_depth_};
+                            } try_body_scope{try_body_depth_ctx()};
                             auto result = eval_flat(*f, *p, body_id, eval_env);
                             if (result && !is_error(*result)) {
                                 // Body succeeded — return result as-is
@@ -8035,8 +8037,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         if (aura::serve::g_current_fiber == nullptr &&
                             callee.sym_id != aura::ast::INVALID_SYM) {
                             const auto sc_uid = static_cast<std::uint32_t>(current_id);
-                            if (sc_uid < name_res_by_node_.size()) {
-                                const auto& sc = name_res_by_node_[sc_uid];
+                            if (sc_uid < name_res_by_node().size()) {
+                                const auto& sc = name_res_by_node()[sc_uid];
                                 if (sc.kind == NameResEntry::Kind::CallNoPrim &&
                                     sc.sym == callee.sym_id && sc.top_gen == top_bind_gen_ &&
                                     sc.cap == eval_env.cap_snapshot().get()) {
@@ -8152,8 +8154,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 callee.sym_id != aura::ast::INVALID_SYM &&
                                 eval_env.binding_mirrors_aligned()) {
                                 const auto cc_uid = static_cast<std::uint32_t>(current_id);
-                                if (cc_uid < name_res_by_node_.size()) {
-                                    const auto& cc = name_res_by_node_[cc_uid];
+                                if (cc_uid < name_res_by_node().size()) {
+                                    const auto& cc = name_res_by_node()[cc_uid];
                                     if (cc.sym == callee.sym_id && cc.top_gen == top_bind_gen_ &&
                                         cc.cap == eval_env.cap_snapshot().get()) {
                                         if (cc.kind == NameResEntry::Kind::Prim &&
@@ -8213,7 +8215,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 // Issue #4596: error? observes the value, in or
                                 // out of try. Other prims still propagate.
                                 if (is_error(*ar) && !is_string(*ar) && cname != "error?" &&
-                                    (cname != "display" || try_body_depth_ > 0))
+                                    (cname != "display" || try_body_depth_ctx() > 0))
                                     return ar;
                                 args.push_back(*ar);
                             }
@@ -8490,31 +8492,28 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         // compared before any overwrite. A moved frame (pin)
                         // cleared the stamp, so a dangling pointer is not read.
                         bool reused = false;
-                        if (tco_reuse_live_ && !cl.dotted && tail_env.has_value() &&
-                            current_env == &*tail_env && current_env == tco_reuse_env_ &&
-                            tco_reuse_cid_ == cid && cargs.size() == tco_reuse_n_ &&
-                            tco_reuse_n_ == named_count && tco_reuse_n_ <= 8 &&
-                            cl.bridge_epoch == tco_reuse_bridge_ &&
-                            defuse_version_.load(std::memory_order_acquire) == tco_reuse_defuse_ &&
-                            env_generation_ == tco_reuse_env_gen_ &&
-                            named_count <= cl.params.size()) {
+                        if (tco.live && !cl.dotted && tail_env.has_value() &&
+                            current_env == &*tail_env && current_env == tco.env && tco.cid == cid &&
+                            cargs.size() == tco.n && tco.n == named_count && tco.n <= 8 &&
+                            cl.bridge_epoch == tco.bridge &&
+                            defuse_version_.load(std::memory_order_acquire) == tco.defuse &&
+                            env_generation_ == tco.env_gen && named_count <= cl.params.size()) {
                             bool syms_ok = true;
-                            for (std::uint32_t i = 0; i < tco_reuse_n_; ++i) {
-                                if (cl.params[i] != tco_reuse_syms_[i]) {
+                            for (std::uint32_t i = 0; i < tco.n; ++i) {
+                                if (cl.params[i] != tco.syms[i]) {
                                     syms_ok = false;
                                     break;
                                 }
                             }
                             if (syms_ok) {
                                 reused = tail_env->overwrite_param_slots(
-                                    std::span<const aura::ast::SymId>(tco_reuse_syms_.data(),
-                                                                      tco_reuse_n_),
+                                    std::span<const aura::ast::SymId>(tco.syms, tco.n),
                                     std::span<const types::EvalValue>(cargs.data(), cargs.size()));
                             }
                         }
                         if (!reused) {
                             // Drop the stamp before materialize re-enters eval.
-                            tco_reuse_live_ = false;
+                            tco.live = false;
                             tail_env = materialize_call_env(cl.to_closure());
                             tail_env->set_primitives(&primitives_);
 
@@ -8549,15 +8548,15 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 }
                             }
                             if (can_stamp) {
-                                tco_reuse_live_ = true;
-                                tco_reuse_cid_ = cid;
-                                tco_reuse_env_ = &*tail_env;
-                                tco_reuse_n_ = static_cast<std::uint32_t>(named_count);
-                                tco_reuse_bridge_ = cl.bridge_epoch;
-                                tco_reuse_defuse_ = defuse_version_.load(std::memory_order_acquire);
-                                tco_reuse_env_gen_ = env_generation_;
+                                tco.live = true;
+                                tco.cid = cid;
+                                tco.env = &*tail_env;
+                                tco.n = static_cast<std::uint32_t>(named_count);
+                                tco.bridge = cl.bridge_epoch;
+                                tco.defuse = defuse_version_.load(std::memory_order_acquire);
+                                tco.env_gen = env_generation_;
                                 for (std::size_t i = 0; i < named_count; ++i)
-                                    tco_reuse_syms_[i] = cl.params[i];
+                                    tco.syms[i] = cl.params[i];
                             }
                         }
                         // Issue #2871: true TCO for TW closure calls.
@@ -9604,7 +9603,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     // Issue #2570: abort begin on first-class error for every
                     // other begin, so a module load does not continue.
                     const bool file_root = require_failure_is_diagnostic_ &&
-                                           file_diag_root_flat_ == f && file_diag_root_id_ == v.id;
+                                           file_diag_root_flat() == f &&
+                                           file_diag_root_id() == v.id;
                     auto finish_child = [&](EvalResult r, aura::ast::NodeId form) -> EvalResult {
                         if (r && file_root && is_error(*r) && !is_string(*r))
                             r = file_mode_escaped_primitive(*this, *r, *f, form);
@@ -9613,8 +9613,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         if (file_root && !r) {
                             const auto nv = f->get(form);
                             if (nv.line > 0)
-                                file_resume_form_ = aura::diag::SourceLocation{
-                                    nv.line, nv.col == 0 ? 1u : nv.col, 0};
+                                set_file_resume_form(aura::diag::SourceLocation{
+                                    nv.line, nv.col == 0 ? 1u : nv.col, 0});
                         }
                         return r;
                     };

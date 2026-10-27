@@ -4995,8 +4995,8 @@ std::size_t Evaluator::refresh_stale_frames_after_steal(std::uint64_t hint_env_i
                 const auto* vp = static_cast<const void*>(p);
                 if (vp == static_cast<const void*>(workspace_flat_) ||
                     vp == static_cast<const void*>(workspace_pool_) ||
-                    vp == static_cast<const void*>(current_flat_) ||
-                    vp == static_cast<const void*>(current_pool_) ||
+                    vp == static_cast<const void*>(current_flat()) ||
+                    vp == static_cast<const void*>(current_pool()) ||
                     vp == static_cast<const void*>(mutate_target_flat_) ||
                     vp == static_cast<const void*>(mutate_target_pool_))
                     return true;

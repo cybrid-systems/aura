@@ -132,7 +132,10 @@ def main() -> int:
     )
     must("std::min<std::uint64_t>(next, ceiling)" in body, "AC2: window clamped against the effective ceiling")
     must("file_heap_allocs_trigger_) * 2)" in body, "AC2: #4525 burst-doubling arm kept")
-    must("tw_closure_allocs_trigger_ <= ceiling);" in body, "AC2: contract_assert cites the effective ceiling")
+    must(
+        "tw_closure_allocs_trigger_.load(std::memory_order_relaxed) <= ceiling);" in body,
+        "AC2: contract_assert cites the effective ceiling",
+    )
     must("third reopen" in gc, "AC2: evaluator_gc.cpp documents the reopen rationale")
     must("[128, 32768]" not in gc and "[128, 32768]" not in flat, "AC2: no stale [128, 32768] clamp doc left behind")
 
