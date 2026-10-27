@@ -10179,13 +10179,28 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             std::vector<NodeId> lifted;
             lifted.reserve(n0);
             DenseNodeSet4682 lifted_seen(flat.size());
+            // Issue #4682: memo of each walked node's top-level form, so
+            // affected nodes sharing a spine walk it once (was
+            // O(|affected| * depth)). kLiftDetached marks a detached subtree.
+            constexpr NodeId kLiftUnknown = NULL_NODE;
+            const NodeId kLiftDetached = static_cast<NodeId>(flat.size());
+            std::vector<NodeId> lift_memo(flat.size(), kLiftUnknown);
+            std::vector<NodeId> lift_path;
             for (std::size_t k = 0; k < n0; ++k) {
                 NodeId cur = affected[k];
                 if (cur == NULL_NODE || cur >= flat.size())
                     continue;
                 std::size_t safety = 0;
                 bool detached = false;
+                lift_path.clear();
                 while (safety++ < flat.size()) {
+                    if (lift_memo[cur] != kLiftUnknown) {
+                        detached = lift_memo[cur] == kLiftDetached;
+                        if (!detached)
+                            cur = lift_memo[cur];
+                        break;
+                    }
+                    lift_path.push_back(cur);
                     const NodeId par = flat.parent_of(cur);
                     if (par == NULL_NODE || par >= flat.size()) {
                         // Issue #4682 fix 1: a parentless non-root node is a
@@ -10202,6 +10217,8 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                         break;
                     cur = par;
                 }
+                for (auto pn : lift_path)
+                    lift_memo[pn] = detached ? kLiftDetached : cur;
                 if (detached)
                     continue;
                 // Every affected node's top-level form is part of the cone
@@ -10890,21 +10907,37 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     // not reachable from the live root so the report describes the restored
     // program. A linked body (the in-flight check) stays in the cone.
     if (!affected.empty() && flat.root != NULL_NODE && flat.is_live_node(flat.root)) {
+        // Issue #4682: memoized per node (0 unknown, 1 reachable, 2 not),
+        // so a shared spine is walked once per pass.
+        std::vector<std::uint8_t> reach_memo(flat.size(), 0);
+        std::vector<NodeId> reach_path;
         auto reachable = [&](NodeId id) -> bool {
             if (!flat.is_live_node(id))
                 return false;
+            reach_path.clear();
             NodeId cur = id;
+            bool result = false;
             for (std::size_t n = 0; n <= flat.size(); ++n) {
-                if (cur == flat.root)
-                    return true;
+                if (cur == flat.root) {
+                    result = true;
+                    break;
+                }
+                if (cur < reach_memo.size() && reach_memo[cur] != 0) {
+                    result = reach_memo[cur] == 1;
+                    break;
+                }
                 if (!flat.is_live_node(cur))
-                    return false;
+                    break;
+                reach_path.push_back(cur);
                 const NodeId parent = flat.parent_of(cur);
                 if (parent == cur || parent == NULL_NODE)
-                    return false;
+                    break;
                 cur = parent;
             }
-            return false;
+            for (auto pn : reach_path)
+                if (pn < reach_memo.size())
+                    reach_memo[pn] = result ? 1 : 2;
+            return result;
         };
         std::vector<NodeId> live;
         live.reserve(affected.size());
@@ -10924,6 +10957,8 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     for (auto a : affected)
         ++affected_id_count_4682[a];
     SeededPassMarker4682 seeded_marker_4682(&engine);
+    std::vector<std::uint8_t> anc_memo_4682(flat.size(), 0);
+    std::vector<NodeId> anc_path_4682;
 
     std::size_t re_inferred = 0;
     std::uint32_t max_narrow_evidence = 0;
@@ -10955,6 +10990,9 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         // bi != ai entries holding a different copy of id).
         bool ancestor_in_affected = false;
         {
+            // Issue #4682: memo "this node or an ancestor is in affected"
+            // (0 unknown, 1 yes, 2 no); shared spines are walked once.
+            anc_path_4682.clear();
             NodeId cur = flat.parent_of(id);
             std::size_t safety = 0;
             while (cur != aura::ast::NULL_NODE && cur < flat.size() && safety++ < flat.size()) {
@@ -10963,8 +11001,15 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                     ancestor_in_affected = true;
                     break;
                 }
+                if (anc_memo_4682[cur] != 0) {
+                    ancestor_in_affected = anc_memo_4682[cur] == 1;
+                    break;
+                }
+                anc_path_4682.push_back(cur);
                 cur = flat.parent_of(cur);
             }
+            for (auto pn : anc_path_4682)
+                anc_memo_4682[pn] = ancestor_in_affected ? 1 : 2;
         }
         if (ancestor_in_affected) {
             continue; // ancestor's recursive walk will cover us
@@ -12384,20 +12429,25 @@ namespace {
             return;
         std::unordered_set<NodeId> seen_dt(define_types.begin(), define_types.end());
         std::unordered_set<NodeId> seen_match(match_lets.begin(), match_lets.end());
+        // Issue #4682: a node already walked had its whole ancestor chain
+        // walked too, so stop there (was O(|dirty| * depth)).
+        std::vector<bool> walked(flat.size(), false);
         for (auto start : dirty) {
             if (start == NULL_NODE || start >= flat.size())
                 continue;
             NodeId cur = start;
             std::size_t safety = 0;
             while (cur != NULL_NODE && cur < flat.size() && safety++ < flat.size()) {
+                if (walked[cur])
+                    break;
+                walked[cur] = true;
                 const auto v = flat.get(cur);
                 if (v.tag == NodeTag::DefineType && seen_dt.insert(cur).second)
                     define_types.push_back(cur);
                 if (flat.has_match_info(cur)) {
                     if (seen_match.insert(cur).second)
                         match_lets.push_back(cur);
-                } else if (v.tag == NodeTag::Let &&
-                           std::string(pool.resolve(v.sym_id)) == "__match_tmp" &&
+                } else if (v.tag == NodeTag::Let && pool.resolve(v.sym_id) == "__match_tmp" &&
                            seen_match.insert(cur).second) {
                     match_lets.push_back(cur);
                 }
@@ -12431,11 +12481,13 @@ namespace {
                                               std::vector<NodeId>& match_lets) {
         std::unordered_set<NodeId> seen_dt;
         std::unordered_set<NodeId> seen_match;
+        // Issue #4682: one visited set across roots; nested roots were
+        // re-walked per root (O(|roots| * subtree)).
+        std::unordered_set<NodeId> walk_seen;
         for (auto root : roots) {
             if (root == NULL_NODE || root >= flat.size())
                 continue;
             std::vector<NodeId> stack = {root};
-            std::unordered_set<NodeId> walk_seen;
             while (!stack.empty()) {
                 auto id = stack.back();
                 stack.pop_back();
@@ -12444,7 +12496,7 @@ namespace {
                 auto v = flat.get(id);
                 if (v.tag == NodeTag::DefineType && seen_dt.insert(id).second)
                     define_types.push_back(id);
-                if (v.tag == NodeTag::Let && std::string(pool.resolve(v.sym_id)) == "__match_tmp" &&
+                if (v.tag == NodeTag::Let && pool.resolve(v.sym_id) == "__match_tmp" &&
                     seen_match.insert(id).second) {
                     match_lets.push_back(id);
                 }

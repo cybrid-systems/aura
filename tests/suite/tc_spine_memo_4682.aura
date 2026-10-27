@@ -1,0 +1,48 @@
+; Issue #4682 (typecheck spine memo): infer_flat_partial memoizes the
+; upward walks (top-level lift, live-root reachability, affected-ancestor
+; dedupe, ADT ancestor/subtree scans). Deep bodies whose nodes share one
+; spine must still type-check, run, and reject bad rebinds exactly as before.
+(require "std/mutate" all:)
+(define *fails* 0)
+(define *n* 0)
+(define (check! ok msg)
+  (set! *n* (+ *n* 1))
+  (if (not ok)
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+(define (rebind name body label)
+  (try (mutate:rebind name body label) (catch (e) (list "raised" e))))
+(define (cl k acc)
+  (if (= k 20) acc
+      (cl (+ k 1) (string-append acc "((= x -" (number->string (+ k 1)) ") " (number->string k) ")"))))
+;; deep cond (nested if spine) with a nested lambda whose param must be in scope
+(define (body v)
+  (string-append "(lambda (x) (cond " (cl 0 "")
+                 " (else ((lambda (y) (+ y " (number->string v) ")) x))))"))
+(set-code (string-append "(define f " (body 0) ")\n"
+                         "(define c0 (lambda (x) (f x)))\n(define c1 (lambda (x) (* 2 (f x))))\n"
+                         "(define k (lambda (s) (string-append s \"!\")))\n"))
+(eval-current)
+(define tc0 (typecheck-current))
+(let loop ((i 0))
+  (if (< i 8)
+      (begin
+        (check! (eq? (rebind "f" (body i) "t") #t) "deep rebind accepted")
+        (eval-current)
+        (check! (= (c0 100) (+ 100 i)) "c0 follows f")
+        (check! (= (c1 100) (* 2 (+ 100 i))) "c1 follows f")
+        (check! (= (f -3) 2) "deep cond arm")
+        (check! (string=? (k "a") "a!") "sibling intact")
+        (loop (+ i 1)))))
+;; bad rebinds still rejected by the post-mutate typecheck
+(define r1 (rebind "f" "(lambda (x z) (+ x z))" "arity"))
+(check! (and (pair? r1) (equal? (car r1) "mutation-failed")) "arity rebind rejected")
+(define r2 (rebind "f" "(lambda (x) (cond ((= x 0) 1) (else ((lambda (y) (+ y nope-4682)) x))))" "unbound"))
+(check! (and (pair? r2) (equal? (car r2) "mutation-failed")) "unbound in nested lambda rejected")
+(check! (= (c0 100) 107) "old f survives rejections")
+;; sibling rebind after rejections still re-checked and runs
+(check! (eq? (rebind "k" "(lambda (s) (string-append s \"?\"))" "sib") #t) "sibling rebind accepted")
+(eval-current)
+(check! (string=? (k "b") "b?") "sibling rebind runs")
+(check! (= (c1 100) 214) "c1 unchanged by sibling rebind")
+(display "tc_spine_memo_4682: ") (display (- *n* *fails*)) (display "/") (display *n*) (newline)
+(if (> *fails* 0) (exit 1))
