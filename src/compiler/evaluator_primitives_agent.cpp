@@ -6491,6 +6491,19 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 }
                 ~SuperviseRegionTls() { Evaluator::clear_parallel_task_region_key(); }
             };
+            // Issue #4723: the watch arm's Phase A is empty by design
+            // (#3726 / #4050): the closures are AgentSpec bodies owned by the
+            // batch child, so BatchResult carries ok-count/err-count = 0 and
+            // status Ok no matter what those bodies did. Tally the real
+            // per-task outcome on the body side (atomics -- bodies run on
+            // scheduler workers) and project it onto the batch face once the
+            // join below has observed them. A body that never applied
+            // (closure reclaimed / gate skip) is a failure, never a silent ok.
+            struct SuperviseTally {
+                std::atomic<std::uint32_t> ok{0};
+                std::atomic<std::uint32_t> err{0};
+            };
+            auto tally = std::make_shared<SuperviseTally>();
             if (watch_scope) {
                 // Spawn into the child so watch_all / RestartN have specs_
                 // + handles. Empty Phase A so closures do not run twice.
@@ -6500,25 +6513,35 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     aura::orch::AgentSpec spec;
                     spec.name = "supervise-batch-" + std::to_string(ti);
                     spec.region_key = rkey;
-                    spec.body = [&ev, cid, rkey, skip_mu, use_eval_gate, caller_apply_hold]() {
+                    spec.body = [&ev, cid, rkey, skip_mu, use_eval_gate, caller_apply_hold,
+                                 tally]() {
                         try {
                             SuperviseRegionTls region_tls(rkey);
-                            run_supervised_apply(ev, skip_mu, use_eval_gate, caller_apply_hold,
-                                                 rkey, [&] {
-                                                     if (!agent_cid_live(ev, cid)) {
-                                                         agent_note_closure_freed_call(ev);
-                                                         return;
-                                                     }
-                                                     (void)ev.apply_closure(cid, {});
-                                                     // Issue #4050: stamp body progress on this
-                                                     // one-shot slot (coop registration is
-                                                     // fiber-local, #2540). Progress at
-                                                     // apply_closure return is enough: the body
-                                                     // then exits, so the fiber clock reads Done
-                                                     // instead of a stale injected coop window.
-                                                     (void)aura::orch::agent_poll();
-                                                 });
+                            // Issue #4723: record what this task actually did
+                            // so the watch face can report real counts.
+                            bool applied = false;
+                            run_supervised_apply(
+                                ev, skip_mu, use_eval_gate, caller_apply_hold, rkey, [&] {
+                                    if (!agent_cid_live(ev, cid)) {
+                                        agent_note_closure_freed_call(ev);
+                                        return;
+                                    }
+                                    auto opt = ev.apply_closure(cid, {});
+                                    applied = opt.has_value() && !types::is_error(*opt);
+                                    // Issue #4050: stamp body progress on this
+                                    // one-shot slot (coop registration is
+                                    // fiber-local, #2540). Progress at
+                                    // apply_closure return is enough: the body
+                                    // then exits, so the fiber clock reads Done
+                                    // instead of a stale injected coop window.
+                                    (void)aura::orch::agent_poll();
+                                });
+                            if (applied)
+                                tally->ok.fetch_add(1, std::memory_order_relaxed);
+                            else
+                                tally->err.fetch_add(1, std::memory_order_relaxed);
                         } catch (...) {
+                            tally->err.fetch_add(1, std::memory_order_relaxed);
                             // [SILENCE-PRIM-#3726] agent body errors surface
                             // via join/status only (#1669 class B).
                         }
@@ -6600,19 +6623,31 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             }
 
             // Issue #4050: close the supervise child on the watch-scope path.
-            // Production only: the wait budget is the existing ~AgentScope SSOT
-            // (kDefaultJoinDrainMs) and the post-wait cleanup is the residual
-            // drain budget (kResidualJoinDrainMs) that routes through
+            // Issue #4723: the join is now unconditional (was production-only).
+            // The watch arm is the default mode, and without the wait the prim
+            // returned before any batch body ran while still reporting Ok /
+            // ok-count=0 / err-count=0 — a failing task was invisible. Waiting
+            // is what makes the tally below describe tasks that ran. The wait
+            // budget is the existing ~AgentScope SSOT (kDefaultJoinDrainMs) and
+            // the post-wait cleanup is the residual drain budget
+            // (kResidualJoinDrainMs) that routes through
             // complete_agent_join_cleanup / ensure_reclaimed_cleanup — so a
             // finished closure releases its arena reservation / directory row
             // before the prim returns instead of waiting for ~Evaluator. A body
             // still live after the budget keeps the #2661 must-wait / abandon
-            // path (no early free). The explicit ReportOnly join policy keeps
-            // this close from cancelling, restarting or replacing a live body.
-            // Soft keeps the historical no-extra-wait behaviour (#2585 / #2661).
-            if (watch_scope && aura::compiler::typed_audit::production_defaults_active()) {
+            // path (no early free) and is reported as an unsettled task.
+            // The explicit ReportOnly join policy keeps this close from
+            // cancelling, restarting or replacing a live body (#2585 / #2661).
+            std::uint64_t watch_join_budget_ms = 0;
+            if (watch_scope) {
                 aura::orch::JoinPolicy join_policy{};
-                join_policy.primary_ms = aura::orch::kDefaultJoinDrainMs;
+                // Issue #4723: an explicit :stall-timeout-ms can only EXTEND
+                // the wait, never shorten it below the ~AgentScope default —
+                // the kwarg historically tuned stall detection and must not
+                // start timing out ordinary batches.
+                watch_join_budget_ms =
+                    std::max<std::uint64_t>(stall_timeout_ms, aura::orch::kDefaultJoinDrainMs);
+                join_policy.primary_ms = watch_join_budget_ms;
                 join_policy.drain_ms = aura::orch::kResidualJoinDrainMs;
                 aura::orch::AgentFailurePolicy join_observe{};
                 join_observe.on_stall = aura::orch::AgentFailureAction::ReportOnly;
@@ -6629,6 +6664,38 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             root.retire_idle_ephemeral_child(&child);
 
             using aura::serve::parallel_orch::BatchStatus;
+            // Issue #4723: project the body tally onto the batch face. The
+            // watch arm's BatchResult is empty by construction (#3726), so
+            // ok-count / err-count / status must come from what the bodies
+            // reported. Unsettled slots (join budget exhausted, body still
+            // live) count as errors: an unfinished task is not a success.
+            std::uint32_t watch_ok_count = 0;
+            std::uint32_t watch_err_count = 0;
+            bool watch_incomplete = false;
+            if (watch_scope) {
+                const auto total = static_cast<std::uint32_t>(cids.size());
+                watch_ok_count = std::min(tally->ok.load(std::memory_order_relaxed), total);
+                watch_err_count = tally->err.load(std::memory_order_relaxed);
+                if (watch_ok_count + watch_err_count != total) {
+                    // Either the join budget expired with bodies still live
+                    // (settled < total) or a RestartN generation added a
+                    // second outcome (settled > total). Clamp to the batch.
+                    watch_incomplete = watch_ok_count + watch_err_count < total;
+                    watch_err_count = total - watch_ok_count;
+                }
+                r.batch.ok_count = watch_ok_count;
+                r.batch.err_count = watch_err_count;
+                if (watch_incomplete) {
+                    r.batch.status = BatchStatus::Timeout;
+                } else if (watch_err_count > 0) {
+                    r.batch.status = BatchStatus::Partial;
+                    aura::serve::parallel_orch::g_parallel_orch_stats.batch_partial_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    r.residual_observed = true;
+                } else {
+                    r.batch.status = BatchStatus::Ok;
+                }
+            }
             // Issue #4050: ok is false when production RestartN cancelled or
             // skipped a still-live supervise body (drain-deferred replace /
             // spawn-admit deny / non-restartable-spec skip) or left a slot

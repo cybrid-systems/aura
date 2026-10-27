@@ -4,12 +4,17 @@ RestartN stalled on an unstamped coop clock.
 
 Contract (one row per AC):
   AC1  orch:supervise-batch :watch-scope #t closes the child scope before
-       returning (production only) with the existing budgets — the
-       ~AgentScope wait (kDefaultJoinDrainMs) plus the residual drain SSOT
+       returning with the existing budgets — the ~AgentScope wait
+       (kDefaultJoinDrainMs) plus the residual drain SSOT
        (kResidualJoinDrainMs) whose cleanup goes through
        complete_agent_join_cleanup / ensure_reclaimed_cleanup. The join
        policy is an explicit ReportOnly policy so the close cannot cancel,
-       restart or replace a live body. Soft adds no wait (#2585 / #2661).
+       restart or replace a live body (#2585 / #2661).
+       Issue #4723 SUPERSEDES the "production only / Soft adds no wait" clause
+       this row originally pinned: the wait is unconditional (Soft included)
+       because the default watch arm returned before any body ran and still
+       reported Ok / ok-count=0 / err-count=0. An explicit :stall-timeout-ms
+       can only extend the budget (max(kwarg, kDefaultJoinDrainMs)).
   AC2  the supervise spec is a one-shot fiber-clock body
        (AgentSpec::body_clock_from_fiber): the closure wrapper stamps
        progress at apply_closure return and watch_agent_liveness treats a
@@ -74,13 +79,18 @@ def main() -> int:
     # ── AC1: watch-scope child close on the existing budgets ─────────────
     must("Issue #4050", "AC1 prim cites", prim)
     must("kSuperviseBatchScopeJoinIssue = 4050", "AC1 issue stamp", spawn)
-    must(
+    # Issue #4723: the close is no longer production-gated (the default Soft
+    # watch arm must wait too), and the budget goes through the #4723
+    # max(kwarg, kDefaultJoinDrainMs) clamp instead of the bare default.
+    forbid(
         "if (watch_scope && aura::compiler::typed_audit::production_defaults_active()) {",
-        "AC1 production-gated close",
+        "AC1 not production-gated (#4723)",
         prim,
     )
     must("child.join_all(join_policy, join_observe)", "AC1 child join", prim)
-    must("join_policy.primary_ms = aura::orch::kDefaultJoinDrainMs;", "AC1 wait budget SSOT", prim)
+    must("watch_join_budget_ms", "AC1 #4723 wait budget", prim)
+    must("aura::orch::kDefaultJoinDrainMs", "AC1 wait budget SSOT", prim)
+    must("join_policy.primary_ms = watch_join_budget_ms;", "AC1 budget clamp applied", prim)
     must("join_policy.drain_ms = aura::orch::kResidualJoinDrainMs;", "AC1 drain budget SSOT", prim)
     must(
         "join_observe.on_join_fail = aura::orch::AgentFailureAction::ReportOnly;",
@@ -88,7 +98,11 @@ def main() -> int:
         prim,
     )
     must("join_observe.on_stall = aura::orch::AgentFailureAction::ReportOnly;", "AC1 close cannot stall-act", prim)
-    must("Soft keeps the historical no-extra-wait behaviour (#2585 / #2661)", "AC1 Soft no wait", prim)
+    must(
+        "cancelling, restarting or replacing a live body (#2585 / #2661)",
+        "AC1 ReportOnly close (#4723: waits on Soft too)",
+        prim,
+    )
 
     # ── AC2: one-shot fiber-clock body, no cancel for missing agent_poll ─
     must("body_clock_from_fiber = true;", "AC2 supervise spec flag", prim)

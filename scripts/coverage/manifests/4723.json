@@ -1,0 +1,58 @@
+{
+  "issue": 4723,
+  "title": "Issue #4723: orch:supervise-batch with the default :watch-scope runs the batch bodies, joins the batch child on every face and reports real ok/err counts (a failing task is no longer hidden behind ok / ok-count=0 / err-count=0).",
+  "ok": "OK: Issue #4723 supervise-batch watch tally - default watch joins the batch child, ok-count/err-count come from per-body outcomes, unsettled bodies refuse with timeout, no test_issue_4723.cpp",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "Issue #4723",
+        "struct SuperviseTally",
+        "tally->ok.fetch_add(1",
+        "tally->err.fetch_add(1",
+        "r.batch.ok_count = watch_ok_count;",
+        "r.batch.err_count = watch_err_count;",
+        "r.batch.status = BatchStatus::Partial;"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "watch_join_budget_ms",
+        "join_policy.primary_ms = watch_join_budget_ms;",
+        "watch_incomplete = watch_ok_count + watch_err_count < total;",
+        "r.batch.status = BatchStatus::Timeout;"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/orch/test_failure_policy_bridge.cpp",
+      "contains": [
+        "ac4723_1_default_watch_reports_failure",
+        "4723 AC1: default watch",
+        "notok:partial:1:1:w:ran",
+        "ac4723_2_success_counts",
+        "ok:ok:3:0"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/orch/test_failure_policy_bridge.cpp",
+      "contains": [
+        "ac4723_3_source_cite",
+        "4723 AC3: watch join is unconditional",
+        "4723 AC3: manifest SSOT present"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/orch/test_issue_4723.cpp",
+        "tests/issues/test_issue_4723.cpp",
+        "docs/design/4723-watch-scope-join.md"
+      ]
+    }
+  ]
+}
