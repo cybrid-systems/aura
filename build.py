@@ -165,7 +165,11 @@ SANITIZER_FLAGS = {
         # with -Werror that kills the build (observed in aura_jit.cpp via
         # LLVMBuilder::load). Downgrade that one diagnostic to a warning —
         # all other -Werror checks stay on.
-        "-fsanitize=thread -fno-omit-frame-pointer -Wno-error=mismatched-new-delete",
+        # -Wno-error=tsan: GCC 16 flags the atomic_thread_fence wrapper in
+        # src/core/atomic_fence_port.h as a TSan-instrumentation warning
+        # ("atomic_thread_fence ... not supported") and -Werror kills the
+        # build (#4711). Same narrowing as the mismatched-new-delete entry.
+        "-fsanitize=thread -fno-omit-frame-pointer -Wno-error=mismatched-new-delete -Wno-error=tsan",
         "-fsanitize=thread",
         "Debug",  # force -O0; -O2/-O3 explode TSan false positives
     ),

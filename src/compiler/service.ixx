@@ -139,6 +139,83 @@ extern "C" void aura_jit_suppress_runtime_reset_this_thread(int on) noexcept;
         (why != nullptr && why[0] != '\0') ? std::string(why) : std::string("hygiene-pass-limit")};
 }
 
+// ── Issue #4711: eval-mutex (M1) release across a blocking wait ───────
+//
+// Single lock order, never reversed: body mutex M0 (the CLI/denseness
+// unique_lock published in the messaging TLS slot, #4356/#4674) then eval
+// mutex M1 (eval_mutex_, #1431). CompilerService::eval takes M0 then M1;
+// a fiber body takes M0 and may enter eval (eval-current / the JIT
+// recompile hook) and then needs M1.
+//
+// A blocking wait inside eval (fiber:join, read-line, http-post, channel
+// park) drops M0 so a sibling body can run. Re-taking M0 on resume while
+// M1 is still held is an M1 → M0 acquisition: TSan
+// lock-order-inversion #4711, and a real deadlock once the sibling body
+// holds M0 and waits for M1. The wait guards therefore drop M1 too
+// (EvalMutexWaitLockGuard in messaging_bridge.h, declared before the
+// body-lock guard) and re-take it AFTER M0, so every path keeps the same
+// M0 → M1 order. Release order across the wait is the reverse.
+struct EvalMutexWaitTls {
+    std::recursive_mutex* mtx = nullptr;
+    // Recursive locks this thread holds through the published scope.
+    int depth = 0;
+};
+static thread_local EvalMutexWaitTls t_eval_mutex_wait_tls;
+
+static void* eval_mutex_wait_release_impl() {
+    EvalMutexWaitTls& t = t_eval_mutex_wait_tls;
+    if (t.mtx == nullptr || t.depth <= 0)
+        return nullptr; // this thread holds no eval mutex — nothing to drop
+    const int n = t.depth;
+    // Full-depth unwind: a re-entrant eval (Path B) holds the recursive
+    // mutex more than once, and a partial unlock would leave it owned by
+    // this (parked) thread — the inversion would just rotate.
+    for (int i = 0; i < n; ++i)
+        t.mtx->unlock();
+    t.depth = 0;
+    return reinterpret_cast<void*>(static_cast<std::intptr_t>(n));
+}
+
+static void eval_mutex_wait_reacquire_impl(void* token) {
+    EvalMutexWaitTls& t = t_eval_mutex_wait_tls;
+    const int n = static_cast<int>(reinterpret_cast<std::intptr_t>(token));
+    if (t.mtx == nullptr || n <= 0)
+        return;
+    for (int i = 0; i < n; ++i)
+        t.mtx->lock();
+    t.depth = n;
+}
+
+// Publish the eval mutex this scope holds in the TLS slot the wait hooks
+// read. Nested eval (Path B) stacks: the enclosing scope is restored on
+// exit, and a wait/re-acquire inside the inner scope unwinds the full
+// recursive depth.
+struct EvalMutexWaitPublishScope {
+    std::recursive_mutex* prev_mtx = nullptr;
+    int prev_depth = 0;
+    std::recursive_mutex& mtx;
+    EvalMutexWaitPublishScope(const EvalMutexWaitPublishScope&) = delete;
+    EvalMutexWaitPublishScope& operator=(const EvalMutexWaitPublishScope&) = delete;
+    explicit EvalMutexWaitPublishScope(std::recursive_mutex& m)
+        : mtx(m) {
+        prev_mtx = t_eval_mutex_wait_tls.mtx;
+        prev_depth = (prev_mtx == &m) ? t_eval_mutex_wait_tls.depth : 0;
+        t_eval_mutex_wait_tls.mtx = &m;
+        t_eval_mutex_wait_tls.depth = prev_depth + 1;
+    }
+    ~EvalMutexWaitPublishScope() {
+        t_eval_mutex_wait_tls.mtx = prev_mtx;
+        t_eval_mutex_wait_tls.depth = prev_depth;
+    }
+};
+
+static void wire_eval_mutex_wait_hooks() {
+    if (aura::messaging::g_eval_mutex_wait_release == nullptr) {
+        aura::messaging::g_eval_mutex_wait_release = &eval_mutex_wait_release_impl;
+        aura::messaging::g_eval_mutex_wait_reacquire = &eval_mutex_wait_reacquire_impl;
+    }
+}
+
 // Issue #1885: CompilerService is the primary Compiler-layer entry.
 // Dependency direction: Compiler → Core + Parser (not reverse).
 // Layering authority: src/core/module_boundary.ixx — update it when
@@ -2868,7 +2945,10 @@ public:
         // read-byte drop the lock across their wait. A re-entrant eval,
         // or a caller that already holds the lock, gets nullptr and does
         // not lock the non-recursive mutex again. Taken before
-        // eval_mutex_ so the order matches main's oneshot path.
+        // eval_mutex_ so the order matches main's oneshot path, and before
+        // every blocking-wait resume (the wait guards re-take M0 before
+        // M1, #4711).
+        wire_eval_mutex_wait_hooks(); // Issue #4711: M1 is droppable across a wait
         aura::messaging::CliMainEvalBodyLock cli_body_lock;
         // Issue #1431 follow-up Race #3 (and Race #4 #5 ...):
         // serialize the entire eval pipeline across threads.
@@ -2891,7 +2971,13 @@ public:
         // re-enter eval() for non-literal args (e.g. string args
         // after eval_arg_fast fails). A plain mutex deadlocks the
         // calling thread and timed out jit_late1 on (f "hi") paths.
-        std::lock_guard<std::recursive_mutex> lock(eval_mutex_);
+        // Issue #4711: unique_lock + the published scope so a blocking
+        // wait inside this eval (fiber:join / read-line / http-post /
+        // channel park) can drop M1 and re-take it after M0. The
+        // recursive depth is unwound fully, so a re-entrant eval (Path B)
+        // publishes a droppable state too.
+        std::unique_lock<std::recursive_mutex> lock(eval_mutex_);
+        EvalMutexWaitPublishScope eval_mutex_wait_scope(eval_mutex_);
         // Issue #411: snapshot the workspace mutation_log_ size at
         // entry so the post-eval auto-incremental typecheck can
         // detect whether this eval produced a new mutation

@@ -222,6 +222,9 @@ namespace {
     // (serve/worker.cpp) hands the worker to a sibling, so the yield only
     // releases the mutex and re-acquires it after the fiber resumes.
     struct CliBodyYieldHandoff {
+        // Issue #4711: see CliBodyLockJoinGuard — M1 dropped across the
+        // yield and re-taken after M0 (declared first = destroyed last).
+        aura::messaging::EvalMutexWaitLockGuard eval_wait_lock;
         std::unique_lock<std::mutex>* lock = nullptr;
         bool released = false;
         explicit CliBodyYieldHandoff(bool wait_for_takeover) {
@@ -317,6 +320,13 @@ namespace {
     //   end   → clear TLS only if it still points at us (never restore a
     //           yielded sibling's prev — that is the #4054 dangling chain)
     struct CliBodyLockJoinGuard {
+        // Issue #4711: declared FIRST so it is destroyed LAST — the eval
+        // mutex (M1) comes back AFTER the body mutex (M0) re-acquire in the
+        // destructor body, keeping the single order M0 -> M1. Without this
+        // the resume was M1 -> M0 against eval()'s M0 -> M1 (TSan
+        // lock-order-inversion) and deadlocked against a fiber body that
+        // holds M0 and enters eval (eval-current / JIT recompile).
+        aura::messaging::EvalMutexWaitLockGuard eval_wait_lock;
         std::unique_lock<std::mutex>* lock = nullptr;
         bool unlocked = false;
         CliBodyLockJoinGuard() {
