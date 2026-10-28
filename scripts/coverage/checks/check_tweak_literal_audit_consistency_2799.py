@@ -47,7 +47,7 @@ def main() -> int:
         ppos = mut.find('add_mutate(\n        "mutate:tweak-literal"')
     if ppos < 0:
         ppos = mut.rfind("mutate:tweak-literal")  # last hit near registration
-    pwin = mut[max(0, ppos - 100) : ppos + 4000] if ppos >= 0 else ""
+    pwin = mut[max(0, ppos - 100) : ppos + 5200] if ppos >= 0 else ""
 
     lpos = flat.find("eval_flat_apply_mutate_tweak_literal")
     # Issue #3601: the lockless deny site gained the #3543 reason stamp + cite
@@ -55,6 +55,9 @@ def main() -> int:
     # (original slack was 63). Widen the window accordingly.
     # Issue #3652: the deny site gained the nested MSE allow arm (~700 chars
     # more) — widen to 4000 so the IntVal / #2799 anchors stay in-window.
+    # Issue #4738: the registration body gained the LiteralFloat relative
+    # factor arm (~700 chars) ahead of the Int path — widen the registration
+    # window to 5200 so MutationSoAField::IntVal stays in-window.
     lwin = flat[lpos : lpos + 4000] if lpos >= 0 else ""
 
     # AC1
