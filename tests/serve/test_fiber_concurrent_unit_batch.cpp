@@ -2010,6 +2010,82 @@ int run_4728_root_yield_latency_smoke() {
 }
 } // namespace aura_fiber_run_wave64_4728
 
+// Wave 65 (#4737): ast:snapshot / ast:restore must not get slower per call
+// when the cycle runs inside a closure (for-each lambda) frame.
+namespace aura_fiber_run_wave65_4737 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+
+// Issue #4737: snapshot / restore cost grew by ~0.07 ms per cycle when the
+// driver was a closure (for-each lambda) and stayed flat from a top-level
+// let loop. The 5 samples of a long run all landed in
+// MutationBoundaryGuard::~MutationBoundaryGuard ->
+// commit_unstable_densify_root_remap -> densify_forget_value_slots_ ->
+// ArenaGroup::forget_external_root_slot_all -> ASTArena::forget_external_
+// root_slot_for_densify (std::erase over the external-root slot vector).
+// Every boundary re-registered the whole known-root inventory into that
+// vector without a membership test, so the vector grew by the inventory per
+// boundary and the per-commit forget walked it — linear growth per call.
+//
+// Blocks of 100 cycles: fixed => block3 ~= block0; pre-fix block3 - block0
+// was seconds (N=200 ran 1.6 s, N=400 7.4 s wall).
+constexpr const char* kClosureCycleProgram = R"AURA(
+(set-code "(define f0 0) (define f1 1) (define f2 2) (define f3 3) (define f4 4) (define f5 5) (define f6 6) (define f7 7) (define f8 8) (define f9 9) (define f10 10) (define f11 11) (define f12 12) (define f13 13) (define f14 14) (define f15 15) (define f16 16) (define f17 17) (define f18 18) (define f19 19)")
+(eval-current)
+(define (cycle k)
+  (let* ((s (ast:snapshot))
+         (_r (mutate:rebind "f3" "(define (f3 x) (+ x 33))" "probe"))
+         (_e (eval-current))
+         (_x (ast:restore s))
+         (_y (eval-current)))
+    k))
+(define (block-sum k0)
+  (let loop ((k k0) (acc 0))
+    (if (< k (+ k0 100))
+        (let* ((t0 (monotonic-ms)) (_ (cycle k)) (t1 (monotonic-ms)))
+          (loop (+ k 1) (+ acc (- t1 t0))))
+        acc)))
+(define blocks (map (lambda (k0) (block-sum k0)) (list 0 100 200 300)))
+(- (list-ref blocks 3) (list-ref blocks 0))
+)AURA";
+
+int run_4737_closure_snapshot_flat_smoke() {
+    std::println("\n=== #4737: ast:snapshot/restore cost from a closure frame ===");
+    CompilerService cs;
+    auto v = cs.eval(kClosureCycleProgram);
+    CHECK(v.has_value(), "#4737 closure-driven snapshot cycle evaluates");
+    CHECK(v && is_int(*v), "#4737 closure-driven snapshot cycle returns an int");
+    const long long delta = (v && is_int(*v)) ? static_cast<long long>(as_int(*v)) : 1LL << 40;
+    std::println("  #4737 block3-minus-block0-ms = {}", delta);
+    // AC1: the last 100 of 400 closure-driven cycles cost no more than the
+    // first 100 plus 150 ms of CI slack (pre-fix the delta was seconds).
+    CHECK(delta <= 150,
+          "[#4737] AC1 ast:snapshot+ast:restore cost does not grow per cycle when driven "
+          "from a closure frame (block3 - block0 <= 150 ms)");
+    // AC2: source contract - the root-slot list is deduped.
+    {
+        std::string arena;
+        for (const char* p : {"src/core/arena.ixx", "../src/core/arena.ixx"}) {
+            std::ifstream in(p);
+            if (!in)
+                continue;
+            arena =
+                std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            if (!arena.empty())
+                break;
+        }
+        CHECK(!arena.empty(), "#4737 AC2 read src/core/arena.ixx");
+        CHECK(arena.find("Issue #4737") != std::string::npos, "[#4737] AC2 arena.ixx cites #4737");
+        CHECK(arena.find("external_root_slot_set_for_densify_") != std::string::npos,
+              "[#4737] AC2 densify root-slot registration is membership-deduped");
+    }
+    std::println("\n=== #4737: {} passed, {} failed ===", g_passed, g_failed);
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave65_4737
 
 int main() {
 
@@ -2304,6 +2380,12 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave64_4728 ########");
     if (int rc = aura_fiber_run_wave64_4728::run_4728_root_yield_latency_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave65_4737 ########");
+    if (int rc = aura_fiber_run_wave65_4737::run_4737_closure_snapshot_flat_smoke(); rc != 0)
         return rc;
 
     return 0;
