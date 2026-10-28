@@ -5584,3 +5584,166 @@ def test_fiber_cow_overlay_torn_read_4715():
     assert line.startswith("(50 1 1)"), (
         f"#4715 torn read: every read must see 0 or 1 and the commit must land; got {line!r}"
     )
+
+
+def test_fiber_cow_overlay_rebind_eval_current_4715():
+    """Issue #4715 AC2: the literal mutate:rebind + eval-current shape.
+
+    An overlay body rebinds the workspace define cow-target (*2 -> *7) with
+    mutate:rebind + eval-current. AC2 requires ordinary env reads to observe
+    the overlay (not only fiber:overlay-get): the body reads its own 49, a
+    watcher fiber that spans the commit only ever sees a WHOLE 14 or 49
+    (old-or-new, never a dead or half-applied closure), and the commit lands
+    as one whole version (49).
+
+    A CLOSURE value keeps the ordinary write-through: rebinding a define
+    must-deopts the closure the shared cell still holds, so a private copy
+    would leave every sibling body calling an invalidated closure. The
+    overlay owns closures only once the workspace-node slice lands (the
+    follow-up half of #4715); the scalar row below is the private case.
+    """
+    program = """
+(begin
+  (set-code "(define cow-target (lambda (x) (* x 2)))")
+  (eval-current)
+  #t)
+(display
+ (let* ((open (fiber:overlay-begin))
+        (m (try (mutate:rebind "cow-target" "(lambda (x) (* x 7))" "cow") (catch (e) #f)))
+        (ec (if (eq? m #t) (try (begin (eval-current) #t) (catch (e) #f)) #f))
+        (own (cow-target 7))
+        (sib (fiber:join (fiber:spawn (lambda () (cow-target 7)))))
+        (w (fiber:spawn
+            (lambda ()
+              (let loop ((i 0) (ok #t))
+                (if (< i 400)
+                    (loop (+ i 1)
+                          (and ok (let ((v (cow-target 7))) (or (= v 14) (= v 49)))))
+                    ok)))))
+        (cm (fiber:overlay-commit))
+        (after (cow-target 7))
+        (seen (fiber:join w)))
+   (list (if (eq? m #t) 1 0) (if (eq? ec #t) 1 0) own
+         (if (or (= sib 14) (= sib 49)) 1 0) (if (error? cm) 0 1) after seen
+         (fiber:overlay-report))))
+(newline)
+"""
+    out = _run_aura_4715(program, runs=2)
+    for attempt, line in enumerate(out):
+        assert line.startswith("(1 1 49 1 1 49 #t "), (
+            f"#4715 AC2 rebind+eval-current run {attempt}: the body must read its"
+            f" rebind (49), the sibling must see a whole version, the commit must"
+            f" land and the concurrent watcher must only ever see old-or-new; got {line!r}"
+        )
+        assert "commits=1" in line and "conflicts=0" in line and "active=0" in line, (
+            f"#4715 AC2 rebind+eval-current run {attempt}: stats must record one"
+            f" commit and leave nothing open; got {line!r}"
+        )
+
+
+def test_fiber_cow_overlay_scalar_rebind_private_4715():
+    """Issue #4715 AC2: a scalar rebind is PRIVATE until the commit.
+
+    Same literal shape (mutate:rebind + eval-current) on a scalar workspace
+    define. This is the row that proves the env-path interception: the body
+    reads its own 9 while a sibling fiber still reads the committed 5, and the
+    commit publishes 9. Before AC2 the rebind overwrote the shared cell
+    immediately and the sibling read 9.
+    """
+    program = """
+(begin
+  (set-code "(define cow-n 5)")
+  (eval-current)
+  #t)
+(display
+ (let* ((open (fiber:overlay-begin))
+        (m (try (mutate:rebind "cow-n" "9" "cow") (catch (e) #f)))
+        (ec (if (eq? m #t) (try (begin (eval-current) #t) (catch (e) #f)) #f))
+        (own cow-n)
+        (sib (fiber:join (fiber:spawn (lambda () cow-n))))
+        (cm (fiber:overlay-commit))
+        (after cow-n))
+   (list (if (eq? m #t) 1 0) (if (eq? ec #t) 1 0) own sib
+         (if (error? cm) 0 1) after (fiber:overlay-report))))
+(newline)
+"""
+    for attempt, line in enumerate(_run_aura_4715(program, runs=2)):
+        assert line.startswith("(1 1 9 5 1 9 "), (
+            f"#4715 AC2 scalar rebind run {attempt}: the overlay body must read its"
+            f" private 9, a sibling fiber must still read the committed 5, and the"
+            f" commit must publish 9; got {line!r}"
+        )
+        assert "commits=1" in line and "conflicts=0" in line and "active=0" in line, (
+            f"#4715 AC2 scalar rebind run {attempt}: stats must record one commit and leave nothing open; got {line!r}"
+        )
+
+
+def test_fiber_cow_overlay_rebind_conflict_4715():
+    """Issue #4715 AC2: a sibling commit that lands first wins.
+
+    The main body holds a private cow-n (9); the fiber rebinds the same name to
+    11 and commits first, so it owns the binding. Our commit must return the
+    structured fiber:cow-conflict error, apply nothing, and leave the survivor
+    as one whole write (11) - optimistic first-committer-wins with
+    whole-overlay rollback, never last-writer-wins.
+    """
+    program = """
+(begin
+  (set-code "(define cow-n 5)")
+  (eval-current)
+  #t)
+(display
+ (let* ((open (fiber:overlay-begin))
+        (m (try (mutate:rebind "cow-n" "9" "cow") (catch (e) #f)))
+        (ec (if (eq? m #t) (try (begin (eval-current) #t) (catch (e) #f)) #f))
+        (own cow-n)
+        (sib (fiber:join
+              (fiber:spawn
+               (lambda ()
+                 (fiber:overlay-begin)
+                 (fiber:overlay-set! "cow-n" 11)
+                 (if (error? (fiber:overlay-commit)) 0 1)))))
+        (cm (try (fiber:overlay-commit) (catch (e) e)))
+        (after cow-n))
+   (list own sib
+         (if (and (string? cm) (>= (string-index cm "fiber:cow-conflict: cow-n") 0)) 1 0)
+         after (fiber:overlay-report))))
+(newline)
+"""
+    for attempt, line in enumerate(_run_aura_4715(program, runs=3)):
+        assert line.startswith("(9 1 1 11 "), (
+            f"#4715 AC2 conflict run {attempt}: own private 9, the sibling commits 11,"
+            f" our stale commit must report fiber:cow-conflict and the winner must"
+            f" survive whole; got {line!r}"
+        )
+        assert "conflicts=1" in line and "active=0" in line, (
+            f"#4715 AC2 conflict run {attempt}: the losing overlay must be rolled back wholesale; got {line!r}"
+        )
+
+
+def test_fiber_cow_overlay_set_bang_private_4715():
+    """Issue #4715 AC2: set! of a top-level binding is overlay-private.
+
+    Inside the overlay cow-s reads 9 after (set! cow-s 9) while a sibling
+    fiber still reads the committed 5, and the commit publishes 9. The shared
+    cell is never written in place, so the sibling cannot observe a torn value.
+    """
+    program = """
+(begin
+  (set-code "(define cow-s 5)")
+  (eval-current)
+  #t)
+(display
+ (let* ((open (fiber:overlay-begin))
+        (set-r (begin (set! cow-s 9) cow-s))
+        (sib (fiber:join (fiber:spawn (lambda () cow-s))))
+        (cm (fiber:overlay-commit))
+        (after cow-s))
+   (list set-r sib (if (error? cm) 0 1) after (fiber:overlay-report))))
+(newline)
+"""
+    line = _run_aura_4715(program, runs=2)[1]
+    assert line.startswith("(9 5 1 9 "), (
+        f"#4715 AC2 set!: the overlay must see its own 9, a sibling must still read"
+        f" 5, and the commit must publish 9; got {line!r}"
+    )

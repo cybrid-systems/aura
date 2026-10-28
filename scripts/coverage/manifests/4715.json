@@ -1,7 +1,7 @@
 {
   "issue": 4715,
-  "title": "Issue #4715: per-fiber COW overlay for env bindings - a body opens a private overlay (base = workspace COW mutation epoch + commit-log sequence), defines/set! stay private, commit merges fast-forward when the base did not move else per-binding, write-write on the same binding is a deterministic fiber:cow-conflict, rollback drops the overlay and leaves the shared env untouched.",
-  "ok": "OK: Issue #4715 per-fiber COW env overlay - disjoint defines commit, same-name write-write is a deterministic conflict (first commit claims the binding, no partial apply), rollback leaves the shared env untouched, a concurrent committer is observed old-or-new (never torn), and the fiber capability gate carries Strict sandbox semantics",
+  "title": "Issue #4715: per-fiber COW overlay for env bindings - a body opens a private overlay (base = workspace COW mutation epoch + commit-log sequence), defines/set!/mutate:rebind+eval-current stay private, ordinary env reads observe the overlay, commit merges fast-forward when the base did not move else per-binding, write-write on the same binding is a deterministic fiber:cow-conflict, rollback drops the overlay and leaves the shared env untouched.",
+  "ok": "OK: Issue #4715 per-fiber COW env overlay - disjoint defines commit, same-name write-write is a deterministic conflict (first commit claims the binding, no partial apply), rollback leaves the shared env untouched, a concurrent committer is observed old-or-new (never torn), ordinary env reads / defines / set! / scalar mutate:rebind+eval-current are intercepted behind a one-thread_local fast path, and the fiber capability gate carries Strict sandbox semantics",
   "checks": [
     {
       "ac": "AC1",
@@ -43,13 +43,113 @@
       ]
     },
     {
+      "ac": "AC1",
+      "path": "tests/python/test_regression.py",
+      "contains": [
+        "Issue #4715",
+        "test_fiber_cow_overlay_disjoint_commit_4715",
+        "test_fiber_cow_overlay_same_name_conflict_4715",
+        "conflicts=1",
+        "commits=2"
+      ]
+    },
+    {
       "ac": "AC2",
       "path": "src/compiler/evaluator_primitives_fiber_cow.cpp",
       "contains": [
         "fiber:overlay-get",
         "if (auto committed = ev.top_env().lookup(name))",
         "copies one EvalValue",
-        "kThreadKeyDomain"
+        "kThreadKeyDomain",
+        "thread_local std::uint32_t t_fiber_cow_overlay_depth",
+        "fiber_cow_overlay_env_read",
+        "fiber_cow_overlay_capture_define_cell"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "Issue #4715 AC2",
+        "extern thread_local std::uint32_t t_fiber_cow_overlay_depth",
+        "fiber_cow_overlay_env_read",
+        "fiber_cow_overlay_env_cell",
+        "fiber_cow_overlay_capture_define",
+        "fiber_cow_overlay_capture_set"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_env.cpp",
+      "contains": [
+        "Issue #4715 AC2",
+        "t_fiber_cow_overlay_depth != 0",
+        "fiber_cow_overlay_env_read",
+        "fiber_cow_overlay_env_cell"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "Issue #4715 AC2",
+        "fiber_cow_overlay_capture_define_cell",
+        "fiber_cow_overlay_capture_set",
+        "t_fiber_cow_overlay_depth == 0"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "Issue #4715 AC2",
+        "fiber_cow_overlay_capture_define"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/fiber_cow_overlay.hh",
+      "contains": [
+        "Issue #4715 AC2",
+        "read_cell",
+        "write_cell",
+        "std::is_invocable_v<ApplyFn&"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "Issue #4715 AC2",
+        "fiber_cow_overlay_capture_define_cell"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/python/test_regression.py",
+      "contains": [
+        "test_fiber_cow_overlay_torn_read_4715",
+        "#4715 torn read",
+        "never torn",
+        "test_fiber_cow_overlay_rebind_eval_current_4715",
+        "test_fiber_cow_overlay_scalar_rebind_private_4715",
+        "test_fiber_cow_overlay_rebind_conflict_4715",
+        "test_fiber_cow_overlay_set_bang_private_4715",
+        "(1 1 49 1 1 49 #t ",
+        "(1 1 9 5 1 9 ",
+        "(9 1 1 11 "
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_fiber_spawn_cli.cpp",
+      "contains": [
+        "ac20_cow_overlay_env_intercept_cite",
+        "ac21_cow_overlay_rebind_eval_current",
+        "AC21: the overlay body reads its private 9 while a sibling fiber still reads",
+        "AC21: first committer wins, the loser reports fiber:cow-conflict and leaves no trace",
+        "AC20: commit publishes in bindings -> registry lock order",
+        "AC20: mutate:rebind refresh stays private under an overlay"
       ]
     },
     {
@@ -66,26 +166,6 @@
       "contains": [
         "register_fiber_cow_primitives",
         "Issue #4715"
-      ]
-    },
-    {
-      "ac": "AC1",
-      "path": "tests/python/test_regression.py",
-      "contains": [
-        "Issue #4715",
-        "test_fiber_cow_overlay_disjoint_commit_4715",
-        "test_fiber_cow_overlay_same_name_conflict_4715",
-        "conflicts=1",
-        "commits=2"
-      ]
-    },
-    {
-      "ac": "AC2",
-      "path": "tests/python/test_regression.py",
-      "contains": [
-        "test_fiber_cow_overlay_torn_read_4715",
-        "#4715 torn read",
-        "never torn"
       ]
     },
     {

@@ -43,8 +43,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -90,6 +92,14 @@ template <typename V> struct FiberOverlay {
     std::uint64_t base_seq = 0;
     bool active = false;
     std::unordered_map<std::string, V> writes;
+    // Issue #4715 AC2: bindings the evaluator already materialized as a
+    // PRIVATE cell (name -> cell id). The define / set! interception points
+    // allocate one so the commit publishes a single cell index: a reader
+    // resolves either the old cell or the new one, never a half-written
+    // payload (the "old-or-new, never torn" property). Names written through
+    // the EDSL (fiber:overlay-define / set!) carry no cell here; their commit
+    // materializes one.
+    std::unordered_map<std::string, std::uint64_t> cells;
 };
 
 // Process-level registry of open overlays + committed claims. One instance
@@ -109,6 +119,7 @@ public:
         ov.base_epoch = base_epoch;
         ov.base_seq = st.seq;
         ov.writes.clear();
+        ov.cells.clear();
         ov.active = true;
         ++st.stats.begins;
         return ov.base_epoch;
@@ -129,8 +140,51 @@ public:
         }
         std::string key(name);
         ov.writes[key] = value;
+        // #4715 AC2: an EDSL write replaces a captured cell — the commit
+        // materializes a fresh cell from the value instead of publishing a
+        // private cell whose payload is now stale.
+        ov.cells.erase(key);
         ++st.stats.writes;
         return true;
+    }
+
+    // #4715 AC2: private write that is already materialized as a cell (the
+    // evaluator define / set! interception). Same conflict contract as
+    // write(); the commit hands the cell to the apply callback so the shared
+    // env switches from the old cell index to this one in one step.
+    bool write_cell(const void* owner, std::uint64_t fiber, std::string_view name, const V& value,
+                    std::uint64_t cell, std::uint64_t base_epoch) {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto& st = owners_[owner];
+        auto& ov = st.overlays[fiber];
+        if (!ov.active) {
+            ov.fiber = fiber;
+            ov.base_epoch = base_epoch;
+            ov.base_seq = st.seq;
+            ov.active = true;
+            ++st.stats.begins;
+        }
+        std::string key(name);
+        ov.writes[key] = value;
+        ov.cells[key] = cell;
+        ++st.stats.writes;
+        return true;
+    }
+
+    // #4715 AC2: the private cell for a name the overlay captured, if any.
+    std::optional<std::uint64_t> read_cell(const void* owner, std::uint64_t fiber,
+                                           std::string_view name) const {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto oit = owners_.find(owner);
+        if (oit == owners_.end())
+            return std::nullopt;
+        auto fit = oit->second.overlays.find(fiber);
+        if (fit == oit->second.overlays.end() || !fit->second.active)
+            return std::nullopt;
+        auto cit = fit->second.cells.find(std::string(name));
+        if (cit == fit->second.cells.end())
+            return std::nullopt;
+        return cit->second;
     }
 
     // Overlay-local read. Returns false when the binding is not shadowed,
@@ -173,6 +227,11 @@ public:
     // Commit protocol (see header comment). ApplyFn is invoked with the
     // registry lock held, in sorted binding order, and must copy the value
     // into the shared env atomically w.r.t. other commits.
+    //
+    // #4715 AC2: ApplyFn may take a third argument (the private cell the
+    // overlay captured for that name, 0 when the write came from the EDSL).
+    // The two-argument form stays valid — every pre-AC2 caller and every
+    // data-layer test row uses it.
     template <class ApplyFn>
     CommitResult commit(const void* owner, std::uint64_t fiber, std::uint64_t current_epoch,
                         ApplyFn&& apply) {
@@ -208,7 +267,13 @@ public:
             return res;
         }
         for (const auto& n : names) {
-            apply(n, ov.writes.at(n));
+            if constexpr (std::is_invocable_v<ApplyFn&, const std::string&, const V&,
+                                              std::uint64_t>) {
+                auto cit = ov.cells.find(n);
+                apply(n, ov.writes.at(n), cit == ov.cells.end() ? 0 : cit->second);
+            } else {
+                apply(n, ov.writes.at(n));
+            }
             ++st.seq;
             st.log[n] = CommitRecord{st.seq, ov.base_epoch, fiber};
             ++res.applied;

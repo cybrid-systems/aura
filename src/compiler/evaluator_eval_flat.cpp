@@ -4083,17 +4083,31 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
         auto refreshed = eval_flat(flat, *workspace_pool_, old_define, top_env());
         if (refreshed) {
             auto& tenv = top_env();
-            std::size_t ci = 0;
-            bool have = false;
-            if (auto existing = tenv.lookup_binding(name); existing && is_cell(*existing)) {
-                ci = as_cell_id(*existing);
-                have = true;
+            // Issue #4715 AC2: inside a body with an open overlay the rebind is
+            // PRIVATE - it lands in the overlay's cell instead of overwriting
+            // the shared cell in place, so a sibling body keeps reading the old
+            // version and fiber:overlay-commit publishes the new cell in one
+            // step (old-or-new, never torn). Without an overlay this branch is
+            // one thread_local load and the original in-place path runs.
+            if (auto private_cell =
+                    primitives_detail::fiber_cow_overlay_capture_define(*this, name, *refreshed)) {
+                // The private cell is the overlay's: reads inside the body
+                // resolve it through Env::lookup / lookup_cell_index, and the
+                // commit publishes it. The shared top env is untouched.
+                (void)private_cell;
+            } else {
+                std::size_t ci = 0;
+                bool have = false;
+                if (auto existing = tenv.lookup_binding(name); existing && is_cell(*existing)) {
+                    ci = as_cell_id(*existing);
+                    have = true;
+                }
+                if (!have)
+                    ci = alloc_cell(*refreshed);
+                else if (ci < cells().size())
+                    cells()[ci] = *refreshed;
+                tenv.bind(name, make_cell(ci));
             }
-            if (!have)
-                ci = alloc_cell(*refreshed);
-            else if (ci < cells().size())
-                cells()[ci] = *refreshed;
-            tenv.bind(name, make_cell(ci));
         }
     }
     last_eval_current_result_.reset();
@@ -6371,7 +6385,12 @@ std::optional<EvalResult> Evaluator::try_eval_flat_hot(aura::ast::FlatAST& flat,
                 return std::nullopt;
             }
         }
-        if (aura::serve::g_current_fiber != nullptr || env.parent() != nullptr)
+        // Issue #4715 AC2: an open overlay must be observed by ordinary
+        // Variable reads too - the per-node name cache below would answer the
+        // pre-overlay cell. One thread_local load (the fiber test above is the
+        // common exit, so this only costs on the host thread).
+        if (aura::serve::g_current_fiber != nullptr || env.parent() != nullptr ||
+            primitives_detail::t_fiber_cow_overlay_depth != 0)
             return std::nullopt;
         const auto uid = static_cast<std::uint32_t>(id);
         if (uid >= name_res_by_node().size())
@@ -6999,7 +7018,11 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     // the walk consults only frame bindings, and the keyword
                     // intern path below still owns every ':'-leading name
                     // the chain missed.
+                    // Issue #4715 AC2: skip the same-pool chain read while an
+                    // overlay is open on this thread, so the overlay (and not
+                    // the pre-overlay cell) answers the read.
                     if (aura::serve::g_current_fiber == nullptr &&
+                        primitives_detail::t_fiber_cow_overlay_depth == 0 &&
                         v.sym_id != aura::ast::INVALID_SYM && eval_env.pool() == p &&
                         eval_env.binding_mirrors_aligned()) {
                         auto cval = chain_read_var(eval_env, v.sym_id);
@@ -9578,7 +9601,14 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         auto vv = eval_flat(*f, *p, val_id, eval_env);
                         if (!vv)
                             return vv;
-                        cells_[ci] = *vv;
+                        // Issue #4715 AC2: a define / rebind of a TOP-LEVEL
+                        // binding inside a body with an open overlay must not
+                        // overwrite the shared cell in place - the value lands
+                        // in the overlay's private cell (one thread_local load
+                        // when no overlay is open, then the original path).
+                        if (!primitives_detail::fiber_cow_overlay_capture_define_cell(
+                                *this, name, *vv, static_cast<std::uint64_t>(ci)))
+                            cells_[ci] = *vv;
                         // Issue #3681: name the closure so set-body can
                         // must-deopt this view after the define is dirtied.
                         if (is_closure(*vv))
@@ -9609,6 +9639,12 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         // back to this define's pool first.
                         if (p)
                             me.set_pool(p);
+                        // Issue #4715 AC2 deliberately does NOT capture a
+                        // brand-new define here: a file-mode top-level define
+                        // must stay bound in the shared env (capturing it would
+                        // unbind the name the moment the overlay is dropped).
+                        // A private NEW binding is the workspace / EDSL face
+                        // (fiber:overlay-define + bind_define_value_in_env).
                         auto ci = alloc_cell(*vv);
                         if (v.sym_id != aura::ast::INVALID_SYM)
                             me.bind_symid(v.sym_id, make_cell(ci));
@@ -10225,6 +10261,14 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     auto val = eval_flat(*f, *p, val_id, eval_env);
                     if (!val)
                         return val;
+                    // Issue #4715 AC2: an open overlay owns the write. A set!
+                    // of a top-level binding is captured as a private cell (the
+                    // shared cell is never overwritten in place); a local
+                    // (parameter / let) target keeps the ordinary path below.
+                    if (primitives_detail::t_fiber_cow_overlay_depth != 0 &&
+                        primitives_detail::fiber_cow_overlay_capture_set(*this, name, *val,
+                                                                         eval_env))
+                        return *val;
                     // Use stable index instead of pointer (cells_ may reallocate)
                     auto cell_idx = eval_env.lookup_cell_index(std::string(name));
                     if (cell_idx) {

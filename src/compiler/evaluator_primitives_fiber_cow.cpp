@@ -44,6 +44,7 @@ namespace {
     using types::as_cell_id;
     using types::as_string_idx;
     using types::is_cell;
+    using types::is_closure;
     using types::is_string;
     using types::make_bool;
     using types::make_cell;
@@ -75,7 +76,135 @@ namespace {
         return idx < heap.size() ? std::string(heap[idx]) : std::string();
     }
 
+    // ── Issue #4715 AC2: the env-path fast-path gate ────────────────────
+    // Non-zero while the calling thread runs a body with an overlay open. The
+    // env read path loads this thread_local once and touches the registry
+    // (and its mutex) only when it is set, so single-body / non-overlay
+    // programs keep byte-identical semantics at one TLS read per lookup.
+    void overlay_sync_tls(const void* owner) {
+        const bool open = cow::registry<EvalValue>().active(owner, fiber_cow_overlay_key());
+        t_fiber_cow_overlay_depth = open ? 1u : 0u;
+    }
+
+    // Issue #4715 AC2: is this value safe to hold privately until commit?
+    //
+    // Tree-walker closures are NOT: rebinding a define dirties it, which
+    // must-deopts the closure the shared cell still holds (name_live_closure +
+    // mark_define_dirty_fn_), so a private copy of the NEW closure while the
+    // shared cell keeps the OLD one leaves every sibling body calling an
+    // invalidated closure ("eval_flat: invalid closure"). Until the workspace
+    // slice of this overlay (the follow-up half of #4715) rebases the AST
+    // node together with the binding, a closure-valued define keeps the
+    // ordinary write-through semantics - visibly the new version, whole, and
+    // never torn. Scalars, strings and heap values are immutable-ish and the
+    // private cell is a GC root, so they capture safely.
+    bool overlay_capturable(const EvalValue& v) {
+        return !is_closure(v);
+    }
+
+    // Copy one private cell payload. The cell identity is fixed once captured,
+    // so a concurrent commit can only be observed before or after the top-env
+    // rebind, never as a half-written value (AC2 "old or new, never torn").
+    bool overlay_cell_value(Evaluator& ev, std::uint64_t cell, EvalValue& out) {
+        std::lock_guard<std::recursive_mutex> lk(ev.cells_storage_mutex());
+        if (cell >= ev.cells().size())
+            return false;
+        out = ev.cells()[static_cast<std::size_t>(cell)];
+        return true;
+    }
+
 } // namespace
+
+// Issue #4715 AC2: definition of the module-wide gate declared in the
+// interface. One entity per module: evaluator_env.cpp / evaluator_eval_flat.cpp
+// (read and write paths) and this TU (overlay primitives) share it.
+thread_local std::uint32_t t_fiber_cow_overlay_depth = 0;
+
+bool fiber_cow_overlay_env_read(Evaluator& ev, std::string_view name, EvalValue& out) {
+    if (t_fiber_cow_overlay_depth == 0)
+        return false;
+    const void* const owner = static_cast<const void*>(&ev);
+    auto& reg = cow::registry<EvalValue>();
+    const auto key = fiber_cow_overlay_key();
+    // A captured define / set! is materialized as a private cell: copy its
+    // payload (one EvalValue) so the fiber sees its own write while every
+    // other body keeps reading the committed cell.
+    if (auto cell = reg.read_cell(owner, key, name))
+        return overlay_cell_value(ev, *cell, out);
+    return reg.read(owner, key, name, out);
+}
+
+std::optional<std::uint64_t> fiber_cow_overlay_env_cell(Evaluator& ev, std::string_view name) {
+    if (t_fiber_cow_overlay_depth == 0)
+        return std::nullopt;
+    return cow::registry<EvalValue>().read_cell(static_cast<const void*>(&ev),
+                                                fiber_cow_overlay_key(), name);
+}
+
+std::optional<std::size_t> fiber_cow_overlay_capture_define(Evaluator& ev, std::string_view name,
+                                                            const EvalValue& value) {
+    if (t_fiber_cow_overlay_depth == 0 || name.empty() || !overlay_capturable(value))
+        return std::nullopt;
+    const void* const owner = static_cast<const void*>(&ev);
+    auto& reg = cow::registry<EvalValue>();
+    const auto key = fiber_cow_overlay_key();
+    std::uint64_t cell = 0;
+    if (auto existing = reg.read_cell(owner, key, name))
+        cell = *existing;
+    if (cell != 0) {
+        // A second rebind of the same name inside one body keeps the fiber's
+        // cell identity: still private, still one pointer swap at commit.
+        std::lock_guard<std::recursive_mutex> lk(ev.cells_storage_mutex());
+        if (cell < ev.cells().size())
+            ev.cells()[static_cast<std::size_t>(cell)] = value;
+        else
+            cell = 0;
+    }
+    if (cell == 0)
+        cell = static_cast<std::uint64_t>(ev.alloc_cell(value));
+    reg.write_cell(owner, key, name, value, cell, aura::core::current_mutation_epoch());
+    overlay_sync_tls(owner);
+    return static_cast<std::size_t>(cell);
+}
+
+std::optional<std::size_t> fiber_cow_overlay_capture_define_cell(Evaluator& ev,
+                                                                 std::string_view name,
+                                                                 const EvalValue& value,
+                                                                 std::uint64_t cell) {
+    if (t_fiber_cow_overlay_depth == 0 || name.empty() || !overlay_capturable(value))
+        return std::nullopt;
+    // Only the shared top-env binding is overlay material: a define inside a
+    // call frame rewrites that frame's cell, which no sibling body reads.
+    const auto top_binding = ev.top_env().lookup_binding(name);
+    if (!top_binding || !is_cell(*top_binding) || as_cell_id(*top_binding) != cell)
+        return std::nullopt;
+    return fiber_cow_overlay_capture_define(ev, name, value);
+}
+
+bool fiber_cow_overlay_capture_set(Evaluator& ev, std::string_view name, const EvalValue& value,
+                                   const Env& env) {
+    if (t_fiber_cow_overlay_depth == 0 || name.empty() || !overlay_capturable(value))
+        return false;
+    const void* const owner = static_cast<const void*>(&ev);
+    auto& reg = cow::registry<EvalValue>();
+    const auto key = fiber_cow_overlay_key();
+    EvalValue shadow = make_void();
+    if (!reg.read(owner, key, name, shadow)) {
+        // Only a top-level binding is overlay material. When the name resolves
+        // to a local (parameter / let) cell the ordinary in-frame write stays:
+        // the overlay is a rebind layer over the shared env, not over lexical
+        // scope.
+        const auto top_binding = ev.top_env().lookup_binding(name);
+        if (!top_binding || !is_cell(*top_binding))
+            return false;
+        const auto top_cell = as_cell_id(*top_binding);
+        const auto resolved = env.lookup_cell_index(name);
+        if (!resolved || *resolved != top_cell)
+            return false;
+    }
+    (void)fiber_cow_overlay_capture_define(ev, name, value);
+    return true;
+}
 
 void register_fiber_cow_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev) {
     auto& reg = cow::registry<EvalValue>();
@@ -107,6 +236,8 @@ void register_fiber_cow_primitives(std::function<void(std::string, PrimFn)> add,
         // means the shared env did not move => fast-forward path.
         const std::uint64_t epoch = aura::core::current_mutation_epoch();
         const std::uint64_t base = reg.begin(owner, fiber_cow_overlay_key(), epoch);
+        // #4715 AC2: arm the env-path fast path for this body.
+        overlay_sync_tls(owner);
         return make_int(static_cast<std::int64_t>(base));
     });
 
@@ -123,6 +254,7 @@ void register_fiber_cow_primitives(std::function<void(std::string, PrimFn)> add,
                 return make_bool(false);
             reg.write(owner, fiber_cow_overlay_key(), name, a[1],
                       aura::core::current_mutation_epoch());
+            overlay_sync_tls(owner); // #4715 AC2: write() auto-begins
             return make_bool(true);
         });
 
@@ -136,6 +268,7 @@ void register_fiber_cow_primitives(std::function<void(std::string, PrimFn)> add,
         if (name.empty())
             return make_bool(false);
         reg.write(owner, fiber_cow_overlay_key(), name, a[1], aura::core::current_mutation_epoch());
+        overlay_sync_tls(owner); // #4715 AC2: write() auto-begins
         return make_bool(true);
     });
 
@@ -186,18 +319,32 @@ void register_fiber_cow_primitives(std::function<void(std::string, PrimFn)> add,
         if (auto denied = deny(ev, "fiber"))
             return *denied;
         const std::uint64_t epoch = aura::core::current_mutation_epoch();
-        cow::CommitResult r = reg.commit(owner, fiber_cow_overlay_key(), epoch,
-                                         [&ev](const std::string& name, const EvalValue& value) {
-                                             // Applies under the registry lock: commits are
-                                             // serialized, so the top-binding append cannot
-                                             // interleave with a sibling commit of the same env.
-                                             // Bind a CELL, matching the evaluator top-level define
-                                             // shape (define binds make_cell(ci) then fills
-                                             // cells_[ci]); a raw value binding would read as an
-                                             // unboxed value to set!/lookup_cell_index.
-                                             const auto ci = ev.alloc_cell(value);
-                                             ev.top_env().bind(name, make_cell(ci));
-                                         });
+        // #4715 AC2: the env read path holds the top-env bindings lock while it
+        // consults the registry, so publish in the same order here (bindings ->
+        // registry). Env::BindingsGuard is per-thread re-entrant, so the bind()
+        // below does not re-take it.
+        auto bind_guard = ev.top_env().lock_bindings_exclusive();
+        cow::CommitResult r = reg.commit(
+            owner, fiber_cow_overlay_key(), epoch,
+            [&ev](const std::string& name, const EvalValue& value, std::uint64_t private_cell) {
+                // Applies under the registry lock: commits are
+                // serialized, so the top-binding append cannot
+                // interleave with a sibling commit of the same env.
+                // Bind a CELL, matching the evaluator top-level define
+                // shape (define binds make_cell(ci) then fills
+                // cells_[ci]); a raw value binding would read as an
+                // unboxed value to set!/lookup_cell_index.
+                //
+                // #4715 AC2: a define / set! captured by the
+                // interception already owns a private cell - publish
+                // that exact cell so a reader sees the old cell or
+                // this one, never a half-written payload.
+                const auto ci = private_cell != 0 && private_cell < ev.cells().size()
+                                    ? private_cell
+                                    : static_cast<std::uint64_t>(ev.alloc_cell(value));
+                ev.top_env().bind(name, make_cell(ci));
+            });
+        overlay_sync_tls(owner); // #4715 AC2: disarmed after commit (0 on success)
         if (!r.conflict.empty()) {
             return make_primitive_error(
                 ev.string_heap_, ev.error_values_,
@@ -210,7 +357,9 @@ void register_fiber_cow_primitives(std::function<void(std::string, PrimFn)> add,
 
     // (fiber:overlay-rollback) — failure / cancel path: drop the overlay.
     add("fiber:overlay-rollback", [&reg, owner](std::span<const EvalValue>) -> EvalValue {
-        return make_bool(reg.rollback(owner, fiber_cow_overlay_key()));
+        const bool dropped = reg.rollback(owner, fiber_cow_overlay_key());
+        overlay_sync_tls(owner); // #4715 AC2: disarmed after rollback
+        return make_bool(dropped);
     });
 
     // (fiber:overlay-pending) — number of bindings held privately right now.

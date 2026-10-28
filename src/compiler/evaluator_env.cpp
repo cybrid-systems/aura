@@ -450,6 +450,20 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
     if (!env_lookup_enter())
         return std::nullopt;
     EnvLookupDepthGuard dec(true);
+    // Issue #4715 AC2: an open per-fiber overlay is a rebind layer over the
+    // shared env. On the shared top env the overlay's writes replace exactly
+    // these base globals, so it is consulted BEFORE the (old) committed
+    // binding; on a call frame / capture env the frame's own locals win and
+    // the same check runs after them (below). Fast path: one thread_local
+    // load; the registry mutex is touched only while this thread runs a body
+    // that opened an overlay.
+    const bool overlay_open =
+        primitives_detail::t_fiber_cow_overlay_depth != 0 && owner_ != nullptr;
+    if (overlay_open && is_shared_top_env()) {
+        types::EvalValue shadowed{};
+        if (primitives_detail::fiber_cow_overlay_env_read(*owner_, n, shadowed))
+            return shadowed;
+    }
     auto bind_guard = lock_bindings_shared(); // #4717 shared top env
     // Issue #4350: authoritative O(1) local probes (newest binding wins —
     // the same answer as a reverse scan, since every append re-points the
@@ -514,6 +528,16 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
         // Issue #4343 / #4350: authoritative O(1) index (see local_symid_binding).
         if (const auto* hit = local_symid_binding(*this, s))
             return *hit;
+    }
+    // Issue #4715 AC2 (second half): this env's own bindings missed, so a name
+    // the overlay holds is answered from the overlay BEFORE the capture /
+    // lexical / SoA chain (which would otherwise return the pre-overlay cell).
+    // Lock order: bindings (held here) -> registry, the same order
+    // fiber:overlay-commit takes them in.
+    if (overlay_open && !is_shared_top_env()) {
+        types::EvalValue shadowed{};
+        if (primitives_detail::fiber_cow_overlay_env_read(*owner_, n, shadowed))
+            return shadowed;
     }
     // Issue #4350: delegated capture bindings (shared snapshot with
     // prebuilt O(1) indexes) — the frozen capture content the per-call
@@ -4806,6 +4830,13 @@ EvalValue* Env::lookup_cell_ptr(std::string_view n, std::vector<EvalValue>* cell
 // lookup_cell_ptr. SoA walk via env_frames_ when registered,
 // legacy pointer walk otherwise.
 std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
+    // Issue #4715 AC2: a binding the open overlay captured as a private cell
+    // resolves to THAT cell, so set! / IR cell loads inside the fiber stay
+    // private. Fast path: one thread_local load.
+    if (primitives_detail::t_fiber_cow_overlay_depth != 0 && owner_ != nullptr) {
+        if (auto cell = primitives_detail::fiber_cow_overlay_env_cell(*owner_, n))
+            return cell;
+    }
     // 1. Local bindings (string path) — newest wins (#2571).
     // Forward scan used to return the first (oldest) cell when
     // multi-define re-bound the same name in a while body; set!
