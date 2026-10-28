@@ -4468,6 +4468,12 @@ def test_fiber_result_root_4710():
     20-wave churn) on the CLI file path and require every wave to answer
     its own values; the source cites pin the provider and BOTH reclaim
     consultation points so the guard cannot pass vacuously.
+
+    Reopen re-check: the GC root holds, but the reopen report still saw
+    empty/aliased rows because the 8 bodies also ran (hash-set!) in
+    parallel - the #4730 env corruption, not a reclaim of the result. A
+    heavier row (8 bodies x 65 private keys x 10 waves) now pins that every
+    joined table is its own (see also test_fiber_parallel_hash_set_env_4730).
     """
     program = r"""(define (mk i) (let ((h (make-hash))) (hash-set! h "n" i) h))
 (define (spawn8) (let l ((i 0) (a (list))) (if (< i 8) (l (+ i 1) (cons (fiber:spawn (lambda () (mk i))) a)) a)))
@@ -4519,6 +4525,43 @@ def test_fiber_result_root_4710():
                 )
             assert lines[3] == "0", (
                 f"#4710 run {attempt}: {lines[3]} of 20 churn waves returned a corrupted hash (stdout {r.stdout!r})"
+            )
+    finally:
+        os.remove(path)
+    # Issue #4710 reopen re-check: the reopen report still saw (-1 ...) and
+    # aliased rows at 6/100. The GC-root half (#4710) holds; the residual was
+    # the parallel-body hash-set! env corruption (#4730) — the same bodies
+    # now run with the heap-slot arming per-thread. Pin a heavier shape than
+    # the issue program: 8 bodies per wave, each writing 65 entries into its
+    # OWN table, 10 waves, every joined table must be its own (length 65 and
+    # the body's own id), never empty and never a sibling's.
+    parallel = r"""(define (mk2 w) (let ((h (make-hash))) (hash-set! h "w" w) (let loop ((i 0)) (if (< i 64) (begin (hash-set! h (number->string i) (+ (* w 1000) i)) (loop (+ i 1))) h))))
+(define (wave w) (let l ((i 0) (a (list))) (if (< i 8) (l (+ i 1) (cons (fiber:spawn (lambda () (mk2 (+ (* w 10) i)))) a)) a)))
+(define (bad-wave w fs)
+  (let loop ((f fs) (sum 0) (cnt 0) (bad 0))
+    (if (null? f) (if (and (= cnt 8) (= sum (+ (* 80 w) 28))) bad (+ bad 1))
+        (let* ((h (fiber:join (car f)))
+               (id (hash-ref h "w" -1))
+               (ok (and (= (hash-length h) 65) (>= id 0) (= (hash-ref h "0" -1) (* id 1000)))))
+          (loop (cdr f) (+ sum id) (+ cnt 1) (+ bad (if ok 0 1)))))))
+(display (let loop ((w 0) (bad 0)) (if (< w 10) (loop (+ w 1) (+ bad (bad-wave w (wave w)))) bad))) (newline)
+"""
+    fd, path = tempfile.mkstemp(suffix=".aura", prefix="aura-4710-par-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(parallel)
+        for attempt in range(3):
+            r = subprocess.run([AURA, path], capture_output=True, text=True, timeout=180, env=env, cwd=str(REPO))
+            out, err = r.stdout or "", r.stderr or ""
+            assert r.returncode == 0, f"#4710 parallel run {attempt}: rc={r.returncode} err={err[-400:]!r}"
+            assert "unbound variable" not in out and "unbound variable" not in err, (
+                f"#4710 parallel run {attempt}: a concurrent body lost its lexical frame "
+                f"(see #4730): {(err or out)[-400:]!r}"
+            )
+            lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+            assert lines and lines[-1] == "0", (
+                f"#4710 parallel run {attempt}: {lines[-1] if lines else None} of 80 joined tables "
+                f"were empty or aliased (stdout={out[-300:]!r} err={err[-300:]!r})"
             )
     finally:
         os.remove(path)
@@ -5045,6 +5088,12 @@ def test_fiber_hash_key_survives_rebind_4709():
     length) and require the key to stay 9 chars with its value intact.
     The source rows pin the parked-segment marking so this guard cannot
     pass vacuously.
+
+    Reopen re-check (#4730): the counter tail is a read-modify-write across
+    four parallel bodies, so lost updates are expected since #4707 removed
+    the per-body mutex (atomicity is the #4715 overlay scope). The issue's
+    invariant is the KEY: every key stays the 9-char "join-void" and the
+    read returns an int, with no "unbound variable" from a sibling body.
     """
     key = "join-void"
     assert len(key) == 9
@@ -5068,7 +5117,15 @@ def test_fiber_hash_key_survives_rebind_4709():
 (map fiber:join fs)
 (list (map string-length (hash-keys stats)) (hash-ref stats "join-void" -1))
 """
-    want = "((9) 120)"
+    # Issue #4730: the counter tail is a read-modify-write across four
+    # bodies ((hash-set! stats (string-append ...) (+ 1 (hash-ref ...)))) —
+    # #4707 removed the per-body mutex, so lost updates are expected here,
+    # and atomicity is the #4715 COW-overlay scope (hash-set! is outside it).
+    # What this issue owns is the KEY: every key must still be the 9-char
+    # "join-void" and the read must return an int, never a re-minted /
+    # emptied slot and never "unbound variable".
+    key_prefix = "((9) "
+    max_value = 120
     env = os.environ.copy()
     env["AURA_TIER_JIT"] = "0"
     env["AURA_PIPELINE_STRICT"] = "0"
@@ -5083,10 +5140,20 @@ def test_fiber_hash_key_survives_rebind_4709():
         for attempt in range(3):
             r = subprocess.run([AURA, path], capture_output=True, text=True, timeout=180, env=env, cwd=str(REPO))
             assert r.returncode == 0, f"#4709 cli run {attempt}: rc={r.returncode} err={(r.stderr or '')[-400:]!r}"
+            err = r.stderr or ""
+            assert "unbound variable" not in err, (
+                f"#4709 cli run {attempt}: a parallel hash-set! body corrupted the env: {err[-400:]!r}"
+            )
             lines = [ln.strip() for ln in (r.stdout or "").splitlines() if ln.strip()]
-            assert lines and lines[-1] == want, (
-                f"#4709 cli run {attempt}: expected {want!r} got {lines[-1] if lines else None!r} "
+            last = lines[-1] if lines else None
+            assert last is not None and last.startswith(key_prefix) and last.endswith(")"), (
+                f"#4709 cli run {attempt}: expected a ((9) <n>) row got {last!r} "
                 f"(a live hash key's string slot was released/re-minted)"
+            )
+            value = int(last[len(key_prefix) : -1])
+            assert 1 <= value <= max_value, (
+                f"#4709 cli run {attempt}: counter {value} outside 1..{max_value} — the key "
+                f"vanished (0) or was double-counted (>{max_value}): {last!r}"
             )
         # (b) serve-async, 2 worker threads: fibers are stackful contexts
         # that park at eval-current/yield, the shape #4706 had to root.
@@ -5114,10 +5181,12 @@ def test_fiber_hash_key_survives_rebind_4709():
                 out = out.decode("utf-8", "replace")
             if isinstance(err, bytes):
                 err = err.decode("utf-8", "replace")
-        assert f'"value":"{want}"' in out, (
-            f"#4709 serve-async: expected value {want!r}; stdout={out[-400:]!r} stderr={err[-400:]!r}"
+        # Same invariant as the CLI row: the key set is the 9-char
+        # "join-void" and the tail is an int (lost updates are #4715's scope).
+        assert f'"value":"{key_prefix}' in out, (
+            f"#4709 serve-async: expected a {key_prefix!r} value row; stdout={out[-400:]!r} stderr={err[-400:]!r}"
         )
-        for banner in ("AURA CRASH", "SIGSEGV", "invalid closure", "corrupt string key"):
+        for banner in ("AURA CRASH", "SIGSEGV", "invalid closure", "corrupt string key", "unbound variable"):
             assert banner not in out and banner not in err, (
                 f"#4709 serve-async: {banner!r} while rebind/eval-current ran under 4 fibers: {err[-400:]!r}"
             )
@@ -5139,6 +5208,107 @@ def test_fiber_hash_key_survives_rebind_4709():
         "#4709: the string slot release no longer consults the mark"
     )
     print("  OK test_fiber_hash_key_survives_rebind_4709 (global hash key stays 9 chars under 4 rebind fibers)")
+
+
+def test_fiber_parallel_hash_set_env_4730():
+    """Issue #4730: concurrent hash-set! in parallel bodies must not corrupt env.
+
+    Reported on main e6f4169e0 (#4707 / #4717 P4-P5 removed the per-body
+    mutex): the issue's own six-line program failed 5/5 at N>=4 on both
+    tiers with "unbound variable: loop" - the named let on the JOINER
+    side, a frame no worker body touches - and "[fiber:join] WARN:
+    workspace mutated during join (defuse_version 4 -> 2811)".
+
+    Mechanism: (hash-set!) is a heap-slot write and arms
+    heap_slot_quiet_for_next_boundary_, but that flag (and the sibling
+    fine_rollback / force_lightweight armings) were plain Evaluator
+    members. Four bodies on four threads armed and consumed ONE flag, so
+    a hash-set! boundary was admitted on the AST path and bumped
+    defuse_version_ while a real mutate:rebind boundary was stamped
+    heap_slot_only and skipped its bump. Each stolen bump opened the
+    #4109 window: a frame was version N while defuse_version_ was N+1, so
+    a concurrent materialize_call_env took the #4072/#4109 empty-Env arm
+    and the call lost every lexical binding it captured (verified with
+    AURA_VERBOSE_ENVFRAME=1: "[#242 warning] materialize_call_env: stale
+    EnvFrame id=20 (frame.version_=367, current defuse_version_=368)").
+    The arming flags are now thread_local, and the bump is published
+    INSIDE the all-shard barrier that rides the capture frames up, so the
+    bucket is atomic for readers.
+
+    Rows: the issue program at N=1 (control), N=4 and N=16 on both tiers
+    must print the int join sum with no error, and the source rows pin
+    the per-thread arming + the barrier-before-bump order.
+    """
+    program = r"""(define m (make-hash))
+(define (work w) (let loop ((i 0)) (if (< i 20000) (begin (hash-set! m (string-append "k" (number->string (modulo i 64))) i) (loop (+ i 1))) w)))
+(define (run n)
+  (let ((fs (let loop ((w 0) (fs (list))) (if (= w n) fs (loop (+ w 1) (cons (fiber:spawn (lambda () (work w))) fs))))))
+    (let loop ((f fs) (s 0)) (if (null? f) s (loop (cdr f) (+ s (fiber:join (car f))))))))
+(display (run {n})) (newline)
+"""
+    env = os.environ.copy()
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env["AURA_SANDBOX"] = "off"
+    env.pop("AURA_SOFT", None)
+    env.pop("AURA_FORCE_IR", None)
+    for jit in ("0", "1"):
+        for n in (1, 4, 16):
+            env["AURA_TIER_JIT"] = jit
+            fd, path = tempfile.mkstemp(suffix=".aura", prefix=f"aura-4730-{n}-")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    fh.write(program.format(n=n))
+                for attempt in range(3):
+                    r = subprocess.run(
+                        [AURA, path],
+                        capture_output=True,
+                        text=True,
+                        timeout=180,
+                        env=env,
+                        cwd=str(REPO),
+                    )
+                    out, err = r.stdout or "", r.stderr or ""
+                    assert r.returncode == 0, f"#4730 J{jit} N{n} run {attempt}: rc={r.returncode} err={err[-400:]!r}"
+                    assert "unbound variable" not in out and "unbound variable" not in err, (
+                        f"#4730 J{jit} N{n} run {attempt}: a parallel hash-set! body emptied a "
+                        f"lexical frame: {(err or out)[-400:]!r}"
+                    )
+                    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+                    assert lines and lines[-1].lstrip("-").isdigit(), (
+                        f"#4730 J{jit} N{n} run {attempt}: expected the int join sum, got "
+                        f"{lines[-1] if lines else None!r} (stdout={out[-300:]!r} err={err[-300:]!r})"
+                    )
+                    # work w returns its own w, so the join sum is 0+1+..+(n-1).
+                    want_sum = n * (n - 1) // 2
+                    assert int(lines[-1]) == want_sum, (
+                        f"#4730 J{jit} N{n} run {attempt}: join sum {lines[-1]} != {want_sum} "
+                        f"(a body lost its parameters or returned another body's w)"
+                    )
+            finally:
+                os.remove(path)
+    # Source rows: the arming stays on the arming thread; the bump is
+    # published under the barrier that rides the frames (not before it).
+    evsrc = (REPO / "src/compiler/evaluator.ixx").read_text(encoding="utf-8")
+    for flag in (
+        "heap_slot_quiet_for_next_boundary_",
+        "fine_rollback_for_next_boundary_",
+        "force_lightweight_checkpoint_for_next_boundary_",
+    ):
+        assert f"inline static thread_local bool {flag}" in evsrc, (
+            f"#4730: {flag} must be per-thread — a sibling body must not consume this body's arming"
+        )
+    bsrc = (REPO / "src/compiler/evaluator_env.cpp").read_text(encoding="utf-8")
+    bpos = bsrc.find("std::uint64_t Evaluator::bump_defuse_and_restamp")
+    assert bpos != -1, "#4730: the atomic bump+restamp publisher is gone"
+    body = bsrc[bpos : bpos + 1400]
+    assert body.find("env_frame_shards_[ef_i].mu") != -1 and (
+        body.find("env_frame_shards_[ef_i].mu") < body.find("defuse_version_.fetch_add")
+    ), "#4730: the defuse bump must be published after the all-shard barrier"
+    mut = (REPO / "src/compiler/evaluator_mutation_boundary.cpp").read_text(encoding="utf-8")
+    assert mut.count("bump_defuse_and_restamp(cp.version, cp.mutation_log_size)") == 2, (
+        "#4730: boundary enter AND exit must publish through the atomic helper"
+    )
+    print("  OK test_fiber_parallel_hash_set_env_4730 (parallel hash-set! keeps every lexical frame)")
 
 
 def test_fiber_sibling_define_dispatch_4712():
@@ -5358,6 +5528,7 @@ for tf in [
     test_fiber_lock_order_inversion_4711,
     test_fiber_cancel_4708,
     test_fiber_hash_key_survives_rebind_4709,
+    test_fiber_parallel_hash_set_env_4730,
     test_fiber_sibling_define_dispatch_4712,
     test_fiber_sibling_dispatch_across_rebind_4715_regression,
     test_serve_async_two_fiber_yield_reclaim_4706,
