@@ -6180,6 +6180,29 @@ public:
     // restamps (#356).
     void restamp_live_capture_frames(std::uint64_t cur_defuse, std::uint64_t entry_version,
                                      std::size_t log_from) noexcept;
+    // Issue #4730: the #4109 restamp body. Caller already holds the
+    // kEnvFramesShardCount shard barrier (all unique) — the same barrier
+    // alloc / truncate / compact take to freeze the container.
+    void restamp_live_capture_frames_locked(std::uint64_t cur_defuse, std::uint64_t entry_version,
+                                            std::size_t log_from) noexcept;
+    // Issue #4730: publish a defuse_version_ bump AND ride the still-valid
+    // capture frames up to it in ONE shard-barrier critical section.
+    //
+    // Bumping before taking the barrier left a window in which a concurrent
+    // materialize_call_env observed fr.version_ < defuse_version_ (one bump
+    // behind) and took the #4072/#4109 empty-Env arm, so the call lost every
+    // lexical binding ("unbound variable: loop" / ": k" from a sibling
+    // body's hash-set!). Holding the barrier across the bump makes the pair
+    // atomic for readers: a reader holds a frame's shard for its version
+    // read, so it either sees the pre-bump defuse with pre-bump versions or
+    // the post-bump defuse with every riding frame restamped.
+    // Returns the new defuse_version_.
+    std::uint64_t bump_defuse_and_restamp(std::uint64_t entry_version,
+                                          std::size_t log_from) noexcept;
+    // Issue #4730: bare counter advance (service dual-epoch lockstep,
+    // hygiene-checkpoint restore) — re-defines no name, so every non-INVALID
+    // behind frame rides up. Bump + ride under the same barrier.
+    std::uint64_t bump_defuse_and_ride_frames() noexcept;
     // Issue #4109: ride still-valid captures up to the CURRENT defuse with
     // an empty invalidation window — for bare counter advances (service
     // dual-epoch lockstep bumps) that re-define no names.
@@ -7947,11 +7970,19 @@ private:
     std::atomic<std::uint64_t> mutation_impact_ring_seq_{0};
     std::atomic<std::uint64_t> last_queried_epoch_{0};
     // Issue #266: fine-grained SoA rollback request + stats.
-    bool fine_rollback_for_next_boundary_ = false;
+    // Issue #4730: "the NEXT boundary" is the next boundary of THIS thread.
+    // #4707 removed the per-body mutex, so four bodies arm/consume these
+    // three flags on four threads concurrently. As plain members they were
+    // stolen across bodies: a sibling's enter consumed this body's
+    // heap-slot arming, so a (hash-set!) boundary took the AST path and
+    // bumped defuse_version_ (the reported 4 -> 2811) while a real
+    // mutate:rebind boundary was stamped heap_slot_only and skipped its
+    // bump. thread_local keeps the arming on the thread that armed it.
+    inline static thread_local bool fine_rollback_for_next_boundary_ = false;
     // Issue #4346: maybe_auto_guard_heap_mutate arms this before
     // try_acquire. enter consumes it and stamps heap_slot_only before
     // the ctor unparses a panic checkpoint of the whole workspace.
-    bool heap_slot_quiet_for_next_boundary_ = false;
+    inline static thread_local bool heap_slot_quiet_for_next_boundary_ = false;
     BoundaryRollbackStats last_boundary_rollback_stats_{};
     // Issue #164: per-join defuse_version_ snapshot. Set at the
     // start of fiber:join's wait, re-checked at wakeup to detect
@@ -8874,7 +8905,10 @@ private:
     // Issue #2990: ConcurrentMutationPolicy (0=SingleWriter default).
     std::atomic<std::uint8_t> concurrent_mutation_policy_{0};
     std::atomic<std::uint8_t> concurrent_mutation_policy_explicit_{0};
-    bool force_lightweight_checkpoint_for_next_boundary_ = false;
+    // Issue #4730: same per-thread "next boundary" contract as the
+    // fine_rollback / heap_slot flags above (a sibling body must not
+    // consume this body's arming).
+    inline static thread_local bool force_lightweight_checkpoint_for_next_boundary_ = false;
     // Issue #2215: set by outermost Guard dtor before exit_mutation_boundary
     // when RenderFastExit applies — skip Full TypedMutationAudit / composite
     // Full recovery on success (failure path never sets this).

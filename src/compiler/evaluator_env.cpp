@@ -2952,6 +2952,15 @@ void Evaluator::restamp_live_capture_frames(std::uint64_t cur_defuse, std::uint6
     std::array<std::unique_lock<std::shared_mutex>, kEnvFramesShardCount> barrier;
     for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
         barrier[ef_i] = std::unique_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // #3900
+    restamp_live_capture_frames_locked(cur_defuse, entry_version, log_from);
+}
+
+// Issue #4730: the restamp body, run with the all-shard barrier held.
+void Evaluator::restamp_live_capture_frames_locked(std::uint64_t cur_defuse,
+                                                   std::uint64_t entry_version,
+                                                   std::size_t log_from) noexcept {
+    if (cur_defuse == 0)
+        return;
     if (env_frames_.empty())
         return;
     bool any_behind = false;
@@ -3048,6 +3057,44 @@ void Evaluator::restamp_live_capture_frames(std::uint64_t cur_defuse, std::uint6
         if (!stranded)
             fr.version_ = cur_defuse;
     }
+}
+
+// Issue #4730: publish a defuse_version_ bump and ride the still-valid
+// capture frames up to it under ONE shard barrier. The bump used to come
+// first and restamp_live_capture_frames took the barrier afterwards: in
+// that window any sibling body's materialize_call_env held its frame's
+// shard, read fr.version_ (one behind) and the freshly bumped defuse, and
+// took the #4072/#4109 empty-Env arm -- so the call lost every lexical
+// binding it captured ("unbound variable: loop" on the joiner while four
+// bodies ran hash-set!). Taking the barrier before the fetch_add makes
+// bump+restamp atomic for readers: a reader that holds a shard sees the
+// pre-bump pair, a reader that acquires after sees the restamped pair.
+std::uint64_t Evaluator::bump_defuse_and_restamp(std::uint64_t entry_version,
+                                                 std::size_t log_from) noexcept {
+    std::array<std::unique_lock<std::shared_mutex>, kEnvFramesShardCount> barrier;
+    for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+        barrier[ef_i] = std::unique_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // #3900
+    const auto cur = defuse_version_.fetch_add(1, std::memory_order_release) + 1;
+    total_mutations_.fetch_add(1, std::memory_order_relaxed);
+    restamp_live_capture_frames_locked(cur, entry_version, log_from);
+    return cur;
+}
+
+// Issue #4730: bare counter advance (service dual-epoch lockstep bump,
+// hygiene-checkpoint metadata restore). It re-defines no name, so every
+// behind frame that is not INVALID_VERSION rides up; the empty invalidation
+// window is the #4357 shape.
+std::uint64_t Evaluator::bump_defuse_and_ride_frames() noexcept {
+    const std::size_t log_from = workspace_flat_ ? workspace_flat_->all_mutations().size() : 0;
+    std::array<std::unique_lock<std::shared_mutex>, kEnvFramesShardCount> barrier;
+    for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+        barrier[ef_i] = std::unique_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // #3900
+    const auto cur = defuse_version_.fetch_add(1, std::memory_order_release) + 1;
+    // No total_mutations_ bump here: the pre-#4730 call sites (service
+    // dual-epoch lockstep, hygiene-checkpoint restore) only advanced the
+    // version. Keep their stats byte-identical.
+    restamp_live_capture_frames_locked(cur, cur, log_from);
+    return cur;
 }
 
 // Issue #356: is_env_frame_invalid — true if the frame has

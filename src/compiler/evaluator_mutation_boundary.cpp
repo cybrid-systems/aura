@@ -1456,10 +1456,6 @@ void Evaluator::enter_mutation_boundary() {
     // defuse and restamping every capture frame made the next materialize
     // treat the whole env as behind, and the bump itself is O(frames).
     if (!(heap_slot_enter && !lightweight)) {
-        defuse_version_.fetch_add(1, std::memory_order_release);
-        // Issue #189: bump the total-mutations counter for
-        // observability. Relaxed because it's stats-only.
-        total_mutations_.fetch_add(1, std::memory_order_relaxed);
         // Issue #4109: the enter bump must not strand still-valid captures
         // for the DURATION of the boundary (nested eval inside the boundary
         // materializes through the same behind arm). The mutation-log window
@@ -1467,8 +1463,10 @@ void Evaluator::enter_mutation_boundary() {
         // frame rides up; the EXIT restamp re-runs the window rule and leaves
         // frames binding a name the boundary re-defined behind once the new
         // cell is swapped in.
-        restamp_live_capture_frames(defuse_version_.load(std::memory_order_acquire), cp.version,
-                                    cp.mutation_log_size);
+        // Issue #4730: bump + ride in one shard-barrier critical section.
+        // Issue #189: the total-mutations counter (stats-only, relaxed) is
+        // bumped by the same helper.
+        (void)bump_defuse_and_restamp(cp.version, cp.mutation_log_size);
     }
 }
 // Exit a mutation boundary. Pops the checkpoint. If success
@@ -2103,12 +2101,9 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     // Issue #4346: heap slot writes are not AST mutations. Skipping the
     // second bump keeps capture frames current without a shard walk.
     if (!cp.heap_slot_only) {
-        defuse_version_.fetch_add(1, std::memory_order_release);
-        // Issue #189: bump the total-mutations counter for
-        // observability. Relaxed because it's stats-only.
-        // We bump it even on rollback so dashboards can see
-        // "the boundary attempted to mutate, then rolled back".
-        total_mutations_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #189: the total-mutations counter (stats-only, relaxed) is
+        // bumped even on rollback so dashboards can see "the boundary
+        // attempted to mutate, then rolled back".
         // Issue #4109: ride still-valid capture frames up to the new defuse
         // in the same critical section as the bump. The boundary's own
         // mutation-log window decides invalidation: frames binding a name the
@@ -2116,8 +2111,9 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // module captures, #2579, are NOT re-defined by unrelated mutates)
         // stay behind; materialize_call_env then returns the empty Env
         // instead of copying pre-mutate bindings into the next call.
-        restamp_live_capture_frames(defuse_version_.load(std::memory_order_acquire), cp.version,
-                                    cp.mutation_log_size);
+        // Issue #4730: bump + restamp under ONE shard barrier (see the
+        // helper) so a sibling body never observes a frame one bump behind.
+        (void)bump_defuse_and_restamp(cp.version, cp.mutation_log_size);
     }
     // Issue #4377: a store inside this boundary stamped defuse before the
     // exit bump above. Outermost success writes that post-exit defuse onto
@@ -8114,13 +8110,12 @@ bool Evaluator::restore_hygiene_checkpoint(const HygieneCheckpoint& cp) noexcept
     (void)check_macro_hygiene_invariant_post_restore("restore-metadata");
     // Bump defuse_version_ once so any reader holding a snapshot
     // across the restore sees a version mismatch and re-reads.
-    defuse_version_.fetch_add(1, std::memory_order_release);
     // Issue #4109: the restore re-definitions nothing (metadata columns
     // only) — ride still-valid captures up so a pure-counter advance does
     // not strand them behind the empty-Env contract.
-    restamp_live_capture_frames(defuse_version_.load(std::memory_order_acquire),
-                                defuse_version_.load(std::memory_order_acquire),
-                                workspace_flat_ ? workspace_flat_->all_mutations().size() : 0);
+    // Issue #4730: bump + ride in one shard-barrier critical section, so no
+    // concurrent materialize can observe the mid-window "one bump behind".
+    (void)bump_defuse_and_ride_frames();
     bump_hygiene_checkpoint_restore_success_total();
     return true;
 }
