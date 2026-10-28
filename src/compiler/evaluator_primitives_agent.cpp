@@ -3432,6 +3432,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             auto ki = types::as_keyword_idx(v);
             if (ki < ev.keyword_table_.size())
                 k = ev.keyword_table_[ki];
+        } else if (types::is_symbol(v)) {
+            // Issue #4727: a quoted identifier atom ('fail-fast / 'cancel) is
+            // an interned symbol now, no longer a string/keyword. The orch
+            // policy grammar keeps accepting the quoted spelling, so read
+            // the name off the symbol table (same shape as
+            // evaluator_primitives_char.cpp view_kind_of).
+            const auto si = static_cast<std::size_t>(types::as_symbol_idx(v));
+            const auto st = ev.symbol_table();
+            if (si < st.size())
+                k = st[si];
         }
         while (!k.empty() && k[0] == ':')
             k = k.substr(1);
@@ -6196,9 +6206,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     return FP::CircuitBreaker;
                 return FP::CollectAll;
             };
-            if (types::is_string(a[0]) || types::is_keyword(a[0])) {
-                std::string v = types::is_string(a[0]) ? heap_str_from(ev.string_heap_, a[0])
-                                                       : orch_keyword_key(a[0]);
+            if (types::is_string(a[0]) || types::is_keyword(a[0]) || types::is_symbol(a[0])) {
+                std::string v = orch_keyword_key(a[0]);
                 batch = parse_batch(v);
             } else if (types::is_int(a[0])) {
                 const auto n = types::as_int(a[0]);
@@ -6218,7 +6227,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 auto& val = a[i + 1];
-                if (k == "residual" && (types::is_string(val) || types::is_keyword(val))) {
+                if (k == "residual" &&
+                    (types::is_string(val) || types::is_keyword(val) || types::is_symbol(val))) {
                     std::string rv = types::is_string(val) ? heap_str_from(ev.string_heap_, val)
                                                            : orch_keyword_key(val);
                     while (!rv.empty() && rv[0] == ':')
@@ -6244,7 +6254,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
                 } else if ((k == "batch-policy" || k == "failure-policy" ||
                             k == "failure_policy") &&
-                           (types::is_string(val) || types::is_keyword(val))) {
+                           (types::is_string(val) || types::is_keyword(val) ||
+                            types::is_symbol(val))) {
                     std::string bv = types::is_string(val) ? heap_str_from(ev.string_heap_, val)
                                                            : orch_keyword_key(val);
                     batch = parse_batch(bv);
@@ -6409,16 +6420,18 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             std::uint32_t retry_backoff_ms = 0;
             {
                 auto try_fp = hash_lookup(a[1], "failure-policy");
-                if (!types::is_string(try_fp) && !types::is_keyword(try_fp))
+                if (!types::is_string(try_fp) && !types::is_keyword(try_fp) &&
+                    !types::is_symbol(try_fp))
                     try_fp = hash_lookup(a[1], "batch-policy");
-                if (types::is_string(try_fp) || types::is_keyword(try_fp)) {
+                if (types::is_string(try_fp) || types::is_keyword(try_fp) ||
+                    types::is_symbol(try_fp)) {
                     std::string bv = types::is_string(try_fp)
                                          ? heap_str_from(ev.string_heap_, try_fp)
                                          : orch_keyword_key(try_fp);
                     batch = parse_batch(bv);
                 }
                 auto rv = hash_lookup(a[1], "residual");
-                if (types::is_string(rv) || types::is_keyword(rv)) {
+                if (types::is_string(rv) || types::is_keyword(rv) || types::is_symbol(rv)) {
                     std::string rs = types::is_string(rv) ? heap_str_from(ev.string_heap_, rv)
                                                           : orch_keyword_key(rv);
                     residual = parse_residual(rs);
@@ -6836,7 +6849,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 auto& val = a[i + 1];
-                if (k == "residual" && (types::is_string(val) || types::is_keyword(val))) {
+                if (k == "residual" &&
+                    (types::is_string(val) || types::is_keyword(val) || types::is_symbol(val))) {
                     std::string rv = types::is_string(val) ? heap_str_from(ev.string_heap_, val)
                                                            : orch_keyword_key(val);
                     while (!rv.empty() && rv[0] == ':')
@@ -6955,9 +6969,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 EvalValue tasks_ev{};
                 if (types::is_hash(sh)) {
                     auto try_fp = hash_lookup(sh, "failure-policy");
-                    if (!types::is_string(try_fp) && !types::is_keyword(try_fp))
+                    if (!types::is_string(try_fp) && !types::is_keyword(try_fp) &&
+                        !types::is_symbol(try_fp))
                         try_fp = hash_lookup(sh, "batch-policy");
-                    if (types::is_string(try_fp) || types::is_keyword(try_fp)) {
+                    if (types::is_string(try_fp) || types::is_keyword(try_fp) ||
+                        types::is_symbol(try_fp)) {
                         std::string bv = types::is_string(try_fp)
                                              ? heap_str_from(ev.string_heap_, try_fp)
                                              : orch_keyword_key(try_fp);

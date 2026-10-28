@@ -1266,12 +1266,49 @@ static void ac3495_5_extend_no_invent() {
           "3495 AC5: no docs/design/3495-*");
 }
 
+// Issue #4727 migrated a quoted identifier atom ('fail-fast / 'cancel) from a
+// string to an interned symbol. The #3495 policy grammar must keep reading
+// the quoted spelling: a silently ignored atom leaves residual=report /
+// batch=collect-all, which is exactly the #3495 AC1 regression face.
+static void ac3495_6_quoted_atom_policy_symbols() {
+    std::println("\n--- #3495 AC6: quoted policy atoms (#4727 symbols) still map ---");
+    using aura::compiler::CompilerService;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    using aura::orch::reset_all_agent_scopes_for_test;
+    reset_all_agent_scopes_for_test();
+    CompilerService cs;
+    ac3206_set_prod(true); // after ctor: CompilerService may reset Soft
+    const auto c0 = g_orch_module_stats.workflow_residual_cancel_total.load();
+    auto quoted = cs.eval(R"(
+        (let ((pol (orch:compose-workflow 'fail-fast :residual 'cancel)))
+          (if (and (string=? (hash-ref pol "failure-policy") "fail-fast")
+                   (string=? (hash-ref pol "residual") "cancel"))
+              1 0))
+    )");
+    CHECK(quoted && is_int(*quoted) && as_int(*quoted) == 1,
+          "3495 AC6: 'fail-fast / 'cancel atoms map (symbol spelling)");
+    auto strings = cs.eval(R"(
+        (let ((pol (orch:compose-workflow "fail-fast" :residual "cancel")))
+          (if (and (string=? (hash-ref pol "failure-policy") "fail-fast")
+                   (string=? (hash-ref pol "residual") "cancel"))
+              1 0))
+    )");
+    CHECK(strings && is_int(*strings) && as_int(*strings) == 1,
+          "3495 AC6: string spelling still maps");
+    CHECK(g_orch_module_stats.workflow_residual_cancel_total.load() == c0,
+          "3495 AC6: compose alone observes no residual");
+    ac3206_set_prod(false);
+    reset_all_agent_scopes_for_test();
+}
+
 static void ac3495_run_added_tests() {
     ac3495_1_prod_cancel_residual_action();
     ac3495_2_soft_observe();
     ac3495_3_policy_not_dropped();
     ac3495_4_watch_scope_false();
     ac3495_5_extend_no_invent();
+    ac3495_6_quoted_atom_policy_symbols();
 }
 
 // ── Issue #3726: supervise-batch must not watch/cancel session-root S ──
