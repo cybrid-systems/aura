@@ -41,8 +41,11 @@ ACs:
        free_slot_snapshot); mint() reuses a released slot; a reused
        slot drops its cached code-point index (invalidate_cp_index_locked)
        and re-runs the mint hook (the #4428 owner stamp); the
-       structural writes (resize / clear / replace / unsafe_storage)
-       keep the free list consistent with the heap.
+       structural writes (resize / clear / replace) keep the free list
+       consistent with the heap. #4717 replaced the raw-vector escape
+       hatch (unsafe_storage) with the stable slot store (StringSlotStore),
+       so the install path is StringSlotStore::assign and there is no
+       Vec& door left to bypass the contract.
   AC2  evaluator_gc.cpp: the file-mode mark marks the string slots
        (seen_string) and BOTH reclaim paths (file-mode + tree-walker)
        release the unreachable slots (release_unreachable_string_slots);
@@ -129,14 +132,13 @@ def main() -> int:
         ("resize", "slot_free_.resize(n, 0);"),
         ("clear", "free_slots_.clear();"),
         ("replace", "free_slots_.clear();"),
-        ("unsafe_storage", "free_slots_.clear();"),
     ):
-        body = _between(
-            heap,
-            f"void {op}(" if op != "unsafe_storage" else "Vec& unsafe_storage()",
-            "static constexpr std::size_t npos",
-        )
+        body = _between(heap, f"void {op}(", "static constexpr std::size_t npos")
         must(needle in body, f"AC1: {op} keeps the free list consistent with the heap")
+    # Issue #4717: the bulk install path is the stable slot store's assign,
+    # reached only from replace() (no raw-vector escape hatch remains).
+    must("v_.assign(std::move(v));" in heap, "AC1: replace installs through the stable slot store")
+    must("Vec& unsafe_storage()" not in heap, "AC1: no raw-vector escape hatch left")
 
     # ── AC2: the mark + the release in both reclaim paths ───────────
     mark = _between(gc, "static void file_reclaim_mark_value(", "bool Evaluator::reclaim_file_mode_unreachable(")

@@ -1710,7 +1710,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             // the function pointer below) stays in this function
             // because it depends on the per-FFI function pointer
             // from ffi_runtime_.
-            std::span<const std::string> string_heap_view(string_heap_.data(), string_heap_.size());
+            ::aura::compiler::StringPoolView string_heap_view(string_heap_);
             std::span<void* const> opaque_heap_view(opaque_heap_.data(), opaque_heap_.size());
             // Issue #4597: Handle:<tag> probe. The context dies with this call.
             FfiApplyHandleProbe handle_probe_ctx{&ffi_runtime_, &opaque_heap_};

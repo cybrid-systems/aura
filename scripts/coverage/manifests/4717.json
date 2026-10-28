@@ -63,6 +63,44 @@
         "last_gc_temp_eval_depth_ctx()",
         "eval_depth_ctx()"
       ]
+    },
+    {
+      "ac": "AC20",
+      "path": "src/compiler/locked_string_heap.hh",
+      "contains": [
+        "Issue #4717: stable-address string slot storage",
+        "class StringSlotStore",
+        "a slot, once constructed, never",
+        "emplace_back(Args&&... args)",
+        "Issue #4717: the read-only string-pool view",
+        "class StringPoolView"
+      ]
+    },
+    {
+      "ac": "AC20",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "::aura::compiler::StringPoolView string_heap() const",
+        "string_at(std::uint64_t payload)",
+        "payload & AURA_STR_SLOT_MASK"
+      ]
+    },
+    {
+      "ac": "AC21",
+      "path": "tests/compiler/test_pmr_alloc_fiber_safe.cpp",
+      "contains": [
+        "4717 AC1: concurrent mint plus read stays reference-valid",
+        "ac4717_concurrent_mint_read"
+      ]
+    },
+    {
+      "ac": "AC21",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "Issue #4717: a minted slot never moves",
+        "fiber_arena_mint",
+        "publish_fiber_string_arena"
+      ]
     }
   ]
 }

@@ -10,7 +10,7 @@ module;
 // Issue #4714: the string payload index-space codec (AURA_STR_*). Same SSOT
 // as lib/runtime.c and the AOT preamble; C, so it is safe in the fragment.
 #include "../../lib/aura_value_abi.h"
-#include "core/fiber_context.hh"          // Issue #4717: per-body eval context
+#include "core/fiber_context.hh" // Issue #4717: per-body eval context
 
 #include "../core/persistent_child_vector.hh"
 #include "../core/layout_stamp.hh" // Issue #2170: LayoutStamp decls in evaluator
@@ -362,9 +362,8 @@ public:
         // Issue #4599: after finalize_hot_table the effect-mask vectors are
         // dense. A later add() appends one unknown slot. The initial
         // registration leaves them empty so finalize sizes them once.
-        if (!effect_known_.empty() && slot == effect_known_.size()) {
-            effect_known_.push_back(0);
-            effect_mask_.push_back(0);
+        if (!effect_cache_.empty() && slot == effect_cache_.size()) {
+            effect_cache_.push_back(0);
         }
         const bool is_hot = (meta.perf_tier == kPrimPerfHot);
         meta_.push_back(std::move(meta));
@@ -410,7 +409,7 @@ public:
         error_values_ = errs;
         primitive_error_counter_ = counter;
     }
-    std::span<const std::string> string_heap() const { return *string_heap_; }
+    ::aura::compiler::StringPoolView string_heap() const { return *string_heap_; }
     ::aura::compiler::LockedStringHeap& string_heap() { return *string_heap_; }
     // Slot-based lookup for primitive values
     const std::string& name_for_slot(std::size_t slot) const { return ordered_names_[slot]; }
@@ -438,8 +437,8 @@ public:
         if (slot < meta_.size())
             meta_[slot] = std::move(meta);
         // Issue #4599: meta backfill changes the mask. Drop the cached bit.
-        if (slot < effect_known_.size())
-            effect_known_[slot] = 0;
+        if (slot < effect_cache_.size())
+            std::atomic_ref<std::uint32_t>(effect_cache_[slot]).store(0, std::memory_order_release);
         // Keep hot map coherent when tier is backfilled later.
         if (slot < meta_.size() && slot < ordered_names_.size() && slot < fn_slots_.size()) {
             if (meta_[slot].perf_tier == kPrimPerfHot)
@@ -453,8 +452,8 @@ public:
     void finalize_hot_table() {
         // Issue #4599: size once so hot fills are in-place stores, including
         // a cached 0 (pure prims). Known bits start clear.
-        effect_known_.assign(ordered_names_.size(), 0);
-        effect_mask_.assign(ordered_names_.size(), 0);
+        effect_cache_.clear();
+        effect_cache_.resize(ordered_names_.size());
         hot_map_.clear();
         hot_entries_.clear();
         hot_timing_held_.clear();
@@ -554,15 +553,25 @@ public:
     std::uint16_t cached_required_effects(std::size_t slot) {
         if (slot >= meta_.size() || slot >= ordered_names_.size())
             return 0;
-        if (slot < effect_known_.size() && effect_known_[slot])
-            return effect_mask_[slot];
-        const auto req = effective_required_effects(
-            ordered_names_[slot], meta_[slot].required_effects, meta_[slot].security_exempt);
-        if (slot < effect_known_.size()) {
-            effect_mask_[slot] = req;
-            effect_known_[slot] = 1;
+        // Issue #4717: the cache is written by whichever body first dispatches
+        // the slot and read by every other body, so the slot word is atomic.
+        // kEffectsKnownBit marks a filled slot in the same word (no second
+        // flag to tear); a duplicate fill stores the same value, so the race
+        // is benign by construction rather than by timing.
+        static constexpr std::uint32_t kEffectsKnownBit = 0x1'0000u;
+        if (slot < effect_cache_.size()) {
+            std::atomic_ref<std::uint32_t> word(effect_cache_[slot]);
+            const auto cached = word.load(std::memory_order_acquire);
+            if ((cached & kEffectsKnownBit) != 0)
+                return static_cast<std::uint16_t>(cached & 0xFFFFu);
+            const auto req = effective_required_effects(
+                ordered_names_[slot], meta_[slot].required_effects, meta_[slot].security_exempt);
+            word.store(static_cast<std::uint32_t>(req) | kEffectsKnownBit,
+                       std::memory_order_release);
+            return req;
         }
-        return req;
+        return effective_required_effects(ordered_names_[slot], meta_[slot].required_effects,
+                                          meta_[slot].security_exempt);
     }
 
 public:
@@ -595,9 +604,10 @@ private:
     std::vector<std::string> ordered_names_;
     std::vector<PrimMeta> meta_;
     std::vector<PrimFn> fn_slots_;
-    // Issue #4599: parallel to ordered_names_. effect_known_ 0 = uncached.
-    std::vector<std::uint8_t> effect_known_;
-    std::vector<std::uint16_t> effect_mask_;
+    // Issue #4599 / #4717: parallel to ordered_names_. One atomic word per
+    // slot: kEffectsKnownBit set = cached, low 16 bits = the mask. Written by
+    // the first dispatching body, read by all the others.
+    std::vector<std::uint32_t> effect_cache_;
     // Issue #4261: owns original hot PrimFn bodies for SBO timing wraps.
     std::vector<std::unique_ptr<PrimFn>> hot_timing_held_;
 };
@@ -2239,7 +2249,7 @@ public:
     // lock; this getter returns a const view that doesn't take
     // the lock — callers must ensure no concurrent mutation
     // (the test harness runs single-threaded).
-    std::span<const std::string> string_heap() const { return string_heap_; }
+    ::aura::compiler::StringPoolView string_heap() const { return string_heap_; }
     // Phase 2.4: mut accessor returns pmr::vector reference
     // (matches the underlying storage type).
     ::aura::compiler::LockedStringHeap& string_heap_mut() { return string_heap_; }
@@ -5483,7 +5493,15 @@ public:
     // exist). Distinct from is_env_frame_invalid (INVALID_VERSION
     // sentinel on a live slot) and is_env_frame_stale (version drift).
     [[nodiscard]] bool is_env_frame_invalid_id(EnvId id) const noexcept {
-        return id == NULL_ENV_ID || id >= env_frames_.size();
+        // Issue #4717: read the PUBLISHED size, not the deque's live size.
+        // alloc_env_frame push_backs env_frames_ on another body's thread;
+        // deque::size() dereferences the deque's map/iterator metadata, which
+        // that push_back mutates (TSan: apply_closure -> is_env_frame_invalid_id
+        // -> deque::size vs alloc_env_frame -> _M_push_back_aux). #4580 already
+        // publishes the size with release after the frame is constructed, so an
+        // acquire load is the same answer without touching the container.
+        return id == NULL_ENV_ID ||
+               id >= env_frames_published_size_.load(std::memory_order_acquire);
     }
     // Issue #1478 / #1539 / #1542: linear post-mutate enforcement
     // (real per-cell scan via bindings_linear_ownership_state_).
@@ -10503,6 +10521,10 @@ public:
     // Issue #4543: string_heap_ is a LockedStringHeap — mint() takes
     // alloc_storage_lock_, appends, runs the #4428 tenant stamp hook and
     // returns the index in one critical section; raw push_back is gone.
+    // Issue #4717: a minted slot never moves, so a body that reads through
+    // string_at() cannot be invalidated by a sibling body's mint; the heap
+    // lock now orders WRITERS only. The per-fiber nursery below mints into
+    // a fiber-owned stable heap (no lock) and promotes on publish/exit.
     // Multi-fiber orch fanout (overnight agents) races unlocked
     // push_back → pmr::vector / monotonic_buffer_resource corruption
     // (SIGSEGV in allocate/deallocate / construct_at — H9).
@@ -18477,7 +18499,8 @@ private:
 
 
 // Pair-aware value formatting (recursively prints lists)
-export inline std::string format_value(const types::EvalValue& v, std::span<const std::string> heap,
+export inline std::string format_value(const types::EvalValue& v,
+                                       ::aura::compiler::StringPoolView heap,
                                        std::span<const Pair> pairs, int depth = 0,
                                        const Primitives* primitives = nullptr,
                                        std::span<const std::string> keywords = {},

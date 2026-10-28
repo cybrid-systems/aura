@@ -1758,6 +1758,63 @@ static void ac4714s_string_space_accessor() {
           "4714S AC3: the accessor block is the documented one decision point");
 }
 
+// ── Issue #4717 AC1: concurrent mint plus read ─────────────────────────
+// The pre-#4717 heap was a std::pmr::vector<std::string>: a mint that grew it
+// moved every slot, so a reader holding a reference from string_at() walked
+// freed storage (TSan: mint_locked_impl vs data()). With the body mutex gone
+// that is a live race between CLI bodies, not a theoretical one.
+// The stable slot store keeps every minted slot at its address, so the
+// reader below keeps seeing the same bytes while 6 minters grow the heap
+// through several blocks. The reference-validity contract is documented at
+// the store (locked_string_heap.hh).
+static void ac4717_concurrent_mint_read() {
+    std::println("\n--- #4717 AC1: concurrent mint plus read stays reference-valid ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    constexpr int kMinters = 6;
+    constexpr int kIters = 1200;
+    constexpr int kBand = 64;
+    constexpr std::size_t kLen = 300;
+    // Pre-mint a band the reader samples while the minters grow the heap.
+    std::vector<std::uint64_t> band;
+    band.reserve(kBand);
+    for (int i = 0; i < kBand; ++i)
+        band.push_back(ev.push_string_heap(std::string(kLen, static_cast<char>('a' + (i % 26)))));
+    std::atomic<bool> stop{false};
+    std::atomic<int> bad{0};
+    std::atomic<std::int64_t> reads{0};
+    std::thread reader([&ev, &band, &stop, &bad, &reads] {
+        while (!stop.load(std::memory_order_acquire)) {
+            for (int i = 0; i < kBand; ++i) {
+                const std::string& s = ev.string_at(band[static_cast<std::size_t>(i)]);
+                const char want = static_cast<char>('a' + (i % 26));
+                if (s.size() != kLen || s.front() != want || s.back() != want) {
+                    bad.fetch_add(1, std::memory_order_relaxed);
+                    continue;
+                }
+                reads.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    });
+    std::vector<std::thread> ts;
+    ts.reserve(kMinters);
+    for (int t = 0; t < kMinters; ++t) {
+        ts.emplace_back([&ev, t] {
+            for (int i = 0; i < kIters; ++i)
+                (void)ev.push_string_heap(std::string(280, static_cast<char>('A' + (t % 26))));
+        });
+    }
+    for (auto& th : ts)
+        th.join();
+    stop.store(true, std::memory_order_release);
+    reader.join();
+    CHECK(bad.load() == 0, "4717 AC1: concurrent mint plus read stays reference-valid");
+    CHECK(reads.load() > 0, "4717 AC1: the reader observed the pre-mint band under growth");
+    const auto heap = read_file("src/compiler/locked_string_heap.hh");
+    CHECK(heap.find("Reference-validity contract") != std::string::npos,
+          "4717 AC1: the reference-validity contract is stated at the store");
+}
+
 int run_test_pmr_alloc_fiber_safe() {
     std::println("=== Issue #2651: PMR / string_heap concurrent alloc safety ===");
     ac1_concurrent_push_string();
@@ -1781,6 +1838,7 @@ int run_test_pmr_alloc_fiber_safe() {
     ac4611_prim_call_arg_rooting();
     ac4714_fiber_string_arena();
     ac4714s_string_space_accessor();
+    ac4717_concurrent_mint_read();
     std::println("\n=== #2651/#2997: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
