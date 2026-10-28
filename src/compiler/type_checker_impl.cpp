@@ -4369,7 +4369,8 @@ void InferenceEngine::init_primitive_env_part0(TypeId Int, TypeId Bool, TypeId F
     register_primitive("mutate:set-body", {String, String}, Dyn);
     register_primitive("mutate:splice", {Int, Int}, Dyn);
     register_primitive("mutate:wrap", {Int, String}, Dyn);
-    register_primitive("mutate:tweak-literal", {Int, Int}, Dyn);
+    // #4738: second arg is a delta (Int) or a relative factor (Float).
+    register_primitive("mutate:tweak-literal", {Int, Dyn}, Dyn);
 
     // IO/网络原语
     register_primitive("load-module", {String}, Dyn);

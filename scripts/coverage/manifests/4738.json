@@ -1,0 +1,13 @@
+{
+  "issue": 4738,
+  "title": "stdlib/ant: colony:search leaves its last failed mutation installed, ignores max-variants, and tweaks literals outside the target functions",
+  "ok": "OK: colony:search checkpoints with ast:snapshot and restores on every non-success exit, charges every variant (including each literal delta) against max-variants, scopes literal search to the enclosing define, and searches float thresholds with a relative delta",
+  "checks": [
+    { "ac": "AC1", "path": "lib/std/ant.aura", "contains": ["(snap (ast:snapshot))", "(ast:restore snap)"] },
+    { "ac": "AC2", "path": "lib/std/ant.aura", "contains": ["(>= tried budget)", "colony-try-ints", "colony-try-floats"] },
+    { "ac": "AC3", "path": "lib/std/ant.aura", "contains": ["colony-literals-in", "colony-find-define", "colony-collect-ids"] },
+    { "ac": "AC4", "path": "lib/std/ant.aura", "contains": ["colony:float-tweak", "mutate:tweak-literal (car ids) factor"] },
+    { "ac": "AC5", "path": "tests/suite/colony.aura", "contains": ["#4738", "colony:6var", "workspace restored on failure"] },
+    { "ac": "AC4", "path": "src/compiler/evaluator_primitives_mutate.cpp", "contains": ["relative float tweak", "LiteralFloat"] }
+  ]
+}
