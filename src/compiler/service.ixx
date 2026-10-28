@@ -2193,6 +2193,7 @@ public:
     }
 
     void reset() {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         // Issue #984: clear thread_local lowering hooks on reset so a
         // subsequent session cannot see this service's trampolines.
         clear_lowering_compiler_core_hooks();
@@ -6455,6 +6456,7 @@ public:
     std::uint64_t ir_cache_v2_access_clock_ = 0;
 
     void maybe_evict_ir_cache_v2() {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         if (ir_cache_v2_.size() <= kIRCacheV2MaxEntries)
             return;
         // Prefer dropping dirty entries (will re-lower on demand).
@@ -6513,6 +6515,7 @@ public:
     // If entry exists but is dirty, the caller should re-lower and call
     // store_define_v2 to update the entry.
     int lookup_define_v2(const std::string& name, std::size_t source_hash) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         auto it = ir_cache_v2_.find(name);
         if (it == ir_cache_v2_.end())
             return 2;
@@ -6611,6 +6614,7 @@ public:
                          std::vector<aura::ir::IRFunction> irs,
                          std::vector<aura::ir::ClosureBridgeData> bridges,
                          std::vector<std::string> strings, std::uint64_t sampled_mut_epoch) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         // Issue #4341: sampled_mut_epoch is the mutation epoch the stored
         // IR was sampled under — captured before the lower (#4338
         // semantics), NOT read live at this store.
@@ -6737,6 +6741,7 @@ public:
     // invalidate_function (invalidate_function does). Public call sites
     // that may race should take OrderedUniqueLock(mutate) first.
     void selective_invalidate_bridge_for_impact(const std::string& name, const ImpactScope& scope) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         std::vector<aura::ir::ClosureBridgeData>* bridges = nullptr;
         if (auto bit = ir_cache_bridge_.find(name); bit != ir_cache_bridge_.end())
             bridges = &bit->second;
@@ -7006,6 +7011,7 @@ public:
     // Write that defuse. Leave the sampled mutation epoch (#4341), bridge,
     // and soa as the store wrote them.
     void restamp_defines_after_boundary_exit_() noexcept {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         const auto live_defuse = evaluator_.defuse_version();
         if (live_defuse == 0)
             return;
@@ -7076,6 +7082,7 @@ public:
     // gen!=0 also applies the lag check even if in_progress is not yet
     // visible (release/acquire). Then set in_progress for the walk.
     void begin_abort_ir_cache_force_fence() {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         // Issue #3258: bump gen first so lag check is visible.
         abort_force_generation_.fetch_add(1, std::memory_order_release);
         abort_force_in_progress_.store(1, std::memory_order_release);
@@ -7098,6 +7105,7 @@ public:
     // observe only. Production/Full: hard drop. abort_define_set is the
     // ir_cache_v2_ key set walked by force_ir_cache_dirty_after_abort.
     void clear_cache_v2_for_define(const std::string& name) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         if (!(aura::compiler::typed_audit::production_defaults_active() ||
               aura::compiler::typed_audit::get_strategy() ==
                   aura::compiler::typed_audit::AuditStrategy::Full)) {
@@ -7123,6 +7131,7 @@ public:
     // Issue #3852: production also force-bumps AOT table epoch so probe
     // cannot return mid-abort native (Soft: AOT untouched).
     void force_ir_cache_dirty_after_abort() {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         // Issue #3069 / #3117: publish the fence before the walk. When
         // begin_abort_ir_cache_force_fence already ran (restore window),
         // do not bump generation a second time.
@@ -7257,6 +7266,7 @@ public:
     // load, no map walk. Distinguisher: should_relower_total.
     static constexpr int kDensifyIrCacheMapInvalidIssue = 3985;
     void force_ir_cache_map_invalid_after_densify() {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         if (!(aura::compiler::typed_audit::production_defaults_active() ||
               aura::compiler::typed_audit::get_strategy() ==
                   aura::compiler::typed_audit::AuditStrategy::Full))
@@ -7507,6 +7517,7 @@ public:
 
     bool try_apply_impact_minimal_dirty_(IRCacheEntry& entry, const std::string& name,
                                          aura::ast::NodeId root_hint = aura::ast::NULL_NODE) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         auto* flat = evaluator_.workspace_flat();
         auto* pool = evaluator_.workspace_pool();
         if (!flat || !pool)
@@ -7861,6 +7872,7 @@ public:
     // Issue #680 / #2031: compute ir_cache_pure impact_scope for a Define
     // mutation root, stamp instruction-level dirty, bump observability.
     void run_define_impact_scope(aura::ast::NodeId root) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         auto* flat = evaluator_.workspace_flat();
         if (!flat || root == aura::ast::NULL_NODE || root >= flat->size())
             return;
@@ -8201,6 +8213,7 @@ public:
     bool relower_define_blocks(const std::string& name, std::string_view source,
                                aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                aura::ast::NodeId expanded_root, bool commit_per_fn_partial = true) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         // Issue #4341: sample BEFORE any per-fn / full re-lower in this
         // call — both the per-fn partial restamp and the full-fallback
         // store_define_v2 stamp the IR with this sampled epoch (#4338
@@ -8969,6 +8982,7 @@ public:
     bool relower_define_function(const std::string& name, std::size_t func_idx,
                                  aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                  aura::ast::NodeId lambda_node_id) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         auto it = ir_cache_v2_.find(name);
         if (it == ir_cache_v2_.end())
             return false;
@@ -9263,6 +9277,7 @@ public:
     void populate_dep_graph_define_4682_(aura::ast::FlatAST& flat_ref,
                                          aura::ast::StringPool& pool_ref, aura::ast::NodeId id,
                                          IsDefine&& is_define) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         auto* ws_flat = &flat_ref;
         auto* ws_pool = &pool_ref;
         {
@@ -9509,6 +9524,7 @@ public:
     }
 
     void populate_ir_cache_v2_from_workspace() {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         auto* ws_flat = evaluator_.workspace_flat();
         auto* ws_pool = evaluator_.workspace_pool();
         if (!ws_flat || !ws_pool)
@@ -9888,6 +9904,7 @@ public:
     // (or skipped-as-clean). Full-fallback count is already on
     // relower_full_called_count.
     std::size_t relower_dirty_defines_from_workspace() {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         // Issue #3067: restore NodeId cascade for stale-rejected edges
         // before partial peel (string-only callers would under-mark).
         drain_deferred_hybrid_cascade_();
@@ -10684,6 +10701,7 @@ public:
     // Get cached IR for a define (returns nullptr if not cached).
     // Used by (eval-current) to assemble the IRModule.
     const IRCacheEntry* get_define_v2(const std::string& name) const {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         auto it = ir_cache_v2_.find(name);
         if (it == ir_cache_v2_.end())
             return nullptr;
@@ -11090,6 +11108,7 @@ public:
 
     // Get all cached defines' names (for the (eval-current) full-lower fallback).
     std::vector<std::string> list_cached_defines_v2() const {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         std::vector<std::string> out;
         out.reserve(ir_cache_v2_.size());
         for (auto& [name, _] : ir_cache_v2_)
@@ -11118,6 +11137,7 @@ public:
     // node_dep from the post-unload string graph, mark remaining callers
     // dirty. Soft/Off tear V2 down too (AC3).
     void unload_module(const std::string& name) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         arena_group_.reset_module(name);
 
         std::vector<std::string> to_remove;
@@ -11332,6 +11352,7 @@ public:
     // Parse module content and cache all top-level defines in ir_cache_.
     // Called by Evaluator after each successful module load.
     void cache_module(const std::string& content, const std::string& path) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         // don't survive re-evaluation via cache_define.
 
 
@@ -11795,6 +11816,14 @@ public:
     }
 
     struct IRDefineEnvBinding {
+        // Issue #4717 (P4): the interpreter below owns mutable execution
+        // state (frames, cells, runtime_closures_, id cursor). It is not
+        // reentrant and it is not per-thread, so a call into it must be
+        // serialized while the registry entry itself stays replaceable.
+        // Taken WITH the IR cache gate released (never both at once — see
+        // ir_cache_gate_ ) so a running body never blocks a compile and a
+        // compile never blocks a call for longer than one dispatch.
+        std::recursive_mutex exec_mtx;
         aura::ir::IRModule module;
         aura::compiler::IRContext context;
         std::unique_ptr<aura::compiler::IRInterpreter> interpreter;
@@ -12243,6 +12272,7 @@ public:
 
     bool bind_value_define_via_ir(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                   aura::ast::NodeId expanded_root, const std::string& name_str) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
         auto cache_bridge_ptr = ir_cache_bridge_.empty() ? nullptr : &ir_cache_bridge_;
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
@@ -12451,6 +12481,7 @@ public:
     // Copies non-entry functions into ir_cache_ first so a later caller lower
     // inlines the new body (the let-loop stays inside one interpreter).
     bool specialize_one_lambda_via_ir(const std::string& name) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         auto src_it = function_sources_.find(name);
         if (src_it == function_sources_.end() || src_it->second.empty())
             return false;
@@ -12584,6 +12615,7 @@ public:
     // Two passes when focusing the whole workspace so cross-calls see a
     // filled cache. Production keeps its own hot-update path.
     void specialize_workspace_lambdas_via_ir(const std::string& focus) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         if (aura::compiler::typed_audit::production_defaults_active())
             return;
         auto* ws_flat = evaluator_.workspace_flat();
@@ -12692,6 +12724,7 @@ public:
     // Used by compile_module disk-cache hits where ir_cache_ is pre-populated.
     bool bind_define_env_only(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                               aura::ast::NodeId expanded_root, const std::string& name_str) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
         auto cache_bridge_ptr = ir_cache_bridge_.empty() ? nullptr : &ir_cache_bridge_;
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
@@ -12702,22 +12735,25 @@ public:
     }
 
     bool bind_function_define_via_ir(const aura::ir::IRModule& ir_mod, const std::string& name) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         if (ir_mod.functions.empty())
             return false;
 
-        auto binding = std::make_unique<IRDefineEnvBinding>(
+        auto binding = std::make_shared<IRDefineEnvBinding>(
             ir_mod, evaluator_.primitives(), &type_registry_, &metrics_, &evaluator_);
         binding->interpreter =
             std::make_unique<aura::compiler::IRInterpreter>(binding->module, binding->context);
         // Issue #4357: disjoint closure ids. Two defines used to both mint
         // kClosureIdHighBit, and the owner map kept only the later name, so
         // a call of the first re-entered the second (hang or a 0 result).
-        if (!types::is_ir_closure_id(next_ir_define_closure_id_))
-            next_ir_define_closure_id_ = types::make_ir_closure_id(0);
-        binding->interpreter->set_next_closure_id(next_ir_define_closure_id_);
+        if (!types::is_ir_closure_id(next_ir_define_closure_id_.load(std::memory_order_acquire)))
+            next_ir_define_closure_id_.store(types::make_ir_closure_id(0),
+                                             std::memory_order_release);
+        binding->interpreter->set_next_closure_id(
+            next_ir_define_closure_id_.load(std::memory_order_acquire));
 
         auto result = binding->interpreter->execute();
-        next_ir_define_closure_id_ = binding->interpreter->next_closure_id();
+        publish_ir_closure_cursor_(binding->interpreter->next_closure_id());
         if (!result || !types::is_closure(*result))
             return false;
 
@@ -13141,6 +13177,11 @@ public:
     std::optional<types::EvalValue>
     dispatch_ir_define_closure(aura::compiler::ClosureId cid,
                                std::span<const types::EvalValue> args) {
+        // Issue #4717 (P4): the registry / owner-map / bridge / IR-cache
+        // lookups below run under the shared IR cache gate; every path that
+        // RUNS a body drops it first (unique_lock) and pins the binding by
+        // shared_ptr, so no body ever executes under the cache gate.
+        std::unique_lock<std::recursive_mutex> ir_gate(ir_cache_gate_);
         // Issue #4712: resolve the owning define by binding identity when
         // the cid->name index has no row. A workspace replace (set-code /
         // snapshot restore) clears the index wholesale in
@@ -13180,8 +13221,7 @@ public:
             // typed "invalid closure" face — never an unrelated define's
             // body.
             for (auto& kv : ir_define_env_bindings_) {
-                auto* interp = kv.second->interpreter.get();
-                if (!interp)
+                if (!kv.second || !kv.second->interpreter)
                     continue;
                 // Issue #4626: the interpreter's strict runtime-mint set is
                 // filled by a BOOL scope flag (IRInterpreter::call_closure
@@ -13202,32 +13242,30 @@ public:
                 // below it, so the strict #4450 rule (a bind-time mint must
                 // NOT resurrect after a workspace restore / rebind) still
                 // holds.
-                if (!interp->owns_runtime_mint(static_cast<std::uint64_t>(cid))) {
-                    const auto& floor = kv.second->runtime_mint_floor;
-                    if (!floor.has_value() || static_cast<std::uint64_t>(cid) < *floor ||
-                        !interp->owns_runtime_closure(static_cast<std::uint64_t>(cid)))
-                        continue;
-                }
-                interp->set_next_closure_id(next_ir_define_closure_id_);
-                auto r = interp->call_closure(static_cast<std::uint64_t>(cid), args);
-                next_ir_define_closure_id_ = interp->next_closure_id();
-                if (!r)
+                // Issue #4717: never run a body under the cache gate. Pin the
+                // binding, drop the gate, then classify + run under exec_mtx.
+                const std::shared_ptr<IRDefineEnvBinding> pinned = kv.second;
+                if (ir_gate.owns_lock())
+                    ir_gate.unlock();
+                types::EvalValue out{};
+                const auto ran = run_pinned_ir_closure_(pinned, cid, args, 1, &out);
+                ir_gate.lock();
+                if (ran == PinnedRun4717::Ok)
+                    return out;
+                if (ran == PinnedRun4717::Failed)
                     return std::nullopt;
-                return *r;
             }
             return std::nullopt;
         }
-        const auto& name = *owner_name;
+        // Issue #4717: copy the name and pin the binding before any unlock —
+        // `owner_name` points into a container this function is about to
+        // stop guarding.
+        const std::string name = *owner_name;
         auto bind_it = ir_define_env_bindings_.find(name);
-        if (bind_it == ir_define_env_bindings_.end() || !bind_it->second->interpreter)
+        if (bind_it == ir_define_env_bindings_.end() || !bind_it->second ||
+            !bind_it->second->interpreter)
             return std::nullopt;
-        // Issue #4450: only the define that MINTED the id may run it — the
-        // bound id itself, or a runtime closure this interpreter still
-        // holds. Anything else is a stale alias: typed deny, never an
-        // unrelated define's body.
-        if (bind_it->second->closure_id != cid &&
-            !bind_it->second->interpreter->owns_runtime_closure(static_cast<std::uint64_t>(cid)))
-            return std::nullopt;
+        const std::shared_ptr<IRDefineEnvBinding> binding = bind_it->second;
         // Note: the stale-entry detection that lived here previously
         // (binding->interpreter->flat.get() compare against current
         // workspace) was REMOVED because IRInterpreter doesn't expose
@@ -13254,15 +13292,24 @@ public:
                 func_it != ir_cache_.end() && !func_it->second.empty()) {
                 auto& bd = bridge_it->second[0];
                 if (bd.flat && bd.pool && bd.body_id != aura::ast::NULL_NODE) {
+                    // Issue #4717: copy what the run needs, then drop the
+                    // gate — eval_flat runs a body and must never hold it.
+                    const auto flat_sp = bd.flat;
+                    const auto pool_sp = bd.pool;
+                    const auto body_id = bd.body_id;
+                    // Copy the params too: func_it->second is a cache row
+                    // that a sibling thread may rewrite once the gate drops.
+                    auto params = func_it->second[0].params;
+                    if (ir_gate.owns_lock())
+                        ir_gate.unlock();
                     aura::compiler::Env ne(&evaluator_.top_env());
                     ne.set_primitives(&evaluator_.primitives());
-                    ne.set_pool(bd.pool.get());
-                    auto& params = func_it->second[0].params;
+                    ne.set_pool(pool_sp.get());
                     for (std::size_t i = 0; i < params.size() && i < args.size(); ++i)
                         ne.bind(params[i], args[i]);
                     auto r = evaluator_.eval_flat(
-                        *const_cast<aura::ast::FlatAST*>(bd.flat.get()),
-                        *const_cast<aura::ast::StringPool*>(bd.pool.get()), bd.body_id, ne);
+                        *const_cast<aura::ast::FlatAST*>(flat_sp.get()),
+                        *const_cast<aura::ast::StringPool*>(pool_sp.get()), body_id, ne);
                     if (r)
                         return *r;
                 }
@@ -13279,24 +13326,30 @@ public:
         // runtime mints never collide with any binding's reserved range;
         // drain the advanced cursor back afterwards.
         // Issue #4682 (6b): opt-in native tier (pure, guarded, exact).
-        if (tier_jit_enabled_4682_() && bind_it->second->closure_id == cid) {
-            if (auto nr = tier_try_native_4682_(*bind_it->second, name, args))
+        if (tier_jit_enabled_4682_() && binding->closure_id == cid) {
+            // Issue #4717: the tier slot lives on the pinned binding; the run
+            // is a body run, so drop the cache gate and hold exec_mtx.
+            const std::shared_ptr<IRDefineEnvBinding> pinned = binding;
+            if (ir_gate.owns_lock())
+                ir_gate.unlock();
+            std::optional<types::EvalValue> nr;
+            {
+                std::lock_guard<std::recursive_mutex> exec(pinned->exec_mtx);
+                nr = tier_try_native_4682_(*pinned, name, args);
+            }
+            if (nr)
                 return *nr;
+            ir_gate.lock();
         }
-        auto* owner_interp = bind_it->second->interpreter.get();
-        owner_interp->set_next_closure_id(next_ir_define_closure_id_);
-        // Issue #4626: the runtime-mint floor is the interpreter's id cursor
-        // where the next mint starts. Set it BEFORE the call so a callback
-        // the call mints (and the tree walker re-enters for) is routable
-        // even when the nested call cleared the interpreter's own
-        // in_runtime_call_ flag.
-        if (!bind_it->second->runtime_mint_floor.has_value())
-            bind_it->second->runtime_mint_floor = owner_interp->next_closure_id();
-        auto r = owner_interp->call_closure(static_cast<std::uint64_t>(cid), args);
-        next_ir_define_closure_id_ = owner_interp->next_closure_id();
-        if (!r)
+        // Issue #4717: the run itself never holds the cache gate (see
+        // run_pinned_ir_closure_ — it re-syncs the closure-id cursor from
+        // the shared monotonic source and drains it back afterwards).
+        if (ir_gate.owns_lock())
+            ir_gate.unlock();
+        types::EvalValue out{};
+        if (run_pinned_ir_closure_(binding, cid, args, 0, &out) != PinnedRun4717::Ok)
             return std::nullopt;
-        return *r;
+        return out;
     }
 
     // Issue #4547: true when `name` is a live (define name (lambda ...)) of
@@ -13335,6 +13388,7 @@ public:
     }
 
     void clear_ir_define_env_binding(const std::string& name) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         auto it = ir_define_env_bindings_.find(name);
         if (it == ir_define_env_bindings_.end())
             return;
@@ -13364,6 +13418,7 @@ public:
                                            const std::string& name_str, bool bind_in_env = true,
                                            const std::string& module_name = "__repl__",
                                            bool from_eval_ir = false) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         const std::string src(source);
         const auto hash = fnv1a_64(src);
         const int st = lookup_define_v2(name_str, hash);
@@ -13479,6 +13534,7 @@ public:
                             aura::ast::StringPool& pool, aura::ast::NodeId expanded_root,
                             const std::string& name_str, bool bind_in_env = true,
                             const std::string& module_name = "__repl__") {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         bool is_redefine = ir_cache_.count(name_str) > 0;
 
         // === Level 2: Type check via TypeCheckWrap pass ===
@@ -13868,6 +13924,7 @@ public:
     }
 
     CompilerSnapshot snapshot() const {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         CompilerSnapshot s;
         s.deopt_count = metrics_.deopt_count.load(std::memory_order_relaxed);
         s.specialization_hits = metrics_.specialization_hits.load(std::memory_order_relaxed);
@@ -14479,6 +14536,7 @@ public:
 
     // Expose evaluator env for --inspect evaluator
     std::string inspect_env() const {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         // Issue #209 (Cycle 3): migrated to use
         // bindings_with_names() instead of bindings().
         // The legacy bindings() accessor bumps the
@@ -14508,6 +14566,7 @@ public:
 
     // Check if a cached function exists
     bool has_cached_function(const std::string& name) const {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         return ir_cache_.find(name) != ir_cache_.end();
     }
 
@@ -15850,6 +15909,7 @@ public:
             static_cast<CompilerService*>(ctx)->on_arena_compact_notify();
     }
     void on_arena_compact_notify() noexcept {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         // Issue #1521 / #3455: ShapeProfiler versions dirty ∪ relocated
         // FnKeys only (IR cache any_block_dirty — existing define-dirty
         // mask). Empty cone → no-op on shape (touched==0). Do not walk
@@ -16313,6 +16373,7 @@ private:
     std::optional<EvalResult> try_dispatch_toplevel_define_call_(aura::ast::FlatAST& flat,
                                                                  aura::ast::StringPool& pool,
                                                                  aura::ast::NodeId root) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         if (root == aura::ast::NULL_NODE || root >= flat.size())
             return std::nullopt;
         auto v = flat.get(root);
@@ -16694,19 +16755,122 @@ private:
         ir_cache_strings_;
 
     // Issue #272: persistent IR runtimes for function-define env bindings.
-    std::unordered_map<std::string, std::unique_ptr<IRDefineEnvBinding>,
+    // Issue #4717: shared_ptr (was unique_ptr) — dispatch_ir_define_closure
+    // resolves a binding under ir_cache_gate_, then releases the gate to
+    // run the body; the shared_ptr keeps the interpreter alive even when a
+    // concurrent mutate:rebind replaces or clears the registry row.
+    std::unordered_map<std::string, std::shared_ptr<IRDefineEnvBinding>,
                        aura::core::TransparentStringHash, std::equal_to<>>
         ir_define_env_bindings_;
     // Issue #272 Cycle 3: top-level value defines bound via IR (name → cell index).
     std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash, std::equal_to<>>
         ir_value_cell_bindings_;
+    // Issue #4717 (P4) — the shared IR / closure cache gate.
+    //
+    // #4707 removed the whole-body fiber mutex, so two bodies (and the CLI
+    // main thread) now reach the compiler's shared IR state concurrently.
+    // That state — ir_cache_, ir_cache_v2_/IRCacheEntry contents,
+    // ir_cache_bridge_/strings, the define→interpreter registry,
+    // ir_define_closure_owner_, the closure-id cursor and the #4682 tier
+    // side tables — was written by whichever thread compiled or
+    // invalidated a define; the body mutex made that single-threaded by
+    // accident.
+    //
+    // Mechanism choice (option (b), NOT a per-body cache): every entry is
+    // keyed by define NAME and is re-derived from the workspace source.
+    // It is NOT eval-state dependent — the eval-state split already landed
+    // in 3ccf14275 (fiber Context). A per-body cache would fork the view
+    // of one shared workspace: a body that rebinds `ka` then evaluates
+    // `kb` from its own cache would serve kb's pre-rebind body after a
+    // sibling's rebind, and the CLI main thread would keep serving both
+    // stale bodies afterwards. So the cache stays single and shared, and
+    // this gate serializes it (sharded/striped would not help: entries
+    // cross-reference each other through dep_graph_ / source_to_ir_map).
+    //
+    // Ordering rules (keep them if you touch this):
+    //   * INNERMOST rank. Only taken under the mutation rank (Mutate) or
+    //     by a short read that takes nothing else while holding it.
+    //   * NEVER held across an eval_flat / IRInterpreter body run, nor
+    //     across anything that can wait on another fiber (fiber:join, a
+    //     condvar): a body running under it could deadlock against its
+    //     own mutate:* or against the sibling it waits for.
+    //   * NEVER taken while holding IRDefineEnvBinding::exec_mtx (gate is
+    //     the outer of the two). Dispatch takes the gate, pins the binding,
+    //     DROPS the gate, then takes exec_mtx for the run; the registry
+    //     walks hold the gate and take exec_mtx per binding. Nothing takes
+    //     the gate with exec_mtx already held, so the pair cannot invert.
+    //   * recursive: relower_* / store_define_v2 / bind_* nest arbitrarily
+    //     deep inside one another.
+    mutable std::recursive_mutex ir_cache_gate_;
+    using IrCacheGate = std::lock_guard<std::recursive_mutex>;
+
     std::unordered_map<aura::compiler::ClosureId, std::string> ir_define_closure_owner_;
     // Issue #4682 (6b): tier stats + worker (worker joins in its dtor).
     TierStats4682 tier_stats_4682_;
     std::unique_ptr<TierWorker4682> tier_worker_4682_;
     // Issue #4357: next id for bind_function_define_via_ir. Starts at the
     // high-bit base; each persistent interpreter consumes a disjoint span.
-    std::uint64_t next_ir_define_closure_id_ = types::make_ir_closure_id(0);
+    // Issue #4717: atomic + max-publisher. Dispatch runs a body with the
+    // cache gate RELEASED, so the cursor cannot be a gated field any more;
+    // ids only ever move forward, so a max-CAS publish is exact (two
+    // bodies that each mint from the same floor is the per-fiber-minting
+    // follow-up, step 3 of #4717 — not a lost update here).
+    std::atomic<std::uint64_t> next_ir_define_closure_id_{types::make_ir_closure_id(0)};
+
+    // Issue #4717: drain an interpreter's advanced id cursor back into the
+    // shared monotonic source (release; max-only so a concurrent publish
+    // from a sibling body is never lowered).
+    void publish_ir_closure_cursor_(std::uint64_t v) noexcept {
+        auto cur = next_ir_define_closure_id_.load(std::memory_order_relaxed);
+        while (v > cur && !next_ir_define_closure_id_.compare_exchange_weak(
+                              cur, v, std::memory_order_release, std::memory_order_relaxed)) {
+        }
+    }
+
+    // Issue #4717 (P4): run one resolved closure on its PINNED binding with
+    // the IR cache gate released. `b` is a shared_ptr copy: a concurrent
+    // rebind can replace or clear the registry row without freeing the
+    // interpreter under the call. exec_mtx serializes the interpreter's
+    // mutable execution state (frames / cells / runtime_closures_ / cursor)
+    // across sibling bodies — the interpreter is not reentrant and not
+    // per-thread. mode 0 = owner path (cid is the binding's own closure or
+    // one of its runtime closures); mode 1 = runtime-mint search (strict
+    // #4450 / #4626 rule: only a call-time mint is routable).
+    enum class PinnedRun4717 { NotMinted, Failed, Ok };
+    PinnedRun4717 run_pinned_ir_closure_(const std::shared_ptr<IRDefineEnvBinding>& b,
+                                         ClosureId cid, std::span<const types::EvalValue> args,
+                                         int mode, types::EvalValue* out) {
+        if (!b || !b->interpreter)
+            return PinnedRun4717::Failed;
+        auto* interp = b->interpreter.get();
+        std::lock_guard<std::recursive_mutex> exec(b->exec_mtx);
+        const auto ucid = static_cast<std::uint64_t>(cid);
+        if (mode == 1) {
+            // Issue #4450 / #4626: a bind-time execute() mint must NOT
+            // resurrect after a workspace restore / rebind; only an id at
+            // or above the call-time mint floor that the interpreter still
+            // holds is routable.
+            if (!interp->owns_runtime_mint(ucid)) {
+                const auto& floor = b->runtime_mint_floor;
+                if (!floor.has_value() || ucid < *floor || !interp->owns_runtime_closure(ucid))
+                    return PinnedRun4717::NotMinted;
+            }
+        } else if (b->closure_id != cid && !interp->owns_runtime_closure(ucid)) {
+            return PinnedRun4717::NotMinted;
+        }
+        interp->set_next_closure_id(next_ir_define_closure_id_.load(std::memory_order_acquire));
+        // Issue #4626: remember the cursor the first call started at, so a
+        // callback this call mints stays routable.
+        if (!b->runtime_mint_floor.has_value())
+            b->runtime_mint_floor = interp->next_closure_id();
+        auto r = interp->call_closure(ucid, args);
+        publish_ir_closure_cursor_(interp->next_closure_id());
+        if (!r)
+            return PinnedRun4717::Failed;
+        *out = *r;
+        return PinnedRun4717::Ok;
+    }
+
 
     // Source code for each cached function, used for re-lowering on dependency changes.
     std::unordered_map<std::string, std::string, aura::core::TransparentStringHash, std::equal_to<>>
@@ -16998,6 +17162,7 @@ private:
     // NodeId even on string dedup) then hybrid_node_cascade_ so callers
     // are dirty. Quiet when no reject armed (zero extra).
     void drain_deferred_hybrid_cascade_() {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         if (deferred_hybrid_armed_.load(std::memory_order_acquire) == 0)
             return;
         std::vector<std::pair<std::string, std::string>> pending;
@@ -17086,6 +17251,7 @@ private:
     // Records these as dependencies of `def_name`.
     void track_define_dependencies(const std::string& def_name, aura::ast::FlatAST& flat,
                                    aura::ast::StringPool& pool) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         if (ir_cache_.empty())
             return;
 
@@ -17727,6 +17893,7 @@ public:
     // unique_lock on jit_cache_mtx_. nullopt = not in cache.
     [[nodiscard]] std::optional<std::size_t>
     ir_cache_v2_dirty_block_count(const std::string& name) const noexcept {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         std::shared_lock cache_read(jit_cache_mtx_);
         auto it = ir_cache_v2_.find(name);
         if (it == ir_cache_v2_.end())
@@ -18968,6 +19135,7 @@ public:
     // Issue #682: pin compiler-managed IRClosure / EnvId roots for GC.
     // Called from Evaluator::flush_gc_roots at safepoint (via hook).
     void flush_compiler_gc_roots(void* root_set_out) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         auto& out = *static_cast<aura::serve::GCRootSet*>(root_set_out);
         const auto current_epoch = bridge_epoch();
         std::unordered_set<std::int64_t> seen_cl;
@@ -18999,9 +19167,11 @@ public:
             if (bit == ir_define_env_bindings_.end() || !bit->second)
                 continue;
             add_closure(static_cast<std::int64_t>(bit->second->closure_id));
-            if (bit->second->interpreter)
+            if (bit->second->interpreter) {
+                std::lock_guard<std::recursive_mutex> exec(bit->second->exec_mtx);
                 bit->second->interpreter->collect_active_gc_roots(out.compiler_closure_roots,
                                                                   current_epoch);
+            }
         }
 
         for (auto& [name, binding] : ir_define_env_bindings_) {
@@ -19009,6 +19179,7 @@ public:
             if (!binding || !binding->interpreter)
                 continue;
             add_closure(static_cast<std::int64_t>(binding->closure_id));
+            std::lock_guard<std::recursive_mutex> exec(binding->exec_mtx);
             binding->interpreter->collect_active_gc_roots(out.compiler_closure_roots,
                                                           current_epoch);
         }
@@ -19032,6 +19203,7 @@ public:
     // Issue #682: invalidate / hot-swap GC coordination — detect
     // missing bridge roots and defer when IR frames are live.
     void on_compiler_invalidate_gc_coordination(const std::string& name) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         const bool has_bridge = ir_cache_bridge_.count(name) > 0;
         const bool has_binding = ir_define_env_bindings_.count(name) > 0;
         if (!has_bridge && !has_binding)
@@ -19040,7 +19212,12 @@ public:
         for (auto& [bind_name, binding] : ir_define_env_bindings_) {
             if (bind_name != name || !binding || !binding->interpreter)
                 continue;
-            if (binding->interpreter->has_active_frames()) {
+            bool active = false;
+            {
+                std::lock_guard<std::recursive_mutex> exec(binding->exec_mtx);
+                active = binding->interpreter->has_active_frames();
+            }
+            if (active) {
                 metrics_.compiler_gc_safepoint_defer_count.fetch_add(1, std::memory_order_relaxed);
                 (void)evaluator_.request_gc_safepoint();
             }
@@ -19052,6 +19229,7 @@ public:
     //   mark_define_dirty. Public entry points must acquire mutate first
     //   (see public_invalidate_bridges_for / atomic_bump_epochs_and_stamp_bridge).
     void invalidate_bridge_for(const std::string& name) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         std::vector<aura::ir::ClosureBridgeData>* bridges = nullptr;
         if (auto bit = ir_cache_bridge_.find(name); bit != ir_cache_bridge_.end())
             bridges = &bit->second;
@@ -19184,6 +19362,7 @@ public:
     // Issue #1523 lock order: mutate_mtx_ unique FIRST (if not held),
     // then epoch + bridge stamp (no dep_graph / workspace).
     void atomic_bump_epochs_and_stamp_bridge(const std::string& name) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         // Issue #4568: one-line Soft rebind returns before invalidate_shape.
         // Reset this name only. An empty catch-all must not wipe unrelated
         // defines (their feedback survives).
@@ -19295,6 +19474,7 @@ public:
     // `name` (empty name → all live views). PrimCall cache still cleared.
     // JIT sid already ran via invalidate_bridge_for. Not a second table.
     void must_deopt_owner_live_closures_for_define_(const std::string& name) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         metrics_.expire_stale_live_closures_total.fetch_add(1, std::memory_order_relaxed);
         evaluator_.walk_active_closures([&]([[maybe_unused]] ClosureId id, Closure& cl) {
             if (!name.empty() && cl.name != name)
@@ -19317,18 +19497,21 @@ public:
                 (void)bname;
                 if (!binding || !binding->interpreter)
                     continue;
+                std::lock_guard<std::recursive_mutex> exec(binding->exec_mtx);
                 binding->interpreter->walk_runtime_closures(
                     [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) { poison_ir(cl); });
             }
         } else {
             if (auto it = ir_define_env_bindings_.find(name);
                 it != ir_define_env_bindings_.end() && it->second && it->second->interpreter) {
+                std::lock_guard<std::recursive_mutex> exec(it->second->exec_mtx);
                 it->second->interpreter->walk_runtime_closures(
                     [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) { poison_ir(cl); });
             }
             for (auto& [bname, binding] : ir_define_env_bindings_) {
                 if (bname == name || !binding || !binding->interpreter)
                     continue;
+                std::lock_guard<std::recursive_mutex> exec(binding->exec_mtx);
                 binding->interpreter->walk_runtime_closures(
                     [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) {
                         if (cl.name == name)
@@ -19771,6 +19954,7 @@ public:
     //   3. PrimCall / JIT inline closure cache (aura_invalidate_all_closure_caches)
     //   4. AuraJIT walk_active_closures already ran via notify_walk_active_closures_
     std::size_t expire_stale_live_closures_(std::uint64_t cur_epoch) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         metrics_.expire_stale_live_closures_total.fetch_add(1, std::memory_order_relaxed);
         std::size_t ir_expired = 0;
         std::size_t tw_expired = 0;
@@ -19787,6 +19971,10 @@ public:
             (void)bname;
             if (!binding || !binding->interpreter)
                 continue;
+            // Issue #4717: serialize the interpreter's mutable execution state
+            // against a body running on a sibling fiber (exec_mtx; taken under
+            // the cache gate, and the gate is never taken while holding it).
+            std::lock_guard<std::recursive_mutex> exec(binding->exec_mtx);
             binding->interpreter->walk_runtime_closures([&]([[maybe_unused]] std::uint64_t cid,
                                                             IRClosure& cl) {
                 // Skip unstamped (legacy) and already-current stamps.
@@ -19872,6 +20060,7 @@ public:
     // Issue #1526: remap IRClosure::env_id through compact_env_frames remap table.
     // Called under compact_env_frames_lock_ before dual-epoch bump.
     void remap_ir_closure_env_ids_on_compact_(const std::int64_t* remap, std::size_t n) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         if (!remap || n == 0)
             return;
         constexpr auto kNull = std::numeric_limits<std::uint32_t>::max();
@@ -19879,6 +20068,10 @@ public:
             (void)name;
             if (!binding || !binding->interpreter)
                 continue;
+            // Issue #4717: serialize the interpreter's mutable execution state
+            // against a body running on a sibling fiber (exec_mtx; taken under
+            // the cache gate, and the gate is never taken while holding it).
+            std::lock_guard<std::recursive_mutex> exec(binding->exec_mtx);
             binding->interpreter->walk_runtime_closures(
                 [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) {
                     if (cl.env_id == kNull || static_cast<std::size_t>(cl.env_id) >= n)
@@ -19895,11 +20088,16 @@ public:
     // Issue #1526: restamp IRClosure::bridge_epoch after dual-epoch bump.
     // Returns number of restamps for metrics aggregation.
     std::size_t restamp_ir_closure_bridge_epochs_(std::uint64_t new_epoch) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         std::size_t n = 0;
         for (auto& [name, binding] : ir_define_env_bindings_) {
             (void)name;
             if (!binding || !binding->interpreter)
                 continue;
+            // Issue #4717: serialize the interpreter's mutable execution state
+            // against a body running on a sibling fiber (exec_mtx; taken under
+            // the cache gate, and the gate is never taken while holding it).
+            std::lock_guard<std::recursive_mutex> exec(binding->exec_mtx);
             binding->interpreter->walk_runtime_closures(
                 [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) {
                     if (cl.bridge_epoch != 0) {
@@ -19988,6 +20186,7 @@ public:
     // Marks every captured fn that is_fn_epoch_stale for deopt-on-next-apply
     // and pairs jit_epoch_stale_check_total with live_closure_stale_prevented.
     void notify_walk_active_closures_(std::uint64_t current_epoch) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         const auto stale = jit_.walk_active_closures(current_epoch);
         metrics_.jit_walk_active_closures_total.fetch_add(1, std::memory_order_relaxed);
         metrics_.jit_walk_active_closures_stale_total.fetch_add(stale, std::memory_order_relaxed);

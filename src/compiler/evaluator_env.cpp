@@ -2728,10 +2728,25 @@ void Evaluator::refresh_stale_frame_in_walk(EnvId id, const char* site) const {
 // bindings_symid_ / bindings_ columns and the live top_env binding.
 void Evaluator::restamp_live_capture_frames(std::uint64_t cur_defuse, std::uint64_t entry_version,
                                             std::size_t log_from) noexcept {
-    if (env_frames_.empty() || cur_defuse == 0)
+    if (cur_defuse == 0)
         return;
-    // Lock-free fast path: the steady state after the previous exit is
-    // zero behind frames; skip the shard barrier entirely.
+    // Issue #4717 (P4): #4707 removed the whole-body fiber mutex, so one
+    // body boundary exit now runs this walk while a sibling body
+    // materialize_call_env / alloc_env_frame touches the same deque. The
+    // old lock-free fast path scanned env_frames_ with NO container lock
+    // (racing push_back map reallocation: TSan flagged the deque walk
+    // against alloc_env_frame) and only took the shard barrier once it had
+    // decided to restamp. Take the 16-shard barrier FIRST - that is the
+    // #3900 / #4542 canonical order (env shards before env_frames_mtx_) and
+    // it is the same barrier alloc_env_frame / truncate / compact take
+    // before touching the deque, so holding all 16 shards freezes the
+    // container for this walk. Steady state therefore costs 16 uncontended
+    // shard locks and still returns before any string interning.
+    std::array<std::unique_lock<std::shared_mutex>, kEnvFramesShardCount> barrier;
+    for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+        barrier[ef_i] = std::unique_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // #3900
+    if (env_frames_.empty())
+        return;
     bool any_behind = false;
     for (const auto& fr : env_frames_) {
         if (fr.version_ != INVALID_VERSION && fr.version_ < cur_defuse) {
@@ -2773,9 +2788,6 @@ void Evaluator::restamp_live_capture_frames(std::uint64_t cur_defuse, std::uint6
     // string binding of every frame (prelude included) is pure overhead
     // and a one-line rebind was paying it on every epoch bump.
     if (mutated_syms.empty()) {
-        std::array<std::unique_lock<std::shared_mutex>, kEnvFramesShardCount> ride;
-        for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
-            ride[ef_i] = std::unique_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // #3900
         for (auto& fr : env_frames_) {
             if (fr.version_ == INVALID_VERSION || fr.version_ >= cur_defuse)
                 continue;
@@ -2789,9 +2801,6 @@ void Evaluator::restamp_live_capture_frames(std::uint64_t cur_defuse, std::uint6
                 return true;
         return false;
     };
-    std::array<std::unique_lock<std::shared_mutex>, kEnvFramesShardCount> barrier;
-    for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
-        barrier[ef_i] = std::unique_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // #3900
     for (std::size_t fr_i = 0; fr_i < env_frames_.size(); ++fr_i) {
         auto& fr = env_frames_[fr_i];
         if (fr.version_ == INVALID_VERSION || fr.version_ >= cur_defuse)

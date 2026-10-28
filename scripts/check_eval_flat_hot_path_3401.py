@@ -98,7 +98,7 @@ def main() -> int:
         # 1500 chars covers the whole arm with margin.
         arm_text = eval_flat[literal_anchor_pos : literal_anchor_pos + 1500]
         required = [
-            "string_intern_by_sym_.get(v.sym_id)",
+            "string_intern_by_sym_.lookup(v.sym_id, cached)",
             "string_view raw_sv = p->resolve",
             "string_intern_by_sym_.set(v.sym_id",
             "std::string raw(raw_sv)",
@@ -120,7 +120,7 @@ def main() -> int:
         arm_text = eval_flat[keyword_anchor_pos : keyword_anchor_pos + 1500]
         required = [
             "string_view name = p->resolve",
-            "keyword_intern_by_sym_.get(v.sym_id)",
+            "keyword_intern_by_sym_.lookup(v.sym_id, cached)",
             "keyword_intern_by_sym_.set(v.sym_id",
         ]
         missing = _arm_keywords(arm_text, required)

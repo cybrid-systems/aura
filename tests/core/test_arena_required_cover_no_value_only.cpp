@@ -1265,7 +1265,7 @@ static void ac3401_eval_flat_hot_path_intern() {
     // consults string_intern_; std::string construction only on miss.
     CHECK(eval_flat.find("// Issue #3401: happy-path string intern") != std::string::npos,
           "AC2: LiteralString arm carries #3401 happy-path intern comment");
-    CHECK(eval_flat.find("string_intern_by_sym_.get(v.sym_id)") != std::string::npos,
+    CHECK(eval_flat.find("string_intern_by_sym_.lookup(v.sym_id, cached)") != std::string::npos,
           "AC2/#3457: LiteralString arm looks up by v.sym_id");
     CHECK(eval_flat.find("string_view raw_sv = p->resolve") != std::string::npos,
           "AC2: LiteralString arm reads pool resolve via std::string_view");
@@ -1291,7 +1291,7 @@ static void ac3401_eval_flat_hot_path_intern() {
           "AC3: :foo keyword Variable arm carries #3401 O(1) intern comment");
     CHECK(eval_flat.find("string_view name = p->resolve") != std::string::npos,
           "AC3: :foo keyword Variable arm reads pool resolve via std::string_view");
-    CHECK(eval_flat.find("keyword_intern_by_sym_.get(v.sym_id)") != std::string::npos,
+    CHECK(eval_flat.find("keyword_intern_by_sym_.lookup(v.sym_id, cached)") != std::string::npos,
           "AC3/#3457: :foo arm looks up by v.sym_id");
     CHECK(eval_flat.find("keyword_intern_by_sym_.set(v.sym_id") != std::string::npos,
           "AC3/#3457: :foo arm records by v.sym_id on miss");
