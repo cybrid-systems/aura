@@ -2088,6 +2088,7 @@ public:
     // the next Moving won't happen on this arena).
     void clear_external_roots_for_densify() noexcept {
         external_roots_for_densify_.clear();
+        external_root_slot_set_for_densify_.clear();
         external_root_slots_for_densify_.clear();
     }
 
@@ -2120,6 +2121,18 @@ public:
     void register_external_root_slot_for_densify(void** slot) noexcept {
         if (slot == nullptr || *slot == nullptr)
             return;
+        // Issue #4737: membership-dedupe the slot list. Every mutation
+        // boundary re-registers the whole known-root inventory (closure
+        // flat/pool slots, live EnvFrame pool slots, workspace covers), so
+        // without a membership test the vector grew by that inventory on
+        // every boundary — and the per-commit forget of the (few) value
+        // slots then walked the ever-longer list with std::erase. That made
+        // ast:snapshot / ast:restore / mutate:rebind cost grow linearly with
+        // the number of mutating calls made from a closure frame. The
+        // value-side companion (external_roots_for_densify_) has always been
+        // a set; the slot side is deduped the same way now (#3017).
+        if (!external_root_slot_set_for_densify_.insert(slot).second)
+            return;
         external_root_slots_for_densify_.push_back(slot);
         register_external_root_for_densify(*slot);
     }
@@ -2131,6 +2144,7 @@ public:
     void forget_external_root_slot_for_densify(void** slot) noexcept {
         if (slot == nullptr)
             return;
+        external_root_slot_set_for_densify_.erase(slot);
         std::erase(external_root_slots_for_densify_, slot);
     }
 
@@ -3052,6 +3066,7 @@ public:
             // Consume prep registration for this window (Agent observability).
             result.external_roots_prep_registered_cleared = external_roots_for_densify_.size();
             external_roots_for_densify_.clear();
+            external_root_slot_set_for_densify_.clear();
             external_root_slots_for_densify_.clear();
             // Issue #3569: window-end consume of the snapshot-scoped process
             // queue entries. Runs on every path that took the snapshot (the
@@ -4841,6 +4856,11 @@ public:
     // *slot is a key in this_window_remap (#3781 — not multi-window
     // tombstones). Cleared with the prep set.
     std::vector<void**> external_root_slots_for_densify_;
+    // Issue #4737: membership for the slot vector above (unique slots only).
+    // The vector is the rewrite walk; the set makes register/forget O(1) so
+    // a repeated known-root registration of the same slot is a no-op instead
+    // of an unbounded append.
+    std::unordered_set<void*> external_root_slot_set_for_densify_;
     // Issue #2971: live intermediate creates auto-wired under production
     // required (pref > 0). Soft / unset never inserts (zero hot-path
     // work). Pre-move densify gate walks this vs pin registry + slots.
