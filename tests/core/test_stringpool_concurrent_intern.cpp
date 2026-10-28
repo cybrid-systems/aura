@@ -11,6 +11,10 @@
 
 #include "test_harness.hpp"
 
+// Issue #4719 (P6 of #4707): the fiber AC below drives stackful
+// aura::serve::Fiber bodies, each on its own worker thread.
+#include "serve/fiber.h"
+
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -25,6 +29,20 @@ import aura.core.ast;
 namespace {
 
 using aura::ast::StringPool;
+
+// Fiber::resume() is a documented no-op without a worker context: it prints
+// "resume called with no worker context" and returns, so the body never runs.
+// A bare test/bench process has no WorkerThread dispatch loop, so install one
+// on the calling OS thread for the duration of the resume (fiber.h:1801 —
+// "Each WorkerThread sets this before running fibers"). Bodies here never
+// yield, so the context only has to carry the swap-out point.
+void resume_fiber(aura::serve::Fiber& fiber) {
+    aura::serve::WorkerContext ctx;
+    auto* prev = aura::serve::g_worker_ctx;
+    aura::serve::g_worker_ctx = &ctx;
+    fiber.resume();
+    aura::serve::g_worker_ctx = prev;
+}
 
 } // namespace
 
@@ -154,6 +172,67 @@ int main() {
                                                    "bumped by >= 3 (1 resolve + 2 find_by_name)");
     }
 
+
+    // AC6 (#4719, P6 of #4707): concurrent intern of the same symbol from N
+    // *fibers* yields exactly one id. The intern tables the evaluator keeps
+    // (string_intern_by_sym_ / keyword_intern_by_sym_ / float_intern_by_node_)
+    // are self-guarded since #4717, and StringPool::intern has its own
+    // shared_mutex, so fiber bodies no longer borrow the removed whole-body
+    // mutex for this. Each fiber runs on its own worker thread (stackful
+    // aura::serve::Fiber), so the interning is genuinely parallel and TSan
+    // sees the pool lock as the happens-before edge.
+    {
+        std::println("\n--- AC6 (#4719): N fibers intern one symbol -> exactly one id ---");
+        constexpr int kFibers = 8;
+        constexpr int kPerFiber = 64;
+        const std::string key = "fiber-shared-intern-key";
+        std::vector<aura::ast::SymId> ids(static_cast<std::size_t>(kFibers * kPerFiber));
+        const auto entries_before = pool.entry_count();
+        const auto interns_before = aura::ast::stringpool_intern_total();
+
+        std::atomic<int> armed{0};
+        std::atomic<bool> go{false};
+        std::vector<std::thread> workers;
+        workers.reserve(kFibers);
+        for (int f = 0; f < kFibers; ++f) {
+            workers.emplace_back([&, f] {
+                aura::serve::Fiber body(
+                    [&, f] {
+                        while (!go.load(std::memory_order_acquire)) {
+                        }
+                        for (int i = 0; i < kPerFiber; ++i)
+                            ids[static_cast<std::size_t>(f * kPerFiber + i)] = pool.intern(key);
+                    },
+                    128 * 1024);
+                armed.fetch_add(1, std::memory_order_release);
+                resume_fiber(body);
+            });
+        }
+        while (armed.load(std::memory_order_acquire) != kFibers) {
+        }
+        go.store(true, std::memory_order_release);
+        for (auto& w : workers)
+            w.join();
+
+        const auto first = ids.front();
+        bool one_id = true;
+        for (auto id : ids)
+            if (id != first) {
+                one_id = false;
+                break;
+            }
+        CHECK(one_id, "all 8 fibers' interns of the same symbol return ONE id");
+        CHECK(pool.resolve(first) == key, "that single id resolves to the interned symbol");
+        const auto found = pool.find_by_name(key);
+        CHECK(found.has_value() && *found == first, "find_by_name sees the same single id");
+        CHECK(pool.entry_count() - entries_before == 1,
+              "the contested symbol created exactly one pool entry");
+        CHECK(aura::ast::stringpool_intern_total() - interns_before ==
+                  static_cast<std::uint64_t>(kFibers * kPerFiber),
+              "every fiber intern call went through intern() (counter exact)");
+    }
+
     std::println("\n=== Results: passed ===");
+
     return 0;
 }

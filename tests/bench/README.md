@@ -6,7 +6,7 @@ Two in-process C++ benches source from `tests/bench/`:
 
 | Target | Source | What it measures |
 |--------|--------|------------------|
-| `ast_hotpath_bench` | `tests/bench/ast_hotpath_bench.cpp` | Consolidated FlatAST hot paths (#393/#398/#399): `stable-ref` (1k + 10k), `children-stable`, `mark-dirty` |
+| `ast_hotpath_bench` | `tests/bench/ast_hotpath_bench.cpp` | Consolidated FlatAST hot paths (#393/#398/#399): `stable-ref` (1k + 10k), `children-stable`, `mark-dirty`; plus counter-shard (#4719 P6: sharded hot-path counter bump cost, 1 vs 8 parallel fibers, AC <= 5%) |
 | `cycle221_pcv_bench` | `tests/bench/cycle221_pcv_bench.cpp` | PersistentChildVector ops / COW (#221 slice 5/5, AC < 2µs/op) |
 
 Other issue-keyed C++ benches live next to their feature tests, not in `tests/bench/`:
@@ -24,6 +24,7 @@ Usage:
 ./build/ast_hotpath_bench stable-ref 10k
 ./build/ast_hotpath_bench children-stable
 ./build/ast_hotpath_bench mark-dirty
+./build/ast_hotpath_bench counter-shard   # Issue #4719: 1 fiber vs 8 parallel fibers
 ./build/cycle221_pcv_bench
 ```
 
