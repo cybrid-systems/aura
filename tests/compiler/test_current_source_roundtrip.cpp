@@ -1806,6 +1806,87 @@ static void ac4589_merge_child_define_wins() {
     CHECK(ws.find("\"rejected\"") != std::string::npos, "4589: a failed apply does not say merged");
 }
 
+
+// Issue #4729: workspace :merge used to wipe the root mutation log /
+// last-mutation-provenance (the merge installs a fresh FlatAST through
+// set-code) and the child's mutations were never recorded; ids restarted at
+// 1. ast:restore only truncated the log, so a rollback left no record.
+//
+// The aura program returns a bitmask over the audit contract:
+//   1  merge appended to the root log (root history survives the swap)
+//   2  last-mutation-provenance is a hash after the merge
+//   4  the merge mutation id is past the pre-merge ids (no reset to 1)
+//   8  a post-merge rebind still logs both records
+//  16  ids keep increasing after the merge
+//  32  ast:restore appended a record to the restored log
+//  64  ids keep increasing across the restore (counter not rewound)
+static void ac4729_merge_and_restore_keep_provenance() {
+    std::println("\n--- #4729: merge/restore keep the mutation log ---");
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    struct RestoreEnv {
+        ~RestoreEnv() {
+            unsetenv("AURA_SANDBOX");
+            unsetenv("AURA_PIPELINE_STRICT");
+        }
+    } restore_env;
+    const auto prog = std::string(R"AURA(
+(set-code "(define (f x) (+ x 1)) (define (g) 2)")
+(eval-current)
+(define (ml) (let ((l (query :mutation-log 100))) (if (list? l) l (list))))
+(define (mid) (let ((p (query:last-mutation-provenance))) (if (hash? p) (hash-ref p "mutation_id") -1)))
+(mutate:rebind "f" "(lambda (x) (+ x 2))" "root-rebind")
+(eval-current)
+(define n-pre (length (ml)))
+(define w (workspace :create "child"))
+(workspace :switch w)
+(mutate:rebind "g" "(lambda () 3)" "child-rebind")
+(eval-current)
+(workspace :switch 0) (eval-current)
+(workspace :merge w) (eval-current)
+(define n-merge (length (ml)))
+(define mid-merge (mid))
+(mutate:rebind "f" "(lambda (x) (+ x 5))" "root-rebind-after-merge")
+(eval-current)
+(define n-rebind (length (ml)))
+(define mid-rebind (mid))
+(define s (ast:snapshot "s"))
+(mutate:rebind "f" "(lambda (x) (+ x 9))" "rebind-to-roll-back")
+(eval-current)
+(ast:restore s) (eval-current)
+(define n-restore (length (ml)))
+(define mid-restore (mid))
+(+ (if (>= n-merge (+ n-pre 1)) 1 0)
+   (if (> mid-merge 0) 2 0)
+   (if (> mid-merge n-pre) 4 0)
+   (if (>= n-rebind (+ n-merge 2)) 8 0)
+   (if (> mid-rebind mid-merge) 16 0)
+   (if (>= n-restore (+ n-rebind 1)) 32 0)
+   (if (> mid-restore mid-rebind) 64 0))
+)AURA");
+    CompilerService cs;
+    auto v = cs.eval(prog);
+    CHECK(v && is_int(*v), "4729: provenance program returns a bitmask");
+    const std::int64_t mask = (v && is_int(*v)) ? as_int(*v) : -1;
+    std::println("  #4729 merge/restore provenance mask = {}", mask);
+    CHECK((mask & 1) != 0, "4729: merge appends to the root log");
+    CHECK((mask & 2) != 0, "4729: last-mutation-provenance is a hash after merge");
+    CHECK((mask & 4) != 0, "4729: merge ids stay past the pre-merge ids");
+    CHECK((mask & 8) != 0, "4729: post-merge rebind still records");
+    CHECK((mask & 16) != 0, "4729: ids stay monotonic after merge");
+    CHECK((mask & 32) != 0, "4729: ast:restore appends a rollback record");
+    CHECK((mask & 64) != 0, "4729: ids stay monotonic across restore");
+    // The merge record names the child work it references.
+    const auto ws = read_file("src/compiler/evaluator_primitives_workspace.cpp");
+    CHECK(ws.find("Issue #4729") != std::string::npos, "4729: merge cites the carry");
+    CHECK(ws.find("adopt_mutation_log") != std::string::npos,
+          "4729: merge re-seeds the merged flat's audit log");
+    const auto ast = read_file("src/compiler/evaluator_primitives_ast.cpp");
+    CHECK(ast.find("Issue #4729") != std::string::npos, "4729: ast:restore cites the rollback");
+    CHECK(ast.find("rolled-back=") != std::string::npos,
+          "4729: ast:restore writes a rollback entry with the discarded ids");
+}
+
 int run_test_current_source_roundtrip() {
     std::println("=== Issue #2921: current-source / snapshot roundtrip matrix ===");
     // Before any set-code in this process: the epoch must still be 0 so the
@@ -1815,6 +1896,7 @@ int run_test_current_source_roundtrip() {
     ac4587_workspace_free_names();
     ac4588_error_data_propagates();
     ac4589_merge_child_define_wins();
+    ac4729_merge_and_restore_keep_provenance();
     ac_dual_workspace();
     ac_snapshot_workspace();
     ac_roundtrip_table();

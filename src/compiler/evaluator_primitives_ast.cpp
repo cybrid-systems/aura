@@ -793,6 +793,15 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         // restore path — SymIds, mutation_log_, type_id_, value_cache_
         // are all preserved bit-for-bit.
         bool did_direct = false;
+        // Issue #4729: a restore used to only TRUNCATE the log back to the
+        // snapshot copy, so a rolled-back mutation left no trace at all.
+        // These capture the audit identity of the records the restore
+        // discards (and the live id counter) so one rollback entry can be
+        // appended afterwards.
+        std::uint64_t pre_next_mutation_id = 0;
+        std::uint64_t rolled_first = 0;
+        std::uint64_t rolled_last = 0;
+        std::uint64_t rolled_count = 0;
         {
             // Issue #1904: MutationBoundaryGuard RAII owns the lock + version bump.
             bool ok = true;
@@ -824,6 +833,23 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                     // mark_dirty_upward's note_subtree_content_write keeps
                     // the cells sound for every guard-window content change.
                     const auto& snap_entry = ev.snapshot_flats_[id];
+                    // Issue #4729: audit identity of the discarded records
+                    // (ids >= the snapshot's own counter — the log is a
+                    // monotonic append, so everything from there on is the
+                    // delta this restore rolls back).
+                    pre_next_mutation_id = ev.workspace_flat_->next_mutation_id();
+                    const std::uint64_t snap_next_mutation_id = snap_entry.flat->next_mutation_id();
+                    rolled_first = 0;
+                    rolled_last = 0;
+                    rolled_count = 0;
+                    for (const auto& rec : ev.workspace_flat_->all_mutations()) {
+                        if (rec.mutation_id < snap_next_mutation_id)
+                            continue;
+                        if (rolled_count == 0)
+                            rolled_first = rec.mutation_id;
+                        rolled_last = rec.mutation_id;
+                        ++rolled_count;
+                    }
                     const std::shared_ptr<FlatSnapshotDefineStamps> stamps = snap_entry.stamps;
                     const bool have_stamps = stamps && !stamps->by_name.empty();
                     std::unordered_map<std::string, std::pair<aura::ast::NodeId, std::uint16_t>>
@@ -1028,6 +1054,21 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                     }
                 }
             }
+            // Issue #4729: the direct assign mirrored the snapshot's log,
+            // so the rolled-back suffix disappeared silently. Keep the id
+            // counter monotonic across the swap and append one rollback
+            // entry naming what was discarded — an external auditor must be
+            // able to see the rollback in Aura's own log.
+            if (ev.workspace_flat_) {
+                ev.workspace_flat_->ensure_next_mutation_id(pre_next_mutation_id);
+                if (rolled_count > 0) {
+                    ev.workspace_flat_->add_mutation(
+                        aura::ast::NULL_NODE, "ast:restore", "", "",
+                        "restore snapshot-" + std::to_string(id) + " rolled-back=" +
+                            std::to_string(rolled_count) + " ids=" + std::to_string(rolled_first) +
+                            ".." + std::to_string(rolled_last));
+                }
+            }
             // Issue #2920: restamp text cache *after* Guard exit (exit may
             // invalidate on log growth). Snapshot source is workspace unparse
             // at snapshot time (#2918).
@@ -1045,12 +1086,32 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         auto set_fn = ev.primitives_.lookup("set-code");
         if (!set_fn)
             return make_bool(false);
+        // Issue #4729: set-code installs a FRESH FlatAST — capture the live
+        // audit log + id counter first so the rollback stays visible and
+        // mutation ids stay monotonic across the swap.
+        std::pmr::vector<aura::ast::MutationRecord> carried_log(std::pmr::get_default_resource());
+        std::uint64_t carried_next = 1;
+        if (ev.workspace_flat_) {
+            const auto& live_log = ev.workspace_flat_->all_mutations();
+            carried_log.assign(live_log.begin(), live_log.end());
+            carried_next = ev.workspace_flat_->next_mutation_id();
+        }
         auto result = (*set_fn)({make_string(source_idx)});
         // Issue #4400: set-code already returned the effect-deny string.
         // Surface it. Parse merr pairs stay #f.
         if (is_error(result))
             return result;
-        return make_bool(is_bool(result) ? as_bool(result) : false);
+        const bool ok_fallback = is_bool(result) ? as_bool(result) : false;
+        if (ok_fallback && ev.workspace_flat_) {
+            ev.workspace_flat_->adopt_mutation_log(carried_log, carried_next);
+            if (!carried_log.empty()) {
+                ev.workspace_flat_->add_mutation(
+                    aura::ast::NULL_NODE, "ast:restore", "", "",
+                    "restore snapshot-" + std::to_string(id) + " rolled-back=" +
+                        std::to_string(carried_log.size()) + " source-fallback=1");
+            }
+        }
+        return make_bool(ok_fallback);
     });
 
     // (ast:diff [id])
