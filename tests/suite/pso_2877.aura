@@ -103,6 +103,45 @@
 (assert! (= (hash-ref (pso:defaults) "pop") 16) "defaults pop 16")
 (assert! (= (hash-ref (pso:defaults) "w") 0.7) "defaults w")
 
+; ── Issue #4739: instance handles + ask/tell ────────────────────
+(display "AC6 instance ask/tell\n")
+(define (fits-of inds)
+  (if (null? inds) (list) (cons (sphere-fit (car inds)) (fits-of (cdr inds)))))
+
+(define s1 (pso:make (hash "dim" 2 "pop" 8
+                           "bounds" (list (list -2.0 2.0) (list -2.0 2.0))
+                           "seed" 7 "vmax" 0.2 "boundary" "reflect")))
+(assert! (= (length (pso:ask s1)) 8) "ask returns the population")
+(assert! (equal? (pso:ask s1) (pso:population s1)) "ask is the current generation")
+(pso:tell! s1 (fits-of (pso:ask s1)))
+(assert! (= (hash-ref (pso:report s1) "gen") 1) "tell! advances the instance gen")
+(assert! (number? (hash-ref (pso:report s1) "best-fit")) "instance best-fit")
+(assert! (>= (hash-ref (pso:report s1) "best-fit") (sphere-fit (pso:best s1))) "best-fit tracks best")
+
+; #f = rejected candidate: recorded, never scored
+(pso:tell! s1 (list #f #f #f #f #f #f #f #f))
+(assert! (>= (hash-ref (pso:report s1) "rejected") 8) "tell! records #f rejects")
+
+; two instances are independent
+(define s2 (pso:make (hash "dim" 1 "pop" 4
+                           "bounds" (list (list -1.0 1.0)) "seed" 11)))
+(assert! (not (equal? (pso:ask s1) (pso:ask s2))) "instances are independent")
+
+; export/import resumes a search
+(define blob (pso:export s1))
+(define s3 (pso:import blob))
+(assert! (equal? (pso:best s3) (pso:best s1)) "import keeps best")
+(assert! (equal? (pso:population s3) (pso:population s1)) "import keeps population")
+(assert! (= (hash-ref (pso:report s3) "gen") (hash-ref (pso:report s1) "gen")) "import keeps gen")
+
+; legacy wrappers run over the default instance
+(pso:init 1 8 (list (list -2.0 2.0)) 12345)
+(assert! (= (length (pso:ask)) 8) "legacy default-instance ask")
+(pso:step! sphere-fit)
+(assert! (= (hash-ref (pso:report) "gen") 1) "legacy gen")
+(assert! (number? (hash-ref (pso:report) "best-fit")) "legacy best-fit")
+(assert! (not (= (string-index (pso:help) "4739" 0) -1)) "help mentions 4739")
+
 (if (= *fails* 0)
     (begin (display "OK-2877 pso\n"))
     (begin
