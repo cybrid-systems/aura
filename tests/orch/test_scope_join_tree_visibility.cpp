@@ -39,10 +39,12 @@
 #include "serve/fiber.h"
 
 #include <atomic>
+#include <chrono>
 #include <format>
 #include <fstream>
 #include <print>
 #include <string>
+#include <thread>
 
 import std;
 import aura.compiler.service;
@@ -356,6 +358,75 @@ __PREFIX__
               "4725 AC3: no test_issue_4725.cpp");
     }
     aura::compiler::typed_audit::apply_dev_audit_defaults();
+
+    // ── Issue #4726: the orch scheduler must survive an idle gap ──────
+    // Reported face (reopened on e6f4169e0): after orch:run-workflow the
+    // next yield-waiting scope tasks NEVER run and scope-join-all times out
+    // with every waiter still #f, and the process lingers for seconds.
+    //
+    // Mechanism: the orch primitives keep one process-wide Scheduler in a
+    // static holder (OrchSchedHolder) and never recreate it. The IO loop's
+    // idle auto-stop ("all fibers done, no spawn for ~3 ticks -> stop the
+    // workers and exit the loop") is a SERVE-lifecycle convenience; when it
+    // fired on that owned scheduler, every later scope-spawn was enqueued
+    // onto STOPPED workers, so no body ever ran (no apply, no closure loss —
+    // instrumented runs showed "DIAG scope-spawn" lines and zero body
+    // entries) and the joins timed out. The holder now disables the auto-stop
+    // (`sched->set_idle_auto_stop(false)`), which is the fix this AC pins.
+    //
+    // Placement: last block of this member on purpose. Pre-fix the wedge is
+    // process-wide (the stopped workers are never replaced), so a failing
+    // run poisons the rest of the batch; keeping it last confines that.
+    {
+        std::println("\n--- #4726 AC2: orch scheduler survives an idle gap ---");
+        reset_all_agent_scopes_for_test();
+        CompilerService cs_idle;
+        const auto idle_run = [&cs_idle]() -> std::string {
+            auto r = cs_idle.eval(R"AURA((define BB (hash))
+(define (bbg k) (if (hash-has-key? BB k) (hash-ref BB k) #f))
+(define (bb! k v) (hash-set! BB k v) v)
+(define (st n) (if (equal? (bbg n) "done") "d" "x"))
+(define (mk n)
+  (orch:scope-spawn (string-append "i" n)
+    (lambda ()
+      (let wait ((i 0))
+        (cond ((equal? (bbg "go") "go") (bb! n "done"))
+              ((> i 200000) (bb! n "aborted"))
+              (else (fiber:yield) (wait (+ i 1))))))))
+(for-each mk (list "1" "2" "3" "4" "5" "6"))
+(bb! "go" "go")
+(define j (orch:scope-join-all :timeout-ms 6000))
+(string-append (hash-ref j "status") ":"
+  (st "1") (st "2") (st "3") (st "4") (st "5") (st "6"))
+)AURA");
+            if (!r || !is_string(*r))
+                return {};
+            const auto idx = as_string_idx(*r);
+            const auto heap = cs_idle.evaluator().string_heap();
+            if (idx >= heap.size())
+                return {};
+            return std::string(heap[idx]);
+        };
+        // Warm the process-wide orch scheduler, then idle past the auto-stop
+        // window (3 IO ticks) before spawning anything else.
+        const auto warm = idle_run();
+        std::println("  #4726 warm -> {}", warm);
+        std::this_thread::sleep_for(std::chrono::milliseconds(3600));
+        const auto after_idle = idle_run();
+        std::println("  #4726 after idle gap -> {}", after_idle);
+        CHECK(warm == "ok:dddddd", "4726 AC2: waiters run before the idle gap");
+        CHECK(after_idle == "ok:dddddd",
+              "4726 AC2: waiters still run after a >3s idle gap (orch scheduler not self-stopped)");
+        const auto sched_h = read_file("src/serve/scheduler.h");
+        const auto sched_cpp = read_file("src/serve/scheduler.cpp");
+        const auto prim_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(sched_h.find("void set_idle_auto_stop(bool on) noexcept") != std::string::npos,
+              "4726 AC2: Scheduler exposes the idle auto-stop switch");
+        CHECK(sched_cpp.find("!spawned_since_tick && idle_auto_stop()") != std::string::npos,
+              "4726 AC2: the IO loop consults the switch before self-stopping");
+        CHECK(prim_src.find("sched->set_idle_auto_stop(false);") != std::string::npos,
+              "4726 AC2: the process-lifetime orch holder disables the auto-stop");
+    }
 
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

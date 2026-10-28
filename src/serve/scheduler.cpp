@@ -1358,7 +1358,11 @@ void Scheduler::run() {
                 const std::uint64_t now_spawns = spawns_total_.load(std::memory_order_acquire);
                 const bool spawned_since_tick = now_spawns != last_seen_spawns;
                 last_seen_spawns = now_spawns;
-                if (all_idle && !spawned_since_tick) {
+                // Issue #4726: an owner that keeps this scheduler for the
+                // process lifetime opts out — self-stopping would strand every
+                // later spawn on stopped workers (bodies never run, joins time
+                // out). Default true keeps the serve idle-shutdown behaviour.
+                if (all_idle && !spawned_since_tick && idle_auto_stop()) {
                     ++idle_ticks;
                     if (idle_ticks >= 3) {
                         // All fibers completed, no spawn for ~3s — auto-stop
