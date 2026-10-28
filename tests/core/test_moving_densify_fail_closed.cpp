@@ -1015,7 +1015,11 @@ static void ac2935_1_full_inventory_and_shared_helper() {
     CHECK(mb.find("workspace_flat_") != std::string::npos, "AC1: workspace_flat_ in inventory");
     CHECK(mb.find("mutate_target_flat_") != std::string::npos,
           "AC1: mutate_target_flat_ in inventory");
-    CHECK(mb.find("current_flat_") != std::string::npos, "AC1: current_flat_ in inventory");
+    // Issue #4717: current_flat/current_pool are relaxed atomics now (a "current
+    // source" hint re-stamped at the top of every eval_flat_body iteration), so they
+    // cannot be handed to RootRemap as void** slots. Pin the documented exclusion.
+    CHECK(mb.find("current_flat/current_pool are relaxed ATOMICS") != std::string::npos,
+          "AC1: current_flat_/current_pool_ documented as excluded from the inventory (#4717)");
     CHECK(mb.find("root_remap_registered_slots_snapshot") != std::string::npos,
           "AC1: RootRemap compiler roots still registered");
     CHECK(ev.find("register_known_moving_densify_root_slots") != std::string::npos,
@@ -7498,11 +7502,13 @@ static void ac4576_inflight_blocks_env_compact() {
         const auto body = env.substr(fn, 20000);
         const auto probe = body.find("densify_in_flight_for(this)");
         const auto lock = body.find("compact_env_frames_lock_");
-        const auto move = body.find("env_frames_ = std::move");
+        // Issue #4717 step 2: env_frames_ is a stable-address slot store; compact
+        // rebuilds it (clear + push_back), it is no longer move-assigned.
+        const auto move = body.find("env_frames_.clear()");
         CHECK(probe != std::string::npos && lock != std::string::npos && probe < lock,
               "4576: in-flight probe returns before the compact lock");
         CHECK(move != std::string::npos && probe < move,
-              "4576: in-flight probe is before the deque move");
+              "4576: in-flight probe is before the frame store is rebuilt");
         CHECK(body.find("note_blocked_compact_while_guard_held") < probe,
               "4576: probe is not the #2164 guard metric");
     }
