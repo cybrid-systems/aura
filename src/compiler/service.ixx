@@ -12788,14 +12788,27 @@ public:
         binding->bound_closure = *result;
         binding->closure_id = types::as_closure_id(*result);
 
+        // Publish, then retire (never retire first): a concurrent body that
+        // resolves this define's top_env cell holds whatever closure id the
+        // CELL publishes at that instant, and it may then park on
+        // ir_cache_gate_ for the whole re-bind before it dispatches. The
+        // superseded id therefore has to stay resolvable until the new one is
+        // published, which retire_ir_define_closure_ keeps true by recording
+        // it in the define's retired-id history that
+        // dispatch_ir_define_closure consults before the strict runtime-mint
+        // deny (#4450 / #4349).
+        const auto new_cid = binding->closure_id;
         auto old_it = ir_define_env_bindings_.find(name);
-        if (old_it != ir_define_env_bindings_.end()) {
-            ir_define_closure_owner_.erase(old_it->second->closure_id);
-        }
+        const std::shared_ptr<IRDefineEnvBinding> old_binding =
+            old_it != ir_define_env_bindings_.end() ? old_it->second : nullptr;
 
-        ir_define_closure_owner_[binding->closure_id] = name;
+        ir_define_closure_owner_[new_cid] = name;
         bind_define_value_in_env(name, binding->bound_closure);
         ir_define_env_bindings_[name] = std::move(binding);
+        if (old_binding != nullptr && old_binding->closure_id != new_cid) {
+            ir_define_closure_owner_.erase(old_binding->closure_id);
+            retire_ir_define_closure_(name, old_binding);
+        }
 
         metrics_.define_ir_env_bind_count.fetch_add(1, std::memory_order_relaxed);
         return true;
@@ -13238,6 +13251,32 @@ public:
             }
         }
         if (owner_name == nullptr) {
+            // Issue #4715 regression: this id was a define's own publication
+            // a moment ago (see retire_ir_define_closure_). The caller
+            // resolved it from the define's cell just before the re-bind took
+            // over and can be parked behind ir_cache_gate_ across several
+            // publications, so resolve it the way the live index would have:
+            // run the define's CURRENT publication. Only ids this evaluator
+            // really published resolve; anything else still takes the strict
+            // runtime-mint decide below (#4349 / #4450).
+            if (auto retired = retired_define_closure_owner_.find(cid);
+                retired != retired_define_closure_owner_.end()) {
+                const std::string retired_name = retired->second;
+                if (auto bit = ir_define_env_bindings_.find(retired_name);
+                    bit != ir_define_env_bindings_.end() && bit->second &&
+                    bit->second->interpreter) {
+                    const std::shared_ptr<IRDefineEnvBinding> pinned = bit->second;
+                    if (ir_gate.owns_lock())
+                        ir_gate.unlock();
+                    types::EvalValue out{};
+                    const auto ran =
+                        run_pinned_ir_closure_(pinned, pinned->closure_id, args, 0, &out);
+                    ir_gate.lock();
+                    if (ran == PinnedRun4717::Ok)
+                        return out;
+                }
+                return std::nullopt;
+            }
             // Issue #4450: a closure minted at RUNTIME by a define's body
             // (an escaping lambda) carries a fresh id that is in no owner
             // map — it lives in the minting interpreter's runtime_closures_.
@@ -13427,13 +13466,52 @@ public:
         return false;
     }
 
+    // Retirement, not forgetting: the dropped closure id keeps resolving to
+    // this define (see retire_ir_define_closure_), so a body that resolved
+    // the cell just before the drop still dispatches.
     void clear_ir_define_env_binding(const std::string& name) {
         IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         auto it = ir_define_env_bindings_.find(name);
         if (it == ir_define_env_bindings_.end())
             return;
+        retire_ir_define_closure_(name, it->second);
         ir_define_closure_owner_.erase(it->second->closure_id);
         ir_define_env_bindings_.erase(it);
+    }
+
+    // Issue #4715 regression (agent-fibers-8): a define's superseded closure
+    // ids keep resolving to that define.
+    //
+    // A body that reads the define's top_env cell resolves a closure id and
+    // only THEN enters dispatch_ir_define_closure, which takes
+    // ir_cache_gate_. The parent's (mutate:rebind ...) + (eval-current) holds
+    // that gate across the whole lowering window, so the body resolves the
+    // pre-publication id and is parked behind the gate while one or more
+    // new publications take over - two per (eval-current) (the whole-
+    // workspace specialize pass runs twice) plus the rebind's. Erasing the
+    // superseded ids made every such call die with "eval_flat: invalid
+    // closure" (agent-fibers-8 failed in ~3 of 4 runs).
+    //
+    // The id -> define name row is what the live index would have held, so a
+    // superseded id dispatches exactly like a name lookup: the define's
+    // CURRENT publication runs. Nothing is retained (no interpreter / module
+    // lifetime extension), the history is bounded per define, and
+    // mark_all_defines_dirty drops it on a workspace replace / ast:restore,
+    // where a value from the previous workspace must not resurrect at all
+    // (#2026 / #4349).
+    static constexpr std::size_t kRetiredDefineHistory = 8;
+    void retire_ir_define_closure_(const std::string& name,
+                                   const std::shared_ptr<IRDefineEnvBinding>& binding) {
+        if (!binding || name.empty())
+            return;
+        const auto retired = binding->closure_id;
+        retired_define_closure_owner_[retired] = name;
+        auto& order = retired_define_closure_order_[name];
+        order.push_back(retired);
+        while (order.size() > kRetiredDefineHistory) {
+            retired_define_closure_owner_.erase(order.front());
+            order.erase(order.begin());
+        }
     }
 
     // ---- Define caching (shared by eval, eval_ir, define_function) -----
@@ -16845,6 +16923,14 @@ private:
     using IrCacheGate = std::lock_guard<std::recursive_mutex>;
 
     std::unordered_map<aura::compiler::ClosureId, std::string> ir_define_closure_owner_;
+    // Issue #4715 regression: superseded define-closure ids stay resolvable
+    // to the define that published them (see retire_ir_define_closure_).
+    // Bounded per define; cleared with ir_define_closure_owner_ on a
+    // workspace replace. Guarded by ir_cache_gate_.
+    std::unordered_map<aura::compiler::ClosureId, std::string> retired_define_closure_owner_;
+    std::unordered_map<std::string, std::vector<aura::compiler::ClosureId>,
+                       aura::core::TransparentStringHash, std::equal_to<>>
+        retired_define_closure_order_;
     // Issue #4682 (6b): tier stats + worker (worker joins in its dtor).
     TierStats4682 tier_stats_4682_;
     std::unique_ptr<TierWorker4682> tier_worker_4682_;
