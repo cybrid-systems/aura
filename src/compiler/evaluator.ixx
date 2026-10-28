@@ -2193,6 +2193,40 @@ namespace primitives_detail {
     void register_messaging_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     // Issue #4715: per-fiber COW overlay for env bindings (fiber:overlay-*).
     void register_fiber_cow_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
+    // ── Issue #4715 AC2: env-read / write interception ──────────────────
+    // An open overlay must be observed by ORDINARY reads inside its fiber
+    // body (not only by fiber:overlay-get), and the body's defines / set!s
+    // must stay private until fiber:overlay-commit. The fast path is the
+    // thread_local depth below: Env::lookup / Env::lookup_cell_index load it
+    // once and only call these hooks when it is non-zero, so a program that
+    // never opens an overlay pays exactly one thread_local read per env
+    // lookup and keeps byte-identical semantics.
+    extern thread_local std::uint32_t t_fiber_cow_overlay_depth;
+    // Shadowed read: fills out with the overlay value for name.
+    export bool fiber_cow_overlay_env_read(Evaluator& ev, std::string_view name,
+                                           types::EvalValue& out);
+    // The overlay private cell for name, when the write was captured through
+    // the evaluator (define / set!) rather than through the EDSL.
+    export std::optional<std::uint64_t> fiber_cow_overlay_env_cell(Evaluator& ev,
+                                                                   std::string_view name);
+    // Capture a top-level define / rebind into the open overlay: allocates
+    // (or reuses) a private cell and returns its index; nullopt when this
+    // thread has no overlay open (the caller keeps the shared-env path).
+    export std::optional<std::size_t>
+    fiber_cow_overlay_capture_define(Evaluator& ev, std::string_view name,
+                                     const types::EvalValue& value);
+    // Same, but only when `cell` is the shared top-env binding's cell: the
+    // in-place define update path (`(define x ...)` over an existing name)
+    // uses this so a local define keeps the ordinary write.
+    std::optional<std::size_t> fiber_cow_overlay_capture_define_cell(Evaluator& ev,
+                                                                     std::string_view name,
+                                                                     const types::EvalValue& value,
+                                                                     std::uint64_t cell);
+    // Capture a set! into the open overlay. Only the top-level cell of a name
+    // the fiber does not shadow locally is captured; a local rebind keeps the
+    // ordinary write path.
+    export bool fiber_cow_overlay_capture_set(Evaluator& ev, std::string_view name,
+                                              const types::EvalValue& value, const Env& env);
     void register_git_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     void register_network_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     void register_auto_evolve_primitives(std::function<void(std::string, PrimFn)> add,
@@ -2355,6 +2389,23 @@ export class Evaluator {
     friend void
     primitives_detail::register_fiber_cow_primitives(std::function<void(std::string, PrimFn)> add,
                                                      Evaluator& ev);
+
+    // Issue #4715 AC2: the interception hooks allocate the overlay's private
+    // cell (alloc_cell) and publish it at commit, so they own the same
+    // private access as the primitive registry above.
+    friend bool primitives_detail::fiber_cow_overlay_env_read(Evaluator& ev, std::string_view name,
+                                                              types::EvalValue& out);
+    friend std::optional<std::uint64_t>
+    primitives_detail::fiber_cow_overlay_env_cell(Evaluator& ev, std::string_view name);
+    friend std::optional<std::size_t>
+    primitives_detail::fiber_cow_overlay_capture_define(Evaluator& ev, std::string_view name,
+                                                        const types::EvalValue& value);
+    friend std::optional<std::size_t> primitives_detail::fiber_cow_overlay_capture_define_cell(
+        Evaluator& ev, std::string_view name, const types::EvalValue& value, std::uint64_t cell);
+    friend bool primitives_detail::fiber_cow_overlay_capture_set(Evaluator& ev,
+                                                                 std::string_view name,
+                                                                 const types::EvalValue& value,
+                                                                 const Env& env);
     friend void
     primitives_detail::register_git_primitives(std::function<void(std::string, PrimFn)> add,
                                                Evaluator& ev);

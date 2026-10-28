@@ -165,6 +165,53 @@ remains a valid denseness PASS path for single-worker residual hunting.
 It is not a substitute for multi-worker races once thread-fallback spawn
 is available.
 
+## Per-fiber COW overlay (Issue #4715)
+
+A body can run against a private copy-on-write overlay instead of the shared
+env top table:
+
+```scheme
+(fiber:overlay-begin)                 ; snapshot base epoch + commit sequence
+(fiber:overlay-define "name" value)   ; private define
+(fiber:overlay-set! "name" value)     ; private rebind of a committed binding
+(fiber:overlay-get "name" default)    ; overlay value, else committed, else default
+(fiber:overlay-has "name")
+(fiber:overlay-commit)                ; merge; error on a write-write conflict
+(fiber:overlay-rollback)              ; drop the overlay, apply nothing
+(fiber:overlay-pending)               ; bindings held privately right now
+(fiber:overlay-report)                ; deterministic stats string
+```
+
+While an overlay is open, **ordinary env reads inside that body see the
+overlay** — not only `fiber:overlay-get`. The read path (`Env::lookup` /
+`Env::lookup_cell_index`) tests one thread-local depth word and only then
+consults the registry, so a program that never opens an overlay keeps
+byte-identical semantics at the cost of a single thread-local load per env
+lookup. Defines, `set!` and `(mutate:rebind …) + (eval-current)` inside the
+body are captured into the overlay as a private cell: the shared cell is not
+written, so a sibling body keeps reading the committed value until
+`fiber:overlay-commit` publishes the new cell in one step (old-or-new, never
+torn).
+
+Commit is optimistic and **first-committer-wins**: the overlay scans every
+pending binding in sorted name order *before* applying anything, and a binding
+another fiber committed after this overlay began aborts the whole overlay with
+`fiber:cow-conflict: <name>` and applies nothing. There is no
+last-writer-wins merge.
+
+Limits (documented, tracked under #4715):
+
+- A **closure-valued** rebind still writes through immediately. Rebinding a
+  define must-deopts the closure the shared cell holds, so a private copy
+  would leave sibling bodies calling an invalidated closure
+  (`eval_flat: invalid closure`). Private capture applies to scalars, strings
+  and heap values; closures join the overlay once the workspace-node slice
+  (the other half of #4715) rebases the AST node together with its binding.
+- `mutate:rebind` itself still mutates the workspace AST (set-code / AST
+  snapshots / `function_sources_`); only the env binding is overlaid.
+- A rolled-back overlay cannot restore a pre-rebind closure, for the same
+  deopt reason — rollback is clean for value bindings.
+
 ## Related
 
 - Hephaestus `notes/host-residuals.md` **H9** (spawn ids) + #2685 caveat

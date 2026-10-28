@@ -11971,6 +11971,15 @@ public:
     }
 
     std::size_t bind_define_value_in_env(const std::string& name, const types::EvalValue& value) {
+        // Issue #4715 AC2: a define / rebind evaluated inside a body with an
+        // open overlay never reaches the shared env - it lands in the fiber's
+        // private cell and publishes at fiber:overlay-commit, so a concurrent
+        // eval-current / mutate:rebind observer sees the OLD or the NEW cell,
+        // never a half-written one. One thread_local load when no overlay is
+        // open (every pre-existing program).
+        if (auto private_cell =
+                primitives_detail::fiber_cow_overlay_capture_define(evaluator_, name, value))
+            return *private_cell;
         // Issue #4717: this publishes a NEW cell slot and its top-env binding
         // while fiber bodies read both (TSan: cells() slot write vs
         // sync_workspace_value_cells_from_env / eval_flat_body). Lock order

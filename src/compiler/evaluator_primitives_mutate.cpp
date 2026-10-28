@@ -4832,8 +4832,15 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 }
                 if (!have)
                     ci = ev.alloc_cell(*refreshed);
-                else if (ci < ev.cells().size())
-                    ev.cells()[ci] = *refreshed;
+                else if (ci < ev.cells().size()) {
+                    // Issue #4715 AC2: inside a body with an open overlay the
+                    // rebind must NOT overwrite the shared cell in place - the
+                    // value goes to the overlay's private cell and is published
+                    // by fiber:overlay-commit.
+                    if (!fiber_cow_overlay_capture_define_cell(ev, name, *refreshed,
+                                                               static_cast<std::uint64_t>(ci)))
+                        ev.cells()[ci] = *refreshed;
+                }
                 // Issue #4583: eval_flat already updated this cell. Another
                 // top_ bind appends a shadow, and the next set_pool re-interns
                 // every shadow. Skip the append when the name is already bound.
@@ -5257,8 +5264,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         }
                         if (!have)
                             ci = ev.alloc_cell(*refreshed);
-                        else if (ci < ev.cells().size())
-                            ev.cells()[ci] = *refreshed;
+                        else if (ci < ev.cells().size()) {
+                            // Issue #4715 AC2: same private-cell rule as rebind.
+                            if (!fiber_cow_overlay_capture_define_cell(
+                                    ev, name, *refreshed, static_cast<std::uint64_t>(ci)))
+                                ev.cells()[ci] = *refreshed;
+                        }
                         tenv.bind(name, types::make_cell(ci));
                     }
                 }

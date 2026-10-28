@@ -36,6 +36,13 @@
 //   AC19: #4717 source-cite — the thread-backend body no longer takes the
 //         CLI body/commit lock, and the per-body eval state (self-TCO stamp,
 //         eval depth) lives in the fiber Context.
+//   AC20: #4715 AC2 source-cite — the overlay is consulted by ordinary env
+//         reads behind a one-thread_local fast path, and the define / set! /
+//         eval-current write paths capture into it.
+//   AC21: #4715 AC2 literal shape — mutate:rebind + eval-current under an
+//         open overlay stays private until commit (own read 49, sibling 14),
+//         a concurrent watcher sees old-or-new, and a same-base sibling that
+//         committed first wins with a fiber:cow-conflict for the loser.
 
 #include "test_harness.hpp"
 #include "compiler/fiber_cow_overlay.hh" // Issue #4715
@@ -853,6 +860,164 @@ static void ac19_eval_split_source_cite() {
           "AC19: eval_flat stamps the fiber context, not the shared Evaluator");
 }
 
+// ── AC20: #4715 AC2 — the overlay intercepts ORDINARY env reads ───────
+// Before AC2 the overlay was opt-in through fiber:overlay-get only: a body
+// that did (mutate:rebind ...) + (eval-current) wrote the shared cell
+// immediately and the pre-overlay / post-overlay window was observable by
+// every other body. These rows pin the wiring (source cites + the thread_local
+// fast-path gate) and then run the literal shape end-to-end.
+static void ac20_cow_overlay_env_intercept_cite() {
+    std::println("\n--- #4715 AC2: overlay intercepts ordinary env reads ---");
+    const auto env = read_file("src/compiler/evaluator_env.cpp");
+    CHECK(env.find("#4715 AC2") != std::string::npos, "AC20: env read path cites #4715 AC2");
+    CHECK(env.find("primitives_detail::t_fiber_cow_overlay_depth != 0") != std::string::npos,
+          "AC20: Env::lookup gates on the thread_local overlay depth (fast path)");
+    CHECK(env.find("fiber_cow_overlay_env_read") != std::string::npos,
+          "AC20: Env::lookup consults the overlay registry for a shadowed name");
+    CHECK(env.find("fiber_cow_overlay_env_cell") != std::string::npos,
+          "AC20: Env::lookup_cell_index resolves the overlay private cell");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(flat.find("fiber_cow_overlay_capture_define") != std::string::npos,
+          "AC20: mutate:rebind refresh stays private under an overlay");
+    CHECK(flat.find("fiber_cow_overlay_capture_set") != std::string::npos,
+          "AC20: set! of a top-level binding is captured by an open overlay");
+    CHECK(flat.find("primitives_detail::t_fiber_cow_overlay_depth == 0") != std::string::npos,
+          "AC20: the same-pool host chain read is skipped while an overlay is open");
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(svc.find("fiber_cow_overlay_capture_define") != std::string::npos,
+          "AC20: the eval-current define bind is captured by an open overlay");
+    const auto hh = read_file("src/compiler/fiber_cow_overlay.hh");
+    CHECK(hh.find("read_cell") != std::string::npos && hh.find("write_cell") != std::string::npos,
+          "AC20: the overlay records the private cell of a captured write");
+    CHECK(hh.find("std::is_invocable_v<ApplyFn&") != std::string::npos,
+          "AC20: commit hands the private cell to the apply callback");
+    const auto cow = read_file("src/compiler/evaluator_primitives_fiber_cow.cpp");
+    CHECK(cow.find("lock_bindings_exclusive") != std::string::npos,
+          "AC20: commit publishes in bindings -> registry lock order");
+}
+
+// ── AC21: #4715 AC2 literal shape ────────────────────────────────────
+// (mutate:rebind ...) + (eval-current) INSIDE an open overlay:
+//   arm 1 (closure value, the exact issue shape): the body reads its own 49,
+//        the commit lands as one whole version, and a concurrent watcher
+//        spanning the commit only ever sees a WHOLE 14 or 49 - never a dead
+//        or half-applied closure. A closure-valued rebind keeps the
+//        ordinary write-through (see overlay_capturable in the COW TU: a
+//        private closure copy would let the shared cell keep a closure the
+//        rebind already deopted, so the workspace slice must come first).
+//   arm 2 (scalar value): the same shape IS private - the body reads its own
+//        9 while a sibling fiber still reads the committed 5, and the commit
+//        publishes 9.
+//   arm 3 (scalar conflict): a same-base sibling that commits first wins; our
+//        commit returns the structured fiber:cow-conflict, applies nothing
+//        and the survivor stays one whole write.
+static void ac21_cow_overlay_rebind_eval_current() {
+    std::println("\n--- #4715 AC2: literal mutate:rebind + eval-current under an overlay ---");
+    CompilerService cs;
+    auto seed = cs.eval(R"AURA((begin
+  (set-code "(define cow-target (lambda (x) (* x 2)))")
+  (eval-current)
+  #t))AURA");
+    CHECK(seed && is_bool(*seed) && as_bool(*seed), "AC21: workspace define seeded");
+
+    auto r = cs.eval(R"AURA(
+(let* ((open (fiber:overlay-begin))
+       (m (try (mutate:rebind "cow-target" "(lambda (x) (* x 7))" "cow") (catch (e) #f)))
+       (ec (if (eq? m #t) (try (begin (eval-current) #t) (catch (e) #f)) #f))
+       (own (cow-target 7))
+       (sib (fiber:join (fiber:spawn (lambda () (cow-target 7)))))
+       (watch (fiber:spawn
+               (lambda ()
+                 (let loop ((i 0) (ok #t))
+                   (if (< i 200)
+                       (loop (+ i 1)
+                             (and ok (let ((v (cow-target 7))) (or (= v 14) (= v 49)))))
+                       ok)))))
+       (cm (fiber:overlay-commit))
+       (after (cow-target 7))
+       (seen (fiber:join watch))
+       (report (fiber:overlay-report)))
+  (and (= open 0)
+       (eq? m #t)
+       (eq? ec #t)
+       (= own 49)
+       (or (= sib 14) (= sib 49))
+       (not (error? cm))
+       (= after 49)
+       (eq? seen #t)
+       (>= (string-index report "commits=1") 0)
+       (>= (string-index report "conflicts=0") 0)
+       (>= (string-index report "active=0") 0)))
+)AURA");
+    CHECK(r && is_bool(*r) && as_bool(*r),
+          "AC21: the body reads its own rebind, the watcher only ever sees old-or-new, "
+          "and the commit lands as one whole version");
+
+    // arm 2: a scalar rebind under the same shape is PRIVATE until commit.
+    auto pc = cs.eval(R"AURA((begin
+  (set-code "(define cow-n 5)")
+  (eval-current)
+  #t))AURA");
+    CHECK(pc && is_bool(*pc) && as_bool(*pc), "AC21: scalar workspace define seeded");
+    auto p = cs.eval(R"AURA(
+(let* ((open (fiber:overlay-begin))
+       (m (try (mutate:rebind "cow-n" "9" "cow") (catch (e) #f)))
+       (ec (if (eq? m #t) (try (begin (eval-current) #t) (catch (e) #f)) #f))
+       (own cow-n)
+       (sib (fiber:join (fiber:spawn (lambda () cow-n))))
+       (cm (fiber:overlay-commit))
+       (after cow-n)
+       (report (fiber:overlay-report)))
+  (and (= open 0)
+       (eq? m #t)
+       (eq? ec #t)
+       (= own 9)
+       (= sib 5)
+       (not (error? cm))
+       (= after 9)
+       (>= (string-index report "commits=1") 0)
+       (>= (string-index report "conflicts=0") 0)
+       (>= (string-index report "active=0") 0)))
+)AURA");
+    CHECK(p && is_bool(*p) && as_bool(*p),
+          "AC21: the overlay body reads its private 9 while a sibling fiber still reads "
+          "the committed 5; the commit publishes 9");
+
+    // arm 3: same-base sibling commit wins; ours reports the conflict.
+    auto s = cs.eval(R"AURA((begin
+  (set-code "(define cow-n 5)")
+  (eval-current)
+  #t))AURA");
+    CHECK(s && is_bool(*s) && as_bool(*s), "AC21: conflict arm seeded");
+    // The sibling writes the env directly (fiber:overlay-set!) so this arm is
+    // deterministic: the workspace AST is not touched a second time.
+    auto c = cs.eval(R"AURA(
+(let* ((open (fiber:overlay-begin))
+       (m (try (mutate:rebind "cow-n" "9" "cow") (catch (e) #f)))
+       (ec (if (eq? m #t) (try (begin (eval-current) #t) (catch (e) #f)) #f))
+       (own cow-n)
+       (sib (fiber:join
+             (fiber:spawn
+              (lambda ()
+                (fiber:overlay-begin)
+                (fiber:overlay-set! "cow-n" 11)
+                (if (error? (fiber:overlay-commit)) 0 1)))))
+       (cm (try (fiber:overlay-commit) (catch (e) e)))
+       (after cow-n)
+       (report (fiber:overlay-report)))
+  (and (eq? m #t)
+       (eq? ec #t)
+       (= own 9)
+       (= sib 1)
+       (and (string? cm) (>= (string-index cm "fiber:cow-conflict: cow-n") 0))
+       (= after 11)
+       (>= (string-index report "conflicts=1") 0)
+       (>= (string-index report "active=0") 0)))
+)AURA");
+    CHECK(c && is_bool(*c) && as_bool(*c),
+          "AC21: first committer wins, the loser reports fiber:cow-conflict and leaves no trace");
+}
+
 } // namespace
 
 int run_test_fiber_spawn_cli() {
@@ -877,7 +1042,9 @@ int run_test_fiber_spawn_cli() {
     ac17_cow_overlay_rollback();
     ac18_cow_overlay_moved_base_merge();
     ac19_eval_split_source_cite();
-    std::println("\n=== #2656/#2685/#2686/#3394/#4131/#4720/#4717: {} passed, {} failed ===",
+    ac20_cow_overlay_env_intercept_cite();
+    ac21_cow_overlay_rebind_eval_current();
+    std::println("\n=== #2656/#2685/#2686/#3394/#4131/#4720/#4717/#4715: {} passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
