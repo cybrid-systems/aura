@@ -3,6 +3,7 @@
 
 module;
 #include "compiler/locked_string_heap.hh" // Issue #4543
+#include "core/fiber_context.hh"          // Issue #4735: try-body stderr face
 
 #include "core/arena_auto_policy_stats.h"
 #include "primitives_meta.h"
@@ -77,7 +78,13 @@ Primitives::Primitives() {
     // Issue #4463: non-number operand. Stderr keeps the legacy line.
     // The value is a primitive error, not a coerced int.
     auto type_error = [this](std::string detail) -> EvalValue {
-        std::println(std::cerr, "error: {}", detail);
+        // Issue #4735 (#4535 contract): the legacy stderr line belongs to the
+        // UNCAUGHT face only. Inside a try body the error value must reach
+        // the catch without a diagnostic on stderr — the tree-walker path
+        // already marks the body (#4456); the primitive side reads the same
+        // per-body depth.
+        if (aura::core::fiber_ctx::active().try_body_depth == 0)
+            std::println(std::cerr, "error: {}", detail);
         if (error_values_ != nullptr && string_heap_ != nullptr) {
             return primitives_detail::make_primitive_error(
                 *string_heap_, *error_values_, std::move(detail), primitive_error_counter_);

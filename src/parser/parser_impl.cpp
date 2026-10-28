@@ -715,6 +715,12 @@ NodeId parse_define(ParserState& s) {
         std::vector<NodeId> annots;
         bool dotted = false;
         while (s.lex.peek().kind != TokenKind::RParen) {
+            // Issue #4736: EOF before the params ')'. The old loop consumed
+            // the end-of-input token and parse_define then read the next
+            // ')' as if the list were closed — one missing trailing paren
+            // was silently auto-closed and the truncated define installed.
+            if (s.lex.eof())
+                break;
             // Check for dotted rest parameter: (define (f . rest) body)
             if (s.lex.peek().kind == TokenKind::Dot) {
                 s.lex.consume(); // consume '.'
@@ -754,6 +760,11 @@ NodeId parse_define(ParserState& s) {
                 annots.push_back(NULL_NODE);
             }
         }
+        if (s.lex.peek().kind != TokenKind::RParen) {
+            if (s.deferred_error.empty())
+                s.deferred_error = "unclosed list: missing ')' before end of file";
+            return NULL_NODE;
+        }
         s.lex.consume(); // ')' after params
         // Parse multiple body expressions and wrap in begin
         std::vector<NodeId> body_exprs;
@@ -762,6 +773,12 @@ NodeId parse_define(ParserState& s) {
             if (be == NULL_NODE)
                 break;
             body_exprs.push_back(be);
+        }
+        // Issue #4736: same strict close for the define form itself.
+        if (s.lex.peek().kind != TokenKind::RParen) {
+            if (s.deferred_error.empty())
+                s.deferred_error = "unclosed list: missing ')' before end of file";
+            return NULL_NODE;
         }
         s.lex.consume(); // ')' closing define
         if (body_exprs.empty())
@@ -785,6 +802,13 @@ NodeId parse_define(ParserState& s) {
     auto v = parse_expr(s);
     if (v == NULL_NODE)
         return NULL_NODE;
+    // Issue #4736: (define name value  — EOF where ')' is required is a
+    // parse error, not an auto-closed define.
+    if (s.lex.peek().kind != TokenKind::RParen) {
+        if (s.deferred_error.empty())
+            s.deferred_error = "unclosed list: missing ')' before end of file";
+        return NULL_NODE;
+    }
     s.lex.consume(); // ')'
     // Issue #4347: same parse-location face for (define name value).
     auto did = s.flat.add_define(s.pool.intern(std::string(n.text)), v);

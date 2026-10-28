@@ -3802,6 +3802,14 @@ if(TARGET all_test_issue_targets)
 endif()
 
 # Issue #4461: float `/` by zero is IEEE; integer `/` by zero is an error value.
+aura_add_issue_test(test_and_or_error_value)
+aura_issue_test_link_light(test_and_or_error_value)
+add_dependencies(all_test_issue_targets test_and_or_error_value)
+
+aura_add_issue_test(test_eval_parse_error_face)
+aura_issue_test_link_light(test_eval_parse_error_face)
+add_dependencies(all_test_issue_targets test_eval_parse_error_face)
+
 aura_add_issue_test(test_arithmetic_int64_safety)
 aura_issue_test_link_light(test_arithmetic_int64_safety)
 if(TARGET all_test_issue_targets)

@@ -1084,11 +1084,22 @@ static void ac23_parallel_eval_no_deadlock() {
     CHECK(!prog.empty(), "AC23: wave program written");
     if (prog.empty())
         return;
+    // The interpreter's tree-walker fallback is gated by the production
+    // pipeline switch (Issue #2213); a fiber body that needs it must run with
+    // the documented override, same as the issue's probe.
+    const char* prev_strict = ::getenv("AURA_PIPELINE_STRICT");
+    const std::string prev_strict_val = prev_strict != nullptr ? prev_strict : "";
+    const bool had_strict = prev_strict != nullptr;
+    ::setenv("AURA_PIPELINE_STRICT", "0", 1);
     const pid_t pid = spawn_4131_oneshot(bin, prog, /*ignore_term=*/false);
     CHECK(pid > 0, "AC23: wave child spawned");
-    if (pid <= 0)
-        return;
-    const int rc = wait_4131_exit(pid, 120000);
+    int rc = -1;
+    if (pid > 0)
+        rc = wait_4131_exit(pid, 120000);
+    if (had_strict)
+        ::setenv("AURA_PIPELINE_STRICT", prev_strict_val.c_str(), 1);
+    else
+        ::unsetenv("AURA_PIPELINE_STRICT");
     CHECK(rc == 0, "AC23: 200 parallel-eval waves finish (no 0-CPU deadlock)");
     ::unlink(prog.c_str());
 }

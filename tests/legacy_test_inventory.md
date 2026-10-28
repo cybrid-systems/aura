@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 895 | Preferred destination suites |
-| **Total scanned** | **895** | |
+| `tests/core/test_*.cpp` | 897 | Preferred destination suites |
+| **Total scanned** | **897** | |
 
 ### Related artifacts
 
@@ -33,14 +33,14 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 94 | 94 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 276 | 276 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 277 | 277 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 108 | 108 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 26 | 26 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 60 | 60 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 88 | 88 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 53 | 53 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 132 | 132 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 58 | 58 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 59 | 59 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -207,6 +207,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/orch/test_agent_scope.cpp`
 - `tests/orch/test_agent_scope_hierarchy.cpp`
 - `tests/compiler/test_alloc_block_seal_last.cpp`
+- `tests/compiler/test_and_or_error_value.cpp`
 - `tests/compiler/test_anonymous_residual_stable_id_policy.cpp`
 - `tests/compiler/test_aot_anonymous_closure_policy.cpp`
 - `tests/compiler/test_aot_bridge_checkpoint_version_steal.cpp`
@@ -436,6 +437,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_escape_gate_steal_densify_clear.cpp`
 - `tests/compiler/test_escape_move_elision_gate.cpp`
 - `tests/compiler/test_eval_current_no_auto_fix.cpp`
+- `tests/compiler/test_eval_parse_error_face.cpp`
 - `tests/compiler/test_eval_relower_hotpath.cpp`
 - `tests/compiler/test_evolution_audit_decision_forensic.cpp`
 - `tests/compiler/test_exhausted_min_dirty_reemit.cpp`
@@ -1217,13 +1219,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (276)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (277)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (276)
+#### domain/ (277)
 
 - `tests/compiler/test_abort_ir_cache_fence_first.cpp` (—) [large, domain_suite, theme_compiler] — AC1: All 3 abort entry points in evaluator_mutation_boundary.cpp
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
@@ -1317,6 +1319,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_envframe_bridge_invalidate.cpp` (—) [domain_suite, theme_compiler] — Issue #1916 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_envframe_dualpath_stale_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #417/#418/#543/#602 (#1978 renamed): issue# moved from filename to header.
 - `tests/reflect/test_error_kind_names_wire.cpp` (—) [domain_suite, theme_reflect] — Wire C1 into business: P2996 validates name tables used by
+- `tests/compiler/test_eval_parse_error_face.cpp` (—) [domain_suite, theme_compiler] — AC1: (eval "(+ 1 (* 2 3)") is a catchable parse-error
 - `tests/compiler/test_evolution_audit_decision_forensic.cpp` (—) [large, domain_suite, theme_compiler] — AC1: additive forensic-source enum (stable int)
 - `tests/compiler/test_exhausted_min_dirty_reemit.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Continuous Defuse fail to exhaust → force-JIT mask set +
 - `tests/orch/test_failure_policy_bridge.cpp` (—) [large, domain_suite, theme_orch] — Issue #2756 — WorkflowFailurePolicy composition (batch + AgentScope +
@@ -2023,14 +2026,15 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_workspace_mtx_contention.cpp` (—) [domain_suite, theme_compiler] — AC1: Source cites #2523; residual strategy documented
 
-### `uncategorized` — Uncategorized / mixed (58)
+### `uncategorized` — Uncategorized / mixed (59)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (58)
+#### domain/ (59)
 
+- `tests/compiler/test_and_or_error_value.cpp` (—) [domain_suite, theme_compiler] — (#4535 contract: only the UNCAUGHT face prints).
 - `tests/compiler/test_arithmetic_int64_safety.cpp` (—) [large, domain_suite, theme_compiler] — test_arithmetic_int64_safety.cpp — Issues #1150–#1156 Phase 1
 - `tests/compiler/test_ast_workspace_modules.cpp` (—) [domain_suite, theme_compiler] — test_ast_workspace_modules.cpp — Issue #563:
 - `tests/stdlib/test_atomic_swap_stdlib.cpp` (—) [domain_suite, theme_stdlib] — test_atomic_swap_stdlib.cpp — Issue #1380:
