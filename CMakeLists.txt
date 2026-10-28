@@ -1431,6 +1431,9 @@ add_test(NAME stable_ref_bench COMMAND ./ast_hotpath_bench stable-ref 1k)
 add_test(NAME stable_ref_bench_10k COMMAND ./ast_hotpath_bench stable-ref 10k)
 add_test(NAME children_stable_bench COMMAND ./ast_hotpath_bench children-stable)
 add_test(NAME mark_dirty_bench COMMAND ./ast_hotpath_bench mark-dirty)
+# Issue #4719 (P6 of #4707): sharded hot-path counter AC1 -- the counter bump
+# must cost within 5% with 8 parallel fibers of the 1-fiber cost.
+add_test(NAME counter_shard_bench COMMAND ./ast_hotpath_bench counter-shard)
 
 # Issue #217 Cycle 14 P4: benchmark suite for the C++26 P2996
 # reflection + auto_serialize/auto_deserialize path. Measures
