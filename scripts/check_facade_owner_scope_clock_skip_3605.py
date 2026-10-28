@@ -170,7 +170,14 @@ def run_checks() -> list[str]:
         failures.append("3604 AC4: stamp gate not found")
     else:
         window = svc[gate : gate + 400]
-        for needle in ("bump_bridge_epoch();", "evaluator_.bump_defuse_version_for_test();"):
+        # Issue #4730: the defuse half is published by ONE helper that bumps
+        # inside the env-frame shard barrier and rides the capture frames in
+        # the same critical section (bump_defuse_version_for_test() +
+        # restamp_live_capture_frames_to_current() ran the bump first and left
+        # a window where a sibling body materialized one bump behind). The
+        # lockstep contract is unchanged: the global path still advances
+        # defuse_version_ here.
+        for needle in ("bump_bridge_epoch();", "bump_defuse_and_ride_frames();"):
             if needle not in window:
                 failures.append(f"3605 AC4: global-path dual-write missing inside the gate: {needle}")
 

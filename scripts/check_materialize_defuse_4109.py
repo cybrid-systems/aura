@@ -104,7 +104,10 @@ def main() -> int:
     boundary_path = ROOT / "src" / "compiler" / "evaluator_mutation_boundary.cpp"
     boundary_src = boundary_path.read_text(encoding="utf-8")
     boundary_code = _strip_cpp_comments(boundary_src)
-    calls = boundary_code.count("restamp_live_capture_frames(")
+    # Issue #4730: enter and exit publish the bump AND the #4109 ride in ONE
+    # shard-barrier critical section (bump_defuse_and_restamp), so the ride
+    # no longer appears as a bare restamp call at the boundary sites.
+    calls = boundary_code.count("bump_defuse_and_restamp(cp.version")
     check(calls >= 2, "AC3: restamp must ride at BOTH enter and exit boundary bumps")
     check("Issue #4109" in boundary_src, "AC3: boundary ride-up call sites must cite #4109")
 
