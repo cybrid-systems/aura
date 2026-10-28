@@ -474,6 +474,60 @@ int run_test_agent_ask() {
               "4040: handoff status");
     }
 
+    // ── Issue #4732: orch:agent-ask honors the documented :timeout-ms ──
+    // The primitive documented (orch:agent-ask name payload [:timeout-ms n])
+    // but read only the positional 3rd arg (int ms), so the keyword form was
+    // ignored and every unanswered ask stalled for the 5000 ms default — a
+    // 5 s stall per ask for every caller following the docs. Both spellings
+    // (:timeout-ms / :timeout_ms) and the positional form must bound the
+    // wait; the keyword wins when both are present.
+    {
+        std::println("\n=== Issue #4732: agent-ask :timeout-ms bounds the wait ===");
+        const auto r4732 = cs.eval(R"AURA(
+            (define sp-4732 (orch:spawn-agent "mute-4732" (lambda () 0) :attach-mailbox #t))
+            (define (row4732 r)
+              (and (>= (car r) 200) (< (car r) 1500)
+                   (string=? (car (cdr r)) "timeout")))
+            (define (kw4732 T)
+              (define t0 (monotonic-ms))
+              (define r (orch:agent-ask "mute-4732" "ping" :timeout-ms T))
+              (list (- (monotonic-ms) t0) (hash-ref r "status" "?")))
+            (define (kw2-4732 T)
+              (define t0 (monotonic-ms))
+              (define r (orch:agent-ask "mute-4732" "ping" :timeout_ms T))
+              (list (- (monotonic-ms) t0) (hash-ref r "status" "?")))
+            (define (pos4732 T)
+              (define t0 (monotonic-ms))
+              (define r (orch:agent-ask "mute-4732" "ping" T))
+              (list (- (monotonic-ms) t0) (hash-ref r "status" "?")))
+            (define k1-4732 (kw4732 300))
+            (define k2-4732 (kw2-4732 300))
+            (define p1-4732 (pos4732 300))
+            (define (both4732)
+              (define t0 (monotonic-ms))
+              (define r (orch:agent-ask "mute-4732" "ping" 5000 :timeout-ms 300))
+              (list (- (monotonic-ms) t0) (hash-ref r "status" "?")))
+            (define b1-4732 (both4732))
+            (string-append
+              (if (row4732 k1-4732) "k" "K")
+              (if (row4732 k2-4732) "k" "K")
+              (if (row4732 p1-4732) "p" "P")
+              (if (row4732 b1-4732) "b" "B")
+              ":" (number->string (car k1-4732)))
+        )AURA");
+        std::string got4732 = "<no-result>";
+        if (r4732 && is_string(*r4732)) {
+            const auto idx = as_string_idx(*r4732);
+            const auto heap = cs.evaluator().string_heap();
+            if (idx < heap.size())
+                got4732 = std::string(heap[idx]);
+        }
+        std::println("  #4732 kw/pos/both -> {}", got4732);
+        CHECK(got4732.starts_with("kkpb:"),
+              std::format("4732: :timeout-ms / :timeout_ms / positional / both bound the ask ({})",
+                          got4732));
+    }
+
     // ── Issue #4722: an in-process responder answers inside the ask window ──
     // The request must reach the responder while the ask is pending, the
     // delivered message must carry a usable correlation handle, and the
