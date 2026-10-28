@@ -42,7 +42,7 @@ def main() -> int:
 
     good = (
         "Issue #3703: intern by sym_id" in me
-        and "if (const auto* e = string_intern_by_sym_.get(v.sym_id))" in me
+        and "if (string_intern_by_sym_.lookup(v.sym_id, cached))" in me
         and "string_intern_by_sym_.set(v.sym_id, val);" in me
     )
     report("AC1", good, "quote LiteralString interns by sym_id")

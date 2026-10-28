@@ -2441,8 +2441,11 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             // LiteralString (#3401/#3457). Quote literals of the same sym_id
             // share one string_heap_ index (eq? true) without per-quote heap
             // growth or the Variable path's linear scan.
-            if (const auto* e = string_intern_by_sym_.get(v.sym_id))
-                return *e;
+            {
+                types::EvalValue cached{};
+                if (string_intern_by_sym_.lookup(v.sym_id, cached))
+                    return cached;
+            }
             auto name = std::string(pool.resolve(v.sym_id));
             auto idx = push_string_heap(std::move(name));
             auto val = make_string(idx);
@@ -6917,8 +6920,11 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     // the first encounter of a unique literal.
                     // Issue #3457: lookup by v.sym_id (dense), not hashed
                     // string_view into the pool.
-                    if (const auto* e = string_intern_by_sym_.get(v.sym_id))
-                        return *e;
+                    {
+                        types::EvalValue cached{};
+                        if (string_intern_by_sym_.lookup(v.sym_id, cached))
+                            return cached;
+                    }
                     std::string_view raw_sv = p->resolve(v.sym_id);
                     // Issue #4455: quoted symbols (≤6) live in short_str_cache_.
                     // Assigning a fresh heap index here moved the next
@@ -6976,8 +6982,11 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     // for backward compatibility with existing readers.
                     std::string_view name = p->resolve(v.sym_id);
                     if (!name.empty() && name[0] == ':') {
-                        if (const auto* e = keyword_intern_by_sym_.get(v.sym_id))
-                            return *e;
+                        {
+                            types::EvalValue cached{};
+                            if (keyword_intern_by_sym_.lookup(v.sym_id, cached))
+                                return cached;
+                        }
                         // keyword_table_ is Evaluator-global. Primitives
                         // (ast:snapshot-fail-reason, query keys) may have
                         // already pushed the same name. Reuse that index so

@@ -492,14 +492,12 @@ static void ac12_source_cite() {
 // CLI Evaluator.
 //
 // Probe: sample /proc/<pid>/task/<tid>/stat (field 3, state) for every
-// non-main task. Before #4717 a parked sibling sat in pthread_mutex_lock
-// (futex, S) and the maximum number of R tasks over 200 samples stayed 1;
-// with the body mutex gone both bodies are R in the same sample. Sampling
-// starts only after BOTH workers exist and one is R (a body is really
-// executing), and stops long before the first body (fib 28) finishes, so
-// the thread-exit hand-off window cannot inject a transient 2. AC14
-// proves the sampler is not vacuous with two concurrent std::thread
-// spinners.
+// non-main task whose comm is "aura-fiber" (a real thread-backend body). Before #4717 a parked
+// sibling sat in pthread_mutex_lock (futex, S) and the maximum number of R tasks over 200 samples
+// stayed 1; with the body mutex gone both bodies are R in the same sample. Sampling starts only
+// after BOTH workers exist and one is R (a body is really executing), and stops long before the
+// first body (fib 28) finishes, so the thread-exit hand-off window cannot inject a transient 2.
+// AC14 proves the sampler is not vacuous with two concurrent std::thread spinners.
 static constexpr int kPinSamples4720 = 200;
 
 static char proc_task_state_4720(const std::string& task_dir) {
@@ -514,6 +512,20 @@ static char proc_task_state_4720(const std::string& task_dir) {
     return line[rp + 2];
 }
 
+// Issue #4717: a fiber worker names its thread "aura-fiber" at body start
+// (evaluator_primitives_messaging.cpp). Counting EVERY non-main task made
+// this probe read 3 workers under ThreadSanitizer, whose own runtime thread
+// lives in the same process, so AC13 failed there for a reason unrelated to
+// the body mutex. Filter on the published name instead: only real
+// thread-backend fiber bodies count as fiber tasks.
+static bool proc_task_is_fiber_4720(const std::string& task_dir) {
+    std::ifstream in(task_dir + "/comm");
+    std::string comm;
+    if (!in || !std::getline(in, comm))
+        return false;
+    return comm.rfind("aura-fiber", 0) == 0;
+}
+
 static std::vector<long> proc_tids_4720(long pid) {
     std::vector<long> tids;
     const std::string dir = "/proc/" + std::to_string(pid) + "/task";
@@ -523,7 +535,10 @@ static std::vector<long> proc_tids_4720(long pid) {
     while (const dirent* e = ::readdir(d)) {
         if (e->d_name[0] < '0' || e->d_name[0] > '9')
             continue;
-        tids.push_back(std::strtol(e->d_name, nullptr, 10));
+        const long tid = std::strtol(e->d_name, nullptr, 10);
+        if (!proc_task_is_fiber_4720(dir + "/" + e->d_name))
+            continue;
+        tids.push_back(tid);
     }
     ::closedir(d);
     std::sort(tids.begin(), tids.end());

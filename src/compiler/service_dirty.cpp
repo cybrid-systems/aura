@@ -362,6 +362,8 @@ void CompilerService::mark_define_dirty(const std::string& name) {
         }
     }
 
+    // Issue #4717 (P4): shared IR / closure cache gate, inside Mutate.
+    std::lock_guard<std::recursive_mutex> ir_gate(ir_cache_gate_);
     // Issue #3112: production + mutate-driven dirty → forward to HotUpdateRegistry
     // facade (decide_and_reemit) so the centralized AotReloadConsistencyProof
     // fail-stamp + owner-scope filtering + region mask are always taken under
@@ -869,6 +871,8 @@ void CompilerService::mark_define_dirty(const std::string& name) {
 
 // ── mark_all_defines_dirty (#196 / #1999 Wave2 bulk invalidate) ───────────
 void CompilerService::mark_all_defines_dirty() {
+    // Issue #4717 (P4): shared IR / closure cache gate.
+    std::lock_guard<std::recursive_mutex> ir_gate(ir_cache_gate_);
     // Issue #2026-07-17 (EDSL SIGSEGV audit, surgical fix):
     // Clear the cid→name map only. Reasoning:
     // - ir_define_closure_owner_ (cid→name) holds ClosureIds from
@@ -975,6 +979,10 @@ void CompilerService::invalidate_function(const std::string& name) {
     OrderedUniqueLock<std::shared_mutex> mutate_lock =
         OrderedUniqueLock<std::shared_mutex>::acquire_if_needed(mutate_mtx_, Level::Mutate);
     sync_lock_order_metrics_();
+    // Issue #4717 (P4): serialize the shared IR / closure cache. Taken
+    // AFTER Mutate (innermost rank) so a mutate caller that already holds
+    // Mutate and then enters a gated compile helper keeps the same order.
+    std::lock_guard<std::recursive_mutex> ir_gate(ir_cache_gate_);
 
     // Issue #4357: drain of a one-line Soft rebind still counts as
     // invalidate_function (callers are re-stamped by the drain). Skip the

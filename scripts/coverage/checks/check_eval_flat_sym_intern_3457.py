@@ -54,9 +54,9 @@ def main() -> int:
     must("kEvalFlatSymInternIssue = 3457", "AC1 stamp", ev)
     must("string_intern_by_sym_", "AC1 member", ev)
     must("keyword_intern_by_sym_", "AC2 member", ev)
-    must("string_intern_by_sym_.get(v.sym_id)", "AC1 get", flat)
+    must("string_intern_by_sym_.lookup(v.sym_id, cached)", "AC1 get", flat)
     must("string_intern_by_sym_.set(v.sym_id", "AC1 set", flat)
-    must("keyword_intern_by_sym_.get(v.sym_id)", "AC2 get", flat)
+    must("keyword_intern_by_sym_.lookup(v.sym_id, cached)", "AC2 get", flat)
     must("keyword_intern_by_sym_.set(v.sym_id", "AC2 set", flat)
     must("Issue #3457", "AC1 cite", flat)
     must("bind_sym_intern_pool(p)", "AC1 pool bind", flat)
@@ -88,7 +88,7 @@ def main() -> int:
     if re.search(r"\bclassify_eval_value_tag\s*\(", stripped):
         fails.append("AC4: classify_eval_value_tag reintroduced (#2616)")
 
-    must("string_intern_by_sym_.get(v.sym_id)", "AC1 extend 3401 test", t3401)
+    must("string_intern_by_sym_.lookup(v.sym_id, cached)", "AC1 extend 3401 test", t3401)
     must("test_literal_string_sym_intern", "AC1 eval_flat fixture", tir)
     must("check_eval_flat_hot_path_3401", "AC1 reuse 3401 linter", l3401)
     must("check_eval_flat_sym_intern_3457", "AC5 build.py", build)

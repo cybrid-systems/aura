@@ -7706,16 +7706,28 @@ private:
     // Caching across pools poisoned later lookups (set-code source,
     // :workspace, hash-ref keys, mutate:set-body).
     struct SymIdIntern {
+        // Issue #4717 (P4): ONE table per Evaluator, shared by every body.
+        // #4707 made bodies concurrent, so a sibling's clear() (a pool
+        // change via bind_sym_intern_pool / clear_sym_intern under
+        // intern_cache_mtx_) raced this body's set() on the same vector
+        // (TSan: SymIdIntern::clear vs set). The table now guards itself:
+        // shared for reads, unique for set/clear. lookup() COPIES the value
+        // out — the old `const EvalValue* get()` handed back a pointer into
+        // vals that a concurrent clear()/resize could free.
+        mutable std::shared_mutex mu;
         std::vector<types::EvalValue> vals;
         std::vector<std::uint8_t> hit;
-        [[nodiscard]] const types::EvalValue* get(std::uint32_t id) const noexcept {
+        [[nodiscard]] bool lookup(std::uint32_t id, types::EvalValue& out) const noexcept {
+            std::shared_lock<std::shared_mutex> r(mu);
             if (id == aura::ast::INVALID_SYM || id >= hit.size() || !hit[id])
-                return nullptr;
-            return &vals[id];
+                return false;
+            out = vals[id];
+            return true;
         }
         void set(std::uint32_t id, types::EvalValue v) {
             if (id == aura::ast::INVALID_SYM)
                 return;
+            std::unique_lock<std::shared_mutex> w(mu);
             if (id >= vals.size()) {
                 vals.resize(id + 1);
                 hit.resize(id + 1);
@@ -7724,6 +7736,7 @@ private:
             hit[id] = 1;
         }
         void clear() noexcept {
+            std::unique_lock<std::shared_mutex> w(mu);
             vals.clear();
             hit.clear();
         }
@@ -7731,6 +7744,7 @@ private:
         // string_heap_. The reclaim treats every cached value as a
         // root, so a cached index is never released under the cache.
         template <class F> void for_each_live(F&& fn) const {
+            std::shared_lock<std::shared_mutex> r(mu);
             const auto n = std::min(vals.size(), hit.size());
             for (std::size_t i = 0; i < n; ++i) {
                 if (hit[i])

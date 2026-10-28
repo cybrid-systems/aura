@@ -11,7 +11,7 @@
         "const std::string* owner_name = nullptr",
         "owner_name = &kv.first",
         "kv.second->closure_id == cid",
-        "const auto& name = *owner_name"
+        "const std::string name = *owner_name"
       ]
     },
     {

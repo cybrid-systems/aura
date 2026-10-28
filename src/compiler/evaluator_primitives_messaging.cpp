@@ -15,6 +15,7 @@ module;
 #include "hash_meta.h"
 #include "fiber_result_roots.hh" // Issue #4710: fiber:join result roots
 
+#include <pthread.h>
 #include <unistd.h>
 
 module aura.compiler.evaluator;
@@ -1467,6 +1468,12 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         // the worker runs complete_fiber.
         auto fid_holder = std::make_shared<std::atomic<int64_t>>(0);
         auto complete_fiber = [&ev, cid, result_ptr, fid_holder]() {
+            // Issue #4717 (P4): name the thread-backend body so an external
+            // probe can tell a FIBER worker apart from any other task in the
+            // process (the #4720 pin probe samples /proc/<pid>/task; under
+            // TSan the sanitizer's own runtime thread used to be miscounted
+            // as a fiber, making AC13 read 3 workers instead of 2).
+            ::pthread_setname_np(::pthread_self(), "aura-fiber");
             // Issue #2738: when using CLI std::thread backend, serialize body
             // evaluation against other thread-fibers on this process. Scheduler
             // path (g_fiber_spawn) does not take this lock — fibers are isolated.
