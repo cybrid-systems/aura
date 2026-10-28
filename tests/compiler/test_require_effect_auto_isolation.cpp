@@ -3484,21 +3484,22 @@ static void ac4642_8_source_cite_and_no_invent() {
     const auto io = read_file("src/compiler/evaluator_primitives_io.cpp");
     const auto ev_src = read_file("src/compiler/evaluator_primitives_eval.cpp");
     CHECK(!io.empty() && !ev_src.empty(), "AC8: the two production files are readable");
-    CHECK(fence_precedes_copy_4642(ev_src, "add(\"eval\"", "auto code = ev.string_heap_[sidx];"),
+    // Issue #4714 follow-up: the heap copy goes through string_at().
+    CHECK(fence_precedes_copy_4642(ev_src, "add(\"eval\"", "auto code = ev.string_at(sidx);"),
           "AC8: eval calls the in-range fence before the copy");
     CHECK(fence_precedes_copy_4642(io, "defer_std_host_prim(\"git-diff\"",
-                                   "if (ev.string_heap_[mi] == \"staged\")"),
+                                   "if (ev.string_at(mi) == \"staged\")"),
           "AC8: git-diff calls the in-range fence before the staged compare");
     CHECK(fence_precedes_copy_4642(io, "defer_std_host_prim(\"git-commit\"",
-                                   "const std::string& msg = ev.string_heap_[mi];"),
+                                   "const std::string& msg = ev.string_at(mi);"),
           "AC8: git-commit calls the in-range fence before the copy");
     CHECK(fence_precedes_copy_4642(io, "defer_std_host_prim(\"git-stage\"",
-                                   "std::string p(ev.string_heap_[si]);"),
+                                   "std::string p(ev.string_at(si));"),
           "AC8: git-stage calls the in-range fence before the copy");
-    CHECK(fence_precedes_copy_4642(io, "add(\"getenv\"", "auto name = ev.string_heap_[nidx];"),
+    CHECK(fence_precedes_copy_4642(io, "add(\"getenv\"", "auto name = ev.string_at(nidx);"),
           "AC8: getenv calls the in-range fence before the copy");
     CHECK(fence_precedes_copy_4642(io, "defer_std_host_prim(\"tcp-connect\"",
-                                   "auto host = ev.string_heap_[hidx];"),
+                                   "auto host = ev.string_at(hidx);"),
           "AC8: tcp-connect calls the in-range fence before the copy");
     // No new Effect bit: eval keeps the kEffectNone dispatch face.
     CHECK(

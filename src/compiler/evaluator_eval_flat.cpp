@@ -3347,7 +3347,11 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 // (define (name args...) body) — function shorthand
                 if (types::is_pair(name_val) && types::is_pair(val_rest) && flat && pool) {
                     auto fn_pair = types::as_pair_idx(name_val);
-                    auto fn_name_data = pairs_[fn_pair].car;
+                    // Issue #4727: the shorthand name inside quoted data is an
+                    // interned symbol, so project it to identifier text like
+                    // the form head / let / set! above. Without this the
+                    // is_string gate below misses and the define is dropped.
+                    auto fn_name_data = ident_text_value(pairs_[fn_pair].car);
                     auto fn_args_data = pairs_[fn_pair].cdr;
 
                     if (types::is_string(fn_name_data)) {
@@ -3366,7 +3370,8 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         auto args_data = fn_args_data;
                         while (types::is_pair(args_data)) {
                             auto ap = types::as_pair_idx(args_data);
-                            auto arg_data = pairs_[ap].car;
+                            // Issue #4727: parameter atoms are symbols too.
+                            auto arg_data = ident_text_value(pairs_[ap].car);
                             if (types::is_string(arg_data)) {
                                 auto aidx = types::as_string_idx(arg_data);
                                 auto astr = string_at_or(aidx);

@@ -19,6 +19,7 @@
 #include <print>
 #include <string>
 #include <string_view>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -339,13 +340,26 @@ static void ac4379_ir_while_lambda_set() {
 // Increment-first is in-process (a missing later form returns the wrong sum).
 // Display-first is a timeout subprocess so a dropped increment cannot hang.
 static std::string aura_binary_4466() {
+    // A candidate must be an exec'able REGULAR file: ::access(X_OK) also
+    // accepts a directory, and "../aura" is the checkout directory itself
+    // when the tree is named aura (that gave "env: '../aura': Permission
+    // denied" and 12 bogus CLI failures).
+    const auto usable = [](const std::string& p) {
+        struct stat st{};
+        return !p.empty() && ::stat(p.c_str(), &st) == 0 && S_ISREG(st.st_mode) &&
+               ::access(p.c_str(), X_OK) == 0;
+    };
+    // The issue runner exports AURA_BIN; a build dir that is not build/
+    // (AURA_BUILD_DIR, e.g. build-4728) is only discoverable that way.
+    if (const char* env = std::getenv("AURA_BIN"); env && usable(env))
+        return std::string(env);
 #ifdef AURA_SOURCE_DIR
     std::string cand = std::string(AURA_SOURCE_DIR) + "/build/aura";
-    if (::access(cand.c_str(), X_OK) == 0)
+    if (usable(cand))
         return cand;
 #endif
     for (const char* c : {"./build/aura", "./aura", "../build/aura", "../aura"}) {
-        if (::access(c, X_OK) == 0)
+        if (usable(c))
             return std::string(c);
     }
     return {};

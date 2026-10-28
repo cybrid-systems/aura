@@ -234,14 +234,18 @@ int run_test_commercial_tenant_profile() {
         CHECK(posture_src.find("commercial-tenant-profile") != std::string::npos,
               "AC6: posture key wired in evaluator_primitives_security.cpp");
 
-        // Live security gate clean.
-        const int rc = std::system("python3 scripts/coverage/checks/check_side_effect_security.py "
-                                   "--strict >/dev/null 2>&1");
-        const int rc2 =
-            std::system("cd .. 2>/dev/null; "
-                        "python3 scripts/coverage/checks/check_side_effect_security.py --strict "
-                        ">/dev/null 2>&1");
-        CHECK(rc == 0 || rc2 == 0, "AC6: live security gate passes");
+        // Live security gate clean. Anchor on the source tree instead of
+        // "maybe cwd is the repo root": the batch driver does not pin cwd,
+        // and a bare "scripts/..." only resolves from there (the issue
+        // runner exports AURA_SRC_ROOT; AURA_SOURCE_DIR is the fallback).
+        std::string root = AURA_SOURCE_DIR;
+        if (const char* env = std::getenv("AURA_SRC_ROOT"); env && *env)
+            root = env;
+        const std::string gate = "cd \"" + root +
+                                 "\" && python3 scripts/coverage/checks/"
+                                 "check_side_effect_security.py --strict >/dev/null 2>&1";
+        const int rc = std::system(gate.c_str());
+        CHECK(rc == 0, "AC6: live security gate passes");
     }
 
     std::println("\n=== #2584 commercial_tenant_profile: {} passed, {} failed ===", g_passed,

@@ -49,7 +49,13 @@ using aura::test::prod::kProdCasesCount;
 using aura::test::prod::ProdCase;
 
 std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref {} \'{}\')", aura::test::aura_call_expr(q), key));
+    // Issue #4727: a quoted identifier is an interned symbol now, so it no
+    // longer matches the C++-built stats hashes (string keys). Probe the
+    // documented string key first, then the symbol face, so a schema check
+    // pins the metric value rather than the key encoding.
+    auto r = cs.eval(std::format("(hash-ref {} \"{}\")", aura::test::aura_call_expr(q), key));
+    if (!r || !is_int(*r))
+        r = cs.eval(std::format("(hash-ref {} '{}')", aura::test::aura_call_expr(q), key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -155,8 +161,13 @@ void run_field_list_cases(CompilerService& cs) {
               std::format("{} schema == {} (got {})", c.query, c.schema, _got_schema_b));
         for (std::size_t f = 0; f < c.n_fields; ++f) {
             const char* key = c.fields[f];
+            // Issue #4727: probe the C++-built string key, then the
+            // symbol face of the same name.
             auto v = cs.eval(
-                std::format("(hash-ref {} \'{}\')", aura::test::aura_call_expr(c.query), key));
+                std::format("(hash-ref {} \"{}\")", aura::test::aura_call_expr(c.query), key));
+            if (!v.has_value())
+                v = cs.eval(
+                    std::format("(hash-ref {} '{}')", aura::test::aura_call_expr(c.query), key));
             CHECK(v.has_value(), std::format("{} field '{}' present", c.query, key));
         }
     }
@@ -177,8 +188,13 @@ void run_production_cases(CompilerService& cs) {
               std::format("{} schema == {} (got {}, {})", c.query, c.schema, got, c.source_stem));
         for (std::size_t f = 0; f < c.n_fields; ++f) {
             const char* key = c.fields[f];
+            // Issue #4727: probe the C++-built string key, then the
+            // symbol face of the same name.
             auto v = cs.eval(
-                std::format("(hash-ref {} \'{}\')", aura::test::aura_call_expr(c.query), key));
+                std::format("(hash-ref {} \"{}\")", aura::test::aura_call_expr(c.query), key));
+            if (!v.has_value())
+                v = cs.eval(
+                    std::format("(hash-ref {} '{}')", aura::test::aura_call_expr(c.query), key));
             CHECK(v.has_value(),
                   std::format("{} field '{}' present ({})", c.query, key, c.source_stem));
         }

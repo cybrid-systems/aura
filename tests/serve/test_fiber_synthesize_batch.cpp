@@ -424,7 +424,10 @@ int run_try_probe_1718() {
                           "try_probe uses probe_slot");
                     CHECK(region.find("mint(call_src)") != std::string::npos,
                           "first-time push still present");
-                    CHECK(region.find("string_heap_[probe_slot]") != std::string::npos,
+                    // Issue #4714 follow-up: every heap read/write goes
+                    // through the evaluator accessors, so the in-place
+                    // assign is mutable_string_at(probe_slot).
+                    CHECK(region.find("mutable_string_at(probe_slot)") != std::string::npos,
                           "in-place assign to slot");
                     CHECK(region.find("make_string(probe_slot)") != std::string::npos,
                           "eval uses probe_slot");

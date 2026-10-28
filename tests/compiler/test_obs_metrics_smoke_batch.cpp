@@ -33,7 +33,13 @@ using aura::test::g_failed;
 using aura::test::g_passed;
 
 std::int64_t hash_int(CompilerService& cs, std::string_view query, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (engine:metrics \"{}\") '{}')", query, key));
+    // Issue #4727: a quoted identifier ("'key") is an interned symbol now, so
+    // it no longer matches a C++-built stats hash, whose keys are strings.
+    // Probe the documented string key first, then the symbol face, so the
+    // check pins the metric value rather than the key encoding.
+    auto r = cs.eval(std::format("(hash-ref (engine:metrics \"{}\") \"{}\")", query, key));
+    if (!r || !is_int(*r))
+        r = cs.eval(std::format("(hash-ref (engine:metrics \"{}\") '{}')", query, key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);

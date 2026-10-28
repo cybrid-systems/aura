@@ -208,7 +208,11 @@ void ac3770_one_contract_per_unbox() {
     const auto b0 = val.find("export inline bool as_bool(");
     const auto b1 = val.find("export inline EvalValue make_void(");
     const auto s0 = val.find("export inline std::uint64_t as_string_idx(");
-    const auto s1 = val.find("export inline EvalValue make_string_v2(");
+    // Issue #4727 inserted make_symbol / is_symbol / as_symbol_idx between
+    // as_string_idx and the v2 prototype, so pin the window to the end of
+    // this one function body (the next `export inline`) instead of the
+    // make_string_v2 anchor two functions later.
+    const auto s1 = val.find("\nexport inline", s0 == std::string::npos ? 0 : s0 + 1);
     const auto iwin =
         (i0 != std::string::npos && i1 > i0) ? val.substr(i0, i1 - i0) : std::string{};
     const auto bwin =

@@ -184,7 +184,12 @@ namespace {
     }
 
     static std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key) {
-        auto r = cs.eval(std::format("(hash-ref {} \'{}\')", aura::test::aura_call_expr(q), key));
+        // Issue #4727: a quoted identifier is an interned symbol now, so it no
+        // longer matches a C++-built stats hash (string keys). Probe the
+        // documented string key first, then the symbol face.
+        auto r = cs.eval(std::format("(hash-ref {} \"{}\")", aura::test::aura_call_expr(q), key));
+        if (!r || !is_int(*r))
+            r = cs.eval(std::format("(hash-ref {} '{}')", aura::test::aura_call_expr(q), key));
         if (!r || !is_int(*r))
             return -1;
         return as_int(*r);
@@ -269,10 +274,12 @@ namespace {
         // Match test_typed_mutation_audit.cpp — trail is catalogued via engine:metrics.
         auto h = cs.eval("(engine:metrics \"query:typed-mutation-audit-trail\")");
         CHECK(h && is_hash(*h), "trail hash");
+        // Issue #4727: the trail hash is C++-built with string keys, so the
+        // quoted (symbol) form no longer matches.
         auto wire_aot = cs.eval("(hash-ref (engine:metrics \"query:typed-mutation-audit-trail\") "
-                                "'aot-hotupdate-audit-wired)");
+                                "\"aot-hotupdate-audit-wired\")");
         auto wire_jit = cs.eval("(hash-ref (engine:metrics \"query:typed-mutation-audit-trail\") "
-                                "'jit-hotpath-audit-wired)");
+                                "\"jit-hotpath-audit-wired\")");
         CHECK(wire_aot && is_int(*wire_aot) && as_int(*wire_aot) == 1, "aot-hotupdate-audit-wired");
         CHECK(wire_jit && is_int(*wire_jit) && as_int(*wire_jit) == 1, "jit-hotpath-audit-wired");
     }
