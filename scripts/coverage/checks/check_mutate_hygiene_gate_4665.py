@@ -257,7 +257,7 @@ def _inventory_files() -> list[str]:
     return hits
 
 
-def check_text(text: str, *, repo_scope: bool) -> list[str]:
+def check_text(text: str, *, repo_scope: bool, extra_reg_text: str = "") -> list[str]:
     """Cross-check the inventory against the registrations. Returns failures."""
     fails: list[str] = []
     masked = _blank_comments(text)
@@ -279,6 +279,19 @@ def check_text(text: str, *, repo_scope: bool) -> list[str]:
             if name not in regs:
                 order.append(name)
                 regs[name] = _lambda_body(text, m.end())
+    # Issue #4742: a mutate:* prim may be registered in a sibling
+    # evaluator_primitives_* partition (the inventory still lives here, AC4).
+    # Such a row is resolved against those partitions' registrations.
+    if extra_reg_text:
+        extra = _merge_adjacent_literals(_blank_comments(extra_reg_text))
+        # Only RESOLVE rows here (AC2 direction). AC1 (a registration without
+        # a row) stays scoped to this file: sibling partitions carry their own
+        # reviewed rows and are not this inventory's completeness target.
+        for regex in (ADD_MUTATE_RE, RAW_ADD_RE):
+            for m in regex.finditer(extra):
+                name = m.group(1)
+                if name not in regs:
+                    regs[name] = _lambda_body(extra_reg_text, m.end())
 
     # The completeness rows are about the REAL inventory (a probe file is
     # deliberately small), so they only run in repo scope.
@@ -450,7 +463,18 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     text = target.read_text(encoding="utf-8", errors="replace")
-    fails = check_text(text, repo_scope=repo_scope)
+    extra_reg_text = ""
+    if repo_scope:
+        parts = []
+        for path in sorted((ROOT / "src" / "compiler").glob("evaluator_primitives_*.cpp")):
+            if path.name == "evaluator_primitives_mutate.cpp":
+                continue
+            try:
+                parts.append(path.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                continue
+        extra_reg_text = chr(10).join(parts)
+    fails = check_text(text, repo_scope=repo_scope, extra_reg_text=extra_reg_text)
     if fails:
         print(f"FAIL #4665 mutate_hygiene_gate: {target}", file=sys.stderr)
         for f in fails:

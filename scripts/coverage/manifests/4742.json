@@ -1,0 +1,11 @@
+{
+  "issue": 4742,
+  "title": "[workspace] gate a candidate define without installing it: parse/typecheck a source string against the current workspace (dry-run rebind)",
+  "ok": "OK: (mutate:check name define-source) strictly parses the candidate and typechecks it against the current workspace with a call-local parse tree, pool and type registry; the workspace, mutation log and epoch are untouched and fiber bodies can call it concurrently",
+  "checks": [
+    { "ac": "AC1", "path": "src/compiler/evaluator_primitives_eval.cpp", "contains": ["Issue #4742", "add(\"mutate:check\"", "(mutate:check name define-source)"] },
+    { "ac": "AC2", "path": "src/compiler/evaluator_primitives_eval.cpp", "contains": ["parse-error", "type-error", "candidate is not a (define ...) form"] },
+    { "ac": "AC3", "path": "src/compiler/evaluator_primitives_eval.cpp", "contains": ["monotonic_buffer_resource scratch", "aura::core::TypeRegistry treg", "shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_)"] },
+    { "ac": "AC4", "path": "src/compiler/evaluator_primitives_mutate.cpp", "contains": ["dry-run parse/typecheck gate; reads the workspace, writes nothing (#4742)"] }
+  ]
+}

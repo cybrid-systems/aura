@@ -1535,6 +1535,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         return make_string(sidx);
     });
 
+
     // Issue #4266: (typecheck-status) — structured typecheck status for
     // stdlib gates. (typecheck-current) embeds diagnostics in a returned
     // STRING and returns normally on type errors, so the old
@@ -1555,6 +1556,181 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             return make_bool(true);
         const auto sidx = static_cast<std::uint64_t>(ev.push_string_heap(st->report));
         return make_string(sidx);
+    });
+
+    // ── Issue #4742: (mutate:check name define-source) — dry-run gate ──
+    // Parses the candidate define STRICTLY (parse_to_flat has no auto-close)
+    // and typechecks it against the current workspace without installing
+    // anything: no workspace mutation, no mutation-log entry, no epoch bump.
+    //
+    //   #t                             — parses and typechecks clean
+    //   ("parse-error" "<message>")    — does not parse / is not a define
+    //                                    for NAME
+    //   ("type-error" "<report>")      — new diagnostics vs. the workspace
+    //
+    // Why not snapshot+rebind+restore: that path mutates the shared workspace
+    // (single writer only), appends mutation-log records and moves the epoch.
+    // Here the parse tree, the string pool and the type registry are all
+    // call-local, so fiber bodies can gate candidates concurrently.
+    // GUARD_EXEMPT: (#4742) a dry-run gate is read-only - it reads the
+    // workspace under a shared lock, parses/typechecks in call-local
+    // storage and writes nothing. No mutation boundary is entered, so the
+    // registration is guard_exempt by construction.
+    add("mutate:check", [&ev, mev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
+            return mev("bad-arg", "usage: (mutate:check name define-source)");
+        const auto name_idx = as_string_idx(a[0]);
+        const auto code_idx = as_string_idx(a[1]);
+        if (name_idx >= ev.string_heap_.size() || code_idx >= ev.string_heap_.size())
+            return mev("bad-arg", "string index out of range");
+        const std::string name(ev.string_at(name_idx));
+        const std::string candidate(ev.string_at(code_idx));
+
+        auto tagged = [&](const char* tag, const std::string& msg) -> EvalValue {
+            const auto mid = static_cast<std::uint64_t>(ev.push_string_heap(msg));
+            const auto tid = static_cast<std::uint64_t>(ev.push_string_heap(std::string(tag)));
+            auto pid = ev.pairs_.size();
+            ev.pairs_.push_back({make_string(mid), make_void()});
+            auto head = ev.pairs_.size();
+            ev.pairs_.push_back({make_string(tid), make_pair(pid)});
+            return make_pair(head);
+        };
+
+        // (0) Strict paren balance. parse_to_flat's special forms can absorb a
+        // missing ) at EOF (parse_if / parse_define do not run the generic
+        // parse_list tail check), so a dry-run gate that promises strict
+        // parsing has to reject unbalanced source itself. Comparing numeric
+        // char codes keeps this scanner independent of literal escaping.
+        {
+            int depth = 0;
+            bool in_str = false, esc = false, in_comment = false;
+            std::string balance_err;
+            for (std::size_t i = 0; i < candidate.size(); ++i) {
+                const char ch = candidate[i];
+                if (in_comment) {
+                    if (ch == 10)
+                        in_comment = false; // newline
+                    continue;
+                }
+                if (in_str) {
+                    if (esc) {
+                        esc = false;
+                        continue;
+                    }
+                    if (ch == 92) {
+                        esc = true;
+                        continue;
+                    } // backslash
+                    if (ch == 34)
+                        in_str = false; // close quote
+                    continue;
+                }
+                if (ch == 59) {
+                    in_comment = true;
+                    continue;
+                } // ; comment
+                if (ch == 34) {
+                    in_str = true;
+                    continue;
+                } // open quote
+                if (ch == 40)
+                    ++depth;         // (
+                else if (ch == 41) { // )
+                    if (--depth < 0) {
+                        balance_err = "unexpected )";
+                        break;
+                    }
+                }
+            }
+            if (balance_err.empty() && in_str)
+                balance_err = "unterminated string literal";
+            if (balance_err.empty() && depth != 0)
+                balance_err = "unclosed list: missing ) before end of input";
+            if (!balance_err.empty())
+                return tagged("parse-error", balance_err);
+        }
+
+        // (1) Strict parse of the candidate on its own.
+        std::pmr::monotonic_buffer_resource scratch;
+        const auto alloc = std::pmr::polymorphic_allocator<std::byte>{&scratch};
+        std::string workspace_src;
+        {
+            aura::ast::StringPool cpool(alloc);
+            aura::ast::FlatAST cflat(alloc);
+            auto pr = aura::parser::parse_to_flat(candidate, cflat, cpool);
+            if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+                std::string msg = pr.error.empty() ? std::string("parse error") : pr.error;
+                return tagged("parse-error", msg);
+            }
+            auto root_v = cflat.get(pr.root);
+            if (root_v.tag != aura::ast::NodeTag::Define)
+                return tagged("parse-error", "candidate is not a (define ...) form for " + name);
+            std::string got = (root_v.sym_id == aura::ast::INVALID_SYM)
+                                  ? std::string()
+                                  : std::string(cpool.resolve(root_v.sym_id));
+            if (!got.empty() && got != name)
+                return tagged("parse-error",
+                              "define name mismatch: expected " + name + ", got " + got);
+        }
+
+        // (2) Workspace source snapshot (read-only; no mutation).
+        {
+            std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
+            if (ev.workspace_flat_ && ev.workspace_pool_ &&
+                ev.workspace_flat_->root != aura::ast::NULL_NODE &&
+                ev.workspace_flat_->root < ev.workspace_flat_->size() &&
+                !ev.workspace_flat_->is_free_slot(ev.workspace_flat_->root))
+                workspace_src = aura::ast::unparse_to_string(
+                    *ev.workspace_flat_, *ev.workspace_pool_, ev.workspace_flat_->root);
+        }
+
+        // (3) Typecheck the composite (workspace + candidate) with a
+        //     call-local registry, then diff diagnostics against the
+        //     workspace baseline so pre-existing reports are not blamed on
+        //     the candidate.
+        auto typecheck_source = [&](const std::string& src, std::vector<std::string>& out) -> bool {
+            std::pmr::monotonic_buffer_resource tscratch;
+            const auto talloc = std::pmr::polymorphic_allocator<std::byte>{&tscratch};
+            aura::ast::StringPool pool(talloc);
+            aura::ast::FlatAST flat(talloc);
+            auto pr = aura::parser::parse_to_flat(src, flat, pool);
+            if (!pr.success || pr.root == aura::ast::NULL_NODE)
+                return false;
+            flat.root = pr.root;
+            aura::core::TypeRegistry treg;
+            aura::compiler::TypeChecker tc(treg);
+            aura::diag::DiagnosticCollector diag;
+            (void)tc.infer_flat(flat, pool, flat.root, diag);
+            for (auto& d : diag.diagnostics())
+                out.push_back(d.format());
+            return true;
+        };
+
+        std::vector<std::string> composite_diags;
+        const std::string composite = workspace_src + "\n" + candidate;
+        if (!typecheck_source(composite, composite_diags))
+            return tagged("parse-error", "candidate does not parse in workspace context");
+        if (composite_diags.empty())
+            return make_bool(true);
+
+        std::vector<std::string> baseline_diags;
+        if (!workspace_src.empty())
+            (void)typecheck_source(workspace_src, baseline_diags);
+
+        std::vector<std::string> fresh;
+        for (auto& msg : composite_diags) {
+            auto it = std::find(baseline_diags.begin(), baseline_diags.end(), msg);
+            if (it != baseline_diags.end())
+                baseline_diags.erase(it); // pre-existing diagnostic
+            else
+                fresh.push_back(msg);
+        }
+        if (fresh.empty())
+            return make_bool(true);
+        std::string report;
+        for (auto& msg : fresh)
+            report += "  " + msg + "\n";
+        return tagged("type-error", report);
     });
 
     // Issue #159 Phase 1: (typecheck-incremental) — incremental

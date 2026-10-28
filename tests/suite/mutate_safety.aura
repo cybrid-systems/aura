@@ -195,3 +195,56 @@
 (if ok4324
   (begin (display "OK-4324 atomic-batch-safe-keywords") (newline))
   (begin (display "FAIL-4324") (newline) (unbound-4324-force-fail)))
+
+; ── Issue #4742: (mutate:check name define-source) dry-run gate ──
+; Strict parse + typecheck against the current workspace without installing
+; anything: no workspace mutation, no mutation-log row, no epoch bump.
+(define ok4742 #t)
+(define (fail4742 what)
+  (set! ok4742 #f)
+  (display "  FAIL-4742: ") (display what) (newline))
+(define (tag4742 v)
+  (if (pair? v) (car v) v))
+
+(set-code "(define (f x) (+ x 1))")
+(define src4742 (current-source :workspace))
+(define gen4742 (ast:generation))
+(define mut4742 (length (query:mutations-since 0)))
+
+(if (equal? (mutate:check "f" "(define (f x) (+ x 2))") #t)
+    (display "  pass: clean candidate returns #t") (fail4742 "clean candidate"))
+(newline)
+
+(if (equal? (tag4742 (mutate:check "f" "(define (f x) (+ x 2)")) "parse-error")
+    (display "  pass: missing paren is a parse-error") (fail4742 "missing paren"))
+(newline)
+
+(if (equal? (tag4742 (mutate:check "f" "(define (f x) (if x")) "parse-error")
+    (display "  pass: special-form truncation is a parse-error") (fail4742 "if truncation"))
+(newline)
+
+(if (equal? (tag4742 (mutate:check "g" "(define (f x) 1)")) "parse-error")
+    (display "  pass: define-name mismatch is a parse-error") (fail4742 "name mismatch"))
+(newline)
+
+(if (equal? (tag4742 (mutate:check "f" "(define (f x) (car 1 2 3))")) "type-error")
+    (display "  pass: ill-typed candidate is a type-error") (fail4742 "type error"))
+(newline)
+
+(if (equal? (tag4742 (mutate:check "f" "(define (f x) (nope x))")) "type-error")
+    (display "  pass: unbound variable is a type-error") (fail4742 "unbound"))
+(newline)
+
+(if (string=? (current-source :workspace) src4742)
+    (display "  pass: workspace unchanged") (fail4742 "workspace changed"))
+(newline)
+(if (= (ast:generation) gen4742)
+    (display "  pass: generation unchanged") (fail4742 "generation changed"))
+(newline)
+(if (= (length (query:mutations-since 0)) mut4742)
+    (display "  pass: mutation log unchanged") (fail4742 "mutation log changed"))
+(newline)
+
+(if ok4742
+  (begin (display "OK-4742 mutate-check-dry-run") (newline))
+  (begin (display "FAIL-4742") (newline) (error "4742 mutate:check suite failed")))
