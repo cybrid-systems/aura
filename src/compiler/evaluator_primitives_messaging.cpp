@@ -221,6 +221,11 @@ namespace {
     // denseness (shared Evaluator). Issue #4053: http-post unlocks via the
     // same TLS through DensenessBodyLockWaitGuard (messaging_bridge hooks).
     std::mutex s_cli_commit_mtx;
+    // Issue #4728: number of threads blocked inside cli_body_lock_acquire()
+    // right now (a genuine contender for the commit mutex). A cooperative
+    // yield only has to wait for a takeover when somebody is actually
+    // queued on the mutex; with the #4717 parallel bodies nobody is.
+    std::atomic<std::size_t> s_cli_commit_waiters{0};
     // Issue #4716: the owning unique_lock is EXECUTION CONTEXT — the body
     // that holds the mutex parks on a fiber:join / channel wait and resumes
     // on another worker, and it must still find its own lock to unlock /
@@ -313,7 +318,11 @@ namespace {
     // wakes up (the CLI thread backend has no scheduler to do the hand-off,
     // so the takeover publish IS the hand-off).
     void cli_body_lock_acquire(std::unique_lock<std::mutex>& lock) {
+        // Issue #4728: publish that this acquire is CONTENDING before it
+        // blocks, so a yielding body knows a takeover can actually land.
+        s_cli_commit_waiters.fetch_add(1, std::memory_order_acq_rel);
         lock.lock();
+        s_cli_commit_waiters.fetch_sub(1, std::memory_order_acq_rel);
         cli_body_lock_publish_takeover();
     }
 
@@ -363,13 +372,29 @@ namespace {
             // Sample the spawn epoch too: a spawn that lands while this
             // body waits means a sibling exists (or is about to run).
             const std::uint64_t seen_spawn = s_cli_spawn_epoch.load(std::memory_order_acquire);
+            // Issue #4728: a takeover can only be published by a thread
+            // that actually takes the commit mutex over. Since #4717 the
+            // parallel fiber bodies never take it (they run on their own OS
+            // threads), so the only possible publisher is the CLI main
+            // thread itself — and it is the one yielding. Waiting for a
+            // takeover that cannot come burned the full 200 ms deadline on
+            // every root-program yield. Wait only when somebody is queued
+            // on the mutex; otherwise this is the pre-#4699 release +
+            // std::this_thread::yield() + re-acquire.
+            const bool contender = s_cli_commit_waiters.load(std::memory_order_acquire) > 0;
             lock->unlock();
             // Clear the TLS slot while unlocked: a sibling body on this
             // OS thread must not observe our unlocked lock (#4054).
             s_tls_cli_body_lock() = nullptr;
             released = true;
-            if (!wait_for_takeover || !sibling_alive)
+            if (!wait_for_takeover || !sibling_alive || !contender) {
+                // Issue #4728: hand the worker over explicitly when a
+                // sibling exists but cannot take the mutex (parallel
+                // bodies) — a cooperative yield still yields.
+                if (sibling_alive)
+                    std::this_thread::yield();
                 return;
+            }
             // Wait until a sibling body has taken the mutex over. Bounded:
             // a lost wakeup or a sibling that finished must never hang a
             // session - the yield then takes the mutex back.
