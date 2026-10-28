@@ -1277,6 +1277,18 @@ export class FlatAST {
     // reset_node_slot does not re-lock (called only under exclusive).
     // LOCK ORDER: flatast_mutex_ (exclusive) before dirty_column_mtx_.
     mutable OwnedSharedMutex flatast_mutex_;
+    // Issue #4717: node-slot DEATH publication lock (node_gen_ = 0 and the
+    // free-list push in recycle_dead_nodes / free_orphan_nodes_from, plus
+    // the free-list REBIRTH rewrite in add_node's reuse branch). Readers
+    // that scan node_gen_ from another body (is_free_slot via the
+    // workspace lambda defines scan / specialize path) hold this shared.
+    //
+    // It is a LEAF lock in the FlatAST order: when both are needed the
+    // order is flatast_mutex_ (writer) -> node_slot_publish_mtx_. Readers
+    // that need both take the SoA read guard first, then this one, so the
+    // two orders agree and no cycle exists. Nothing acquires flatast_mutex_
+    // while holding this.
+    mutable std::shared_mutex node_slot_publish_mtx_;
 
     // Issue #3868: SoA seqlock write epoch. Bumped even→odd on
     // writer-section entry and odd→even on exit — SoaSeqlockWriteSection
@@ -1324,6 +1336,7 @@ public:
 
 private:
     void reset_node_slot(NodeId id, NodeTag tag, SyntaxMarker m) {
+        // #4717: rebirth rewrite under flatast_mutex_ + slot-publish lock.
         tag_[id] = tag;
         int_val_[id] = 0;
         float_val_[id] = 0.0;
@@ -1687,6 +1700,10 @@ public:
             // Issue #2424: exclusive dirty_column while clearing
             // dirty_[id] (free-list reuse; size unchanged).
             {
+                // Issue #4717: this is the slot REBIRTH publication — a
+                // workspace scanner on another body may be reading this
+                // slot's node_gen_ (is_free_slot) right now.
+                std::unique_lock<std::shared_mutex> publish_lock(node_slot_publish_mtx_);
                 std::unique_lock<std::shared_mutex> dirty_wlock(dirty_column_mtx_.mutable_get());
                 reset_node_slot(id, tag, m);
             }
@@ -2298,7 +2315,11 @@ public:
     // Issue #2440: mutable + atomic_ref; resize under dirty_column_mtx_.
     mutable std::pmr::vector<std::uint8_t> occ_stale_;
     std::uint64_t next_mutation_id_ = 1;
-    std::uint16_t generation_ = 1;
+    // Issue #4717: publish_layout_stamp / is_valid read the generation from
+    // another body while a rollback bumps it. Same copyable-atomic treatment
+    // as the EnvFrame stamps (set/read is a whole-value publish, never an RMW
+    // the reader must observe).
+    std::atomic<std::uint16_t> generation_{1};
     // Issue #4315: monotonic id of the FlatAST set-code published.
     // 0 means this object was not published by production set-code
     // (unit flats, Soft). Rebirth restarts generation_/wrap/cow, so
@@ -3557,7 +3578,7 @@ public:
         // Issue #339: per-node occurrence-staleness column.
         , occ_stale_(std::move(other.occ_stale_))
         , next_mutation_id_(other.next_mutation_id_)
-        , generation_(other.generation_)
+        , generation_(other.generation_.load(std::memory_order_acquire))
         , node_gen_(std::move(other.node_gen_))
         , free_list_(std::move(other.free_list_))
         , bump_generation_count_(other.bump_generation_count_.load())
@@ -3660,7 +3681,7 @@ public:
             narrowing_log_ = std::move(other.narrowing_log_);
             node_first_mutation_ = std::move(other.node_first_mutation_);
             next_mutation_id_ = other.next_mutation_id_;
-            generation_ = other.generation_;
+            generation_.store(other.generation_.load(std::memory_order_acquire));
             bump_generation_count_.store(other.bump_generation_count_.load());
             is_valid_check_count_.store(other.is_valid_check_count_.load());
             stable_ref_invalidations_.store(other.stable_ref_invalidations_.load());
@@ -3777,7 +3798,7 @@ public:
         // declaration order to silence -Wreorder.)
         , occ_stale_(other.occ_stale_)
         , next_mutation_id_(other.next_mutation_id_)
-        , generation_(other.generation_)
+        , generation_(other.generation_.load(std::memory_order_acquire))
         , node_gen_(other.node_gen_)
         , free_list_(other.free_list_)
         , bump_generation_count_(other.bump_generation_count_.load())
@@ -3881,7 +3902,7 @@ public:
             narrowing_log_ = other.narrowing_log_;
             node_first_mutation_ = other.node_first_mutation_;
             next_mutation_id_ = other.next_mutation_id_;
-            generation_ = other.generation_;
+            generation_.store(other.generation_.load(std::memory_order_acquire));
             bump_generation_count_.store(other.bump_generation_count_.load());
             is_valid_check_count_.store(other.is_valid_check_count_.load());
             stable_ref_invalidations_.store(other.stable_ref_invalidations_.load());
@@ -5570,6 +5591,10 @@ public:
 
     // Shared SoA lock for multi-column reads concurrent with add_node.
     [[nodiscard]] SoAReadGuard try_acquire_soa_reader_lock() const { return SoAReadGuard(this); }
+    // Issue #4717: slot-death publication lock (see the member comment).
+    [[nodiscard]] std::shared_mutex& node_slot_publish_mutex() const noexcept {
+        return node_slot_publish_mtx_;
+    }
     // Exclusive SoA lock for external size/mutation batches (rare;
     // add_node/clear already lock exclusively).
     [[nodiscard]] SoAWriteGuard begin_soa_write() { return SoAWriteGuard(this); }
@@ -6348,6 +6373,7 @@ public:
     // and push onto free_list_. Used after rollback when mutations added
     // nodes that are no longer reachable after children_ restore.
     std::size_t free_orphan_nodes_from(NodeId begin) {
+        std::unique_lock<std::shared_mutex> publish_lock(node_slot_publish_mtx_); // #4717
         std::size_t freed = 0;
         for (NodeId id = begin; id < size(); ++id) {
             if (id >= node_gen_.size())
@@ -6437,7 +6463,9 @@ public:
         free_list_.clear();
         if (node_gen_.size() < tag_.size())
             node_gen_.resize(tag_.size(), 0);
-        const auto gen = generation_ == 0 ? std::uint16_t{1} : generation_;
+        const auto gen = generation_.load(std::memory_order_acquire) == 0
+                             ? std::uint16_t{1}
+                             : generation_.load(std::memory_order_acquire);
         for (NodeId id = 0; id < static_cast<NodeId>(tag_.size()); ++id)
             node_gen_[id] = gen;
         restamp_lazy_align_enabled_.store(false, std::memory_order_release);
@@ -6494,6 +6522,13 @@ public:
     }
 
     [[nodiscard]] std::size_t recycle_dead_nodes() {
+        // Issue #4717: node_gen_=0 is the slot-death publication that
+        // is_free_slot() reads lock-free from other bodies (workspace
+        // scanners / specialize). Take the slot-publication lock exclusive
+        // for the whole sweep so a concurrent scan sees either the live
+        // slot or the tombstone, never a half-torn column. Leaf lock:
+        // never taken while holding flatast_mutex_ on the reader side.
+        std::unique_lock<std::shared_mutex> publish_lock(node_slot_publish_mtx_);
         auto live = mark_live_nodes();
         // Issue #1408 (typed-mutate-atomic abort cross-wire): a rebind
         // record's rollback payload stores NodeIds (field_offset 0 = the
@@ -7027,7 +7062,7 @@ public:
         node_gen_.clear();
         free_list_.clear();
         next_mutation_id_ = 1;
-        generation_ = 1;
+        generation_.store(1, std::memory_order_release);
         match_info_.clear();
         root = NULL_NODE;
     }
@@ -7432,7 +7467,11 @@ public:
         read_column(ast.node_gen_);
         std::memcpy(&ast.next_mutation_id_, &buf[pos], 4);
         pos += 4;
-        std::memcpy(&ast.generation_, &buf[pos], 2);
+        {
+            std::uint16_t gen_bits = 0;
+            std::memcpy(&gen_bits, &buf[pos], 2);
+            ast.generation_.store(gen_bits, std::memory_order_release);
+        }
         pos += 2;
         pos += 2; // reserved
 
@@ -9797,9 +9836,9 @@ public:
         // Discard metadata snapshot (committed state keeps live columns).
         atomic_batch_meta_snap_valid_ = false;
         atomic_batch_meta_snap_ = MetadataColumnsSnapshot{};
-        ++generation_;
-        if (generation_ == 0)
-            generation_ = 1;
+        generation_.fetch_add(1, std::memory_order_acq_rel);
+        if (generation_.load(std::memory_order_acquire) == 0)
+            generation_.store(1, std::memory_order_release);
         // Note: we don't have a per-batch dirty list (would
         // require tracking all touched nodes in the lockless
         // mutates). The first post-commit structural mutate

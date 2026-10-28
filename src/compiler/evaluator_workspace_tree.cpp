@@ -286,6 +286,10 @@ bool Evaluator::save_panic_checkpoint() {
         panic_safe_cells_size_ = cells_.size();
         panic_safe_pairs_size_ = pairs_.size();
         panic_safe_env_frames_size_ = env_frames_.size();
+        // Issue #4717: publish liveness AFTER the source is installed so a
+        // body's has_panic_checkpoint() probe (acquire) either sees no
+        // checkpoint or a fully installed one — never a string mid-write.
+        panic_checkpoint_live_.store(true, std::memory_order_release);
         arm_gc_defer_for_pending_panic();
         bump_panic_checkpoint_save_count();
         bump_longrunning_checkpoint_success();
@@ -321,6 +325,8 @@ bool Evaluator::save_panic_checkpoint() {
     panic_safe_cells_size_ = cells_.size();
     panic_safe_pairs_size_ = pairs_.size();
     panic_safe_env_frames_size_ = env_frames_.size();
+    // Issue #4717: publish liveness after the source install (see above).
+    panic_checkpoint_live_.store(true, std::memory_order_release);
     // Issue #1489: arm process-wide GC defer for the recovery window
     // (commit/restore releases). Protects pinned COW / StableNodeRef /
     // EnvFrame from compact_sweep while checkpoint is live.

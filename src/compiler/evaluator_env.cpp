@@ -341,11 +341,116 @@ struct EnvLookupDepthGuard {
     }
     return true;
 }
+// ── Issue #4717 step 2: shared top-env binding publication ──────────
+//
+// Every Env below carries the historical single-writer contract EXCEPT the
+// one shared Env: `owner_->top_env()`. That Env is read by any number of
+// fiber bodies (free variables, prim/global cache probes, capture copies,
+// typecheck walks) while the main thread evaluates a top-level `define`,
+// which appends to the SAME binding arrays and O(1) index maps (TSan:
+// Env::lookup / lookup_binding / local_symid_last / alloc_env_frame_from_env
+// vs bind_symid_with_linear_state / set_pool / bind_define_value_in_env).
+//
+// The fix publishes the shared top env's binding SET behind one
+// reader/writer lock owned by the Evaluator: readers (lookup + every span
+// consumer) take it shared, writers (bind / unbind / rekey / replace) take
+// it exclusive. Private envs — call frames, capture copies, module envs —
+// are NOT the top env, so helpers return an EMPTY guard and pay nothing:
+// the hot per-call bind path is untouched.
+namespace {
+    inline std::shared_mutex* shared_top_bindings_mu(const Env& e) noexcept {
+        auto* o = e.owner();
+        if (o == nullptr)
+            return nullptr;
+        if (static_cast<const Env*>(&o->top_env()) != &e)
+            return nullptr;
+        return &o->top_env_bindings_mutex();
+    }
+} // namespace
+
+bool Env::is_shared_top_env() const noexcept {
+    return shared_top_bindings_mu(*this) != nullptr;
+}
+
+namespace {
+    // Issue #4717: how deep THIS thread holds the shared top-env binding lock.
+    // Re-entrancy comes from Env methods that call each other (set_linear_
+    // ownership_state_by_name -> set_linear_ownership_state) and from mutation
+    // brackets that call bind/unbind internally. Clang-format: keep the
+    // counter next to its only users.
+    thread_local int t_env_bind_depth = 0;
+} // namespace
+
+Env::BindingsGuard::BindingsGuard(BindingsGuard&& o) noexcept
+    : held_(o.held_)
+    , exclusive_(o.exclusive_)
+    , mu_(o.mu_)
+    , slk_(std::move(o.slk_))
+    , ulk_(std::move(o.ulk_)) {
+    o.held_ = false;
+}
+
+Env::BindingsGuard& Env::BindingsGuard::operator=(BindingsGuard&& o) noexcept {
+    if (this != &o) {
+        if (held_)
+            --t_env_bind_depth;
+        held_ = o.held_;
+        exclusive_ = o.exclusive_;
+        mu_ = o.mu_;
+        slk_ = std::move(o.slk_);
+        ulk_ = std::move(o.ulk_);
+        o.held_ = false;
+    }
+    return *this;
+}
+
+Env::BindingsGuard::~BindingsGuard() {
+    // Member locks release AFTER this body; the depth decrement only tracks
+    // this thread's re-entrancy bookkeeping.
+    if (held_)
+        --t_env_bind_depth;
+}
+
+void Env::BindingsGuard::unlock() noexcept {
+    if (!held_)
+        return;
+    held_ = false;
+    --t_env_bind_depth;
+    slk_ = std::shared_lock<std::shared_mutex>();
+    ulk_ = std::unique_lock<std::shared_mutex>();
+}
+
+Env::BindingsGuard Env::BindingsGuard::acquire(const Env& e, bool exclusive) {
+    BindingsGuard g;
+    if (t_env_bind_depth > 0)
+        return g; // already held by this thread — re-entrant, no-op
+    auto* mu = shared_top_bindings_mu(e);
+    if (mu == nullptr)
+        return g; // private env: nothing to publish
+    g.mu_ = mu;
+    g.exclusive_ = exclusive;
+    if (exclusive)
+        g.ulk_ = std::unique_lock<std::shared_mutex>(*mu);
+    else
+        g.slk_ = std::shared_lock<std::shared_mutex>(*mu);
+    g.held_ = true;
+    ++t_env_bind_depth;
+    return g;
+}
+
+Env::BindingsGuard Env::lock_bindings_shared() const {
+    return BindingsGuard::acquire(*this, /*exclusive=*/false);
+}
+
+Env::BindingsGuard Env::lock_bindings_exclusive() {
+    return BindingsGuard::acquire(*this, /*exclusive=*/true);
+}
 std::optional<EvalValue> Env::lookup(std::string_view n) const {
     // The pre (!n.empty()) is on the declaration in evaluator.ixx.
     if (!env_lookup_enter())
         return std::nullopt;
     EnvLookupDepthGuard dec(true);
+    auto bind_guard = lock_bindings_shared(); // #4717 shared top env
     // Issue #4350: authoritative O(1) local probes (newest binding wins —
     // the same answer as a reverse scan, since every append re-points the
     // index at the new slot and erasures rebuild it).
@@ -400,7 +505,8 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
     std::optional<aura::ast::SymId> interned_sym;
     auto ensure_interned = [&]() -> aura::ast::SymId {
         if (!interned_sym && pool_)
-            interned_sym = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
+            interned_sym = const_cast<aura::ast::StringPool*>(pool_.load(std::memory_order_acquire))
+                               ->intern(n);
         return interned_sym.value_or(aura::ast::INVALID_SYM);
     };
     if (pool_ && !bindings_symid_.empty()) {
@@ -450,6 +556,11 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
     if (owner_ && parent_ == nullptr && host_empty_capture4595 &&
         (!cap_snap_ || (cap_snap_->bindings_.empty() && cap_snap_->bindings_symid_.empty()) ||
          cap_snap_->live_safe_top)) {
+        // Issue #4717: this consult reads the SHARED top env arrays from a
+        // (private) capture env, so the lookup-entry guard covers this env,
+        // not top_ - take top_ publication lock too (re-entrant no-op when
+        // this env already is top_).
+        auto top_bind_guard = owner_->top_env().lock_bindings_shared();
         if (const auto* b = local_binding(std::as_const(*owner_).top_env())) {
             if (is_cell(*b)) {
                 auto ci = as_cell_id(*b);
@@ -459,6 +570,9 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
             return *b;
         }
     }
+    // Issue #4717: the array reads above are done; do NOT straddle the    // EnvFrame shard walk
+    // below with the bindings lock (lock-order).
+    bind_guard.unlock();
     // 2. parent_ pointer chain — Wave2: iterative (no recursive C++ stack
     //    per hop). Same hop budget as SoA walk / env_lookup_enter.
     // Issue #2735 / #2739: do NOT return nullopt when parent_ walk misses —
@@ -469,11 +583,16 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
     if (parent_) {
         std::size_t hops = 0;
         for (const Env* p = parent_; p && hops < MAX_ENV_DEPTH; p = p->parent_, ++hops) {
+            // Issue #4717: a hop may be the shared top env (lexical chain
+            // reaching top_). Empty guard on every private hop.
+            auto hop_guard = p->lock_bindings_shared();
             // Issue #4350: authoritative indexes on every hop (no per-miss scan).
             if (const auto* hit = local_binding(*p))
                 return *hit;
             if (p->pool_ && !p->bindings_symid_.empty()) {
-                auto s = const_cast<aura::ast::StringPool*>(p->pool_)->intern(n);
+                auto s =
+                    const_cast<aura::ast::StringPool*>(p->pool_.load(std::memory_order_acquire))
+                        ->intern(n);
                 if (const auto* hit = local_symid_binding(*p, s))
                     return *hit;
             }
@@ -578,6 +697,11 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
             if (cur == 0 && owner_) {
                 // Issue #4350: O(1) via top_'s authoritative name index
                 // (newest binding wins — same answer as the reverse scan).
+                // Issue #4717: this consult reads the SHARED top env arrays from a
+                // (private) capture env, so the lookup-entry guard covers this env,
+                // not top_ - take top_ publication lock too (re-entrant no-op when
+                // this env already is top_).
+                auto top_bind_guard = owner_->top_env().lock_bindings_shared();
                 if (const auto* b = local_binding(std::as_const(*owner_).top_env())) {
                     if (is_cell(*b)) {
                         auto ci = as_cell_id(*b);
@@ -594,6 +718,11 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
         // for the parent_id_==0 start path (no hops into non-zero frames).
         if (parent_id_ == 0 && owner_) {
             // Check live top_ env's bindings (Issue #4350: O(1) index).
+            // Issue #4717: this consult reads the SHARED top env arrays from a
+            // (private) capture env, so the lookup-entry guard covers this env,
+            // not top_ - take top_ publication lock too (re-entrant no-op when
+            // this env already is top_).
+            auto top_bind_guard = owner_->top_env().lock_bindings_shared();
             if (const auto* b = local_binding(std::as_const(*owner_).top_env())) {
                 if (is_cell(*b)) {
                     auto ci = as_cell_id(*b);
@@ -637,6 +766,7 @@ std::optional<EvalValue> Env::lookup_binding(std::string_view n) const {
     if (!env_lookup_enter())
         return std::nullopt;
     EnvLookupDepthGuard dec(true);
+    auto bind_guard = lock_bindings_shared(); // #4717 shared top env
     for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it)
         if (it->first == n)
             return it->second;
@@ -659,9 +789,23 @@ std::optional<EvalValue> Env::lookup_binding(std::string_view n) const {
 // gradual/suite/integ/bash regressions ("unbound variable: x").
 void Env::set_pool(const aura::ast::StringPool* p) {
     const auto gen = p ? p->intern_epoch() : 0;
-    if (p == pool_ && pool_epoch_ == gen)
+    // Issue #4717 step 2: eval_flat_body calls set_pool on the env it was
+    // handed, and for the shared top env that write raced every body's
+    // pool()/lookup read (TSan: set_pool rekey vectors vs try_eval_flat_hot
+    // / local_symid_last). The pool identification is published atomically
+    // so the repeated no-op call (the common case, one per body entry) costs
+    // two acquire loads and never takes the binding lock.
+    if (p == pool_.load(std::memory_order_acquire) &&
+        pool_epoch_.load(std::memory_order_acquire) == gen)
         return;
-    pool_epoch_ = gen;
+    // Only a real rekey touches the arrays/indexes: serialize with readers
+    // of the shared top env (empty guard for private envs).
+    auto bind_guard = lock_bindings_exclusive();
+    if (p == pool_.load(std::memory_order_acquire) &&
+        pool_epoch_.load(std::memory_order_acquire) == gen)
+        return; // another body completed the same rekey
+    const auto* prev_pool = pool_.load(std::memory_order_acquire);
+    pool_epoch_.store(gen, std::memory_order_release);
     // Issue #2868: SymIds are pool-local. set-code allocates a fresh
     // StringPool per install; without re-key, lookup_by_symid /
     // lookup_cell_index SymId paths treat `intern("prom_leaf_a")` in
@@ -714,7 +858,7 @@ void Env::set_pool(const aura::ast::StringPool* p) {
                     symid_index_[bindings_symid_[i].first] = i;
             }
             bindings_linear_ownership_state_.assign(bindings_symid_.size(), linear_rt::Untracked);
-        } else if (pool_ && !bindings_symid_.empty()) {
+        } else if (prev_pool != nullptr && !bindings_symid_.empty()) {
             // SymId-only capture frame: resolve names via the previous pool.
             std::vector<std::pair<aura::ast::SymId, types::EvalValue>> rekeyed;
             std::vector<std::uint8_t> rekeyed_lin;
@@ -722,7 +866,7 @@ void Env::set_pool(const aura::ast::StringPool* p) {
             rekeyed_lin.reserve(bindings_symid_.size());
             auto* mut = const_cast<aura::ast::StringPool*>(p);
             for (std::size_t i = 0; i < bindings_symid_.size(); ++i) {
-                const auto name = pool_->resolve(bindings_symid_[i].first);
+                const auto name = prev_pool->resolve(bindings_symid_[i].first);
                 if (name.empty())
                     continue;
                 rekeyed.emplace_back(mut->intern(name), bindings_symid_[i].second);
@@ -739,7 +883,7 @@ void Env::set_pool(const aura::ast::StringPool* p) {
                 symid_index_[bindings_symid_[i].first] = i;
         }
     }
-    pool_ = p;
+    pool_.store(p, std::memory_order_release);
 }
 
 void Env::bind_symid(aura::ast::SymId s, types::EvalValue v) {
@@ -751,6 +895,10 @@ void Env::bind_symid(aura::ast::SymId s, types::EvalValue v) {
 // — same Env single-writer contract as bind_with_linear_state (#1861).
 // Concurrent lookup_by_symid during this write is unsupported.
 void Env::bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v, std::uint8_t state) {
+    // Issue #4717: a top-level `define` appends here on the mutating thread
+    // while bodies read the same arrays/indexes. Exclusive guard on the
+    // shared top env; empty (no cost) on every call frame.
+    auto bind_guard = lock_bindings_exclusive();
     bindings_symid_.emplace_back(s, std::move(v));
     // Issue #4343: O(1) SymId lookup index (last-wins for shadowing).
     // Issue #4599 follow-up: small frames (< 9 bindings) scan instead —
@@ -773,7 +921,7 @@ void Env::bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v, s
     // the body exited AND made while free-captures of i see the wrong cell
     // (pred i=8 while local display i=0 → infinite/zero sum).
     if (pool_) {
-        const auto name = pool_->resolve(s);
+        const auto name = pool_.load(std::memory_order_acquire)->resolve(s);
         if (!name.empty()) {
             const auto& val = bindings_symid_.back().second;
             const std::string key(name);
@@ -800,6 +948,7 @@ void Env::bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v, s
 // (evaluator.ixx). Concurrent bind vs lookup on the same Env is
 // unsupported; do not add env_mtx_ on this hot path.
 void Env::bind_with_linear_state(std::string_view n, types::EvalValue v, std::uint8_t state) {
+    auto bind_guard = lock_bindings_exclusive(); // #4717 shared top env
     bindings_.emplace_back(std::string(n), std::move(v));
     if (!binding_index_.empty() || bindings_.size() > 8) {
         if (binding_index_.empty()) {
@@ -814,7 +963,8 @@ void Env::bind_with_linear_state(std::string_view n, types::EvalValue v, std::ui
         // pool_ is const*; intern mutates the pool. StringPool::intern
         // is not thread-safe (#1861) — callers must serialize shared
         // pool mutation externally (single-fiber eval / workspace lock).
-        auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
+        auto s =
+            const_cast<aura::ast::StringPool*>(pool_.load(std::memory_order_acquire))->intern(n);
         bindings_symid_.emplace_back(s, bindings_.back().second);
         // Issue #4343: O(1) SymId lookup index (small frames scan).
         if (!symid_index_.empty() || bindings_symid_.size() > 8) {
@@ -837,6 +987,7 @@ void Env::bind_with_linear_state(std::string_view n, types::EvalValue v, std::ui
 // Rebuilds binding_index_ after erase. Does not touch bindings_symid_
 // (call unbind_local_symid separately so dual-write bind can roll back both).
 bool Env::unbind_local(std::string_view n) {
+    auto bind_guard = lock_bindings_exclusive(); // #4717 shared top env
     bool removed = false;
     for (std::size_t i = bindings_.size(); i > 0; --i) {
         if (bindings_[i - 1].first == n) {
@@ -859,6 +1010,7 @@ bool Env::unbind_local(std::string_view n) {
 }
 
 bool Env::unbind_local_symid(aura::ast::SymId s) {
+    auto bind_guard = lock_bindings_exclusive(); // #4717 shared top env
     bool removed = false;
     for (std::size_t i = bindings_symid_.size(); i > 0; --i) {
         if (bindings_symid_[i - 1].first == s) {
@@ -882,6 +1034,7 @@ bool Env::unbind_local_symid(aura::ast::SymId s) {
 }
 
 std::optional<types::EvalValue> Env::local_symid_last(aura::ast::SymId s) const {
+    auto bind_guard = lock_bindings_shared(); // #4717 shared top env
     if (s == aura::ast::INVALID_SYM || bindings_symid_.empty())
         return std::nullopt;
     // Issue #4599: a handful of params is cheaper as integer compares
@@ -903,6 +1056,7 @@ std::optional<types::EvalValue> Env::local_symid_last(aura::ast::SymId s) const 
 
 bool Env::overwrite_param_slots(std::span<const aura::ast::SymId> syms,
                                 std::span<const types::EvalValue> vals) {
+    auto bind_guard = lock_bindings_exclusive(); // #4717 shared top env
     const auto n = syms.size();
     if (n != vals.size() || bindings_symid_.size() != n)
         return false;
@@ -925,6 +1079,7 @@ bool Env::overwrite_param_slots(std::span<const aura::ast::SymId> syms,
 }
 
 aura::core::VoidResult Env::set_linear_ownership_state(aura::ast::SymId s, std::uint8_t state) {
+    auto bind_guard = lock_bindings_exclusive(); // #4717 shared top env
     for (std::size_t i = bindings_symid_.size(); i > 0; --i) {
         const std::size_t idx = i - 1;
         if (bindings_symid_[idx].first == s) {
@@ -945,7 +1100,8 @@ aura::core::VoidResult Env::set_linear_ownership_state(aura::ast::SymId s, std::
 aura::core::VoidResult Env::set_linear_ownership_state_by_name(std::string_view n,
                                                                std::uint8_t state) {
     if (pool_) {
-        auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
+        auto s =
+            const_cast<aura::ast::StringPool*>(pool_.load(std::memory_order_acquire))->intern(n);
         auto r = set_linear_ownership_state(s, state);
         if (!r)
             return r;
@@ -974,6 +1130,7 @@ std::optional<types::EvalValue> Env::lookup_by_symid(aura::ast::SymId s) const {
     if (!env_lookup_enter())
         return std::nullopt;
     EnvLookupDepthGuard dec(true);
+    auto bind_guard = lock_bindings_shared(); // #4717 shared top env
     // Issue #4343: O(1) index hit before the linear walk. The map keeps
     // the newest index per SymId (bind appends are last-wins), matching
     // the reverse-scan semantics exactly; the walk stays as a
@@ -998,10 +1155,13 @@ std::optional<types::EvalValue> Env::lookup_by_symid(aura::ast::SymId s) const {
     // against the snapshot's pool-local keys is the #4351/#4352
     // collision face (symid-first lookups included).
     if (cap_snap_ && pool_) {
-        if (auto it = cap_snap_->name_index_.find(pool_->resolve(s));
+        if (auto it =
+                cap_snap_->name_index_.find(pool_.load(std::memory_order_acquire)->resolve(s));
             it != cap_snap_->name_index_.end())
             return cap_snap_->bindings_[it->second].second;
     }
+    // Issue #4717: local array reads done - release before the chain walk.
+    bind_guard.unlock();
     // Issue #1128: try SoA owner chain first, then fall through to
     // legacy parent_ so mixed SoA/legacy graphs still resolve.
     // lookup_by_symid_chain is already iterative + hop-bounded.
@@ -1015,7 +1175,7 @@ std::optional<types::EvalValue> Env::lookup_by_symid(aura::ast::SymId s) const {
 // Issue #207 (Cycle 1): bindings_with_names() — materializes
 // the named version of the bindings. Walks the SymId-keyed
 // bindings_symid_ array and resolves each SymId to a name
-// string via pool_->resolve(). Returns a new vector with
+// string via pool_.load(std::memory_order_acquire)->resolve(). Returns a new vector with
 // (name, value) pairs in the same order as bindings_symid_.
 //
 // This is the "current behavior, as a derived view" per the
@@ -1031,23 +1191,24 @@ std::optional<types::EvalValue> Env::lookup_by_symid(aura::ast::SymId s) const {
 // fallback for envs that haven't been migrated yet.
 //
 // Issue #1863: no shared_lock / env_symid_mtx_. Iteration of
-// bindings_symid_ plus pool_->resolve(sym) is unlocked. Concurrent
+// bindings_symid_ plus pool_.load(std::memory_order_acquire)->resolve(sym) is unlocked. Concurrent
 // bind_symid* / bind_with_linear_state can realloc the vector
 // (UAF) or race pool intern vs resolve (#1861). Unsupported under
 // the Env single-writer contract — sequential bind then
 // bindings_with_names is the supported model (same class as #1862).
 std::vector<std::pair<std::string, types::EvalValue>> Env::bindings_with_names() const {
+    auto bind_guard = lock_bindings_shared(); // #4717 shared top env
     std::vector<std::pair<std::string, types::EvalValue>> out;
     out.reserve(bindings_symid_.size());
     for (const auto& [sym, val] : bindings_symid_) {
         std::string name;
         if (pool_) {
-            // pool_->resolve() returns the canonical name
+            // pool_.load(std::memory_order_acquire)->resolve() returns the canonical name
             // (string_view) for this SymId. If the SymId
             // is not in the pool (defensive), the resolved
             // view is empty. Const read only — safe vs concurrent
             // intern only under external serialize (#1861/#1863).
-            std::string_view resolved = pool_->resolve(sym);
+            std::string_view resolved = pool_.load(std::memory_order_acquire)->resolve(sym);
             if (!resolved.empty())
                 name.assign(resolved.data(), resolved.size());
         }
@@ -1093,7 +1254,8 @@ std::optional<types::EvalValue> Env::lookup_by_intern(std::string_view n,
     // logically const (no observable env state change beyond
     // the pool's intern side effect, which is idempotent for
     // already-interned names).
-    aura::ast::StringPool* use_pool = const_cast<aura::ast::StringPool*>(pool ? pool : pool_);
+    aura::ast::StringPool* use_pool =
+        const_cast<aura::ast::StringPool*>(pool ? pool : pool_.load(std::memory_order_acquire));
     if (!use_pool) {
         // No pool available — can't intern. Fall through to
         // the legacy string-based lookup as a last resort.
@@ -1187,10 +1349,9 @@ void EnvFrame::bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue
     }
     // Issue #1903: assert dual-path consistency after every bind_symid.
     // bind_symid_with_linear_state has an asymmetry: when pool_ is set
-    // but pool_->resolve(s) returns empty (e.g. synthetic / unresolved
-    // SymId), the bindings_ array is shorter than bindings_symid_ — a
-    // real desync. The helper bumps envframe_desync_detected_ in that
-    // case so observability surfaces it.
+    // but pool_.load(std::memory_order_acquire)->resolve(s) returns empty (e.g. synthetic /
+    // unresolved SymId), the bindings_ array is shorter than bindings_symid_ — a real desync. The
+    // helper bumps envframe_desync_detected_ in that case so observability surfaces it.
     ensure_dual_path_consistent();
 }
 
@@ -1199,8 +1360,8 @@ void EnvFrame::bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue
 //   2. Linear ownership state length matches bindings_symid_.size()
 //   3. Content parity (when pool_ is set AND lengths match):
 //      for each index i, bindings_[i].second == bindings_symid_[i].second
-//      AND (when pool_->resolve(symid) is non-empty)
-//           bindings_[i].first == pool_->resolve(symid).
+//      AND (when pool_.load(std::memory_order_acquire)->resolve(symid) is non-empty)
+//           bindings_[i].first == pool_.load(std::memory_order_acquire)->resolve(symid).
 //
 // Bumps envframe_dual_consistency_asserted_ on every call (regardless
 // of pass/fail). On desync: also bumps envframe_desync_detected_.
@@ -1215,7 +1376,7 @@ bool EnvFrame::ensure_dual_path_consistent() const noexcept {
 
     bool ok = true;
     // Check 1: length equality. The most common drift mode after
-    // bind_symid_with_linear_state when pool_->resolve(s) returns
+    // bind_symid_with_linear_state when pool_.load(std::memory_order_acquire)->resolve(s) returns
     // empty (bindings_ stays shorter than bindings_symid_).
     if (bindings_.size() != bindings_symid_.size()) {
         ok = false;
@@ -1327,20 +1488,25 @@ std::optional<types::EvalValue> EnvFrame::lookup_local_by_symid(aura::ast::SymId
 // primitives_. No cells_ pointer (pure data). Cell resolution
 // centralized later in lookup paths using Evaluator::cells_.
 aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitives* primitives) {
-    // Issue #145 P0 follow-up: unique_lock on env_frames_mtx_
-    // to serialize push_back with fiber-thread readers
-    // (materialize_call_env). The deque's map array can be
-    // reallocated when the deque grows past the current map
-    // capacity, freeing the map pointer a fiber thread is
-    // reading via env_frame[id]. Unique lock makes the
-    // push_back atomic with respect to readers.
-    // Issue #3900: shard barrier FIRST (index order) — shard readers
-    // no longer hold env_frames_mtx_, and taking the structure mutex
-    // before the shards would AB-BA against in-flight walkers.
-    std::array<std::unique_lock<std::shared_mutex>, kEnvFramesShardCount> ef_barrier;
-    for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
-        ef_barrier[ef_i] = std::unique_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu);
-    std::unique_lock<std::shared_mutex> wlock(env_frames_mtx_);
+    // Issue #4717 step 2: allocation fast path. env_frames_ is a
+    // stable-address slot store (EnvFrameStore, root->page->block with
+    // release-published atomic pointers), so a growing arena no longer
+    // invalidates a reader's map/slot reference and no longer needs the
+    // 16-shard barrier + env_frames_mtx_ unique lock that used to be
+    // taken on EVERY captured frame. What is still required is writer
+    // serialization (the #4459 reuse freelist + the index/alloc order),
+    // which is one leaf mutex:
+    //
+    //   * readers (env_frame, iteration, size()) take nothing here — they
+    //     walk root->page->block with acquire loads over the published
+    //     size, and slot contents stay guarded by the per-id
+    //     EnvFramesShard lock exactly as before;
+    //   * slot REUSE rewrites an already-published slot, so it still runs
+    //     under that id's shard lock (taken after allocation).
+    //
+    // The all-shard barrier now exists only on scan paths that need a
+    // frozen snapshot (truncate_env_frames_to_checkpoint, compact).
+    std::lock_guard<std::mutex> alloc_lock(env_frame_alloc_mtx_);
     if (env_frames_.size() >= NULL_ENV_ID) {
         // 4G envs reached. Return NULL to signal overflow;
         // callers should treat this as fatal (env allocation
@@ -1389,15 +1555,17 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitiv
     // this the legacy 0 sentinel would either always match (cold
     // start) or always mismatch (after first env_generation_ bump).
     fr.env_gen_stamp_ = env_generation_;
-    env_frames_.push_back(std::move(fr));
-    const EnvId id = static_cast<EnvId>(env_frames_.size() - 1);
-    // Issue #1903: set the owner_ back-pointer so the frame's
-    // ensure_dual_path_consistent() can route counter bumps through
-    // the owning Evaluator. Set AFTER push_back (index stable).
-    env_frames_[id].set_owner(this);
+    // Issue #1903 / #4717: set the owner_ back-pointer BEFORE the slot is
+    // published. The store publishes the slot index with a release store,
+    // so a reader that observes the new id is guaranteed to see a fully
+    // constructed frame (bindings empty, but every scalar written).
+    fr.set_owner(this);
+    const auto new_id = env_frames_.push_back(std::move(fr));
+    if (new_id == NULL_ENV_ID) [[unlikely]]
+        return NULL_ENV_ID;
+    const EnvId id = static_cast<EnvId>(new_id);
     // Issue #4580: publish the new size with release — is_valid_env_id
-    // reads this atomic instead of deque::size(), so unlocked audit
-    // readers never race the push_back.
+    // reads this atomic, so unlocked audit readers never race the growth.
     env_frames_published_size_.store(env_frames_.size(), std::memory_order_release);
     return id;
 }
@@ -1434,6 +1602,11 @@ aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(const Env& e, EnvId pa
         else
             pid = e.parent_id();
     }
+    // Issue #4717: the capture source may BE the shared top env (a closure
+    // capturing a global define), which another body may be binding into.
+    // Hold the publication lock shared for the whole copy; empty guard for
+    // private envs.
+    auto src_guard = e.lock_bindings_shared();
     EnvId id = alloc_env_frame(pid);
     if (id == NULL_ENV_ID)
         return NULL_ENV_ID;
@@ -1494,7 +1667,7 @@ aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(const Env& e, EnvId pa
 // post-Commit 1/2 the legacy `bindings_` array is no longer eagerly
 // populated — it stays empty until a caller invokes
 // `Env::bindings_with_names()` (which materializes via
-// `pool_->resolve()` + `"@<symid:N>"` fallback). Issue #1903 turned
+// `pool_.load(std::memory_order_acquire)->resolve()` + `"@<symid:N>"` fallback). Issue #1903 turned
 // the size-only check into a full 3-check semantic comparison
 // (length + linear-ownership SoA + content parity when pool_ is set)
 // inside EnvFrame::ensure_dual_path_consistent(). This free function
@@ -1983,7 +2156,7 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
                                  "[#242 warning] materialize_call_env: stale EnvFrame id={} "
                                  "(frame.version_={}, current defuse_version_={}). "
                                  "Bindings skipped — not copied into eval_flat.",
-                                 cl.env_id, fr.version_, cur_defuse);
+                                 cl.env_id, fr.version_.load(), cur_defuse);
                 }
             }
             ne.set_env_version(cur_defuse);
@@ -2707,7 +2880,7 @@ void Evaluator::refresh_stale_frame_in_walk(EnvId id, const char* site) const {
                      "[#242 warning] {}: stale EnvFrame id={} "
                      "(frame.version_={}, current defuse_version_={}). "
                      "Bindings left in place; version_ not advanced.",
-                     site, id, fr.version_, current);
+                     site, id, fr.version_.load(), current);
     }
 }
 
@@ -3541,7 +3714,13 @@ std::size_t Evaluator::compact_env_frames() {
     }
 
     const std::size_t reclaimed = orig_size - new_env_frames.size();
-    env_frames_ = std::move(new_env_frames);
+    // Issue #4717 step 2: env_frames_ is a stable-address slot store, not a
+    // movable container. Rebuild it from the packed frames; the whole compact
+    // already holds every EnvFramesShard + env_frames_mtx_ exclusive, so no
+    // reader can observe the intermediate state.
+    env_frames_.clear();
+    for (auto& packed : new_env_frames)
+        (void)env_frames_.push_back(std::move(packed));
     // Issue #4459: remap invalidates freelist indices. Drop them;
     // the packed deque has no holes to reuse.
     env_frame_reuse_.clear();
@@ -4520,6 +4699,7 @@ EvalValue* Env::lookup_cell_ptr(std::string_view n, std::vector<EvalValue>* cell
     if (owner_ && parent_ == nullptr && host_empty_capture4595 &&
         (!cap_snap_ || (cap_snap_->bindings_.empty() && cap_snap_->bindings_symid_.empty()) ||
          cap_snap_->live_safe_top)) {
+        auto top_bind_guard = owner_->top_env().lock_bindings_shared(); // #4717
         auto tb4595 = owner_->top_env().bindings();
         for (auto it = tb4595.rbegin(); it != tb4595.rend(); ++it) {
             auto& b = *it;
@@ -4605,6 +4785,7 @@ EvalValue* Env::lookup_cell_ptr(std::string_view n, std::vector<EvalValue>* cell
     // 4. Issue #2870 / #2566: live top_ free-var cells after parent miss
     //    (named-let free-var set! of top-level define; empty materialize).
     if (owner_) {
+        auto top_bind_guard = owner_->top_env().lock_bindings_shared(); // #4717
         for (auto& b : owner_->top_env().bindings()) {
             if (b.first == n) {
                 if (is_cell(b.second)) {
@@ -4648,7 +4829,8 @@ std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
     // 1b. Issue #1482: SymId PRIMARY when string bindings empty
     // (materialize may only have rehydrated bindings_symid_).
     if (pool_ && !bindings_symid_.empty()) {
-        auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
+        auto s =
+            const_cast<aura::ast::StringPool*>(pool_.load(std::memory_order_acquire))->intern(n);
         for (auto it = bindings_symid_.rbegin(); it != bindings_symid_.rend(); ++it) {
             if (it->first == s) {
                 if (is_cell(it->second))
@@ -4676,6 +4858,7 @@ std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
     if (owner_ && parent_ == nullptr && host_empty_capture4595 &&
         (!cap_snap_ || (cap_snap_->bindings_.empty() && cap_snap_->bindings_symid_.empty()) ||
          cap_snap_->live_safe_top)) {
+        auto top_bind_guard = owner_->top_env().lock_bindings_shared(); // #4717
         auto tb4595 = owner_->top_env().bindings();
         for (auto it = tb4595.rbegin(); it != tb4595.rend(); ++it) {
             auto& b = *it;
@@ -4725,7 +4908,8 @@ std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
             // SymId path on parent frames. A behind capture may only
             // have bindings_symid_.
             if (pool_ && !f.bindings_symid_.empty()) {
-                auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
+                auto s = const_cast<aura::ast::StringPool*>(pool_.load(std::memory_order_acquire))
+                             ->intern(n);
                 for (auto it = f.bindings_symid_.rbegin(); it != f.bindings_symid_.rend(); ++it) {
                     if (it->first == s) {
                         if (is_cell(it->second)) {
@@ -4759,6 +4943,7 @@ std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
     //    (Env::lookup hits live top_ at cur==0). Prefer parent_ above so
     //    let* locals shadow same-named top_ defines.
     if (owner_) {
+        auto top_bind_guard = owner_->top_env().lock_bindings_shared(); // #4717
         for (auto& b : owner_->top_env().bindings()) {
             if (b.first == n) {
                 if (is_cell(b.second))
@@ -4767,7 +4952,8 @@ std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
             }
         }
         if (pool_) {
-            auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
+            auto s = const_cast<aura::ast::StringPool*>(pool_.load(std::memory_order_acquire))
+                         ->intern(n);
             for (auto it = owner_->top_env().bindings_symid().rbegin();
                  it != owner_->top_env().bindings_symid().rend(); ++it) {
                 if (it->first == s) {

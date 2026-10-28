@@ -2,6 +2,7 @@
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
+#include <atomic>               // Issue #4717: atomic_ref coverage counters
 #include "rebind_phase_stats.h" // per-phase rebind timing (opt-in)
 
 #include <fcntl.h>
@@ -141,7 +142,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         std::shared_lock<std::shared_mutex> rlock;
         if (ev.mutation_boundary_depth() == 0 && !ev.mutation_boundary_held())
             rlock = std::shared_lock<std::shared_mutex>(ev.workspace_mtx_);
-        ev.coverage_counters_[1]++;
+        std::atomic_ref<std::uint64_t>(ev.coverage_counters_[1])
+            .fetch_add(1, std::memory_order_relaxed);
         if (!ev.workspace_flat_ || !ev.workspace_pool_)
             return std::nullopt;
 
@@ -342,8 +344,10 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 // blanket drop here is gone: dropping pre-existing shadows
                 // at install time silently rerouted calls like (check ...)
                 // to the primitive after the first reload.
-                ev.coverage_counters_[0]++;
-                ev.coverage_counters_[5]++;
+                std::atomic_ref<std::uint64_t>(ev.coverage_counters_[0])
+                    .fetch_add(1, std::memory_order_relaxed);
+                std::atomic_ref<std::uint64_t>(ev.coverage_counters_[5])
+                    .fetch_add(1, std::memory_order_relaxed);
                 if (a.empty() || !is_string(a[0])) {
                     ok = false;
                     return mev("bad-arg", "usage: (set-code code-string)");
@@ -432,7 +436,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                     // Store error for eval-current/eval-current-output to propagate
                     ev.last_set_code_error_kind_ = "parse";
                     ev.last_set_code_error_msg_ = err;
-                    ev.coverage_counters_[5]--;
+                    std::atomic_ref<std::uint64_t>(ev.coverage_counters_[5])
+                        .fetch_sub(1, std::memory_order_relaxed);
                     ev.workspace_pool_ = saved_pool;
                     ev.workspace_flat_ = saved_flat;
                     ok = false;
@@ -720,11 +725,16 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         }
         struct RestoreTopPool {
             Env& top;
+            // Issue #4717: the restore mutates the SHARED top env while other
+            // fiber bodies read it; one exclusive guard covers the whole
+            // bracket (inner bind/unbind/set_pool are re-entrant no-ops).
+            Env::BindingsGuard guard;
             const aura::ast::StringPool* saved;
             std::size_t binds;
             const std::vector<std::string>* keep;
             explicit RestoreTopPool(Env& t, const std::vector<std::string>* k)
                 : top(t)
+                , guard(t.lock_bindings_exclusive())
                 , saved(t.pool())
                 , binds(t.bindings().size())
                 , keep(k) {}
@@ -764,6 +774,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         const std::uint64_t rehome_from = ev.closure_id_watermark();
         auto result = ev.eval_flat(*flat_p, *pool_p, pr.root, ev.top_);
         {
+            auto top_bind_guard = ev.top_env().lock_bindings_shared(); // #4717
             const auto& tb = ev.top_env().bindings();
             if (tb.size() > restore_top_pool.binds) {
                 bool any_drop = false;
@@ -1095,7 +1106,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 }
             }
         }
-        ev.coverage_counters_[2]++;
+        std::atomic_ref<std::uint64_t>(ev.coverage_counters_[2])
+            .fetch_add(1, std::memory_order_relaxed);
         // set-code errors are evaluator-local (not under workspace_mtx_).
         if (!ev.last_set_code_error_kind_.empty()) {
             auto kind = std::move(ev.last_set_code_error_kind_);
@@ -1135,7 +1147,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // Reason string stays hygiene-pass-limit (or the other deny code).
         if (const char* why = hygiene_expand_deny_why_4078())
             return mev(why, why);
-        ev.coverage_counters_[4]++;
+        std::atomic_ref<std::uint64_t>(ev.coverage_counters_[4])
+            .fetch_add(1, std::memory_order_relaxed);
 
         // Incremental eval cache (Issue #32b / #159 / #1441).
         // Issue #3915 / #3918: dirty-check the *root*, not the last child.
@@ -1532,7 +1545,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
     // subtree. The win scales with workspace size.
     add("typecheck-incremental", [&ev](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
-        ev.coverage_counters_[1]++;
+        std::atomic_ref<std::uint64_t>(ev.coverage_counters_[1])
+            .fetch_add(1, std::memory_order_relaxed);
         if (!ev.workspace_flat_ || !ev.workspace_pool_) {
             const auto eidx = static_cast<std::uint64_t>(ev.push_string_heap("no workspace"));
             return make_string(eidx);

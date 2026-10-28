@@ -272,7 +272,7 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
         // typecheck-incremental still sees the live workspace.
         {
             const bool hard_gate = mutate_type_gate::is_hard();
-            if (rebind_light_path_ && !hard_gate &&
+            if (rebind_light_path() && !hard_gate &&
                 !aura::compiler::typed_audit::production_defaults_active()) {
                 note_type_dirty_txn_this_boundary();
                 note_infer_solve_solved(true);
@@ -329,6 +329,7 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             // rebuild when this checker already holds the same set. A fresh
             // checker has fp 0 and always seeds.
             std::uint64_t host_fp = 0;
+            auto top_bind_guard = top_.lock_bindings_shared(); // #4717 shared top env
             {
                 std::uint64_t h = 1469598103934665603ull;
                 auto mix = [&](std::uint64_t x) {
