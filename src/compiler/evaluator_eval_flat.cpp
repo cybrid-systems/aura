@@ -6564,6 +6564,11 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
         const Env* current_env = &env;
         aura::ast::NodeId current_id = id;
         std::optional<Env> tail_env;
+        // Issue #4717 (P5): loop-local validity snapshot (see the is_valid
+        // fast path below). body_gen_flat tracks the flat the snapshot was
+        // taken from — TCO may re-point f mid-loop.
+        std::uint16_t body_gen = f->generation();
+        aura::ast::FlatAST* body_gen_flat = f;
         // Issue #2871: when TCO rebinds tail_env, any Env that still serves
         // as a raw parent_ target (letrec / inline-lambda child frames)
         // must outlive the rebind. Call TCO materialize uses SoA capture
@@ -6813,8 +6818,20 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
             tw_stw_safepoint();
             if (tw_reclaim_due())
                 maybe_reclaim_tw_unreachable();
-            current_flat_.store(f, std::memory_order_relaxed);
-            current_pool_.store(p, std::memory_order_relaxed);
+            // Issue #4717 (P5): read-mostly publish. This pair is the
+            // per-eval "current source" hint; a store per node visit made all
+            // bodies write one shared cache line on every node, so every
+            // fiber's copy of that line was invalidated by every other fiber
+            // (the store is an exclusive grab even when the value is
+            // unchanged). Re-stamp only when the line does not already hold
+            // this body's pointers: the post-condition ("after this point the
+            // hint is f/p unless another body races") is unchanged, but the
+            // steady state leaves the line shared-clean and the per-node cost
+            // is two relaxed loads off a line that stays in S.
+            if (current_flat_.load(std::memory_order_relaxed) != f)
+                current_flat_.store(f, std::memory_order_relaxed);
+            if (current_pool_.load(std::memory_order_relaxed) != p)
+                current_pool_.store(p, std::memory_order_relaxed);
             // Issue #3457: SymId intern is pool-local. TCO / nested
             // eval / a fresh CompilerService::eval snippet swap `p`.
             bind_sym_intern_pool(p);
@@ -6835,21 +6852,46 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
             // MacroIntroduced only; residual live slots lag. Eval of the
             // current tree is the layout face — refresh live current_id
             // then re-check. Free-list tombstones stay InternalError.
-            if (!f->is_valid(current_id)) {
-                if (f->is_live_node(current_id))
-                    f->restamp_node_generation(current_id);
+            //
+            // Issue #4717 (P5): the observe-only predicate
+            // (id in range && node_gen_[id] == generation_) is answered from a
+            // loop-local generation snapshot so the interpreter does not pay
+            // is_valid()'s shared-line counter RMW on every node visit. The
+            // snapshot can only ACCEPT a slot whose generation equals the
+            // snapshot generation while the workspace generation still equals
+            // it, i.e. exactly what is_valid() would accept; any mismatch —
+            // TCO re-point of f, a mid-body restamp, a generation bump, a
+            // recycled slot (node_gen_ == 0) or an out-of-range id — falls
+            // into the exact oracle below, which keeps the #3523 restamp and
+            // the #4349 StaleWorkspace refusal byte-for-byte.
+            if (f != body_gen_flat) {
+                body_gen_flat = f;
+                body_gen = f->generation();
+            }
+            const auto live_gen = f->generation();
+            if (live_gen != body_gen || current_id >= f->size() ||
+                f->node_gen_for(current_id) != live_gen) {
                 if (!f->is_valid(current_id)) {
-                    // Issue #4349: ast:restore over a post-mutate snapshot
-                    // leaves env closures holding node ids that are dead in
-                    // the restored flat. That is a documented, recoverable
-                    // workspace face — not an internal error. Tell the caller
-                    // how to re-bind.
-                    return std::unexpected(
-                        Diagnostic{ErrorKind::StaleWorkspace,
-                                   "stale node id (gen mismatch): the workspace "
-                                   "changed under compiled definitions (ast:restore) "
-                                   "— run (eval-current) to re-bind, then retry"});
+                    if (f->is_live_node(current_id))
+                        f->restamp_node_generation(current_id);
+                    if (!f->is_valid(current_id)) {
+                        // Issue #4349: ast:restore over a post-mutate snapshot
+                        // leaves env closures holding node ids that are dead in
+                        // the restored flat. That is a documented, recoverable
+                        // workspace face — not an internal error. Tell the caller
+                        // how to re-bind.
+                        return std::unexpected(
+                            Diagnostic{ErrorKind::StaleWorkspace,
+                                       "stale node id (gen mismatch): the workspace "
+                                       "changed under compiled definitions (ast:restore) "
+                                       "— run (eval-current) to re-bind, then retry"});
+                    }
                 }
+                // Re-validate the snapshot against whatever the slow path
+                // just settled (restamp_node_generation writes node_gen_ from
+                // the live generation).
+                body_gen_flat = f;
+                body_gen = f->generation();
             }
             if (current_id >= f->size())
                 return std::unexpected(Diagnostic{ErrorKind::InternalError, "invalid node id"});
