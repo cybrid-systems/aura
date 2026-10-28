@@ -1515,8 +1515,9 @@ EOF
             && printf '%s\n' "$1" | grep -qx 'K1 #t' \
             && printf '%s\n' "$1" | grep -qx 'K2 #t' \
             && printf '%s\n' "$1" | grep -qx 'RESTORE1 #t' \
-            && ! printf '%s\n' "$1" | grep -q 'author=0' \
-            && ! printf '%s\n' "$1" | grep -q 'composite=0'
+            && printf '%s\n' "$1" | grep -q 'op=ast:restore sum=restore snapshot-1 rolled-back=2' \
+            && ! printf '%s\n' "$1" | tr '"' '\n' | grep 'op=rebind\|op=structural-set-child' | grep -q 'author=0' \
+            && ! printf '%s\n' "$1" | tr '"' '\n' | grep 'op=rebind\|op=structural-set-child' | grep -q 'composite=0'
     }
     if _ok4365 "$hard" && _ok4365 "$soft" && [ -z "$errh" ] && [ -z "$errs" ]; then
         _record_pass "4365-persist-author-composite"
