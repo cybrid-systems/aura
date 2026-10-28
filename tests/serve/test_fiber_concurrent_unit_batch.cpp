@@ -1930,6 +1930,87 @@ int run_4699_source_contract_smoke() {
 }
 } // namespace aura_fiber_run_wave63_4699
 
+// Wave 64 (#4728): fiber_orch - root fiber:yield must not wait for a
+// takeover no parallel body can publish.
+namespace aura_fiber_run_wave64_4728 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+
+// Issue #4728: with parallel bodies (#4717) a sibling never takes the
+// commit mutex, so CliBodyYieldHandoff waited the full 200 ms deadline on
+// every ROOT-program yield whenever a sibling body was alive (~203 ms per
+// yield measured; one #4708 repro went 1 s -> 100 s). The hand-off now
+// waits only when a thread is actually queued on the mutex, so a root
+// yield is release + std::this_thread::yield() + re-acquire again.
+//
+// The program returns (+ (* 1000000 (if live-sibling 1 0)) ms-for-20-yields)
+// so one integer carries both facts: pre-fix ~4064 ms, fixed ~0-20 ms.
+// "live" is the sibling's own entry flag (set by the body before it spins),
+// not its iteration count: with the fix the 20 root yields complete in well
+// under a millisecond, so the sibling may never be scheduled in between.
+constexpr const char* kRootYieldLatencyProgram = R"AURA(
+(define n 0)
+(define stop #f)
+(define started #f)
+(define (spin) (set! started #t) (let l () (if stop n (begin (set! n (+ n 1)) (fiber:yield) (l)))))
+(define f (fiber:spawn spin))
+(define (wait-start k) (if (or started (= k 0)) started (wait-start (- k 1))))
+(define live (wait-start 200000))
+(define (yields k) (let ((t0 (monotonic-ms))) (let w ((i 0)) (if (< i k) (begin (fiber:yield) (w (+ i 1))))) (- (monotonic-ms) t0)))
+(define a (yields 20))
+(set! stop #t)
+(define joined (fiber:join f))
+(+ (* 1000000 (if live 1 0)) a)
+)AURA";
+
+int run_4728_root_yield_latency_smoke() {
+    std::println("\n=== #4728: root fiber:yield latency with a live sibling body ===");
+    CompilerService cs;
+    auto v = cs.eval(kRootYieldLatencyProgram);
+    CHECK(v.has_value(), "#4728 root-yield program evaluates");
+    CHECK(v && is_int(*v), "#4728 root-yield program returns an encoded count");
+    const long long encoded = (v && is_int(*v)) ? static_cast<long long>(as_int(*v)) : -1;
+    const long long ms = encoded % 1000000;
+    const bool sibling_ran = encoded >= 1000000;
+    std::println("  #4728 encoded = {} (live-sibling={}, 20-yields-ms={})", encoded, sibling_ran,
+                 ms);
+    // AC1: the sibling body really was alive (it entered its body before the
+    // root started yielding), otherwise the latency clause below would be
+    // vacuous (no hand-off path taken).
+    CHECK(sibling_ran, "[#4728] AC1 a sibling fiber body was alive during the root yields");
+    // AC2: 20 root yields stay interactive. Pre-fix 4064 ms (200 ms/yield
+    // deadline); post-fix single-digit ms. 400 ms leaves an order of
+    // magnitude of headroom for a loaded CI box.
+    CHECK(ms < 400, "[#4728] AC2 20 root fiber:yield calls while a sibling body is alive "
+                    "stay under 400 ms (was ~4064 ms at 200 ms/yield)");
+    // AC3: source contract - the wait is gated on a real contender.
+    {
+        std::string messaging;
+        for (const char* p : {"src/compiler/evaluator_primitives_messaging.cpp",
+                              "../src/compiler/evaluator_primitives_messaging.cpp"}) {
+            std::ifstream in(p);
+            if (!in)
+                continue;
+            messaging =
+                std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            if (!messaging.empty())
+                break;
+        }
+        CHECK(!messaging.empty(), "#4728 AC3 read evaluator_primitives_messaging.cpp");
+        CHECK(messaging.find("Issue #4728") != std::string::npos,
+              "[#4728] AC3 messaging cites #4728");
+        CHECK(messaging.find("s_cli_commit_waiters") != std::string::npos,
+              "[#4728] AC3 the takeover wait is gated on a real commit-mutex contender");
+    }
+    std::println("\n=== #4728: {} passed, {} failed ===", g_passed, g_failed);
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave64_4728
+
+
 int main() {
 
 
@@ -2217,6 +2298,12 @@ int main() {
     if (int rc = aura_fiber_run_wave63_4699::run_4699_scheduler_yield_interleave_smoke(); rc != 0)
         return rc;
     if (int rc = aura_fiber_run_wave63_4699::run_4699_source_contract_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave64_4728 ########");
+    if (int rc = aura_fiber_run_wave64_4728::run_4728_root_yield_latency_smoke(); rc != 0)
         return rc;
 
     return 0;
