@@ -76,3 +76,46 @@ Callers own apply: write policy knobs, `hot-strategy:swap!`, or
 ## Example
 
 `tests/suite/swarm_2874.aura` — sphere minimization via PSO.
+
+## Instances + ask/tell (#4739)
+
+The legacy `pso:init` / `pso:step!` / `pso:best` / `pso:report` /
+`pso:export` surface runs over **one default instance**. When a caller has
+to gate, parallelise, dedupe or record candidates itself, drive an
+instance by hand:
+
+```aura
+(define s (pso:make (hash "dim" 3 "pop" 16
+                          "bounds" (list (list 0.0 64.0)
+                                         (list 0.0 64.0)
+                                         (list 1.0 128.0))
+                          "seed" 7
+                          "vmax" 0.2             ; velocity clamp, fraction of span
+                          "boundary" "reflect"))) ; clip | reflect | absorb
+
+(pso:ask s)        ; -> this generation's positions - no evaluation
+(pso:tell! s fits) ; fits: one number per position, or #f = rejected/failed
+(pso:best s)
+(pso:population s)
+(pso:report s)     ; kind/gen/best-fit/mean-fit/diversity/rejected
+(pso:export s)     ; -> blob
+(pso:import blob)  ; -> an independent instance resumed from the blob
+```
+
+Semantics:
+
+- **ask/tell split** - `ask` never evaluates and never changes state;
+  `tell!` consumes exactly one ask's positions, then advances the
+  generation.
+- **`#f` fitness** - a rejected or failed candidate: it is counted in
+  the report's `rejected` key and never updates a personal best.
+- **Instances are independent** - all state (positions, velocities,
+  personal bests, PRNG, generation) lives in the instance hash; two
+  instances can run interleaved, and `import` resumes a search.
+- **`vmax`** clamps |v_i| <= vmax * span_i; **`boundary`** chooses
+  `clip` (legacy), `reflect` (velocity flips at the wall) or
+  `absorb` (velocity zeroes).
+
+Instance calls are fibre-safe for evaluation on the caller side: only the
+caller touches the instance hash, so run `ask` on the coordinator, evaluate
+the batch wherever you like, then `tell!` back.

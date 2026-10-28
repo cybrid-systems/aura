@@ -1,0 +1,12 @@
+{
+  "issue": 4739,
+  "title": "stdlib/pso (std/swarm): swarm instance handles + an ask/tell API so callers can gate, parallelise and record candidates themselves",
+  "ok": "OK: std/pso exposes pso:make / pso:ask / pso:tell! / pso:best / pso:export / pso:import over per-instance state (no globals), with rejected candidates recorded and velocity clamp + boundary handling; the legacy pso:init/pso:step! wrappers run over one default instance",
+  "checks": [
+    { "ac": "AC1", "path": "lib/std/pso.aura", "contains": ["(define (pso:make", "(define (pso:ask", "(define (pso:tell!", "(define (pso:import"] },
+    { "ac": "AC1", "path": "lib/std/pso.aura", "contains": ["(define *pso-default* #f)", "pso:default-instance", "pso-make-instance"] },
+    { "ac": "AC2", "path": "lib/std/pso.aura", "contains": ["(define (pso:step! fitness-fn)", "(pso:tell! s (pso-map fitness-fn inds))"] },
+    { "ac": "AC3", "path": "lib/std/pso.aura", "contains": ["pso-velocity", "vmax", "reflect", "absorb"] },
+    { "ac": "AC5", "path": "tests/suite/pso_2877.aura", "contains": ["#4739", "instance ask/tell", "import keeps population"] }
+  ]
+}

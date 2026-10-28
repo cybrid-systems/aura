@@ -11,10 +11,27 @@
 ;   (pso:step! (lambda (x) (- 0.0 (sphere x))))
 ;   (pso:best)
 ;
+; Issue #4739 — instance handles + ask/tell so callers can gate, batch and
+; parallelise evaluation themselves:
+;
+;   (define s (pso:make (hash "dim" 3 "pop" 16 "bounds" b "seed" 7
+;                             "vmax" 0.2 "boundary" "reflect")))
+;   (pso:ask s)        ; -> this generation's positions (no evaluation)
+;   (pso:tell! s fits) ; fits: numbers, or #f for a rejected/failed candidate
+;   (pso:best s) (pso:population s) (pso:report s) (pso:export s)
+;   (pso:import blob)  ; -> an independent instance restored from export
+;
+; Legacy pso:init / pso:step! / pso:best / pso:population / pso:report /
+; pso:export keep working as wrappers over ONE default instance.
+; Velocity clamp ("vmax", a fraction of the dimension span) and boundary
+; handling ("boundary": "clip" | "reflect" | "absorb") are optional;
+; defaults keep the pre-#4739 trajectory (no clamp, clip).
+;
 ; Form order (#2769): export before require.
 
 (export pso:init pso:init-hash pso:step! pso:best pso:population
         pso:report pso:export pso:help pso:defaults
+        pso:make pso:ask pso:tell! pso:import pso:default-instance
         swarm:init swarm:step! swarm:best swarm:report swarm:export
         swarm:population)
 
@@ -32,38 +49,370 @@
         "seed" 424242
         "parallel" #f))
 
+; ── Small list/number helpers ────────────────────────────────────
+(define (pso-opt opts key default)
+  (let ((v (hash-ref opts key)))
+    (if (null? v) default v)))
+
+(define (pso-len lst)
+  (let loop ((xs lst) (n 0))
+    (if (null? xs) n (loop (cdr xs) (+ n 1)))))
+
+(define (pso-ref lst i)
+  (let loop ((xs lst) (k i))
+    (if (null? xs) #f
+      (if (= k 0) (car xs) (loop (cdr xs) (- k 1))))))
+
+(define (pso-set lst i val)
+  (if (null? lst) (list)
+    (if (= i 0) (cons val (cdr lst))
+      (cons (car lst) (pso-set (cdr lst) (- i 1) val)))))
+
+(define (pso-map f lst)
+  (if (null? lst) (list) (cons (f (car lst)) (pso-map f (cdr lst)))))
+
+(define (pso-repeat v n)
+  (let loop ((k 0) (acc (list)))
+    (if (>= k n) (reverse acc) (loop (+ k 1) (cons v acc)))))
+
+(define (pso-sum lst)
+  (let loop ((xs lst) (s 0.0))
+    (if (null? xs) s (loop (cdr xs) (+ s (car xs))))))
+
+(define (pso-max a b) (if (> a b) a b))
+(define (pso-abs x) (if (< x 0.0) (- 0.0 x) x))
+(define (pso-clip x lo hi) (if (< x lo) lo (if (> x hi) hi x)))
+
+; ── Per-instance PRNG (state lives in the instance, not a global) ──
+(define (pso-rng! s)
+  (let ((n (modulo (+ (* (hash-ref s "rng") 1103515245) 12345) 2147483647)))
+    (hash-set! s "rng" n)
+    n))
+
+(define (pso-rf! s) (/ (pso-rng! s) 2147483647.0))
+(define (pso-rr! s lo hi) (+ lo (* (pso-rf! s) (- hi lo))))
+
+(define (pso-bound s d)
+  (let ((b (hash-ref s "bounds")))
+    (if (or (null? b) (not (list? b)))
+        (list -1.0 1.0)
+      (if (< d (pso-len b)) (pso-ref b d) (car b)))))
+
+; ── Individual / velocity construction ───────────────────────────
+(define (pso-rand-ind s)
+  (let loop ((d 0) (acc (list)))
+    (if (>= d (hash-ref s "dim")) (reverse acc)
+      (let* ((bh (pso-bound s d))
+             (x (pso-rr! s (car bh) (car (cdr bh)))))
+        (loop (+ d 1) (cons x acc))))))
+
+(define (pso-rand-vel s)
+  (let loop ((d 0) (acc (list)))
+    (if (>= d (hash-ref s "dim")) (reverse acc)
+      (let* ((bh (pso-bound s d))
+             (span (- (car (cdr bh)) (car bh)))
+             (v (pso-rr! s (- 0.0 (* 0.1 span)) (* 0.1 span))))
+        (loop (+ d 1) (cons v acc))))))
+
+; ── Instance construction ────────────────────────────────────────
+(define (pso-make-instance opts)
+  (let* ((dim (pso-opt opts "dim" 1))
+         (pop (pso-opt opts "pop" 16))
+         (bounds (pso-opt opts "bounds" (list (list -1.0 1.0))))
+         (w (pso-opt opts "w" 0.7))
+         (c1 (pso-opt opts "c1" 1.4))
+         (c2 (pso-opt opts "c2" 1.4))
+         (seed (pso-opt opts "seed" 424242))
+         (vmax (pso-opt opts "vmax" #f))
+         (boundary (pso-opt opts "boundary" "clip"))
+         (parallel (pso-opt opts "parallel" #f))
+         (s (hash "kind" "pso"
+                  "dim" dim "pop" pop "bounds" bounds
+                  "w" w "c1" c1 "c2" c2 "seed" seed "rng" seed
+                  "vmax" vmax
+                  "boundary" (if (string? boundary) boundary "clip")
+                  "parallel" (if parallel #t parallel)
+                  "gen" 0
+                  "inds" (list) "vels" (list) "fits" (list)
+                  "pbest" (list) "pbest-fit" (list)
+                  "best-ind" (list) "best-fit" -1000000000.0
+                  "rejected" 0)))
+    (hash-set! s "inds"
+               (let loop ((k 0) (acc (list)))
+                 (if (>= k pop) (reverse acc)
+                   (loop (+ k 1) (cons (pso-rand-ind s) acc)))))
+    (hash-set! s "vels"
+               (let loop ((k 0) (acc (list)))
+                 (if (>= k pop) (reverse acc)
+                   (loop (+ k 1) (cons (pso-rand-vel s) acc)))))
+    (hash-set! s "pbest" (hash-ref s "inds"))
+    (hash-set! s "pbest-fit" (pso-repeat -1000000000.0 pop))
+    s))
+
+; ── One default instance for the legacy wrappers (#4739) ─────────
+(define *pso-default* #f)
+
+(define (pso:default-instance)
+  (if *pso-default*
+      *pso-default*
+      (begin
+        (set! *pso-default* (pso-make-instance (pso:defaults)))
+        *pso-default*)))
+
 ; Convenience: (pso:init dim pop bounds [seed])
 (define (pso:init dim pop bounds . rest)
   (let ((seed (if (null? rest) 424242 (car rest))))
-    (swarm:init (hash "kind" "pso"
-                      "dim" dim
-                      "pop" pop
-                      "bounds" bounds
-                      "w" 0.7
-                      "c1" 1.4
-                      "c2" 1.4
-                      "seed" seed))))
+    (set! *pso-default*
+          (pso-make-instance (hash "dim" dim "pop" pop "bounds" bounds
+                                   "w" 0.7 "c1" 1.4 "c2" 1.4 "seed" seed)))
+    *pso-default*))
 
-; Full opts hash (merges kind:pso). Keys: dim,pop,bounds,w,c1,c2,seed,parallel
+; Full opts hash (merges kind:pso). Keys: dim,pop,bounds,w,c1,c2,seed,
+; vmax,boundary,parallel
 (define (pso:init-hash opts)
-  (swarm:init
-    (hash "kind" "pso"
-          "dim" (let ((v (hash-ref opts "dim"))) (if (null? v) 1 v))
-          "pop" (let ((v (hash-ref opts "pop"))) (if (null? v) 16 v))
-          "bounds" (let ((v (hash-ref opts "bounds")))
-                     (if (null? v) (list (list -1.0 1.0)) v))
-          "w" (let ((v (hash-ref opts "w"))) (if (null? v) 0.7 v))
-          "c1" (let ((v (hash-ref opts "c1"))) (if (null? v) 1.4 v))
-          "c2" (let ((v (hash-ref opts "c2"))) (if (null? v) 1.4 v))
-          "seed" (let ((v (hash-ref opts "seed"))) (if (null? v) 424242 v))
-          "parallel" (let ((v (hash-ref opts "parallel")))
-                       (if (null? v) #f v)))))
+  (set! *pso-default*
+        (pso-make-instance
+          (hash "dim" (pso-opt opts "dim" 1)
+                "pop" (pso-opt opts "pop" 16)
+                "bounds" (pso-opt opts "bounds" (list (list -1.0 1.0)))
+                "w" (pso-opt opts "w" 0.7)
+                "c1" (pso-opt opts "c1" 1.4)
+                "c2" (pso-opt opts "c2" 1.4)
+                "seed" (pso-opt opts "seed" 424242)
+                "vmax" (pso-opt opts "vmax" #f)
+                "boundary" (pso-opt opts "boundary" "clip")
+                "parallel" (pso-opt opts "parallel" #f))))
+  *pso-default*)
 
-(define (pso:step! fitness-fn) (swarm:step! fitness-fn))
-(define (pso:best) (swarm:best))
-(define (pso:population) (swarm:population))
-(define (pso:report) (swarm:report))
-(define (pso:export) (swarm:export))
+; ── Instance handles (#4739) ─────────────────────────────────────
+(define (pso:make . rest)
+  (pso-make-instance (if (null? rest) (pso:defaults) (car rest))))
+
+; Positions for this generation. No evaluation, no state change.
+(define (pso:ask . rest)
+  (hash-ref (if (null? rest) (pso:default-instance) (car rest)) "inds"))
+
+; Row of fitnesses padded/truncated to the population size. #f = rejected.
+(define (pso-fit-row fits n)
+  (let loop ((k 0) (fs (if (list? fits) fits (list))))
+    (if (>= k n) (list)
+      (cons (if (null? fs) #f (car fs))
+            (loop (+ k 1) (if (null? fs) (list) (cdr fs)))))))
+
+(define (pso-note-best! s)
+  (let* ((pfs (hash-ref s "pbest-fit"))
+         (n (pso-len pfs)))
+    (let loop ((i 0) (bi 0) (bv -1000000000.0))
+      (if (>= i n)
+          (if (> bv (hash-ref s "best-fit"))
+              (begin
+                (hash-set! s "best-fit" bv)
+                (hash-set! s "best-ind" (pso-ref (hash-ref s "pbest") bi))
+                #t)
+              #f)
+        (let ((f (pso-ref pfs i)))
+          (if (and (number? f) (> f bv))
+              (loop (+ i 1) i f)
+              (loop (+ i 1) bi bv)))))))
+
+; New velocity per dimension: w*v + c1*r1*(pbest-x) + c2*r2*(gbest-x),
+; clamped to ±vmax*span when vmax is a number.
+(define (pso-velocity s v x pb gb r1 r2)
+  (let ((w (hash-ref s "w")) (c1 (hash-ref s "c1")) (c2 (hash-ref s "c2"))
+        (vmax (hash-ref s "vmax")))
+    (let loop ((d 0) (vs v) (xs x) (ps pb) (gs gb) (acc (list)))
+      (if (null? xs) (reverse acc)
+        (let* ((vi (if (null? vs) 0.0 (car vs)))
+               (xi (car xs))
+               (pi (if (null? ps) xi (car ps)))
+               (gi (if (null? gs) xi (car gs)))
+               (nvi (+ (* w vi)
+                       (* c1 r1 (- pi xi))
+                       (* c2 r2 (- gi xi))))
+               (bh (pso-bound s d))
+               (span (- (car (cdr bh)) (car bh)))
+               (lim (if (and (number? vmax) (> span 0.0)) (* (pso-abs vmax) span) #f))
+               (cvi (if (and lim (> (pso-abs nvi) lim))
+                        (if (< nvi 0.0) (- 0.0 lim) lim)
+                        nvi)))
+          (loop (+ d 1)
+                (if (null? vs) (list) (cdr vs))
+                (cdr xs)
+                (if (null? ps) (list) (cdr ps))
+                (if (null? gs) (list) (cdr gs))
+                (cons cvi acc)))))))
+
+; New position per dimension. Returns (list position new-velocity) so a
+; reflect/absorb boundary can report the post-boundary velocity too.
+(define (pso-position s x v)
+  (let ((mode (hash-ref s "boundary")))
+    (let loop ((d 0) (xs x) (vs v) (npos (list)) (nvel (list)))
+      (if (null? xs) (list (reverse npos) (reverse nvel))
+        (let* ((bh (pso-bound s d))
+               (lo (car bh))
+               (hi (car (cdr bh)))
+               (nx (+ (car xs) (if (null? vs) 0.0 (car vs))))
+               (nv (if (null? vs) 0.0 (car vs)))
+               (out (or (< nx lo) (> nx hi)))
+               (cx (pso-clip nx lo hi))
+               (cv (cond
+                     ((not out) nv)
+                     ((string=? mode "reflect") (- 0.0 nv))
+                     ((string=? mode "absorb") 0.0)
+                     (#t nv))))
+          (loop (+ d 1)
+                (cdr xs)
+                (if (null? vs) (list) (cdr vs))
+                (cons cx npos)
+                (cons cv nvel)))))))
+
+(define (pso-move! s)
+  (let* ((inds (hash-ref s "inds"))
+         (vels (hash-ref s "vels"))
+         (pbests (hash-ref s "pbest"))
+         (gb (hash-ref s "best-ind"))
+         (n (pso-len inds)))
+    (let loop ((i 0) (ninds (list)) (nvels (list)))
+      (if (>= i n)
+          (begin
+            (hash-set! s "inds" (reverse ninds))
+            (hash-set! s "vels" (reverse nvels))
+            #t)
+        (let* ((x (pso-ref inds i))
+               (v (pso-ref vels i))
+               (pb (pso-ref pbests i))
+               (r1 (pso-rf! s))
+               (r2 (pso-rf! s))
+               (mv (pso-velocity s v x pb gb r1 r2))
+               (pos (pso-position s x mv)))
+          (loop (+ i 1)
+                (cons (car pos) ninds)
+                (cons (car (cdr pos)) nvels)))))))
+
+; Tell the swarm the fitness of the last (pso:ask) generation, then advance.
+; fits: one entry per individual; a number is scored, #f is a rejected or
+; failed candidate (recorded in the report's "rejected" counter, personal
+; best untouched).
+(define (pso:tell! s fits)
+  (let* ((inds (hash-ref s "inds"))
+         (n (pso-len inds))
+         (fs (pso-fit-row fits n)))
+    (hash-set! s "fits" fs)
+    (let loop ((i 0))
+      (if (>= i n) #t
+        (begin
+          (let ((f (pso-ref fs i)))
+            (if (number? f)
+                (if (> f (pso-ref (hash-ref s "pbest-fit") i))
+                    (begin
+                      (hash-set! s "pbest-fit"
+                                 (pso-set (hash-ref s "pbest-fit") i f))
+                      (hash-set! s "pbest"
+                                 (pso-set (hash-ref s "pbest") i (pso-ref inds i)))
+                      #t)
+                    #f)
+                (hash-set! s "rejected" (+ 1 (hash-ref s "rejected")))))
+          (loop (+ i 1)))))
+    (pso-note-best! s)
+    (pso-move! s)
+    (hash-set! s "gen" (+ 1 (hash-ref s "gen")))
+    (hash-ref s "gen")))
+
+(define (pso:step! fitness-fn)
+  (let* ((s (pso:default-instance))
+         (inds (hash-ref s "inds")))
+    (pso:tell! s (pso-map fitness-fn inds))))
+
+(define (pso:best . rest)
+  (hash-ref (if (null? rest) (pso:default-instance) (car rest)) "best-ind"))
+
+(define (pso:population . rest)
+  (hash-ref (if (null? rest) (pso:default-instance) (car rest)) "inds"))
+
+(define (pso-mean-l1 s)
+  (let* ((inds (hash-ref s "inds"))
+         (n (pso-len inds)))
+    (if (< n 2) 0.0
+      (let loop ((i 0) (sum 0.0) (cnt 0))
+        (if (>= i n) (if (= cnt 0) 0.0 (/ sum cnt))
+          (let ((ai (pso-ref inds i)))
+            (let jloop ((j (+ i 1)) (sm sum) (c cnt))
+              (if (>= j n) (loop (+ i 1) sm c)
+                (let* ((bj (pso-ref inds j))
+                       (d (let dloop ((xs ai) (ys bj) (acc 0.0))
+                            (if (or (null? xs) (null? ys)) acc
+                              (dloop (cdr xs) (cdr ys)
+                                     (+ acc (pso-abs (- (car xs) (car ys)))))))))
+                  (jloop (+ j 1) (+ sm d) (+ c 1)))))))))))
+
+(define (pso-numeric-fits fs)
+  (if (null? fs) (list)
+    (if (number? (car fs))
+        (cons (car fs) (pso-numeric-fits (cdr fs)))
+        (pso-numeric-fits (cdr fs)))))
+
+(define (pso:report . rest)
+  (let* ((s (if (null? rest) (pso:default-instance) (car rest)))
+         (fs (pso-numeric-fits (hash-ref s "fits")))
+         (n (pso-len fs)))
+    (hash "kind" "pso"
+          "gen" (hash-ref s "gen")
+          "best-fit" (hash-ref s "best-fit")
+          "mean-fit" (if (= n 0) 0.0 (/ (pso-sum fs) n))
+          "best" (hash-ref s "best-ind")
+          "pop" (hash-ref s "pop")
+          "dim" (hash-ref s "dim")
+          "diversity" (pso-mean-l1 s)
+          "parallel" (hash-ref s "parallel")
+          "rejected" (hash-ref s "rejected"))))
+
+(define (pso-export-string s)
+  (let ((r (pso:report s)))
+    (string-append
+      "{\"kind\":\"pso\""
+      ",\"gen\":" (number->string (hash-ref r "gen"))
+      ",\"best-fit\":" (number->string (hash-ref r "best-fit"))
+      ",\"mean-fit\":" (number->string (hash-ref r "mean-fit"))
+      ",\"pop\":" (number->string (hash-ref r "pop"))
+      ",\"dim\":" (number->string (hash-ref r "dim"))
+      ",\"diversity\":" (number->string (hash-ref r "diversity"))
+      "}")))
+
+; 0 args -> the legacy JSON-ish string; 1 arg -> an importable blob.
+(define (pso:export . rest)
+  (if (null? rest)
+      (pso-export-string (pso:default-instance))
+      (let ((s (car rest)))
+        (hash "kind" "pso"
+              "dim" (hash-ref s "dim")
+              "pop" (hash-ref s "pop")
+              "bounds" (hash-ref s "bounds")
+              "w" (hash-ref s "w")
+              "c1" (hash-ref s "c1")
+              "c2" (hash-ref s "c2")
+              "seed" (hash-ref s "seed")
+              "rng" (hash-ref s "rng")
+              "vmax" (hash-ref s "vmax")
+              "boundary" (hash-ref s "boundary")
+              "gen" (hash-ref s "gen")
+              "inds" (hash-ref s "inds")
+              "vels" (hash-ref s "vels")
+              "fits" (hash-ref s "fits")
+              "pbest" (hash-ref s "pbest")
+              "pbest-fit" (hash-ref s "pbest-fit")
+              "best-ind" (hash-ref s "best-ind")
+              "best-fit" (hash-ref s "best-fit")
+              "rejected" (hash-ref s "rejected")))))
+
+; Restore an independent instance from an exported blob (#4739: the old
+; surface could snapshot but never resume).
+(define (pso:import blob)
+  (let ((s (hash)))
+    (let loop ((ks (hash-keys blob)))
+      (if (null? ks) s
+        (begin
+          (hash-set! s (car ks) (hash-ref blob (car ks)))
+          (loop (cdr ks)))))))
 
 (define (pso:help)
-  "std/pso (#2877): continuous particle swarm. (pso:init dim pop bounds) or (pso:init-hash h) with w/c1/c2/seed/parallel. (pso:step! fit) fit: list-of-nums→number higher-better. Use for continuous knobs; prefer grid for discrete scans, ant for mutation-type ranking.")
+  "std/pso (#2877/#4739): continuous particle swarm. Legacy: (pso:init dim pop bounds [seed]) or (pso:init-hash h) then (pso:step! fit) / (pso:best) / (pso:report) / (pso:export). Instances: (pso:make h) -> s; (pso:ask s) positions; (pso:tell! s fits) fits numbers or #f; (pso:best s) (pso:population s) (pso:report s) (pso:export s) -> blob; (pso:import blob) -> s. Opts: w,c1,c2,seed,vmax (fraction of span),boundary clip|reflect|absorb.")
