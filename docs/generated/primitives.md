@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**486** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**489** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -10,8 +10,8 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 56 primitives (12%)
-- **core**: 395 primitives (81%)
+- **mutation-safety**: 56 primitives (11%)
+- **core**: 398 primitives (81%)
 - **internal-observable**: 34 primitives (7%)
 - **convenience**: 1 primitives (0%)
 
@@ -151,7 +151,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `c-struct-set!` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (281)
+## Core builtins (284)
 
 - `%base64-decode` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -213,6 +213,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `cos` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `current-time` *[core]* — `src/compiler/evaluator_primitives_misc.cpp`
 - `current-time-ms` *[core]* — `src/compiler/evaluator_primitives_misc.cpp`
+- `datum->string` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `declare-type` *[core]* — `src/compiler/evaluator_primitives_types.cpp`
 - `define-linear` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `define-lookup` *[core]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
@@ -350,8 +351,10 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `quotient` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `raise` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `read` *[core]* — `src/compiler/evaluator_primitives_file.cpp`
+- `read-all-from-string` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `read-byte` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
 - `read-file` *[core]* — `src/compiler/evaluator_primitives_file.cpp`
+- `read-from-string` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `read-line` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
 - `recv` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `reflect-members` *[core]* — `src/compiler/evaluator_primitives_reflect.cpp`
@@ -693,7 +696,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (395)
+### Core builtins (must remain primitive) (398)
 
 - `%base64-decode` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` — `src/compiler/evaluator_primitives_char.cpp`
@@ -772,6 +775,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `cos` — `src/compiler/evaluator_primitives_math.cpp`
 - `current-time` — `src/compiler/evaluator_primitives_misc.cpp`
 - `current-time-ms` — `src/compiler/evaluator_primitives_misc.cpp`
+- `datum->string` — `src/compiler/evaluator_primitives_eval.cpp`
 - `declare-type` — `src/compiler/evaluator_primitives_types.cpp`
 - `define-linear` — `src/compiler/evaluator_primitives_math.cpp`
 - `define-lookup` — `src/compiler/evaluator_primitives_query_workspace.cpp`
@@ -964,8 +968,10 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `quotient` — `src/compiler/evaluator_primitives_math.cpp`
 - `raise` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `read` — `src/compiler/evaluator_primitives_file.cpp`
+- `read-all-from-string` — `src/compiler/evaluator_primitives_eval.cpp`
 - `read-byte` — `src/compiler/evaluator_primitives_char.cpp`
 - `read-file` — `src/compiler/evaluator_primitives_file.cpp`
+- `read-from-string` — `src/compiler/evaluator_primitives_eval.cpp`
 - `read-line` — `src/compiler/evaluator_primitives_char.cpp`
 - `recv` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `reflect-members` — `src/compiler/evaluator_primitives_reflect.cpp`

@@ -15,6 +15,7 @@ module;
 #include "core/workspace_epoch.hh"          // Issue #3691: bump_mutation_epoch on set-code
 #include "typed_mutation_audit.h"           // Issue #4315: production_defaults_active on set-code
 #include "compiler/mark_all_owner_clear.hh" // Issue #4360: set-code clears IR owners
+#include "float_repr.hh"                    // Issue #4746: one decimal spelling (#4468)
 
 module aura.compiler.evaluator;
 
@@ -26,6 +27,7 @@ import aura.core.lifetime_pin; // Issue #2363: GeneralObjectPin adopt on interme
 import aura.compiler.value;
 import aura.compiler.type_checker;
 import aura.parser.parser;
+import aura.parser.lexer; // Issue #4746: datum reader walks the shared lexer
 import aura.diag;
 
 // Issue #4078: production expand deny must not eval_flat the refused tree.
@@ -119,6 +121,13 @@ namespace {
         bool ok = false;
         std::string report;
     };
+
+    // Issue #4746: datum reader / printer recursion limits. Namespace scope
+    // (not members): the reader struct below is a local class inside
+    // register_eval_primitives, and a local class may not declare static
+    // data members.
+    constexpr int kDatumIoMaxDepth = 200;
+    constexpr std::size_t kDatumIoMaxListLen = 4096;
 
 } // namespace
 
@@ -2150,6 +2159,425 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         }
         return result;
     });
+
+    // ── Issue #4746: string -> datum reader + round-tripping printer ──
+    //
+    // (eval s) runs a string as a program, and the parser desugars special
+    // forms on the way in — a (define ...) never stays a plain list. Code
+    // inspection needs the other direction, scoped to data:
+    //   (read-from-string s [start])      -> first datum at/after start
+    //   (read-all-from-string s [start])  -> list of every remaining datum
+    //   (datum->string d)                 -> reader syntax that reads back
+    // Special forms stay plain lists of interned symbols (#4727 identity),
+    // numbers keep int/float, strings keep escapes, and
+    // (equal? (read-from-string (datum->string d)) d) holds for data.
+    //
+    // The reader/printer live in a local struct rather than captured
+    // lambdas: a primitive outlives register_eval_primitives(), so it may
+    // capture only the Evaluator reference (never a sibling local closure).
+    {
+        struct DatumIo {
+            Evaluator& ev;
+
+            struct ReadState {
+                aura::parser::Lexer lex;
+                std::string error;
+                explicit ReadState(std::string_view src)
+                    : lex(src) {}
+            };
+
+            [[nodiscard]] std::optional<std::string> string_at(const EvalValue& v) const {
+                if (!types::is_string(v))
+                    return std::nullopt;
+                const auto idx = types::as_string_idx(v);
+                if (idx >= ev.string_heap_.size())
+                    return std::nullopt;
+                return std::string(ev.string_at(idx));
+            }
+
+            // One cons slot; pairs_ growth is serialized like every other
+            // reader (#1397).
+            [[nodiscard]] EvalValue cons(EvalValue head, EvalValue tail) const {
+                std::lock_guard lock(ev.alloc_storage_lock_);
+                const auto pid = ev.pairs_.size();
+                ev.pairs_.push_back({head, tail});
+                return make_pair(pid);
+            }
+
+            [[nodiscard]] EvalValue mk_string(const std::string& text) const {
+                return make_string(static_cast<std::uint64_t>(ev.push_string_heap(text)));
+            }
+
+            [[nodiscard]] std::optional<EvalValue> read_datum(ReadState& st, int depth) const {
+                using aura::parser::TokenKind;
+                if (depth > kDatumIoMaxDepth) {
+                    st.error = "read-from-string: datum nested too deeply";
+                    return std::nullopt;
+                }
+                const auto tok = st.lex.consume();
+                switch (tok.kind) {
+                    case TokenKind::Integer: {
+                        std::int64_t iv = 0;
+                        const auto* first = tok.text.data();
+                        const auto* last = first + tok.text.size();
+                        const auto [ptr, ec] = std::from_chars(first, last, iv, 10);
+                        if (ec != std::errc{} || ptr != last) {
+                            st.error = "read-from-string: bad integer literal '" +
+                                       std::string(tok.text) + "'";
+                            return std::nullopt;
+                        }
+                        return make_int(iv);
+                    }
+                    case TokenKind::Float: {
+                        double dv = 0.0;
+                        const auto* first = tok.text.data();
+                        const auto* last = first + tok.text.size();
+                        const auto [ptr, ec] = std::from_chars(first, last, dv);
+                        if (ec != std::errc{} || ptr != last) {
+                            st.error = "read-from-string: bad float literal '" +
+                                       std::string(tok.text) + "'";
+                            return std::nullopt;
+                        }
+                        return make_float(dv);
+                    }
+                    case TokenKind::String:
+                        // The lexer resolved the escapes into its own buffer;
+                        // copy the bytes now, before the next token can
+                        // overwrite it.
+                        return mk_string(std::string(tok.text));
+                    case TokenKind::Identifier:
+                        // An identifier atom is an interned symbol (name
+                        // identity across pools, #4727); a leading ':' is the
+                        // keyword spelling the evaluator uses.
+                        if (!tok.text.empty() && tok.text.front() == ':')
+                            return ev.intern_keyword(tok.text);
+                        return ev.intern_symbol(tok.text);
+                    case TokenKind::Bool:
+                        return make_bool(tok.text == "1");
+                    case TokenKind::Character: {
+                        std::int64_t cp = 0;
+                        const auto* first = tok.text.data();
+                        const auto* last = first + tok.text.size();
+                        const auto [ptr, ec] = std::from_chars(first, last, cp, 10);
+                        if (ec != std::errc{} || ptr != last) {
+                            st.error = "read-from-string: bad character literal";
+                            return std::nullopt;
+                        }
+                        // Aura characters are int code points (#4129).
+                        return make_int(cp);
+                    }
+                    case TokenKind::Ellipsis:
+                        return ev.intern_symbol("...");
+                    case TokenKind::Quote:
+                    case TokenKind::QuasiQuote:
+                    case TokenKind::Unquote:
+                    case TokenKind::UnquoteSplicing: {
+                        std::string_view head = "quote";
+                        if (tok.kind == TokenKind::QuasiQuote)
+                            head = "quasiquote";
+                        else if (tok.kind == TokenKind::Unquote)
+                            head = "unquote";
+                        else if (tok.kind == TokenKind::UnquoteSplicing)
+                            head = "unquote-splicing";
+                        auto inner = read_datum(st, depth + 1);
+                        if (!inner)
+                            return std::nullopt;
+                        return cons(ev.intern_symbol(head), cons(*inner, make_void()));
+                    }
+                    case TokenKind::LParen:
+                    case TokenKind::HashLParen: {
+                        // Special forms are NOT further special-cased: this
+                        // stays a plain list of symbols. Only reader syntaxes
+                        // (quote family, #( ... ) vectors, dotted pairs) are
+                        // reconstructed.
+                        const bool is_vector = tok.kind == TokenKind::HashLParen;
+                        std::vector<EvalValue> items;
+                        EvalValue tail = make_void();
+                        bool dotted = false;
+                        for (;;) {
+                            const auto ahead = st.lex.peek();
+                            if (ahead.kind == TokenKind::RParen) {
+                                st.lex.consume();
+                                break;
+                            }
+                            if (ahead.kind == TokenKind::EndOfFile) {
+                                st.error = "read-from-string: unexpected end of input";
+                                return std::nullopt;
+                            }
+                            if (ahead.kind == TokenKind::Error) {
+                                st.error =
+                                    "read-from-string: bad token '" + std::string(ahead.text) + "'";
+                                return std::nullopt;
+                            }
+                            if (ahead.kind == TokenKind::Dot) {
+                                st.lex.consume();
+                                if (is_vector || items.empty()) {
+                                    st.error = "read-from-string: misplaced '.'";
+                                    return std::nullopt;
+                                }
+                                auto rest = read_datum(st, depth + 1);
+                                if (!rest)
+                                    return std::nullopt;
+                                tail = *rest;
+                                const auto close = st.lex.consume();
+                                if (close.kind != TokenKind::RParen) {
+                                    st.error = "read-from-string: expected ')' after dotted tail";
+                                    return std::nullopt;
+                                }
+                                dotted = true;
+                                break;
+                            }
+                            auto item = read_datum(st, depth + 1);
+                            if (!item)
+                                return std::nullopt;
+                            items.push_back(*item);
+                        }
+                        if (is_vector) {
+                            const auto vid = ev.mint_vector(std::move(items), /*check_quota=*/true);
+                            if (vid == Evaluator::kFileHeapMintDenied) {
+                                st.error = "read-from-string: vector heap quota exceeded";
+                                return std::nullopt;
+                            }
+                            return make_vector(vid);
+                        }
+                        EvalValue out = dotted ? tail : make_void();
+                        for (auto it = items.rbegin(); it != items.rend(); ++it)
+                            out = cons(*it, out);
+                        return out;
+                    }
+                    case TokenKind::RParen:
+                        st.error = "read-from-string: unexpected ')'";
+                        return std::nullopt;
+                    case TokenKind::Dot:
+                        st.error = "read-from-string: unexpected '.' outside a list";
+                        return std::nullopt;
+                    case TokenKind::EndOfFile:
+                        st.error = "read-from-string: unexpected end of input";
+                        return std::nullopt;
+                    case TokenKind::Error:
+                    default:
+                        st.error = "read-from-string: bad token '" + std::string(tok.text) + "'";
+                        return std::nullopt;
+                }
+            }
+
+            // Shared argv handling for the reader primitives: string +
+            // optional byte-offset start, then one datum or every datum left.
+            [[nodiscard]] std::optional<std::vector<EvalValue>>
+            read_args(std::span<const EvalValue> a, bool read_all, std::string& err) const {
+                if (a.empty()) {
+                    err = read_all ? "usage: (read-all-from-string s [start])"
+                                   : "usage: (read-from-string s [start])";
+                    return std::nullopt;
+                }
+                auto src = string_at(a[0]);
+                if (!src) {
+                    err = "read-from-string: expected a string";
+                    return std::nullopt;
+                }
+                std::size_t start = 0;
+                if (a.size() >= 2) {
+                    if (!types::is_int(a[1])) {
+                        err = "read-from-string: start offset must be an integer";
+                        return std::nullopt;
+                    }
+                    const auto off = types::as_int(a[1]);
+                    if (off < 0 || static_cast<std::size_t>(off) > src->size()) {
+                        err = "read-from-string: start offset out of range";
+                        return std::nullopt;
+                    }
+                    start = static_cast<std::size_t>(off);
+                }
+                ReadState st(std::string_view(*src).substr(start));
+                std::vector<EvalValue> out;
+                for (;;) {
+                    if (st.lex.peek().kind == aura::parser::TokenKind::EndOfFile)
+                        break;
+                    auto d = read_datum(st, 0);
+                    if (!d) {
+                        err = st.error;
+                        return std::nullopt;
+                    }
+                    out.push_back(*d);
+                    if (!read_all)
+                        break;
+                }
+                if (out.empty()) {
+                    err = "read-from-string: no datum";
+                    return std::nullopt;
+                }
+                return out;
+            }
+
+            [[nodiscard]] std::optional<std::string> print(const EvalValue& v, int depth) const {
+                if (depth > kDatumIoMaxDepth)
+                    return std::string("...");
+                if (types::is_void(v))
+                    return std::string("()");
+                if (types::is_bool(v))
+                    return std::string(types::as_bool(v) ? "#t" : "#f");
+                if (types::is_int(v))
+                    return std::to_string(types::as_int(v));
+                if (types::is_float(v)) {
+                    const auto d = types::as_float(v);
+                    // R7RS spellings; the reader has no non-finite literal, so
+                    // this is the one float shape that does not read back.
+                    if (!std::isfinite(d))
+                        return std::string(std::isnan(d) ? "+nan.0"
+                                                         : (d > 0 ? "+inf.0" : "-inf.0"));
+                    // #4468's single decimal spelling: shortest form that
+                    // reads back as the same double, with the ".0" guard that
+                    // keeps an integer-valued float inexact.
+                    return aura::compiler::format_float_shortest(d);
+                }
+                if (types::is_string(v)) {
+                    const auto idx = types::as_string_idx(v);
+                    if (idx >= ev.string_heap_.size())
+                        return std::nullopt;
+                    const std::string text(ev.string_at(idx));
+                    std::string out = "\"";
+                    for (const unsigned char c : text) {
+                        switch (c) {
+                            case '"':
+                                out += "\\\"";
+                                break;
+                            case '\\':
+                                out += "\\\\";
+                                break;
+                            case '\n':
+                                out += "\\n";
+                                break;
+                            case '\t':
+                                out += "\\t";
+                                break;
+                            case '\r':
+                                out += "\\r";
+                                break;
+                            default:
+                                if (c < 0x20 || c == 0x7f) {
+                                    out += std::format("\\x{:02x}", static_cast<unsigned>(c));
+                                } else {
+                                    out += static_cast<char>(c);
+                                }
+                                break;
+                        }
+                    }
+                    out += '"';
+                    return out;
+                }
+                if (types::is_symbol(v)) {
+                    const auto idx = types::as_symbol_idx(v);
+                    std::lock_guard lock(ev.symbol_table_mtx_);
+                    if (idx >= ev.symbol_table_.size())
+                        return std::nullopt;
+                    return ev.symbol_table_[idx];
+                }
+                if (types::is_keyword(v)) {
+                    const auto idx = types::as_keyword_idx(v);
+                    std::lock_guard lock(ev.keyword_table_mtx_);
+                    if (idx >= ev.keyword_table_.size())
+                        return std::nullopt;
+                    // keyword_table_ entries keep their leading ':'.
+                    return ev.keyword_table_[idx];
+                }
+                if (types::is_pair(v)) {
+                    std::vector<std::string> parts;
+                    EvalValue cur = v;
+                    for (;;) {
+                        if (!types::is_pair(cur))
+                            break;
+                        if (parts.size() >= kDatumIoMaxListLen)
+                            return std::nullopt;
+                        EvalValue car_v{};
+                        EvalValue cdr_v{};
+                        {
+                            std::lock_guard lock(ev.alloc_storage_lock_);
+                            const auto idx = types::as_pair_idx(cur);
+                            if (idx >= ev.pairs_.size())
+                                return std::nullopt;
+                            car_v = ev.pairs_[idx].car;
+                            cdr_v = ev.pairs_[idx].cdr;
+                        }
+                        auto car_s = print(car_v, depth + 1);
+                        if (!car_s)
+                            return std::nullopt;
+                        parts.push_back(std::move(*car_s));
+                        cur = cdr_v;
+                    }
+                    std::string out = "(";
+                    for (std::size_t i = 0; i < parts.size(); ++i) {
+                        if (i > 0)
+                            out += ' ';
+                        out += parts[i];
+                    }
+                    if (!types::is_void(cur)) {
+                        auto tail_s = print(cur, depth + 1);
+                        if (!tail_s)
+                            return std::nullopt;
+                        if (!parts.empty())
+                            out += " . ";
+                        out += *tail_s;
+                    }
+                    out += ')';
+                    return out;
+                }
+                if (types::is_vector(v)) {
+                    std::vector<EvalValue> elems;
+                    {
+                        std::lock_guard lock(ev.alloc_storage_lock_);
+                        const auto idx = types::as_vector_idx(v);
+                        if (idx >= ev.vector_heap_.size())
+                            return std::nullopt;
+                        elems = ev.vector_heap_[idx];
+                    }
+                    std::string out = "#(";
+                    for (std::size_t i = 0; i < elems.size(); ++i) {
+                        if (i > 0)
+                            out += ' ';
+                        auto s = print(elems[i], depth + 1);
+                        if (!s)
+                            return std::nullopt;
+                        out += *s;
+                    }
+                    out += ')';
+                    return out;
+                }
+                // Closures, hashes, cells, errors: not reader syntax.
+                return std::nullopt;
+            }
+        };
+
+        const DatumIo datum_io{ev};
+
+        add("read-from-string", [datum_io, mev](std::span<const EvalValue> a) -> EvalValue {
+            std::string err;
+            auto datums = datum_io.read_args(a, /*read_all=*/false, err);
+            if (!datums)
+                return mev("parse", err);
+            return datums->front();
+        });
+
+        add("read-all-from-string", [datum_io, mev](std::span<const EvalValue> a) -> EvalValue {
+            std::string err;
+            auto datums = datum_io.read_args(a, /*read_all=*/true, err);
+            if (!datums)
+                return mev("parse", err);
+            EvalValue out = make_void();
+            for (auto it = datums->rbegin(); it != datums->rend(); ++it)
+                out = datum_io.cons(*it, out);
+            return out;
+        });
+
+        add("datum->string", [datum_io, mev](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty())
+                return mev("bad-arg", "usage: (datum->string datum)");
+            auto printed = datum_io.print(a[0], 0);
+            if (!printed)
+                return mev("bad-arg", "datum->string: unsupported datum (pairs, vectors, symbols, "
+                                      "keywords, numbers, strings and booleans round-trip)");
+            return datum_io.mk_string(*printed);
+        });
+    }
 }
 
 } // namespace aura::compiler::primitives_detail

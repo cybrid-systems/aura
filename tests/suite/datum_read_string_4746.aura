@@ -1,0 +1,98 @@
+; Issue #4746: (read-from-string s [start]) / (read-all-from-string s [start])
+; turn text into DATA without evaluating it — special forms stay plain lists
+; of interned symbols — and (datum->string d) prints reader syntax that reads
+; back: (equal? (read-from-string (datum->string d)) d).
+(define *fails* 0)
+(define *n* 0)
+(define (check! ok msg)
+  (set! *n* (+ *n* 1))
+  (if (not ok)
+      (begin (set! *fails* (+ *fails* 1))
+             (display "  FAIL: ") (display msg) (newline))))
+
+; ── atoms keep their kind ──
+(check! (= (read-from-string "42") 42) "integer atom")
+(check! (not (float? (read-from-string "42"))) "integer stays int")
+(check! (equal? (read-from-string "1.5") 1.5) "float atom")
+(check! (float? (read-from-string "1.5")) "float stays float")
+(check! (equal? (read-from-string "\"a b\"") "a b") "string atom")
+(check! (equal? (read-from-string "\"a\\nb\"") "a\nb") "escapes resolved once")
+(check! (eq? (read-from-string "foo") 'foo) "symbol atom is interned")
+(check! (symbol? (read-from-string "foo")) "symbol atom is a symbol, not a string")
+(check! (eq? (read-from-string ":tag") :tag) "keyword atom")
+(check! (eq? (read-from-string "#t") #t) "boolean atom")
+(check! (eq? (read-from-string "#f") #f) "boolean #f atom")
+(check! (= (read-from-string "#\\a") 97) "character atom is a code point")
+(check! (symbol? (read-from-string "...")) "ellipsis reads as a symbol")
+
+; ── lists, special forms, quote syntax ──
+(define d (read-from-string "(define (f x) (+ x 1))"))
+(check! (pair? d) "define is a pair")
+(check! (eq? (car d) 'define) "head is the symbol define (not desugared)")
+(check! (symbol? (car d)) "head is a symbol")
+(check! (equal? (car (cdr d)) '(f x)) "signature stays a plain list")
+(check! (equal? (car (cdr (cdr d))) '(+ x 1)) "body stays a plain list")
+(check! (equal? (read-from-string "(1 2 3)") '(1 2 3)) "plain list")
+(check! (equal? (read-from-string "(1 . 2)") '(1 . 2)) "dotted pair")
+(check! (= (cdr (read-from-string "(1 . 2)")) 2) "dotted tail is the datum")
+(check! (equal? (read-from-string "'x") '(quote x)) "quote reads as (quote x)")
+(check! (equal? (read-from-string "`(a ,b ,@c)") '(quasiquote (a (unquote b) (unquote-splicing c))))
+        "quasiquote reads as a plain list")
+(check! (equal? (read-from-string "#(1 2)") (vector 1 2)) "vector literal")
+(check! (vector? (read-from-string "#(1 2)")) "vector stays a vector")
+
+; ── read-all variant + start offset ──
+(check! (equal? (read-all-from-string "1 2 3") '(1 2 3)) "read-all returns every datum")
+(check! (equal? (read-all-from-string "(a) (b)") '((a) (b))) "read-all nested")
+(check! (= (read-from-string "abc 42" 4) 42) "start offset skips a prefix")
+(check! (= (read-from-string "  7") 7) "leading whitespace is skipped")
+
+; ── datum->string round trips ──
+(define (round-trip? x)
+  (equal? (read-from-string (datum->string x)) x))
+(check! (round-trip? '(1 2 3)) "list round trip")
+(check! (round-trip? '((a . b) #(1 2) "s" 1.25 #t)) "mixed datum round trip")
+; keywords round-trip when read from text (a quoted :k literal loses its
+; keyword kind inside quote on main, which is the companion quote issue).
+(check! (round-trip? (read-from-string "(:k :other)")) "keyword list round trip")
+(check! (keyword? (car (read-from-string "(:k)"))) "keyword atom keeps its kind")
+(check! (equal? (datum->string '(1 2)) "(1 2)") "printer spells a list")
+(check! (equal? (datum->string '(1 . 2)) "(1 . 2)") "printer spells a dotted pair")
+(check! (equal? (datum->string "a\"b") "\"a\\\"b\"") "printer escapes quotes")
+(check! (equal? (datum->string 1.5) "1.5") "printer keeps the float spelling")
+(check! (equal? (datum->string 2.0) "2.0") "integer-valued float keeps .0")
+(check! (equal? (datum->string 'sym) "sym") "printer spells a symbol")
+(check! (equal? (datum->string :kw) ":kw") "printer spells a keyword")
+
+; A datum read from text (special forms and quote syntax intact) prints back
+; and reads back equal — the rewrite-and-reinstall loop the harness needs.
+(define pol (read-from-string "(define (guard x) (if (> x 3) 'high 'low))"))
+(check! (round-trip? pol) "read -> print -> read round trip")
+(check! (equal? (datum->string pol)
+                 "(define (guard x) (if (> x 3) (quote high) (quote low)))")
+        "printer spells quote as a plain list")
+(check! (round-trip? (read-from-string "(a (b (c (d))))")) "nested round trip")
+
+; ── the aura-scm-agents use case: walk a proposed policy ──
+(define (find-thresholds n acc)
+  (cond ((not (pair? n)) (if (number? n) (cons n acc) acc))
+        (else (find-thresholds (cdr n) (find-thresholds (car n) acc)))))
+(check! (equal? (find-thresholds pol '()) '(3)) "numeric thresholds are walkable")
+
+; ── malformed input is an error value, not a silent () ──
+(define (read-error-kind v) (if (pair? v) (car v) 'not-an-error))
+(check! (equal? (read-error-kind (read-from-string "(1")) "parse")
+        "unbalanced input errors")
+(check! (equal? (read-error-kind (read-from-string "")) "parse")
+        "empty input errors")
+(check! (equal? (read-error-kind (read-from-string 42)) "parse")
+        "non-string input errors")
+(check! (equal? (read-error-kind (read-from-string "abc" 9)) "parse")
+        "out-of-range start errors")
+(check! (equal? (read-error-kind (datum->string (lambda (x) x))) "bad-arg")
+        "unsupported datum errors")
+
+(if (= *fails* 0)
+    (begin (display "OK-datum-read-string-4746 ") (display *n*) (display " checks") (newline))
+    (begin (display "datum_read_string_4746: ") (display (- *n* *fails*))
+           (display "/") (display *n*) (newline) (exit 1)))
