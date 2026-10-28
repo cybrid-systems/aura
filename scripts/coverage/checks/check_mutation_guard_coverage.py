@@ -69,6 +69,9 @@ READONLY_PATTERNS = [
     re.compile(r"^per-defuse-index-callers$"),
     # Issue #2124: metadata / policy / probe-only mutate:* (no AST write).
     re.compile(r"^check-stable-ref$"),
+    # Issue #4742: dry-run parse/typecheck gate — reads the workspace, writes
+    # nothing (no AST write, no mutation-log record, no epoch bump).
+    re.compile(r"^check$"),
     re.compile(r"^set-stale-ref-policy$"),
     re.compile(r"^set-pattern-index-policy$"),
     re.compile(r"^request-gc-safepoint$"),
