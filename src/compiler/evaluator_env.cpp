@@ -1544,7 +1544,14 @@ std::shared_ptr<const CapSnapshot> Evaluator::cap_snap_for_frame(EnvId frame_id)
             cap_snap_cache_.erase(it);
         }
     }
-    if (frame_id == NULL_ENV_ID || frame_id >= env_frames_.size())
+    // Issue #4717: range checks read the PUBLISHED size. env_frames_.size()
+    // dereferences the deque's map metadata, which a concurrent
+    // alloc_env_frame push_back mutates on another body's thread (TSan:
+    // materialize_call_env -> cap_snap_for_frame -> deque::size vs
+    // _M_push_back_aux). #4580 publishes the size AFTER the frame exists, so
+    // a referenced id is always below it.
+    if (frame_id == NULL_ENV_ID ||
+        frame_id >= env_frames_published_size_.load(std::memory_order_acquire))
         return nullptr;
     std::shared_ptr<const CapSnapshot> snap;
     {
@@ -1623,7 +1630,8 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // A later length drift (rebind, inject) must not reuse the snapshot;
     // the legacy gate below still bumps hard_fail or soft++.
     auto capture_len_diverges = [&](EnvId id) -> bool {
-        if (id == NULL_ENV_ID || static_cast<std::size_t>(id) >= env_frames_.size())
+        if (id == NULL_ENV_ID || static_cast<std::size_t>(id) >=
+                                     env_frames_published_size_.load(std::memory_order_acquire))
             return false;
         std::shared_lock<std::shared_mutex> rlock(env_frame_shards_[env_frame_shard_index(id)].mu);
         // Issue #4529: re-check under the shard lock — restore_panic_checkpoint
@@ -1637,7 +1645,8 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     };
     const bool len_diverges = capture_len_diverges(cl.env_id);
     std::shared_ptr<const CapSnapshot> snap;
-    if (!len_diverges && cl.env_id != NULL_ENV_ID && cl.env_id < env_frames_.size())
+    if (!len_diverges && cl.env_id != NULL_ENV_ID &&
+        cl.env_id < env_frames_published_size_.load(std::memory_order_acquire))
         snap = cap_snap_for_frame(cl.env_id);
     if (snap && !epoch_or_env_stale) {
         Env ne;
@@ -1679,7 +1688,8 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // foreign-generation (sibling region parent restamped mid-walk).
     // Empty-Env safe fallback (same shape as bridge-stale path)
     // + bump env_gen_fence_reject_total so dashboards can observe.
-    if (cl.env_id != NULL_ENV_ID && cl.env_id < env_frames_.size()) {
+    if (cl.env_id != NULL_ENV_ID &&
+        cl.env_id < env_frames_published_size_.load(std::memory_order_acquire)) {
         // Issue #4529: the fence read is authoritative under the frame's
         // shard lock, with an in-lock size re-check — the unlocked range
         // test above is only a fast path; restore_panic_checkpoint can

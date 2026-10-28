@@ -4,6 +4,7 @@
 
 module;
 
+#include "compiler/locked_string_heap.hh" // Issue #4717: StringPoolView
 #include "primitives_detail.h"
 #include "runtime_shared.h"
 #include "float_repr.hh" // Issue #4468
@@ -102,7 +103,7 @@ namespace {
     // (pairs / vectors) before fmt_val_to_string reads a byte. Returns true
     // on the FIRST foreign slot (the helper already recorded the one
     // IsolationDeny); the caller converts to the primitive error.
-    static bool fmt_payload_denied(Evaluator& ev, std::span<const std::string> heap,
+    static bool fmt_payload_denied(Evaluator& ev, ::aura::compiler::StringPoolView heap,
                                    std::span<const Pair> pairs,
                                    std::span<const std::vector<EvalValue>> vectors,
                                    const EvalValue& v, int depth) {
@@ -143,7 +144,7 @@ namespace {
         return false;
     }
 
-    static std::string fmt_val_to_string(const EvalValue& v, std::span<const std::string> heap,
+    static std::string fmt_val_to_string(const EvalValue& v, ::aura::compiler::StringPoolView heap,
                                          std::span<const Pair> pairs, bool quote, int depth,
                                          std::span<const std::vector<EvalValue>> vectors,
                                          std::span<const std::string> symbols) {
@@ -234,7 +235,7 @@ namespace {
         return "<unknown>";
     }
 
-    static void io_print_val(const EvalValue& v, std::span<const std::string> heap,
+    static void io_print_val(const EvalValue& v, ::aura::compiler::StringPoolView heap,
                              std::span<const Pair> pairs, bool quote, int depth,
                              std::span<const std::string> keywords,
                              std::span<const std::vector<EvalValue>> vectors,
@@ -426,7 +427,7 @@ namespace {
     // true before any stamp load, so this stays a pure structural walk.
     // Heaps arrive as spans from the friend registration lambdas.
     static bool io_walk_tenant_allows(const EvalValue& v, Evaluator& ev,
-                                      std::span<const std::string> heap,
+                                      ::aura::compiler::StringPoolView heap,
                                       std::span<const Pair> pairs,
                                       std::span<const std::vector<EvalValue>> vectors,
                                       std::string_view op, int depth) {

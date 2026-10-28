@@ -71,8 +71,8 @@ namespace {
     // Issue #4612: "no slot" sentinel for the probe result.
     constexpr std::size_t kNoHashSlot = static_cast<std::size_t>(-1);
 
-    [[nodiscard]] std::uint64_t
-    eval_hash_key_hash(const EvalValue& k, const std::pmr::vector<std::string>& sh) noexcept {
+    [[nodiscard]] std::uint64_t eval_hash_key_hash(const EvalValue& k,
+                                                   ::aura::compiler::StringPoolView sh) noexcept {
         if (is_int(k))
             return static_cast<std::uint64_t>(as_int(k)) * 0x9e3779b97f4a7c15ull;
         if (is_string(k)) {
@@ -102,8 +102,7 @@ namespace {
     // yet reachable via g_hash_tables / JIT bridges (those use workspace
     // locks, not hash_tables_mutex_). Published tables: leave old block
     // orphaned so concurrent readers cannot UAF after pointer swap.
-    [[nodiscard]] bool flat_hash_grow_eval(FlatHashTable*& htp,
-                                           const std::pmr::vector<std::string>& sh,
+    [[nodiscard]] bool flat_hash_grow_eval(FlatHashTable*& htp, ::aura::compiler::StringPoolView sh,
                                            bool destroy_old) {
         auto* ht = htp;
         if (!ht)
@@ -158,7 +157,7 @@ namespace {
     // destroy_old_on_grow: see flat_hash_grow_eval (false for published tables).
     [[nodiscard]] bool flat_hash_insert_eval(FlatHashTable*& htp, const EvalValue& key,
                                              const EvalValue& val,
-                                             const std::pmr::vector<std::string>& sh,
+                                             ::aura::compiler::StringPoolView sh,
                                              bool destroy_old_on_grow) {
         if (!htp)
             return false;
@@ -218,7 +217,7 @@ namespace {
     // true before any stamp load. IsolationDeny rides the helper (op =
     // the probing prim).
     [[nodiscard]] bool eval_hash_keys_eq(const EvalValue& a, const EvalValue& b,
-                                         const std::pmr::vector<std::string>& sh,
+                                         ::aura::compiler::StringPoolView sh,
                                          const std::pmr::vector<Pair>* pairs = nullptr,
                                          const std::vector<std::vector<EvalValue>>* vh = nullptr,
                                          int depth = 0, Evaluator* tenant_ev = nullptr,
@@ -298,7 +297,7 @@ namespace {
     // Returns the slot index of the match, or kNoHashSlot for a miss.
     [[nodiscard]] std::size_t
     eval_hash_probe(const FlatHashTable* ht, std::uint64_t kh, const EvalValue& key,
-                    const std::pmr::vector<std::string>& sh, const std::pmr::vector<Pair>* pairs,
+                    ::aura::compiler::StringPoolView sh, const std::pmr::vector<Pair>* pairs,
                     const std::vector<std::vector<EvalValue>>* vh, Evaluator* tenant_ev,
                     std::string_view tenant_op) noexcept {
         const auto* meta = ht->metadata();
@@ -391,7 +390,7 @@ namespace {
     }
 
     [[nodiscard]] inline bool imm_key_eq(const EvalValue& a, const EvalValue& b,
-                                         const std::pmr::vector<std::string>& sh) {
+                                         ::aura::compiler::StringPoolView sh) {
         if (a.val == b.val)
             return true;
         if (is_string(a) && is_string(b)) {
@@ -431,7 +430,7 @@ namespace {
 
     [[nodiscard]] std::uint32_t imm_insert(ImmHashArena& ar, std::uint32_t node, std::uint64_t h,
                                            int shift, const EvalValue& k, const EvalValue& v,
-                                           bool& added, const std::pmr::vector<std::string>& sh) {
+                                           bool& added, ::aura::compiler::StringPoolView sh) {
         if (node == 0) {
             added = true;
             return ar.leaf(h, k, v);
@@ -481,7 +480,7 @@ namespace {
 
     [[nodiscard]] std::uint32_t imm_erase(ImmHashArena& ar, std::uint32_t node, std::uint64_t h,
                                           int shift, const EvalValue& k, bool& removed,
-                                          const std::pmr::vector<std::string>& sh) {
+                                          ::aura::compiler::StringPoolView sh) {
         if (node == 0)
             return 0;
         const ImmNode n = ar.nodes[node];
@@ -536,7 +535,7 @@ namespace {
     }
 
     [[nodiscard]] bool imm_lookup(ImmHashArena& ar, std::uint32_t node, std::uint64_t h,
-                                  const EvalValue& k, const std::pmr::vector<std::string>& sh,
+                                  const EvalValue& k, ::aura::compiler::StringPoolView sh,
                                   EvalValue& out) {
         int shift = 0;
         while (node != 0) {

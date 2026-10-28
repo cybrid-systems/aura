@@ -98,7 +98,7 @@ Primitives::Primitives() {
     table_["+"] = [this, reject_non_number](std::span<const EvalValue> a) {
         if (auto err = reject_non_number(a))
             return *err;
-        std::span<const std::string> heap(string_heap_->data(), string_heap_->size());
+        ::aura::compiler::StringPoolView heap(*string_heap_);
         auto v = aura::compiler::pure::arithmetic_sum_pure(a, heap, nullptr);
         if (is_error(v)) {
             // Issue #4482: the only error left here is fixnum overflow.

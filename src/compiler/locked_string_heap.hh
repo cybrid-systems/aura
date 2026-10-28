@@ -38,12 +38,14 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <memory_resource>
 #include <mutex>
+#include <new>
 #include <span>
 #include <string>
 #include <type_traits>
@@ -55,6 +57,228 @@
 
 namespace aura::compiler {
 
+// ── Reference-validity contract (Issue #4717) ───────────────────────────
+// A reference from LockedStringHeap::operator[] (or Evaluator::string_at,
+// which is the payload door) stays valid, with the same bytes, while:
+//   1. OTHER slots are minted — the store never moves a constructed slot,
+//      and a mint publishes only the new slot, its block pointer and size_;
+//   2. the same slot is read from any thread — the read path walks atomic
+//      root/page/block pointers and touches only the slot's own bytes.
+// It does NOT survive:
+//   3. an in-place content write to that slot (mutable_string_at /
+//      note_write): the writer's obligation, unchanged from pre-#4717;
+//   4. a structural write — resize-shrink, clear, replace, or a reclaim
+//      release/reuse. Those are quiescent-only (world stopped, or the
+//      reclaim's mark proved the slot unreachable).
+// A released slot that is re-minted is a NEW object; the reclaim only
+// releases slots no live value references, so no correct program observes
+// the previous content through it.
+//
+// ── Issue #4717: stable-address string slot storage ─────────────────────
+//
+// The pre-#4717 heap was a std::pmr::vector<std::string>. Growing it MOVED
+// every element, so a reader that held a reference (string_at returns a
+// reference into the heap) dereferenced freed storage the moment a sibling
+// body minted. With the #4717 body mutex gone that is a live data race:
+// TSan reports LockedStringHeap::mint_locked_impl (vector.tcc realloc)
+// against LockedStringHeap::data() (the span view).
+//
+// StringSlotStore fixes the mechanism: a slot, once constructed, never
+// moves and is never destroyed until a structural write that requires
+// quiescence (clear / replace / resize-shrink). Storage is
+//
+//     root[page]  -> page[block] -> block[slot]
+//
+//   * `root_` is a fixed array of atomic page pointers, sized once at
+//     construction and never moved;
+//   * a page is a fixed array of atomic block pointers, allocated on the
+//     first slot that needs it and never moved;
+//   * a block is kBlockSlots std::string slots, allocated on demand.
+//
+// Publication: a block pointer is stored with release AFTER its elements
+// exist, and size_ is stored with release after the element write. A
+// reader walks root -> page -> block with acquire loads and then touches
+// ONLY that slot's std::string. It never reads the container metadata a
+// mint mutates (the old vector's data/size pointers), which is what makes
+// a concurrent mint plus read data-race free instead of merely unlikely.
+//
+// Writer discipline: emplace_back / resize-grow / assign are single-writer.
+// The shared heap serializes writers on its bound mutex; a per-fiber arena
+// is unbound and owned by one fiber. destroy paths (clear / replace /
+// resize-shrink) require quiescence (world stopped), same as before.
+class StringSlotStore {
+public:
+    using value_type = std::string;
+    using size_type = std::size_t;
+
+    static constexpr std::size_t kBlockSlotBits = 9; // 512 strings / block
+    static constexpr std::size_t kBlockSlots = std::size_t{1} << kBlockSlotBits;
+    static constexpr std::size_t kBlockMask = kBlockSlots - 1;
+    static constexpr std::size_t kPageBlockBits = 10; // 1024 blocks / page
+    static constexpr std::size_t kPageBlocks = std::size_t{1} << kPageBlockBits;
+    static constexpr std::size_t kPageBlockMask = kPageBlocks - 1;
+    static constexpr std::size_t kRootPages = 1024;
+    // 1024 pages * 1024 blocks * 512 slots.
+    static constexpr std::size_t kMaxSlots = kRootPages * kPageBlocks * kBlockSlots;
+
+    using Block = std::array<std::string, kBlockSlots>;
+
+    struct Page {
+        std::atomic<Block*> blocks[kPageBlocks];
+        Page() noexcept {
+            for (auto& b : blocks)
+                b.store(nullptr, std::memory_order_relaxed);
+        }
+    };
+
+    StringSlotStore() noexcept { init_root(); }
+    explicit StringSlotStore(std::pmr::memory_resource* r) noexcept
+        : res_(r) {
+        init_root();
+    }
+    StringSlotStore(const StringSlotStore&) = delete;
+    StringSlotStore& operator=(const StringSlotStore&) = delete;
+    ~StringSlotStore() { destroy_all(); }
+
+    [[nodiscard]] size_type size() const noexcept { return size_.load(std::memory_order_acquire); }
+    [[nodiscard]] bool empty() const noexcept { return size() == 0; }
+    // Reserved capacity is not a heap-level concept any more: growth
+    // allocates a block at a time. Kept for the vector-surface callers.
+    [[nodiscard]] size_type capacity() const noexcept { return size(); }
+
+    [[nodiscard]] std::string& operator[](size_type i) noexcept {
+        return *const_cast<std::string*>(slot_ptr(i));
+    }
+    [[nodiscard]] const std::string& operator[](size_type i) const noexcept { return *slot_ptr(i); }
+    std::string& at(size_type i) { return (*this)[i]; }
+    const std::string& at(size_type i) const { return (*this)[i]; }
+    std::string& back() noexcept { return (*this)[size() - 1]; }
+    const std::string& back() const noexcept { return (*this)[size() - 1]; }
+    std::string& front() noexcept { return (*this)[0]; }
+    const std::string& front() const noexcept { return (*this)[0]; }
+
+    // Append one slot. Returns its index. Single writer (the heap lock,
+    // or the owning fiber on an unbound arena heap).
+    template <class... Args> size_type emplace_back(Args&&... args) {
+        const size_type i = size_.load(std::memory_order_relaxed);
+        Block* b = ensure_block(i);
+        if (b == nullptr) [[unlikely]]
+            return kMaxSlots;
+        (*b)[i & kBlockMask] = std::string(std::forward<Args>(args)...);
+        size_.store(i + 1, std::memory_order_release);
+        return i;
+    }
+
+    // Grow with empty slots / shrink (destroys the tail: quiescent only).
+    void resize(size_type n) {
+        const size_type cur = size_.load(std::memory_order_relaxed);
+        if (n > cur) {
+            for (size_type i = cur; i < n; ++i) {
+                Block* b = ensure_block(i);
+                if (b == nullptr) [[unlikely]] {
+                    n = i; // slot space exhausted: publish what exists
+                    break;
+                }
+                std::string().swap((*b)[i & kBlockMask]);
+            }
+        } else {
+            for (size_type i = n; i < cur; ++i) {
+                Block* b = find_block(i);
+                if (b != nullptr)
+                    std::string().swap((*b)[i & kBlockMask]);
+            }
+        }
+        size_.store(n, std::memory_order_release);
+    }
+
+    void clear() noexcept { destroy_all(); }
+
+    // Install a bulk-built heap (GC compaction). Quiescent only.
+    void assign(std::pmr::vector<std::string>&& src) {
+        destroy_all();
+        for (auto& s : src)
+            (void)emplace_back(std::move(s));
+    }
+
+    void shrink_to_fit() noexcept {}
+    void reserve(size_type) noexcept {}
+    [[nodiscard]] std::pmr::memory_resource* resource() const noexcept { return res_; }
+
+private:
+    static const std::string& empty_slot() noexcept {
+        static const std::string kEmpty;
+        return kEmpty;
+    }
+    void init_root() noexcept {
+        for (auto& p : root_)
+            p.store(nullptr, std::memory_order_relaxed);
+    }
+    [[nodiscard]] Block* find_block(size_type i) const noexcept {
+        const size_type blk = i >> kBlockSlotBits;
+        const size_type pg = blk >> kPageBlockBits;
+        if (pg >= kRootPages) [[unlikely]]
+            return nullptr;
+        Page* page = root_[pg].load(std::memory_order_acquire);
+        if (page == nullptr) [[unlikely]]
+            return nullptr;
+        return page->blocks[blk & kPageBlockMask].load(std::memory_order_acquire);
+    }
+    [[nodiscard]] const std::string* slot_ptr(size_type i) const noexcept {
+        Block* b = find_block(i);
+        if (b == nullptr) [[unlikely]]
+            return &empty_slot();
+        return &(*b)[i & kBlockMask];
+    }
+    // Single-writer growth: allocate the page / block this slot needs and
+    // publish it with a release store.
+    Block* ensure_block(size_type i) {
+        const size_type blk = i >> kBlockSlotBits;
+        const size_type pg = blk >> kPageBlockBits;
+        if (pg >= kRootPages) [[unlikely]]
+            return nullptr;
+        Page* page = root_[pg].load(std::memory_order_relaxed);
+        if (page == nullptr) {
+            page = new Page();
+            root_[pg].store(page, std::memory_order_release);
+        }
+        Block* b = page->blocks[blk & kPageBlockMask].load(std::memory_order_relaxed);
+        if (b == nullptr) {
+            if (res_ != nullptr) {
+                void* mem = res_->allocate(sizeof(Block), alignof(Block));
+                b = new (mem) Block();
+            } else {
+                b = new Block();
+            }
+            page->blocks[blk & kPageBlockMask].store(b, std::memory_order_release);
+        }
+        return b;
+    }
+    void destroy_all() noexcept {
+        for (size_type p = 0; p < kRootPages; ++p) {
+            Page* page = root_[p].load(std::memory_order_relaxed);
+            if (page == nullptr)
+                continue;
+            for (size_type k = 0; k < kPageBlocks; ++k) {
+                Block* b = page->blocks[k].load(std::memory_order_relaxed);
+                if (b == nullptr)
+                    continue;
+                b->~Block();
+                if (res_ != nullptr)
+                    res_->deallocate(b, sizeof(Block), alignof(Block));
+                else
+                    delete b;
+                page->blocks[k].store(nullptr, std::memory_order_relaxed);
+            }
+            delete page;
+            root_[p].store(nullptr, std::memory_order_relaxed);
+        }
+        size_.store(0, std::memory_order_release);
+    }
+
+    std::pmr::memory_resource* res_ = nullptr;
+    std::atomic<Page*> root_[kRootPages];
+    std::atomic<size_type> size_{0};
+};
 class LockedStringHeap {
 public:
     using Vec = std::pmr::vector<std::string>;
@@ -62,8 +286,28 @@ public:
     using size_type = std::size_t;
     using reference = std::string&;
     using const_reference = const std::string&;
-    using iterator = Vec::iterator;
-    using const_iterator = Vec::const_iterator;
+    // Issue #4717: slots are stable but not contiguous, so iteration is
+    // index-based (the range-for surface only ever read the slots).
+    struct iterator {
+        LockedStringHeap* h = nullptr;
+        std::size_t i = 0;
+        std::string& operator*() const { return (*h)[i]; }
+        iterator& operator++() {
+            ++i;
+            return *this;
+        }
+        bool operator!=(const iterator& o) const { return i != o.i; }
+    };
+    struct const_iterator {
+        const LockedStringHeap* h = nullptr;
+        std::size_t i = 0;
+        const std::string& operator*() const { return (*h)[i]; }
+        const_iterator& operator++() {
+            ++i;
+            return *this;
+        }
+        bool operator!=(const const_iterator& o) const { return i != o.i; }
+    };
     using MintHook = void (*)(void* ctx, std::size_t idx) noexcept;
 
     LockedStringHeap() = default;
@@ -222,20 +466,18 @@ public:
     const_reference back() const noexcept { return v_.back(); }
     reference front() noexcept { return v_.front(); }
     const_reference front() const noexcept { return v_.front(); }
-    std::string* data() noexcept { return v_.data(); }
-    const std::string* data() const noexcept { return v_.data(); }
-    iterator begin() noexcept { return v_.begin(); }
-    iterator end() noexcept { return v_.end(); }
-    const_iterator begin() const noexcept { return v_.begin(); }
-    const_iterator end() const noexcept { return v_.end(); }
-    const_iterator cbegin() const noexcept { return v_.cbegin(); }
-    const_iterator cend() const noexcept { return v_.cend(); }
-    [[nodiscard]] const Vec& view() const noexcept { return v_; }
-    operator const Vec&() const noexcept { return v_; }
-    operator std::span<const std::string>() const noexcept { return {v_.data(), v_.size()}; }
-    [[nodiscard]] std::pmr::memory_resource* resource() const noexcept {
-        return v_.get_allocator().resource();
-    }
+    // Issue #4717: reads are index-only. The heap has no contiguous
+    // storage any more (a minted slot must never move), so there is no
+    // data() / span / vector view: every reader goes through operator[]
+    // or StringPoolView (below), and every payload reader through
+    // Evaluator::string_at().
+    iterator begin() noexcept { return iterator{this, 0}; }
+    iterator end() noexcept { return iterator{this, v_.size()}; }
+    const_iterator begin() const noexcept { return const_iterator{this, 0}; }
+    const_iterator end() const noexcept { return const_iterator{this, v_.size()}; }
+    const_iterator cbegin() const noexcept { return const_iterator{this, 0}; }
+    const_iterator cend() const noexcept { return const_iterator{this, v_.size()}; }
+    [[nodiscard]] std::pmr::memory_resource* resource() const noexcept { return v_.resource(); }
 
     // ── code-point index (Issue #4548) ─────────────────────────────
     static constexpr std::size_t kCpIndexMinBytes = 256;
@@ -335,21 +577,9 @@ public:
     void replace(Vec&& v) {
         Guard g(mu_, lock_observer_);
         ++write_gen_;
-        v_ = std::move(v);
+        v_.assign(std::move(v));
         slot_free_.assign(v_.size(), 0);
         free_slots_.clear();
-    }
-    // Escape hatch for code that must see the raw vector (bulk remap).
-    // Caller holds mutex() or runs with every mutator stopped.
-    // Issue #4548: the caller may rewrite slots, so cached indexes go.
-    // Issue #4608: the caller may rewrite the slots' liveness too, so
-    // the free list is dropped (every slot is live until proven
-    // otherwise by the next reclaim).
-    Vec& unsafe_storage() noexcept {
-        ++write_gen_;
-        slot_free_.assign(v_.size(), 0);
-        free_slots_.clear();
-        return v_;
     }
 
     static constexpr std::size_t npos = static_cast<std::size_t>(-1);
@@ -459,7 +689,8 @@ private:
     // caller holds the lock.
     void invalidate_cp_index_locked(size_type idx) noexcept { cp_meta_.erase(idx); }
 
-    Vec v_;
+    // Issue #4717: stable slots (a slot never moves once minted).
+    StringSlotStore v_;
     std::recursive_mutex* mu_ = nullptr;
     // Issue #4714: lock-observation hook (null = unmeasured).
     std::atomic<std::uint64_t>* lock_observer_ = nullptr;
@@ -475,6 +706,80 @@ private:
     std::uint64_t write_gen_ = 0;
     mutable std::uint64_t cp_meta_gen_ = 0;
     mutable std::unordered_map<size_type, CpIndex> cp_meta_;
+};
+
+// ── Issue #4717: the read-only string-pool view ──────────────────────────
+//
+// Every reader of a string pool takes one of these instead of a
+// std::span<const std::string>. A span required contiguous storage, which a
+// stable-slot heap cannot provide (deque/vector growth moves elements, and
+// the vector's data/size pointers are exactly what a concurrent mint
+// writes). StringPoolView is index-addressable over any of the three
+// backends that exist in the engine:
+//
+//   * LockedStringHeap — the shared heap (space 0) and permanent peer
+//     heaps; reads are lock-free and reference-valid per the contract on
+//     StringSlotStore;
+//   * std::vector<std::string> — keyword / symbol tables and test pools
+//     (builder-owned, immutable while a body runs);
+//   * std::span<const std::string> — the compatibility door for the pure
+//     kernels' existing call sites.
+//
+// A default-constructed view is empty; an out-of-range index reads as the
+// empty string (the pre-#4717 span's operator[] was UB there, and every
+// caller bounds-checks first — this only removes the UB, not the check).
+class StringPoolView {
+public:
+    StringPoolView() noexcept = default;
+    StringPoolView(const LockedStringHeap& h) noexcept
+        : heap_(&h) {}
+    StringPoolView(const LockedStringHeap* h) noexcept
+        : heap_(h) {}
+    StringPoolView(const std::vector<std::string>& v) noexcept
+        : vec_(&v) {}
+    StringPoolView(std::span<const std::string> s) noexcept
+        : span_(s) {}
+
+    [[nodiscard]] const std::string& operator[](std::size_t i) const noexcept {
+        if (heap_ != nullptr)
+            return (*heap_)[i];
+        if (vec_ != nullptr)
+            return i < vec_->size() ? (*vec_)[i] : empty_ref();
+        return i < span_.size() ? span_[i] : empty_ref();
+    }
+    [[nodiscard]] std::size_t size() const noexcept {
+        if (heap_ != nullptr)
+            return heap_->size();
+        if (vec_ != nullptr)
+            return vec_->size();
+        return span_.size();
+    }
+    [[nodiscard]] bool empty() const noexcept { return size() == 0; }
+    [[nodiscard]] const LockedStringHeap* heap() const noexcept { return heap_; }
+    [[nodiscard]] std::span<const std::string> span() const noexcept { return span_; }
+
+    struct const_iterator {
+        const StringPoolView* v = nullptr;
+        std::size_t i = 0;
+        const std::string& operator*() const { return (*v)[i]; }
+        const_iterator& operator++() {
+            ++i;
+            return *this;
+        }
+        bool operator!=(const const_iterator& o) const { return i != o.i; }
+    };
+    const_iterator begin() const { return const_iterator{this, 0}; }
+    const_iterator end() const { return const_iterator{this, size()}; }
+
+private:
+    static const std::string& empty_ref() noexcept {
+        static const std::string kEmpty;
+        return kEmpty;
+    }
+
+    const LockedStringHeap* heap_ = nullptr;
+    const std::vector<std::string>* vec_ = nullptr;
+    std::span<const std::string> span_{};
 };
 
 // Generic mint for helpers templated on the heap type (LockedStringHeap or a

@@ -272,12 +272,11 @@ export struct FfiHandleProbe {
     bool (*match)(void* ctx, std::uint64_t packed, std::string_view tag, void*& ptr) = nullptr;
 };
 
-export inline FFIMarshalled
-ffi_marshal_args_pure(std::span<const types::EvalValue> args, std::span<const int> arg_types,
-                      std::span<const std::string> string_heap, std::span<void* const> opaque_heap,
-                      std::span<const std::uint32_t> opaque_generation = {},
-                      std::span<const std::string> handle_tags = {},
-                      FfiHandleProbe handle_probe = {}) {
+export inline FFIMarshalled ffi_marshal_args_pure(
+    std::span<const types::EvalValue> args, std::span<const int> arg_types,
+    ::aura::compiler::StringPoolView string_heap, std::span<void* const> opaque_heap,
+    std::span<const std::uint32_t> opaque_generation = {},
+    std::span<const std::string> handle_tags = {}, FfiHandleProbe handle_probe = {}) {
     FFIMarshalled out{};
     if (args.size() != arg_types.size() || args.size() > kFfiMaxArgs) {
         out.arity_mismatch = true;
@@ -505,8 +504,8 @@ namespace aura::compiler::pure {
 // This matches the legacy `coerce_to_int` semantics for callers
 // that ignore the Result, but adds an error path for callers
 // that want to handle string-parse failures explicitly.
-export inline aura::diag::Result<std::int64_t> coerce_to_int_pure(const types::EvalValue& v,
-                                                                  std::span<const std::string> heap)
+export inline aura::diag::Result<std::int64_t>
+coerce_to_int_pure(const types::EvalValue& v, ::aura::compiler::StringPoolView heap)
     // Issue #213 follow-up: C++26 contract. The function
     // gracefully handles v being any EvalValue (returns 0 for
     // non-coercible types), so the precondition is just
@@ -715,7 +714,7 @@ export inline std::string numeric_type_mismatch_detail(const types::EvalValue& v
 }
 
 inline std::string_view arith_string_text(const types::EvalValue& v,
-                                          std::span<const std::string> heap) noexcept {
+                                          ::aura::compiler::StringPoolView heap) noexcept {
     if (!types::is_string(v) || heap.empty())
         return {};
     const auto idx = types::as_string_idx(v);
@@ -728,7 +727,8 @@ inline std::string_view arith_string_text(const types::EvalValue& v,
 // the primitive wrapper replaces with a cause string. Numeric results
 // are never error values.
 inline types::EvalValue arith_type_sentinel(const types::EvalValue& bad,
-                                            std::span<const std::string> heap, std::ostream* diag) {
+                                            ::aura::compiler::StringPoolView heap,
+                                            std::ostream* diag) {
     if (diag) {
         *diag << "error: " << numeric_type_mismatch_detail(bad, arith_string_text(bad, heap))
               << '\n';
@@ -755,7 +755,7 @@ inline types::EvalValue fixnum_overflow_error(const char* op, std::ostream* diag
 // tc-strict-runtime-typed-arg-mismatch and tc-type-var-name-from-param
 // substring-match stderr). The result is an error sentinel, not 0.
 export inline types::EvalValue arithmetic_sum_pure(std::span<const types::EvalValue> args,
-                                                   std::span<const std::string> string_heap,
+                                                   ::aura::compiler::StringPoolView string_heap,
                                                    std::ostream* diag = nullptr) {
     if (args.empty())
         return types::make_int(0);
@@ -794,7 +794,7 @@ export inline types::EvalValue arithmetic_sum_pure(std::span<const types::EvalVa
 // fresh EvalValue (make_int or make_float). Same diag sink
 // convention as arithmetic_sum_pure.
 export inline types::EvalValue arithmetic_sub_pure(std::span<const types::EvalValue> args,
-                                                   std::span<const std::string> string_heap,
+                                                   ::aura::compiler::StringPoolView string_heap,
                                                    std::ostream* diag = nullptr) {
     if (args.empty())
         return types::make_int(0);
@@ -846,7 +846,7 @@ export inline types::EvalValue arithmetic_sub_pure(std::span<const types::EvalVa
 // Pure variadic multiplication: (*) → 1, (* x) → x, (* x y z ...) → x * y * z.
 // Promotes to float if any arg is float.
 export inline types::EvalValue arithmetic_mul_pure(std::span<const types::EvalValue> args,
-                                                   std::span<const std::string> string_heap,
+                                                   ::aura::compiler::StringPoolView string_heap,
                                                    std::ostream* diag = nullptr) {
     if (args.empty())
         return types::make_int(1);
@@ -889,7 +889,7 @@ export inline types::EvalValue arithmetic_mul_pure(std::span<const types::EvalVa
 // short-circuit on all-zeros.
 export inline aura::diag::Result<types::EvalValue>
 arithmetic_div_pure(std::span<const types::EvalValue> args,
-                    std::span<const std::string> string_heap, std::ostream* diag = nullptr)
+                    ::aura::compiler::StringPoolView string_heap, std::ostream* diag = nullptr)
     // Issue #213 follow-up: C++26 contract. Division by
     // zero is detected at runtime via std::unexpected; the
     // function gracefully handles empty args (returns

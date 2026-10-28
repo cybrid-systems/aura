@@ -76,7 +76,7 @@ using types::make_void;
 namespace {
 
     // Issue #2998 / #4463: ints and floats only. Strings are not parsed.
-    [[nodiscard]] bool try_coerce_int(const EvalValue& v, std::span<const std::string> heap,
+    [[nodiscard]] bool try_coerce_int(const EvalValue& v, ::aura::compiler::StringPoolView heap,
                                       std::int64_t& out) {
         if (is_int(v)) {
             out = as_int(v);
@@ -91,7 +91,7 @@ namespace {
         return true;
     }
 
-    void note_arith_mismatch(const EvalValue& v, std::span<const std::string> heap) {
+    void note_arith_mismatch(const EvalValue& v, ::aura::compiler::StringPoolView heap) {
         std::string_view text;
         if (is_string(v) && !heap.empty()) {
             const auto idx = as_string_idx(v);
