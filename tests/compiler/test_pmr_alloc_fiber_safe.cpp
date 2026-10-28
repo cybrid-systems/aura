@@ -1815,7 +1815,258 @@ static void ac4717_concurrent_mint_read() {
           "4717 AC1: the reference-validity contract is stated at the store");
 }
 
+// ── Issue #4714 Row 2: the PRODUCTION mint path takes no shared lock ──
+// Before this increment push_string_heap -> string_heap_.mint() took
+// alloc_storage_lock_ once per mint. Now, inside a fiber body, the same door
+// fills an exclusively claimed batch slot with NO acquisition; the batch
+// claim (one per 512..8192 mints) is the only lock. Both numbers below are
+// MEASURED through the same observer (LockedStringHeap::Guard increments
+// Evaluator::string_heap_lock_count()), and a bound-heap control proves the
+// observer fires, so the 0 is a measurement and not a dead hook.
+static void ac4714r2_production_mint_no_lock() {
+    std::println("\n--- #4714 Row 2 AC1: production push_string_heap takes no shared lock ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    constexpr int kFibers = 2;
+    constexpr int kBeforeIters = 2000; // before window: the pre-#4714 path
+    constexpr int kWarm = 9000;        // grows the batch to FiberSlabArena::kMaxBatch
+    constexpr int kWindow = 4000;      // steady-state window measured below
+    constexpr std::uint64_t kBaseFid = 4714'2000;
+    const auto content = [](int f, int i) {
+        return "r2-" + std::to_string(f) + "-" + std::to_string(i);
+    };
+    std::atomic<int> errors{0};
+
+    // BEFORE: the pre-#4714 host path, two threads, same door.
+    const auto locks_before_total = ev.string_heap_lock_count();
+    std::atomic<int> before_mints{0};
+    {
+        std::vector<std::thread> ts;
+        ts.reserve(kFibers);
+        for (int f = 0; f < kFibers; ++f) {
+            ts.emplace_back([&ev, &content, &before_mints, &errors, f] {
+                try {
+                    for (int i = 0; i < kBeforeIters; ++i) {
+                        (void)ev.push_string_heap(content(f, i));
+                        before_mints.fetch_add(1, std::memory_order_relaxed);
+                    }
+                } catch (...) {
+                    errors.fetch_add(1, std::memory_order_relaxed);
+                }
+            });
+        }
+        for (auto& t : ts)
+            t.join();
+    }
+    const auto locks_before = ev.string_heap_lock_count() - locks_before_total;
+    const auto before_n = static_cast<std::uint64_t>(before_mints.load());
+
+
+    // AFTER: the production door inside a fiber context. Each thread pins
+    // the fiber id exactly as serve/fiber.cpp exposes it through
+    // g_current_fiber / aura_fiber_current_id.
+    std::atomic<int> warmed{0};
+    std::atomic<bool> go{false};
+    // Sampled payloads: only the OPEN batch is addressable by local index
+    // (a closed batch's slots stay live as ordinary shared slots), so the
+    // content check goes through the payloads the fibers actually minted.
+    std::vector<std::uint64_t> first_payload(kFibers, 0);
+    std::vector<std::uint64_t> last_payload(kFibers, 0);
+    std::vector<std::thread> ts;
+    ts.reserve(kFibers);
+    for (int f = 0; f < kFibers; ++f) {
+        ts.emplace_back([&ev, &content, &warmed, &go, &errors, &first_payload, &last_payload, f,
+                         kBaseFid] {
+            try {
+                const std::uint64_t fid = kBaseFid + static_cast<std::uint64_t>(f);
+                // Static doors: call them through the instance (the test TU
+                // does not name the module's Evaluator type).
+                ev.set_fiber_mint_override_for_test(fid);
+                for (int i = 0; i < kWarm; ++i)
+                    (void)ev.push_string_heap(content(f, i));
+                warmed.fetch_add(1, std::memory_order_acq_rel);
+                while (!go.load(std::memory_order_acquire))
+                    std::this_thread::yield();
+                for (int i = kWarm; i < kWarm + kWindow; ++i) {
+                    const auto idx = static_cast<std::uint64_t>(ev.push_string_heap(content(f, i)));
+                    if (i == kWarm)
+                        first_payload[static_cast<std::size_t>(f)] = idx;
+                    last_payload[static_cast<std::size_t>(f)] = idx;
+                }
+            } catch (...) {
+                errors.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+    }
+    while (warmed.load(std::memory_order_acquire) < kFibers)
+        std::this_thread::yield();
+    // Steady state: each fiber holds a full batch, so the window below must
+    // not acquire the shared heap lock once.
+    const auto locks0 = ev.string_heap_lock_count();
+    const auto slab_mints0 = ev.fiber_slab_mints();
+    const auto claims0 = ev.fiber_slab_claims();
+    go.store(true, std::memory_order_release);
+    for (auto& t : ts)
+        t.join();
+    const auto locks_after = ev.string_heap_lock_count() - locks0;
+    const auto mints_after = ev.fiber_slab_mints() - slab_mints0;
+    const auto claims_total = ev.fiber_slab_claims() - claims0;
+    const auto want = static_cast<std::uint64_t>(kFibers) * static_cast<std::uint64_t>(kWindow);
+
+    CHECK(errors.load() == 0, "4714R2 AC1: 0 errors under 2-fiber production mint");
+    CHECK(mints_after == want, "4714R2 AC1: the window went through the production slab (got " +
+                                   std::to_string(mints_after) + ", want " + std::to_string(want) +
+                                   ")");
+    CHECK(locks_before == before_n,
+          "4714R2 AC1: BEFORE - the host path takes one heap lock per mint (" +
+              std::to_string(locks_before) + " locks for " + std::to_string(before_n) + " mints)");
+    CHECK(locks_after == 0,
+          "4714R2 AC1: AFTER - steady-state production mints take NO heap lock (observed " +
+              std::to_string(locks_after) + " over " + std::to_string(want) + " mints)");
+    CHECK(claims_total == 0,
+          "4714R2 AC1: no batch claim inside the steady-state window (observed " +
+              std::to_string(claims_total) + ")");
+    CHECK(ev.fiber_arena_control_lock_delta() > 0,
+          "4714R2 AC1: the lock observer fires for a bound heap (control, so the 0 is measured)");
+    bool content_ok = true;
+    std::string first_bad;
+    for (int f = 0; f < kFibers; ++f) {
+        const auto fid = kBaseFid + static_cast<std::uint64_t>(f);
+        CHECK(ev.fiber_slab_size(fid) == static_cast<std::size_t>(kWarm + kWindow),
+              "4714R2 AC1: fiber " + std::to_string(f) + " minted one slot per call");
+        const auto fi = static_cast<std::size_t>(f);
+        const auto got_first = ev.copy_string_heap_at(first_payload[fi]);
+        const auto got_last = ev.copy_string_heap_at(last_payload[fi]);
+        if (got_first != content(f, kWarm)) {
+            content_ok = false;
+            first_bad = "fiber " + std::to_string(f) + " first window payload want '" +
+                        content(f, kWarm) + "' got '" + got_first + "'";
+        } else if (got_last != content(f, kWarm + kWindow - 1)) {
+            content_ok = false;
+            first_bad = "fiber " + std::to_string(f) + " last window payload want '" +
+                        content(f, kWarm + kWindow - 1) + "' got '" + got_last + "'";
+        }
+    }
+    CHECK(content_ok, "4714R2 AC1: every sampled payload reads back byte-identical through "
+                      "copy_string_heap_at (" +
+                          first_bad + ")");
+    CHECK(ev.fiber_slab_tenant(kBaseFid) == 1,
+          "4714R2 AC1: the batch carries the #4428 owner record (tenant+1 = 1)");
+
+    std::println("\n--- #4714 Row 2 AC2: publish is copy-free, one lock, tail returned ---");
+#if defined(__SANITIZE_THREAD__)
+    // A TSan build is ~75x slower; the 2 ms publish bound is a Release
+    // measurement, so the sanitizer run gets a proportional allowance.
+    constexpr long long kPublishBoundUs = 20000;
+#else
+    constexpr long long kPublishBoundUs = 2000;
+#endif
+    const auto pub_locks0 = ev.fiber_slab_publish_locks();
+    const auto free0 = ev.string_heap_free_slots();
+    const auto tp0 = std::chrono::steady_clock::now();
+    const auto published0 = ev.publish_fiber_slab(kBaseFid);
+    const auto published1 = ev.publish_fiber_slab(kBaseFid + 1);
+    const auto publish_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                                std::chrono::steady_clock::now() - tp0)
+                                .count();
+    const auto free1 = ev.string_heap_free_slots();
+    CHECK(!published0.empty() && !published1.empty(),
+          "4714R2 AC2: publish returns the slots of the batch it closes");
+    CHECK(ev.string_heap_claimed_slots() == 0,
+          "4714R2 AC2: publishing leaves no claimed slot behind (got " +
+              std::to_string(ev.string_heap_claimed_slots()) + ")");
+    CHECK(ev.fiber_slab_publish_locks() - pub_locks0 == 2,
+          "4714R2 AC2: exactly ONE shared-heap lock per publish batch (got " +
+              std::to_string(ev.fiber_slab_publish_locks() - pub_locks0) + " for 2 batches)");
+    CHECK(!published0.empty() &&
+              ev.copy_string_heap_at(published0.back()) == content(0, kWarm + kWindow - 1),
+          "4714R2 AC2: the last published slot is intact after the batch closes");
+    CHECK(free1 > free0, "4714R2 AC2: the unused tail went back to the free list (" +
+                             std::to_string(free0) + " -> " + std::to_string(free1) + ")");
+    CHECK(ev.fiber_slab_count() == 0, "4714R2 AC2: both slabs are dropped after publish");
+    CHECK(publish_us < kPublishBoundUs,
+          "4714R2 AC2: publishing 2 x " + std::to_string(kWarm + kWindow) +
+              " slot batches stays under the promotion bound (" + std::to_string(kPublishBoundUs) +
+              " us; measured " + std::to_string(publish_us) + " us, no copy)");
+    std::println("    4714R2: BEFORE {} locks / {} mints; AFTER {} locks / {} window mints; "
+                 "{} batch claims for {} warm mints; publish 2 x {} slots = {} us, "
+                 "{} free slots returned",
+                 locks_before, before_n, locks_after, want, claims_total, kWarm, kWarm + kWindow,
+                 publish_us, free1 - free0);
+
+    std::println("\n--- #4714 Row 2 AC3: a mint inside a real fiber, joined byte-exact ---");
+    // The #4709 join-void shape: the body builds string keys and returns the
+    // hash; join must hand the parent byte-exact keys. This drives the REAL
+    // fiber:spawn/join path (no override), so string-append / number->string
+    // inside the body go through the production door.
+    auto rdef = cs.eval("(define (mk4714r2 k n) (let ((h (hash)))"
+                        " (let loop ((i 0)) (if (< i n) (begin"
+                        " (hash-set! h (string-append \"k\" (number->string k) \"-\""
+                        " (number->string i)) i)"
+                        " (loop (+ i 1))) h))))");
+    CHECK(rdef.has_value(), "4714R2 AC3: the string-keyed builder defines");
+    // Spawn and join in ONE form: the parent blocks inside fiber:join instead
+    // of evaluating a second form while the body allocates cells — cells_ is
+    // still a shared, unsynchronized arena (#4714's cells/pairs slice), and a
+    // parent eval running against a live body would surface that pre-existing
+    // hole here instead of the string path this AC is about.
+    auto rj =
+        cs.eval("(define f4714r2_hv (fiber:join (fiber:spawn (lambda () (mk4714r2 9 200)))))");
+    CHECK(rj.has_value(), "4714R2 AC3: the 200-key hash joins");
+    auto rlen = cs.eval("(hash-length f4714r2_hv)");
+    CHECK(rlen && is_int(*rlen) && as_int(*rlen) == 200,
+          "4714R2 AC3: the joined hash has 200 entries (got " +
+              (rlen && is_int(*rlen) ? std::to_string(as_int(*rlen)) : std::string("no result")) +
+              ")");
+    bool keys_ok = true;
+    std::string key_bad;
+    for (int i : {0, 1, 63, 199}) {
+        const auto key = "k9-" + std::to_string(i);
+        auto rv = cs.eval("(hash-ref f4714r2_hv \"" + key + "\")");
+        if (!rv || !is_int(*rv) || as_int(*rv) != i) {
+            keys_ok = false;
+            key_bad = "key '" + key + "' -> " +
+                      (rv ? (is_int(*rv) ? std::to_string(as_int(*rv)) : std::string("non-int"))
+                          : std::string("error"));
+            break;
+        }
+    }
+    CHECK(keys_ok,
+          "4714R2 AC3: joined string keys resolve byte-exact in the parent (" + key_bad + ")");
+
+    std::println("\n--- #4714 Row 2 AC4: source cites ---");
+    const auto heap_src = read_file("src/compiler/locked_string_heap.hh");
+    CHECK(heap_src.find("claim_slots") != std::string::npos &&
+              heap_src.find("write_claimed_slot") != std::string::npos &&
+              heap_src.find("release_claimed_slots") != std::string::npos,
+          "4714R2 AC4: the heap owns the exclusive batch API");
+    const auto arena_src = read_file("src/compiler/fiber_alloc_arena.hh");
+    CHECK(arena_src.find("class FiberSlabArena") != std::string::npos &&
+              arena_src.find("FiberSlabTable") != std::string::npos,
+          "4714R2 AC4: the production arena + table are in the arena header");
+    const auto evsrc = read_file("src/compiler/evaluator.ixx");
+    CHECK(evsrc.find("fiber_slab_arenas_") != std::string::npos &&
+              evsrc.find("fiber_slab_mint(") != std::string::npos &&
+              evsrc.find("publish_fiber_slab(") != std::string::npos,
+          "4714R2 AC4: the Evaluator owns the slab table + the mint/publish doors");
+    const auto push_at = evsrc.find("std::int32_t push_string_heap(const std::string& s)");
+    CHECK(push_at != std::string::npos &&
+              evsrc.substr(push_at, 1200).find("fiber_slab_mint(") != std::string::npos,
+          "4714R2 AC4: the PRODUCTION door routes through the slab");
+    const auto msgsrc = read_file("src/compiler/evaluator_primitives_messaging.cpp");
+    CHECK(msgsrc.find("publish_fiber_slab(static_cast<std::uint64_t>(fid))") != std::string::npos,
+          "4714R2 AC4: fiber completion publishes the slab before the result is ready");
+}
+
 int run_test_pmr_alloc_fiber_safe() {
+    // TEMPORARY local experiment (reverted before the commit): run only the
+    // #4714 Row 2 block, which the full TSan run cannot reach past the
+    // pre-existing #4474 r3 multi-million-live-heap AC.
+    if (const char* only = std::getenv("AURA_4714_ONLY_R2"); only != nullptr && *only != 0) {
+        ac4714r2_production_mint_no_lock();
+        std::println("\n=== #4714R2-only: {} passed, {} failed ===", g_passed, g_failed);
+        return g_failed ? 1 : 0;
+    }
     std::println("=== Issue #2651: PMR / string_heap concurrent alloc safety ===");
     ac1_concurrent_push_string();
     ac2_concurrent_push_pair();
@@ -1839,6 +2090,7 @@ int run_test_pmr_alloc_fiber_safe() {
     ac4714_fiber_string_arena();
     ac4714s_string_space_accessor();
     ac4717_concurrent_mint_read();
+    ac4714r2_production_mint_no_lock();
     std::println("\n=== #2651/#2997: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

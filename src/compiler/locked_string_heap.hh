@@ -152,6 +152,16 @@ public:
     [[nodiscard]] const std::string& operator[](size_type i) const noexcept { return *slot_ptr(i); }
     std::string& at(size_type i) { return (*this)[i]; }
     const std::string& at(size_type i) const { return (*this)[i]; }
+    // Issue #4714 Row 2: the slot's own storage, or nullptr when its block
+    // was never allocated. A WRITE must use this and never operator[]:
+    // operator[] substitutes the process-wide empty sentinel for a missing
+    // block, and writing there would corrupt every reader of that sentinel.
+    [[nodiscard]] std::string* writable_slot(size_type i) noexcept {
+        Block* b = find_block(i);
+        if (b == nullptr) [[unlikely]]
+            return nullptr;
+        return &(*b)[i & kBlockMask];
+    }
     std::string& back() noexcept { return (*this)[size() - 1]; }
     const std::string& back() const noexcept { return (*this)[size() - 1]; }
     std::string& front() noexcept { return (*this)[0]; }
@@ -357,7 +367,157 @@ public:
         return mint_locked_impl(std::forward<Args>(args)...);
     }
 
+    // ── Issue #4714 Row 2: exclusive slot batches (the production mint) ──
+    // claim_slots takes the ONE lock acquisition of a batch; every slot it
+    // returns is then exclusively owned by the caller, which fills it with
+    // write_claimed_slot() (NO lock) and either publishes it or returns it
+    // with release_claimed_slots(). That is what lets two fibers mint
+    // strings concurrently without serializing on alloc_storage_lock_: the
+    // payload stays a plain space-0 index (no new tag, no second index
+    // space), the slot's storage lives in this heap, and no other thread
+    // can observe or touch a claimed slot until its owner publishes a value
+    // that names it.
+    //
+    // Owner contract (Evaluator::fiber_slab_mint):
+    //   * write_generation() must still match the value seen at claim time
+    //     (a structural write — resize-shrink / clear / compaction — moved
+    //     the slots otherwise, and the claim is re-taken);
+    //   * a slot may be returned only when no value references it, which the
+    //     publish tail and the fiber-exit path both know.
+    // `prev_filled`/`prev_unused` close the batch the caller is done with
+    // under the SAME lock acquisition: a fiber owns at most one open batch,
+    // so a refill disclaims the exhausted one instead of leaking its claim
+    // flags (a claimed slot is skipped by the reclaim forever).
+    template <class StampFn, class OnRelease>
+    std::vector<std::uint64_t> claim_slots(std::size_t n,
+                                           std::span<const std::uint64_t> prev_filled,
+                                           std::span<const std::uint64_t> prev_unused,
+                                           StampFn&& stamp, OnRelease&& on_unused) {
+        std::vector<std::uint64_t> out;
+        Guard g(mu_, lock_observer_); // ONE shared-heap lock for the batch
+        close_locked(prev_filled, prev_unused, on_unused);
+        if (n == 0)
+            return out;
+        out.reserve(n);
+        // (1) Released slots first: the reclaim proved no live value
+        // references them, so they are free for exclusive reuse (#4608).
+        while (out.size() < n && !free_slots_.empty()) {
+            const auto idx = free_slots_.back();
+            free_slots_.pop_back();
+            if (idx >= v_.size()) [[unlikely]]
+                continue;
+            if (idx < slot_free_.size())
+                slot_free_[idx] = 0;
+            set_claimed_locked(idx, true);
+            invalidate_cp_index_locked(idx);
+            std::string().swap(v_[idx]); // already empty; defensive
+            out.push_back(static_cast<std::uint64_t>(idx));
+        }
+        // (2) Then the append tail. ensure_block() runs under this lock, so
+        // the owner's later write never allocates and never takes a lock.
+        while (out.size() < n) {
+            const auto idx = v_.size();
+            if (idx >= StringSlotStore::kMaxSlots) [[unlikely]]
+                break;
+            v_.emplace_back(std::string());
+            slot_free_.push_back(0);
+            set_claimed_locked(idx, true);
+            out.push_back(static_cast<std::uint64_t>(idx));
+        }
+        if (!out.empty())
+            stamp(std::span<const std::uint64_t>(out.data(), out.size()));
+        return out;
+    }
+
+    // Fill a claimed slot WITHOUT the lock: the caller is the slot's only
+    // writer (see claim_slots). False when the index was invalidated by a
+    // structural write or when its block is missing; `s` is then untouched
+    // (swap, not move) so the caller can fall back to the locked mint.
+    bool write_claimed_slot(std::uint64_t idx, std::string& s) {
+        const auto i = static_cast<size_type>(idx);
+        if (i >= v_.size()) [[unlikely]]
+            return false;
+        std::string* slot = v_.writable_slot(i);
+        if (slot == nullptr) [[unlikely]]
+            return false;
+        slot->swap(s);
+        return true;
+    }
+
+    // Close a claimed batch, ONE lock for the whole batch:
+    //   * `filled` slots lose their claim but keep their content — they are
+    //     ordinary shared slots from now on, so the file-heap reclaim owns
+    //     their lifetime exactly as it owns every other slot's;
+    //   * `unused` slots (never handed to a value) are emptied and go back
+    //     on the free list;
+    //   * on_unused() runs under the same lock for the caller's own
+    //     index-parallel bookkeeping (the #4428 tenant record).
+    // A batch abandoned because a structural write moved its indices is
+    // closed with filled = all slots and an empty `unused`: the content
+    // may name live strings after a compaction, so it is neither dropped
+    // nor freed, only disclaimed.
+    template <class OnRelease>
+    std::size_t close_claimed_batch(std::span<const std::uint64_t> filled,
+                                    std::span<const std::uint64_t> unused, OnRelease&& on_unused) {
+        Guard g(mu_, lock_observer_);
+        return close_locked(filled, unused, on_unused);
+    }
+
 private:
+    template <class OnRelease>
+    std::size_t close_locked(std::span<const std::uint64_t> filled,
+                             std::span<const std::uint64_t> unused, OnRelease&& on_unused) {
+        for (const auto raw : filled) {
+            const auto i = static_cast<size_type>(raw);
+            if (i < v_.size() && i < claimed_.size())
+                claimed_[i] = 0;
+        }
+        std::size_t released = 0;
+        for (const auto raw : unused) {
+            const auto i = static_cast<size_type>(raw);
+            // Slot 0 is the immortal empty string (the default error-cause
+            // sentinel): never released, exactly as release_unmarked has it.
+            if (i == 0 || i >= v_.size()) [[unlikely]]
+                continue;
+            std::string().swap(v_[i]);
+            invalidate_cp_index_locked(i);
+            if (slot_free_.size() < v_.size())
+                slot_free_.resize(v_.size(), 0);
+            if (!slot_free_[i]) {
+                slot_free_[i] = 1;
+                free_slots_.push_back(i);
+            }
+            if (i < claimed_.size())
+                claimed_[i] = 0;
+            ++released;
+        }
+        on_unused(unused);
+        return released;
+    }
+
+public:
+    [[nodiscard]] bool slot_is_claimed(size_type i) const noexcept {
+        return i < claimed_.size() && claimed_[i] != 0;
+    }
+    [[nodiscard]] std::size_t claimed_slot_count() const noexcept { return claimed_.size(); }
+    // Slots currently owned by a fiber batch (0 = no claim leaked). Test
+    // door: takes the lock and counts, so it is O(heap) — never hot path.
+    [[nodiscard]] std::size_t claimed_live_count() const {
+        Guard g(mu_, lock_observer_);
+        std::size_t n = 0;
+        for (const auto c : claimed_)
+            if (c)
+                ++n;
+        return n;
+    }
+
+private:
+    void set_claimed_locked(size_type i, bool claimed) {
+        if (claimed_.size() <= i)
+            claimed_.resize(i + 1, 0);
+        claimed_[i] = claimed ? 1 : 0;
+    }
+
     template <class... Args> std::uint64_t mint_locked_impl(Args&&... args) {
         if (!free_slots_.empty()) {
             // Reuse a released slot. The swap drops the old content
@@ -429,6 +589,13 @@ public:
                 continue; // already free (or re-minted since the mark)
             if (i < slot_free_.size() && slot_free_[i])
                 continue; // already on the free list
+            // Issue #4714 Row 2: a slot claimed by a live fiber's slab is
+            // owned by that fiber — the fiber's values are fiber-local until
+            // it publishes, so the mark cannot see them. Skipping the
+            // release is what keeps the owner's next write from racing a
+            // free-list reuse.
+            if (slot_is_claimed(i))
+                continue;
             // Drop the content: swapping in an empty string releases
             // the old heap buffer with the temporary.
             std::string().swap(v_[i]);
@@ -488,9 +655,15 @@ public:
     // cached index. Call with or without the lock held.
     void note_write(size_type /*idx*/) noexcept {
         Guard g(mu_, lock_observer_);
-        ++write_gen_;
+        write_gen_.fetch_add(1, std::memory_order_release);
     }
-    [[nodiscard]] std::uint64_t write_generation() const noexcept { return write_gen_; }
+    // Issue #4714 Row 2: the generation is readable WITHOUT the lock. The
+    // per-fiber slab path checks it per mint so a structural write
+    // (resize-shrink / clear / GC compaction) that invalidated its claimed
+    // indices is noticed before the next write lands in a moved slot.
+    [[nodiscard]] std::uint64_t write_generation() const noexcept {
+        return write_gen_.load(std::memory_order_acquire);
+    }
 
     // Code points in slot i; npos when i is out of range.
     [[nodiscard]] std::size_t code_point_count(size_type i) const {
@@ -551,16 +724,20 @@ public:
     // shrink drops the free slots past the new end.
     void resize(size_type n) {
         Guard g(mu_, lock_observer_);
-        ++write_gen_;
+        write_gen_.fetch_add(1, std::memory_order_release);
         v_.resize(n);
         slot_free_.resize(n, 0);
+        // Issue #4714: a claimed index past the new end no longer exists.
+        if (claimed_.size() > n)
+            claimed_.resize(n);
         std::erase_if(free_slots_, [n](size_type i) { return i >= n; });
     }
     void clear() noexcept {
         Guard g(mu_, lock_observer_);
-        ++write_gen_;
+        write_gen_.fetch_add(1, std::memory_order_release);
         v_.clear();
         slot_free_.clear();
+        claimed_.clear();
         free_slots_.clear();
     }
     void shrink_to_fit() {
@@ -576,9 +753,12 @@ public:
     // already dropped the dead ones), so the free list is reset.
     void replace(Vec&& v) {
         Guard g(mu_, lock_observer_);
-        ++write_gen_;
+        write_gen_.fetch_add(1, std::memory_order_release);
         v_.assign(std::move(v));
         slot_free_.assign(v_.size(), 0);
+        // Issue #4714: every claimed index now names a different slot; the
+        // owner notices through write_generation() and re-claims.
+        claimed_.clear();
         free_slots_.clear();
     }
 
@@ -599,13 +779,14 @@ private:
         const auto& s = v_[i];
         // Any write since the last build invalidates every entry: drop
         // them all so dead strings' indexes do not linger.
-        if (cp_meta_gen_ != write_gen_) {
+        const auto gen = write_generation();
+        if (cp_meta_gen_ != gen) {
             cp_meta_.clear();
-            cp_meta_gen_ = write_gen_;
+            cp_meta_gen_ = gen;
         }
         auto it = cp_meta_.find(i);
         if (it != cp_meta_.end() && it->second.data == s.data() && it->second.bytes == s.size() &&
-            it->second.gen == write_gen_)
+            it->second.gen == gen)
             return it->second;
         if (it == cp_meta_.end()) {
             if (cp_meta_.size() >= kCpIndexMaxEntries)
@@ -615,7 +796,7 @@ private:
         CpIndex& m = it->second;
         m.data = s.data();
         m.bytes = s.size();
-        m.gen = write_gen_;
+        m.gen = gen;
         m.stride_offsets.clear();
         bool ascii = true;
         {
@@ -702,8 +883,12 @@ private:
     // the free list). Both are guarded by mu_ like v_.
     std::vector<std::size_t> free_slots_;
     std::vector<std::uint8_t> slot_free_;
-    // Issue #4548: guarded by mu_ like v_.
-    std::uint64_t write_gen_ = 0;
+    // Issue #4714 Row 2: index-parallel to v_ (1 = exclusively owned by a
+    // fiber's slab until it publishes or returns the slot). Guarded by mu_.
+    std::vector<std::uint8_t> claimed_;
+    // Issue #4548: guarded by mu_ like v_. Issue #4714 Row 2: atomic so the
+    // lock-free slab path can read it (acquire) without taking mu_.
+    std::atomic<std::uint64_t> write_gen_{0};
     mutable std::uint64_t cp_meta_gen_ = 0;
     mutable std::unordered_map<size_type, CpIndex> cp_meta_;
 };

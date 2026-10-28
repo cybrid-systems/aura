@@ -1,7 +1,7 @@
 {
   "issue": 4714,
-  "title": "Issue #4714: per-fiber string nursery with copy-on-send promotion - the fast path takes no lock (measured), a publish deep-copies the batch into shared old space under ONE narrow lock, and an unpublishing fiber exit releases the arena wholesale",
-  "ok": "OK: Issue #4714 per-fiber string arena - 2 fibers mint concurrently with 0 heap locks and 0 table locks on the steady-state path (Guard-observed, with a bound-heap control), promotion on publish is one lock per batch, the 10k promotion cost is measured (2.1 ms into the churned shared heap, 1.2 ms into a fresh one), a 10k-entry fiber:join is under 2 ms, and an unpublishing exit drops the arena in O(chunks); follow-up AC7-AC11: the String payload carries an index-space id in payload bits 48..55 (space 0 = the legacy shared heap, bit-identical for every reachable slot, ABI stays 4 and no tag predicate moves), all 309 direct heap readers now go through Evaluator::string_at()/string_at_or()/mutable_string_at() (0 direct indexes left outside the accessor), and a registered peer space resolves through the same accessor",
+  "title": "Issue #4714: per-fiber string arena - the fast path takes no lock (measured), a publish deep-copies the nursery batch into shared old space under ONE narrow lock, an unpublishing fiber exit releases the arena wholesale, and (Row 2) the PRODUCTION push_string_heap door claims an exclusive batch of real shared slots so a fiber mints with no shared lock at all",
+  "ok": "OK: Issue #4714 per-fiber string arena - 2 fibers mint concurrently with 0 heap locks and 0 table locks on the steady-state path (Guard-observed, with a bound-heap control), promotion on publish is one lock per batch, the 10k promotion cost is measured (2.1 ms into the churned shared heap, 1.2 ms into a fresh one), a 10k-entry fiber:join is under 2 ms, and an unpublishing exit drops the arena in O(chunks); Row 2 (AC12-AC16): the PRODUCTION push_string_heap door routes through FiberSlabArena - inside a fiber it claims an exclusive batch of real shared-heap slots (one lock per batch, 512 slots doubling to 8192) and then mints with NO lock, measured through the same Guard observer as 0 heap locks over an 8000-mint steady-state window from 2 fibers against 4000 locks for the pre-#4714 host path over the same volume, with the bound-heap control still firing; the payload stays a plain space-0 index (no tag, ABI or reader change), publish is copy-free with exactly one narrow lock per batch, the unused tail goes back to the free list, fiber exit disclaims its batch so the file-heap reclaim owns the survivors, and the #4709 join shape returns byte-exact string keys from a real fiber:spawn/join; follow-up AC7-AC11: the String payload carries an index-space id in payload bits 48..55 (space 0 = the legacy shared heap, bit-identical for every reachable slot, ABI stays 4 and no tag predicate moves), all 309 direct heap readers now go through Evaluator::string_at()/string_at_or()/mutable_string_at() (0 direct indexes left outside the accessor), and a registered peer space resolves through the same accessor",
   "checks": [
     {
       "ac": "AC1",
@@ -116,6 +116,58 @@
       "contains": [
         "string_at_or(",
         "string_at("
+      ]
+    },
+    {
+      "ac": "AC12",
+      "path": "tests/compiler/test_pmr_alloc_fiber_safe.cpp",
+      "contains": [
+        "ac4714r2_production_mint_no_lock",
+        "4714R2 AC1: BEFORE - the host path takes one heap lock per mint",
+        "4714R2 AC1: AFTER - steady-state production mints take NO heap lock",
+        "4714R2 AC1: the window went through the production slab",
+        "4714R2 AC1: the lock observer fires for a bound heap",
+        "4714R2 AC2: exactly ONE shared-heap lock per publish batch",
+        "4714R2 AC3: joined string keys resolve byte-exact in the parent"
+      ]
+    },
+    {
+      "ac": "AC13",
+      "path": "src/compiler/locked_string_heap.hh",
+      "contains": [
+        "Issue #4714 Row 2",
+        "claim_slots",
+        "write_claimed_slot",
+        "close_claimed_batch",
+        "writable_slot"
+      ]
+    },
+    {
+      "ac": "AC14",
+      "path": "src/compiler/fiber_alloc_arena.hh",
+      "contains": [
+        "class FiberSlabArena",
+        "class FiberSlabTable",
+        "Issue #4714 Row 2: the production per-fiber mint arena"
+      ]
+    },
+    {
+      "ac": "AC15",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "fiber_slab_arenas_",
+        "fiber_slab_mint(",
+        "publish_fiber_slab(",
+        "string_heap_lock_total_",
+        "current_fiber_mint_id"
+      ]
+    },
+    {
+      "ac": "AC16",
+      "path": "src/compiler/evaluator_primitives_messaging.cpp",
+      "contains": [
+        "publish_fiber_slab(static_cast<std::uint64_t>(fid))",
+        "Issue #4714 Row 2: the production slab needs no copy"
       ]
     }
   ]

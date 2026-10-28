@@ -8123,6 +8123,17 @@ private:
     // an unpublishing exit drops the arena wholesale. Owner tagging is
     // this side table, not a value bit: see fiber_alloc_arena.hh.
     mutable ::aura::compiler::FiberArenaTable fiber_string_arenas_;
+    // Issue #4714 Row 2: the PRODUCTION mint arena (fiber id -> slab).
+    // Unlike the nursery above it does not own storage: it claims an
+    // exclusive batch of REAL string_heap_ slots (one lock per batch) and
+    // writes them with no lock, so the payload it returns is an ordinary
+    // space-0 shared index (no reader, tag, ABI or GC change). Publishing
+    // copies nothing; it returns the unused tail and fences.
+    mutable ::aura::compiler::FiberSlabTable fiber_slab_arenas_;
+    // Issue #4714 Row 2: every lock acquisition on string_heap_ itself
+    // (observed inside LockedStringHeap::Guard, so the number is measured).
+    // The Row 2 proof is a delta of this counter across a mint window.
+    mutable std::atomic<std::uint64_t> string_heap_lock_total_{0};
     // Short string cache: ≤6 byte strings are deduplicated via this hash
     // (avoids redundant string_heap_ pushes and enables faster equal?)
     std::unordered_map<std::string, types::EvalValue, aura::core::TransparentStringHash,
@@ -9262,6 +9273,23 @@ public:
         if (vector_slot_tenants_.size() <= idx)
             vector_slot_tenants_.resize(idx + 1, 0);
         vector_slot_tenants_[idx] = capability_tenant_id_ + 1;
+    }
+    // Issue #4714 Row 2: tenant stamp for a slab batch. The batch owner is
+    // a single fiber, so stamping the whole claim with the claiming tenant
+    // is exactly the #4428 record every one of those mints would have
+    // written — in ONE pass under the claim lock instead of per mint.
+    static std::uint64_t fiber_slab_stamp_thunk(void* ctx,
+                                                std::span<const std::uint64_t> slots) noexcept {
+        auto* ev = static_cast<Evaluator*>(ctx);
+        for (const auto idx : slots)
+            ev->note_inrange_string_mint(static_cast<std::size_t>(idx));
+        return ev->capability_tenant_id_ + 1;
+    }
+    static void fiber_slab_unstamp_thunk(void* ctx, std::span<const std::uint64_t> slots) noexcept {
+        auto* ev = static_cast<Evaluator*>(ctx);
+        for (const auto idx : slots)
+            if (idx < ev->string_slot_tenants_.size())
+                ev->string_slot_tenants_[idx] = 0;
     }
     // Issue #4428: record the executing tenant on a string intern.
     // Caller holds alloc_storage_lock_. Encoding matches the pair mint.
@@ -10980,11 +11008,28 @@ public:
     // push_back → pmr::vector / monotonic_buffer_resource corruption
     // (SIGSEGV in allocate/deallocate / construct_at — H9).
     std::int32_t push_string_heap(const std::string& s) {
-        // mint() takes alloc_storage_lock_ for the append (#2651/#4543);
-        // the per-fiber nursery (#4714) is a separate, unbound heap.
+        // Issue #4714 Row 2: inside a fiber body the mint takes an exclusive
+        // slot from the fiber's slab and NO lock (the per-batch claim inside
+        // fiber_slab_mint is the only acquisition). The host path keeps the
+        // #2651/#4543 contract: string_heap_.mint() takes alloc_storage_lock_
+        // for the append, stamps the #4428 tenant record and returns the
+        // index in one critical section.
+        if (const auto fid = current_fiber_mint_id(); fid != 0) {
+            std::string copy(s);
+            const auto idx = fiber_slab_mint(fid, copy);
+            if (idx != kNoFiberSlot)
+                return static_cast<std::int32_t>(idx);
+        }
         return static_cast<std::int32_t>(string_heap_.mint(s));
     }
     std::int32_t push_string_heap(std::string&& s) {
+        // Same routing for the rvalue door; the slab fill is a swap, so `s`
+        // survives untouched when the slab declines the mint.
+        if (const auto fid = current_fiber_mint_id(); fid != 0) {
+            const auto idx = fiber_slab_mint(fid, s);
+            if (idx != kNoFiberSlot)
+                return static_cast<std::int32_t>(idx);
+        }
         return static_cast<std::int32_t>(string_heap_.mint(std::move(s)));
     }
 
@@ -11063,6 +11108,130 @@ public:
         (void)control.mint(std::string("4714-control"));
         return observed.load(std::memory_order_relaxed);
     }
+    // ── Issue #4714 Row 2: the production per-fiber mint path ────────
+    // `push_string_heap` routes here whenever the calling thread runs a
+    // fiber body. The fiber claims an EXCLUSIVE batch of REAL string_heap_
+    // slots (ONE lock per batch) and fills them with no lock at all, so the
+    // returned payload is an ordinary space-0 shared index: no reader, tag,
+    // ABI or GC change, and publishing copies nothing (see FiberSlabArena).
+    static constexpr std::uint64_t kNoFiberSlot = static_cast<std::uint64_t>(-1);
+
+    // Test door: pin a fiber id on a plain thread so the PRODUCTION door
+    // (push_string_heap) can be driven and measured without the scheduler.
+    // The pin is an out-of-line static data member (one entity with external
+    // linkage): a function-local static in an inline module function can end
+    // up duplicated in an importing TU, which would let the setter and the
+    // push_string_heap fast path read different copies.
+    static void set_fiber_mint_override_for_test(std::uint64_t fiber_id) noexcept {
+        tls_fiber_mint_override_ = fiber_id;
+    }
+    static void clear_fiber_mint_override_for_test() noexcept { tls_fiber_mint_override_ = 0; }
+    static std::uint64_t fiber_mint_override_for_test() noexcept {
+        return tls_fiber_mint_override_;
+    }
+
+    // The current fiber id on this thread (0 = host thread). The C hook is
+    // serve/fiber.cpp's aura_fiber_current_id, registered at load time.
+    static std::uint64_t current_fiber_mint_id() noexcept {
+        if (const auto pinned = tls_fiber_mint_override_; pinned != 0) [[unlikely]]
+            return pinned;
+        const auto fn = ::aura_get_current_fiber_id_fn();
+        return fn ? fn() : 0;
+    }
+
+    // Every lock acquisition on string_heap_ itself (observed inside
+    // LockedStringHeap::Guard; the Row 2 proof is a delta of this).
+    [[nodiscard]] std::uint64_t string_heap_lock_count() const noexcept {
+        return string_heap_lock_total_.load(std::memory_order_relaxed);
+    }
+
+    // Fast path: resolve the arena through a per-thread cache (the table
+    // mutex is taken once per thread/fiber/epoch), then fill a slot with NO
+    // lock. kNoFiberSlot means "fall back to the locked shared mint" (a
+    // tenant switch mid-batch, heap slot space exhausted, or a structural
+    // write that invalidated the claimed batch).
+    std::uint64_t fiber_slab_mint(std::uint64_t fiber_id, std::string& s) {
+        struct TlsSlab {
+            const Evaluator* owner = nullptr;
+            std::uint64_t fiber_id = 0;
+            std::uint64_t epoch = 0;
+            ::aura::compiler::FiberSlabArena* arena = nullptr;
+        };
+        static thread_local TlsSlab tls;
+        const auto epoch = fiber_slab_arenas_.epoch();
+        if (tls.owner != this || tls.fiber_id != fiber_id || tls.epoch != epoch) [[unlikely]] {
+            fiber_arena_stats::slab_table_locks().fetch_add(1, std::memory_order_relaxed);
+            tls.owner = this;
+            tls.fiber_id = fiber_id;
+            tls.epoch = epoch;
+            tls.arena = &fiber_slab_arenas_.get_or_create(
+                fiber_id, string_heap_, &fiber_slab_stamp_thunk, &fiber_slab_unstamp_thunk, this);
+        }
+        // A tenant switch mid-batch keeps #4428 exact: the batch's slots are
+        // stamped with the claiming tenant, so another tenant does not
+        // borrow them. tenant() == 0 means the arena has not claimed yet
+        // (a stamp is always tenant+1 >= 1), so a fresh arena is allowed to
+        // claim and every later mint is held to its stamp.
+        const auto want_tenant = capability_tenant_id_ + 1;
+        const auto have_tenant = tls.arena->tenant();
+        if (have_tenant != 0 && have_tenant != want_tenant) [[unlikely]]
+            return kNoFiberSlot;
+        const auto idx = tls.arena->mint(s);
+        return idx ? *idx : kNoFiberSlot;
+    }
+    // Copy-free publish: the payloads are already shared slots, so this only
+    // returns the unused tail (ONE narrow lock) and fences so a receiving
+    // thread sees this fiber's bytes. Returns the published slot indices in
+    // mint order (an identity remap, local slot i -> shared index out[i]).
+    std::vector<std::uint64_t> publish_fiber_slab(std::uint64_t fiber_id) {
+        auto owned = fiber_slab_arenas_.take(fiber_id);
+        if (!owned)
+            return {};
+        return owned->publish();
+    }
+    // Fiber exit: same tail release without the publish fence. Slots a
+    // value already names stay live (a channel send may reference one) and
+    // the file-heap reclaim frees them once unreachable.
+    void drop_fiber_slab(std::uint64_t fiber_id) {
+        auto owned = fiber_slab_arenas_.take(fiber_id);
+        if (owned)
+            owned->drop();
+    }
+    [[nodiscard]] std::size_t fiber_slab_count() const { return fiber_slab_arenas_.size(); }
+    [[nodiscard]] std::uint64_t fiber_slab_claims() const noexcept {
+        return fiber_arena_stats::slab_claims().load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t fiber_slab_mints() const noexcept {
+        return fiber_arena_stats::slab_mints().load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t fiber_slab_publish_locks() const noexcept {
+        return fiber_arena_stats::slab_publish_locks().load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t fiber_slab_table_locks() const noexcept {
+        return fiber_arena_stats::slab_table_locks().load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::size_t fiber_slab_size(std::uint64_t fiber_id) {
+        auto* a = fiber_slab_arenas_.find(fiber_id);
+        return a ? a->minted() : 0;
+    }
+    [[nodiscard]] std::uint64_t fiber_slab_slot(std::uint64_t fiber_id, std::size_t local) {
+        auto* a = fiber_slab_arenas_.find(fiber_id);
+        return a ? a->slot_at(local) : kNoFiberSlot;
+    }
+    [[nodiscard]] std::uint64_t fiber_slab_tenant(std::uint64_t fiber_id) {
+        auto* a = fiber_slab_arenas_.find(fiber_id);
+        return a ? a->tenant() : 0;
+    }
+    [[nodiscard]] std::uint64_t fiber_slab_claim_count(std::uint64_t fiber_id) {
+        auto* a = fiber_slab_arenas_.find(fiber_id);
+        return a ? a->claims() : 0;
+    }
+    // Slots still owned by a fiber batch: 0 after every batch is published
+    // or dropped (a nonzero value means a claim leaked past its fiber).
+    [[nodiscard]] std::size_t string_heap_claimed_slots() {
+        return string_heap_.claimed_live_count();
+    }
+
     // Issue #2652: snapshot string under alloc_storage_lock_ so concurrent
     // push_back cannot reallocate while display/hash/compare holds a ref.
     // OOB / empty heap → empty string (fail-closed for printing).
@@ -17037,6 +17206,10 @@ public:
     // Stored as void* to avoid a circular include between
     // evaluator.ixx and fiber.h. The .cpp file casts to Fiber*.
     static thread_local void* g_current_fiber_void;
+    // Issue #4714 Row 2: test-only fiber-id pin for the production mint door
+    // (see current_fiber_mint_id). Defined out-of-line with external linkage
+    // so the setter and the fast path always share one entity.
+    static thread_local std::uint64_t tls_fiber_mint_override_;
     static void* get_current_fiber() { return g_current_fiber_void; }
     static void set_current_fiber(void* f) { g_current_fiber_void = f; }
 
