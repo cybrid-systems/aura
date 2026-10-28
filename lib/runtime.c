@@ -970,6 +970,48 @@ static void aura_display_pair_chain(int64_t val) {
                                                        : "#f");
     putchar(')');
 }
+// Issue #4727 follow-up: standalone AOT symbol table.
+// #4727 makes a quoted identifier atom a first-class symbol whose payload
+// indexes an evaluator-global name table; the emitter calls
+// aura_intern_symbol(name) to build that payload. The host/JIT provides the
+// definition in aura_jit_runtime.cpp, but --emit-binary links only this file,
+// so every module using a quoted symbol failed to link with
+//   undefined reference to aura_intern_symbol
+// Keep a runtime-local name table: identity is still name identity inside one
+// AOT binary, and printing can recover the name.
+static char** g_aot_symbol_names = NULL;
+static size_t g_aot_symbol_count = 0;
+static size_t g_aot_symbol_cap = 0;
+
+__attribute__((weak)) int64_t aura_intern_symbol(const char* name) {
+    const char* n = name ? name : "";
+    for (size_t i = 0; i < g_aot_symbol_count; ++i) {
+        if (g_aot_symbol_names[i] && strcmp(g_aot_symbol_names[i], n) == 0)
+            return AURA_MAKE_SYMBOL((long long)i);
+    }
+    if (g_aot_symbol_count == g_aot_symbol_cap) {
+        size_t cap = g_aot_symbol_cap ? g_aot_symbol_cap * 2 : 64;
+        char** grown = (char**)realloc(g_aot_symbol_names, cap * sizeof(char*));
+        if (!grown)
+            return AURA_MAKE_SYMBOL(0);
+        g_aot_symbol_names = grown;
+        g_aot_symbol_cap = cap;
+    }
+    size_t len = strlen(n);
+    char* copy = (char*)malloc(len + 1);
+    if (!copy)
+        return AURA_MAKE_SYMBOL(0);
+    memcpy(copy, n, len + 1);
+    g_aot_symbol_names[g_aot_symbol_count] = copy;
+    return AURA_MAKE_SYMBOL((long long)g_aot_symbol_count++);
+}
+
+__attribute__((weak)) const char* aura_symbol_name(int64_t idx) {
+    if (idx < 0 || (size_t)idx >= g_aot_symbol_count)
+        return NULL;
+    return g_aot_symbol_names[idx];
+}
+
 int64_t aura_display_int(int64_t val) {
     // Check float before string since float-encoded values look like strings
     if (IS_FLOAT(val)) {
@@ -977,6 +1019,9 @@ int64_t aura_display_int(int64_t val) {
         printf("%g", d);
     } else if (IS_STRING(val)) {
         printf("%s", aura_string_ref(val));
+    } else if (AURA_IS_SYMBOL(val)) {
+        const char* sym = aura_symbol_name((int64_t)AURA_SYMBOL_IDX(val));
+        printf("%s", sym ? sym : "?");
     } else if (IS_PAIR(val)) {
         aura_display_pair_chain(val);
     } else if (IS_UNSPEC(val)) {
