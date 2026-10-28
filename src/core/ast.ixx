@@ -8430,6 +8430,31 @@ public:
     }
     std::uint64_t next_mutation_id() const { return next_mutation_id_; }
 
+    // Issue #4729: keep mutation ids monotonic across a whole-flat swap.
+    // workspace:merge and the ast:restore source fallback install a FRESH
+    // FlatAST through set-code (new pool/flat, next_mutation_id_ back at 1);
+    // without this a merge reset the counter and the same id named two
+    // different mutations in one run.
+    void ensure_next_mutation_id(std::uint64_t at_least) noexcept {
+        if (at_least > next_mutation_id_)
+            next_mutation_id_ = at_least;
+    }
+
+    // Issue #4729: re-seed the audit log with the records of the flat this
+    // one replaced (verbatim — ids / operator / summary / author /
+    // timestamps) and continue the id counter past them. The caller then
+    // appends one entry describing the swap itself, so an external auditor
+    // can still join a merge or a rollback to provenance instead of finding
+    // an empty log.
+    void adopt_mutation_log(const std::pmr::vector<MutationRecord>& carried,
+                            std::uint64_t next_id) {
+        if (!carried.empty()) {
+            auto& log = mutation_log_.mut();
+            log.insert(log.end(), carried.begin(), carried.end());
+        }
+        ensure_next_mutation_id(next_id);
+    }
+
     // Get all mutation records (unfiltered).
     const std::pmr::vector<MutationRecord>& all_mutations() const { return mutation_log_; }
     std::pmr::vector<MutationRecord>& all_mutations() { return mutation_log_; }
