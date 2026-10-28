@@ -273,12 +273,14 @@ bool test_quote() {
         return false;
     }
 
-    // Test: 'x should return a string "x"
+    // Test: 'x should return the interned symbol x (Issue #4727: quoted
+    // identifier atoms are symbols, not strings; string? is false and
+    // symbol? is true, so the old string expectation is stale).
     auto sym = flat.add_variable(pool.intern("x"));
     auto qsym = flat.add_quote(sym);
     auto r2 = eval.eval_flat(flat, pool, qsym, eval.top_env());
-    if (!r2 || !aura::compiler::types::is_string(*r2)) {
-        std::println(std::cerr, "FAIL: (quote x) expected string \"x\"");
+    if (!r2 || !aura::compiler::types::is_symbol(*r2)) {
+        std::println(std::cerr, "FAIL: (quote x) expected symbol x");
         return false;
     }
 
