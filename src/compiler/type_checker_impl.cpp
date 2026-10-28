@@ -2142,6 +2142,28 @@ bool ConstraintSystem::consistent_unify(TypeId t1, TypeId t2) {
         return consistent_subtype(f1->ret, f2->ret);
     }
 
+    // Issue #4748: the polymorphic car/cdr binding models a pair as a
+    // two-slot function type (env_.bind("car", forall a b. (a -> b) -> a) in
+    // the primitive table), while `pair?` occurrence narrowing refines the
+    // tested variable to the nominal Pair ground (#279). Both denote the same
+    // value class — a pair whose component types are not yet known. Without
+    // this arm the narrowed Pair met the instantiated pair shape as
+    // "ground vs function", so consistent_unify returned false and the call
+    // site reported a spurious TypeError ("argument 0: expected (__tN ->
+    // __tM), got Pair") for (if (pair? r) (car r) r) on the set-code /
+    // eval-current path. Only a shape whose slots are still free (or
+    // Dynamic) matches: a concrete closure type (Int -> Int) stays a real
+    // mismatch.
+    if ((f1 == nullptr) != (f2 == nullptr)) {
+        const auto* shape = f1 != nullptr ? f1 : f2;
+        const auto other = f1 != nullptr ? t2 : t1;
+        if (reg_.tag_of(other) == TypeTag::PAIR && shape->args.size() == 1 &&
+            (reg_.is_var(shape->args[0]) || shape->args[0] == reg_.dynamic_type()) &&
+            (reg_.is_var(shape->ret) || shape->ret == reg_.dynamic_type())) {
+            return true;
+        }
+    }
+
     // Ground type consistency: any two ground/base types are CONSISTENT
     // (they may need runtime coercion, but the type system allows it).
     // Issue #3202: Production + Strict hard-reject Int~String (and similar
