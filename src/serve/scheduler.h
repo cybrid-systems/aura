@@ -62,6 +62,23 @@ public:
     // Stop all workers and the event loop
     void stop();
 
+    // Issue #4726: the idle auto-stop ("all fibers done, no spawn for ~3s →
+    // self-destruct") is a SERVE-lifecycle convenience: it exists so a
+    // scheduler nobody stops does not hang an embedder. A producer that OWNS
+    // the scheduler for the process lifetime must disable it: the orch
+    // primitives keep one process-wide Scheduler in a static holder and
+    // never recreate it, so a self-destruct stops the workers while the owner
+    // keeps handing them work — every later spawn is enqueued into a stopped
+    // worker, its body never runs, and scope-join-all / fiber:join time out
+    // (the #4726 face: after an idle gap all waiters stay unwoken and the
+    // join reports timeout). Default stays ENABLED (serve + tests unchanged).
+    void set_idle_auto_stop(bool on) noexcept {
+        idle_auto_stop_.store(on, std::memory_order_release);
+    }
+    [[nodiscard]] bool idle_auto_stop() const noexcept {
+        return idle_auto_stop_.load(std::memory_order_acquire);
+    }
+
     // ── Event management ────────────────────────────
     // Register a fiber's eventfd with the epoll instance.
     // Called during fiber spawn or session setup.
@@ -307,6 +324,9 @@ private:
     // queues drained for a few ms) must never accumulate toward stopping
     // a working scheduler.
     std::atomic<std::uint64_t> spawns_total_{0};
+    // Issue #4726: false when the owner keeps this scheduler for the process
+    // lifetime (the orch static holder); the IO loop then never self-stops.
+    std::atomic<bool> idle_auto_stop_{true};
     // Issue #4004: true until ~Scheduler (store false before fiber destroy).
     std::shared_ptr<std::atomic<bool>> handoff_source_live_{
         std::make_shared<std::atomic<bool>>(true)};

@@ -1171,8 +1171,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                 }
             }
             if (!ws_found) {
-                ws_kw = ev.keyword_table_.size();
-                ev.keyword_table_.push_back(":workspace");
+                ws_kw = ev.intern_keyword_slot(":workspace");
             }
             auto cs_result = (*src_fn)({types::make_keyword(ws_kw)});
             if (!is_string(cs_result))
@@ -1503,8 +1502,8 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                                                         }
                                                     }
                                                     if (!ws_found) {
-                                                        ws_kw = ev.keyword_table_.size();
-                                                        ev.keyword_table_.push_back(":workspace");
+                                                        ws_kw =
+                                                            ev.intern_keyword_slot(":workspace");
                                                     }
                                                     auto src =
                                                         (*src_fn)({types::make_keyword(ws_kw)});
@@ -3548,6 +3547,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             if (sched)
                 return;
             sched = std::make_unique<aura::serve::Scheduler>(workers);
+            // Issue #4726: this holder OWNS the scheduler for the process
+            // lifetime (ensure() never replaces it) and stops it in the
+            // destructor, so it must not let the IO loop self-destruct: an
+            // idle auto-stop stopped the workers while the orch primitives
+            // kept spawning onto them, so every later scope-spawn body never
+            // ran and scope-join-all reported timeout (all waiters unwoken).
+            sched->set_idle_auto_stop(false);
             runner = std::thread([this] { sched->run(); });
         }
         ~OrchSchedHolder() {
@@ -5561,7 +5567,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // stamps MailKind::Ask + correlation_id (#2538 typed path) and
     // dual-writes the legacy "ask:<id>:<body>" prefix (#2231).
     add("orch:agent-ask",
-        [&ev, build_orch_hash, add_deny_class](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, build_orch_hash, add_deny_class,
+         orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
             if (a.size() < 2 || !types::is_string(a[0])) {
                 return make_primitive_error(
                     ev.string_heap_, ev.error_values_,
@@ -5585,12 +5592,27 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 payload = types::as_bool(a[1]) ? "#t" : "#f";
             else
                 payload = "payload";
-            // Default timeout 5000ms; optional 3rd arg (int ms).
+            // Default timeout 5000ms. Issue #4732: the documented shape is
+            // the :timeout-ms / :timeout_ms keyword; it used to be ignored
+            // (every ask stalled for the 5000ms default) because only the
+            // positional 3rd arg (int ms) was read. Both forms are honored,
+            // and the keyword wins when both are present — same kw scan as
+            // orch:agent-join / agent-recv / scope-join-all.
             std::uint64_t timeout_ms = 5000;
             if (a.size() >= 3 && types::is_int(a[2])) {
                 const auto t = types::as_int(a[2]);
                 if (t > 0)
                     timeout_ms = static_cast<std::uint64_t>(t);
+            }
+            for (std::size_t i = 2; i + 1 < a.size(); ++i) {
+                if (!types::is_keyword(a[i]) && !types::is_symbol(a[i]))
+                    continue;
+                const auto k = orch_keyword_key(a[i]);
+                if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(a[i + 1])) {
+                    const auto t = types::as_int(a[i + 1]);
+                    if (t > 0)
+                        timeout_ms = static_cast<std::uint64_t>(t);
+                }
             }
             // Delegate to the C++ helper (typed + dual-write legacy protocol).
             const auto r = aura::orch::agent_ask(*hp, payload, timeout_ms);
