@@ -1520,15 +1520,16 @@ public:
         evaluator_.set_dirty_batch_fn([this](bool begin) { this->set_dirty_batch(begin); });
         evaluator_.set_boundary_prep_batch_fn([this](bool begin) {
             if (begin) {
-                if (boundary_prep_depth_++ == 0) {
-                    boundary_prep_done_ = false;
-                    boundary_finalize_done_ = false;
-                    boundary_rate_sampled_ = false;
+                if (boundary_prep_depth_.fetch_add(1, std::memory_order_acq_rel) == 0) {
+                    boundary_prep_done_.store(false, std::memory_order_relaxed);
+                    boundary_finalize_done_.store(false, std::memory_order_relaxed);
+                    boundary_rate_sampled_.store(false, std::memory_order_relaxed);
                 }
-            } else if (boundary_prep_depth_ > 0 && --boundary_prep_depth_ == 0) {
-                boundary_prep_done_ = false;
-                boundary_finalize_done_ = false;
-                boundary_rate_sampled_ = false;
+            } else if (boundary_prep_depth_.load(std::memory_order_acquire) > 0 &&
+                       boundary_prep_depth_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+                boundary_prep_done_.store(false, std::memory_order_relaxed);
+                boundary_finalize_done_.store(false, std::memory_order_relaxed);
+                boundary_rate_sampled_.store(false, std::memory_order_relaxed);
             }
         });
         // Issue #3681: the id captured before set-body / rebind is the IR
@@ -9394,9 +9395,16 @@ public:
                     // Issue #4681: the define's env cell is its call slot.
                     if (call_slots_enabled_4681_()) {
                         auto cell = evaluator_.top_env().lookup(name);
-                        if (cell && types::is_cell(*cell) &&
-                            types::as_cell_id(*cell) < evaluator_.cells().size() &&
-                            types::is_closure(evaluator_.cells()[types::as_cell_id(*cell)])) {
+                        bool slot_is_closure = false;
+                        if (cell && types::is_cell(*cell)) {
+                            // Issue #4717: snapshot under the cells storage lock.
+                            std::lock_guard<std::recursive_mutex> cell_lk(
+                                evaluator_.cells_storage_mutex());
+                            const auto ci = types::as_cell_id(*cell);
+                            slot_is_closure = ci < evaluator_.cells().size() &&
+                                              types::is_closure(evaluator_.cells()[ci]);
+                        }
+                        if (slot_is_closure) {
                             ir_call_slots_4681_[name] = types::as_cell_id(*cell);
                             auto lv = ws_flat->get(v.child(0));
                             slot_arity_4681_[name] = static_cast<int>(lv.params.size());
@@ -9441,9 +9449,14 @@ public:
             types::EvalValue actual = val;
             if (types::is_cell(actual)) {
                 const auto ci = types::as_cell_id(actual);
-                if (ci >= evaluator_.cells().size())
-                    return;
-                actual = evaluator_.cells()[ci];
+                // Issue #4717: snapshot the cell under the storage lock so a
+                // concurrent cell append cannot reallocate underneath.
+                {
+                    std::lock_guard<std::recursive_mutex> cell_lk(evaluator_.cells_storage_mutex());
+                    if (ci >= evaluator_.cells().size())
+                        return;
+                    actual = evaluator_.cells()[ci];
+                }
                 if (!types::is_closure(actual)) {
                     // Issue #4587: a host value such as (define n 5) is a
                     // cell whose payload is not a closure. Skipping it made
@@ -11958,6 +11971,12 @@ public:
     }
 
     std::size_t bind_define_value_in_env(const std::string& name, const types::EvalValue& value) {
+        // Issue #4717: this publishes a NEW cell slot and its top-env binding
+        // while fiber bodies read both (TSan: cells() slot write vs
+        // sync_workspace_value_cells_from_env / eval_flat_body). Lock order
+        // everywhere is bindings -> cell storage.
+        auto bind_guard = evaluator_.top_env().lock_bindings_exclusive();
+        std::lock_guard<std::recursive_mutex> cells_lock(evaluator_.cells_storage_mutex());
         auto existing = evaluator_.top_env().lookup_binding(name);
         if (existing && types::is_cell(*existing)) {
             auto ci = types::as_cell_id(*existing);
@@ -13366,6 +13385,18 @@ public:
             return false;
         // Issue #4598: tag/sym_id are column reads. get() only the define
         // whose name matches, then the lambda child.
+        //
+        // Issue #4717: this scan runs on the specialize/drain thread while
+        // the mutating thread parses and recycles workspace slots, so it must
+        // follow the #2488 SoA reader contract instead of reading columns
+        // bare (TSan: reset_node_slot tag_ write / recycle_dead_nodes
+        // node_gen_ write vs this scan). SoA shared guard covers the
+        // add_node/reset columns; the slot-publication guard covers the
+        // node_gen_ tombstones. Order: SoA first, publish second (the
+        // writer order is flatast_mutex_ then publish). Column reads only —
+        // get() would take the same SoA lock a second time.
+        auto soa_guard = ws_flat->try_acquire_soa_reader_lock();
+        std::shared_lock<std::shared_mutex> publish_guard(ws_flat->node_slot_publish_mutex());
         for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
             if (ws_flat->is_free_slot(id))
                 continue;
@@ -13376,10 +13407,10 @@ public:
                 continue;
             if (ws_pool->resolve(sym) != name)
                 continue;
-            auto v = ws_flat->get(id);
-            if (v.children.empty())
+            const auto kids = ws_flat->children(id);
+            if (kids.empty())
                 return false;
-            const auto body = v.child(0);
+            const auto body = kids[0];
             if (body >= ws_flat->size() || ws_flat->is_free_slot(body))
                 return false;
             return ws_flat->tag(body) == aura::ast::NodeTag::Lambda;
@@ -19288,33 +19319,36 @@ public:
     // Inside a batch the global halves run once (first name); per-name
     // work (gc coordination, feedback reset, bridge invalidate) still runs
     // for every name.
-    int dirty_batch_depth_ = 0;
-    bool dirty_batch_pre_done_ = false;
+    std::atomic<int> dirty_batch_depth_ = 0;
+    std::atomic<bool> dirty_batch_pre_done_ = false;
     // Boundary-exit prep coalescing (see set_boundary_prep_batch_fn).
-    int boundary_prep_depth_ = 0;
-    bool boundary_prep_done_ = false;
-    bool boundary_finalize_done_ = false;
-    bool boundary_rate_sampled_ = false;
+    // Issue #4717: the boundary-prep bracket is armed/disarmed from ANY
+    // body's mutate primitive (the set_boundary_prep_batch_fn hook), so the
+    // depth and the once-per-bracket flags are shared atomics, not ints/bools.
+    std::atomic<int> boundary_prep_depth_{0};
+    std::atomic<bool> boundary_prep_done_{false};
+    std::atomic<bool> boundary_finalize_done_{false};
+    std::atomic<bool> boundary_rate_sampled_{false};
     // Dedupe the name-independent cascade tail (linear/GC window finalize,
     // workspace dirty-rate sample) across one boundary exit.
     [[nodiscard]] bool boundary_rate_sample_skip_() noexcept {
-        if (boundary_prep_depth_ <= 0)
+        if (boundary_prep_depth_.load(std::memory_order_acquire) <= 0)
             return false;
-        if (boundary_rate_sampled_)
+        if (boundary_rate_sampled_.load(std::memory_order_acquire))
             return true;
-        boundary_rate_sampled_ = true;
+        boundary_rate_sampled_.store(true, std::memory_order_release);
         return false;
     }
-    bool dirty_batch_epoch_done_ = false;
-    bool dirty_batch_finalize_done_ = false;
-    bool dirty_batch_linear_scan_done_ = false;    // #4680
-    bool dirty_batch_hotswap_audit_done_ = false;  // #4680
-    bool dirty_batch_rate_sampled_ = false;        // #4681
-    std::uint64_t dirty_batch_walk_epoch_ = ~0ull; // #4680
+    std::atomic<bool> dirty_batch_epoch_done_ = false;
+    std::atomic<bool> dirty_batch_finalize_done_ = false;
+    std::atomic<bool> dirty_batch_linear_scan_done_ = false;    // #4680
+    std::atomic<bool> dirty_batch_hotswap_audit_done_ = false;  // #4680
+    std::atomic<bool> dirty_batch_rate_sampled_ = false;        // #4681
+    std::atomic<std::uint64_t> dirty_batch_walk_epoch_ = ~0ull; // #4680
     std::uint64_t dirty_batch_coalesced_4678_ = 0;
     void set_dirty_batch(bool begin) noexcept {
         if (begin) {
-            if (dirty_batch_depth_++ == 0) {
+            if (dirty_batch_depth_.fetch_add(1, std::memory_order_acq_rel) == 0) {
                 dirty_batch_pre_done_ = false;
                 dirty_batch_epoch_done_ = false;
                 dirty_batch_finalize_done_ = false;
@@ -19323,7 +19357,8 @@ public:
                 dirty_batch_rate_sampled_ = false;
                 dirty_batch_walk_epoch_ = ~0ull;
             }
-        } else if (dirty_batch_depth_ > 0 && --dirty_batch_depth_ == 0) {
+        } else if (dirty_batch_depth_.load(std::memory_order_acquire) > 0 &&
+                   dirty_batch_depth_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
             dirty_batch_pre_done_ = false;
             dirty_batch_epoch_done_ = false;
             dirty_batch_finalize_done_ = false;

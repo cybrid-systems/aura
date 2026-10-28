@@ -1531,6 +1531,8 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
             roots.push_back(c);
     }
     auto push_env = [&](const Env& e) {
+        // Issue #4717: e may be the shared top env, appended by another body.
+        auto bind_guard = e.lock_bindings_shared();
         for (const auto& b : e.bindings())
             roots.push_back(b.second);
         for (const auto& b : e.bindings_symid())
@@ -1865,6 +1867,8 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     work.reserve(held.size() + 64);
 
     auto push_env = [&](const Env& e) {
+        // Issue #4717: e may be the shared top env, appended by another body.
+        auto bind_guard = e.lock_bindings_shared();
         for (const auto& b : e.bindings())
             work.push_back(b.second);
         for (const auto& b : e.bindings_symid())

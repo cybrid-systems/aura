@@ -77,7 +77,10 @@ def main() -> int:
     # Covered by existing fixtures (#2402 / #2122 / #2394 / #2393 lineage).
     # The new SLA surface is purely additive observability on top of the
     # already-correct #2402 / #2122 / #2393 logic — no silent wrong-gen.
-    must("std::uint16_t generation_", "AC3", astx)  # existing field unchanged
+    # Issue #4717: the generation is published atomically (rollback bumps it on
+    # one body while publish_layout_stamp reads it on another); the 16-bit
+    # wrap semantics the SLA surface keys on are unchanged.
+    must("std::atomic<std::uint16_t> generation_", "AC3", astx)
     must("mutable std::atomic<std::uint32_t> wrap_epoch_", "AC3", astx)
     must("mutable std::atomic<std::uint64_t> restamp_nodes_total_", "AC3", astx)
     must("mutable std::atomic<std::uint64_t> restamp_us_total_", "AC3", astx)

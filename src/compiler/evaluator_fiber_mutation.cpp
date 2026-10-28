@@ -1947,7 +1947,7 @@ void Evaluator::flush_mutation_boundary() {
             // Issue #3918: heap guards leave the bit false. Yield still has
             // the real checkpoint; the exit fence uses the bit.
             const bool covered = consume_cone_cover_4682(*this); // #4682
-            if (!rebind_light_path_) {
+            if (!rebind_light_path()) {
                 bool ast_mutated = outermost_ast_mutated_;
                 if (!stack.back().exit_fence && workspace_flat_) {
                     const auto& frame = stack.back();
@@ -2074,10 +2074,10 @@ bool Evaluator::pending_panic_checkpoint() const noexcept {
     // unwind / yield metadata, not guard state). So we
     // check via the bind hook: when bind_yield_hook_evaluator
     // was called, a guard is active. The "has checkpoint"
-    // property is then inferred from `panic_safe_source_`
-    // (set by save_panic_checkpoint). When non-empty, the
-    // guard captured a checkpoint.
-    return !panic_safe_source_.empty();
+    // property is then inferred from the published #4717 liveness flag
+    // (set by save_panic_checkpoint, release) — the string itself is owned
+    // by the saving thread.
+    return has_panic_checkpoint();
 }
 
 // Issue #438: C-linkage shim so fiber.h can call the

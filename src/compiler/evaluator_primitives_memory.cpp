@@ -2,6 +2,7 @@
 // aura.compiler.evaluator module partition; registered via evaluator_ctor.cpp.
 
 module;
+#include <atomic> // Issue #4717: atomic_ref coverage counters
 
 #include "runtime_shared.h"
 #include "security_capabilities.h" // Issue #4428: kEffectMutate on the value-path consult
@@ -114,7 +115,8 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         "coverage-report", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
             std::string result = "#(coverage";
             for (int i = 0; i < 16; i++) {
-                if (ev.coverage_counters_[i] > 0) {
+                if (std::atomic_ref<std::uint64_t>(ev.coverage_counters_[i])
+                        .load(std::memory_order_relaxed) > 0) {
                     std::string name;
                     switch (i) {
                         case 0:
@@ -148,7 +150,10 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                             name = "reserved-" + std::to_string(i);
                             break;
                     }
-                    result += " " + name + ":" + std::to_string(ev.coverage_counters_[i]);
+                    result +=
+                        " " + name + ":" +
+                        std::to_string(std::atomic_ref<std::uint64_t>(ev.coverage_counters_[i])
+                                           .load(std::memory_order_relaxed));
                 }
             }
             result += ")";

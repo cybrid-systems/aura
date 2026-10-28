@@ -725,8 +725,50 @@ public:
         : parent_(p)
         , owner_(p ? p->owner_ : nullptr)
         , parent_id_(p ? p->parent_id_ : NULL_ENV_ID) {}
-    Env(const Env&) = default;
-    Env& operator=(const Env&) = default;
+    // Issue #4717: pool_/pool_epoch_ are published atomics (the shared top
+    // env's pool is flipped by set_pool while bodies read pool()), and the
+    // legacy-use counter is a relaxed atomic, so copy/assign are explicit.
+    // KEEP IN SYNC with the member list at the bottom of this class.
+    Env(const Env& o)
+        : parent_(o.parent_)
+        , primitives_(o.primitives_)
+        , pool_(o.pool_.load(std::memory_order_acquire))
+        , cap_snap_(o.cap_snap_)
+        , pool_epoch_(o.pool_epoch_.load(std::memory_order_acquire))
+        , bindings_(o.bindings_)
+        , binding_index_(o.binding_index_)
+        , bindings_symid_(o.bindings_symid_)
+        , symid_index_(o.symid_index_)
+        , rekey_memo_4682_{o.rekey_memo_4682_[0], o.rekey_memo_4682_[1]}
+        , rekey_memo_next_4682_(o.rekey_memo_next_4682_)
+        , bindings_linear_ownership_state_(o.bindings_linear_ownership_state_)
+        , owner_(o.owner_)
+        , parent_id_(o.parent_id_)
+        , env_version_(o.env_version_)
+        , bindings_legacy_uses_(o.bindings_legacy_uses_.load(std::memory_order_relaxed)) {}
+    Env& operator=(const Env& o) {
+        if (this == &o)
+            return *this;
+        parent_ = o.parent_;
+        primitives_ = o.primitives_;
+        pool_.store(o.pool_.load(std::memory_order_acquire), std::memory_order_release);
+        cap_snap_ = o.cap_snap_;
+        pool_epoch_.store(o.pool_epoch_.load(std::memory_order_acquire), std::memory_order_release);
+        bindings_ = o.bindings_;
+        binding_index_ = o.binding_index_;
+        bindings_symid_ = o.bindings_symid_;
+        symid_index_ = o.symid_index_;
+        rekey_memo_4682_[0] = o.rekey_memo_4682_[0];
+        rekey_memo_4682_[1] = o.rekey_memo_4682_[1];
+        rekey_memo_next_4682_ = o.rekey_memo_next_4682_;
+        bindings_linear_ownership_state_ = o.bindings_linear_ownership_state_;
+        owner_ = o.owner_;
+        parent_id_ = o.parent_id_;
+        env_version_ = o.env_version_;
+        bindings_legacy_uses_.store(o.bindings_legacy_uses_.load(std::memory_order_relaxed),
+                                    std::memory_order_relaxed);
+        return *this;
+    }
     void set_parent(const Env* p) { parent_ = p; }
     void set_primitives(const Primitives* p) { primitives_ = p; }
     // P0 step 2 (EnvFrame SoA migration, symmetric to EnvFrame): removed
@@ -766,6 +808,7 @@ public:
     // carries legacy bindings_ (Define/begin paths that bound before
     // pool was set). Rebuilds binding_index_ for O(1) lookup.
     void replace_string_bindings(std::span<const std::pair<std::string, types::EvalValue>> bs) {
+        auto guard = lock_bindings_exclusive(); // Issue #4717: top_ rewrite
         bindings_.assign(bs.begin(), bs.end());
         binding_index_.clear();
         for (std::size_t i = 0; i < bindings_.size(); ++i)
@@ -802,7 +845,9 @@ public:
     // unbound / prior define body stolen). Implemented in
     // evaluator_env.cpp.
     void set_pool(const aura::ast::StringPool* p);
-    [[nodiscard]] const aura::ast::StringPool* pool() const noexcept { return pool_; }
+    [[nodiscard]] const aura::ast::StringPool* pool() const noexcept {
+        return pool_.load(std::memory_order_acquire);
+    }
     // Issue #4350: delegated capture bindings (closure-level shared
     // snapshot with prebuilt O(1) indexes). Consulted after the local
     // arrays miss; the SoA parent chain is unchanged.
@@ -843,6 +888,53 @@ public:
     // Return cell index (stable across vector reallocation) or nullopt if not a cell
     std::optional<std::uint64_t> lookup_cell_index(std::string_view n) const;
     const Env* parent() const { return parent_; }
+    // ── Issue #4717 step 2: shared top-env binding publication ──────
+    // The top-level Env is the one Env several fiber bodies read while
+    // the main thread evaluates a top-level `define` (TSan: Env::lookup
+    // vs Env::bind_symid_with_linear_state / set_pool). Private envs
+    // (call frames, capture copies) keep the historical single-writer
+    // contract and pay nothing: every helper below returns an EMPTY
+    // guard unless `this` IS `owner_->top_env()`.
+    //
+    // The top env is published through one reader/writer lock held
+    // against the whole binding set (arrays + O(1) indexes + linear
+    // state), because a rekey/unbind rewrites the arrays in place and a
+    // reader must not observe a half-rebuilt set. Appends are the common
+    // case and still only touch the tail, but they run under the same
+    // lock so the index maps stay internally consistent.
+    [[nodiscard]] bool is_shared_top_env() const noexcept;
+    // Re-entrant: a call from a thread that already holds the lock (a nested
+    // Env method, or a mutation bracket that calls bind/unbind internally)
+    // returns an EMPTY guard instead of re-acquiring — std::shared_mutex is
+    // not recursive and a shared→exclusive upgrade would deadlock.
+    class BindingsGuard {
+    public:
+        BindingsGuard() noexcept = default;
+        BindingsGuard(const BindingsGuard&) = delete;
+        BindingsGuard& operator=(const BindingsGuard&) = delete;
+        BindingsGuard(BindingsGuard&& o) noexcept;
+        BindingsGuard& operator=(BindingsGuard&& o) noexcept;
+        ~BindingsGuard();
+        // Release early. A guarded read region must not straddle another lock
+        // (the EnvFrame shard walk / an SoA chain walk): TSan sees a
+        // bindings->shard order here and a shard->bindings order in a walker
+        // callback, which is a lock-order inversion even when no deadlock
+        // happens. Callers narrow the guard to the array reads instead.
+        void unlock() noexcept;
+        [[nodiscard]] explicit operator bool() const noexcept { return held_; }
+
+    private:
+        friend class Env;
+        static BindingsGuard acquire(const Env& e, bool exclusive);
+        bool held_ = false;
+        bool exclusive_ = false;
+        std::shared_mutex* mu_ = nullptr;
+        std::shared_lock<std::shared_mutex> slk_;
+        std::unique_lock<std::shared_mutex> ulk_;
+    };
+    // Empty guard for every non-shared Env (no lock taken, no cost).
+    [[nodiscard]] BindingsGuard lock_bindings_shared() const;
+    [[nodiscard]] BindingsGuard lock_bindings_exclusive();
     // Issue #207 (Cycle 1): legacy bindings() accessors —
     // bumped for the bindings_legacy_uses metric.
     // Issue #210 (Cycle 4): these accessors are scheduled
@@ -855,12 +947,16 @@ public:
     // [[deprecated]] attribute or compile-time check)
     // is deferred until the migration is complete — see
     // the cleanup path in #208.
+    // Issue #4717: the metric counter is bumped from body threads that
+    // share the top env, so it is a relaxed atomic (the accessors below
+    // are also read on the shared env; the SPAN they return is only
+    // stable while the caller holds lock_bindings_shared()).
     std::vector<std::pair<std::string, types::EvalValue>>& bindings() {
-        ++bindings_legacy_uses_;
+        bindings_legacy_uses_.fetch_add(1, std::memory_order_relaxed);
         return bindings_;
     }
     std::span<const std::pair<std::string, types::EvalValue>> bindings() const {
-        ++bindings_legacy_uses_;
+        bindings_legacy_uses_.fetch_add(1, std::memory_order_relaxed);
         return bindings_;
     }
     // Issue #207: bindings_symid_iter() — preferred accessor
@@ -906,6 +1002,10 @@ public:
     // Issue #4599: string mirror and symid array stayed the same length, so
     // a symid hit agrees with Env::lookup's string-first probe.
     [[nodiscard]] bool binding_mirrors_aligned() const noexcept {
+        // Issue #4717: reads two array sizes of the shared top env while a
+        // body's set_pool rekey / bind rewrites them (TSan: binding_mirrors_
+        // aligned vs _Vector_base move in set_pool).
+        auto guard = lock_bindings_shared();
         return bindings_.empty() || bindings_.size() == bindings_symid_.size();
     }
     // Issue #4599: overwrite param slots of a reused self-TCO frame.
@@ -934,10 +1034,10 @@ private:
     // get the right pool with the right fallback. Phase 2.5
     // drop (the original goal) removes this field after the
     // migration completes; see cpp26_guide.md §2.7.7.
-    const aura::ast::StringPool* pool_ = nullptr; // Issue #145
+    std::atomic<const aura::ast::StringPool*> pool_{nullptr}; // Issue #145 / #4717
     // Issue #4350: shared capture snapshot (see set_cap_snapshot).
     std::shared_ptr<const CapSnapshot> cap_snap_;
-    std::uint64_t pool_epoch_ = 0;
+    std::atomic<std::uint64_t> pool_epoch_{0};
     // P0 step 2: cells_ pointer removed (was used for cell deref in
     // lookups). Bindings now always return the raw value (cell
     // sentinel if applicable); deref centralized via Evaluator
@@ -1000,14 +1100,16 @@ private:
     // string-keyed bindings_ to SymId-keyed bindings_symid_.
     // Cycle 2+ migrates callers incrementally, watching the
     // metric trend to 0.
-    mutable std::size_t bindings_legacy_uses_ = 0;
+    mutable std::atomic<std::size_t> bindings_legacy_uses_{0};
 
 public:
     // Issue #207: accessors for the metric.
     [[nodiscard]] std::size_t bindings_legacy_uses() const noexcept {
-        return bindings_legacy_uses_;
+        return bindings_legacy_uses_.load(std::memory_order_relaxed);
     }
-    void reset_bindings_legacy_uses() noexcept { bindings_legacy_uses_ = 0; }
+    void reset_bindings_legacy_uses() noexcept {
+        bindings_legacy_uses_.store(0, std::memory_order_relaxed);
+    }
     // Issue #286: accessors for the env_version_ snapshot stamp
     // (set by materialize_call_env; read by lookup_cell_ptr and
     // observability code).
@@ -1160,6 +1262,39 @@ export struct EnvFrameResolveResultMut {
     }
 };
 
+// Issue #4717 step 2: a scalar frame field that two bodies publish to
+// (alloc_env_frame's #4459 reuse rewrite vs publish_layout_stamp /
+// restamp_live_capture_frames on another thread) must be an atomic, or the
+// write is a plain data race even though the value is only ever replaced
+// with a monotonically newer stamp. Copyable so EnvFrame keeps its implicit
+// copy/move (tests copy frames).
+export struct CopyableAtomicU64 {
+    std::atomic<std::uint64_t> v{0};
+    CopyableAtomicU64() noexcept = default;
+    CopyableAtomicU64(std::uint64_t x) noexcept
+        : v(x) {}
+    CopyableAtomicU64(const CopyableAtomicU64& o) noexcept
+        : v(o.v.load(std::memory_order_acquire)) {}
+    CopyableAtomicU64& operator=(const CopyableAtomicU64& o) noexcept {
+        v.store(o.v.load(std::memory_order_acquire), std::memory_order_release);
+        return *this;
+    }
+    CopyableAtomicU64& operator=(std::uint64_t x) noexcept {
+        v.store(x, std::memory_order_release);
+        return *this;
+    }
+    [[nodiscard]] operator std::uint64_t() const noexcept {
+        return v.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] std::uint64_t
+    load(std::memory_order mo = std::memory_order_acquire) const noexcept {
+        return v.load(mo);
+    }
+    void store(std::uint64_t x, std::memory_order mo = std::memory_order_release) noexcept {
+        v.store(x, mo);
+    }
+};
+
 export struct EnvFrame {
     EnvId parent_id = NULL_ENV_ID;
     const Primitives* primitives_ = nullptr;
@@ -1178,7 +1313,7 @@ export struct EnvFrame {
     // is always >= 1 (incremented on every MutationBoundaryGuard
     // enter). So a version_ == 0 frame is always stale; this is
     // intentional — old frames should be re-validated.
-    std::uint64_t version_ = 0;
+    CopyableAtomicU64 version_{0};
 
     // Issue #2251: env_gen_stamp captures the LayoutStamp.env_gen
     // at allocation time (and refreshes on publish_layout_stamp()).
@@ -1193,7 +1328,7 @@ export struct EnvFrame {
     // (bump env_gen_fence_reject_total) so the caller can
     // refresh / rebuild rather than silently use foreign-gen
     // bindings.
-    std::uint64_t env_gen_stamp_ = 0;
+    CopyableAtomicU64 env_gen_stamp_{0};
 
     // Issue #1903: back-pointer to owning Evaluator. Used by
     // EnvFrame::ensure_dual_path_consistent() to bump the
@@ -1290,6 +1425,246 @@ export struct EnvFrame {
     std::optional<types::EvalValue> lookup_local_by_symid(aura::ast::SymId s) const;
 };
 
+// ── Issue #4717 step 2: stable-address EnvFrame arena ──────────────
+//
+// `env_frames_` used to be a std::deque<EnvFrame>. Element addresses were
+// stable, but the CONTAINER metadata was not: push_back may reallocate the
+// deque's map array, so every reader (iteration, size(), end()) raced
+// alloc_env_frame on another body's thread (TSan: deque::_M_push_back_aux
+// vs _Deque_iterator::operator*). The old fix serialized writers against
+// every reader with a 16-shard barrier + env_frames_mtx_ on EVERY
+// allocation — 17 lock acquisitions per captured frame, which is also the
+// swarm throughput blocker.
+//
+// EnvFrameStore fixes the mechanism the same way StringSlotStore fixed the
+// string heap (#4717 step 1):
+//
+//     root[page]  -> page[block] -> block[slot]
+//
+//   * root_ is a fixed array of atomic page pointers, sized once and never
+//     moved;
+//   * a page is a fixed array of atomic block pointers, allocated on the
+//     first slot that needs it and never moved;
+//   * a block is kBlockSlots EnvFrame slots, allocated on demand.
+//
+// Publication: a block pointer is stored with release AFTER its elements
+// exist, and size_ is stored with release after the slot is fully
+// constructed. A reader walks root -> page -> block with acquire loads and
+// then touches ONLY that slot. It never reads container metadata a writer
+// mutates, so growth cannot invalidate a reference or tear an iteration.
+//
+// Writer discipline: emplace_back / resize-grow / assign are single-writer
+// (Evaluator::alloc_env_frame serializes them on env_frame_alloc_mtx_).
+// Slot REUSE (issue #4459) rewrites an already-published slot and stays
+// guarded by that slot's EnvFramesShard lock, exactly as before — this
+// store only guarantees that the slot ADDRESS never changes. destroy paths
+// (clear / resize-shrink) require quiescence (the 16-shard barrier).
+export class EnvFrameStore {
+public:
+    using value_type = EnvFrame;
+    using size_type = std::size_t;
+
+    static constexpr std::size_t kBlockSlotBits = 6; // 64 frames / block
+    static constexpr std::size_t kBlockSlots = std::size_t{1} << kBlockSlotBits;
+    static constexpr std::size_t kBlockMask = kBlockSlots - 1;
+    static constexpr std::size_t kPageBlockBits = 6; // 64 blocks / page
+    static constexpr std::size_t kPageBlocks = std::size_t{1} << kPageBlockBits;
+    static constexpr std::size_t kPageBlockMask = kPageBlocks - 1;
+    static constexpr std::size_t kRootPages = 256;
+    // 256 pages * 64 blocks * 64 slots = 1,048,576 live frames. EnvIds are
+    // reused (#4459) so a long-running session stays far below this.
+    static constexpr std::size_t kMaxSlots = kRootPages * kPageBlocks * kBlockSlots;
+
+    using Block = std::array<EnvFrame, kBlockSlots>;
+
+    struct Page {
+        std::atomic<Block*> blocks[kPageBlocks];
+        Page() noexcept {
+            for (auto& b : blocks)
+                b.store(nullptr, std::memory_order_relaxed);
+        }
+    };
+
+    EnvFrameStore() noexcept { init_root(); }
+    EnvFrameStore(const EnvFrameStore&) = delete;
+    EnvFrameStore& operator=(const EnvFrameStore&) = delete;
+    EnvFrameStore(EnvFrameStore&&) = delete;
+    EnvFrameStore& operator=(EnvFrameStore&&) = delete;
+    ~EnvFrameStore() { destroy_all(); }
+
+    [[nodiscard]] size_type size() const noexcept { return size_.load(std::memory_order_acquire); }
+    [[nodiscard]] bool empty() const noexcept { return size() == 0; }
+    // Reserved capacity is not a store-level concept any more: growth
+    // allocates a block at a time. Kept for the deque-surface callers.
+    [[nodiscard]] size_type capacity() const noexcept { return size(); }
+
+    [[nodiscard]] EnvFrame& operator[](size_type i) noexcept {
+        return *const_cast<EnvFrame*>(slot_ptr(i));
+    }
+    [[nodiscard]] const EnvFrame& operator[](size_type i) const noexcept { return *slot_ptr(i); }
+    EnvFrame& at(size_type i) { return (*this)[i]; }
+    const EnvFrame& at(size_type i) const { return (*this)[i]; }
+    EnvFrame& back() noexcept { return (*this)[size() - 1]; }
+    const EnvFrame& back() const noexcept { return (*this)[size() - 1]; }
+    EnvFrame& front() noexcept { return (*this)[0]; }
+    const EnvFrame& front() const noexcept { return (*this)[0]; }
+
+    // Append one frame. Returns its index, or NULL_ENV_ID when the slot
+    // space is exhausted. Single writer (env_frame_alloc_mtx_).
+    size_type emplace_back() {
+        const size_type i = size_.load(std::memory_order_relaxed);
+        if (i >= kMaxSlots) [[unlikely]]
+            return NULL_ENV_ID;
+        Block* b = ensure_block(i);
+        if (b == nullptr) [[unlikely]]
+            return NULL_ENV_ID;
+        (*b)[i & kBlockMask] = EnvFrame{};
+        size_.store(i + 1, std::memory_order_release);
+        return i;
+    }
+
+    size_type push_back(EnvFrame&& f) {
+        const size_type i = size_.load(std::memory_order_relaxed);
+        if (i >= kMaxSlots) [[unlikely]]
+            return NULL_ENV_ID;
+        Block* b = ensure_block(i);
+        if (b == nullptr) [[unlikely]]
+            return NULL_ENV_ID;
+        (*b)[i & kBlockMask] = std::move(f);
+        size_.store(i + 1, std::memory_order_release);
+        return i;
+    }
+
+    // Grow with default frames / shrink (destroys the tail: quiescent only).
+    void resize(size_type n) {
+        const size_type cur = size_.load(std::memory_order_relaxed);
+        if (n > cur) {
+            for (size_type i = cur; i < n; ++i) {
+                if (emplace_back() == NULL_ENV_ID) [[unlikely]]
+                    return;
+            }
+            return;
+        }
+        for (size_type i = n; i < cur; ++i) {
+            Block* b = find_block(i);
+            if (b != nullptr)
+                (*b)[i & kBlockMask] = EnvFrame{};
+        }
+        size_.store(n, std::memory_order_release);
+    }
+
+    void clear() noexcept { destroy_all(); }
+
+    // Iteration: a snapshot range over the published slots. The iterator
+    // reads only published size + acquire-loaded block pointers, so it is
+    // race-free against a concurrent append.
+    struct iterator {
+        EnvFrameStore* s = nullptr;
+        size_type i = 0;
+        EnvFrame& operator*() const { return (*s)[i]; }
+        EnvFrame* operator->() const { return &(*s)[i]; }
+        iterator& operator++() {
+            ++i;
+            return *this;
+        }
+        bool operator!=(const iterator& o) const { return i != o.i; }
+    };
+    struct const_iterator {
+        const EnvFrameStore* s = nullptr;
+        size_type i = 0;
+        const EnvFrame& operator*() const { return (*s)[i]; }
+        const EnvFrame* operator->() const { return &(*s)[i]; }
+        const_iterator& operator++() {
+            ++i;
+            return *this;
+        }
+        bool operator!=(const const_iterator& o) const { return i != o.i; }
+    };
+    iterator begin() noexcept { return iterator{this, 0}; }
+    iterator end() noexcept { return iterator{this, size()}; }
+    const_iterator begin() const noexcept { return const_iterator{this, 0}; }
+    const_iterator end() const noexcept { return const_iterator{this, size()}; }
+    const_iterator cbegin() const noexcept { return const_iterator{this, 0}; }
+    const_iterator cend() const noexcept { return const_iterator{this, size()}; }
+
+private:
+    static const EnvFrame& empty_slot() noexcept {
+        static const EnvFrame kEmpty;
+        return kEmpty;
+    }
+    void init_root() noexcept {
+        for (auto& p : root_)
+            p.store(nullptr, std::memory_order_relaxed);
+    }
+    [[nodiscard]] Page* ensure_page(size_type pg) noexcept {
+        Page* p = root_[pg].load(std::memory_order_acquire);
+        if (p != nullptr)
+            return p;
+        auto* fresh = new (std::nothrow) Page();
+        if (fresh == nullptr)
+            return nullptr;
+        if (!root_[pg].compare_exchange_strong(p, fresh, std::memory_order_acq_rel,
+                                               std::memory_order_acquire)) {
+            delete fresh; // another writer installed it
+            return p;
+        }
+        return fresh;
+    }
+    [[nodiscard]] Block* ensure_block(size_type i) noexcept {
+        const size_type blk = i >> kBlockSlotBits;
+        const size_type pg = blk >> kPageBlockBits;
+        if (pg >= kRootPages) [[unlikely]]
+            return nullptr;
+        Page* page = ensure_page(pg);
+        if (page == nullptr) [[unlikely]]
+            return nullptr;
+        Block* b = page->blocks[blk & kPageBlockMask].load(std::memory_order_acquire);
+        if (b != nullptr)
+            return b;
+        auto* fresh = new (std::nothrow) Block();
+        if (fresh == nullptr)
+            return nullptr;
+        Block* expect = nullptr;
+        if (!page->blocks[blk & kPageBlockMask].compare_exchange_strong(
+                expect, fresh, std::memory_order_acq_rel, std::memory_order_acquire)) {
+            delete fresh;
+            return expect;
+        }
+        return fresh;
+    }
+    [[nodiscard]] Block* find_block(size_type i) const noexcept {
+        const size_type blk = i >> kBlockSlotBits;
+        const size_type pg = blk >> kPageBlockBits;
+        if (pg >= kRootPages) [[unlikely]]
+            return nullptr;
+        Page* page = root_[pg].load(std::memory_order_acquire);
+        if (page == nullptr) [[unlikely]]
+            return nullptr;
+        return page->blocks[blk & kPageBlockMask].load(std::memory_order_acquire);
+    }
+    [[nodiscard]] const EnvFrame* slot_ptr(size_type i) const noexcept {
+        Block* b = find_block(i);
+        if (b == nullptr) [[unlikely]]
+            return &empty_slot();
+        return &(*b)[i & kBlockMask];
+    }
+    void destroy_all() noexcept {
+        for (size_type pg = 0; pg < kRootPages; ++pg) {
+            Page* page = root_[pg].exchange(nullptr, std::memory_order_acq_rel);
+            if (page == nullptr)
+                continue;
+            for (auto& b : page->blocks) {
+                Block* blk = b.exchange(nullptr, std::memory_order_acq_rel);
+                delete blk;
+            }
+            delete page;
+        }
+        size_.store(0, std::memory_order_release);
+    }
+
+    std::atomic<Page*> root_[kRootPages];
+    std::atomic<size_type> size_{0};
+};
 // Issue #2268: use-site fence handle for EnvFrame. Pairs the
 // env_frames_ index with the env_gen_stamp at capture time so
 // accidental bare EnvFrame* use across yield / steal / compact
@@ -2194,9 +2569,27 @@ public:
     Env& top_env() { return top_; }
     // Issue #4599: a bind or unbind on top_ invalidates cached prim/global
     // resolutions. set! does not (cells are re-read; non-cells are not cached).
+    // Issue #4717: written by the top-env binder (main thread) and read by
+    // every body's remember_prim_call cache probe, so the generation is a
+    // relaxed atomic and never wraps to 0.
     void note_top_binding_changed() noexcept {
-        if (++top_bind_gen_ == 0)
-            top_bind_gen_ = 1;
+        if (top_bind_gen_.fetch_add(1, std::memory_order_relaxed) + 1 == 0)
+            top_bind_gen_.store(1, std::memory_order_relaxed);
+    }
+    // Issue #4717 step 2: reader/writer lock for the shared top env's
+    // binding set (see Env::lock_bindings_shared). Lives on the Evaluator
+    // so Env copies never carry a mutex and non-shared envs pay nothing.
+    [[nodiscard]] std::shared_mutex& top_env_bindings_mutex() const noexcept {
+        return top_env_bindings_mu_;
+    }
+    // Issue #4717 step 2: cells_ is an append-only pmr vector that the
+    // define-bind path grows while another body reads cell payloads
+    // (sync_workspace_value_cells_from_env / TopCellLoad lowering). The
+    // storage lock already guards every alloc_cell: expose it so readers
+    // that must not observe a reallocating vector can snapshot under it.
+    // Recursive: alloc_cell may already hold it on this thread.
+    [[nodiscard]] std::recursive_mutex& cells_storage_mutex() const noexcept {
+        return alloc_storage_lock_;
     }
     // Issue #128: span-friendly read-only view of cells.
     // Replaces `const std::vector<types::EvalValue>&` with
@@ -3469,31 +3862,42 @@ public:
     // The body's guard is nested. The outermost drain runs after the body
     // returns, so the focus name stays set until that drain finishes and
     // the wrapper installs the new IR closure.
-    bool rebind_light_path_ = false;
-    bool rebind_light_cascaded_ = false;
-    bool rebind_light_stamped_ = false;
-    std::string rebind_light_focus_;
+    // Issue #4717 step 2: the one-line rebind state describes the RUNNING
+    // BODY (arm/disarm bracket a body's mutate primitive), not the shared
+    // Evaluator. As members, two fiber bodies arming/disarming concurrently
+    // wrote each other's flags (TSan: arm_rebind_light_path vs
+    // rebind_light_path() on the mutate primitive) and could erase each
+    // other's focus. They now live in the per-body fiber context
+    // (core/fiber_context.hh), like the #4717 per-body eval state.
     void arm_rebind_light_path() noexcept {
-        rebind_light_path_ = true;
-        rebind_light_cascaded_ = false;
-        rebind_light_stamped_ = false;
-        rebind_light_focus_.clear();
+        auto& c = eval_ctx();
+        c.rebind_light_path = true;
+        c.rebind_light_cascaded = false;
+        c.rebind_light_stamped = false;
+        c.rebind_light_focus.clear();
     }
     void disarm_rebind_light_path() noexcept {
-        rebind_light_path_ = false;
-        rebind_light_cascaded_ = false;
-        rebind_light_stamped_ = false;
-        rebind_light_focus_.clear();
+        auto& c = eval_ctx();
+        c.rebind_light_path = false;
+        c.rebind_light_cascaded = false;
+        c.rebind_light_stamped = false;
+        c.rebind_light_focus.clear();
     }
-    void note_rebind_light_focus(std::string name) { rebind_light_focus_ = std::move(name); }
+    void note_rebind_light_focus(std::string name) {
+        eval_ctx().rebind_light_focus = std::move(name);
+    }
     [[nodiscard]] const std::string& rebind_light_focus() const noexcept {
-        return rebind_light_focus_;
+        return eval_ctx().rebind_light_focus;
     }
-    [[nodiscard]] bool rebind_light_path() const noexcept { return rebind_light_path_; }
-    [[nodiscard]] bool rebind_light_cascaded() const noexcept { return rebind_light_cascaded_; }
-    [[nodiscard]] bool rebind_light_stamped() const noexcept { return rebind_light_stamped_; }
-    void note_rebind_light_cascaded() noexcept { rebind_light_cascaded_ = true; }
-    void note_rebind_light_stamped() noexcept { rebind_light_stamped_ = true; }
+    [[nodiscard]] bool rebind_light_path() const noexcept { return eval_ctx().rebind_light_path; }
+    [[nodiscard]] bool rebind_light_cascaded() const noexcept {
+        return eval_ctx().rebind_light_cascaded;
+    }
+    [[nodiscard]] bool rebind_light_stamped() const noexcept {
+        return eval_ctx().rebind_light_stamped;
+    }
+    void note_rebind_light_cascaded() noexcept { eval_ctx().rebind_light_cascaded = true; }
+    void note_rebind_light_stamped() noexcept { eval_ctx().rebind_light_stamped = true; }
     // Phase 3: read cache entry from outside the module.
     using IsDefineDirtyFn = bool(const std::string&);
     std::function<IsDefineDirtyFn> is_define_dirty_fn_ = nullptr;
@@ -3886,6 +4290,10 @@ public:
         // throw from later bookkeeping cannot leave depth permanently
         // elevated (exception-safe dual of ~Evaluator release).
         release_gc_defer_for_pending_panic();
+        // Issue #4717: close the publication window BEFORE the string is
+        // dropped, so an unlocked has_panic_checkpoint() probe on another
+        // body stops consulting the source rather than racing the clear.
+        panic_checkpoint_live_.store(false, std::memory_order_release);
         // Issue #3850: drop live-CP process depth (independent of defer)
         // before clearing fields so Moving densify probe cannot race a
         // half-cleared window.
@@ -3917,7 +4325,14 @@ public:
     }
 
     // Check if a safe checkpoint exists.
-    bool has_panic_checkpoint() const { return !panic_safe_source_.empty(); }
+    // Issue #4717: save_panic_checkpoint() publishes the source string from
+    // the mutating thread while a body's MutationBoundaryGuard dtor probes
+    // for a checkpoint here. The liveness answer rides a release/acquire
+    // atomic instead of the std::string's data pointer, so the probe never
+    // touches the string a save is rewriting.
+    bool has_panic_checkpoint() const {
+        return panic_checkpoint_live_.load(std::memory_order_acquire);
+    }
 
     // Issue #596: on fiber resume, restore a pending panic checkpoint when
     // the outermost Guard mutation failed (cross-fiber rollback path).
@@ -6512,7 +6927,18 @@ public:
                                         60);
     }
     std::array<EnvFramesShard, kEnvFramesShardCount> env_frame_shards_;
-    std::deque<EnvFrame> env_frames_;
+    // Issue #4717 step 2: stable-address slot store (root->page->block).
+    // A frame's address never changes once its slot is published, and
+    // growth publishes only an atomic block pointer + size, so the
+    // allocation fast path needs no shard barrier and no env_frames_mtx_
+    // (see EnvFrameStore). Elements are still deque-address-stable, so
+    // every `EnvFrame&` / `EnvFrameRef` contract is unchanged.
+    EnvFrameStore env_frames_;
+    // Issue #4717: allocation serialization for the stable store. Writers
+    // only (reuse-freelist pop + slot construct + size publish); readers
+    // never take it. This replaces the 16 env shards + env_frames_mtx_
+    // unique barrier that used to be taken on every captured frame.
+    std::mutex env_frame_alloc_mtx_;
     // Issue #4580: size published with release after every growth / shrink /
     // clear (push_back in alloc_env_frame, truncate resize, test-injection
     // emplace_back, reset_env_frames). The structure SSOT stays env_frames_;
@@ -6821,6 +7247,10 @@ private:
     // ── Panic auto-rollback (Issue #39) ─────────────────────────
     bool panic_auto_rollback_ = false;
     std::string panic_safe_source_; // last known good source code
+    // Issue #4717: published liveness for panic_safe_source_ (see
+    // has_panic_checkpoint). Set with release AFTER the string is installed,
+    // cleared with release BEFORE the string is dropped.
+    std::atomic<bool> panic_checkpoint_live_{false};
     // Issue #1489: true while process-wide gc_hooks defer depth was
     // armed for this evaluator's live PanicCheckpoint (save→commit/restore).
     bool gc_defer_armed_for_panic_cp_ = false;
@@ -7636,7 +8066,11 @@ private:
     // mutate_mtx_ under workspace hold — lock-order inversion).
     // Filled by push_post_mutate_incremental_cascade; drained or cleared
     // only from outermost Guard Phase-5 post-unlock.
+    // Issue #4717: any body's mutate primitive can queue a cascade root here
+    // while another body's boundary drain swaps it out (TSan: push_back vs
+    // empty()/swap). Short queue, so one leaf mutex.
     std::vector<std::string> pending_cascade_bfs_invalidate_;
+    mutable std::mutex cascade_bfs_mtx_;
 
     // ── 模块类型签名（#8 跨模块类型检查） ──────────────────────
     // (declare-type "name" "param-types" "ret-type") 存储的签名，
@@ -7914,7 +8348,10 @@ private:
         }
         return *static_cast<std::vector<std::uint8_t>*>(c.let_bind_kind_cache.get());
     }
-    std::uint64_t top_bind_gen_ = 1;
+    // Issue #4717: read by every body's prim/global cache probe.
+    std::atomic<std::uint64_t> top_bind_gen_{1};
+    // Issue #4717 step 2: shared top-env binding publication lock.
+    mutable std::shared_mutex top_env_bindings_mu_;
     void clear_name_res_cache() noexcept {
         name_res_by_node().clear();
         let_bind_kind().clear();

@@ -292,7 +292,7 @@ PostRestoreReport FlatAST::validate_post_restore(std::vector<ValidationError>* e
     record_size_mismatch("node_first_mutation_", node_first_mutation_.size());
     record_size_mismatch("last_seen_epoch_", last_seen_epoch_.size());
 
-    if (generation_ == 0)
+    if (generation_.load(std::memory_order_acquire) == 0)
         record(NULL_NODE, "generation_ is zero (invalid workspace epoch)");
 
     for (NodeId id = 0; id < size(); ++id) {
@@ -802,6 +802,13 @@ void FlatAST::clear_all_dirty() {
 
 // --- FlatAST::restamp_all_node_generations ---
 void FlatAST::restamp_all_node_generations() {
+    // Issue #4717: node_gen_ is the slot-liveness column that is_free_slot()
+    // reads from other bodies (workspace scans, specialize). The whole-slot
+    // restamp publishes generations, so it joins the slot-publication
+    // discipline. Leaf lock: callers that already hold flatast_mutex_
+    // (truncate_to, rollback) do NOT hold this one, so there is no
+    // re-entrancy and no order inversion (flatast_mutex_ -> publish).
+    std::unique_lock<std::shared_mutex> publish_lock(node_slot_publish_mtx_);
     const auto t0 = std::chrono::steady_clock::now();
     const bool wrap_recovery = auto_restamp_pending_.load(std::memory_order_relaxed);
     std::uint64_t restamped = 0;
@@ -1235,9 +1242,9 @@ void FlatAST::bump_generation() noexcept {
         // so the per-op bumps would be redundant.
         return;
     }
-    ++generation_;
-    if (generation_ == 0) {
-        generation_ = 1;
+    generation_.fetch_add(1, std::memory_order_acq_rel);
+    if (generation_.load(std::memory_order_acquire) == 0) {
+        generation_.store(1, std::memory_order_release);
         // Issue #457: detected a uint16_t wrap-around.
         // generation_ is uint16_t (1..65535) and we
         // wrap 65535 → 0 → 1. After 65K structural
@@ -1312,9 +1319,9 @@ void FlatAST::bump_generation_subtree(NodeId subtree_root) noexcept {
 
 // --- FlatAST::bump_generation_on_rollback ---
 void FlatAST::bump_generation_on_rollback() {
-    ++generation_;
-    if (generation_ == 0)
-        generation_ = 1;
+    generation_.fetch_add(1, std::memory_order_acq_rel);
+    if (generation_.load(std::memory_order_acquire) == 0)
+        generation_.store(1, std::memory_order_release);
     if (!defer_rollback_restamp_)
         restamp_all_node_generations();
 }

@@ -6916,8 +6916,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                 }
                 case aura::ast::NodeTag::LiteralString: {
                     // Issue #3401: happy-path string intern. std::string
-                    // construction + push_string_heap (locked mint, #4543) happen only on
-                    // the first encounter of a unique literal.
+                    // construction + push_string_heap (#4543) on first use only.
                     // Issue #3457: lookup by v.sym_id (dense), not hashed
                     // string_view into the pool.
                     {
@@ -6931,6 +6930,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     // (quote sym) off the slot bound earlier, so eq? became #f
                     // after a same-text string literal. Reuse the quote slot.
                     // emplace does not replace a key a quote already owns.
+                    // #4717: shared map; same recursive lock as the mint path.
+                    std::lock_guard short_cache_lock(alloc_storage_lock_);
                     if (raw_sv.size() <= 6) {
                         if (auto it = short_str_cache_.find(raw_sv); it != short_str_cache_.end()) {
                             string_intern_by_sym_.set(v.sym_id, it->second);
@@ -10291,6 +10292,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             if (write_frame(fr))
                                 return *val;
                             if (cur == 0) {
+                                // Issue #4717: shared top env read.
+                                auto top_bind_guard = owner->top_env().lock_bindings_shared();
                                 for (auto& b : owner->top_env().bindings()) {
                                     if (b.first != name)
                                         continue;

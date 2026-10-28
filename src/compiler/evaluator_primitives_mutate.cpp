@@ -11309,6 +11309,8 @@ void Evaluator::finalize_define_mutate_invalidation(const aura::ast::FlatAST& fl
 void Evaluator::enqueue_cascade_bfs_invalidate(std::string name) noexcept {
     if (name.empty())
         return;
+    // Issue #4717: another body's boundary drain may be swapping the queue.
+    std::lock_guard cascade_lock(cascade_bfs_mtx_);
     // Dedup: O(n) small — cascade typically marks few defines per boundary.
     for (const auto& existing : pending_cascade_bfs_invalidate_) {
         if (existing == name)
@@ -11321,13 +11323,16 @@ void Evaluator::enqueue_cascade_bfs_invalidate(std::string name) noexcept {
 
 void Evaluator::drain_cascade_bfs_invalidate() noexcept {
     aura::compiler::phase_stats::Scope phase_drain(aura::compiler::phase_stats::Drain);
-    if (pending_cascade_bfs_invalidate_.empty()) {
-        return;
-    }
-    // Snapshot + clear first so re-entrant cascade during invalidate
-    // cannot re-process the same batch (and cannot UAF the vector).
+    // Issue #4717: queue is fed by any body's mutate primitive.
     std::vector<std::string> batch;
-    batch.swap(pending_cascade_bfs_invalidate_);
+    {
+        std::lock_guard cascade_lock(cascade_bfs_mtx_);
+        if (pending_cascade_bfs_invalidate_.empty())
+            return;
+        // Snapshot + clear first so re-entrant cascade during invalidate
+        // cannot re-process the same batch (and cannot UAF the vector).
+        batch.swap(pending_cascade_bfs_invalidate_);
+    }
     // Snapshot each root's dependents BEFORE the hard pass: invalidate_
     // function tears down the drained root's dep_graph_ row, so a post-pass
     // get_dependents_fn_ lookup reads the post-teardown (empty) state and
@@ -11410,6 +11415,7 @@ void Evaluator::clear_cascade_bfs_invalidate() noexcept {
     // rollback suppression. Clearing here - not only when the batch itself
     // is non-empty - keeps it from ever reaching a later committed mutation.
     primitives_detail::rebind_rollback_cascade_pending() = false;
+    std::lock_guard cascade_lock(cascade_bfs_mtx_); // Issue #4717
     if (pending_cascade_bfs_invalidate_.empty())
         return;
     const auto n = static_cast<std::uint64_t>(pending_cascade_bfs_invalidate_.size());
@@ -11463,8 +11469,8 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
     // Issue #4357: nested eval_flat and the outer rebind guard both exit
     // through here. The second copy repeats mark + relower. One arm, one
     // cascade. set-body does not arm the flag.
-    if (rebind_light_path_) {
-        if (rebind_light_cascaded_) {
+    if (rebind_light_path()) {
+        if (rebind_light_cascaded()) {
             return;
         }
         note_rebind_light_cascaded();
@@ -11723,7 +11729,7 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
             // stays wired (#2813); this only skips the duplicate call.
             if (defer_relower) {
                 ++cascade_relower_deferred_4678_; // Issue #4678: outer exit re-lowers.
-            } else if (!rebind_light_path_) {
+            } else if (!rebind_light_path()) {
                 relower_dirty_defines_fn_();
                 if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
                     m->cascade_relower_ran_total.fetch_add(1, std::memory_order_relaxed);

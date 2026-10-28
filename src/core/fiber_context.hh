@@ -25,6 +25,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace aura::core::fiber_ctx {
@@ -114,6 +115,15 @@ struct Context {
     // Issue #4717: #4595 let-binding kind memo, also node-id keyed and
     // per-body for the same reason.
     std::shared_ptr<void> let_bind_kind_cache;
+    // Issue #4717 step 2: the one-line Soft rebind bracket
+    // (Evaluator::arm/disarm_rebind_light_path) describes the running body.
+    // As Evaluator members, two bodies clobbered each other's arm/disarm
+    // and focus; they live here now (fiber-local, plain-thread fallback
+    // preserves the old per-thread semantics).
+    bool rebind_light_path = false;
+    bool rebind_light_cascaded = false;
+    bool rebind_light_stamped = false;
+    std::string rebind_light_focus;
     // Observability: owning fiber id (0 = plain thread fallback).
     std::uint64_t owner_fiber = 0;
 };

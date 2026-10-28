@@ -885,7 +885,10 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
                                                        static_cast<std::uint32_t>(target_node),
                                                        slot.fiber_id, tenant_id); // Issue #3903
     }
-    g_sandbox_state().effect_checks++;
+    // Issue #4717: concurrent bodies both bump this process-wide counter;
+    // atomic_ref keeps the aggregate ABI (plain uint64_t field) intact.
+    std::atomic_ref<std::uint64_t>(g_sandbox_state().effect_checks)
+        .fetch_add(1, std::memory_order_relaxed);
     return ok;
 }
 
