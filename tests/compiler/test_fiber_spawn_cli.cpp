@@ -43,6 +43,11 @@
 //         open overlay stays private until commit (own read 49, sibling 14),
 //         a concurrent watcher sees old-or-new, and a same-base sibling that
 //         committed first wins with a fiber:cow-conflict for the loser.
+//   AC22: #4733 — a variadic (define (f . xs) ...) called from 4 parallel
+//         fiber bodies reports 0 bad rest lists over 3 x 4 x 2000 calls
+//         (the rest spine mints under alloc_storage_lock_).
+//   AC23: #4734 — 200 waves of 4 parallel eval bodies complete (bounded
+//         subprocess; the shard -> bindings inversion is gone).
 
 #include "test_harness.hpp"
 #include "compiler/fiber_cow_overlay.hh" // Issue #4715
@@ -1020,6 +1025,74 @@ static void ac21_cow_overlay_rebind_eval_current() {
           "AC21: first committer wins, the loser reports fiber:cow-conflict and leaves no trace");
 }
 
+// ── AC22: #4733 — dotted rest spine is per-call on every thread ──────
+// Four fiber bodies call a variadic procedure 2000x each. The rest list used
+// to be minted with a raw pairs_.push_back + pairs_.size() (no
+// alloc_storage_lock_): two bodies read the same size -> shared cons cell
+// ("another fiber's argument" / "car: not a pair"), and the racing vector
+// growth aborted the process (std::length_error vector::reserve) or wedged it.
+// Before the fix one run read 89/78/74/92 bad of 2000 per fiber.
+static void ac22_dotted_rest_per_fiber() {
+    std::println("\n--- #4733 AC22: dotted rest list stays per-call/per-fiber ---");
+    CompilerService cs;
+    const char* src = R"(
+(define (second . xs) (cadr xs))
+(define (work k)
+  (let loop ((i 0) (bad 0))
+    (if (= i 2000)
+        bad
+        (loop (+ i 1)
+              (if (equal? (try (second i k) (catch (e) 'err)) k) bad (+ bad 1))))))
+(define serial (work 7))
+(define par (map fiber:join (map (lambda (k) (fiber:spawn (lambda () (work k)))) (list 1 2 3 4))))
+(and (= serial 0) (equal? par (list 0 0 0 0)))
+)";
+    bool all_ok = true;
+    for (int round = 0; round < 3; ++round) {
+        auto r = cs.eval(src);
+        const bool ok = r && is_bool(*r) && as_bool(*r);
+        CHECK(ok, "AC22: serial and all 4 fibers report 0 bad rest calls");
+        all_ok = all_ok && ok;
+    }
+    if (!all_ok)
+        std::println("AC22: rest spine under fibers is not per-call");
+}
+
+// ── AC23: #4734 — parallel eval bodies do not deadlock ──────────────
+// 200 waves x 4 fibers, each evaluating a lambda source string. The
+// shard -> bindings lock order in Env::lookup's root-frame consult inverted
+// against the top-env EXCLUSIVE bracket eval holds across its program:
+// two bodies held a shard read lock and waited for the bindings lock while
+// the eval body held bindings and waited for the shard (0% CPU, every
+// thread parked). Bounded subprocess: a regression parks, it must not hang
+// the suite.
+static void ac23_parallel_eval_no_deadlock() {
+    std::println("\n--- #4734 AC23: 200 waves of parallel eval complete ---");
+    const auto bin = aura_bin_path_4131();
+    CHECK(!bin.empty(), "AC23: aura binary resolved beside the test binary");
+    if (bin.empty())
+        return;
+    const auto prog =
+        write_4131_program("aura_4734_eval_waves",
+                           R"SRC((define (job i) (procedure? (eval "(lambda (a b) (+ a b))")))
+(let loop ((w 0))
+  (if (< w 200)
+      (begin (map fiber:join (map (lambda (i) (fiber:spawn (lambda () (job i)))) (list 0 1 2 3)))
+             (loop (+ w 1)))
+      (begin (display "DONE") (newline))))
+)SRC");
+    CHECK(!prog.empty(), "AC23: wave program written");
+    if (prog.empty())
+        return;
+    const pid_t pid = spawn_4131_oneshot(bin, prog, /*ignore_term=*/false);
+    CHECK(pid > 0, "AC23: wave child spawned");
+    if (pid <= 0)
+        return;
+    const int rc = wait_4131_exit(pid, 120000);
+    CHECK(rc == 0, "AC23: 200 parallel-eval waves finish (no 0-CPU deadlock)");
+    ::unlink(prog.c_str());
+}
+
 } // namespace
 
 int run_test_fiber_spawn_cli() {
@@ -1046,7 +1119,10 @@ int run_test_fiber_spawn_cli() {
     ac19_eval_split_source_cite();
     ac20_cow_overlay_env_intercept_cite();
     ac21_cow_overlay_rebind_eval_current();
-    std::println("\n=== #2656/#2685/#2686/#3394/#4131/#4720/#4717/#4715: {} passed, {} failed ===",
+    ac22_dotted_rest_per_fiber();
+    ac23_parallel_eval_no_deadlock();
+    std::println("\n=== #2656/#2685/#2686/#3394/#4131/#4720/#4717/#4715/#4733/#4734: {} "
+                 "passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

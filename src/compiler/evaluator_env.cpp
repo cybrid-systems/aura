@@ -712,13 +712,23 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
                     }
                 }
             }
+            // Issue #4734: capture this frame's link and whether it is the
+            // root BEFORE the top_ consult, then drop the per-frame shard
+            // lock. Taking the bindings lock while a shard lock is held is the
+            // shard -> bindings order; env-frame writers take bindings ->
+            // shard (materialize / alloc), and an `eval` body holds the
+            // top-env EXCLUSIVE bracket across its program, so the two orders
+            // deadlocked (parallel fiber bodies, 0% CPU).
+            const EnvId next_frame = pfr.parent_id;
+            const bool at_root_frame = (cur == 0 && owner_ != nullptr);
+            hop_rlock.unlock();
             // Issue #2566: when the SoA walk reaches the root frame (0), also
             // consult live top_ bindings. Frame 0 is a snapshot taken at
             // module-load start; nested (require) injects into live top_
             // after that snapshot. Without this, free-vars introduced by
             // require are invisible to materialize_call_env SoA walks that
             // start from a module capture frame (parent chain ends at 0).
-            if (cur == 0 && owner_) {
+            if (at_root_frame) {
                 // Issue #4350: O(1) via top_'s authoritative name index
                 // (newest binding wins — same answer as the reverse scan).
                 // Issue #4717: this consult reads the SHARED top env arrays from a
@@ -735,7 +745,7 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
                     return *b;
                 }
             }
-            cur = pfr.parent_id;
+            cur = next_frame;
         }
         // Final fallback: starting parent_id_ was 0 (capture was top-level).
         // Issue #2566: also covered above when walk reaches cur==0; keep this
