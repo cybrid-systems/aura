@@ -529,7 +529,10 @@ static_assert(!is_float_hot(kSpecialTrue) && !is_float_hot(kSpecialUnspecified))
 }
 
 // AC4 metrics: hot-path untag / tag-test samples (as_* / explicit note).
-inline std::atomic<std::uint64_t> value_tag_hot_path_total{0};
+// Issue #4717 (P4 step 3): sharded — bumped per as_*/is_* unbox; a single
+// std::atomic made every body contend on one cache line. Totals stay exact
+// (load() sums the shards).
+inline aura::core::ShardedCounter value_tag_hot_path_total{0};
 // Debug-only contract fails (AURA_CONTRACTS_OBSERVE / enforce path mirrors).
 inline std::atomic<std::uint64_t> value_tag_hot_contract_fail_total{0};
 // Tag stability feed for ShapeProfiler (#2259 goal 4).

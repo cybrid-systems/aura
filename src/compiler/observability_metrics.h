@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include "core/atomic_fence_port.h"
+#include "core/sharded_counter.h"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -97,7 +98,10 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> stable_ref_handoff_reject_total{0};
     // Issue #493: EDSL hot-path bottleneck measurement (evaluator_eval_flat /
     // lowering_impl call sites).
-    std::atomic<std::uint64_t> hotpath_eval_flat_calls{0};
+    // Issue #4717 (P4 step 3): sharded — one bump per eval_flat_body node
+    // visit, i.e. the hottest shared word in the interpreter. Totals stay
+    // exact (load() sums the shards).
+    aura::core::ShardedCounter hotpath_eval_flat_calls{0};
     std::atomic<std::uint64_t> hotpath_lowering_calls{0};
     std::atomic<std::uint64_t> hotpath_soa_dual_emit_hits{0};
     // --emit-binary
