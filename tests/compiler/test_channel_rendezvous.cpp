@@ -14,6 +14,14 @@
 //   AC5: fiber-parked channel handoff (no worker-thread deadlock)
 //   AC6: source contract (cooperative channel park)
 //   AC7: coverage manifest wiring
+//
+// Issue #4744 — channel:send of a NUMBER from a fiber body never arrived
+// (the receiver blocked in channel:recv forever) because a non-string payload
+// was rejected with a primitive error VALUE that a body drops.
+//
+//   AC8: fixnum / bool / void / float payloads are delivered (FIFO too)
+//   AC9: a Ref payload is rejected with the kind named, nothing queued
+//   AC10: source contract + manifest
 
 #include "test_harness.hpp"
 
@@ -39,13 +47,21 @@ using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
 using aura::compiler::PrimFn;
 using aura::compiler::types::as_bool;
+using aura::compiler::types::as_float;
 using aura::compiler::types::as_int;
 using aura::compiler::types::as_string_idx;
 using aura::compiler::types::is_bool;
+using aura::compiler::types::is_error;
+using aura::compiler::types::is_float;
 using aura::compiler::types::is_int;
+using aura::compiler::types::is_pair;
 using aura::compiler::types::is_string;
+using aura::compiler::types::is_void;
+using aura::compiler::types::make_bool;
+using aura::compiler::types::make_float;
 using aura::compiler::types::make_int;
 using aura::compiler::types::make_string;
+using aura::compiler::types::make_void;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -317,6 +333,110 @@ static void ac7_coverage_manifest() {
     CHECK(manifest.find("AC7") != std::string::npos, "AC7: manifest covers AC7");
 }
 
+
+// ── Issue #4744: immediate (number / bool / void / float) payloads ──
+// A non-string payload used to be rejected with a primitive error VALUE, which
+// a fiber body drops on the floor: the paired channel:recv then blocked
+// forever (the filed repro: 8 fibers send the integer 1, the coordinator hangs
+// with rc=124 while the same program sending "1" completes). An immediate
+// value is now delivered as itself, and a Ref payload (pair / closure / ...)
+// is rejected LOUDLY with the offending kind named.
+static void ac8_immediate_payload_4744() {
+    std::println("\n--- #4744 AC8: immediate payloads are delivered ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    (void)cs.eval("1");
+    auto create = lookup_prim(ev, "channel:create");
+    auto send = lookup_prim(ev, "channel:send");
+    auto recv = lookup_prim(ev, "channel:recv");
+    CHECK(create && send && recv, "AC8: channel prims registered");
+    if (!create || !send || !recv)
+        return;
+    auto id = as_int((*create)({make_int(64)}));
+
+    auto s_int = (*send)({make_int(id), make_int(7)});
+    CHECK(is_bool(s_int) && as_bool(s_int), "AC8: send of a fixnum returns #t");
+    auto g_int = (*recv)({make_int(id)});
+    CHECK(is_int(g_int) && as_int(g_int) == 7,
+          "AC8: recv delivers the fixnum itself (was: error value + blocked recv)");
+
+    auto s_bool = (*send)({make_int(id), make_bool(true)});
+    CHECK(is_bool(s_bool) && as_bool(s_bool), "AC8: send of #t returns #t");
+    auto g_bool = (*recv)({make_int(id)});
+    CHECK(is_bool(g_bool) && as_bool(g_bool), "AC8: recv delivers #t");
+
+    auto s_void = (*send)({make_int(id), make_void()});
+    CHECK(is_bool(s_void) && as_bool(s_void), "AC8: send of void returns #t");
+    auto g_void = (*recv)({make_int(id)});
+    CHECK(is_void(g_void), "AC8: recv delivers void");
+
+    auto s_float = (*send)({make_int(id), make_float(1.5)});
+    CHECK(is_bool(s_float) && as_bool(s_float), "AC8: send of a float returns #t");
+    auto g_float = (*recv)({make_int(id)});
+    CHECK(is_float(g_float) && as_float(g_float) == 1.5, "AC8: recv delivers the float");
+
+    // FIFO order is preserved across payload kinds.
+    (void)(*send)({make_int(id), make_int(1)});
+    (void)(*send)({make_int(id), make_float(2.5)});
+    auto f1 = (*recv)({make_int(id)});
+    auto f2 = (*recv)({make_int(id)});
+    CHECK(is_int(f1) && as_int(f1) == 1 && is_float(f2) && as_float(f2) == 2.5,
+          "AC8: mixed immediate payloads keep FIFO order");
+}
+
+// AC9: an undeliverable (Ref) payload is named, and nothing is queued.
+static void ac9_undeliverable_payload_4744() {
+    std::println("\n--- #4744 AC9: undeliverable payload is named, not dropped ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    (void)cs.eval("1");
+    auto create = lookup_prim(ev, "channel:create");
+    auto send = lookup_prim(ev, "channel:send");
+    auto try_recv = lookup_prim(ev, "channel:try-recv");
+    CHECK(create && send && try_recv, "AC9: channel prims registered");
+    if (!create || !send || !try_recv)
+        return;
+    auto id = as_int((*create)({make_int(4)}));
+    auto pair = cs.eval("(list 1 2)");
+    CHECK(pair && is_pair(*pair), "AC9: a pair payload value is available");
+    if (!pair)
+        return;
+    auto rejected = (*send)({make_int(id), *pair});
+    CHECK(is_error(rejected), "AC9: send of a pair returns an error value");
+    // The message names the payload kind, so a caller can act on it.
+    bool named = false;
+    auto& sh = ev.string_heap_mut();
+    for (std::size_t i = 0; i < sh.size(); ++i) {
+        if (sh[i].find("unsupported payload type (pair)") != std::string::npos)
+            named = true;
+    }
+    CHECK(named, "AC9: the reject names the payload kind (pair)");
+    // Nothing was enqueued: the next payload a receiver sees is the one sent
+    // AFTER the rejected send.
+    (void)(*send)({make_int(id), make_int(11)});
+    auto after = (*try_recv)({make_int(id)});
+    CHECK(is_int(after) && as_int(after) == 11, "AC9: nothing was queued by the rejected send");
+}
+
+// AC10: source contract (payload envelope + immediate pass-through).
+static void ac10_source_4744() {
+    std::println("\n--- #4744 AC10: source contract (payload envelope) ---");
+    auto src = read_file("src/compiler/evaluator_primitives_messaging.cpp");
+    CHECK(!src.empty(), "AC10: read messaging");
+    CHECK(src.find("Issue #4744") != std::string::npos, "AC10: cites #4744");
+    CHECK(src.find("channel_message_to_value") != std::string::npos,
+          "AC10: an immediate payload is turned back into a value on recv");
+    CHECK(src.find("unsupported payload type") != std::string::npos,
+          "AC10: an undeliverable payload is named");
+    auto hdr = read_file("src/compiler/evaluator.ixx");
+    CHECK(hdr.find("struct ChannelMessage") != std::string::npos,
+          "AC10: the channel queue carries a ChannelMessage envelope");
+    auto manifest = read_file("scripts/coverage/manifests/4744.json");
+    CHECK(!manifest.empty(), "AC10: manifest exists");
+    CHECK(manifest.find("\"issue\": 4744") != std::string::npos,
+          "AC10: manifest declares issue 4744");
+}
+
 } // namespace
 
 int run_test_channel_rendezvous() {
@@ -329,6 +449,10 @@ int run_test_channel_rendezvous() {
     ac5_fiber_park_no_deadlock();
     ac6_source_4700();
     ac7_coverage_manifest();
+    // Issue #4744 — immediate payloads (number / bool / void / float).
+    ac8_immediate_payload_4744();
+    ac9_undeliverable_payload_4744();
+    ac10_source_4744();
     std::println("\n=== #2483 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
