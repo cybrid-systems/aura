@@ -13,3 +13,54 @@
   (set-code "(display (+ 1 42))")
   (mutate:tweak-literal 3 1 "")
   (check (integer? 1)))
+
+; ── Issue #4738: colony:search budget + restore + literal scoping ──
+; (Executed at load: the test-suite forms above only record quoted forms.)
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+(require "std/ant" all:)
+
+(display "AC4738 failure restores the workspace + caps the budget\n")
+(define src0 "(define (f x) (display (+ x 40)))\n(define (g y) (* y 7))")
+(set-code src0)
+(define before (current-source :workspace))
+(define r (colony:search "999" 6))
+(assert! (not (car r)) "failure returns #f")
+; every variant — including the four deltas of one literal — is charged
+(assert! (string=? (car (cdr (cdr r))) "colony:6var") "max-variants is a hard cap")
+(assert! (string=? (current-source :workspace) before) "workspace restored on failure")
+; the unrelated define's literal is not tweaked
+(assert! (not (= (string-index (current-source :workspace) "(* y 7)" 0) -1))
+         "literal outside the target define untouched")
+
+(display "AC4738 success keeps the winning mutation\n")
+(set-code "(define (f x) (+ x 1))(display (f 41))")
+(define before2 (current-source :workspace))
+(define r2 (colony:search "42" 5))
+(assert! (car r2) "success returns #t")
+(assert! (not (string=? (current-source :workspace) before2))
+         "winning mutation stays installed")
+
+(display "AC4738 float thresholds are searched\n")
+(set-code "(define (thr y) (if (< y 0.15) \"hi\" \"lo\"))(display (thr 0.2))")
+(define before3 (current-source :workspace))
+(define r3 (colony:search "hi" 8))
+(assert! (car r3) "float literal found by a relative delta")
+(assert! (not (string=? (current-source :workspace) before3))
+         "float tweak committed on success")
+
+(if (= *fails* 0)
+    (display "OK-4738 colony budget/restore/scoping\n")
+    (begin
+      (display "FAIL-4738 fails=")
+      (display *fails*)
+      (newline)
+      (error "4738 suite failed")))

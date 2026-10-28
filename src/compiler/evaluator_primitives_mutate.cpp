@@ -5578,12 +5578,17 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 ok = false;
                 return mev("read-only", "workspace is read-only");
             }
-            if (a.size() < 2 || !is_int(a[1]) || !ev.workspace_flat_) {
+            // Issue #4738: a float delta on a LiteralFloat is a RELATIVE
+            // factor (new = old * (1 + delta)), so std/ant's colony search
+            // can tune thresholds like 0.15. Integer deltas on LiteralInt
+            // keep the absolute old + delta contract.
+            if (a.size() < 2 || !(is_int(a[1]) || is_float(a[1])) || !ev.workspace_flat_) {
                 ok = false;
-                return mev("bad-arg",
-                           "usage: (mutate:tweak-literal node-id|stable-ref delta [summary])");
+                return mev(
+                    "bad-arg",
+                    "usage: (mutate:tweak-literal node-id|stable-ref delta|factor [summary])");
             }
-            auto delta = as_int(a[1]);
+            auto delta = is_int(a[1]) ? as_int(a[1]) : 0;
             auto& flat = *ev.workspace_flat_;
             aura::ast::NodeId node = aura::ast::NULL_NODE;
             if (auto resolve_err =
@@ -5603,9 +5608,31 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 }
             }
             auto v = flat.get(node);
+            if (v.tag == aura::ast::NodeTag::LiteralFloat) {
+                // Issue #4738: relative float tweak.
+                const double old_val = v.float_value;
+                const double factor =
+                    is_float(a[1]) ? as_float(a[1]) : static_cast<double>(as_int(a[1]));
+                // A zero literal has no magnitude to scale: apply absolutely.
+                const double new_val = (old_val == 0.0) ? factor : old_val * (1.0 + factor);
+                std::string fsummary = (a.size() > 2 && is_string(a[2]))
+                                           ? safe_str(a[2])
+                                           : "tweak-literal " + std::to_string(old_val) + "->" +
+                                                 std::to_string(new_val);
+                flat.add_mutation_with_rollback(
+                    node, "tweak-literal", "Float", "Float", fsummary,
+                    aura::ast::MutationStatus::Committed,
+                    static_cast<std::uint32_t>(aura::ast::MutationSoAField::FloatVal),
+                    std::bit_cast<std::uint64_t>(old_val), std::bit_cast<std::uint64_t>(new_val),
+                    true);
+                flat.set_float(node, new_val);
+                ev.workspace_flat_->mark_dirty_upward(node);
+                return make_float(new_val);
+            }
             if (v.tag != aura::ast::NodeTag::LiteralInt) {
                 ok = false;
-                return mev("type-error", "node " + std::to_string(node) + " is not a LiteralInt");
+                return mev("type-error", "node " + std::to_string(node) +
+                                             " is not a numeric literal (LiteralInt|LiteralFloat)");
             }
             auto new_val =
                 std::max<std::int64_t>(0, static_cast<std::int64_t>(v.int_value) + delta);
@@ -11156,6 +11183,8 @@ inline constexpr MutateHygieneRow kMutateHygieneInventory[] = {
     {"mutate:from-verification-feedback", MutateHygienePolicy::Required, ""},
     {"mutate:check-stable-ref", MutateHygienePolicy::Exempt,
      "read-only stable-ref probe; no AST write (#2986)"},
+    {"mutate:check", MutateHygienePolicy::Exempt,
+     "dry-run parse/typecheck gate; reads the workspace, writes nothing (#4742)"},
     {"mutate:set-stale-ref-policy", MutateHygienePolicy::Exempt,
      "policy setter; no AST write (#2986)"},
     {"mutate:rollback-macro-introduced", MutateHygienePolicy::Exempt,

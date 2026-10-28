@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**485** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**486** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -10,7 +10,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 55 primitives (11%)
+- **mutation-safety**: 56 primitives (12%)
 - **core**: 395 primitives (81%)
 - **internal-observable**: 34 primitives (7%)
 - **convenience**: 1 primitives (0%)
@@ -54,8 +54,9 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `query:type-feedback` *[internal-observable]* — `src/compiler/evaluator_primitives_query_tail.cpp`
 - `query:where` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 
-## Mutate: (2)
+## Mutate: (3)
 
+- `mutate:check` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `mutate:set-agent-fingerprint` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:validate-reflected` *[mutation-safety]* — `src/compiler/evaluator_primitives_query_tail.cpp`
 
@@ -633,7 +634,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (55)
+### Mutation safety (must remain primitive) (56)
 
 - `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -665,6 +666,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `c-struct-size` — `src/compiler/ffi_primitives_impl.cpp`
 - `compile:relower-strategy` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:snapshot` — `src/compiler/evaluator_primitives_compile.cpp`
+- `mutate:check` — `src/compiler/evaluator_primitives_eval.cpp`
 - `mutate:set-agent-fingerprint` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:validate-reflected` — `src/compiler/evaluator_primitives_query_tail.cpp`
 - `panic-auto-rollback?` — `src/compiler/evaluator_primitives_obs_eval.cpp`

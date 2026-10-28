@@ -177,10 +177,63 @@
               (reverse (cons (substring str i n) result))
               (lp (+ comma 1) (cons (substring str i comma) result)))))))))
 
-; ── Helper: find all literal ints adjacent to a function body ──
+; ── Helper: literal node ids inside one define (#4738) ──
+; The fn-name argument is honoured: an empty name keeps the workspace-wide
+; census, a real name walks that define's own subtree, so colony:search
+; never tweaks a literal in an unrelated define. (:defined-by filters to
+; Define nodes, so the subtree walk is what actually scopes a function.)
+(define (colony-list-append a b)
+  (if (null? a) b (cons (car a) (colony-list-append (cdr a) b))))
+
+(define (colony-find-define name)
+  (let loop ((ids (query:node-type "Define")))
+    (if (null? ids) #f
+      (let ((info (query :node (car ids))))
+        (if (and (string? (car (cdr info)))
+                 (string=? (car (cdr info)) name))
+            (car ids)
+            (loop (cdr ids)))))))
+
+; (query :node id) does not expose a stable tag id for value-carrying
+; literals, so scope by subtree membership instead of by tag comparison:
+; take the workspace-wide census for TAG-NAME and keep only the ids that
+; live inside the define's subtree.
+(define (colony-collect-ids id)
+  (let walk ((pending (list id)) (acc (list)))
+    (if (null? pending) (reverse acc)
+      (let* ((cur (car pending))
+             (kids (query :children cur))
+             (ks (if (list? kids) kids (list))))
+        (walk (colony-list-append ks (cdr pending)) (cons cur acc))))))
+
+(define (colony-id-member? x xs)
+  (if (null? xs) #f
+    (if (= x (car xs)) #t (colony-id-member? x (cdr xs)))))
+
+(define (colony-filter-ids keep xs)
+  (let loop ((ys xs) (acc (list)))
+    (if (null? ys) (reverse acc)
+      (if (colony-id-member? (car ys) keep)
+          (loop (cdr ys) (cons (car ys) acc))
+          (loop (cdr ys) acc)))))
+
+(define (colony-literals-in name tag-name)
+  (let ((def (colony-find-define name)))
+    (if (not def) (list)
+      (colony-filter-ids (colony-collect-ids def)
+                         (query:node-type tag-name)))))
+
 (define find-literal-ints
   (lambda (fn-name)
-    (query:node-type "LiteralInt")))
+    (if (string=? fn-name "")
+        (query:node-type "LiteralInt")
+        (colony-literals-in fn-name "LiteralInt"))))
+
+(define find-literal-floats
+  (lambda (fn-name)
+    (if (string=? fn-name "")
+        (query:node-type "LiteralFloat")
+        (colony-literals-in fn-name "LiteralFloat"))))
 
 ; ── Helper: try a mutation, return (success? output) ──
 (define try-mutation
@@ -189,6 +242,78 @@
       (if (and (string? result) (output-contains-any? result expected-str))
           (list #t result)
           (list #f result)))))
+
+; ── Budgeted strategy runners (#4738) ────────────────────────────
+; Each returns (found? tried output message). Every attempt — including the
+; ±1/±2 deltas of one literal — is charged against the caller's
+; max-variants budget, so the budget is a hard cap and not a per-strategy
+; and per-literal allowance.
+
+; Strategy 1: display-ref — replace body with (display <ref>)
+(define (colony-try-refs src fns ref expected-str budget)
+  (let loop ((fns-left fns) (tried 0))
+    (if (or (null? fns-left) (>= tried budget))
+        (list #f tried "" "")
+      (let ((fn-name (car fns-left))
+            (rest-fns (cdr fns-left))
+            (new-body (string-append "(lambda (x) (display "
+                                     (number->string ref) "))")))
+        (set-code src)
+        (mutate:rebind fn-name new-body "colony:display-ref")
+        (let ((res (try-mutation src expected-str)))
+          (if (car res)
+              (list #t (+ tried 1) (car (cdr res))
+                    (string-append "colony:ref-" (number->string ref)))
+              (loop rest-fns (+ tried 1))))))))
+
+; Strategy 2: integer literals inside each named function, ±1/±2.
+(define (colony-try-ints src lit-groups expected-str budget tried0)
+  (let loop ((groups lit-groups) (tried tried0))
+    (if (or (null? groups) (>= tried budget))
+        (list #f tried "" "")
+      (let ((lit-ids (cdr (car groups)))
+            (rest-groups (cdr groups)))
+        (let try-lits ((ids lit-ids) (tried tried))
+          (if (or (null? ids) (>= tried budget))
+              (loop rest-groups tried)
+            (let try-deltas ((ds (list 1 -1 2 -2)) (tried tried))
+              (if (or (null? ds) (>= tried budget))
+                  (try-lits (cdr ids) tried)
+                (let ((delta (car ds)))
+                  (set-code src)
+                  (mutate:tweak-literal (car ids) delta "colony:lit-tweak")
+                  (let ((res (try-mutation src expected-str)))
+                    (if (car res)
+                        (list #t (+ tried 1) (car (cdr res))
+                              (string-append "colony:tweak-"
+                                             (number->string delta)))
+                        (try-deltas (cdr ds) (+ tried 1)))))))))))))
+
+; Strategy 3: float literals inside each named function, relative factors
+; (#4738: thresholds like 0.15 were never searched). mutate:tweak-literal
+; treats a float delta on a LiteralFloat as a relative factor:
+; new = old * (1 + factor).
+(define (colony-try-floats src lit-groups expected-str budget tried0)
+  (let loop ((groups lit-groups) (tried tried0))
+    (if (or (null? groups) (>= tried budget))
+        (list #f tried "" "")
+      (let ((lit-ids (cdr (car groups)))
+            (rest-groups (cdr groups)))
+        (let try-lits ((ids lit-ids) (tried tried))
+          (if (or (null? ids) (>= tried budget))
+              (loop rest-groups tried)
+            (let try-factors ((fs (list 0.1 -0.1 0.25 -0.25 0.5 -0.5)) (tried tried))
+              (if (or (null? fs) (>= tried budget))
+                  (try-lits (cdr ids) tried)
+                (let ((factor (car fs)))
+                  (set-code src)
+                  (mutate:tweak-literal (car ids) factor "colony:float-tweak")
+                  (let ((res (try-mutation src expected-str)))
+                    (if (car res)
+                        (list #t (+ tried 1) (car (cdr res))
+                              (string-append "colony:float-"
+                                             (number->string factor)))
+                        (try-factors (cdr fs) (+ tried 1)))))))))))))
 
 ; Main search: display-ref + lit-tweak for each named function
 ;
@@ -200,58 +325,51 @@
 ; (set-code ...). That makes fn-name-list see the require'd module's
 ; defines and miss the "no defines" case the test expects.
 ; See dual-workspace design (archived: git tag docs-archive-pre-2026-06).
+; #4738: literal node-id groups, queried from the PRISTINE workspace
+; before any attempt (set-code re-parses the same source, so the ids stay
+; valid for every attempt). Group = (fn-name . literal-ids).
+(define (colony-literal-groups fns)
+  (let loop ((fs fns) (acc (list)))
+    (if (null? fs) (reverse acc)
+      (loop (cdr fs)
+            (cons (cons (car fs) (find-literal-ints (car fs))) acc)))))
+
+(define (colony-float-groups fns)
+  (let loop ((fs fns) (acc (list)))
+    (if (null? fs) (reverse acc)
+      (loop (cdr fs)
+            (cons (cons (car fs) (find-literal-floats (car fs))) acc)))))
+
 (define (colony:search expected-str max-variants)
   (let* ((src (current-source :workspace))
          (fns (fn-name-list src))
-         (ref (find-first-ref expected-str)))
+         (ref (find-first-ref expected-str))
+         ;; #4738: entry checkpoint. Restored on every non-success exit so a
+         ;; failed search never leaves its last mutation installed.
+         (snap (ast:snapshot))
+         ;; Queried before the first attempt (pristine workspace).
+         (groups (colony-literal-groups fns))
+         (fgroups (colony-float-groups fns)))
     (if (null? fns)
-        (list #f "" "colony:no-fns")
-      (let search-all ((strategies (list "display-ref" "lit-tweak"))
-                       (tried 0) (best-out ""))
-        (if (or (null? strategies) (>= tried max-variants))
-            (list #f best-out (string-append "colony:" (number->string tried) "var"))
-          (let ((strategy (car strategies))
-                (rest-strat (cdr strategies)))
-            (cond
-              ;; Strategy 1: display-ref — replace body with (display <ref>)
-              ((string=? strategy "display-ref")
-               (if ref
-                 (let search-fns ((fns-left fns) (inner-tried 0))
-                   (if (or (null? fns-left) (>= inner-tried max-variants))
-                       (search-all rest-strat (+ tried inner-tried) best-out)
-                     (let ((fn-name (car fns-left))
-                           (rest-fns (cdr fns-left))
-                           (new-body (string-append "(lambda (x) (display " (number->string ref) "))")))
-                       (set-code src)
-                       (mutate:rebind fn-name new-body)
-                       (let ((res (try-mutation src expected-str)))
-                         (if (car res)
-                             (list #t (car (cdr res)) (string-append "colony:ref-" (number->string ref)))
-                           (search-fns rest-fns (+ inner-tried 1)))))))
-                 (search-all rest-strat tried best-out)))
-
-              ;; Strategy 2: lit-tweak — find numeric literals, try +/-1/2
-              ((string=? strategy "lit-tweak")
-               (let ((literals (find-literal-ints "")))
-                 (if (null? literals)
-                     (search-all rest-strat tried best-out)
-                   (let tweak-lits ((lit-ids literals) (inner-tried 0))
-                     (if (or (null? lit-ids) (>= inner-tried max-variants))
-                         (search-all rest-strat (+ tried inner-tried) best-out)
-                       (let ((lit-id (car lit-ids))
-                             (rest-lits (cdr lit-ids))
-                             (deltas (list 1 -1 2 -2)))
-                         (let try-deltas ((ds deltas) (d-tried 0))
-                           (if (null? ds)
-                               (tweak-lits rest-lits (+ inner-tried d-tried))
-                             (let ((delta (car ds))
-                                   (rest-ds (cdr ds)))
-                               (set-code src)
-                               (mutate:tweak-literal lit-id delta "colony")
-                               (let ((res (try-mutation src expected-str)))
-                                 (if (car res)
-                                     (list #t (car (cdr res))
-                                           (string-append "colony:tweak-" (number->string delta)))
-                                   (try-deltas rest-ds (+ d-tried 1)))))))))))))
-
-              (#t (search-all rest-strat tried best-out)))))))))
+        (begin (ast:restore snap)
+               (list #f "" "colony:no-fns"))
+      (let* ((r1 (if ref (colony-try-refs src fns ref expected-str max-variants)
+                     (list #f 0 "" "")))
+             (tried1 (car (cdr r1))))
+        (if (car r1)
+            (list #t (car (cdr (cdr r1))) (car (cdr (cdr (cdr r1)))))
+          (let* ((r2 (colony-try-ints src groups expected-str max-variants tried1))
+                 (tried2 (car (cdr r2))))
+            (if (car r2)
+                (list #t (car (cdr (cdr r2))) (car (cdr (cdr (cdr r2)))))
+              (let* ((r3 (colony-try-floats src fgroups expected-str max-variants tried2))
+                     (tried3 (car (cdr r3))))
+                (if (car r3)
+                    (list #t (car (cdr (cdr r3))) (car (cdr (cdr (cdr r3)))))
+                  (begin
+                    (ast:restore snap)
+                    ;; Output is "" — the restored workspace is the entry
+                    ;; state, so no partial-run output is meaningful.
+                    (list #f ""
+                          (string-append "colony:"
+                                         (number->string tried3) "var")))))))))))
