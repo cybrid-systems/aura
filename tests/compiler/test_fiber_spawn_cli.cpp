@@ -937,7 +937,8 @@ static void ac21_cow_overlay_rebind_eval_current() {
        (after (cow-target 7))
        (seen (fiber:join watch))
        (report (fiber:overlay-report)))
-  (and (= open 0)
+  (and (> open 0) ; #4715: overlay-begin returns the base workspace epoch, which the
+       ; seed (set-code + eval-current) already advanced - 0 was never the contract.
        (eq? m #t)
        (eq? ec #t)
        (= own 49)
@@ -968,14 +969,15 @@ static void ac21_cow_overlay_rebind_eval_current() {
        (cm (fiber:overlay-commit))
        (after cow-n)
        (report (fiber:overlay-report)))
-  (and (= open 0)
+  (and (> open 0) ; same contract as arm 1: the base epoch, already advanced by the seed.
        (eq? m #t)
        (eq? ec #t)
        (= own 9)
        (= sib 5)
        (not (error? cm))
        (= after 9)
-       (>= (string-index report "commits=1") 0)
+       ; arm 1 already committed in this CompilerService: stats are cumulative.
+       (>= (string-index report "commits=2") 0)
        (>= (string-index report "conflicts=0") 0)
        (>= (string-index report "active=0") 0)))
 )AURA");
