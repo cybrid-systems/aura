@@ -3496,7 +3496,9 @@ static void ac4519_source_cite() {
         const auto win = pc.substr(sp, 2400);
         const auto lock2 = win.find("std::lock_guard lock(ev.alloc_storage_lock_)");
         const auto bounds2 = win.find("idx >= ev.string_heap_.size()");
-        const auto slot = win.find("auto& s = ev.string_heap_[idx]");
+        // Issue #4714 follow-up: the in-place slot write goes through
+        // mutable_string_at(); the bounds check + lock order are unchanged.
+        const auto slot = win.find("auto& s = ev.mutable_string_at(idx)");
         CHECK(lock2 != std::string::npos && bounds2 != std::string::npos &&
                   slot != std::string::npos && lock2 < bounds2 && bounds2 < slot,
               "4519 cite: second section bounds-checks before operator[]");

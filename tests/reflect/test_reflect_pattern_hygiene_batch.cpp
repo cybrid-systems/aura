@@ -239,9 +239,14 @@ namespace {
         CHECK(setup_macro_ws(cs), "macro workspace");
         const auto s0 =
             href(cs, "query:pattern-hygiene-stats", "macro_introduced_skipped_in_query_total");
+        // query:pattern takes the pattern as a TEXT argument; a quoted list
+        // is a pair and the primitive answers bad-arg without reaching the
+        // matcher, so the skip counters could never move (the AC then only
+        // looked vacuous). Use the supported string form so the hygienic
+        // index actually serves and credits the skips.
         for (int i = 0; i < 8; ++i) {
-            (void)cs.eval("(query:pattern '...)");
-            (void)cs.eval("(query:pattern '( * _ _))");
+            (void)cs.eval("(query:pattern \"...\")");
+            (void)cs.eval("(query:pattern \"(* _ _)\")");
         }
         const auto s1 =
             href(cs, "query:pattern-hygiene-stats", "macro_introduced_skipped_in_query_total");

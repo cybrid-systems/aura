@@ -69,7 +69,10 @@ static void ac3_define_quote() {
     // Sequential evals mirror pipe-mode multi-form CLI (each form separate eval).
     auto def = cs.eval("(define d 'commit)");
     CHECK(def.has_value(), "AC3: define succeeds");
-    CHECK(eval_bool(cs, "(string? d)"), "AC3: d is string (symbol), not fixnum 0");
+    // Issue #4727: a quoted identifier atom is an interned symbol, not a
+    // string (and never the old fixnum 0). symbol? is the exact predicate.
+    CHECK(eval_bool(cs, "(symbol? d)"), "AC3: d is a symbol, not fixnum 0");
+    CHECK(!eval_bool(cs, "(string? d)"), "AC3: d is not a string (#4727)");
     CHECK(eval_bool(cs, "(eq? d 'commit)"), "AC3: eq? defined quote vs literal");
     CHECK(eval_bool(cs, "(equal? d 'commit)"), "AC3: equal? defined quote vs literal");
     // Redefine to another decision tag

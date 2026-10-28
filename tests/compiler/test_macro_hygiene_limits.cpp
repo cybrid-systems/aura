@@ -78,10 +78,12 @@ using aura::compiler::macro_exp::set_hygiene_pass_cap;
 using aura::compiler::types::as_int;
 using aura::compiler::types::as_pair_idx;
 using aura::compiler::types::as_string_idx;
+using aura::compiler::types::as_symbol_idx;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
 using aura::compiler::types::is_string;
+using aura::compiler::types::is_symbol;
 using aura::compiler::types::is_void;
 using aura::core::capability::Effect;
 using aura::core::capability::EffectSandboxMode;
@@ -3208,6 +3210,8 @@ static std::string describe_eval_4390(const aura::compiler::EvalResult& r) {
         return "void";
     if (is_string(*r))
         return "string";
+    if (is_symbol(*r))
+        return "symbol";
     if (is_pair(*r))
         return "pair";
     return std::format("other {:#x}", static_cast<std::uint64_t>((*r).val));
@@ -3223,10 +3227,12 @@ static void ac4390_legacy_eval_macro_denies_without_mse() {
         CompilerService cs;
         auto ok = cs.eval_ir(repro);
         std::string sym;
-        if (ok && is_string(*ok)) {
-            const auto idx = as_string_idx(*ok);
-            if (idx >= 0 && static_cast<std::size_t>(idx) < cs.evaluator().string_heap_size())
-                sym = cs.evaluator().string_heap_at(static_cast<std::size_t>(idx));
+        // Issue #4727: the source atom comes back as an interned SYMBOL, not
+        // a string-heap entry. The name is the contract, not the slot.
+        if (ok && is_symbol(*ok)) {
+            const auto sidx = as_symbol_idx(*ok);
+            if (static_cast<std::size_t>(sidx) < cs.evaluator().symbol_table().size())
+                sym = cs.evaluator().symbol_table()[static_cast<std::size_t>(sidx)];
         }
         CHECK(ok.has_value() && sym == "tmp",
               std::format("4390: Off defmacro returns source symbol tmp (got {} / {})",
@@ -3283,10 +3289,12 @@ static void ac4390_legacy_eval_macro_denies_without_mse() {
         grant_self_evo_production();
         auto ok = cs.eval_ir(repro);
         std::string sym;
-        if (ok && is_string(*ok)) {
-            const auto idx = as_string_idx(*ok);
-            if (idx >= 0 && static_cast<std::size_t>(idx) < cs.evaluator().string_heap_size())
-                sym = cs.evaluator().string_heap_at(static_cast<std::size_t>(idx));
+        // Issue #4727: the source atom comes back as an interned SYMBOL, not
+        // a string-heap entry. The name is the contract, not the slot.
+        if (ok && is_symbol(*ok)) {
+            const auto sidx = as_symbol_idx(*ok);
+            if (static_cast<std::size_t>(sidx) < cs.evaluator().symbol_table().size())
+                sym = cs.evaluator().symbol_table()[static_cast<std::size_t>(sidx)];
         }
         CHECK(ok.has_value() && sym == "tmp",
               std::format("4390: a MacroSelfEvo grant still expands (got {} / {})",
