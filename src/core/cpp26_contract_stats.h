@@ -78,6 +78,8 @@ extern "C" int aura_production_defaults_active_probe() noexcept;
 #include <cstdlib>
 #include <cstring>
 
+#include "core/sharded_counter.h"
+
 // ── Hot mode preprocessor selection (Issue #2435 / #3106) ──────────────
 // Priority: ENFORCE > HARDEN-armed SOFT_OBSERVE (#3106) > plain SOFT_OBSERVE
 // (#3043) > legacy OBSERVE aliases > explicit OFF > NDEBUG-default Enforce
@@ -173,7 +175,13 @@ inline std::atomic<std::uint64_t> contract_violations_caught_total{0};
 
 // Hot-path invariant probes (Arena alloc, Value classify, SoA view,
 // Shape inline, Pass dirty-skip). Zero cost when hot mode is OFF.
-inline std::atomic<std::uint64_t> hotpath_invariant_hits_total{0};
+//
+// Issue #4717 (P4 step 3): sharded — this word is bumped from EVERY
+// AURA_HOT_CONTRACT on every as_*/is_* unbox and from every arena/shape
+// probe, so as one std::atomic it serialized every evaluator body on a
+// single cache line (measured: the top ldadd site at n=16). Sharding keeps
+// the totals EXACT: load() sums the shards.
+inline aura::core::ShardedCounter hotpath_invariant_hits_total{0};
 
 // Compile-time consteval/static_assert count baked into the binary.
 // Bump when cxx26_invariants.ixx / value_tags.h / shape.h grow.

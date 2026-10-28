@@ -262,7 +262,11 @@ export enum class SummaryFlag : std::uint32_t {
 // export accessors below (consumed by the query:stringpool-intern-stats
 // primitive in evaluator_primitives_query.cpp).
 static std::atomic<std::uint64_t> g_stringpool_intern_total{0};
-static std::atomic<std::uint64_t> g_stringpool_intern_concurrent_readers_total{0};
+// Issue #4717 (P4 step 3): the reader counter is bumped on EVERY
+// resolve()/find_by_name() shared-lock acquisition — i.e. per variable
+// lookup fallback — so as one std::atomic it put a shared cache-line RMW
+// on the resolution path of every fiber. Sharded; totals stay exact.
+static aura::core::ShardedCounter g_stringpool_intern_concurrent_readers_total{0};
 
 export [[nodiscard]] std::uint64_t stringpool_intern_total() noexcept {
     return g_stringpool_intern_total.load(std::memory_order_relaxed);
@@ -2349,7 +2353,11 @@ public:
     // (the increment is observability, not a logical state
     // change — the validation result is the same).
     mutable std::atomic<std::uint64_t> bump_generation_count_{0};
-    mutable std::atomic<std::uint64_t> is_valid_check_count_{0};
+    // Issue #4717 (P4 step 3): sharded — is_valid() is the interpreter's
+    // per-node access oracle, so this bump ran on every node visit from
+    // every fiber and serialized them on one cache line. load() sums the
+    // shards, so the reported lifetime total stays exact.
+    mutable aura::core::ShardedCounter is_valid_check_count_{0};
     mutable std::atomic<std::uint64_t> stable_ref_invalidations_{0};
     // Issue #392: scoped / per-subtree generation bumping for
     // reduced StableRef over-invalidation. subtree_bump_count_

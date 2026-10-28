@@ -49,6 +49,16 @@ def compiler_metrics_scalar_atomics(header: str) -> list[str]:
         mm = re.search(r"std::atomic<\s*std::uint(?:64|32|16|8)_t\s*>\s+(\w+)", line)
         if mm:
             names.append(mm.group(1))
+            continue
+        # Issue #4717 (P4 step 3): aura::core::ShardedCounter is a scalar
+        # atomic-equivalent counter (fetch_add / load / store, EXACT totals
+        # by summing shards). A sharded field is still a CompilerMetrics
+        # scalar observable, so it belongs in the .inc exactly like a
+        # std::atomic<uint64_t> one — the AC1/AC2 name parity below is
+        # unchanged.
+        sm = re.search(r"aura::core::ShardedCounter\s+(\w+)", line)
+        if sm:
+            names.append(sm.group(1))
     return names
 
 
