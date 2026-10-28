@@ -2207,11 +2207,15 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             std::size_t named_count = cl_copy.params.size() - 1;
             for (std::size_t i = 0; i < named_count && i < args.size(); ++i)
                 ne.bind_symid(cl_copy.params[i], args[i]); // Issue #145: SymId
-            // Collect remaining args into a pair list for the rest param
+            // Collect remaining args into a pair list for the rest param.
+            // Issue #4733: mint_pair holds alloc_storage_lock_ across the
+            // size+append+index. A raw pairs_.push_back here let two fiber
+            // bodies read the same size (shared cons cell: another fiber's
+            // argument / "car: not a pair") or race the vector growth
+            // (vector::reserve length_error / heap corruption).
             types::EvalValue rest = make_void();
             for (std::size_t i = args.size(); i > named_count; --i) {
-                auto pid = pairs_.size();
-                pairs_.push_back({args[i - 1], rest});
+                const auto pid = mint_pair(args[i - 1], rest, /*check_quota=*/false);
                 rest = make_pair(pid);
             }
             ne.bind_symid(cl_copy.params.back(), rest);
@@ -7220,10 +7224,12 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             tail_env->bind_symid(pspan[i], std::move(iargs[i]));
                         }
                         if (dotted && !pspan.empty()) {
+                            // Issue #4733: same locked mint as the apply_closure
+                            // rest spine (per-call list must stay per-fiber).
                             types::EvalValue rest = make_void();
                             for (std::size_t i = rest_args.size(); i > 0; --i) {
-                                auto pid = pairs_.size();
-                                pairs_.push_back({rest_args[i - 1], rest});
+                                const auto pid =
+                                    mint_pair(rest_args[i - 1], rest, /*check_quota=*/false);
                                 rest = make_pair(pid);
                             }
                             tail_env->bind_symid(pspan.back(), rest);
@@ -7542,8 +7548,10 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 for (std::size_t i = v.children.size() - 1; i >= regular_count + 1;
                                      --i) {
                                     auto item = ast_to_data(*f, *p, v.child(i));
-                                    auto pid = pairs_.size();
-                                    pairs_.push_back(Pair{std::move(item), rest_list});
+                                    // Issue #4733: locked size+append (a fiber
+                                    // body may build macro rest spines too).
+                                    const auto pid =
+                                        mint_pair(item, rest_list, /*check_quota=*/false);
                                     rest_list = make_pair(pid);
                                 }
                                 tail_env->bind(rest_name, std::move(rest_list));
@@ -8138,6 +8146,13 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                             auto ar = eval_flat(*f, *p, sc.child[sci], eval_env);
                                             if (!ar)
                                                 return ar;
+                                            // Issue #4735: an error value in a
+                                            // non-last clause is not a truth
+                                            // value — it leaves and/or the way a
+                                            // leading error leaves begin (#2570),
+                                            // so try/catch sees it.
+                                            if (is_error(*ar) && !is_string(*ar))
+                                                return ar;
                                             if (sc_and ? !is_truthy(*ar) : is_truthy(*ar))
                                                 return *ar;
                                         }
@@ -8164,6 +8179,12 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                     auto ar = eval_flat(*f, *p, v.child(ci), eval_env);
                                     if (!ar)
                                         return ar;
+                                    // Issue #4735: a primitive type error is an
+                                    // error VALUE; truthiness must not swallow
+                                    // it in a non-last clause (the last clause
+                                    // is tail-called and already propagates).
+                                    if (is_error(*ar) && !is_string(*ar))
+                                        return ar;
                                     if (!is_truthy(*ar))
                                         return *ar;
                                 }
@@ -8179,6 +8200,11 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 for (std::size_t ci = 1; ci + 1 < v.children.size(); ++ci) {
                                     auto ar = eval_flat(*f, *p, v.child(ci), eval_env);
                                     if (!ar)
+                                        return ar;
+                                    // Issue #4735: same error-value face as the
+                                    // and prefix loop — an error is not a
+                                    // short-circuit value.
+                                    if (is_error(*ar) && !is_string(*ar))
                                         return ar;
                                     if (is_truthy(*ar))
                                         return *ar;
@@ -8599,10 +8625,15 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 tail_env->bind_symid(cl.params[i], std::move(cargs[i]));
                             }
                             if (cl.dotted && !cl.params.empty()) {
+                                // Issue #4733: the hot dotted-call spine used
+                                // a raw unlocked push_back; two bodies could
+                                // land on the same index (wrong rest list) or
+                                // race the vector growth. mint_pair locks the
+                                // size+append.
                                 types::EvalValue rest = make_void();
                                 for (std::size_t i = rest_args.size(); i > 0; --i) {
-                                    auto pid = pairs_.size();
-                                    pairs_.push_back({rest_args[i - 1], rest});
+                                    const auto pid =
+                                        mint_pair(rest_args[i - 1], rest, /*check_quota=*/false);
                                     rest = make_pair(pid);
                                 }
                                 tail_env->bind_symid(cl.params.back(), rest);
@@ -10377,7 +10408,13 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             EnvFrame& fr = owner->env_frame_mut(cur);
                             if (write_frame(fr))
                                 return *val;
-                            if (cur == 0) {
+                            // Issue #4734: drop the shard lock before the top_
+                            // consult (shard -> bindings is the inverse of the
+                            // bindings -> shard order env-frame writers take).
+                            const EnvId next_frame = fr.parent_id;
+                            const bool at_root_frame = (cur == 0);
+                            wlock.unlock();
+                            if (at_root_frame) {
                                 // Issue #4717: shared top env read.
                                 auto top_bind_guard = owner->top_env().lock_bindings_shared();
                                 for (auto& b : owner->top_env().bindings()) {
@@ -10393,7 +10430,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                     return *val;
                                 }
                             }
-                            cur = fr.parent_id;
+                            cur = next_frame;
                         }
                     }
                     // Issue #4374: display and newline are primitives, not
