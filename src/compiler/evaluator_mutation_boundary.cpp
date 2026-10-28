@@ -1048,6 +1048,13 @@ namespace aura::compiler {
 // in the body. Nested guards are composite, so the success exit would
 // otherwise always pay composite_txn_commit under Sampled. Full strategy,
 // production defaults, and the hard type gate keep the heavy exit.
+// Issue #4288: process-wide #3210 temporary-canary probe (one acquire load
+// when the inventory is empty — no mutex, no allocation).
+static bool moving_temp_canary_live_() noexcept {
+    std::vector<void*> temps;
+    return aura::ast::snapshot_temporary_moving_live_ptrs(temps) > 0;
+}
+
 static bool rebind_light_skip_heavy_exit(const Evaluator& ev) noexcept {
     return ev.rebind_light_path() && !typed_audit::production_defaults_active() &&
            typed_audit::get_strategy() != typed_audit::AuditStrategy::Full &&
@@ -6666,6 +6673,22 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             densify_incomplete_remap = compact_r.moving_incomplete_remap_any;
             // Issue #3783: real blocked flag for unified success (was hardcoded false).
             densify_moving_blocked = compact_r.moving_blocked_precondition_any;
+            // Issue #4288: the #3857/#4066 canary soft-gate lives INSIDE each
+            // arena's live_compact(Moving). A window whose ArenaGroup has no
+            // registered arena (fresh evaluator / module arenas not yet
+            // bound) runs no live_compact, so the process-wide inventory was
+            // never consulted and the window published vacuous-green
+            // (would_allow/pin true, production-hard throttle cleared) while
+            // a temporary canary was live. Fold the inventory into the
+            // window's blocked aggregate: same fail-closed contract,
+            // arena-count independent. The arena path already refuses to
+            // relocate under a live canary, so this ADDS no relocate skip;
+            // it closes the zero-arena bookkeeping hole.
+            if (!densify_moving_blocked && moving_temp_canary_live_()) {
+                densify_moving_blocked = true;
+                aura::core::densify_consistency::g_moving_blocked_temp_canary_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
             // Issue #2775: prep-API aggregate from AdaptiveCompactResult →
             // local for the publish call below. See moving_densify_health.hh
             // for the additive snapshot.external_roots_prep_registered_last
