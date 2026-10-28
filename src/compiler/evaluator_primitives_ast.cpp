@@ -277,15 +277,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                 kw_str = ":added";
 
             // Lookup or create keyword
-            auto kw_idx = ev.keyword_table_.size();
-            for (std::size_t ki = 0; ki < ev.keyword_table_.size(); ++ki) {
-                if (ev.keyword_table_[ki] == kw_str) {
-                    kw_idx = ki;
-                    break;
-                }
-            }
-            if (kw_idx == ev.keyword_table_.size())
-                ev.keyword_table_.push_back(kw_str);
+            auto kw_idx = ev.intern_keyword_slot(kw_str);
 
             auto line_idx = ev.string_heap_.mint(line);
             auto line_pair = ev.pairs_.size();
@@ -545,16 +537,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                 kw = ":none";
                 break;
         }
-        auto kw_idx = ev.keyword_table_.size();
-        for (std::size_t ki = 0; ki < ev.keyword_table_.size(); ++ki) {
-            if (ev.keyword_table_[ki] == kw) {
-                kw_idx = ki;
-                break;
-            }
-        }
-        if (kw_idx == ev.keyword_table_.size())
-            ev.keyword_table_.push_back(kw);
-        return make_keyword(kw_idx);
+        return make_keyword(ev.intern_keyword_slot(kw));
     });
 
     // ── Issue #107 part 3: AST versioning protocol primitive ──────────

@@ -654,6 +654,58 @@ int run_test_agent_ask() {
         }
     }
 
+    // ── Issue #4731: keyword interning from concurrent fiber bodies ──
+    // Two fiber bodies run on separate OS threads here (the CLI thread
+    // backend). Each interned its first `:kw` literal through the
+    // unsynchronized Evaluator-global keyword table, so two threads ran
+    // std::vector<std::string>::push_back at once and the realloc moved
+    // the buffer out from under the other thread (ASan heap-use-after-free
+    // in the string move; glibc "malloc(): unaligned tcache chunk").
+    // intern_keyword_slot() is the one atomic scan+append; every writer
+    // routes through it now.
+    {
+        std::println("\n=== Issue #4731: concurrent keyword interning ===");
+        auto& ev4731 = cs.evaluator();
+        const std::size_t base4731 = ev4731.keyword_table().size();
+        constexpr int kThreads4731 = 8;
+        constexpr int kPer4731 = 200;
+        std::atomic<bool> go4731{false};
+        std::vector<std::uint64_t> last4731(kThreads4731, 0);
+        std::vector<std::thread> th4731;
+        for (int t = 0; t < kThreads4731; ++t) {
+            th4731.emplace_back([&ev4731, &go4731, &last4731, t] {
+                while (!go4731.load(std::memory_order_acquire))
+                    std::this_thread::yield();
+                for (int i = 0; i < kPer4731; ++i) {
+                    const auto name = std::format(":k4731-{}-{}", t, i);
+                    last4731[static_cast<std::size_t>(t)] = ev4731.intern_keyword_slot(name);
+                }
+            });
+        }
+        go4731.store(true, std::memory_order_release);
+        for (auto& th : th4731)
+            th.join();
+        bool slots_ok4731 = true;
+        for (int t = 0; t < kThreads4731; ++t) {
+            const auto expect = std::format(":k4731-{}-{}", t, kPer4731 - 1);
+            const auto idx = last4731[static_cast<std::size_t>(t)];
+            if (idx >= ev4731.keyword_table().size() || ev4731.keyword_table()[idx] != expect)
+                slots_ok4731 = false;
+        }
+        CHECK(slots_ok4731, "4731 AC1: every interning thread lands in its own slot");
+        CHECK(ev4731.keyword_table().size() >= base4731 + kThreads4731 * kPer4731,
+              "4731 AC1: no interning thread lost its keyword");
+        const auto kt_src4731 = read_file("src/compiler/evaluator.ixx");
+        const auto ef_src4731 = read_file("src/compiler/evaluator_eval_flat.cpp");
+        CHECK(kt_src4731.find("std::uint64_t intern_keyword_slot(std::string_view name)") !=
+                  std::string::npos,
+              "4731 AC1: one atomic scan+append helper");
+        CHECK(kt_src4731.find("std::lock_guard lock(keyword_table_mtx_)") != std::string::npos,
+              "4731 AC1: the helper serializes on keyword_table_mtx_");
+        CHECK(ef_src4731.find("std::lock_guard kw_lock(keyword_table_mtx_);") != std::string::npos,
+              "4731 AC1: the interpreter intern path takes keyword_table_mtx_");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

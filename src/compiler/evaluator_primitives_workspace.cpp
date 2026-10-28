@@ -827,8 +827,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             // would return the script being evaluated, not the
             // workspace's saved source — causing merge/discard/
             // conflicts-with to operate on the wrong data.
-            std::uint64_t ws_kw = ev.keyword_table_.size();
-            ev.keyword_table_.push_back(":workspace");
+            std::uint64_t ws_kw = ev.intern_keyword_slot(":workspace");
             auto src = (*src_fn)({types::make_keyword(ws_kw)});
             if (is_string(src)) {
                 auto sidx = as_string_idx(src);
@@ -1073,8 +1072,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         if (src_fn) {
             // Issue #135: pass :workspace so we read the parent
             // workspace's saved flat, not the per-eval current flat.
-            std::uint64_t ws_kw = ev.keyword_table_.size();
-            ev.keyword_table_.push_back(":workspace");
+            std::uint64_t ws_kw = ev.intern_keyword_slot(":workspace");
             auto src = (*src_fn)({types::make_keyword(ws_kw)});
             if (is_string(src)) {
                 auto sidx = as_string_idx(src);
@@ -1304,8 +1302,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             if (src_fn) {
                 // Issue #135: pass :workspace so we read the parent
                 // workspace's saved flat, not the per-eval current flat.
-                std::uint64_t ws_kw = ev.keyword_table_.size();
-                ev.keyword_table_.push_back(":workspace");
+                std::uint64_t ws_kw = ev.intern_keyword_slot(":workspace");
                 auto src = (*src_fn)({types::make_keyword(ws_kw)});
                 if (is_string(src)) {
                     auto sidx = as_string_idx(src);

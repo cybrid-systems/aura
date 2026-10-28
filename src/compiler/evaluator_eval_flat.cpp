@@ -7044,6 +7044,10 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             // needs the name — take the full slow path.
                         }
                     }
+                    // Issue #4731: the scan + append below are serialized on
+                    // keyword_table_mtx_ (concurrent fiber bodies intern into
+                    // this Evaluator-global table; unsynchronized push_back
+                    // reallocated it under another body's move-ctor: ASan UAF).
                     // Issue #3401: keyword O(1) intern. std::string
                     // construction + keyword_table_.push_back happen only
                     // on the first encounter of a unique :foo literal.
@@ -7057,11 +7061,11 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             if (keyword_intern_by_sym_.lookup(v.sym_id, cached))
                                 return cached;
                         }
-                        // keyword_table_ is Evaluator-global. Primitives
-                        // (ast:snapshot-fail-reason, query keys) may have
-                        // already pushed the same name. Reuse that index so
-                        // (eq? fr :no-workspace) is identity, not a second
-                        // slot. SymId cache still avoids the scan on hits.
+                        // keyword_table_ is Evaluator-global: primitives may
+                        // have pushed the same name. Reuse that index so
+                        // (eq? fr :no-workspace) is identity. SymId cache
+                        // avoids the scan on hits.
+                        std::lock_guard kw_lock(keyword_table_mtx_);
                         for (std::size_t ki = 0; ki < keyword_table_.size(); ++ki) {
                             if (keyword_table_[ki] == name) {
                                 auto val = make_keyword(static_cast<std::uint64_t>(ki));
