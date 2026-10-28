@@ -1,0 +1,58 @@
+; Issue #4748: a pair? test that guards car/cdr of the same variable must not
+; produce a spurious type error on the set-code / eval-current path. The
+; polymorphic car/cdr binding models a pair as (a -> b); pair? narrows to the
+; nominal Pair ground. The two denote the same value class, so the narrowing
+; must be consistent with that shape — while a real mismatch still reports.
+(define *fails* 0)
+(define *n* 0)
+(define (check! ok msg)
+  (set! *n* (+ *n* 1))
+  (if (not ok)
+      (begin (set! *fails* (+ *fails* 1))
+             (display "  FAIL: ") (display msg) (newline))))
+
+(define (workspace-clean?)
+  (let ((report (typecheck-current)))
+    (and (string? report) (>= (string-index report "no errors") 0))))
+(define (status-clean?) (eq? (typecheck-status) #t))
+
+; ── the reported repro: (if (pair? r) (car r) r) ──
+(set-code "(define (g r) (if (pair? r) (car r) r))\n")
+(eval-current)
+(check! (status-clean?) "pair?/car/r: typecheck-status is #t")
+(check! (workspace-clean?) "pair?/car/r: no diagnostics in typecheck-current")
+(check! (= (g '(1 2)) 1) "g still returns the car of a pair")
+(check! (= (g 7) 7) "g still returns the non-pair unchanged")
+
+; ── the variants from the issue table ──
+(set-code "(define (g2 r) (if (pair? r) (car r) 0))\n")
+(eval-current)
+(check! (and (status-clean?) (workspace-clean?)) "pair?/car/0: clean")
+(check! (= (g2 '(5)) 5) "g2 car")
+(check! (= (g2 9) 0) "g2 non-pair")
+
+(set-code "(define (g3 r) (if (pair? r) (cdr r) r))\n")
+(eval-current)
+(check! (and (status-clean?) (workspace-clean?)) "pair?/cdr/r: clean")
+(check! (= (g3 4) 4) "g3 non-pair")
+
+; ── controls: the narrowing fix must not silence the warning class ──
+(set-code "(define (bad r) (car 5))\n")
+(eval-current)
+(check! (not (status-clean?)) "a real Int-vs-pair mismatch still reports")
+(check! (not (workspace-clean?)) "real mismatch still in typecheck-current")
+
+(set-code "(define (bad2 r) (if (string? r) (car r) 0))\n")
+(eval-current)
+(check! (not (status-clean?)) "String narrowed into car still reports")
+
+; ── the fixed shape still typechecks with the rest of the language ──
+(set-code "(define (sum r) (if (pair? r) (+ (car r) (cdr r)) 0))\n")
+(eval-current)
+(check! (and (status-clean?) (workspace-clean?)) "arithmetic on narrowed pair components is clean")
+(check! (= (sum '(2 . 3)) 5) "sum still runs")
+
+(if (= *fails* 0)
+    (begin (display "OK-pair-narrowing-4748 ") (display *n*) (display " checks") (newline))
+    (begin (display "pair_narrowing_4748: ") (display (- *n* *fails*))
+           (display "/") (display *n*) (newline) (exit 1)))
