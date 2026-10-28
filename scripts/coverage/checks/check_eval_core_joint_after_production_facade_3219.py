@@ -65,7 +65,11 @@ def main() -> int:
     # bump) — extend the window so the pinned identifiers stay in range.
     hwin = ixx[hpos : hpos + 2600] if hpos >= 0 else ""
     must("Issue #3219", "AC1 helper cite", ixx)
-    must("evaluator_.bump_defuse_version_for_test()", "AC1 Evaluator defuse", hwin)
+    # Issue #4730: the Evaluator defuse half of the joint dual-write is
+    # published by ONE helper that bumps inside the env-frame shard barrier
+    # and rides the capture frames in the same critical section. The joint
+    # contract (bridge + defuse advance together here) is unchanged.
+    must("bump_defuse_and_ride_frames()", "AC1 Evaluator defuse", hwin)
     must("bump_bridge_epoch()", "AC1 core bridge", hwin)
     must("expire_stale_live_closures_", "AC1 expire", hwin)
     must("notify_walk_active_closures_", "AC1 walk", hwin)
