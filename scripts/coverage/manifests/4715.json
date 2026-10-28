@@ -176,6 +176,36 @@
         "rollbacks=1",
         "active=0"
       ]
+    },
+    {
+      "ac": "AC2-regression",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "Issue #4715 regression",
+        "retire_ir_define_closure_",
+        "retired_define_closure_owner_",
+        "kRetiredDefineHistory",
+        "run_pinned_ir_closure_(pinned, pinned->closure_id, args, 0, &out)"
+      ]
+    },
+    {
+      "ac": "AC2-regression",
+      "path": "src/compiler/service_dirty.cpp",
+      "contains": [
+        "Issue #4715 regression",
+        "retired_define_closure_owner_.clear()",
+        "retired_define_closure_order_.clear()"
+      ]
+    },
+    {
+      "ac": "AC2-regression",
+      "path": "tests/python/test_regression.py",
+      "contains": [
+        "Issue #4715 regression",
+        "test_fiber_sibling_dispatch_across_rebind_4715_regression",
+        "invalid closure",
+        "BENCH fibers 1000010200"
+      ]
     }
   ]
 }

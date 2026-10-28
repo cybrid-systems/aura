@@ -895,8 +895,15 @@ void CompilerService::mark_all_defines_dirty() {
     // Issue #4360: a workspace replace (set-code / snapshot restore) arms
     // the flag. Flush and define-add still dirty every cache entry below,
     // but a sibling IR closure must stay dispatchable.
-    if (::aura::compiler::mark_all_clears_ir_owners())
+    if (::aura::compiler::mark_all_clears_ir_owners()) {
         ir_define_closure_owner_.clear();
+        // Issue #4715 regression: the one-generation retirement history is a
+        // continuation of this index. A workspace replace / ast:restore is
+        // exactly the case where the previous publication must NOT resurrect
+        // (#4349), so drop it with the index it belongs to.
+        retired_define_closure_owner_.clear();
+        retired_define_closure_order_.clear();
+    }
     // Issue #1999 / #600 AC5 + Wave2: set-code soft-dirty is the
     // invalidate path for a full workspace replace. Mark every
     // ir_cache_v2 entry dirty, then ONE bulk jit_.invalidate_all()

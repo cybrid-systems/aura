@@ -5231,6 +5231,72 @@ def test_fiber_sibling_define_dispatch_4712():
     print("  OK test_fiber_sibling_define_dispatch_4712 (sibling IR define stays dispatchable after set-code)")
 
 
+def test_fiber_sibling_dispatch_across_rebind_4715_regression():
+    """Issue #4715 regression: a body keeps dispatching the define it resolved.
+
+    This is the class-2 pre-push bench agent-fibers-8
+    (bench/cases/agent/fibers.aura): eight fiber bodies call a sibling
+    `pure` define while the parent runs (mutate:rebind "hot" ...) +
+    (eval-current). The parent's (eval-current) re-specialises every
+    workspace lambda twice, and bind_function_define_via_ir minted a fresh
+    IR closure id per publication and erased the superseded id BEFORE the
+    define's top_env cell was repointed. A body resolves the cell (old id)
+    and only then enters dispatch_ir_define_closure, which takes
+    ir_cache_gate_ - held by the parent for the whole lowering window - so
+    it is parked across two publications; when it finally dispatched, the
+    id had no owner row, was not a runtime mint, and the strict #4450 /
+    #4349 rule denied it: "eval_flat: invalid closure", the join returned
+    void and the harness read an unknown hotv. Measured on origin/main
+    (6905aa4a5): 23 of 30 runs failed.
+
+    Arms:
+      (a) the bench case itself, 6 attempts at BENCH_SPIN=50 (deterministic
+          result: hot(1) = 10, 8 * (1..50 = 1275) => 1000010200);
+      (b) source rows: the retired-id history, its dispatch consult and its
+          workspace-replace clear are still in place.
+    """
+    bench_case = REPO / "bench/cases/agent/fibers.aura"
+    env = os.environ.copy()
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env["AURA_SANDBOX"] = "off"
+    env["BENCH_SPIN"] = "50"
+    env.pop("AURA_SOFT", None)
+    env.pop("AURA_FORCE_IR", None)
+    for attempt in range(6):
+        r = subprocess.run(
+            [AURA, str(bench_case)],
+            capture_output=True,
+            text=True,
+            timeout=180,
+            env=env,
+            cwd=str(REPO),
+        )
+        err = r.stderr or ""
+        out = r.stdout or ""
+        assert r.returncode == 0, f"#4715 regression attempt {attempt}: rc={r.returncode} err={err[-400:]!r}"
+        assert "invalid closure" not in err, (
+            f"#4715 regression attempt {attempt}: a body lost the define it had "
+            f"resolved across the parent's re-bind: {err[-400:]!r}"
+        )
+        assert "BENCH fibers 1000010200 " in out, (
+            f"#4715 regression attempt {attempt}: expected the bench line, got {out[-200:]!r}"
+        )
+    svc = (REPO / "src/compiler/service.ixx").read_text(encoding="utf-8")
+    assert "retire_ir_define_closure_" in svc, "#4715 regression: the retired define-closure history is gone"
+    assert "retired_define_closure_owner_.find(cid)" in svc, (
+        "#4715 regression: dispatch no longer resolves a superseded define id"
+    )
+    assert "kRetiredDefineHistory" in svc, "#4715 regression: the retired-id history is no longer bounded per define"
+    dirty = (REPO / "src/compiler/service_dirty.cpp").read_text(encoding="utf-8")
+    assert "retired_define_closure_owner_.clear()" in dirty, (
+        "#4715 regression: a workspace replace must drop the retired-id history"
+    )
+    print(
+        "  OK test_fiber_sibling_dispatch_across_rebind_4715_regression "
+        "(a body keeps its define across mutate:rebind + eval-current)"
+    )
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -5293,6 +5359,7 @@ for tf in [
     test_fiber_cancel_4708,
     test_fiber_hash_key_survives_rebind_4709,
     test_fiber_sibling_define_dispatch_4712,
+    test_fiber_sibling_dispatch_across_rebind_4715_regression,
     test_serve_async_two_fiber_yield_reclaim_4706,
     test_fiber_gc_root_registry_4713,
 ]:
