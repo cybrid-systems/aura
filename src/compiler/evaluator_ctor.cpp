@@ -147,6 +147,11 @@ Evaluator::Evaluator() {
             static_cast<Evaluator*>(ctx)->note_inrange_string_mint(idx);
         },
         this);
+    // Issue #4714 Row 2: measure every lock acquisition on the shared heap
+    // (the Guard counts only a mutex that is really taken). The Row 2 proof
+    // is a delta of this counter across a steady-state mint window: the
+    // per-fiber slab claims a batch once, then mints with no acquisition.
+    string_heap_.set_lock_observer(&string_heap_lock_total_);
     primitives_.set_string_heap(&string_heap_);
     primitives_.set_error_sink(&error_values_, &primitive_error_count_);
     // Issue #2652: reserve string slot 0 as the immortal empty string so

@@ -312,6 +312,8 @@ thread_local std::vector<aura::compiler::Evaluator::MutationCheckpoint>
 thread_local std::vector<aura::compiler::Evaluator::YieldBoundaryCheckpoint>
     aura::compiler::Evaluator::g_main_thread_yield_checkpoints;
 thread_local void* aura::compiler::Evaluator::g_current_fiber_void;
+// Issue #4714 Row 2: the test pin for the production mint door (one entity).
+thread_local std::uint64_t aura::compiler::Evaluator::tls_fiber_mint_override_ = 0;
 // Issue #1403: thread-local stack of Evaluator* hooks (replaces the
 // previous thread_local Evaluator* pointer). When fiber:spawn
 // reuses a worker thread for multiple fibers, each fiber's RAII

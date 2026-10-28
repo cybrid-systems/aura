@@ -1536,6 +1536,13 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                     // reclaim holds alloc_storage_lock_, and promoting
                     // under it would invert that order.
                     (void)ev.publish_fiber_string_arena(static_cast<std::uint64_t>(fid));
+                    // Issue #4714 Row 2: the production slab needs no copy —
+                    // its payloads already name shared slots. Close the batch
+                    // (return the unused tail, one narrow lock) and fence so
+                    // a joiner observes this fiber's string bytes. Also
+                    // outside s_fiber_results_mtx, for the same lock-order
+                    // reason as the copy-on-send publish above.
+                    (void)ev.publish_fiber_slab(static_cast<std::uint64_t>(fid));
                     arena_published = true;
                 }
                 if (fid != 0) {
