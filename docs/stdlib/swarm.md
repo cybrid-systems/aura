@@ -141,3 +141,65 @@ the caller. Never `fiber:join` inside a worker (nested-join host residual).
 ```
 
 See also: `tests/suite/swarm_2874.aura` (PSO), epic #2874.
+
+## Multi-objective fitness + Pareto archive (#4740)
+
+Set `objectives` to the vector length and `directions` to one entry per
+objective; a fitness may then be a list:
+
+```aura
+(swarm:init (hash "kind" "grid" "dim" 1 "pop" 16 "bins" 16
+                  "bounds" (list (list 0.0 1.0))
+                  "objectives" 2
+                  "directions" (list "max" "min")     ; recall up, FAR down
+                  "archive-max" 64                    ; bounded archive
+                  "hv-ref" (list 0.0 -0.5)))          ; optional HV reference
+(swarm:step! (lambda (ind) (list (recall ind) (far ind))))
+(swarm:front)              ; -> list of hashes: ind / fitness / max / scalar
+(swarm:archive-size)
+(hash-ref (swarm:report) "front-size")
+(hash-ref (swarm:report) "hypervolume")
+(hash-ref (swarm:report) "best-fitness")   ; the raw vector at the best
+```
+
+- **Archive** - every evaluated candidate is inserted when it is not
+  dominated; entries that a newcomer dominates are dropped. Above
+  `archive-max` the least-crowded entry (smallest crowding distance) is
+  removed, so the front stays bounded and spread out.
+- **Guidance** - PSO/ABC/grid guidance still needs one number: the scalar
+  score is a weighted sum in MAXIMIZE space (`min` objectives negated).
+  Weights default to 1.0 each; set `weights` or call
+  `(swarm:scalarize fit weights directions)` yourself.
+- **Hypervolume** - exact for two objectives against `hv-ref` (default: a
+  point 10% below the front's per-objective minimum); reported as 0.0 for
+  other arities, where `front-size` is the portable signal.
+- **Leader selection** - the v1 leader is the best scalarized particle;
+  MOPSO-style leader sampling from the archive is not implemented yet.
+
+## Bounded, isolated parallel evaluation (#4741)
+
+`"parallel"` accepts a hash instead of `#t`:
+
+```aura
+(swarm:init (hash "kind" "pso" "dim" 2 "pop" 64
+                  "bounds" (list (list -1.0 1.0) (list -1.0 1.0))
+                  "parallel" (hash "max-fibers" 8     ; wave size (cores)
+                                   "isolate" #t       ; fiber overlay per body
+                                   "on-error" "reject"))) ; #f per failure
+(swarm:step! fitness-fn)
+(swarm:last-errors)  ; -> ((index . message) ...) most recent first
+```
+
+- **Waves** - at most `max-fibers` bodies run at once; the coordinator
+  joins a wave before starting the next, so fan-out matches the core count.
+- **Isolation** - with `isolate`, every body runs inside
+  `fiber:overlay-begin` / `fiber:overlay-rollback` (#4715), so a
+  candidate's defines never leak into a sibling. A raising body still
+  closes its overlay before returning.
+- **Errors** - a raising fitness is recorded per individual instead of
+  aborting the step; the report's `errors` key counts them and
+  `swarm:last-errors` carries the messages.
+- **Legacy** - `"parallel" #t` keeps the flat all-at-once fan-out.
+- **Fiber-body caveat** - variadic calls (rest-args corruption) and string
+  `eval` (deadlock) are still unsafe inside a parallel fitness body; keep
+  those on the coordinator.
