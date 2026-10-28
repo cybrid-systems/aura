@@ -9,6 +9,7 @@
 
 module;
 #include "compiler/locked_string_heap.hh" // Issue #4543
+#include "core/fiber_context.hh"          // Issue #4735: try-body stderr face
 
 #include "primitives_detail.h"
 #include "runtime_shared.h"
@@ -92,6 +93,10 @@ namespace {
     }
 
     void note_arith_mismatch(const EvalValue& v, ::aura::compiler::StringPoolView heap) {
+        // Issue #4735 (#4535 contract): the legacy line is the UNCAUGHT face.
+        // A try body's catch must see the error value silently.
+        if (aura::core::fiber_ctx::active().try_body_depth != 0)
+            return;
         std::string_view text;
         if (is_string(v) && !heap.empty()) {
             const auto idx = as_string_idx(v);

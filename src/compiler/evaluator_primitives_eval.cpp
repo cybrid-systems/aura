@@ -692,8 +692,38 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         auto pool = std::make_unique<aura::ast::StringPool>();
         auto flat = std::make_unique<aura::ast::FlatAST>();
         auto pr = aura::parser::parse_to_flat(code, *flat, *pool);
-        if (!pr.success || pr.root == aura::ast::NULL_NODE)
-            return make_void();
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+            // Issue #4736: unbalanced / truncated source is a PARSE ERROR the
+            // caller must be able to reject — returning () made a missing or
+            // extra ')' look like a successful evaluation of nothing. A
+            // comment/whitespace-only program has no form to run and stays ().
+            bool no_forms = true;
+            for (std::size_t i = 0; i < code.size() && no_forms; ++i) {
+                const char c = code[i];
+                if (c == ';') {
+                    while (i < code.size() && code[i] != '\n')
+                        ++i;
+                    continue;
+                }
+                if (!std::isspace(static_cast<unsigned char>(c)))
+                    no_forms = false;
+            }
+            if (no_forms)
+                return make_void();
+            std::string parse_err;
+            for (const auto& pe : pr.errors) {
+                if (!parse_err.empty())
+                    parse_err += "; ";
+                parse_err += pe.format();
+            }
+            if (parse_err.empty())
+                parse_err = pr.error.empty() ? "source could not be parsed" : pr.error;
+            // An ERROR VALUE (not the tagged merr pair): try/catch classifies
+            // error values, so a gate that wraps eval in try sees the failure.
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "parse-error: " + parse_err,
+                                        ev.primitive_error_counter_ptr());
+        }
         flat->root = pr.root;
         auto* flat_p = flat.get();
         auto* pool_p = pool.get();
