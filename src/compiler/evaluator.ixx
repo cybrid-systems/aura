@@ -2677,13 +2677,22 @@ public:
     // (eq? of a keyword a primitive already pushed) holds. The leading
     // ':' stays in the table, matching eval_flat.
     [[nodiscard]] types::EvalValue intern_keyword(std::string_view name) {
+        return types::make_keyword(intern_keyword_slot(name));
+    }
+    // Issue #4731: atomic (scan + append) on the Evaluator-global keyword
+    // table. Returns the existing slot for name, else appends it. The scan
+    // and the append MUST be one critical section: fiber bodies run
+    // concurrently (#4707) and both used to do size()/push_back, which both
+    // corrupted the vector (realloc on two threads) and could hand out the
+    // wrong index.
+    std::uint64_t intern_keyword_slot(std::string_view name) {
+        std::lock_guard lock(keyword_table_mtx_);
         for (std::size_t ki = 0; ki < keyword_table_.size(); ++ki) {
             if (keyword_table_[ki] == name)
-                return types::make_keyword(static_cast<std::uint64_t>(ki));
+                return static_cast<std::uint64_t>(ki);
         }
-        auto kidx = static_cast<std::uint64_t>(keyword_table_.size());
         keyword_table_.emplace_back(name);
-        return types::make_keyword(kidx);
+        return static_cast<std::uint64_t>(keyword_table_.size() - 1);
     }
 
     // Issue #135: read-only access to the string heap for tests
@@ -8523,6 +8532,14 @@ private:
     // table append + index insert are serialized (keyword_table_ predates
     // that requirement; atoms are far more frequent than keywords).
     mutable std::mutex symbol_table_mtx_;
+    // Issue #4731: the keyword table had no such guard. It is Evaluator-global
+    // and every fiber body (plus the JIT tier hook) interns into it, so the
+    // old unsynchronized scan + push_back ran _M_realloc_append on two
+    // threads at once: the string move-construction read a buffer the other
+    // thread had just freed (ASan heap-use-after-free; glibc 'malloc():
+    // unaligned tcache chunk'). intern_keyword_slot() is the one atomic
+    // scan+append; every call site takes the index it returns.
+    mutable std::mutex keyword_table_mtx_;
     // Issue #4717: per-body execution counters (fiber Context). They were
     // shared Evaluator members, so two bodies raced them.
     [[nodiscard]] std::size_t& eval_depth_ctx() noexcept { return eval_ctx().eval_depth; }

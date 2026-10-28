@@ -3079,8 +3079,7 @@ void CompilePrims::register_compile_p29(PrimRegistrar add, Evaluator& ev) {
                 // Issue #1855: locked snapshot (not ir_cache_v2_find pointer).
                 auto dirty_opt = svc.ir_cache_v2_dirty_block_count(fname);
                 if (!dirty_opt) {
-                    auto sym_idx = ev.keyword_table_.size();
-                    ev.keyword_table_.push_back("unknown");
+                    auto sym_idx = ev.intern_keyword_slot("unknown");
                     return make_keyword(sym_idx);
                 }
                 const std::size_t dirty = *dirty_opt;
@@ -3102,8 +3101,7 @@ void CompilePrims::register_compile_p29(PrimRegistrar add, Evaluator& ev) {
                     tag = "incremental";
                 else
                     tag = "full";
-                auto sym_idx = ev.keyword_table_.size();
-                ev.keyword_table_.push_back(tag);
+                auto sym_idx = ev.intern_keyword_slot(tag);
                 return make_keyword(sym_idx);
             },
             make_bool(false));

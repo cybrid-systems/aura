@@ -1171,8 +1171,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                 }
             }
             if (!ws_found) {
-                ws_kw = ev.keyword_table_.size();
-                ev.keyword_table_.push_back(":workspace");
+                ws_kw = ev.intern_keyword_slot(":workspace");
             }
             auto cs_result = (*src_fn)({types::make_keyword(ws_kw)});
             if (!is_string(cs_result))
@@ -1503,8 +1502,8 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                                                         }
                                                     }
                                                     if (!ws_found) {
-                                                        ws_kw = ev.keyword_table_.size();
-                                                        ev.keyword_table_.push_back(":workspace");
+                                                        ws_kw =
+                                                            ev.intern_keyword_slot(":workspace");
                                                     }
                                                     auto src =
                                                         (*src_fn)({types::make_keyword(ws_kw)});
