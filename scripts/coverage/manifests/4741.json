@@ -1,0 +1,12 @@
+{
+  "issue": 4741,
+  "title": "stdlib/swarm: bounded, isolated fiber-parallel evaluation (parallel #t spawns the whole population with no isolation or failure handling)",
+  "ok": "OK: a hash parallel option caps the wave size (max-fibers), wraps each body in a fiber overlay when isolate is set, records per-individual failures instead of aborting the step, and exposes them through swarm:last-errors and the report",
+  "checks": [
+    { "ac": "AC1", "path": "lib/std/swarm.aura", "contains": ["max-fibers", "swarm-eval-pop-bounded", "swarm-list-take"] },
+    { "ac": "AC2", "path": "lib/std/swarm.aura", "contains": ["fiber:overlay-begin", "fiber:overlay-rollback", "isolate"] },
+    { "ac": "AC3", "path": "lib/std/swarm.aura", "contains": ["swarm-eval-one-isolated", "swarm-collect-results", "swarm-error"] },
+    { "ac": "AC4", "path": "lib/std/swarm.aura", "contains": ["(define (swarm:last-errors)", "errors"] },
+    { "ac": "AC5", "path": "tests/suite/swarm_2874.aura", "contains": ["#4741", "bounded parallel", "failing individuals are recorded"] }
+  ]
+}

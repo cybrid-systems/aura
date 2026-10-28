@@ -21,6 +21,8 @@
 (export swarm:init swarm:step! swarm:best swarm:population
         swarm:report swarm:export
         swarm:kind swarm:gen swarm:parallel!
+        swarm:front swarm:scalarize swarm:last-errors
+        swarm:archive-size
         swarm:help)
 
 (require "std/ant" all:)
@@ -67,6 +69,17 @@
 (define *swarm-fss-vol-min* 0.25)
 (define *swarm-fss-vol-max* 4.0)
 (define *swarm-boids-max-speed* 0.25)
+; multi-objective (#4740) — vector fitness + bounded Pareto archive
+(define *swarm-objectives* 0)      ; 0 = scalar fitness
+(define *swarm-directions* (list)) ; "max" | "min" per objective
+(define *swarm-weights* (list))    ; optional scalarization weights
+(define *swarm-archive* (list))    ; non-dominated entries (hash, see insert)
+(define *swarm-archive-max* 64)    ; archive cap (crowding-distance trim)
+(define *swarm-best-fit-raw* (list)) ; raw (vector) fitness at the best
+(define *swarm-hv-ref* (list))     ; hypervolume reference point (optional)
+; bounded / isolated parallel evaluation (#4741)
+(define *swarm-parallel-opts* #f)  ; #f = legacy flat fanout, hash = bounded
+(define *swarm-last-errors* (list)) ; (index . message) of failed individuals
 
 ; ── Tiny PRNG (inline; avoid std/random internal-define footgun) ──
 (define (swarm-rand!)
@@ -159,36 +172,334 @@
         (loop (+ d 1) (cdr gs) (cons x acc))))))
 
 ; ── Fitness evaluation (optional flat fiber fanout) ─────────────
+; #4740: a fitness is a number (scalar) or a list of objectives.
 (define (swarm-eval-one fitness-fn ind)
   (let ((f (fitness-fn ind)))
-    (if (number? f) f -1000000000.0)))
+    (if (number? f) f
+      (if (list? f) f -1000000000.0))))
+
+; ── Multi-objective helpers (#4740) ─────────────────────────────
+(define (swarm-dir-sign dirs i)
+  (let ((d (swarm-list-ref dirs i)))
+    (if (and (string? d) (string=? d "min")) -1.0 1.0)))
+
+; (swarm:scalarize fit [weights [directions]]) — weighted sum in
+; MAXIMIZE space (a "min" objective is negated). Scalars pass through.
+(define (swarm:scalarize fit . rest)
+  (if (not (list? fit))
+      (if (number? fit) fit -1000000000.0)
+    (let* ((weights (if (and (not (null? rest)) (list? (car rest)))
+                        (car rest) *swarm-weights*))
+           (dirs (if (and (not (null? rest)) (not (null? (cdr rest)))
+                          (list? (car (cdr rest))))
+                     (car (cdr rest)) *swarm-directions*)))
+      (let loop ((ds dirs) (fs fit) (i 0) (s 0.0))
+        (if (null? fs) s
+          (let* ((sign (swarm-dir-sign ds 0))
+                 (w (let ((ww (swarm-list-ref weights i)))
+                      (if (number? ww) ww 1.0)))
+                 (v (car fs)))
+            (loop (if (null? ds) ds (cdr ds)) (cdr fs) (+ i 1)
+                  (+ s (* w sign (if (number? v) v 0.0))))))))))
+
+; Scalar guidance score for any fitness shape (internal).
+(define (swarm-score fit)
+  (if (number? fit) fit
+    (if (list? fit) (swarm:scalarize fit) -1000000000.0)))
+
+; Fitness vector → MAXIMIZE space (min objectives negated) (#4740).
+(define (swarm-vec-max fit)
+  (let loop ((d 0) (xs fit) (acc (list)))
+    (if (null? xs) (reverse acc)
+      (loop (+ d 1) (cdr xs)
+            (cons (* (swarm-dir-sign *swarm-directions* d)
+                     (if (number? (car xs)) (car xs) 0.0))
+                  acc)))))
+
+(define (swarm-vec= a b)
+  (let loop ((xs a) (ys b))
+    (cond ((or (null? xs) (null? ys)) #t)
+          ((= (car xs) (car ys)) (loop (cdr xs) (cdr ys)))
+          (#t #f))))
+
+(define (swarm-dominates? a b)
+  ; a dominates b: >= in every objective and > in at least one.
+  (let loop ((xs a) (ys b) (strict #f))
+    (cond ((or (null? xs) (null? ys)) strict)
+          ((< (car xs) (car ys)) #f)
+          ((> (car xs) (car ys)) (loop (cdr xs) (cdr ys) #t))
+          (#t (loop (cdr xs) (cdr ys) strict)))))
+
+(define (swarm-archive-has-max? mv entries)
+  (if (null? entries) #f
+    (if (swarm-vec= (hash-ref (car entries) "max") mv) #t
+      (swarm-archive-has-max? mv (cdr entries)))))
+
+(define (swarm-archive-dominated? mv entries)
+  (if (null? entries) #f
+    (if (swarm-dominates? (hash-ref (car entries) "max") mv) #t
+      (swarm-archive-dominated? mv (cdr entries)))))
+
+; Crowding distance over the archive (sum of per-objective neighbor gaps).
+(define (swarm-crowding-dist entries)
+  (let ((n (swarm-length entries)))
+    (if (< n 3) (let loop ((k 0) (acc (list)))
+                  (if (>= k n) (reverse acc) (loop (+ k 1) (cons 1000000000.0 acc))))
+      (let loop ((d 0) (dist (swarm-abc-zeros n)))
+        (if (>= d *swarm-objectives*) dist
+          (let* ((idx (let iloop ((k 0) (acc (list)))
+                        (if (>= k n) (reverse acc) (iloop (+ k 1) (cons k acc)))))
+                 (sorted (swarm-sort-by-obj idx entries d))
+                 (vals (swarm-map (lambda (k) (swarm-list-ref (hash-ref (swarm-list-ref entries k) "max") d)) sorted))
+                 (lo (let vloop ((xs vals) (m (car vals)))
+                       (if (null? xs) m (vloop (cdr xs) (swarm-min m (car xs))))))
+                 (hi (let vloop ((xs vals) (m (car vals)))
+                       (if (null? xs) m (vloop (cdr xs) (swarm-max m (car xs))))))
+                 (span (- hi lo)))
+            (if (<= span 0.0) (loop (+ d 1) dist)
+              (let* ((n1 (swarm-length sorted))
+                     (d1 (swarm-set-add dist (car sorted) 1000000000.0))
+                     (d2 (swarm-set-add d1 (swarm-list-ref sorted (- n1 1)) 1000000000.0)))
+                (let inner ((k 1) (acc d2))
+                  (if (>= k (- n1 1)) (loop (+ d 1) acc)
+                    (let* ((prev (swarm-list-ref vals (- k 1)))
+                           (next (swarm-list-ref vals (+ k 1)))
+                           (cur (swarm-list-ref dist (swarm-list-ref sorted k)))
+                           (gap (/ (- next prev) span)))
+                      (inner (+ k 1)
+                             (swarm-set-add acc (swarm-list-ref sorted k) (+ cur gap))))))))))))))
+
+(define (swarm-set-add lst i delta)
+  (swarm-list-set lst i (+ (swarm-list-ref lst i) delta)))
+
+; Insertion sort of indices by objective d (ascending).
+(define (swarm-sort-by-obj idx entries d)
+  (let insert-all ((xs idx) (acc (list)))
+    (if (null? xs) acc
+      (let ((x (car xs)))
+        (insert-all (cdr xs)
+                    (let insert ((ys acc))
+                      (cond
+                        ((null? ys) (list x))
+                        ((<= (swarm-list-ref (hash-ref (swarm-list-ref entries x) "max") d)
+                             (swarm-list-ref (hash-ref (swarm-list-ref entries (car ys)) "max") d))
+                         (cons x ys))
+                        (#t (cons (car ys) (insert (cdr ys)))))))))))
+
+; Trim the archive to its cap by dropping the least-crowded entry.
+(define (swarm-archive-trim!)
+  (let loop ((n (swarm-length *swarm-archive*)))
+    (if (<= n *swarm-archive-max*) *swarm-archive*
+      (let* ((dists (swarm-crowding-dist *swarm-archive*))
+             (drop (let iloop ((k 0) (bi 0) (bv 1000000000.0))
+                     (if (>= k n) bi
+                       (let ((v (swarm-list-ref dists k)))
+                         (if (< v bv) (iloop (+ k 1) k v) (iloop (+ k 1) bi bv)))))))
+        (set! *swarm-archive*
+              (let drop-loop ((es *swarm-archive*) (i 0) (acc (list)))
+                (if (null? es) (reverse acc)
+                  (if (= i drop) (drop-loop (cdr es) (+ i 1) acc)
+                    (drop-loop (cdr es) (+ i 1) (cons (car es) acc))))))
+        (loop (- n 1))))))
+
+; Non-dominated insert (#4740). A scalar fitness never enters the archive.
+(define (swarm-archive-insert! ind fit)
+  (if (or (not (list? fit)) (< *swarm-objectives* 1))
+      #f
+    (let ((mv (swarm-vec-max fit)))
+      (if (or (swarm-archive-dominated? mv *swarm-archive*)
+              (swarm-archive-has-max? mv *swarm-archive*))
+          #f
+        (begin
+          (set! *swarm-archive*
+                (let loop ((es *swarm-archive*) (acc (list)))
+                  (if (null? es) (reverse acc)
+                    (if (swarm-dominates? mv (hash-ref (car es) "max"))
+                        (loop (cdr es) acc)
+                      (loop (cdr es) (cons (car es) acc))))))
+          (set! *swarm-archive*
+                (cons (hash "ind" ind "fitness" fit "max" mv
+                            "scalar" (swarm:scalarize fit))
+                      *swarm-archive*))
+          (swarm-archive-trim!)
+          #t)))))
+
+; Register every evaluated candidate in the archive (kept generation-best
+; view is orthogonal: the archive accumulates across generations).
+(define (swarm-archive-record! inds fits)
+  (if (< *swarm-objectives* 1) #f
+    (let loop ((is inds) (fs fits))
+      (if (or (null? is) (null? fs)) #t
+        (begin
+          (swarm-archive-insert! (car is) (car fs))
+          (loop (cdr is) (cdr fs)))))))
+
+(define (swarm:front) *swarm-archive*)
+; Per-individual failures from the last bounded/isolated wave (#4741):
+; a list of (index . message) pairs, most recent first.
+(define (swarm:last-errors) *swarm-last-errors*)
+(define (swarm:archive-size) (swarm-length *swarm-archive*))
+
+; Hypervolume of the archive in MAXIMIZE space. Exact for 2 objectives;
+; 0.0 (documented) for other arities.
+(define (swarm-hv-ref-point)
+  (if (and (list? *swarm-hv-ref*) (= (swarm-length *swarm-hv-ref*) *swarm-objectives*) (> *swarm-objectives* 1))
+      *swarm-hv-ref*
+    ;; default: a point strictly BELOW the front's lower-left corner in
+    ;; maximize space — min observed minus a 10% margin (or 1.0 when the
+    ;; objective has no spread), so a non-degenerate front scores > 0.
+    (let loop ((d 0) (acc (list)))
+      (if (>= d *swarm-objectives*) (reverse acc)
+        (let* ((mn (let iloop ((es *swarm-archive*) (m 0.0) (first #t))
+                     (if (null? es) m
+                       (let ((v (swarm-list-ref (hash-ref (car es) "max") d)))
+                         (iloop (cdr es) (if first v (swarm-min m v)) #f)))))
+               (mx (let iloop ((es *swarm-archive*) (m 0.0) (first #t))
+                     (if (null? es) m
+                       (let ((v (swarm-list-ref (hash-ref (car es) "max") d)))
+                         (iloop (cdr es) (if first v (swarm-max m v)) #f)))))
+               (span (- mx mn))
+               (margin (if (> span 0.0) (* 0.1 span) 1.0)))
+          (loop (+ d 1) (cons (- mn margin) acc)))))))
+
+(define (swarm-hypervolume)
+  (if (not (= *swarm-objectives* 2)) 0.0
+    (let* ((ref (swarm-hv-ref-point))
+           (r1 (car ref))
+           (r2 (car (cdr ref)))
+           (pts (let loop ((es *swarm-archive*) (acc (list)))
+                  (if (null? es) (reverse acc)
+                    (let ((m (hash-ref (car es) "max")))
+                      (loop (cdr es) (cons m acc))))))
+           ;; descending by first objective
+           (sorted (let insert-all ((xs pts) (acc (list)))
+                     (if (null? xs) acc
+                       (let ((x (car xs)))
+                         (insert-all (cdr xs)
+                                     (let insert ((ys acc))
+                                       (cond
+                                         ((null? ys) (list x))
+                                         ((>= (car x) (car (car ys))) (cons x ys))
+                                         (#t (cons (car ys) (insert (cdr ys))))))))))))
+      ; Strip sweep: walk points high-x → low-x; between two x values the
+      ; region spans the best y seen so far.
+      (let loop ((ps sorted) (prev #f) (seen r2) (hv 0.0))
+        (if (null? ps) hv
+          (let* ((pt (car ps))
+                 (x (car pt))
+                 (y (car (cdr pt))))
+            (if (or (<= x r1) (<= y r2))
+                (loop (cdr ps) prev seen hv)
+              (if prev
+                  (loop (cdr ps) x (swarm-max seen y)
+                        (+ hv (* (- prev x) (- seen r2))))
+                  (loop (cdr ps) x (swarm-max seen y) hv)))))))))
+
+; ── Bounded / isolated parallel evaluation (#4741) ──────────────
+(define (swarm-list-take lst n)
+  (let loop ((xs lst) (k n) (acc (list)))
+    (if (or (= k 0) (null? xs)) (reverse acc)
+      (loop (cdr xs) (- k 1) (cons (car xs) acc)))))
+
+(define (swarm-list-append a b)
+  (if (null? a) b
+    (cons (car a) (swarm-list-append (cdr a) b))))
+
+(define (swarm-eval-one-isolated fitness-fn ind isolate)
+  ; #4741: the error arm must still close the overlay it opened, otherwise
+  ; the body returns with a live private region and a later fiber teardown
+  ; frees it twice (double free, observed on the failing-fitness AC).
+  (let ((guarded
+          (lambda ()
+            (try
+              (swarm-eval-one fitness-fn ind)
+              (catch (e) (hash "swarm-error" #t "msg" "fitness-fn raised"))))))
+    (if isolate
+        (begin
+          ;; #4715 overlay: the candidate's defines stay private to this
+          ;; body and are rolled back before it returns (#4741 AC2).
+          (fiber:overlay-begin)
+          (let ((res (guarded)))
+            (fiber:overlay-rollback)
+            res))
+        (guarded))))
+
+(define (swarm-collect-results vals start onerr)
+  (let loop ((vs vals) (i start) (acc (list)))
+    (if (null? vs) (reverse acc)
+      (let ((v (car vs)))
+        (if (and (hash? v) (hash-ref v "swarm-error"))
+            (begin
+              (set! *swarm-last-errors*
+                    (cons (cons i (hash-ref v "msg")) *swarm-last-errors*))
+              (loop (cdr vs) (+ i 1)
+                    (cons (if (string=? onerr "reject") #f -1000000000.0) acc)))
+          (loop (cdr vs) (+ i 1) (cons v acc)))))))
+
+; Waves of at most max-fibers concurrent bodies; every body is guarded so a
+; raise becomes a per-individual record instead of aborting the step.
+(define (swarm-eval-pop-bounded fitness-fn inds)
+  (let* ((cfg *swarm-parallel-opts*)
+         (k (let ((v (swarm-opt cfg "max-fibers" 8)))
+              (if (and (number? v) (>= v 1)) v 8)))
+         (isolate (swarm-opt cfg "isolate" #f))
+         (onerr (let ((v (swarm-opt cfg "on-error" "reject")))
+                  (if (string? v) v "reject")))
+         (n (swarm-length inds)))
+    (set! *swarm-last-errors* (list))
+    (let wave ((i 0) (acc (list)))
+      (if (>= i n) (reverse acc)
+        (let* ((batch (swarm-list-take (swarm-list-drop inds i) k))
+               (fids (swarm-map
+                       (lambda (ind)
+                         (fiber:spawn
+                           (lambda ()
+                             (swarm-eval-one-isolated fitness-fn ind isolate))))
+                       batch))
+               (vals (swarm-map (lambda (fid) (fiber:join fid)) fids)))
+          (wave (+ i k) (swarm-list-append acc
+                                           (swarm-collect-results vals i onerr))))))))
+
+(define (swarm-list-drop lst n)
+  (if (or (= n 0) (null? lst)) lst
+    (swarm-list-drop (cdr lst) (- n 1))))
 
 (define (swarm-eval-pop fitness-fn inds)
-  (if (and *swarm-parallel* (not (null? inds)))
-      ;; Flat fanout: spawn all on caller, join all on caller — never
-      ;; fiber:join inside a worker (#2869 residual).
-      (let ((fids (swarm-map
-                    (lambda (ind)
-                      (fiber:spawn (lambda () (swarm-eval-one fitness-fn ind))))
-                    inds)))
-        (swarm-map (lambda (fid) (fiber:join fid)) fids))
-      (swarm-map (lambda (ind) (swarm-eval-one fitness-fn ind)) inds)))
+  (let ((fits
+          (cond
+            (*swarm-parallel-opts* (swarm-eval-pop-bounded fitness-fn inds))
+            ((and *swarm-parallel* (not (null? inds)))
+             ;; Flat fanout: spawn all on caller, join all on caller — never
+             ;; fiber:join inside a worker (#2869 residual).
+             (let ((fids (swarm-map
+                           (lambda (ind)
+                             (fiber:spawn (lambda () (swarm-eval-one fitness-fn ind))))
+                           inds)))
+               (swarm-map (lambda (fid) (fiber:join fid)) fids)))
+            (#t (swarm-map (lambda (ind) (swarm-eval-one fitness-fn ind)) inds)))))
+    (swarm-archive-record! inds fits)
+    fits))
 
 (define (swarm-argmax fits)
-  (let loop ((xs fits) (i 0) (best-i 0) (best-v -1000000000.0))
+  (let loop ((xs fits) (i 0) (best-i 0) (best-v -10000000000.0))
     (if (null? xs) best-i
-      (if (> (car xs) best-v)
-          (loop (cdr xs) (+ i 1) i (car xs))
-          (loop (cdr xs) (+ i 1) best-i best-v)))))
+      (let ((v (swarm-score (car xs))))
+        (if (> v best-v)
+            (loop (cdr xs) (+ i 1) i v)
+            (loop (cdr xs) (+ i 1) best-i best-v))))))
 
 (define (swarm-note-best! inds fits)
   (let* ((bi (swarm-argmax fits))
          (bf (swarm-list-ref fits bi))
+         (bs (swarm-score bf))
          (bind (swarm-list-ref inds bi)))
-    (if (> bf *swarm-best-fit*)
+    ; #4740: guidance compares the scalarized score; the raw fitness
+    ; (a vector under multi-objective) travels as "best-fitness".
+    (if (> bs *swarm-best-fit*)
         (begin
-          (set! *swarm-best-fit* bf)
-          (set! *swarm-best-ind* bind))
+          (set! *swarm-best-fit* bs)
+          (set! *swarm-best-ind* bind)
+          (set! *swarm-best-fit-raw* bf))
         #f)))
 
 ; ── Diversity (mean pairwise L1; string ops → distinct fraction) ─
@@ -706,7 +1017,13 @@
          (cohere (swarm-opt opts "cohere" 0.3))
          (radius (swarm-opt opts "radius" 0.5))
          (max-speed (swarm-opt opts "max-speed" 0.25))
-         (step (swarm-opt opts "step" 0.1)))
+         (step (swarm-opt opts "step" 0.1))
+         ; #4740 multi-objective
+         (objectives (swarm-opt opts "objectives" 0))
+         (directions (swarm-opt opts "directions" (list)))
+         (weights (swarm-opt opts "weights" (list)))
+         (archive-max (swarm-opt opts "archive-max" 64))
+         (hv-ref (swarm-opt opts "hv-ref" (list))))
     (set! *swarm-kind* kind)
     (set! *swarm-dim* dim)
     (set! *swarm-pop* pop)
@@ -717,6 +1034,17 @@
     (set! *swarm-seed* seed)
     (set! *swarm-bins* bins)
     (set! *swarm-parallel* (if par #t #f))
+    ; #4741: a hash "parallel" option selects bounded/isolated waves.
+    (set! *swarm-parallel-opts* (if (hash? par) par #f))
+    (set! *swarm-last-errors* (list))
+    ; #4740
+    (set! *swarm-objectives* (if (and (number? objectives) (>= objectives 1)) objectives 0))
+    (set! *swarm-directions* (if (list? directions) directions (list)))
+    (set! *swarm-weights* (if (list? weights) weights (list)))
+    (set! *swarm-archive-max* (if (and (number? archive-max) (>= archive-max 1)) archive-max 64))
+    (set! *swarm-hv-ref* (if (list? hv-ref) hv-ref (list)))
+    (set! *swarm-archive* (list))
+    (set! *swarm-best-fit-raw* (list))
     (set! *swarm-ant-evap* (if (number? evap) evap 0.95))
     (set! *swarm-pso-w* (if (number? w) w 0.7))
     (set! *swarm-pso-c1* (if (number? c1) c1 1.4))
@@ -818,10 +1146,20 @@
 ; Issue #2875: expose current population (list of individuals).
 (define (swarm:population) *swarm-inds*)
 
+; Rejected (#f) and non-numeric entries stay out of the mean (#4740/#4741).
+(define (swarm-scored-fits)
+  (let loop ((xs *swarm-fits*) (acc (list)))
+    (if (null? xs) (reverse acc)
+      (let ((v (car xs)))
+        (if (or (number? v) (list? v))
+            (loop (cdr xs) (cons (swarm-score v) acc))
+          (loop (cdr xs) acc))))))
+
 (define (swarm-mean-fit)
-  (let ((n (swarm-length *swarm-fits*)))
+  (let* ((fs (swarm-scored-fits))
+         (n (swarm-length fs)))
     (if (= n 0) 0.0
-      (let loop ((xs *swarm-fits*) (s 0.0))
+      (let loop ((xs fs) (s 0.0))
         (if (null? xs) (/ s n)
           (loop (cdr xs) (+ s (car xs))))))))
 
@@ -839,7 +1177,22 @@
         "parallel" *swarm-parallel*
         ; #2880 FSS exploratory scale (1.0 for other kinds)
         "volitive" (if (string=? *swarm-kind* "fss") *swarm-fss-volitive* 1.0)
-        "step" (if (string=? *swarm-kind* "fss") *swarm-fss-step* 0.0)))
+        "step" (if (string=? *swarm-kind* "fss") *swarm-fss-step* 0.0)
+        ; #4740 multi-objective surface
+        "objectives" *swarm-objectives*
+        "best-fitness" (if (> *swarm-objectives* 0) *swarm-best-fit-raw* *swarm-best-fit*)
+        "front-size" (swarm-length *swarm-archive*)
+        "hypervolume" (swarm-hypervolume)
+        "archive-max" *swarm-archive-max*
+        ; #4741 per-individual failure record (count of last generation)
+        "errors" (swarm-length *swarm-last-errors*)
+        "max-fibers" (let ((v (if *swarm-parallel-opts*
+                                  (swarm-opt *swarm-parallel-opts* "max-fibers" 0)
+                                  0)))
+                       (if (number? v) v 0))
+        "isolate" (if *swarm-parallel-opts*
+                      (if (swarm-opt *swarm-parallel-opts* "isolate" #f) #t #f)
+                      #f)))
 
 (define (swarm:export)
   (let ((r (swarm:report)))
@@ -854,4 +1207,4 @@
       "}")))
 
 (define (swarm:help)
-  "std/swarm (#2874–#2880): (swarm:init h) (swarm:step! fit) (swarm:best) (swarm:population) (swarm:report) (swarm:export). kinds: grid|pso|ant|abc|boids|fss. fss opts: step (base swim). report volitive expands on stagnation. abc: limit,neighbor. pso: w,c1,c2. ant: ops,evaporate. boids: sep,align,cohere.")
+  "std/swarm (#2874 #2875 #2876 #2877 #2878 #2879 #2880 #4740 #4741): (swarm:init h) (swarm:step! fit) (swarm:best) (swarm:population) (swarm:report) (swarm:export). kinds: grid|pso|ant|abc|boids|fss. fss opts: step (base swim). report volitive expands on stagnation. abc: limit,neighbor. pso: w,c1,c2. ant: ops,evaporate. boids: sep,align,cohere. Multi-objective (#4740): fit may be a list; init opts objectives/directions/archive-max/hv-ref; (swarm:front) Pareto archive; (swarm:scalarize fit [weights [directions]]); report front-size+hypervolume. Parallel (#4741): \"parallel\" (hash \"max-fibers\" 8 \"isolate\" #t \"on-error\" \"reject\"); (swarm:last-errors).")

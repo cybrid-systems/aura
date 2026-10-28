@@ -1,0 +1,12 @@
+{
+  "issue": 4740,
+  "title": "stdlib/swarm: multi-objective support (vector fitness + Pareto archive)",
+  "ok": "OK: std/swarm accepts vector fitness with per-objective directions, keeps a bounded non-dominated Pareto archive with crowding-distance trimming, exposes swarm:front, scalarizes for guidance with swarm:scalarize, and reports front-size plus hypervolume",
+  "checks": [
+    { "ac": "AC1", "path": "lib/std/swarm.aura", "contains": ["(define (swarm:scalarize", "swarm-vec-max", "swarm-dir-sign"] },
+    { "ac": "AC2", "path": "lib/std/swarm.aura", "contains": ["swarm-archive-insert!", "swarm-dominates?", "swarm-crowding-dist", "swarm-archive-trim!"] },
+    { "ac": "AC3", "path": "lib/std/swarm.aura", "contains": ["(define (swarm:front)", "(define (swarm:archive-size)"] },
+    { "ac": "AC4", "path": "lib/std/swarm.aura", "contains": ["(define (swarm-hypervolume)", "swarm-hv-ref-point", "front-size", "hypervolume"] },
+    { "ac": "AC5", "path": "tests/suite/swarm_2874.aura", "contains": ["#4740", "multi-objective front", "archive-max caps the front"] }
+  ]
+}

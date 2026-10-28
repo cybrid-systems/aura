@@ -68,6 +68,101 @@
 ; AC5: help surface
 (assert! (not (= (string-index (swarm:help) "2874" 0) -1)) "help mentions 2874")
 
+; ── Issue #4740: multi-objective (vector fitness + Pareto archive) ──
+(display "AC6 multi-objective front\n")
+(define (absv x) (if (< x 0.0) (- 0.0 x) x))
+; maximize "recall" (peaks at 0.5), minimize "far distance" (peaks at 0.2)
+(define (mo-fit ind)
+  (let ((x (car ind)))
+    (list (absv (- x 0.5)) (absv (- x 0.2)))))
+
+(define (vec-dom? a b)
+  ; a dominates b in MAXIMIZE space
+  (let loop ((xs a) (ys b) (strict #f))
+    (cond ((or (null? xs) (null? ys)) strict)
+          ((< (car xs) (car ys)) #f)
+          ((> (car xs) (car ys)) (loop (cdr xs) (cdr ys) #t))
+          (#t (loop (cdr xs) (cdr ys) strict)))))
+
+(define (max-space fit dirs)
+  (if (null? fit) (list)
+    (cons (* (if (string=? (car dirs) "min") -1.0 1.0) (car fit))
+          (max-space (cdr fit) (cdr dirs)))))
+
+(define (front-non-dominated? front dirs)
+  (if (null? front) #t
+    (let ((mi (max-space (hash-ref (car front) "fitness") dirs)))
+      (let loop ((rest (cdr front)))
+        (if (null? rest) (front-non-dominated? (cdr front) dirs)
+          (if (vec-dom? (max-space (hash-ref (car rest) "fitness") dirs) mi)
+              #f
+              (loop (cdr rest))))))))
+
+(swarm:init (hash "kind" "grid" "dim" 1 "pop" 8 "bins" 8
+                  "bounds" (list (list 0.0 1.0))
+                  "objectives" 2 "directions" (list "max" "min")
+                  "seed" 5))
+(swarm:step! mo-fit)
+(swarm:step! mo-fit)
+(define front (swarm:front))
+(assert! (> (length front) 1) "archive holds a trade-off front")
+(assert! (= (length front) (hash-ref (swarm:report) "front-size")) "report front-size")
+(assert! (number? (hash-ref (swarm:report) "hypervolume")) "report hypervolume")
+(assert! (> (hash-ref (swarm:report) "hypervolume") 0.0) "hypervolume positive")
+(assert! (front-non-dominated? front (list "max" "min")) "front is non-dominated")
+
+; scalarization helper (documented weights + directions)
+(assert! (= (swarm:scalarize (list 1.0 0.0) (list 1.0 1.0) (list "max" "max")) 1.0) "scalarize max")
+(assert! (= (swarm:scalarize (list 1.0 1.0) (list 1.0 1.0) (list "max" "min")) 0.0) "scalarize min")
+
+; the archive is bounded (crowding-distance trim)
+(swarm:init (hash "kind" "grid" "dim" 1 "pop" 8 "bins" 8
+                  "bounds" (list (list 0.0 1.0))
+                  "objectives" 2 "directions" (list "max" "min")
+                  "archive-max" 3 "seed" 5))
+(let loop ((i 0))
+  (if (>= i 12) #t (begin (swarm:step! mo-fit) (loop (+ i 1)))))
+(assert! (<= (length (swarm:front)) 3) "archive-max caps the front")
+
+; scalar runs keep an empty front
+(swarm:init (hash "kind" "grid" "dim" 1 "pop" 4
+                  "bounds" (list (list -1.0 1.0)) "seed" 2))
+(swarm:step! sphere)
+(assert! (= (hash-ref (swarm:report) "front-size") 0) "scalar run has an empty front")
+
+; ── Issue #4741: bounded + isolated parallel evaluation ─────────
+(display "AC7 bounded parallel\n")
+(define (slow-fit ind)
+  (let loop ((k 0)) (if (>= k 500) (sphere ind) (loop (+ k 1)))))
+
+(swarm:init (hash "kind" "grid" "dim" 1 "pop" 12 "bins" 12
+                  "bounds" (list (list -1.0 1.0)) "seed" 3
+                  "parallel" (hash "max-fibers" 3 "isolate" #t
+                                   "on-error" "reject")))
+(swarm:step! slow-fit)
+(assert! (= (hash-ref (swarm:report) "max-fibers") 3) "max-fibers recorded")
+(assert! (hash-ref (swarm:report) "isolate") "isolate recorded")
+(assert! (= (length (swarm:population)) 12) "bounded waves evaluate the whole population")
+(assert! (= (length (swarm:last-errors)) 0) "healthy run records no errors")
+
+(define (flaky-fit ind)
+  (if (< (car ind) 0.0) (error "boom") (sphere ind)))
+(swarm:init (hash "kind" "grid" "dim" 1 "pop" 8 "bins" 8
+                  "bounds" (list (list -1.0 1.0)) "seed" 3
+                  "parallel" (hash "max-fibers" 2 "isolate" #t
+                                   "on-error" "reject")))
+(swarm:step! flaky-fit)
+(assert! (> (length (swarm:last-errors)) 0) "failing individuals are recorded, not fatal")
+(assert! (= (hash-ref (swarm:report) "errors") (length (swarm:last-errors))) "report errors count")
+
+; isolate: a candidate that defines a name does not leak into siblings
+(swarm:init (hash "kind" "grid" "dim" 1 "pop" 4 "bins" 4
+                  "bounds" (list (list -1.0 1.0)) "seed" 9
+                  "parallel" (hash "max-fibers" 2 "isolate" #t
+                                   "on-error" "reject")))
+(swarm:step! (lambda (ind) (begin (define swarm-leak-probe 1) (sphere ind))))
+(assert! (= (length (swarm:last-errors)) 0) "isolated bodies run clean")
+
 (if (= *fails* 0)
     (begin (display "OK-2874 swarm\n"))
     (begin
