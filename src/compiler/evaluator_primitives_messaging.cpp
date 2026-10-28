@@ -501,11 +501,77 @@ namespace {
     // Issue #4700: a non-owning view of Evaluator::Channel. The Channel
     // type is private to the Evaluator, so the cooperative helpers take the
     // fields they need instead of the type — evaluator.ixx stays untouched.
+    // Issue #4744: the payload a channel carries (see aura::compiler::ChannelMessage
+    // in evaluator.ixx). A string keeps the #4714 copy-on-send shape; an
+    // immediate value is the raw EvalValue word and needs no heap of the
+    // sending body.
+    //
+    // Build the IMMEDIATE payload for one send. Returns false for a Ref value
+    // (pair / closure / vector / hash / ...): its index names the SENDING
+    // body's heap, so it cannot be delivered to another body.
+    bool channel_message_from_immediate(const EvalValue& v, ChannelMessage& out) {
+        // low2 == 01 is a Ref (pool-indexed heap type); every other encoding
+        // is an immediate word (fixnum / float / #f / #t / void / symbol).
+        if ((v.val & 0x3) == 1)
+            return false;
+        out.kind = ChannelMessage::Kind::kImmediate;
+        out.raw = v.val;
+        return true;
+    }
+
+    // Issue #4744: name the payload kind for the reject message, so a caller
+    // that sent something undeliverable reads WHAT was rejected (the #4494
+    // lesson: a silent drop turns a type mismatch into a deadlock).
+    const char* channel_payload_kind_name(const EvalValue& v) {
+        if (is_string(v))
+            return "string";
+        if (is_int(v))
+            return "int";
+        if (is_float(v))
+            return "float";
+        if (is_bool(v))
+            return "bool";
+        if (is_void(v))
+            return "void";
+        if (is_unspecified(v))
+            return "unspecified";
+        if (is_pair(v))
+            return "pair";
+        if (is_closure(v))
+            return "closure";
+        if (is_cell(v))
+            return "cell";
+        if (is_vector(v))
+            return "vector";
+        if (is_hash(v))
+            return "hash";
+        if (is_primitive(v))
+            return "primitive";
+        if (is_keyword(v))
+            return "keyword";
+        if (is_error(v))
+            return "error";
+        return "unknown";
+    }
+
+    // Issue #4744: turn one queued payload into a value of the RECEIVING body.
+    // An immediate is already the value; a string is minted into this
+    // evaluator's string heap (unchanged #4714 behaviour).
+    // Template so this implementation unit never has to name the string-heap
+    // type (it is not exported from the evaluator module; the call sites,
+    // which do see it, instantiate here).
+    template <typename Heap> EvalValue channel_message_to_value(Heap& heap, ChannelMessage&& msg) {
+        if (msg.kind == ChannelMessage::Kind::kImmediate)
+            return EvalValue{msg.raw};
+        auto idx = heap.mint(std::move(msg.text));
+        return make_string(static_cast<std::uint64_t>(idx));
+    }
+
     struct ChannelView {
         const void* key = nullptr; // stable channel identity (the Channel address)
         std::mutex& mtx;
         std::condition_variable& cv;
-        std::deque<std::string>& queue;
+        std::deque<ChannelMessage>& queue;
         std::size_t& buffer_size;
         std::size_t& waiting_receivers;
         bool& closed;
@@ -633,8 +699,9 @@ namespace {
     // FIBER (never the worker thread) until a message is queued or the
     // channel is closed. Returns the message, or nullopt when the channel
     // was closed (the caller then returns the empty string).
-    std::optional<std::string> channel_recv_cooperative(ChannelView& ch, aura::serve::Fiber* fiber,
-                                                        bool* cancelled_out = nullptr) {
+    std::optional<ChannelMessage> channel_recv_cooperative(ChannelView& ch,
+                                                           aura::serve::Fiber* fiber,
+                                                           bool* cancelled_out = nullptr) {
         const void* key = ch.key;
         for (;;) {
             // Issue #4708: cancellation safepoint -- this is one of the
@@ -707,7 +774,7 @@ namespace {
     // Issue #4700: cooperative (fiber) channel send. Parks the calling FIBER
     // (never the worker thread) until the buffer has room (buffered
     // channel) or a receiver is posted (rendezvous).
-    bool channel_send_cooperative(ChannelView& ch, std::string msg, aura::serve::Fiber* fiber,
+    bool channel_send_cooperative(ChannelView& ch, ChannelMessage msg, aura::serve::Fiber* fiber,
                                   bool* cancelled_out = nullptr) {
         const void* key = ch.key;
         for (;;) {
@@ -2226,14 +2293,26 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
     add("channel:send", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !is_int(a[0]))
             return make_bool(false);
-        // Issue #4494: messages are strings. A non-string used to return #f
-        // silently, so the paired channel:recv blocked forever.
-        if (!is_string(a[1]))
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "channel:send: message must be a string",
-                                        ev.primitive_error_counter_ptr());
+        // Issue #4494: a non-string used to return #f silently, so the
+        // paired channel:recv blocked forever.
+        // Issue #4744: an IMMEDIATE payload (number / boolean / void /
+        // unspecified / symbol) is now delivered instead of rejected — the
+        // number case was the reported deadlock. A Ref payload (pair,
+        // closure, vector, hash, ...) still cannot cross a body boundary
+        // (its index names the sender's heap), so it is rejected LOUDLY with
+        // the offending kind named instead of being dropped on the floor.
+        ChannelMessage msg;
+        if (is_string(a[1])) {
+            msg.kind = ChannelMessage::Kind::kString;
+            msg.text = ev.string_at(as_string_idx(a[1])); // copy before wait
+        } else if (!channel_message_from_immediate(a[1], msg))
+            return make_primitive_error(
+                ev.string_heap_, ev.error_values_,
+                std::string("channel:send: unsupported payload type (") +
+                    channel_payload_kind_name(a[1]) +
+                    "); send a string or an immediate value (number, boolean, void)",
+                ev.primitive_error_counter_ptr());
         auto ch_id = static_cast<std::size_t>(as_int(a[0]));
-        auto msg = ev.string_at(as_string_idx(a[1])); // copy before wait
         // Issue #2483: release channels_mtx_ before blocking — holding it
         // across cv.wait deadlocks concurrent channel:recv on the same
         // Evaluator (recv needs the global map lock to look up the channel).
@@ -2309,8 +2388,8 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                                                     ev.primitive_error_counter_ptr());
             if (!msg)
                 return make_string(0); // channel closed
-            auto idx = ev.string_heap_.mint(std::move(*msg));
-            return make_string(static_cast<std::uint64_t>(idx));
+            // Issue #4744: an immediate payload is returned as itself.
+            return channel_message_to_value(ev.string_heap_, std::move(*msg));
         }
         std::unique_lock ul(ch.mtx);
         // Issue #2483: announce waiting receiver so rendezvous send can proceed.
@@ -2327,8 +2406,8 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         ch.queue.pop_front();
         ul.unlock();
         ch.cv.notify_all();
-        auto idx = ev.string_heap_.mint(std::move(msg));
-        return make_string(static_cast<std::uint64_t>(idx));
+        // Issue #4744: an immediate payload is returned as itself.
+        return channel_message_to_value(ev.string_heap_, std::move(msg));
     });
 
     // (channel:try-recv channel-id) — Non-blocking receive
@@ -2354,8 +2433,8 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         ch.cv.notify_all(); // wake blocked senders (full buffer / next rendezvous)
         // Issue #4700: wake a parked fiber sender — the buffer slot is free.
         channel_wake_waiters(&ch, /*sender=*/true);
-        auto idx = ev.string_heap_.mint(std::move(msg));
-        return make_string(static_cast<std::uint64_t>(idx));
+        // Issue #4744: an immediate payload is returned as itself.
+        return channel_message_to_value(ev.string_heap_, std::move(msg));
     });
 
     // (channel:close channel-id) — Close a channel

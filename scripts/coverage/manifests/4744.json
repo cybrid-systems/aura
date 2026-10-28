@@ -1,0 +1,32 @@
+{
+  "issue": 4744,
+  "title": "channel:send of a number from parallel fiber bodies is delivered (immediates) or rejected loudly",
+  "checks": [
+    {
+      "ac": "AC8_AC9",
+      "path": "src/compiler/evaluator_primitives_messaging.cpp",
+      "contains": [
+        "Issue #4744",
+        "channel_message_to_value",
+        "unsupported payload type"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "struct ChannelMessage",
+        "kImmediate = 1",
+        "std::deque<ChannelMessage> queue;"
+      ]
+    },
+    {
+      "ac": "AC10_test",
+      "path": "tests/compiler/test_channel_rendezvous.cpp",
+      "contains": [
+        "#4744 AC8",
+        "#4744 AC9"
+      ]
+    }
+  ]
+}

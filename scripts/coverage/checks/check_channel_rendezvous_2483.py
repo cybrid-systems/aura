@@ -46,14 +46,17 @@ def main() -> int:
     must("waiting_receivers", "AC1", ixx)
     must("waiting_receivers", "AC1", msg)
 
-    spos = msg.find("channel:send")
-    sbody = msg[spos : spos + 2500] if spos >= 0 else ""
+    # Issue #4744: anchor on the registration line (the prim grew a payload
+    # envelope) instead of the first mention of the name, which now sits in
+    # the surrounding commentary.
+    spos = msg.find('add("channel:send"')
+    sbody = msg[spos : spos + 3400] if spos >= 0 else ""
     must_not("ch.buffer_size == 0 || ch.queue.size()", "AC2", sbody)
     must("waiting_receivers", "AC2", sbody)
     must("ch_ptr", "AC3", sbody)
 
-    rpos = msg.find("channel:recv")
-    rbody = msg[rpos : rpos + 1500] if rpos >= 0 else ""
+    rpos = msg.find('add("channel:recv"')
+    rbody = msg[rpos : rpos + 2600] if rpos >= 0 else ""
     must("waiting_receivers", "AC3-recv", rbody)
 
     must("2483 AC1", "gate", test)

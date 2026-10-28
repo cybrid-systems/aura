@@ -1727,6 +1727,23 @@ export struct Pair {
     types::EvalValue cdr;
 };
 
+// Issue #4744: one channel:send payload. Strings keep the #4714
+// copy-on-send shape (the bytes are copied out of the sender body's string
+// arena and minted into the receiving body's heap), while an IMMEDIATE
+// value — fixnum, float, #t/#f, void, unspecified, symbol — travels as its
+// raw EvalValue word: it is self-contained (no heap index of the sending
+// body), so it needs no copy and no mint at all. A Ref value (pair,
+// closure, vector, hash, ...) names the SENDING body's heap and is NOT
+// deliverable: channel:send rejects it loudly before anything is queued.
+// A namespace-scope type (not an Evaluator member) so the messaging
+// primitives' cooperative helpers can name it.
+export struct ChannelMessage {
+    enum class Kind : std::uint8_t { kString = 0, kImmediate = 1 };
+    Kind kind = Kind::kString;
+    std::string text;     // kString
+    std::int64_t raw = 0; // kImmediate: the raw EvalValue word
+};
+
 export struct MacroDef {
     std::vector<std::string> params;
     bool dotted = false;
@@ -8866,10 +8883,11 @@ private:
     std::atomic<std::uint64_t> deprecated_prim_dispatch_total_{0};
 
     // ── Concurrent Channels (fiber-safe message passing) ─────
+    // Issue #4744: the queue carries a ChannelMessage (string or immediate).
     struct Channel {
         std::mutex mtx;
         std::condition_variable cv;
-        std::deque<std::string> queue;
+        std::deque<ChannelMessage> queue;
         std::size_t buffer_size = 0; // 0 = rendezvous (unbuffered)
         // Issue #2483: count of blocked channel:recv waiters so unbuffered
         // send only proceeds when a receiver is posted (true rendezvous).
