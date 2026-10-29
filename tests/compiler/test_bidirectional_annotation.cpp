@@ -591,8 +591,13 @@ int aura_issue_1413_run() {
             std::println("\n--- #3700 AC1: production quoted (+ 1 \"x\") TypeError ---");
             ProdScope prod;
             aura::diag::DiagnosticCollector diag;
-            infer_code("(quote ((lambda ((x : Int)) x) \"hi\"))",
-                       aura::compiler::GradualPermissiveness::Strict, /*strict=*/false, diag);
+            // Issue #4743 supersedes the construct, not the invariant: a
+            // quoted special form (lambda/define/if/...) is DATA now, so only
+            // an ordinary application under the quote is still a Call the
+            // production Quote walk typechecks. `+` keeps the Int~String
+            // operand mismatch this AC names.
+            infer_code("(quote (+ 1 \"hi\"))", aura::compiler::GradualPermissiveness::Strict,
+                       /*strict=*/false, diag);
             CHECK(has_kind_msg(diag, aura::diag::ErrorKind::TypeError, "type mismatch") ||
                       has_kind_msg(diag, aura::diag::ErrorKind::TypeError,
                                    "incompatible ground types") ||
@@ -613,9 +618,11 @@ int aura_issue_1413_run() {
             std::println("\n--- #3700 AC3: Soft Quote no extra TypeError ---");
             apply_dev_audit_defaults();
             aura::diag::DiagnosticCollector diag;
-            infer_code("(quote ((lambda ((x : Int)) x) \"hi\"))",
-                       aura::compiler::GradualPermissiveness::Balanced, /*strict=*/false, diag);
-            CHECK(!has_kind_msg(diag, aura::diag::ErrorKind::TypeError, "type mismatch"),
+            infer_code("(quote (+ 1 \"hi\"))", aura::compiler::GradualPermissiveness::Balanced,
+                       /*strict=*/false, diag);
+            CHECK(!has_kind_msg(diag, aura::diag::ErrorKind::TypeError, "type mismatch") &&
+                      !has_kind_msg(diag, aura::diag::ErrorKind::TypeError,
+                                    "incompatible ground types"),
                   "3700 AC3: Soft Quote children not required");
         }
         apply_dev_audit_defaults();

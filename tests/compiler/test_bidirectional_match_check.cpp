@@ -1179,12 +1179,22 @@ static void ac3700_quote_walk_children() {
         return err;
     };
 
-    CHECK(infer_has_typeerror("(quote ((lambda ((x : Int)) x) \"hi\"))", true),
+    // Issue #4743 (supersedes the #3700 AC1 construct, not its invariant):
+    // the operand of quote is DATA, so special-form heads (lambda / define /
+    // if / ...) are no longer desugared at quote_depth > 0. A quoted
+    // `(lambda ((x : Int)) x)` is now a list of symbols, not an annotated
+    // application — it can never raise the Int~String TypeError this AC
+    // asserted. The #3700 invariant is unchanged and still checked here:
+    // a PRODUCTION Quote walks its operand's code-shaped children, so an
+    // ordinary application under the quote with a ground-type mismatch is a
+    // TypeError. `+` is not a special form, so the quoted list stays a Call
+    // and the Int-vs-String operand mismatch is reported by the child walk.
+    CHECK(infer_has_typeerror("(quote (+ 1 \"hi\"))", true),
           "3700 AC1: production Quote inner Call Int~String is TypeError");
     CHECK(infer_has_typeerror("(check (quote 1) : Int)", true),
           "3700 AC2: Quote in expected Int is TypeError");
     CHECK(!infer_has_typeerror("(quote 1)", false), "3700 AC3: Soft Quote no extra TypeError");
-    CHECK(!infer_has_typeerror("(quote ((lambda ((x : Int)) x) \"hi\"))", false),
+    CHECK(!infer_has_typeerror("(quote (+ 1 \"hi\"))", false),
           "3700 AC3: Soft Quote does not require child walk TypeError");
 
     {
