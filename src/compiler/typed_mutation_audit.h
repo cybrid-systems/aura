@@ -782,8 +782,43 @@ inline TypedMutationAuditTrail& g_trail() {
 }
 
 [[nodiscard]] inline bool production_defaults_active() noexcept {
+    // Issue #4752: acquire pairs with the release store in
+    // note_production_defaults_active() so a reader that observes the face
+    // active also observes the arm memo written before it. Without the pair a
+    // Ready gate could read face=1 with a stale memo=0 and refuse a live
+    // production process (the intermittent fail_bits=0x200 abort).
     return g_typed_mutation_audit_counters.production_defaults_active.load(
-               std::memory_order_relaxed) != 0;
+               std::memory_order_acquire) != 0;
+}
+
+// Issue #4752: single writer for the production face. The hot-contract
+// harden memo (#3490 / src/core/cpp26_contract_stats.h) is *derived* from
+// this face (#3313: production_defaults_active() ⇒ hot contracts armed, no
+// env required). Writing the counter alone leaves that memo stale at 0 and
+// the next multi-worker Ready aborts with
+// kProductionAbiSelfcheckFailBitHotContracts (fail_bits=0x200) on a face the
+// contracts layer itself treats as armed — the intermittent orch-batch /
+// AURA_TYPED_AUDIT=sampled flake behind #4752. Arm/disarm both here so no
+// caller (production bootstrap or test harness) can split them.
+// Issue #4752: the two stores are ordered so a concurrent Ready probe can
+// never observe "face active + memo disarmed" for a *stable* face:
+//   arm   → memo first, then the face (release)
+//   disarm→ face first (release), then the memo
+// A reader that observes the face through the acquire probe
+// (aura_production_defaults_active_probe) therefore also observes the memo
+// written before it. The Ready gate additionally re-reads the face after a
+// disarmed memo so a face *drop* in flight is not mistaken for a production
+// claim (see src/serve/runtime_production_abi.cpp).
+inline void note_production_defaults_active(bool active) noexcept {
+    if (active) {
+        aura::core::cpp26::note_hot_contract_harden_armed(true);
+        g_typed_mutation_audit_counters.production_defaults_active.store(1u,
+                                                                         std::memory_order_release);
+    } else {
+        g_typed_mutation_audit_counters.production_defaults_active.store(0u,
+                                                                         std::memory_order_release);
+        aura::core::cpp26::note_hot_contract_harden_armed(false);
+    }
 }
 
 
@@ -1165,9 +1200,9 @@ inline void reset_production_audit_defaults_for_test() noexcept {
     using namespace ::aura::core::audit_wal;
     using namespace ::aura::core::security_event_wal;
     using namespace ::aura::core::wal_slo;
-    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    // Issue #4752: the face and its derived harden arm move together.
+    note_production_defaults_active(false);
     g_typed_mutation_audit_counters.dev_audit_opt_in.store(0, std::memory_order_relaxed);
-    aura::core::cpp26::note_hot_contract_harden_armed(false);
     aura::core::set_query_epoch_strict(false);
     aura_pcv_set_stale_span_exclusive(0);
     ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
@@ -1179,11 +1214,12 @@ inline void reset_production_audit_defaults_for_test() noexcept {
 inline void apply_production_audit_defaults() noexcept {
     set_strategy(AuditStrategy::Full);
     set_sample_ratio(1);
-    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
-    g_typed_mutation_audit_counters.dev_audit_opt_in.store(0, std::memory_order_relaxed);
     // Issue #3490: cache Harden arm so as_int / view_at do not re-enter
     // aura_production_defaults_active_probe() on every HOT_CHECK.
-    aura::core::cpp26::note_hot_contract_harden_armed(true);
+    // Issue #4752: the #3490 memo is derived state — latch face + memo via
+    // the single writer so a Ready gate can never see face=1 / memo=0.
+    note_production_defaults_active(true);
+    g_typed_mutation_audit_counters.dev_audit_opt_in.store(0, std::memory_order_relaxed);
     aura::core::set_query_epoch_strict(true);
     clear_mid_fallback_refuse_se_tls();
     aura_pcv_set_stale_span_exclusive(1);
@@ -1288,14 +1324,15 @@ inline void apply_production_audit_defaults() noexcept {
 inline void apply_dev_audit_defaults() noexcept {
     // Issue #3530: drop production face before Sampled/ratio=4 so the
     // setter refuse does not stick the process on Sampled/1.
-    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    // Issue #4752: face + derived memo drop together (single writer).
+    note_production_defaults_active(false);
     set_strategy(AuditStrategy::Sampled);
     set_sample_ratio(4);
     g_typed_mutation_audit_counters.dev_audit_opt_in.store(1, std::memory_order_relaxed);
     // Issue #3490: Soft/dev restores the cached Harden arm (tests flip
     // defaults mid-process). Env AURA_HOT_HARDEN is re-read on next miss
-    // only if the cache is reset to -1; store 0 so Soft stays unarmed.
-    aura::core::cpp26::note_hot_contract_harden_armed(false);
+    // only if the cache is reset to -1; the writer above stores 0 so Soft
+    // stays unarmed (#4752 keeps that store and the face drop atomic).
     aura::core::set_query_epoch_strict(false);
     clear_mid_fallback_refuse_se_tls();
     aura_pcv_set_stale_span_exclusive(0);

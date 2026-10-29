@@ -89,12 +89,11 @@ struct RestoreSandbox {
             ::setenv("AURA_SANDBOX", prev.c_str(), 1);
         else
             ::unsetenv("AURA_SANDBOX");
-        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
-            .store(0, std::memory_order_relaxed);
         // Issue #3866: multi-worker Ready self-check requires hot contracts
         // armed when production is latched. Disarm with the latch so a
         // later Scheduler(2) under the restored Soft face stays Quiet.
-        aura::core::cpp26::note_hot_contract_harden_armed(false);
+        // Issue #4752: the latch and the #3490 memo are one writer.
+        aura::compiler::typed_audit::note_production_defaults_active(false);
     }
 };
 
@@ -1433,8 +1432,9 @@ static void ac3125_cross_scope_directory() {
 
         const auto prod_before = aura::compiler::typed_audit::g_typed_mutation_audit_counters
                                      .production_defaults_active.load(std::memory_order_relaxed);
-        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
-            .store(0, std::memory_order_relaxed);
+        // Issue #4752: restore through the single writer so the #3490 memo
+        // cannot be left disarmed under a restored production face.
+        aura::compiler::typed_audit::note_production_defaults_active(false);
 
         Scheduler sched(1);
         AgentScope scope_a(sched);

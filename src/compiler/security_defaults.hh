@@ -213,16 +213,20 @@ inline void apply_production_security_defaults() noexcept {
             std::string_view av(aud);
             if (av == "off") {
                 set_strategy(AuditStrategy::Off);
-                g_typed_mutation_audit_counters.production_defaults_active.store(
-                    0, std::memory_order_relaxed);
+                // Issue #4752: drop the derived harden memo with the face.
+                note_production_defaults_active(false);
                 // Issue #3075: audit-off is not a production face.
                 aura::core::set_query_epoch_strict(false);
             } else if (av == "sampled") {
                 // Production Sampled still uses ratio=1 (every event).
                 set_strategy(AuditStrategy::Sampled);
                 set_sample_ratio(1);
-                g_typed_mutation_audit_counters.production_defaults_active.store(
-                    1, std::memory_order_relaxed);
+                // Issue #4752: this branch claims the production face, so it
+                // must also arm the #3490 harden memo (single writer). Before
+                // #4752 it stored the counter alone: AURA_TYPED_AUDIT=sampled
+                // production deploys then aborted at multi-worker Ready with
+                // kProductionAbiSelfcheckFailBitHotContracts (fail_bits=0x200).
+                note_production_defaults_active(true);
                 // Issue #3075: production_defaults_active=1 arms QueryEpoch
                 // strict even when the audit strategy stays Sampled.
                 aura::core::set_query_epoch_strict(true);

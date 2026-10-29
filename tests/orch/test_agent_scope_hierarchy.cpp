@@ -471,8 +471,10 @@ static void ac3444_scope_path_address() {
 static void ac3444_hard_deny_stub() {
     std::println("\n--- #3444 AC4: spawn_child HardDeny returns parent stub ---");
     auto set_prod = [](bool on) {
-        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
-            .store(on ? 1u : 0u, std::memory_order_relaxed);
+        // Issue #4752: a production claim must arm the #3490 harden memo in
+        // the same step — Scheduler(2).run() below refuses Ready (fail_bits
+        // 0x200) on a face/memo split.
+        aura::compiler::typed_audit::note_production_defaults_active(on);
     };
     set_prod(true);
     unsetenv("AURA_SANDBOX");

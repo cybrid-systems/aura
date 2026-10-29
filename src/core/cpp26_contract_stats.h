@@ -241,6 +241,13 @@ inline std::atomic<std::uint64_t> hotpath_contracts_3313_active{1};
 // hot CHECK; store from apply_production / apply_dev / first miss.
 inline std::atomic<int> hot_contract_harden_armed_cache{-1};
 
+// Issue #4752: this is a *memo* of the production face (#3313: face on ⇒
+// armed), never an independent flag. Writers must move it in the same step
+// as production_defaults_active — use
+// aura::compiler::typed_audit::note_production_defaults_active(bool) instead
+// of calling this directly from a production claim; the multi-worker Ready
+// self-check refuses a split face (fail_bits=0x200). Direct use stays valid
+// only for test faces that set/env-probe the arm state on its own.
 inline void note_hot_contract_harden_armed(bool armed) noexcept {
     hot_contract_harden_armed_cache.store(armed ? 1 : 0, std::memory_order_relaxed);
 }

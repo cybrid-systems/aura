@@ -63,9 +63,18 @@ bool aura_runtime_require_production_abi() noexcept {
         fail_bits |= kProductionAbiSelfcheckFailBitTypedEntry;
     // Issue #3899: single-worker Ready with a production claim must also
     // refuse unarmed hot contracts (same bit-9 as multi-worker #3866).
-    // Soft / sandbox=off already returned above.
+    // Soft / sandbox=off already returned above. Issue #4752: same arming
+    // contract — note_production_defaults_active() is the only face writer.
+    //
+    // Issue #4752 read order: face → memo → face. The face *drop* path stores
+    // face=0 before memo=0, so a Ready probe racing a disarmed dev/test face
+    // can otherwise see face=1 with memo=0 and refuse a process that is not a
+    // production claim at all (the intermittent fail_bits=0x200 abort). A
+    // face active on both sides of a disarmed memo is a real refusal.
 #if !defined(AURA_PRODUCTION_PACK)
-    if (!::aura::core::cpp26::hot_contract_harden_armed())
+    if (aura_production_defaults_active_probe() != 0 &&
+        !::aura::core::cpp26::hot_contract_harden_armed() &&
+        aura_production_defaults_active_probe() != 0)
         fail_bits |= kProductionAbiSelfcheckFailBitHotContracts;
 #endif
 
@@ -140,8 +149,26 @@ bool aura_runtime_require_production_multi_worker() noexcept {
     // Issue #3866: hot contracts must be fail-closed under the production
     // face — unarmed + non-PACK NDEBUG OFF runs as_int / view_at contracts
     // Quiet (the ship-without-arm window). Ready refuses.
+    //
+    // Issue #4752 arming contract (measured, not optional): whoever claims
+    // the production face MUST arm the #3490 harden memo in the same step,
+    // because prod_active ⇒ armed is the #3313 runtime contract and the memo
+    // is only a cache of it. Use
+    // aura::compiler::typed_audit::note_production_defaults_active(true|false)
+    // — production bootstrap (apply_production_audit_defaults,
+    // apply_production_security_defaults incl. AURA_TYPED_AUDIT=sampled) and
+    // every test harness that latches production_defaults_active directly.
+    // A bare counter store leaves the memo stale at 0 and this bit fires on a
+    // face the contracts layer itself treats as armed (the intermittent
+    // test_orch_agent_batch 0x200 abort). The bit is kept live on purpose: a
+    // process that really is disarmed under a production claim must refuse
+    // Ready. Read order face → memo → face: a face drop in flight stores
+    // face=0 before memo=0, so a torn read must not refuse (see the
+    // single-worker variant above).
 #if !defined(AURA_PRODUCTION_PACK)
-    if (!::aura::core::cpp26::hot_contract_harden_armed())
+    if (aura_production_defaults_active_probe() != 0 &&
+        !::aura::core::cpp26::hot_contract_harden_armed() &&
+        aura_production_defaults_active_probe() != 0)
         fail_bits |= kProductionAbiSelfcheckFailBitHotContracts;
 #endif
 

@@ -1945,8 +1945,8 @@ int run_test_parallel_intend_pure_contract() {
         using aura::compiler::typed_audit::reset_for_test;
 
         auto set_prod = [](bool on) {
-            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
-                .store(on ? 1u : 0u, std::memory_order_relaxed);
+            // Issue #4752: face + derived harden memo move together.
+            aura::compiler::typed_audit::note_production_defaults_active(on);
         };
 
         std::println("\n--- #3840 AC1: SingleWriter + region-keys stays eval-serialized=#t ---");

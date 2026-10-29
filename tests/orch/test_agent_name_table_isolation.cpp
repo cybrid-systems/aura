@@ -64,8 +64,9 @@ static void ac3727_set_prod(bool on) {
     // or production bootstrap is latched before Scheduler::run.
     ::setenv("AURA_SANDBOX", "off", 1);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
-    aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
-        on ? 1u : 0u, std::memory_order_relaxed);
+    // Issue #4752: face + derived harden memo move together (a later
+    // Scheduler(2) under a restored sandbox face must not see face=1/memo=0).
+    aura::compiler::typed_audit::note_production_defaults_active(on);
 }
 
 static std::string read_file(const char* path) {
