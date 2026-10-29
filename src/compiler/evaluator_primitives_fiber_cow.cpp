@@ -464,6 +464,24 @@ void register_fiber_cow_primitives(std::function<void(std::string, PrimFn)> add,
                 // interception already owns a private cell - publish
                 // that exact cell so a reader sees the old cell or
                 // this one, never a half-written payload.
+                //
+                // #4757: when the name is already bound to a top-level
+                // cell, write the committed value INTO that cell instead
+                // of rebinding the name to the private one. set! sites,
+                // closures and compiled code resolve a global to its cell
+                // once; rebinding orphaned that cell, so every later
+                // (set! x ...) from a procedure body wrote a cell no
+                // reader looked at. The in-place store is the same
+                // single-cell write a plain set! does (under the cells
+                // storage lock), so readers still see old or new.
+                if (auto existing = ev.top_env().lookup_binding(name); existing && is_cell(*existing)) {
+                    const auto old_ci = as_cell_id(*existing);
+                    std::lock_guard<std::recursive_mutex> lk(ev.cells_storage_mutex());
+                    if (old_ci < ev.cells().size()) {
+                        ev.cells()[static_cast<std::size_t>(old_ci)] = value;
+                        return;
+                    }
+                }
                 const auto ci = private_cell != 0 && private_cell < ev.cells().size()
                                     ? private_cell
                                     : static_cast<std::uint64_t>(ev.alloc_cell(value));
