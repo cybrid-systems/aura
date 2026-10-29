@@ -128,3 +128,10 @@ src/compiler/evaluator_eval_flat.cpp
 # EDSL stdlib suite + scripts/check_soft_ready_http_post_three_batch_4055.py
 # (live serve round-trip); C++ unit pairing not applicable to the delegation.
 src/compiler/evaluator_primitives_char.cpp
+
+# Clang-format-only churn (2026-10-30 gate fix): the format check flagged this
+# prim TU and the mechanical reformat is the only change. No behavior change;
+# the COW-overlay contract is covered by tests/suite/cow2_4715.aura plus the
+# #4715 regression rows in tests/python/test_regression.py. Function-like edits
+# still require a test pairing by review, same as the entries above.
+src/compiler/evaluator_primitives_fiber_cow.cpp

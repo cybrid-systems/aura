@@ -324,7 +324,7 @@ NodeId parse_expr(ParserState& s) {
             return id;
         }
         case TokenKind::QuasiQuote: {
-            s.lex.consume(); // consume `
+            s.lex.consume();                   // consume `
             auto id = read_quasiquote_4760(s); // Issue #4760
             if (id == NULL_NODE)
                 return NULL_NODE;
@@ -332,7 +332,7 @@ NodeId parse_expr(ParserState& s) {
             return id;
         }
         case TokenKind::Unquote: {
-            s.lex.consume(); // consume ,
+            s.lex.consume();                           // consume ,
             auto inner = read_unquote_operand_4760(s); // Issue #4760
             if (inner == NULL_NODE)
                 return NULL_NODE;
@@ -343,7 +343,7 @@ NodeId parse_expr(ParserState& s) {
             return id;
         }
         case TokenKind::UnquoteSplicing: {
-            s.lex.consume(); // consume ,@
+            s.lex.consume();                           // consume ,@
             auto inner = read_unquote_operand_4760(s); // Issue #4760
             if (inner == NULL_NODE)
                 return NULL_NODE;
@@ -416,21 +416,23 @@ NodeId parse_float(ParserState& s, Token tok) {
 // Thread-local rather than a ParserState field so the exported parser module
 // interface is unchanged; every bracket restores it.
 namespace {
-thread_local int t_qq_level_4760 = 0;
-struct QqLevelScope4760 {
-    int saved_level;
-    int saved_qdepth;
-    int& qdepth;
-    QqLevelScope4760(int& qd, int level, int qdepth_now)
-        : saved_level(t_qq_level_4760), saved_qdepth(qd), qdepth(qd) {
-        t_qq_level_4760 = level;
-        qd = qdepth_now;
-    }
-    ~QqLevelScope4760() {
-        t_qq_level_4760 = saved_level;
-        qdepth = saved_qdepth;
-    }
-};
+    thread_local int t_qq_level_4760 = 0;
+    struct QqLevelScope4760 {
+        int saved_level;
+        int saved_qdepth;
+        int& qdepth;
+        QqLevelScope4760(int& qd, int level, int qdepth_now)
+            : saved_level(t_qq_level_4760)
+            , saved_qdepth(qd)
+            , qdepth(qd) {
+            t_qq_level_4760 = level;
+            qd = qdepth_now;
+        }
+        ~QqLevelScope4760() {
+            t_qq_level_4760 = saved_level;
+            qdepth = saved_qdepth;
+        }
+    };
 } // namespace
 NodeId expand_qq(ParserState& s, NodeId expr, int depth);
 // Read the template after ` / (quasiquote. Active (outermost) templates expand
@@ -2271,9 +2273,9 @@ static bool is_quasiquote(const aura::ast::FlatAST& flat, const aura::ast::Strin
 
 // Issue #4760: code for the two-element list (<head> <elem>).
 static NodeId qq_list_4760(ParserState& s, std::string_view head, NodeId elem) {
-    auto tail = s.flat.add_call(s.flat.add_variable(s.pool.intern("cons")),
-                                std::vector<aura::ast::NodeId>{
-                                    elem, s.flat.add_quote(s.flat.add_literal(0))});
+    auto tail = s.flat.add_call(
+        s.flat.add_variable(s.pool.intern("cons")),
+        std::vector<aura::ast::NodeId>{elem, s.flat.add_quote(s.flat.add_literal(0))});
     auto hq = s.flat.add_quote(s.flat.add_variable(s.pool.intern(std::string(head))));
     return s.flat.add_call(s.flat.add_variable(s.pool.intern("cons")),
                            std::vector<aura::ast::NodeId>{hq, tail});
