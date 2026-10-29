@@ -1098,7 +1098,14 @@ static void ac4577_mark_all_drops_jit_bundle() {
     const auto mall = dirty.find("void CompilerService::mark_all_defines_dirty()");
     CHECK(mall != std::string::npos, "4577: mark_all lives in service_dirty.cpp");
     if (mall != std::string::npos) {
-        const auto mwin = dirty.substr(mall, 4000);
+        // Issue #4577: the citation window is the FUNCTION BODY, not a fixed
+        // character count. #4753 inserted the retired-tree-walker clear
+        // ahead of the dirty loop and pushed the real
+        // jit_.invalidate_all() past a 4000-char count, which made this
+        // ordering check read a truncated window (invariant unchanged:
+        // production gate < bundle erase < native drop < bulk invalidate).
+        const auto mend = dirty.find("\n}\n", mall);
+        const auto mwin = dirty.substr(mall, mend == std::string::npos ? 4000 : mend - mall);
         const auto probe = mwin.find("aura_production_defaults_active_probe()");
         const auto erase = mwin.find("erase_jit_cache_bundle_rows_for_define_");
         const auto drop = mwin.find("aura_drop_jit_fn_native_for_define");

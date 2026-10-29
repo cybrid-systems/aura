@@ -1438,6 +1438,15 @@ static void ac13_3678_ffi_pointer_class_refuse() {
 // epoch must not wash into eval_flat of the pre-reemit body under
 // production defaults (#3421 does not fire without a densify window).
 // Unimpacted rebind of *other* defines keeps the #2569/#2578 recover.
+//
+// Issue #4753 supersedes the REFUSAL half of AC1 for a named define
+// closure: an id the define's top_env cell advertises stays dispatchable
+// and resolves to the define's CURRENT publication. After mutate:set-body
+// the current publication is the NEW body, so the row now pins the
+// sharper invariant - the captured pre-set-body id runs the current (20)
+// body and the superseded (10) body is never observable - instead of
+// asserting a refuse. #3421's densify guard and the #2569 recover for
+// unimpacted defines are unchanged.
 static void ac14_3681_production_pre_reemit_refuse() {
     std::println("\n--- #3681: production MustDeopt/dirty refuse; unimpacted recover ---");
     const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
@@ -1475,9 +1484,14 @@ static void ac14_3681_production_pre_reemit_refuse() {
         const auto sr1 = m->closure_stale_returns.load(std::memory_order_relaxed);
         const auto md1 = m->must_deopt_force_deopt_success_total.load(std::memory_order_relaxed);
         const auto sf1 = m->compiler_closure_safe_fallbacks.load(std::memory_order_relaxed);
-        std::println("  3681 AC1 probe: refused={} stale_d={} mustdeopt_d={} safe_fb_d={}",
-                     !got.has_value(), sr1 - sr0, md1 - md0, sf1 - sf0);
-        CHECK(!got.has_value(), "AC1: production refuses pre-reemit body of dirtied F");
+        std::println("  3681 AC1 probe: val={} stale_d={} mustdeopt_d={} safe_fb_d={}",
+                     got && is_int(*got) ? as_int(*got) : (std::int64_t)-999, sr1 - sr0, md1 - md0,
+                     sf1 - sf0);
+        // Issue #4753: the captured pre-set-body id resolves to the
+        // define's CURRENT publication (the new body). The superseded
+        // pre-reemit body must never be observed.
+        CHECK(got.has_value() && is_int(*got) && as_int(*got) == 20,
+              "AC1: pre-set-body id runs the CURRENT publication (20), never the superseded 10");
         CHECK(m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed) == restamp0,
               "AC1: no #2569 restamp wash");
     }

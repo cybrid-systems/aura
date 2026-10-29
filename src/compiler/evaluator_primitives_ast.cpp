@@ -980,8 +980,17 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                                     q.push_back(c);
                             }
                         }
-                        if (ev.drop_ir_define_binding_fn_) {
-                            for (const auto& nm : drop)
+                        for (const auto& nm : drop) {
+                            // Issue #4349 / #4753: a restore is a workspace
+                            // REPLACE, not a supersede-by-new-publication.
+                            // The #4753 deferral (cell still advertises the
+                            // id) would keep the replaced workspace's
+                            // publication dispatchable and a stale call
+                            // would answer with the rolled-back body, so the
+                            // cone takes the strict invalidate face.
+                            if (ev.invalidate_ir_define_binding_fn_)
+                                ev.invalidate_ir_define_binding_fn_(nm);
+                            else if (ev.drop_ir_define_binding_fn_)
                                 ev.drop_ir_define_binding_fn_(nm);
                         }
                         if (ev.mark_define_dirty_fn_) {

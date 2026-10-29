@@ -371,17 +371,21 @@ static void ac3986_shape_flip_empty_persist_forces_full() {
         CHECK(cs.eval(R"(
 (set-code "
 (define f (lambda (x)
-  (if x 1 (if x 2 (if x 3 (if x 4 (if x 5 (if x 6 (if x 7 (if x 8 9)))))))))
-")
+  (if x 1 (if x 2 (if x 3 (if x 4 (if x 5 (if x 6 (if x 7 (if x 8 9))))))))))
+"
+)
 )")
                   .has_value(),
               "3986 AC1: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "3986 AC1: eval");
-        if (!cs.get_define_v2("f"))
-            (void)cs.eval("(compile:cache-define \"f\")");
+        // Issue #3986: the workspace text must be a BALANCED define - the
+        // 8-deep nested if is the mid-density lowering anchor (25 blocks).
+        // An unbalanced string is a parse error, installs nothing, and the
+        // cache probe would read a null row (it used to crash the member).
         CHECK(cs.get_define_v2("f") != nullptr, "3986 AC1: f cached");
-        const auto nblocks =
-            cs.get_define_v2("f")->irs.empty() ? 0 : cs.get_define_v2("f")->irs[0].blocks.size();
+        const auto nblocks = (!cs.get_define_v2("f") || cs.get_define_v2("f")->irs.empty())
+                                 ? 0
+                                 : cs.get_define_v2("f")->irs[0].blocks.size();
         // Quiet + mid density raises thr to 9; mark 9 so adaptive is full
         // and Shape's 2× window still flips (9 < 18).
         constexpr std::size_t kFlipDirty = 9;
@@ -484,17 +488,19 @@ static void ac4157_shape_flip_stale_persist_fails_closed() {
         CHECK(cs.eval(R"(
 (set-code "
 (define f (lambda (x)
-  (if x 1 (if x 2 (if x 3 (if x 4 (if x 5 (if x 6 (if x 7 (if x 8 9)))))))))
+  (if x 1 (if x 2 (if x 3 (if x 4 (if x 5 (if x 6 (if x 7 (if x 8 9))))))))))
 ")
 )")
                   .has_value(),
               "4157 AC2: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "4157 AC2: eval");
-        if (!cs.get_define_v2("f"))
-            (void)cs.eval("(compile:cache-define \"f\")");
+        // Issue #4157: the workspace text must be a BALANCED define (the
+        // 8-deep nested if is the mid-density lowering anchor); an
+        // unbalanced string is a parse error and installs nothing.
         CHECK(cs.get_define_v2("f") != nullptr, "4157 AC2: f cached");
-        const auto nblocks =
-            cs.get_define_v2("f")->irs.empty() ? 0 : cs.get_define_v2("f")->irs[0].blocks.size();
+        const auto nblocks = (!cs.get_define_v2("f") || cs.get_define_v2("f")->irs.empty())
+                                 ? 0
+                                 : cs.get_define_v2("f")->irs[0].blocks.size();
         CHECK(nblocks >= 9, "4157 AC2: nested-if lowered enough blocks");
 
         // Arm the persist with f's own block-0 encoding (#3986 AC2 shape):
@@ -603,8 +609,7 @@ static void ac4091_shape_flip_dirty_cone() {
     CHECK(cs.eval(R"(
 (set-code "
 (define f (lambda (x)
-  (if x 1 (if x 2 (if x 3 (if x 4 (if x 5 (if x 6 (if x 7 (if x 8 9)))))))))
-)
+  (if x 1 (if x 2 (if x 3 (if x 4 (if x 5 (if x 6 (if x 7 (if x 8 9))))))))))
 (define g (lambda (x) x))
 (define h (lambda (x) x))
 ")
