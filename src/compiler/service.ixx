@@ -266,6 +266,140 @@ struct ExecMutexWaitPublishScope {
     }
 };
 
+// Issue #4765: the registry walks (expire_stale_live_closures_, restamp,
+// poison, GC-root collect, env-id remap) hold the IR cache gate and take each
+// define's exec_mtx. A body running on that define holds exec_mtx and, when
+// it calls another define, re-enters dispatch and waits for the gate: an ABBA
+// deadlock against a sibling fiber's mutate:rebind (gdb on the aura-harness
+// swarm run: body in run_pinned_ir_closure_ -> dispatch_ir_define_closure ->
+// gate; rebind in mark_define_dirty -> expire_stale_live_closures_ ->
+// exec_mtx). Dropping exec_mtx for the gate wait is NOT safe (a sibling body
+// then re-enters the same non-reentrant interpreter: ~ExecFrame SIGSEGV).
+//
+// Instead a thread that must BLOCK (on the gate, or on another define's
+// exec_mtx) while holding exec mutexes PARKS them: it records them here,
+// blocks, and on wake-up unparks and waits for any walker still inside one
+// of its interpreters. A walker that holds the gate and finds a parked
+// exec_mtx borrows that interpreter for one binding's walk.
+static std::mutex g_exec_parked_mtx_4765;
+static std::condition_variable g_exec_parked_cv_4765;
+struct ExecParkState4765 {
+    int parked = 0;  // owner threads blocked with this exec_mtx held
+    int walking = 0; // walkers currently inside the interpreter unlocked
+};
+static std::unordered_map<const std::recursive_mutex*, ExecParkState4765> g_exec_parked_4765;
+
+// Park every exec_mtx this thread holds (it is about to block).
+static bool park_exec_holds_4765() {
+    EvalMutexWaitTls& t = t_eval_mutex_wait_tls;
+    if (t.exec_released || t.exec_holds.empty())
+        return false;
+    std::lock_guard<std::mutex> lk(g_exec_parked_mtx_4765);
+    for (auto& h : t.exec_holds)
+        ++g_exec_parked_4765[h.m].parked;
+    return true;
+}
+
+// Unpark after the wait: no new walker may start, and the thread does not
+// resume the body until every walker already inside one of its
+// interpreters has left.
+static void unpark_exec_holds_4765() {
+    EvalMutexWaitTls& t = t_eval_mutex_wait_tls;
+    std::unique_lock<std::mutex> lk(g_exec_parked_mtx_4765);
+    for (auto& h : t.exec_holds) {
+        auto it = g_exec_parked_4765.find(h.m);
+        if (it != g_exec_parked_4765.end())
+            --it->second.parked;
+    }
+    g_exec_parked_cv_4765.wait(lk, [&] {
+        for (auto& h : t.exec_holds) {
+            auto it = g_exec_parked_4765.find(h.m);
+            if (it != g_exec_parked_4765.end() && it->second.walking > 0)
+                return false;
+        }
+        return true;
+    });
+    for (auto& h : t.exec_holds) {
+        auto it = g_exec_parked_4765.find(h.m);
+        if (it != g_exec_parked_4765.end() && it->second.parked <= 0 && it->second.walking <= 0)
+            g_exec_parked_4765.erase(it);
+    }
+}
+
+// Blocking acquisition from a thread that may hold exec mutexes (the IR
+// cache gate, or another define's exec_mtx): park while blocked.
+static void lock_park_aware_4765(std::recursive_mutex& m) {
+    if (m.try_lock())
+        return;
+    if (!park_exec_holds_4765()) {
+        m.lock();
+        return;
+    }
+    m.lock();
+    unpark_exec_holds_4765();
+}
+
+static void lock_ir_gate_body_safe_4765(std::recursive_mutex& gate) { lock_park_aware_4765(gate); }
+
+// Issue #4765: exec_mtx taken by a walker that HOLDS the IR cache gate.
+// Owns the lock when it is free (or held by this thread); otherwise, once
+// the owner is parked (blocked, see above), borrows the interpreter for the
+// scope of this guard - the owner cannot resume until the guard is gone.
+struct ExecUnderGate4765 {
+    std::recursive_mutex& m;
+    bool owned = false;
+    bool borrowed = false;
+    explicit ExecUnderGate4765(std::recursive_mutex& em)
+        : m(em) {
+        for (;;) {
+            if (m.try_lock()) {
+                owned = true;
+                return;
+            }
+            {
+                std::lock_guard<std::mutex> lk(g_exec_parked_mtx_4765);
+                auto it = g_exec_parked_4765.find(&m);
+                if (it != g_exec_parked_4765.end() && it->second.parked > 0) {
+                    ++it->second.walking;
+                    borrowed = true;
+                    return;
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::microseconds(20));
+        }
+    }
+    ExecUnderGate4765(const ExecUnderGate4765&) = delete;
+    ExecUnderGate4765& operator=(const ExecUnderGate4765&) = delete;
+    ~ExecUnderGate4765() {
+        if (owned)
+            m.unlock();
+        if (borrowed) {
+            {
+                std::lock_guard<std::mutex> lk(g_exec_parked_mtx_4765);
+                auto it = g_exec_parked_4765.find(&m);
+                if (it != g_exec_parked_4765.end()) {
+                    --it->second.walking;
+                    if (it->second.parked <= 0 && it->second.walking <= 0)
+                        g_exec_parked_4765.erase(it);
+                }
+            }
+            g_exec_parked_cv_4765.notify_all();
+        }
+    }
+};
+
+// lock_guard-shaped exec_mtx acquisition for a body run (parks while blocked).
+struct ExecRunLock4765 {
+    std::recursive_mutex& m;
+    explicit ExecRunLock4765(std::recursive_mutex& em)
+        : m(em) {
+        lock_park_aware_4765(em);
+    }
+    ExecRunLock4765(const ExecRunLock4765&) = delete;
+    ExecRunLock4765& operator=(const ExecRunLock4765&) = delete;
+    ~ExecRunLock4765() { m.unlock(); }
+};
+
 static void wire_eval_mutex_wait_hooks() {
     if (aura::messaging::g_eval_mutex_wait_release == nullptr) {
         aura::messaging::g_eval_mutex_wait_release = &eval_mutex_wait_release_impl;
@@ -12392,7 +12526,8 @@ public:
         // dispatch -> recursive_mutex::lock with the body as owner, the body
         // parked in dispatch on ir_cache_gate_). Lower the module, then drop
         // the gate for the run and re-take it for the binding writes.
-        std::unique_lock<std::recursive_mutex> ir_gate(ir_cache_gate_);
+        std::unique_lock<std::recursive_mutex> ir_gate(ir_cache_gate_, std::defer_lock);
+        relock_ir_gate_(ir_gate); // #4765
         auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
         auto cache_bridge_ptr = ir_cache_bridge_.empty() ? nullptr : &ir_cache_bridge_;
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
@@ -12410,7 +12545,7 @@ public:
         if (ir_gate.owns_lock())
             ir_gate.unlock();
         auto result = interp.execute();
-        ir_gate.lock();
+        relock_ir_gate_(ir_gate); // #4765
         if (!result)
             return false;
 
@@ -13321,7 +13456,8 @@ public:
         // lookups below run under the shared IR cache gate; every path that
         // RUNS a body drops it first (unique_lock) and pins the binding by
         // shared_ptr, so no body ever executes under the cache gate.
-        std::unique_lock<std::recursive_mutex> ir_gate(ir_cache_gate_);
+        std::unique_lock<std::recursive_mutex> ir_gate(ir_cache_gate_, std::defer_lock);
+        relock_ir_gate_(ir_gate); // #4765
         // Issue #4712: resolve the owning define by binding identity when
         // the cid->name index has no row. A workspace replace (set-code /
         // snapshot restore) clears the index wholesale in
@@ -13383,7 +13519,7 @@ public:
                     types::EvalValue out{};
                     const auto ran =
                         run_pinned_ir_closure_(pinned, pinned->closure_id, args, 0, &out);
-                    ir_gate.lock();
+                    relock_ir_gate_(ir_gate); // #4765
                     if (ran == PinnedRun4717::Ok)
                         return out;
                 }
@@ -13400,7 +13536,7 @@ public:
                     if (ir_gate.owns_lock())
                         ir_gate.unlock();
                     auto resolved = evaluator_.apply_closure(*cell_cid, args);
-                    ir_gate.lock();
+                    relock_ir_gate_(ir_gate); // #4765
                     --retired_resolve_depth_;
                     if (resolved)
                         return resolved;
@@ -13446,7 +13582,7 @@ public:
                     ir_gate.unlock();
                 types::EvalValue out{};
                 const auto ran = run_pinned_ir_closure_(pinned, cid, args, 1, &out);
-                ir_gate.lock();
+                relock_ir_gate_(ir_gate); // #4765
                 if (ran == PinnedRun4717::Ok)
                     return out;
                 if (ran == PinnedRun4717::Failed)
@@ -13531,12 +13667,12 @@ public:
                 ir_gate.unlock();
             std::optional<types::EvalValue> nr;
             {
-                std::lock_guard<std::recursive_mutex> exec(pinned->exec_mtx);
+                ExecRunLock4765 exec(pinned->exec_mtx); // #4765
                 nr = tier_try_native_4682_(*pinned, name, args);
             }
             if (nr)
                 return *nr;
-            ir_gate.lock();
+            relock_ir_gate_(ir_gate); // #4765
         }
         // Issue #4717: the run itself never holds the cache gate (see
         // run_pinned_ir_closure_ — it re-syncs the closure-id cursor from
@@ -17159,10 +17295,30 @@ private:
     //     nested dispatch only ever finds the gate free or held by a
     //     same-thread recursion. bind_value_define_via_ir was the one site
     //     still holding the gate across a run (fixed in #4747).
+    //     Issue #4765: the registry walks DO wait for exec_mtx under the
+    //     gate, so a nested dispatch can find the gate held by a walker that
+    //     waits for this body's exec_mtx. Gate waits park the waiter's
+    //     exec_mtx holds (lock_ir_gate_body_safe_4765) and walkers take
+    //     exec_mtx through ExecUnderGate4765, which borrows a parked one.
     //   * recursive: relower_* / store_define_v2 / bind_* nest arbitrarily
     //     deep inside one another.
     mutable std::recursive_mutex ir_cache_gate_;
-    using IrCacheGate = std::lock_guard<std::recursive_mutex>;
+    // Issue #4765: every gate acquisition parks this thread's exec_mtx holds
+    // while it waits (see lock_ir_gate_body_safe_4765).
+    void relock_ir_gate_(std::unique_lock<std::recursive_mutex>& g) const {
+        lock_ir_gate_body_safe_4765(ir_cache_gate_);
+        g = std::unique_lock<std::recursive_mutex>(ir_cache_gate_, std::adopt_lock);
+    }
+    struct IrCacheGate {
+        std::recursive_mutex& m;
+        explicit IrCacheGate(std::recursive_mutex& gm)
+            : m(gm) {
+            lock_ir_gate_body_safe_4765(gm);
+        }
+        IrCacheGate(const IrCacheGate&) = delete;
+        IrCacheGate& operator=(const IrCacheGate&) = delete;
+        ~IrCacheGate() { m.unlock(); }
+    };
 
     std::unordered_map<aura::compiler::ClosureId, std::string> ir_define_closure_owner_;
     // Issue #4715 regression: superseded define-closure ids stay resolvable
@@ -17221,7 +17377,7 @@ private:
         if (!b || !b->interpreter)
             return PinnedRun4717::Failed;
         auto* interp = b->interpreter.get();
-        std::lock_guard<std::recursive_mutex> exec(b->exec_mtx);
+        ExecRunLock4765 exec(b->exec_mtx); // #4765 parks while blocked
         // Issue #4717 follow-up: a body run can block on another fiber (fiber:join of a
         // sibling this same body spawned - orch:parallel / orch:scope). The
         // wait hooks drop exec_mtx across that wait; declared AFTER `exec`, so
@@ -19551,7 +19707,7 @@ public:
                 continue;
             add_closure(static_cast<std::int64_t>(bit->second->closure_id));
             if (bit->second->interpreter) {
-                std::lock_guard<std::recursive_mutex> exec(bit->second->exec_mtx);
+                ExecUnderGate4765 exec(bit->second->exec_mtx);  // #4765
                 bit->second->interpreter->collect_active_gc_roots(out.compiler_closure_roots,
                                                                   current_epoch);
             }
@@ -19562,7 +19718,7 @@ public:
             if (!binding || !binding->interpreter)
                 continue;
             add_closure(static_cast<std::int64_t>(binding->closure_id));
-            std::lock_guard<std::recursive_mutex> exec(binding->exec_mtx);
+            ExecUnderGate4765 exec(binding->exec_mtx);  // #4765
             binding->interpreter->collect_active_gc_roots(out.compiler_closure_roots,
                                                           current_epoch);
         }
@@ -19597,7 +19753,7 @@ public:
                 continue;
             bool active = false;
             {
-                std::lock_guard<std::recursive_mutex> exec(binding->exec_mtx);
+                ExecUnderGate4765 exec(binding->exec_mtx);  // #4765
                 active = binding->interpreter->has_active_frames();
             }
             if (active) {
@@ -19884,21 +20040,21 @@ public:
                 (void)bname;
                 if (!binding || !binding->interpreter)
                     continue;
-                std::lock_guard<std::recursive_mutex> exec(binding->exec_mtx);
+                ExecUnderGate4765 exec(binding->exec_mtx);  // #4765
                 binding->interpreter->walk_runtime_closures(
                     [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) { poison_ir(cl); });
             }
         } else {
             if (auto it = ir_define_env_bindings_.find(name);
                 it != ir_define_env_bindings_.end() && it->second && it->second->interpreter) {
-                std::lock_guard<std::recursive_mutex> exec(it->second->exec_mtx);
+                ExecUnderGate4765 exec(it->second->exec_mtx);  // #4765
                 it->second->interpreter->walk_runtime_closures(
                     [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) { poison_ir(cl); });
             }
             for (auto& [bname, binding] : ir_define_env_bindings_) {
                 if (bname == name || !binding || !binding->interpreter)
                     continue;
-                std::lock_guard<std::recursive_mutex> exec(binding->exec_mtx);
+                ExecUnderGate4765 exec(binding->exec_mtx);  // #4765
                 binding->interpreter->walk_runtime_closures(
                     [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) {
                         if (cl.name == name)
@@ -20361,7 +20517,7 @@ public:
             // Issue #4717: serialize the interpreter's mutable execution state
             // against a body running on a sibling fiber (exec_mtx; taken under
             // the cache gate, and the gate is never taken while holding it).
-            std::lock_guard<std::recursive_mutex> exec(binding->exec_mtx);
+            ExecUnderGate4765 exec(binding->exec_mtx);  // #4765
             binding->interpreter->walk_runtime_closures([&]([[maybe_unused]] std::uint64_t cid,
                                                             IRClosure& cl) {
                 // Skip unstamped (legacy) and already-current stamps.
@@ -20458,7 +20614,7 @@ public:
             // Issue #4717: serialize the interpreter's mutable execution state
             // against a body running on a sibling fiber (exec_mtx; taken under
             // the cache gate, and the gate is never taken while holding it).
-            std::lock_guard<std::recursive_mutex> exec(binding->exec_mtx);
+            ExecUnderGate4765 exec(binding->exec_mtx);  // #4765
             binding->interpreter->walk_runtime_closures(
                 [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) {
                     if (cl.env_id == kNull || static_cast<std::size_t>(cl.env_id) >= n)
@@ -20484,7 +20640,7 @@ public:
             // Issue #4717: serialize the interpreter's mutable execution state
             // against a body running on a sibling fiber (exec_mtx; taken under
             // the cache gate, and the gate is never taken while holding it).
-            std::lock_guard<std::recursive_mutex> exec(binding->exec_mtx);
+            ExecUnderGate4765 exec(binding->exec_mtx);  // #4765
             binding->interpreter->walk_runtime_closures(
                 [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) {
                     if (cl.bridge_epoch != 0) {

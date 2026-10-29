@@ -1,0 +1,63 @@
+;; fiber_rebind_nested_dispatch_4765.aura — Issue #4765: a fiber body that
+;; runs a workspace define which calls ANOTHER workspace define (nested IR
+;; dispatch while the outer body holds its interpreter exec mutex) must not
+;; deadlock against a sibling fiber doing mutate:rebind + eval-current
+;; (which takes the IR cache gate and then walks every define's exec mutex).
+;; Before the fix this hung (0% CPU, all threads in futex_wait) in roughly
+;; half of the runs; the suite runner's timeout is the failure signal.
+;; The same workload also lost ~3% of fiber results: the sibling's
+;; eval-current soft-restamped the spawned body closure's bridge epoch between
+;; the apply snapshot and its race-window revalidate, the body was refused and
+;; fiber:join returned void (`car: not a pair` below).
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+
+(define nw 4)
+(define (pol-name w) (string-append "pol-" (number->string w)))
+(define (pol-src v) (string-append "(lambda () " (number->string v) ")"))
+(define (pol-conds n)
+  (let loop ((w 0) (s ""))
+    (if (= w n) s
+        (loop (+ w 1) (string-append s "((= w " (number->string w) ") (" (pol-name w) ")) ")))))
+(define (pol-workspace n)
+  (let loop ((w 0) (s ""))
+    (if (= w n)
+        (string-append s "(define (polv w) (cond " (pol-conds n) "(else 0)))"
+                       " (define (polsum k) (let l ((i 0) (a 0)) (if (= i k) a (l (+ i 1) (+ a (polv (modulo i " (number->string n) ")))))))")
+        (loop (+ w 1) (string-append s "(define " (pol-name w) " " (pol-src 0) ") ")))))
+(set-code (pol-workspace nw))
+(eval-current)
+
+(define errors (make-hash))
+(define (note-err! k) (hash-set! errors k (+ 1 (hash-ref errors k 0))))
+
+;; Worker w: call the nested define chain many times; every 4th turn rebind
+;; its own pol-<w> and apply it, while peers keep calling through polv.
+(define (worker w turns)
+  (let loop ((t 0) (calls 0) (rebinds 0))
+    (if (= t turns)
+        (list w calls rebinds)
+        (begin
+          (try (polsum 16) (catch (e) (note-err! "call")))
+          (if (= (modulo t 4) 0)
+              (try (begin (mutate:rebind (pol-name w) (pol-src (+ t 1)) (string-append "rb" (number->string t)))
+                          (eval-current))
+                   (catch (e) (note-err! "rebind"))))
+          (fiber:yield)
+          (loop (+ t 1) (+ calls 1) (if (= (modulo t 4) 0) (+ rebinds 1) rebinds))))))
+
+(define (round r)
+  (let* ((fs (map (lambda (w) (fiber:spawn (lambda () (worker w 40)))) (iota nw)))
+         (rs (map fiber:join fs)))
+    (assert! (equal? (map car rs) (iota nw)) (string-append "round " (number->string r) ": every worker finished"))))
+
+(round 0) (round 1) (round 2) (round 3) (round 4)
+(assert! (integer? (polsum 8)) "nested define chain still dispatches after the rounds")
+
+(if (= *fails* 0)
+    (begin (display "OK-4765 nested dispatch vs rebind") (newline))
+    (begin (display "FAIL-4765 fails=") (display *fails*) (newline) (error "4765 suite failed")))
