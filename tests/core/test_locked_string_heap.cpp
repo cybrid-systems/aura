@@ -197,6 +197,14 @@ void ac3_shared_evaluator_prims() {
 
 void ac4_tenant_stamp_on_prim_mint() {
     std::println("\n--- AC4: #4428 stamp written for a primitive mint ---");
+
+    // Issue #4747: the tenant-stamp arrays are only written when something can
+    // READ them (effect sandbox on the production face, strict, or a
+    // multi-tenant env). Arm the face so this row exercises the stamping path;
+    // the unobservable case is pinned separately below.
+    const bool was_active = aura::core::sandbox::is_sandbox_active();
+    const bool was_strict = aura::core::sandbox::is_strict();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
     CompilerService cs;
     auto& ev = cs.evaluator();
     auto pss = ev.primitives().lookup("panic-safe-source");
@@ -210,6 +218,21 @@ void ac4_tenant_stamp_on_prim_mint() {
     const auto idx = as_string_idx(r);
     CHECK(ev.string_slot_tenant_record_for_test(idx) == ev.capability_tenant_id() + 1,
           "AC4: minted slot carries the minting tenant's stamp");
+
+    // Issue #4747 negative row: with nothing able to observe the stamp the mint
+    // path deliberately skips the write (that is what removed the realloc race).
+    aura::core::sandbox::set_mode(was_strict
+                                      ? aura::core::sandbox::SandboxMode::Strict
+                                      : (was_active ? aura::core::sandbox::SandboxMode::Restricted
+                                                    : aura::core::sandbox::SandboxMode::Off));
+    if (!aura::core::sandbox::is_sandbox_active() && ev.tenant_stamps_observable() == false) {
+        auto r2 = (*pss)({});
+        CHECK(is_string(r2), "AC4: unobservable-face mint still returns a string");
+        if (is_string(r2))
+            CHECK(ev.string_slot_tenant_record_for_test(as_string_idx(r2)) == 0,
+                  "AC4: unobservable face leaves the slot unstamped (0 = owner-unknown, fail "
+                  "closed)");
+    }
 }
 
 // Reference walk (#4472) the cached index must agree with.
