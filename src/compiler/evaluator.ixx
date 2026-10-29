@@ -3799,6 +3799,15 @@ public:
     void set_mark_all_defines_dirty_fn(std::function<void()> fn) {
         mark_all_defines_dirty_fn_ = std::move(fn);
     }
+    // Issue #4753: must_deopt_closures_named drops a define's stale
+    // tree-walker closure generations (Issue #4583). Report each dropped id
+    // with its define name so the IR define index keeps it resolvable to the
+    // define's current publication, exactly like a retired IR publication id
+    // (#4715 rule: run the define's CURRENT publication).
+    void
+    set_note_retired_define_closure_fn(std::function<void(std::uint64_t, const std::string&)> fn) {
+        note_retired_define_closure_fn_ = std::move(fn);
+    }
     // Issue #3033 / #3117: dual-topology abort hooks.
     // begin: publish abort_force fence before restore (concurrent lookup).
     // dirty: after restore, zero-restamp + clear source_to_ir_map.
@@ -8159,6 +8168,10 @@ private:
     // Issue #3681: clear_ir_define_env_binding for the mutated name only.
     std::function<void(const std::string&)> drop_ir_define_binding_fn_ = nullptr;
     std::function<void()> mark_all_defines_dirty_fn_ = nullptr;
+    // Issue #4753: dropped tree-walker publication ids (define name) that
+    // stay resolvable to the define's current publication.
+    std::function<void(std::uint64_t, const std::string&)> note_retired_define_closure_fn_ =
+        nullptr;
     // Issue #3033 / #3117: dual-topology abort IR-cache fence (set by
     // CompilerService on init; null when standalone).
     std::function<void()> abort_ir_cache_begin_force_fn_ = nullptr;
