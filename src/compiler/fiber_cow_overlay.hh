@@ -60,6 +60,31 @@ struct CommitRecord {
     std::uint64_t commit_seq = 0;
     std::uint64_t base_epoch = 0;
     std::uint64_t fiber = 0;
+    // Issue #4715 follow-up: the workspace mutation epoch observed when the
+    // winner committed. Paired with base_epoch it is the "committed epoch"
+    // half of the structured conflict condition.
+    std::uint64_t epoch = 0;
+};
+
+// Issue #4715 follow-up: structured conflict condition. The primitive face
+// renders this both as a trailing key=value suffix on the historical
+// "fiber:cow-conflict: <name>" string (so existing callers/tests keep
+// working) and as a hash via (fiber:overlay-conflict).
+//
+// read_only distinguishes the two validation arms:
+//   false — write-write: another fiber committed the SAME binding after we
+//           began (the #4715 AC1 first-committer-wins rule);
+//   true  — read-set: we read a binding another fiber committed after we
+//           began (write skew: our result was computed from a stale value).
+struct ConflictInfo {
+    std::string binding;
+    std::uint64_t winner_fiber = 0;
+    std::uint64_t winner_seq = 0;
+    std::uint64_t winner_epoch = 0; // committed epoch
+    std::uint64_t base_epoch = 0;   // our epoch
+    std::uint64_t base_seq = 0;     // our commit-log base
+    bool read_only = false;
+    [[nodiscard]] bool valid() const noexcept { return !binding.empty(); }
 };
 
 // Aggregate observability for the (fiber:overlay-report) primitive.
@@ -69,6 +94,10 @@ struct OverlayStats {
     std::uint64_t fast_forward = 0;
     std::uint64_t merged = 0;
     std::uint64_t conflicts = 0;
+    // Issue #4715 follow-up: the stale-read (write-skew) subset of
+    // `conflicts`; the additive report field keeps the pre-follow-up
+    // begins=/commits=/conflicts=/rollbacks= shape intact.
+    std::uint64_t read_conflicts = 0;
     std::uint64_t rollbacks = 0;
     std::uint64_t writes = 0;
     std::uint64_t active = 0;
@@ -80,6 +109,14 @@ struct CommitResult {
     bool ok = false;
     bool fast_forward = false;
     std::string conflict;
+    // Issue #4715 follow-up: the structured condition behind `conflict`
+    // (empty binding on success) and the sorted names actually applied.
+    ConflictInfo conflict_info;
+    std::vector<std::string> applied_names;
+    // Every name this overlay held when commit was attempted (sorted); on a
+    // rejection applied_names is empty and this is what the audit record
+    // names as the dropped attempt.
+    std::vector<std::string> attempted_names;
     std::size_t applied = 0;
 };
 
@@ -92,6 +129,12 @@ template <typename V> struct FiberOverlay {
     std::uint64_t base_seq = 0;
     bool active = false;
     std::unordered_map<std::string, V> writes;
+    // Issue #4715 follow-up: shared-env bindings this body READ while the
+    // overlay was open (name -> commit-log seq at first read). Commit
+    // validates them against the log so a value computed from a stale read
+    // cannot be committed (write skew). Names this overlay also wrote are
+    // skipped — the write-write arm already owns them.
+    std::unordered_map<std::string, std::uint64_t> reads;
     // Issue #4715 AC2: bindings the evaluator already materialized as a
     // PRIVATE cell (name -> cell id). The define / set! interception points
     // allocate one so the commit publishes a single cell index: a reader
@@ -119,8 +162,10 @@ public:
         ov.base_epoch = base_epoch;
         ov.base_seq = st.seq;
         ov.writes.clear();
+        ov.reads.clear();
         ov.cells.clear();
         ov.active = true;
+        st.last_conflict.erase(fiber);
         ++st.stats.begins;
         return ov.base_epoch;
     }
@@ -135,6 +180,7 @@ public:
             ov.fiber = fiber;
             ov.base_epoch = base_epoch;
             ov.base_seq = st.seq;
+            ov.reads.clear();
             ov.active = true;
             ++st.stats.begins;
         }
@@ -161,6 +207,7 @@ public:
             ov.fiber = fiber;
             ov.base_epoch = base_epoch;
             ov.base_seq = st.seq;
+            ov.reads.clear();
             ov.active = true;
             ++st.stats.begins;
         }
@@ -189,7 +236,32 @@ public:
 
     // Overlay-local read. Returns false when the binding is not shadowed,
     // so the caller falls through to the committed global env.
-    bool read(const void* owner, std::uint64_t fiber, std::string_view name, V& out) const {
+    //
+    // Issue #4715 follow-up: a miss IS a shared-env read of `name`, so it is
+    // recorded in the read set for stale-read validation at commit. A hit
+    // (our own private write) records nothing: the write-write arm owns it.
+    bool read(const void* owner, std::uint64_t fiber, std::string_view name, V& out) {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto oit = owners_.find(owner);
+        if (oit == owners_.end())
+            return false;
+        auto& st = oit->second;
+        auto fit = st.overlays.find(fiber);
+        if (fit == st.overlays.end() || !fit->second.active)
+            return false;
+        std::string key(name);
+        auto wit = fit->second.writes.find(key);
+        if (wit == fit->second.writes.end()) {
+            fit->second.reads.emplace(std::move(key), st.seq);
+            return false;
+        }
+        out = wit->second;
+        return true;
+    }
+
+    // Side-effect-free twin of read(): overlay membership / value probe that
+    // must NOT enter the read set (fiber:overlay-has, capture pre-checks).
+    bool peek(const void* owner, std::uint64_t fiber, std::string_view name, V& out) const {
         std::lock_guard<std::mutex> lk(mu_);
         auto oit = owners_.find(owner);
         if (oit == owners_.end())
@@ -202,6 +274,19 @@ public:
             return false;
         out = wit->second;
         return true;
+    }
+
+    // Issue #4715 follow-up: the last structured conflict this fiber saw
+    // (survives the overlay drop, cleared by the next begin()).
+    std::optional<ConflictInfo> last_conflict(const void* owner, std::uint64_t fiber) const {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto oit = owners_.find(owner);
+        if (oit == owners_.end())
+            return std::nullopt;
+        auto it = oit->second.last_conflict.find(fiber);
+        if (it == oit->second.last_conflict.end())
+            return std::nullopt;
+        return it->second;
     }
 
     std::size_t pending(const void* owner, std::uint64_t fiber) const {
@@ -232,9 +317,13 @@ public:
     // overlay captured for that name, 0 when the write came from the EDSL).
     // The two-argument form stays valid — every pre-AC2 caller and every
     // data-layer test row uses it.
-    template <class ApplyFn>
+    // #4715 follow-up: the optional NotifyFn runs LAST, still under the
+    // registry lock, so a provenance record (mutation log) lands in commit
+    // order without a second lock in the evaluator. It must not re-enter the
+    // registry.
+    template <class ApplyFn, class NotifyFn = std::nullptr_t>
     CommitResult commit(const void* owner, std::uint64_t fiber, std::uint64_t current_epoch,
-                        ApplyFn&& apply) {
+                        ApplyFn&& apply, NotifyFn&& notify = nullptr) {
         std::lock_guard<std::mutex> lk(mu_);
         CommitResult res;
         auto oit = owners_.find(owner);
@@ -250,20 +339,63 @@ public:
         for (const auto& kv : ov.writes)
             names.push_back(kv.first);
         std::sort(names.begin(), names.end());
+        res.attempted_names = names;
         // #4715 AC1: conflict scan is a full pass BEFORE any apply, so a
         // conflicting commit cannot leave a partial write set behind.
+        // Write-write arm first (the historical rule), then the #4715
+        // follow-up read-set arm: a binding we READ that another fiber
+        // committed after we began makes everything we computed from that
+        // value stale (write skew), so the commit must not land either.
         for (const auto& n : names) {
             auto rit = st.log.find(n);
             if (rit != st.log.end() && rit->second.commit_seq > ov.base_seq) {
                 res.conflict = n;
+                res.conflict_info = ConflictInfo{n,
+                                                 rit->second.fiber,
+                                                 rit->second.commit_seq,
+                                                 rit->second.epoch,
+                                                 ov.base_epoch,
+                                                 ov.base_seq,
+                                                 /*read_only=*/false};
                 break;
+            }
+        }
+        if (res.conflict.empty() && !ov.reads.empty()) {
+            // Compare against the sequence observed AT THE READ, not the
+            // overlay base: a binding another fiber committed before this
+            // body read it was seen correctly, so it is not a stale read.
+            std::vector<std::pair<std::string, std::uint64_t>> rnames;
+            rnames.reserve(ov.reads.size());
+            for (const auto& kv : ov.reads)
+                if (ov.writes.find(kv.first) == ov.writes.end())
+                    rnames.emplace_back(kv.first, kv.second);
+            std::sort(rnames.begin(), rnames.end(),
+                      [](const auto& a, const auto& b) { return a.first < b.first; });
+            for (const auto& [n, read_seq] : rnames) {
+                auto rit = st.log.find(n);
+                if (rit != st.log.end() && rit->second.commit_seq > read_seq) {
+                    res.conflict = n;
+                    res.conflict_info = ConflictInfo{n,
+                                                     rit->second.fiber,
+                                                     rit->second.commit_seq,
+                                                     rit->second.epoch,
+                                                     ov.base_epoch,
+                                                     ov.base_seq,
+                                                     /*read_only=*/true};
+                    break;
+                }
             }
         }
         res.fast_forward = (ov.base_epoch == current_epoch);
         if (!res.conflict.empty()) {
             // Rollback by policy: the loser applies nothing.
             ++st.stats.conflicts;
+            if (res.conflict_info.read_only)
+                ++st.stats.read_conflicts;
+            st.last_conflict[fiber] = res.conflict_info;
             st.overlays.erase(fit);
+            if constexpr (!std::is_same_v<std::decay_t<NotifyFn>, std::nullptr_t>)
+                notify(res);
             return res;
         }
         for (const auto& n : names) {
@@ -275,16 +407,20 @@ public:
                 apply(n, ov.writes.at(n));
             }
             ++st.seq;
-            st.log[n] = CommitRecord{st.seq, ov.base_epoch, fiber};
+            st.log[n] = CommitRecord{st.seq, ov.base_epoch, fiber, current_epoch};
             ++res.applied;
         }
         res.ok = true;
+        res.applied_names = names;
         if (res.fast_forward)
             ++st.stats.fast_forward;
         else
             ++st.stats.merged;
         ++st.stats.commits;
         st.overlays.erase(fit);
+        st.last_conflict.erase(fiber);
+        if constexpr (!std::is_same_v<std::decay_t<NotifyFn>, std::nullptr_t>)
+            notify(res);
         return res;
     }
 
@@ -325,6 +461,9 @@ private:
         std::unordered_map<std::uint64_t, FiberOverlay<V>> overlays;
         // Committed claims by binding name (write-write conflict SSOT).
         std::unordered_map<std::string, CommitRecord> log;
+        // Issue #4715 follow-up: last structured conflict per fiber, so the
+        // loser can read the condition object after its overlay was dropped.
+        std::unordered_map<std::uint64_t, ConflictInfo> last_conflict;
         std::uint64_t seq = 0;
         OverlayStats stats;
     };
