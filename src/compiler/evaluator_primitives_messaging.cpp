@@ -998,9 +998,9 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                         return false;
                 return true;
             }
-            why = depth == 0 ? channel_payload_kind_name(v)
-                             : std::string(channel_payload_kind_name(v)) +
-                                   " nested in a list/vector/hash";
+            why = depth == 0
+                      ? channel_payload_kind_name(v)
+                      : std::string(channel_payload_kind_name(v)) + " nested in a list/vector/hash";
             return false;
         };
         return enc(enc, root, 0);
@@ -1028,48 +1028,49 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                 return make_void();
             const char tag = in[pos++];
             switch (tag) {
-            case 'I':
-                return EvalValue{static_cast<std::int64_t>(get_u64())};
-            case 'S': {
-                const auto n = static_cast<std::size_t>(get_u64());
-                std::string text = in.substr(std::min(pos, in.size()), n);
-                pos += n;
-                return make_string(static_cast<std::uint64_t>(ev.string_heap_.mint(std::move(text))));
-            }
-            case 'L': {
-                const auto n = static_cast<std::size_t>(get_u64());
-                std::vector<EvalValue> elems;
-                elems.reserve(std::min<std::size_t>(n, 1u << 16));
-                for (std::size_t i = 0; i < n && pos < in.size(); ++i)
-                    elems.push_back(self(self));
-                EvalValue acc = self(self); // tail
-                for (auto it = elems.rbegin(); it != elems.rend(); ++it)
-                    acc = cons(*it, acc);
-                return acc;
-            }
-            case 'V': {
-                const auto n = static_cast<std::size_t>(get_u64());
-                std::vector<EvalValue> elems;
-                for (std::size_t i = 0; i < n && pos < in.size(); ++i)
-                    elems.push_back(self(self));
-                EvalValue acc = make_void(); // '() is void-terminated (see _agent:list)
-                for (auto it = elems.rbegin(); it != elems.rend(); ++it)
-                    acc = cons(*it, acc);
-                return l2v ? (*l2v)({acc}) : acc;
-            }
-            case 'H': {
-                const auto n = static_cast<std::size_t>(get_u64());
-                EvalValue h = mkhash ? (*mkhash)({}) : make_void();
-                for (std::size_t i = 0; i < n && pos < in.size(); ++i) {
-                    EvalValue k = self(self);
-                    EvalValue v = self(self);
-                    if (hset)
-                        (*hset)({h, k, v});
+                case 'I':
+                    return EvalValue{static_cast<std::int64_t>(get_u64())};
+                case 'S': {
+                    const auto n = static_cast<std::size_t>(get_u64());
+                    std::string text = in.substr(std::min(pos, in.size()), n);
+                    pos += n;
+                    return make_string(
+                        static_cast<std::uint64_t>(ev.string_heap_.mint(std::move(text))));
                 }
-                return h;
-            }
-            default:
-                return make_void();
+                case 'L': {
+                    const auto n = static_cast<std::size_t>(get_u64());
+                    std::vector<EvalValue> elems;
+                    elems.reserve(std::min<std::size_t>(n, 1u << 16));
+                    for (std::size_t i = 0; i < n && pos < in.size(); ++i)
+                        elems.push_back(self(self));
+                    EvalValue acc = self(self); // tail
+                    for (auto it = elems.rbegin(); it != elems.rend(); ++it)
+                        acc = cons(*it, acc);
+                    return acc;
+                }
+                case 'V': {
+                    const auto n = static_cast<std::size_t>(get_u64());
+                    std::vector<EvalValue> elems;
+                    for (std::size_t i = 0; i < n && pos < in.size(); ++i)
+                        elems.push_back(self(self));
+                    EvalValue acc = make_void(); // '() is void-terminated (see _agent:list)
+                    for (auto it = elems.rbegin(); it != elems.rend(); ++it)
+                        acc = cons(*it, acc);
+                    return l2v ? (*l2v)({acc}) : acc;
+                }
+                case 'H': {
+                    const auto n = static_cast<std::size_t>(get_u64());
+                    EvalValue h = mkhash ? (*mkhash)({}) : make_void();
+                    for (std::size_t i = 0; i < n && pos < in.size(); ++i) {
+                        EvalValue k = self(self);
+                        EvalValue v = self(self);
+                        if (hset)
+                            (*hset)({h, k, v});
+                    }
+                    return h;
+                }
+                default:
+                    return make_void();
             }
         };
         return dec(dec);
@@ -2602,30 +2603,31 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // (channel:try-recv channel-id) — Non-blocking receive
     // Returns message string if available, or empty string if no message.
-    add("channel:try-recv", [&ev, channel_recv_value_4763](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]))
-            return make_string(0);
-        auto ch_id = static_cast<std::size_t>(as_int(a[0]));
-        std::shared_ptr<Evaluator::Channel> ch_ptr;
-        {
-            std::lock_guard lk(ev.channels_mtx_);
-            if (ch_id >= ev.channels_.size() || !ev.channels_[ch_id])
+    add("channel:try-recv",
+        [&ev, channel_recv_value_4763](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_int(a[0]))
                 return make_string(0);
-            ch_ptr = ev.channels_[ch_id];
-        }
-        auto& ch = *ch_ptr;
-        std::unique_lock ul(ch.mtx);
-        if (ch.queue.empty())
-            return make_string(0);
-        auto msg = std::move(ch.queue.front());
-        ch.queue.pop_front();
-        ul.unlock();
-        ch.cv.notify_all(); // wake blocked senders (full buffer / next rendezvous)
-        // Issue #4700: wake a parked fiber sender — the buffer slot is free.
-        channel_wake_waiters(&ch, /*sender=*/true);
-        // Issue #4744: an immediate payload is returned as itself.
-        return channel_recv_value_4763(std::move(msg));
-    });
+            auto ch_id = static_cast<std::size_t>(as_int(a[0]));
+            std::shared_ptr<Evaluator::Channel> ch_ptr;
+            {
+                std::lock_guard lk(ev.channels_mtx_);
+                if (ch_id >= ev.channels_.size() || !ev.channels_[ch_id])
+                    return make_string(0);
+                ch_ptr = ev.channels_[ch_id];
+            }
+            auto& ch = *ch_ptr;
+            std::unique_lock ul(ch.mtx);
+            if (ch.queue.empty())
+                return make_string(0);
+            auto msg = std::move(ch.queue.front());
+            ch.queue.pop_front();
+            ul.unlock();
+            ch.cv.notify_all(); // wake blocked senders (full buffer / next rendezvous)
+            // Issue #4700: wake a parked fiber sender — the buffer slot is free.
+            channel_wake_waiters(&ch, /*sender=*/true);
+            // Issue #4744: an immediate payload is returned as itself.
+            return channel_recv_value_4763(std::move(msg));
+        });
 
     // (channel:close channel-id) — Close a channel
     // Wakes all waiters; subsequent recv returns empty string.
