@@ -5224,6 +5224,13 @@ static constexpr HygieneExempt3576 kMutateHygieneExempt3576[] = {
      "GUARD_EXEMPT: metadata-only agent identity stamp (#2986)"},
     {"mutate:check-stable-ref", "read-only stable-ref probe; no AST write",
      "GUARD_EXEMPT: read-only stable-ref probe"},
+    // Issue #4742: mutate:check is no longer a structural rewrite; it is the
+    // dry-run parse/typecheck gate (name define-source) that reads the
+    // workspace and writes nothing, so the enumerative "records a hygiene
+    // violation" probe does not apply. The product's own hygiene inventory
+    // records the same Exempt policy with a reviewed reason; AC3 pins it.
+    {"mutate:check", "dry-run parse/typecheck gate; reads the workspace, writes nothing (#4742)",
+     "GUARD_EXEMPT: (#4742) a dry-run gate is read-only"},
     {"mutate:set-stale-ref-policy", "policy setter; no AST write",
      "GUARD_EXEMPT: policy setter — no AST write"},
     {"mutate:set-pattern-index-policy", "policy setter; no AST write",
@@ -5451,7 +5458,13 @@ static void ac3576_3_allowlist_reason_source_cite() {
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
     const auto qtail = read_file("src/compiler/evaluator_primitives_query_tail.cpp");
     const auto compile = read_file("src/compiler/evaluator_primitives_compile.cpp");
+    // Issue #4742: mutate:check is registered in the eval primitive TU (the
+    // dry-run gate lives with typecheck-status), so the cite scan has to read
+    // the file the prim is actually registered in — otherwise the only way to
+    // satisfy AC3 would be to cite a file the prim is not in.
+    const auto eval = read_file("src/compiler/evaluator_primitives_eval.cpp");
     CHECK(!mut.empty(), "3576 AC3: mutate.cpp readable");
+    CHECK(!eval.empty(), "3576 AC3: evaluator_primitives_eval.cpp readable");
     for (const auto& e : kMutateHygieneExempt3576) {
         CHECK(e.reason != nullptr && e.reason[0] != '\0',
               std::string("3576 AC3: reason for ") + e.name);
@@ -5459,11 +5472,32 @@ static void ac3576_3_allowlist_reason_source_cite() {
               std::string("3576 AC3: source-cite for ") + e.name);
         const bool cited = mut.find(e.source_cite) != std::string::npos ||
                            qtail.find(e.source_cite) != std::string::npos ||
-                           compile.find(e.source_cite) != std::string::npos;
+                           compile.find(e.source_cite) != std::string::npos ||
+                           eval.find(e.source_cite) != std::string::npos;
         CHECK(cited, std::string("3576 AC3: ") + e.name + " cite in registration source");
         CHECK(mut.find(e.name) != std::string::npos || qtail.find(e.name) != std::string::npos ||
-                  compile.find(e.name) != std::string::npos,
+                  compile.find(e.name) != std::string::npos ||
+                  eval.find(e.name) != std::string::npos,
               std::string("3576 AC3: ") + e.name + " registered in source");
+    }
+    // Issue #4742: mutate:check moved from a structural rewrite to the
+    // read-only dry-run gate, so it is exempt from the enumerative probe. The
+    // exemption is legitimate because the REGISTRATION POINT records it: pin
+    // the product inventory row (policy + reviewed reason), not just this
+    // file's table, so "add the name to the exempt list" cannot become a way
+    // to silence AC2 for a prim the product still declares structural.
+    {
+        const auto pos = mut.find("\"mutate:check\", MutateHygienePolicy::Exempt");
+        CHECK(pos != std::string::npos,
+              "3576 AC3: mutate:check is an Exempt product inventory row");
+        if (pos != std::string::npos) {
+            const auto row = mut.substr(pos, 240);
+            const auto ex = row.find("Exempt,");
+            const auto q1 = ex == std::string::npos ? std::string::npos : row.find('"', ex);
+            const auto q2 = q1 == std::string::npos ? std::string::npos : row.find('"', q1 + 1);
+            CHECK(q1 != std::string::npos && q2 != std::string::npos && q2 > q1 + 1,
+                  "3576 AC3: mutate:check product row records a reason");
+        }
     }
 }
 

@@ -469,6 +469,18 @@ bool Evaluator::restore_panic_checkpoint() {
         // frames and bumps envframe_post_rollback_invalidations_.
         (void)truncate_env_frames_to_checkpoint();
         // Clear checkpoint after successful restore
+        // Issue #4717: has_panic_checkpoint() answers from the liveness atomic
+        // (panic_checkpoint_live_), not from the source string. This path
+        // clears the fields inline (it keeps #1667's release-gc-defer-last
+        // order instead of calling clear_panic_checkpoint()) and never
+        // published the clear, so after a successful restore
+        // has_panic_checkpoint() stayed TRUE forever: a steal/GC/compact probe
+        // believed a checkpoint was still armed, save_panic_checkpoint() could
+        // not observe the empty→live transition for note_panic_checkpoint_live(),
+        // and the process-wide GC-defer depth the clear released disagreed with
+        // the published liveness. Publish the clear BEFORE the source is
+        // dropped, the same publication order clear_panic_checkpoint() uses.
+        panic_checkpoint_live_.store(false, std::memory_order_release);
         // Issue #3850: pair note_panic_checkpoint_live from save (restore
         // clears fields without clear_panic_checkpoint()).
         if (!panic_safe_source_.empty())

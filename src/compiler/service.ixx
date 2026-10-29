@@ -159,31 +159,70 @@ struct EvalMutexWaitTls {
     std::recursive_mutex* mtx = nullptr;
     // Recursive locks this thread holds through the published scope.
     int depth = 0;
+    // Issue #4717 follow-up: interpreter execution mutexes (IRDefineEnvBinding::exec_mtx,
+    // taken by run_pinned_ir_closure_) this thread holds. Dispatch pins the
+    // binding, drops the cache gate and then takes exec_mtx for the run, so
+    // the order is M0 body lock -> M1 eval mutex -> M2 exec mutex and a
+    // blocking wait must release them in the exact reverse order. Without M2
+    // a body spawned from inside the interpreter (orch:parallel) deadlocks:
+    // the joiner parks in IRInterpreter::call_closure holding exec_mtx while
+    // the spawned body needs that same mutex to dispatch its own define.
+    struct ExecHold {
+        std::recursive_mutex* m = nullptr;
+        int depth = 0;
+    };
+    std::vector<ExecHold> exec_holds;
+    // True between the release hook and its reacquire. A wait nested inside a
+    // released region must NOT unlock the same recursive mutex twice (that is
+    // UB), so the inner release is a no-op until the outer reacquire runs.
+    bool exec_released = false;
 };
 static thread_local EvalMutexWaitTls t_eval_mutex_wait_tls;
 
 static void* eval_mutex_wait_release_impl() {
     EvalMutexWaitTls& t = t_eval_mutex_wait_tls;
-    if (t.mtx == nullptr || t.depth <= 0)
-        return nullptr; // this thread holds no eval mutex — nothing to drop
-    const int n = t.depth;
+    if (t.exec_released)
+        return nullptr; // an enclosing wait already dropped them
+    const bool has_eval = t.mtx != nullptr && t.depth > 0;
+    if (!has_eval && t.exec_holds.empty())
+        return nullptr; // this thread holds nothing — nothing to drop
+    // Reverse acquisition order: exec mutexes (M2) topmost first, THEN the
+    // eval mutex (M1). M0 is released by the wait's body-lock guard after
+    // this hook returns.
+    for (auto it = t.exec_holds.rbegin(); it != t.exec_holds.rend(); ++it) {
+        for (int i = 0; i < it->depth; ++i)
+            it->m->unlock();
+    }
+    const int n = has_eval ? t.depth : 0;
     // Full-depth unwind: a re-entrant eval (Path B) holds the recursive
     // mutex more than once, and a partial unlock would leave it owned by
     // this (parked) thread — the inversion would just rotate.
     for (int i = 0; i < n; ++i)
         t.mtx->unlock();
     t.depth = 0;
-    return reinterpret_cast<void*>(static_cast<std::intptr_t>(n));
+    t.exec_released = true;
+    // Non-zero whenever anything was dropped (n can be 0 with only M2 held).
+    return reinterpret_cast<void*>(static_cast<std::intptr_t>(n) + 1);
 }
 
 static void eval_mutex_wait_reacquire_impl(void* token) {
     EvalMutexWaitTls& t = t_eval_mutex_wait_tls;
-    const int n = static_cast<int>(reinterpret_cast<std::intptr_t>(token));
-    if (t.mtx == nullptr || n <= 0)
+    const int raw = static_cast<int>(reinterpret_cast<std::intptr_t>(token)) - 1;
+    if (raw < 0)
         return;
-    for (int i = 0; i < n; ++i)
-        t.mtx->lock();
-    t.depth = n;
+    const int n = raw;
+    t.exec_released = false;
+    // Acquisition order: M1 first (the M0 body lock is re-taken by the wait
+    // guard before this hook), then the exec mutexes (M2) bottom-to-top.
+    if (t.mtx != nullptr && n > 0) {
+        for (int i = 0; i < n; ++i)
+            t.mtx->lock();
+        t.depth = n;
+    }
+    for (auto& h : t.exec_holds) {
+        for (int i = 0; i < h.depth; ++i)
+            h.m->lock();
+    }
 }
 
 // Publish the eval mutex this scope holds in the TLS slot the wait hooks
@@ -206,6 +245,24 @@ struct EvalMutexWaitPublishScope {
     ~EvalMutexWaitPublishScope() {
         t_eval_mutex_wait_tls.mtx = prev_mtx;
         t_eval_mutex_wait_tls.depth = prev_depth;
+    }
+};
+
+// Issue #4717 follow-up: publish an interpreter execution mutex (M2) for the duration of
+// the run so a blocking wait inside the body drops it too (see
+// EvalMutexWaitTls::exec_holds for the order).
+struct ExecMutexWaitPublishScope {
+    std::recursive_mutex& mtx;
+    ExecMutexWaitPublishScope(const ExecMutexWaitPublishScope&) = delete;
+    ExecMutexWaitPublishScope& operator=(const ExecMutexWaitPublishScope&) = delete;
+    explicit ExecMutexWaitPublishScope(std::recursive_mutex& m)
+        : mtx(m) {
+        t_eval_mutex_wait_tls.exec_holds.push_back({&m, 1});
+    }
+    ~ExecMutexWaitPublishScope() {
+        auto& holds = t_eval_mutex_wait_tls.exec_holds;
+        if (!holds.empty())
+            holds.pop_back();
     }
 };
 
@@ -6516,6 +6573,18 @@ public:
     // If entry exists but is dirty, the caller should re-lower and call
     // store_define_v2 to update the entry.
     int lookup_define_v2(const std::string& name, std::size_t source_hash) {
+        // Issue #3069 / #3258 / #4717: the abort fence must be observable
+        // WHILE force_ir_cache_dirty_after_abort walks the cache. The walker
+        // holds ir_cache_gate_ for the whole walk, so a read path that takes
+        // the same gate first never sees the mid-walk window (it would answer
+        // from a half-forced entry) and deadlocks against the #3159 AC4
+        // mid-walk hold (walker waits for the hold, the probe waits for the
+        // gate). Answer the in-progress face lock-free, before the gate:
+        // fail-closed needs-relower, no entry read.
+        if (abort_force_in_progress_.load(std::memory_order_acquire) != 0) {
+            metrics_.should_relower_total.fetch_add(1, std::memory_order_relaxed);
+            return 1;
+        }
         IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         auto it = ir_cache_v2_.find(name);
         if (it == ir_cache_v2_.end())
@@ -16970,6 +17039,11 @@ private:
             return PinnedRun4717::Failed;
         auto* interp = b->interpreter.get();
         std::lock_guard<std::recursive_mutex> exec(b->exec_mtx);
+        // Issue #4717 follow-up: a body run can block on another fiber (fiber:join of a
+        // sibling this same body spawned - orch:parallel / orch:scope). The
+        // wait hooks drop exec_mtx across that wait; declared AFTER `exec`, so
+        // this scope is destroyed before the lock_guard re-locks.
+        ExecMutexWaitPublishScope exec_wait_publish(b->exec_mtx);
         const auto ucid = static_cast<std::uint64_t>(cid);
         if (mode == 1) {
             // Issue #4450 / #4626: a bind-time execute() mint must NOT
