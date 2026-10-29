@@ -12375,7 +12375,16 @@ public:
 
     bool bind_value_define_via_ir(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                   aura::ast::NodeId expanded_root, const std::string& name_str) {
-        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
+        // Issue #4747: the gate is a RUN-scoped guard here, not a whole-
+        // function one. It was held across interp.execute() below - the #4717
+        // rule "NEVER held across an IRInterpreter body run" - so this path
+        // deadlocked against a concurrent fiber body: the body held its
+        // define's exec_mtx and wanted the gate, this thread held the gate and
+        // wanted that same exec_mtx (gdb: main in bind_value_define_via_ir ->
+        // dispatch -> recursive_mutex::lock with the body as owner, the body
+        // parked in dispatch on ir_cache_gate_). Lower the module, then drop
+        // the gate for the run and re-take it for the binding writes.
+        std::unique_lock<std::recursive_mutex> ir_gate(ir_cache_gate_);
         auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
         auto cache_bridge_ptr = ir_cache_bridge_.empty() ? nullptr : &ir_cache_bridge_;
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
@@ -12386,7 +12395,14 @@ public:
         aura::compiler::IRContext ctx(evaluator_.primitives(), &type_registry_, &metrics_,
                                       &evaluator_);
         aura::compiler::IRInterpreter interp(ir_mod, ctx);
+        // Issue #4747: never run a body under the cache gate (see the note at
+        // the gate declaration). A nested dispatch inside this run takes the
+        // gate itself, and a sibling body may be inside exec_mtx waiting for
+        // it - holding both is the inversion.
+        if (ir_gate.owns_lock())
+            ir_gate.unlock();
         auto result = interp.execute();
+        ir_gate.lock();
         if (!result)
             return false;
 
@@ -17111,8 +17127,16 @@ private:
     //   * NEVER taken while holding IRDefineEnvBinding::exec_mtx (gate is
     //     the outer of the two). Dispatch takes the gate, pins the binding,
     //     DROPS the gate, then takes exec_mtx for the run; the registry
-    //     walks hold the gate and take exec_mtx per binding. Nothing takes
-    //     the gate with exec_mtx already held, so the pair cannot invert.
+    //     walks hold the gate and take exec_mtx per binding.
+    //     Issue #4747: a RUN legitimately re-enters dispatch (the body calls
+    //     a closure), so "nothing" was wrong — the run's nested dispatch
+    //     does take the gate with exec_mtx held, and it must never WAIT for
+    //     it while another thread waits for that exec_mtx. The invariant that
+    //     makes that safe is the "NEVER held across a body run" rule above:
+    //     anyone waiting on an exec_mtx has already dropped the gate, so the
+    //     nested dispatch only ever finds the gate free or held by a
+    //     same-thread recursion. bind_value_define_via_ir was the one site
+    //     still holding the gate across a run (fixed in #4747).
     //   * recursive: relower_* / store_define_v2 / bind_* nest arbitrarily
     //     deep inside one another.
     mutable std::recursive_mutex ir_cache_gate_;

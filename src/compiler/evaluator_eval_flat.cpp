@@ -1384,6 +1384,27 @@ extern "C" void aura_tw_safepoint() noexcept {
     tw_stw_safepoint();
 }
 
+// Issue #4747: how many OTHER threads are inside the tree walker without a
+// certified fiber segment. This thread's own plain share is excluded, so a
+// single-threaded program reads 0.
+//
+// A plain walker's roots live in its thread's default segment, which the
+// registry deliberately does not cross-mark: it is not fiber-owned, so there
+// is no park hook that can certify it quiescent. BOTH destructive sweeps
+// must therefore stand down while one runs. The tree-walker sweep has done
+// so since #2738 (this is that same count, extracted). The IR-side sweep
+// (IRInterpreter::maybe_reclaim_unreachable) did not: it collected only THIS
+// thread's roots plus registered fiber segments, so a tree-walking FIBER BODY
+// on the CLI thread backend — thread backend bodies attach no segment, they
+// walk in their worker thread's plain segment — had its live env frames and
+// pair chains freed underneath it. The 4-guard probe then read a top-level
+// define back as Void ("expected Int, got Void") or spun forever on spliced
+// cells. Same rule, one count, both sweeps.
+extern "C" int aura_tw_plain_walkers_other() noexcept {
+    const int self_plain = (t_tw_cur == nullptr && t_tw_default.walking) ? 1 : 0;
+    return g_tw_plain_walkers.load(std::memory_order_acquire) - self_plain;
+}
+
 // Issue #4713: observability — reclaims that ran with registered fiber
 // segments, and foreign segments marked by one (proves the cross-thread mark
 // path actually executes; used by the issue's AC probe).
@@ -1410,8 +1431,9 @@ void Evaluator::maybe_reclaim_tw_unreachable() {
     // collector cannot certify them. Fiber segments certify through the
     // process registry (parked_epoch / kTwQuiescent), so reclaim now runs
     // with more than one RUNNING fiber thread.
-    const int self_plain = (t_tw_cur == nullptr && t_tw_default.walking) ? 1 : 0;
-    if (g_tw_plain_walkers.load(std::memory_order_acquire) > self_plain)
+    // Issue #4747: same count as the IR-side sweep now consults — see
+    // aura_tw_plain_walkers_other.
+    if (aura_tw_plain_walkers_other() > 0)
         return;
     TwStwHandle stw;
     if (!tw_stw_begin(stw, kTwStwWaitBudget)) {
