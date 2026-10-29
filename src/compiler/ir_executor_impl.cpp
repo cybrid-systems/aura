@@ -2450,7 +2450,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             break;
                         }
                     }
-                    auto id = next_closure_id_++;
+                    auto id = mint_closure_id_4764(); // #4764 shared cursor
                     IRClosure ircl;
                     ircl.func_id = ops[1];
                     ircl.env = std::vector<EvalValue>(ops[2], make_void());

@@ -241,6 +241,27 @@ public:
             next_closure_id_ = id;
     }
     [[nodiscard]] std::uint64_t next_closure_id() const noexcept { return next_closure_id_; }
+    // Issue #4764: mint from a shared cursor. A persistent define's
+    // interpreter used to publish its advanced cursor only after the call
+    // returned, so a callee define dispatched DURING the call (k5 passes an
+    // inline lambda to cnt) re-minted the same id for its named-let loop and
+    // the callback call ran the loop. With a shared cursor every MakeClosure
+    // claims its id from the service-wide source immediately.
+    void set_shared_closure_cursor(std::atomic<std::uint64_t>* c) noexcept {
+        shared_closure_cursor_ = c;
+    }
+    [[nodiscard]] std::uint64_t mint_closure_id_4764() noexcept {
+        if (shared_closure_cursor_ == nullptr)
+            return next_closure_id_++;
+        auto cur = shared_closure_cursor_->load(std::memory_order_acquire);
+        std::uint64_t id = 0;
+        do {
+            id = cur > next_closure_id_ ? cur : next_closure_id_;
+        } while (!shared_closure_cursor_->compare_exchange_weak(
+            cur, id + 1, std::memory_order_acq_rel, std::memory_order_acquire));
+        next_closure_id_ = id + 1;
+        return id;
+    }
 
     // ── Runtime reflection API ─────────────────────────────────
     // Inspect a single closure by id
@@ -363,6 +384,7 @@ private:
 
     // Per-instance closure storage
     std::uint64_t next_closure_id_ = aura::compiler::types::make_ir_closure_id(0); // #907/#4502
+    std::atomic<std::uint64_t>* shared_closure_cursor_ = nullptr; // #4764
     std::unordered_map<std::uint64_t, IRClosure> runtime_closures_;
     // Issue #4450: subset of runtime_closures_ minted while executing a
     // call (see owns_runtime_mint). in_runtime_call_ is RAII-set by

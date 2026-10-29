@@ -1,0 +1,47 @@
+;; workspace_hof_named_let_callback_4764.aura — Issue #4764: a workspace
+;; define passing an inline lambda to another workspace define that calls it
+;; inside a named let ran the loop closure instead (`car expects 2
+;; arguments`). The caller's interpreter minted the lambda's closure id but
+;; published its id cursor only after returning, so the callee's interpreter
+;; re-minted the same id for its `loop`. Pass = exit 0 + OK line.
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+
+(set-code "(define cnt (lambda (f xs) (let loop ((xs xs) (n 0)) (if (null? xs) n (loop (cdr xs) (if (f (car xs)) (+ n 1) n))))))
+(define cnt1 (lambda (f xs) (let loop ((ys xs)) (if (null? ys) 0 (if (f (car ys)) (+ 1 (loop (cdr ys))) (loop (cdr ys)))))))
+(define cnt3 (lambda (f xs) (let loop ((xs xs) (n 0) (z 0)) (if (null? xs) n (loop (cdr xs) (if (f (car xs)) (+ n 1) n) z)))))
+(define cntd (lambda (f xs) (define (lp xs n) (if (null? xs) n (lp (cdr xs) (if (f (car xs)) (+ n 1) n)))) (lp xs 0)))
+(define cntg (lambda (g xs) (let loop ((xs xs) (n 0)) (if (null? xs) n (loop (cdr xs) (+ n (g (car xs))))))))
+(define k5 (lambda (x) (cnt (lambda (a) (> a 1)) (list 1 2 3))))
+(define k6 (lambda (x) (cnt1 (lambda (a) (> a 1)) (list 1 2 3))))
+(define k7 (lambda (x) (cnt3 (lambda (a) (> a 1)) (list 1 2 3))))
+(define k8 (lambda (x) (cntd (lambda (a) (> a 1)) (list 1 2 3))))
+(define k9 (lambda (x) (cntg (lambda (a) a) (list 1 2 3))))
+(define k5b (lambda (x) (let ((g (lambda (a) (> a x)))) (cnt g (list 1 2 3)))))
+(define my-filter (lambda (p xs) (let loop ((xs xs) (acc '())) (if (null? xs) (reverse acc) (loop (cdr xs) (if (p (car xs)) (cons (car xs) acc) acc))))))
+(define my-map (lambda (f xs) (let loop ((xs xs) (acc '())) (if (null? xs) (reverse acc) (loop (cdr xs) (cons (f (car xs)) acc))))))
+(define two (lambda (xs) (my-map (lambda (v) (* v 10)) (my-filter (lambda (v) (odd? v)) xs))))
+(define pos (lambda (a) (> a 1)))
+(define k10 (lambda (x) (cnt pos (list 1 2 3))))")
+(eval-current)
+
+(define (res th) (try (th) (catch (e) (list 'ERR e))))
+(assert! (equal? (res (lambda () (k5 0))) 2) "k5: 2-ary named let calls the argument")
+(assert! (equal? (res (lambda () (k6 0))) 2) "k6: 1-ary named let")
+(assert! (equal? (res (lambda () (k7 0))) 2) "k7: 3-ary named let")
+(assert! (equal? (res (lambda () (k8 0))) 2) "k8: inner define loop")
+(assert! (equal? (res (lambda () (k9 0))) 6) "k9: callback value summed")
+(assert! (equal? (res (lambda () (k5b 1))) 2) "k5b: capturing let-bound lambda")
+(assert! (equal? (res (lambda () (two (list 1 2 3 4 5)))) '(10 30 50)) "two callbacks, nested HOFs")
+(assert! (equal? (res (lambda () (k10 0))) 2) "k10: named workspace lambda (control)")
+(assert! (equal? (res (lambda () (cnt (lambda (a) (> a 1)) (list 1 2 3)))) 2) "file-level caller (control)")
+;; repeat calls: ids keep moving forward, no stale reuse
+(assert! (equal? (map (lambda (i) (res (lambda () (k5 i)))) (iota 5)) '(2 2 2 2 2)) "k5 x5")
+
+(if (= *fails* 0)
+    (begin (display "OK-4764 workspace HOF named-let callback") (newline))
+    (begin (display "FAIL-4764 fails=") (display *fails*) (newline) (error "4764 suite failed")))
