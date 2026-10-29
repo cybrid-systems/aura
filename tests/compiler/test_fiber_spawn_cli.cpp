@@ -48,6 +48,8 @@
 //         (the rest spine mints under alloc_storage_lock_).
 //   AC23: #4734 — 200 waves of 4 parallel eval bodies complete (bounded
 //         subprocess; the shard -> bindings inversion is gone).
+//   AC24: #4745 — a pure closure called through an inner lambda from 8 parallel
+//         fiber bodies returns only #t/#f, never a leaked primitive value.
 
 #include "test_harness.hpp"
 #include "compiler/fiber_cow_overlay.hh" // Issue #4715
@@ -1104,6 +1106,54 @@ static void ac23_parallel_eval_no_deadlock() {
     ::unlink(prog.c_str());
 }
 
+
+// ── AC24: #4745 — a pure closure called through an inner lambda in parallel
+// fiber bodies never returns a non-boolean ──────────────────────────────
+// The filed probe (probes/closure-unknown-in-fibers.aura) sees the value
+// <unknown> about once per 30k calls; the value is the first-class `and`
+// primitive, i.e. a Variable node was evaluated in the value position of an
+// and/or clause. Mechanism: the #4599 per-node memo (and/or clause ids,
+// prim/cell decisions) is PER BODY but flat-scoped, and it was invalidated
+// from the SHARED "last flat/pool" atomics. A body that alternates flats
+// (calling a closure whose body lives in another flat, then continuing in its
+// own) usually finds the shared atomic ALREADY holding its new flat because a
+// sibling stored it, so the clear was skipped and a stale entry (same node
+// id, other flat) answered a later visit with the other flat's clause list.
+// The memo is now cleared on THIS body's flat/pool change.
+static void ac24_closure_in_fibers_boolean_4745() {
+    std::println("\n--- #4745 AC24: inner-lambda closure calls stay boolean in fibers ---");
+    CompilerService cs;
+    const char* src = R"AURA(
+(define pol4745 (eval "(lambda (e x) (eq? x 1))"))
+(define (mk4745 n)
+  (let loop ((i 0) (acc (list)))
+    (if (= i n) acc
+        (loop (+ i 1) (cons (hash "id" i "exposure" (remainder i 3)) acc)))))
+(define rows4745 (mk4745 60))
+(define (work4745 passes)
+  (let loop ((p 0) (bad 0))
+    (if (= p passes) bad
+        (let rows ((rs rows4745) (b bad))
+          (if (null? rs) (loop (+ p 1) b)
+              (let* ((e (car rs))
+                     (r ((lambda (e) (pol4745 e (hash-ref e "exposure"))) e)))
+                (rows (cdr rs) (if (boolean? r) b (+ b 1)))))))))
+(define serial4745 (work4745 400))
+(define par4745 (map fiber:join (map (lambda (k) (fiber:spawn (lambda () (work4745 400))))
+                                   (list 1 2 3 4 5 6 7 8))))
+(and (= serial4745 0) (equal? par4745 (list 0 0 0 0 0 0 0 0)))
+)AURA";
+    bool all_ok = true;
+    for (int round = 0; round < 3; ++round) {
+        auto r = cs.eval(src);
+        const bool ok = r && is_bool(*r) && as_bool(*r);
+        CHECK(ok, "AC24: serial and all 8 fibers see only #t/#f from the closure");
+        all_ok = all_ok && ok;
+    }
+    if (!all_ok)
+        std::println("AC24: a fiber body read another flat's clause list (stale per-node memo)");
+}
+
 } // namespace
 
 int run_test_fiber_spawn_cli() {
@@ -1132,7 +1182,9 @@ int run_test_fiber_spawn_cli() {
     ac21_cow_overlay_rebind_eval_current();
     ac22_dotted_rest_per_fiber();
     ac23_parallel_eval_no_deadlock();
-    std::println("\n=== #2656/#2685/#2686/#3394/#4131/#4720/#4717/#4715/#4733/#4734: {} "
+    // Issue #4745 — per-body #4599 memo invalidation (flat/pool scoped).
+    ac24_closure_in_fibers_boolean_4745();
+    std::println("\n=== #2656/#2685/#2686/#3394/#4131/#4720/#4717/#4715/#4733/#4734/#4745: {} "
                  "passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed ? 1 : 0;

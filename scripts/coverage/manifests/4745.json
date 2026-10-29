@@ -1,0 +1,23 @@
+{
+  "issue": 4745,
+  "title": "per-body #4599 node memo is invalidated on the BODY's flat/pool change (parallel fibers)",
+  "checks": [
+    {
+      "ac": "AC24_src",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "Issue #4745",
+        "if (float_intern_flat_ctx() != f)",
+        "if (sym_intern_pool_ctx() != p || intern_pool_gen_ctx() != gen)"
+      ]
+    },
+    {
+      "ac": "AC24_test",
+      "path": "tests/compiler/test_fiber_spawn_cli.cpp",
+      "contains": [
+        "#4745 AC24",
+        "work4745"
+      ]
+    }
+  ]
+}
