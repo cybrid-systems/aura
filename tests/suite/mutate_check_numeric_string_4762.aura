@@ -1,0 +1,38 @@
+;; mutate_check_numeric_string_4762.aura — Issue #4762: a string literal
+;; operand of a numeric primitive is a type error in the mutate:check dry-run
+;; gate (the runtime always raises "expected Int, got String"). Pass = exit 0
+;; + OK line.
+
+(define *fails* 0)
+(define (type-error? r) (and (pair? r) (equal? (car r) "type-error")))
+(define (check! ok msg r)
+  (if ok
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1))
+             (display "  FAIL: ") (display msg) (display " got ") (write r) (newline))))
+
+(set-code "(define (f x) (+ x 1))")
+(eval-current)
+
+(define (rejects src msg)
+  (let ((r (mutate:check "f" src))) (check! (type-error? r) msg r)))
+(define (accepts src msg)
+  (let ((r (mutate:check "f" src))) (check! (equal? r #t) msg r)))
+
+(rejects "(define (f x) (+ x \"a\"))" "(+ x \"a\") is a type error")
+(rejects "(define (f x) (and (> x \"0.17\") #t))" "(> x \"0.17\") is a type error")
+(rejects "(define (f x) (* \"2\" x))" "string literal as first operand")
+(rejects "(define (f x) (- x 1 \"3\"))" "string literal past the second operand")
+(rejects "(define (f x) (if (<= x \"5\") 1 2))" "<= with a string literal")
+(rejects "(define (f x) (= x \"0\"))" "= with a string literal")
+;; controls: still accepted
+(accepts "(define (f x) (+ x 1))" "(+ x 1)")
+(accepts "(define (f x) (and (> x 0.17) #t))" "(> x 0.17)")
+(accepts "(define (f x) (string-append \"a\" (number->string x)))" "string ops untouched")
+(accepts "(define (f x) (equal? x \"0\"))" "equal? with a string")
+;; the existing reports keep working
+(rejects "(define (f x) (string-append x 1))" "(string-append x 1)")
+
+(if (= *fails* 0)
+    (begin (display "OK-4762 numeric primitive with a string literal is a type error") (newline))
+    (begin (display "FAIL-4762 fails=") (display *fails*) (newline) (error "4762 suite failed")))
