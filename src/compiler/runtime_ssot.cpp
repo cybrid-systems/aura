@@ -143,6 +143,40 @@ extern "C" void* aura_pair_seg_dir_base() {
 std::vector<PairSlot*> g_owned_pair_slots_;
 std::mutex g_owned_pair_slots_mtx;
 
+// Issue #4747 (application face): how many BODIES are inside an IR drain right
+// now, process-wide.
+//
+// An IR drain keeps its live values in IRInterpreter::call_stack_ / cell_heap_ /
+// linear_heap_ / the const caches, and publishes them only through
+// ir_inflight::g_providers, which is THREAD-LOCAL. A file-heap reclaim started
+// from a sibling fiber's interpreter therefore cannot mark another body's IR
+// locals, args or cells, and frees them: the sibling reads Void / () back (the
+// #4747 "expected Int, got Void" face, now silent because the app's guard rail
+// just sees an empty guard list). The existing stand-down counts only PLAIN
+// tree-walkers (#2738 / e5ba83aad); a CLI/serve fiber body is a fiber-owned
+// segment, so the count is 0 for it and the sweep proceeds.
+//
+// A collector that cannot certify a live body must stand down (the #2738 rule);
+// this counter is the certification input for the IR-body class, together with
+// the drain depth so the sweeping body never counts itself.
+// The count is owned by the IRInterpreter that is draining (one instance per
+// define), NOT by the thread: a body can yield inside IR and resume on another
+// worker (#4716), so a thread-local depth would leak a body that migrated. The
+// sweeping interpreter subtracts its own instance.
+std::atomic<int> g_ir_active_drains{0};
+
+extern "C" int aura_ir_active_drains_total() noexcept {
+    return g_ir_active_drains.load(std::memory_order_acquire);
+}
+
+extern "C" void aura_ir_drain_begin() noexcept {
+    g_ir_active_drains.fetch_add(1, std::memory_order_acq_rel);
+}
+
+extern "C" void aura_ir_drain_end() noexcept {
+    g_ir_active_drains.fetch_sub(1, std::memory_order_acq_rel);
+}
+
 // Issue #4057: owner-principal stamps parallel to g_pair_slots — same SSOT
 // placement so the evaluator partition TUs and the JIT SOs share one table
 // (a definition living only in aura_jit_runtime.cpp would repeat the

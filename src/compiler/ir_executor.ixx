@@ -470,6 +470,10 @@ private:
     [[nodiscard]] std::uint64_t alloc_cell();
     std::uint32_t allocs_since_reclaim_ = 0;
     bool reclaiming_ = false;
+    // Issue #4747: nesting depth of drain_call_stack on THIS interpreter. Body
+    // state, not thread state (a body can yield inside IR and resume elsewhere);
+    // the process-global aura_ir_active_drains count is driven from it.
+    std::atomic<int> drain_depth_{0};
     std::vector<std::uint64_t> cell_reuse_;
     std::vector<std::uint8_t> cell_on_freelist_;
 };

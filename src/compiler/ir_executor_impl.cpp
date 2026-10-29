@@ -54,6 +54,13 @@ extern "C" int aura_jit_poll_hold_budget_safepoint() noexcept;
 // — see the definition in evaluator_eval_flat.cpp. Weak no-op (0) in
 // light-link units that do not link the evaluator.
 extern "C" int aura_tw_plain_walkers_other() noexcept;
+// Issue #4747: bodies inside an IR drain on OTHER threads. Their live IR
+// locals/args/cells sit in an IRInterpreter frame set, published only through
+// the thread-local ir_inflight provider stack, so a sweep on this thread cannot
+// mark them. See the definition in runtime_ssot.cpp.
+extern "C" int aura_ir_active_drains_total() noexcept;
+extern "C" void aura_ir_drain_begin() noexcept;
+extern "C" void aura_ir_drain_end() noexcept;
 
 namespace aura::compiler {
 
@@ -503,6 +510,20 @@ IRInterpreter*& IRInterpreter::t_active() noexcept {
 }
 
 EvalResult IRInterpreter::drain_call_stack(std::size_t base) {
+    // Issue #4747: count THIS interpreter's drain process-wide for its duration,
+    // so a file-heap sweep started from a sibling fiber's interpreter stands down
+    // instead of freeing this body's live IR frames. The count belongs to the
+    // interpreter (not the thread): a body may yield inside IR and resume on
+    // another worker, and the pairing must not leak.
+    if (drain_depth_.fetch_add(1, std::memory_order_acq_rel) == 0)
+        aura_ir_drain_begin();
+    struct DrainCountGuard {
+        std::atomic<int>& depth;
+        ~DrainCountGuard() {
+            if (depth.fetch_sub(1, std::memory_order_acq_rel) == 1)
+                aura_ir_drain_end();
+        }
+    } drain_count_guard{drain_depth_};
     // Issue #4600 §3: publish this instance for the duration of the drain.
     // A JIT guard exit inside a native callee resumes the deopting frame;
     // that resume must run here, where the frame's cell / closure ids live.
@@ -3203,7 +3224,11 @@ void IRInterpreter::maybe_reclaim_unreachable() {
     // cells. Stand down exactly like the tree-walker sweep already does
     // (#2738 / #4713) and back off one trigger interval, so the skip is not
     // retried at the next instruction.
-    if (aura_tw_plain_walkers_other() > 0) {
+    // Issue #4747: subtract this interpreter — the sweeping body is itself a
+    // drain. What remains are bodies this sweep cannot mark.
+    const int foreign_drains =
+        aura_ir_active_drains_total() - (drain_depth_.load(std::memory_order_acquire) > 0 ? 1 : 0);
+    if (aura_tw_plain_walkers_other() > 0 || foreign_drains > 0) {
         allocs_since_reclaim_ = 0;
         ev->reset_file_heap_allocs_since_reclaim();
         return;

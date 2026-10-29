@@ -44,6 +44,10 @@ import aura.diag;
 import aura.parser.parser;
 import aura.compiler.soa_view;
 
+// Issue #4747: bodies inside an IR drain on other threads (see the definition
+// in runtime_ssot.cpp). Their IR frame set is published only through the
+// thread-local ir_inflight provider stack, which this thread cannot read.
+extern "C" int aura_ir_active_drains_total() noexcept;
 // Issue #4078: production expand deny must not eval the require import form.
 extern "C" int aura_hygiene_expand_deny_blocks_eval(void) noexcept;
 extern "C" const char* aura_macro_hygiene_last_limit_reason_string(void) noexcept;
@@ -1432,8 +1436,10 @@ void Evaluator::maybe_reclaim_tw_unreachable() {
     // process registry (parked_epoch / kTwQuiescent), so reclaim now runs
     // with more than one RUNNING fiber thread.
     // Issue #4747: same count as the IR-side sweep now consults — see
-    // aura_tw_plain_walkers_other.
-    if (aura_tw_plain_walkers_other() > 0)
+    // aura_tw_plain_walkers_other. A body running IR on another thread is the
+    // sibling hole: its live IR frames are thread-local roots this collector
+    // cannot mark, so it stands down for that body class too.
+    if (aura_tw_plain_walkers_other() > 0 || aura_ir_active_drains_total() > 0)
         return;
     TwStwHandle stw;
     if (!tw_stw_begin(stw, kTwStwWaitBudget)) {
