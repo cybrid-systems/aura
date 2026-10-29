@@ -2541,6 +2541,17 @@ bool Evaluator::check_workspace_isolation(std::uint64_t target_tenant, std::uint
     return ok;
 }
 
+bool Evaluator::tenant_stamps_observable() const noexcept {
+    // Issue #4747: exactly the readers' gate — inrange_slot_tenant_allows (the
+    // pair/vector cross-tenant face) and the string/hash gates all return before
+    // reading a stamp unless the effect sandbox is on the production face. If
+    // this is false the stamp arrays are write-only, so the mint path skips the
+    // write (see note_inrange_pair_mint).
+    const auto mode = effect_sandbox_mode();
+    return mode != 0 || ::aura::core::sandbox::is_strict() ||
+           ::aura::core::provenance::multi_tenant_env_active();
+}
+
 bool Evaluator::inrange_slot_tenant_allows(std::size_t idx, bool vector_heap,
                                            std::uint16_t required_effects,
                                            std::string_view op) noexcept {

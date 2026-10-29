@@ -9417,11 +9417,33 @@ public:
     // Issue #4298: record the executing tenant on a cons/list or vector mint.
     // Encoding is tenant+1; 0 stays "never stamped".
     void note_inrange_pair_mint(std::size_t idx) noexcept {
+        // Issue #4747 (application face): the stamp arrays are index-parallel to
+        // the shared pairs_ / vector_heap_ heaps and were grown + written from
+        // whatever body minted, with no lock. Two overlapping fiber bodies both
+        // saw size() <= idx and both reallocated the same std::vector; one body's
+        // resize freed the buffer the other was writing into (SIGSEGV in
+        // note_inrange_pair_mint+372 with si_addr outside every module, plus the
+        // silent heap-metadata corruption behind the wrong guard verdicts).
+        //
+        // Only inrange_slot_tenant_allows (and the string/hash cross-tenant
+        // gates) ever READ these arrays, and all of them return before the read
+        // unless the effect sandbox is on the production face (Soft/Off and
+        // single-tenant never look). With nothing able to observe a stamp there
+        // is nothing to record, so do not touch the array at all: that removes
+        // the wasted write per mint and, with it, the realloc race on every
+        // single-tenant / Soft / Off process. A slot minted before the face is
+        // armed stays "never stamped" (0), which the reader already treats as
+        // owner-unknown and fails closed for a non-kernel principal — the same
+        // verdict the tenant-0 stamp produced.
+        if (!tenant_stamps_observable())
+            return;
         if (pair_slot_tenants_.size() <= idx)
             pair_slot_tenants_.resize(idx + 1, 0);
         pair_slot_tenants_[idx] = capability_tenant_id_ + 1;
     }
     void note_inrange_vector_mint(std::size_t idx) noexcept {
+        if (!tenant_stamps_observable())
+            return;
         if (vector_slot_tenants_.size() <= idx)
             vector_slot_tenants_.resize(idx + 1, 0);
         vector_slot_tenants_[idx] = capability_tenant_id_ + 1;
@@ -9452,6 +9474,10 @@ public:
     // that returns a String) never reached the reclaim trigger, so
     // the string heap grew by one slot per minted string.
     void note_inrange_string_mint(std::size_t idx) noexcept {
+        if (!tenant_stamps_observable()) {
+            file_heap_allocs_since_reclaim_.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
         if (string_slot_tenants_.size() <= idx)
             string_slot_tenants_.resize(idx + 1, 0);
         string_slot_tenants_[idx] = capability_tenant_id_ + 1;
@@ -9656,6 +9682,10 @@ public:
     // Prod face only. true = caller may read or write the slot. false = mismatch
     // already audited; caller must leave the slot unchanged and not return it.
     // Soft/Off returns before either stamp array is touched.
+    // Issue #4747: can an isolation reader ever consult a tenant stamp in this
+    // process right now? False on the Soft / Off / single-tenant face, where the
+    // stamp arrays are write-only and the mint path must not touch them.
+    [[nodiscard]] bool tenant_stamps_observable() const noexcept;
     [[nodiscard]] bool inrange_slot_tenant_allows(std::size_t idx, bool vector_heap,
                                                   std::uint16_t required_effects,
                                                   std::string_view op) noexcept;
