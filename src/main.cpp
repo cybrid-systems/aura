@@ -2337,14 +2337,23 @@ int main(int argc, char* argv[]) {
                 cs.sync_soft_export_cells_for_ir();
             }
         }
+        // Issue #4750: --load runs the same one-pass eval as the file entry
+        // (aura program.aura). An error that escapes a top-level user call is
+        // one located diagnostic with a non-zero exit status here too - the
+        // old path printed the value formatter's <error> on stdout and exited
+        // 0, so every harness that spawns Aura read a failed run as success.
+        // #4465's file-mode gate is armed for the same root eval.
+        cs.set_require_failure_is_diagnostic(true);
         auto result = cs.eval(content);
         if (!result) {
-            std::println(std::cerr, "error: {}", result.error().format());
+            std::println(std::cerr, "error: {}", result.error().format_with_source(content));
             return 1;
         }
         if (!is_void(*result))
             std::println("{}", fmt_val(*result, cs));
-        return 0;
+        // Issue #4497: an error value consumed by display/write outside try
+        // already names itself on stderr and fails the run.
+        return aura_displayed_error_count() > 0 ? 1 : 0;
     }
 
     // ── --emit-binary: compile to standalone native binary ───────

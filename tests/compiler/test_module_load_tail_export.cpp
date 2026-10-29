@@ -226,6 +226,31 @@ struct Cli4460 {
     std::string err;
 };
 
+// Issue #4750: the frozen-source entry (--load) is the face the suite and
+// e2e harnesses spawn. It runs the same one-pass eval, so an error that
+// escapes a top-level user call must be one located diagnostic + rc 1 there
+// too - not the value formatter's <error> on stdout with rc 0.
+static Cli4460 run_load_4750(const std::string& bin, const std::string& src,
+                             const std::string& assignments) {
+    Cli4460 r;
+    const char* outp = "/tmp/aura-4750-out.txt";
+    const char* errp = "/tmp/aura-4750-err.txt";
+    std::string cmd = "timeout 15 env -u AURA_SANDBOX -u AURA_PIPELINE_STRICT -u AURA_PATH " +
+                      assignments + " '" + bin + "' --load '" + src + "' >'" + std::string(outp) +
+                      "' 2>'" + std::string(errp) + "'";
+    const int raw = std::system(cmd.c_str());
+    r.rc = (raw != -1 && WIFEXITED(raw)) ? WEXITSTATUS(raw) : raw;
+    {
+        std::ifstream in(outp);
+        r.out.assign(std::istreambuf_iterator<char>(in), {});
+    }
+    {
+        std::ifstream in(errp);
+        r.err.assign(std::istreambuf_iterator<char>(in), {});
+    }
+    return r;
+}
+
 static Cli4460 run_file_4460(const std::string& bin, const std::string& src,
                              const std::string& assignments) {
     Cli4460 r;
@@ -444,6 +469,32 @@ static void ac4465_escaped_primitive_continues() {
     auto bare_run = run_file_4460(bin, "/tmp/aura-4465-bare.aura", face);
     CHECK(bare_run.rc == 0, "4465: bare primitive still exits 0");
     CHECK(bare_run.out == "beforeafter", "4465: bare primitive still continues");
+
+    // Issue #4750: the --load face (frozen snapshot; what the suite/e2e
+    // harnesses spawn) must report the same escaped error as one located
+    // diagnostic with a non-zero exit status. Before the fix it printed the
+    // value formatter's <error> on stdout and exited 0 - every caller had to
+    // grep stdout for <error>.
+    {
+        std::ofstream f("/tmp/aura-4750-load.aura");
+        f << "(define (id x) x)\n";
+        f << "(display \"before\")\n";
+        f << "(id (vector-ref (vector 1 2 3) 5))\n";
+        f << "(display \"after\")\n";
+    }
+    auto load_run = run_load_4750(bin, "/tmp/aura-4750-load.aura", face);
+    if (load_run.rc != 1 || load_run.out.find("<error>") != std::string::npos ||
+        count_sub(load_run.err, "vector-ref: index 5 out of range for vector of length 3") != 1) {
+        std::println(std::cerr, "4750 --load rc {} out [{}] err [{}]", load_run.rc, load_run.out,
+                     load_run.err);
+    }
+    CHECK(load_run.rc == 1, "4750: --load exits 1 on the escaped error");
+    CHECK(load_run.out.find("before") != std::string::npos, "4750: --load ran the form before");
+    CHECK(load_run.out.find("<error>") == std::string::npos, "4750: --load has no <error>");
+    CHECK(count_sub(load_run.err, "vector-ref: index 5 out of range for vector of length 3") == 1,
+          "4750: --load names the cause once");
+    CHECK(load_run.err.find("error:") != std::string::npos,
+          "4750: --load prints a located diagnostic");
 }
 
 // Issue #4467: a user procedure, lambda, or named let with the wrong
