@@ -3121,6 +3121,49 @@ ast::NodeId Evaluator::data_to_flat(const types::EvalValue& data, aura::ast::Fla
     return ast::NULL_NODE;
 }
 
+// Issue #4759: legacy defmacro call-site expansion cache. Key = evaluator,
+// flat, call node, macro body and the printed argument data; value = the
+// expansion parsed into its OWN flat + pool. Parsing into the caller's flat
+// appended nodes under a running body walk (a define body spun forever), so
+// the expansion never touches the program flat. Entries live for the process
+// (closures made by an expansion keep pointing at its flat); past the cap new
+// expansions are retained on the Evaluator instead of cached.
+namespace {
+struct LegacyMacroSite4759 {
+    std::shared_ptr<aura::ast::FlatAST> flat;
+    std::shared_ptr<aura::ast::StringPool> pool;
+    aura::ast::NodeId root = aura::ast::NULL_NODE;
+};
+constexpr std::size_t kLegacyMacroSiteCap4759 = 4096;
+std::mutex& legacy_macro_site_mtx_4759() {
+    static std::mutex m;
+    return m;
+}
+std::unordered_map<std::string, LegacyMacroSite4759>& legacy_macro_sites_4759() {
+    static auto* m = new std::unordered_map<std::string, LegacyMacroSite4759>();
+    return *m;
+}
+[[maybe_unused]] static std::optional<LegacyMacroSite4759>
+legacy_macro_site_lookup_4759(const std::string& key) {
+    std::lock_guard lk(legacy_macro_site_mtx_4759());
+    auto& sites = legacy_macro_sites_4759();
+    auto it = sites.find(key);
+    if (it == sites.end())
+        return std::nullopt;
+    return it->second;
+}
+// False when the cache is full (caller retains the program itself).
+[[maybe_unused]] static bool legacy_macro_site_store_4759(const std::string& key,
+                                                          const LegacyMacroSite4759& site) {
+    std::lock_guard lk(legacy_macro_site_mtx_4759());
+    auto& sites = legacy_macro_sites_4759();
+    if (sites.size() >= kLegacyMacroSiteCap4759)
+        return false;
+    sites.emplace(key, site);
+    return true;
+}
+} // namespace
+
 // Issue #4390: preserved, legacy defmacro, and eval_data_as_code share
 // macro_expand_all's MacroSelfEvo face. Deny before template eval, tail
 // bind, or data_to_flat. check_macro_self_evo already stores the process
@@ -7593,13 +7636,22 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             // Bind regular params first (all but the last)
                             std::size_t regular_count =
                                 is_rest ? md.params.size() - 1 : md.params.size();
-                            tail_env.emplace(&eval_env);
-                            tail_env->set_primitives(&primitives_);
+                            // Issue #4759: a private env for the macro parameters. In a
+                            // tail position eval_env IS *macro_env_4759, so emplacing tail_env
+                            // here made the new env its own parent and set! in the
+                            // expansion walked that cycle forever.
+                            std::optional<Env> macro_env_4759;
+                            macro_env_4759.emplace(&eval_env);
+                            macro_env_4759->set_primitives(&primitives_);
 
 
                             for (std::size_t i = 0; i < regular_count && i + 1 < v.children.size();
                                  ++i) {
-                                tail_env->bind(md.params[i], ast_to_data(*f, *p, v.child(i + 1)));
+                                // Issue #4759: macro arguments are syntax data — identifiers
+                                // are symbols, string literals stay strings — so the
+                                // printed expansion re-reads as the same code.
+                                macro_env_4759->bind(md.params[i],
+                                               ast_to_data(*f, *p, v.child(i + 1), /*datum=*/true));
                             }
 
                             // Rest param: collect remaining args as a list
@@ -7608,20 +7660,101 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 EvalValue rest_list = make_void();
                                 for (std::size_t i = v.children.size() - 1; i >= regular_count + 1;
                                      --i) {
-                                    auto item = ast_to_data(*f, *p, v.child(i));
+                                    auto item = ast_to_data(*f, *p, v.child(i), /*datum=*/true); // #4759
                                     // Issue #4733: locked size+append (a fiber
                                     // body may build macro rest spines too).
                                     const auto pid =
                                         mint_pair(item, rest_list, /*check_quota=*/false);
                                     rest_list = make_pair(pid);
                                 }
-                                tail_env->bind(rest_name, std::move(rest_list));
+                                macro_env_4759->bind(rest_name, std::move(rest_list));
+                            }
+                            // Issue #4759: expand once per call site and run the
+                            // expansion as real code. eval_data_as_code's mini
+                            // interpreter returned symbol atoms unevaluated
+                            // (`(list 'display v)` printed the name, `(my-inc! z)`
+                            // added a symbol) and knows only a few special forms.
+                            // The expansion is printed with datum->string (symbols
+                            // bare, strings quoted) and parsed into this flat. The
+                            // site key carries the printed argument data, so a
+                            // mutated call site re-expands. A template that
+                            // datum->string cannot print (a spliced closure) or
+                            // that does not parse keeps the historical
+                            // eval_data_as_code path (#334 note below).
+                            auto legacy_macro_print_datum_4759 = [&](const EvalValue& d,
+                                                                     std::string& out) {
+                                auto prim = macro_env_4759->lookup_primitive("datum->string");
+                                if (!prim)
+                                    return false;
+                                std::array<EvalValue, 1> pargs{d};
+                                auto r = (*prim)(std::span<const EvalValue>(pargs));
+                                if (!is_string(r))
+                                    return false;
+                                out = std::string(string_at_or(as_string_idx(r)));
+                                return true;
+                            };
+                            // A define in the expansion re-keys top_ onto the
+                            // expansion's pool (#4373); restore the caller's.
+                            auto legacy_macro_run_4759 = [&](const LegacyMacroSite4759& site) {
+                                auto saved_pool = top_env().pool();
+                                auto r = eval_flat(*site.flat, *site.pool, site.root, eval_env);
+                                if (saved_pool && top_env().pool() != saved_pool)
+                                    top_env().set_pool(saved_pool);
+                                return r;
+                            };
+                            std::string site_key_4759;
+                            {
+                                std::string args_text;
+                                bool printable = true;
+                                for (std::size_t i = 0; printable && i < md.params.size(); ++i) {
+                                    auto bound = macro_env_4759->lookup(md.params[i]);
+                                    std::string one;
+                                    printable = bound && legacy_macro_print_datum_4759(*bound, one);
+                                    args_text += one;
+                                    args_text += '\x1f';
+                                }
+                                if (printable)
+                                    site_key_4759 = std::format(
+                                        "{}|{}|{}|{}|{}|{}", static_cast<const void*>(this),
+                                        static_cast<const void*>(f), current_id,
+                                        static_cast<const void*>(md.flat), md.body_id, args_text);
+                            }
+                            if (!site_key_4759.empty()) {
+                                if (auto hit = legacy_macro_site_lookup_4759(site_key_4759))
+                                    return legacy_macro_run_4759(*hit);
                             }
                             // Evaluate macro body (quasiquote-expanded template) → produces data
                             auto template_result =
-                                eval_flat(*md.flat, md.pool ? *md.pool : *p, md.body_id, *tail_env);
+                                eval_flat(*md.flat, md.pool ? *md.pool : *p, md.body_id, *macro_env_4759);
                             if (!template_result)
                                 return template_result;
+                            TwPinResult pin_template_4759(template_result);
+                            if (!site_key_4759.empty()) {
+                                std::string text;
+                                if (legacy_macro_print_datum_4759(*template_result, text)) {
+                                    auto fu = std::make_unique<aura::ast::FlatAST>();
+                                    auto pu = std::make_unique<aura::ast::StringPool>();
+                                    auto pr = aura::parser::parse_to_flat(text, *fu, *pu);
+                                    if (pr.success && pr.root != aura::ast::NULL_NODE) {
+                                        fu->root = pr.root;
+                                        LegacyMacroSite4759 site;
+                                        site.root = pr.root;
+                                        site.flat = std::shared_ptr<aura::ast::FlatAST>(fu.release());
+                                        site.pool = std::shared_ptr<aura::ast::StringPool>(pu.release());
+                                        // Over the cap: still fine — `site` holds the
+                                        // flat for this call; closures it makes are
+                                        // kept alive by an intentional leak below.
+                                        if (!legacy_macro_site_store_4759(site_key_4759, site)) {
+                                            static auto* overflow_4759 =
+                                                new std::vector<LegacyMacroSite4759>();
+                                            static std::mutex overflow_mtx_4759;
+                                            std::lock_guard lk(overflow_mtx_4759);
+                                            overflow_4759->push_back(site);
+                                        }
+                                        return legacy_macro_run_4759(site);
+                                    }
+                                }
+                            }
                             // Issue #334 (deferred): the simpler
                             // data_to_flat path was tried here and
                             // reverted — it can't work because the
