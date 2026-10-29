@@ -1,0 +1,74 @@
+;; channel_structured_payload_4763.aura — Issue #4763: channel:send deep-
+;; copies a list / vector / hash payload (nested, with string and immediate
+;; leaves); the receiver gets an equal, independent value. A closure is
+;; still rejected loudly, also when nested.
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ") (display msg) (newline))))
+(define (rejected? thunk) (try (begin (thunk) #f) (catch (e) #t)))
+(define (send-ok? c v) (try (begin (channel:send c v) #t) (catch (e) #f)))
+
+(define c (channel:create 8))
+
+;; A: a list round-trips, and is a copy
+(define l (list 1 "two" 'three 4.5 #t (list 6 (list "seven"))))
+(assert! (send-ok? c l) "A: list send accepted")
+(define l2 (channel:recv c))
+(assert! (equal? l2 l) "A: nested list round-trips equal")
+(assert! (equal? (cadr l2) "two") "A: string leaf copied")
+(assert! (not (eq? l2 l)) "A: receiver gets a fresh list")
+
+;; B: dotted pair and empty list
+(channel:send c (cons 1 2))
+(assert! (equal? (channel:recv c) (cons 1 2)) "B: dotted pair round-trips")
+(channel:send c (list (list) (cons "a" (list))))
+(assert! (equal? (channel:recv c) (list (list) (list "a"))) "B: empty lists inside a list")
+
+;; C: vector
+(define v (vector 1 "x" (list 2 3)))
+(channel:send c v)
+(define v2 (channel:recv c))
+(assert! (vector? v2) "C: vector arrives as a vector")
+(assert! (and (= (vector-length v2) 3) (equal? (vector-ref v2 1) "x") (equal? (vector-ref v2 2) (list 2 3))) "C: vector contents")
+(vector-set! v2 0 99)
+(assert! (= (vector-ref v 0) 1) "C: mutating the copy leaves the original alone")
+
+;; D: hash
+(define h (make-hash))
+(hash-set! h "k" (list 1 2))
+(hash-set! h "n" 42)
+(channel:send c h)
+(define h2 (channel:recv c))
+(assert! (hash? h2) "D: hash arrives as a hash")
+(assert! (and (equal? (hash-ref h2 "k" #f) (list 1 2)) (= (hash-ref h2 "n" 0) 42)) "D: hash contents")
+(hash-set! h2 "n" 0)
+(assert! (= (hash-ref h "n" 0) 42) "D: mutating the copy leaves the original alone")
+
+;; E: across fibers
+(define c2 (channel:create 0))
+(define f (fiber:spawn (lambda () (channel:send c2 (list "from-fiber" (vector 1 2))) 'sent)))
+(define got (channel:recv c2))
+(fiber:join f)
+(assert! (equal? (car got) "from-fiber") "E: fiber -> main list payload")
+(assert! (equal? (vector-ref (cadr got) 1) 2) "E: nested vector across fibers")
+
+;; F: try-recv delivers structured payloads too
+(channel:send c (list 7 8))
+(assert! (equal? (channel:try-recv c) (list 7 8)) "F: try-recv list payload")
+
+;; G: closures still rejected, also nested; strings/immediates unchanged
+(assert! (rejected? (lambda () (channel:send c (lambda () 1)))) "G: closure rejected")
+(assert! (rejected? (lambda () (channel:send c (list 1 (lambda () 1))))) "G: nested closure rejected")
+(channel:send c "plain")
+(assert! (equal? (channel:recv c) "plain") "G: string payload unchanged")
+(channel:send c 5)
+(assert! (= (channel:recv c) 5) "G: immediate payload unchanged")
+
+(if (= *fails* 0)
+    (begin (display "OK-4763 structured channel payloads") (newline))
+    (begin (display "FAIL-4763 count=") (display *fails*) (newline) (exit 1)))

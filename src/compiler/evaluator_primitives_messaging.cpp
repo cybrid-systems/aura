@@ -899,6 +899,187 @@ namespace {
 } // namespace
 
 void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
+    // ── Issue #4763: structured channel payloads ─────────────────────────
+    // A list / vector / hash payload (nested, with string and immediate
+    // leaves) is DEEP-COPIED on channel:send: the sender serializes it into
+    // a self-contained byte string (no heap index of the sending body
+    // survives), and the receiver rebuilds a fresh value in its own heap. A
+    // closure (or any other Ref with body-local state) is still rejected
+    // loudly, at any depth. The datum kind rides in ChannelMessage::kind as
+    // a value beyond kImmediate, local to this TU.
+    //   'I' u64 raw | 'S' u64 n bytes | 'L' u64 n elems... tail
+    //   'V' u64 n elems... | 'H' u64 n (key value)...
+    constexpr auto kChannelDatumKind4763 = static_cast<ChannelMessage::Kind>(2);
+    constexpr int kChannelDatumMaxDepth4763 = 256;
+    constexpr std::size_t kChannelDatumMaxNodes4763 = 4'000'000;
+    auto channel_encode_4763 = [&ev](const EvalValue& root, std::string& out,
+                                     std::string& why) -> bool {
+        auto vref = ev.primitives_.lookup("vector-ref");
+        auto vlen = ev.primitives_.lookup("vector-length");
+        auto hkeys = ev.primitives_.lookup("hash-keys");
+        auto href = ev.primitives_.lookup("hash-ref");
+        std::size_t nodes = 0;
+        auto put_u64 = [&out](std::uint64_t x) {
+            char b[8];
+            std::memcpy(b, &x, 8);
+            out.append(b, 8);
+        };
+        auto pair_at = [&ev](const EvalValue& v, Pair& p) -> bool {
+            std::lock_guard slock(ev.alloc_storage_lock_);
+            const auto idx = as_pair_idx(v);
+            if (idx >= ev.pairs_.size())
+                return false;
+            p = ev.pairs_[idx];
+            return true;
+        };
+        auto enc = [&](auto& self, const EvalValue& v, int depth) -> bool {
+            if (++nodes > kChannelDatumMaxNodes4763 || depth > kChannelDatumMaxDepth4763) {
+                why = "payload too large, too deep, or cyclic";
+                return false;
+            }
+            if (is_string(v)) {
+                const std::string text(ev.string_at(as_string_idx(v)));
+                out.push_back('S');
+                put_u64(text.size());
+                out.append(text);
+                return true;
+            }
+            if ((v.val & 0x3) != 1) { // immediate word
+                out.push_back('I');
+                put_u64(static_cast<std::uint64_t>(v.val));
+                return true;
+            }
+            if (is_pair(v)) {
+                std::vector<EvalValue> elems;
+                EvalValue cur = v;
+                while (is_pair(cur)) {
+                    Pair p;
+                    if (!pair_at(cur, p) || ++nodes > kChannelDatumMaxNodes4763) {
+                        why = "payload too large, stale, or cyclic";
+                        return false;
+                    }
+                    elems.push_back(p.car);
+                    cur = p.cdr;
+                }
+                out.push_back('L');
+                put_u64(elems.size());
+                for (const auto& e : elems)
+                    if (!self(self, e, depth + 1))
+                        return false;
+                return self(self, cur, depth + 1);
+            }
+            if (is_vector(v) && vref && vlen) {
+                const EvalValue n = (*vlen)({v});
+                if (!is_int(n) || as_int(n) < 0) {
+                    why = "vector";
+                    return false;
+                }
+                out.push_back('V');
+                put_u64(static_cast<std::uint64_t>(as_int(n)));
+                for (std::int64_t i = 0; i < as_int(n); ++i)
+                    if (!self(self, (*vref)({v, make_int(i)}), depth + 1))
+                        return false;
+                return true;
+            }
+            if (is_hash(v) && hkeys && href) {
+                std::vector<EvalValue> keys;
+                EvalValue cur = (*hkeys)({v});
+                while (is_pair(cur)) {
+                    Pair p;
+                    if (!pair_at(cur, p))
+                        break;
+                    keys.push_back(p.car);
+                    cur = p.cdr;
+                }
+                out.push_back('H');
+                put_u64(keys.size());
+                for (const auto& k : keys)
+                    if (!self(self, k, depth + 1) || !self(self, (*href)({v, k}), depth + 1))
+                        return false;
+                return true;
+            }
+            why = depth == 0 ? channel_payload_kind_name(v)
+                             : std::string(channel_payload_kind_name(v)) +
+                                   " nested in a list/vector/hash";
+            return false;
+        };
+        return enc(enc, root, 0);
+    };
+    auto channel_decode_4763 = [&ev](const std::string& in) -> EvalValue {
+        auto l2v = ev.primitives_.lookup("list->vector");
+        auto mkhash = ev.primitives_.lookup("hash"); // (hash) = an empty table
+        auto hset = ev.primitives_.lookup("hash-set!");
+        std::size_t pos = 0;
+        auto get_u64 = [&]() -> std::uint64_t {
+            std::uint64_t x = 0;
+            if (pos + 8 <= in.size())
+                std::memcpy(&x, in.data() + pos, 8);
+            pos += 8;
+            return x;
+        };
+        auto cons = [&ev](const EvalValue& car, const EvalValue& cdr) -> EvalValue {
+            std::lock_guard slock(ev.alloc_storage_lock_);
+            const auto pid = ev.pairs_.size();
+            ev.pairs_.push_back({car, cdr});
+            return make_pair(pid);
+        };
+        auto dec = [&](auto& self) -> EvalValue {
+            if (pos >= in.size())
+                return make_void();
+            const char tag = in[pos++];
+            switch (tag) {
+            case 'I':
+                return EvalValue{static_cast<std::int64_t>(get_u64())};
+            case 'S': {
+                const auto n = static_cast<std::size_t>(get_u64());
+                std::string text = in.substr(std::min(pos, in.size()), n);
+                pos += n;
+                return make_string(static_cast<std::uint64_t>(ev.string_heap_.mint(std::move(text))));
+            }
+            case 'L': {
+                const auto n = static_cast<std::size_t>(get_u64());
+                std::vector<EvalValue> elems;
+                elems.reserve(std::min<std::size_t>(n, 1u << 16));
+                for (std::size_t i = 0; i < n && pos < in.size(); ++i)
+                    elems.push_back(self(self));
+                EvalValue acc = self(self); // tail
+                for (auto it = elems.rbegin(); it != elems.rend(); ++it)
+                    acc = cons(*it, acc);
+                return acc;
+            }
+            case 'V': {
+                const auto n = static_cast<std::size_t>(get_u64());
+                std::vector<EvalValue> elems;
+                for (std::size_t i = 0; i < n && pos < in.size(); ++i)
+                    elems.push_back(self(self));
+                EvalValue acc = make_void(); // '() is void-terminated (see _agent:list)
+                for (auto it = elems.rbegin(); it != elems.rend(); ++it)
+                    acc = cons(*it, acc);
+                return l2v ? (*l2v)({acc}) : acc;
+            }
+            case 'H': {
+                const auto n = static_cast<std::size_t>(get_u64());
+                EvalValue h = mkhash ? (*mkhash)({}) : make_void();
+                for (std::size_t i = 0; i < n && pos < in.size(); ++i) {
+                    EvalValue k = self(self);
+                    EvalValue v = self(self);
+                    if (hset)
+                        (*hset)({h, k, v});
+                }
+                return h;
+            }
+            default:
+                return make_void();
+            }
+        };
+        return dec(dec);
+    };
+    auto channel_recv_value_4763 = [&ev, channel_decode_4763](ChannelMessage&& msg) -> EvalValue {
+        if (msg.kind == kChannelDatumKind4763)
+            return channel_decode_4763(msg.text);
+        return channel_message_to_value(ev.string_heap_, std::move(msg));
+    };
+
     // Issue #4710: install the fiber:join result-root provider so the
     // evaluator's reclaims (tree-walker + file-mode) mark the values of
     // finished-but-unjoined fibers. Registration is idempotent (first
@@ -2290,7 +2471,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
     // Blocks if buffer full (buffered) or until a recv is posted (rendezvous).
     // Issue #2483: buffer_size==0 must NOT short-circuit the wait predicate
     // (that made send non-blocking and let the queue grow unboundedly).
-    add("channel:send", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add("channel:send", [&ev, channel_encode_4763](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !is_int(a[0]))
             return make_bool(false);
         // Issue #4494: a non-string used to return #f silently, so the
@@ -2305,13 +2486,22 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         if (is_string(a[1])) {
             msg.kind = ChannelMessage::Kind::kString;
             msg.text = ev.string_at(as_string_idx(a[1])); // copy before wait
-        } else if (!channel_message_from_immediate(a[1], msg))
-            return make_primitive_error(
-                ev.string_heap_, ev.error_values_,
-                std::string("channel:send: unsupported payload type (") +
-                    channel_payload_kind_name(a[1]) +
-                    "); send a string or an immediate value (number, boolean, void)",
-                ev.primitive_error_counter_ptr());
+        } else if (!channel_message_from_immediate(a[1], msg)) {
+            // Issue #4763: a list / vector / hash is deep-copied; a closure
+            // (at any depth) is still rejected loudly.
+            std::string why;
+            std::string bytes;
+            if (is_closure(a[1]) || !channel_encode_4763(a[1], bytes, why))
+                return make_primitive_error(
+                    ev.string_heap_, ev.error_values_,
+                    std::string("channel:send: unsupported payload type (") +
+                        (why.empty() ? std::string(channel_payload_kind_name(a[1])) : why) +
+                        "); send a string, an immediate value (number, boolean, void), or a "
+                        "list/vector/hash of those",
+                    ev.primitive_error_counter_ptr());
+            msg.kind = kChannelDatumKind4763;
+            msg.text = std::move(bytes);
+        }
         auto ch_id = static_cast<std::size_t>(as_int(a[0]));
         // Issue #2483: release channels_mtx_ before blocking — holding it
         // across cv.wait deadlocks concurrent channel:recv on the same
@@ -2361,7 +2551,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
     // (channel:recv channel-id) — Receive a message from a channel
     // Returns the message string, or empty string if channel closed.
     // Blocks until a message is available.
-    add("channel:recv", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add("channel:recv", [&ev, channel_recv_value_4763](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_string(0);
         auto ch_id = static_cast<std::size_t>(as_int(a[0]));
@@ -2389,7 +2579,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             if (!msg)
                 return make_string(0); // channel closed
             // Issue #4744: an immediate payload is returned as itself.
-            return channel_message_to_value(ev.string_heap_, std::move(*msg));
+            return channel_recv_value_4763(std::move(*msg));
         }
         std::unique_lock ul(ch.mtx);
         // Issue #2483: announce waiting receiver so rendezvous send can proceed.
@@ -2407,12 +2597,12 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         ul.unlock();
         ch.cv.notify_all();
         // Issue #4744: an immediate payload is returned as itself.
-        return channel_message_to_value(ev.string_heap_, std::move(msg));
+        return channel_recv_value_4763(std::move(msg));
     });
 
     // (channel:try-recv channel-id) — Non-blocking receive
     // Returns message string if available, or empty string if no message.
-    add("channel:try-recv", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add("channel:try-recv", [&ev, channel_recv_value_4763](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_string(0);
         auto ch_id = static_cast<std::size_t>(as_int(a[0]));
@@ -2434,7 +2624,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         // Issue #4700: wake a parked fiber sender — the buffer slot is free.
         channel_wake_waiters(&ch, /*sender=*/true);
         // Issue #4744: an immediate payload is returned as itself.
-        return channel_message_to_value(ev.string_heap_, std::move(msg));
+        return channel_recv_value_4763(std::move(msg));
     });
 
     // (channel:close channel-id) — Close a channel
