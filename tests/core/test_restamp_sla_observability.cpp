@@ -177,7 +177,13 @@ static void ac6_additive_schema_existing_fixtures() {
     // Issue #2528 only adds new counters + accessors. Does NOT modify
     // existing fields (generation_, wrap_epoch_, restamp_nodes_total_,
     // etc.) — verified by source-cite that existing fields are unchanged.
-    CHECK(astx.find("std::uint16_t generation_") != std::string::npos,
+    // Issue #4717 (P4 step 2): generation_ is still a 16-bit generation with
+    // the same name and lifecycle, but it is now published as an atomic so a
+    // concurrent fiber body can read it without the workspace lock. The
+    // #2528 contract this row pins is "additive, no existing field
+    // repurposed/retyped away from its 16-bit generation identity", so the
+    // declaration is pinned as it stands (width + name + initial value).
+    CHECK(astx.find("std::atomic<std::uint16_t> generation_{1}") != std::string::npos,
           "AC6: generation_ field unchanged (uint16)");
     CHECK(astx.find("mutable std::atomic<std::uint32_t> wrap_epoch_") != std::string::npos,
           "AC6: wrap_epoch_ field unchanged (uint32 atomic)");

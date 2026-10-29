@@ -1741,6 +1741,47 @@ constexpr const char* kYieldInterleaveProgram = R"AURA(
 (+ (* 1000 (length log)) (runs (reverse log)))
 )AURA";
 
+// Issue #4699 AC1 rendezvous probe (post-#4717 CLI thread backend).
+//
+// The old AC1 program logged (set! log (cons id log)) from three bodies and
+// asserted "runs > 3" (at least one interleaving) plus "turns == 9". Both are
+// properties of a SHARED, UNSYNCHRONIZED list append, not of the scheduler:
+// three bodies doing read-modify-write on one global lose entries under load
+// (observed turns=8, lost turn), and "runs" only says whether the OS happened
+// to preempt a body inside its three microsecond turns (observed 9003 = no
+// interleaving at all, 9007 = full interleaving, same binary, same box).
+//
+// The property that carries the #4699 contract after #4717 (the body no
+// longer takes the whole-body commit mutex, each body runs on its own OS
+// thread) is that the three sibling bodies are INSIDE their bodies at the
+// same time - a cooperative yield hands the turn over instead of a body
+// owning the workspace to completion. Each body publishes only its OWN flag
+// (no shared read-modify-write), then yields until it observes all three:
+//   three simultaneous bodies -> every body observes the rendezvous (3)
+//   run-to-completion         -> the first body cannot see the others and
+//                                spins to the bound; only the LAST body
+//                                observes all three (1)
+// The bound keeps a scheduling failure a failing row, never a hang.
+constexpr const char* kCliRendezvousProgram = R"AURA(
+(define f1 0)
+(define f2 0)
+(define f3 0)
+(define (arrive slot)
+  (cond ((= slot 1) (set! f1 1))
+        ((= slot 2) (set! f2 1))
+        (else (set! f3 1))))
+(define (mk slot)
+  (lambda ()
+    (arrive slot)
+    (let loop ((i 0))
+      (cond ((and (= f1 1) (= f2 1) (= f3 1)) #t)
+            ((>= i 2000000) #f)
+            (else (fiber:yield) (loop (+ i 1)))))))
+(define fs (map (lambda (id) (fiber:spawn (mk id))) '(1 2 3)))
+(define (count-true xs) (if (null? xs) 0 (+ (if (car xs) 1 0) (count-true (cdr xs)))))
+(count-true (map fiber:join fs))
+)AURA";
+
 // Issue #4699: a long root yield loop must let the spawned child run.
 // Pre-fix the root loop spun through all 100k yields without the child
 // ever getting a turn (the child stayed in the worker's LIFO queue
@@ -1782,17 +1823,14 @@ namespace {
 int run_4699_cli_yield_interleave_smoke() {
     std::println("\n=== #4699: CLI thread backend: fiber:yield interleaves sibling fibers ===");
     CompilerService cs;
-    auto v = cs.eval(kYieldInterleaveProgram);
+    auto v = cs.eval(kCliRendezvousProgram);
     CHECK(v.has_value(), "#4699 CLI yield-interleave program evaluates");
     CHECK(v && is_int(*v), "#4699 CLI yield-interleave program returns a count");
-    const long long encoded = (v && is_int(*v)) ? static_cast<long long>(as_int(*v)) : -1;
-    const auto score = decode(encoded);
-    std::println("  #4699 CLI encoded = {} (turns={} runs={})", encoded, score.turns, score.runs);
-    CHECK(score.turns == 9,
-          "[#4699] AC1 CLI thread backend: every spawned body ran all three turns");
-    CHECK(score.runs > 3,
-          "[#4699] AC1 CLI thread backend: fiber:yield interleaves the sibling fibers "
-          "(no body runs to completion)");
+    const long long arrived = (v && is_int(*v)) ? static_cast<long long>(as_int(*v)) : -1;
+    std::println("  #4699 CLI bodies that met the three-body rendezvous = {}", arrived);
+    CHECK(arrived == 3,
+          "[#4699] AC1 CLI thread backend: every spawned body is inside its body at the "
+          "same time (fiber:yield hands the turn to a sibling; no body runs to completion)");
     return g_failed ? 1 : 0;
 }
 
