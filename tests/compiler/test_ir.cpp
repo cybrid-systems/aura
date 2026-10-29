@@ -2810,12 +2810,14 @@ int main() {
                 }
             }
 
-            // AC2 soft: the historical runtime-coerce peel still returns Int.
+            // AC2 soft: issue #4762 — the runtime no longer coerces a string
+            // operand (#4735), so a string LITERAL operand is a TypeError in
+            // the soft face too (was: the runtime-coerce peel returned Int).
             {
                 apply_dev_audit_defaults();
                 TypeRegistry treg;
                 auto r = infer_src("(+ \"42\" 1)", treg);
-                if (r.ty == treg.int_type() && !r.saw_any_te) {
+                if (r.ty == treg.void_type() && r.saw_any_te) {
                     ++ts_passed;
                     std::println("TS OK: ac4107_2_arith_pair_soft_int");
                 } else {
@@ -2838,12 +2840,13 @@ int main() {
                 }
             }
 
-            // AC3 soft: the single-operand pass-through still returns String.
+            // AC3 soft: issue #4762 — a single string literal operand is a
+            // TypeError in the soft face too (was: passed through as String).
             {
                 apply_dev_audit_defaults();
                 TypeRegistry treg;
                 auto r = infer_src("(+ \"a\")", treg);
-                if (r.ty == treg.string_type() && !r.saw_any_te) {
+                if (r.ty == treg.void_type() && r.saw_any_te) {
                     ++ts_passed;
                     std::println("TS OK: ac4107_3_arith_single_soft_string");
                 } else {

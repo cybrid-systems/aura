@@ -6,7 +6,7 @@
 
 (define (verify-output code . expected)
   (let ((compile-ok (aura-verify code)))
-    (if (not (= compile-ok "#t")) compile-ok
+    (if (not (equal? compile-ok "#t")) compile-ok
       (begin
         (set-code code)
         (typecheck-current)
