@@ -14,8 +14,11 @@
 #include "core/cpp26_contract_stats.h"
 
 #include <chrono>
+#include <csignal>
 #include <cstdint>
 #include <cstdlib>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <fstream>
 #include <print>
 #include <string>
@@ -710,6 +713,176 @@ int run_test_steal_complete_strong_entry() {
                 t.join();
                 aura::compiler::typed_audit::apply_dev_audit_defaults();
                 aura::serve::clear_production_abi_selfcheck_for_test();
+            }
+        }
+
+        // ── Issue #4752: production face + harden memo are one writer ──
+        {
+            std::println("\n=== Issue #4752: production face / harden-memo arming ===");
+            using aura::compiler::typed_audit::apply_dev_audit_defaults;
+            using aura::compiler::typed_audit::note_production_defaults_active;
+            using aura::compiler::typed_audit::production_defaults_active;
+            using aura::core::cpp26::hot_contract_harden_armed;
+            using aura::core::cpp26::note_hot_contract_harden_armed;
+
+            // AC1: source-cite — one writer for face + memo, both
+            // AURA_TYPED_AUDIT branches of the production bootstrap routed
+            // through it, bit-9 guard kept live at Ready.
+            {
+                const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+                const auto sdef = read_file("src/compiler/security_defaults.hh");
+                const auto rpa = read_file("src/serve/runtime_production_abi.cpp");
+                CHECK(tma.find("inline void note_production_defaults_active") != std::string::npos,
+                      "4752 AC1: single writer exists");
+                CHECK(tma.find("Issue #4752") != std::string::npos, "4752 AC1: writer cites #4752");
+                CHECK(sdef.find("note_production_defaults_active(true)") != std::string::npos,
+                      "4752 AC1: AURA_TYPED_AUDIT=sampled arms the memo");
+                CHECK(sdef.find("note_production_defaults_active(false)") != std::string::npos,
+                      "4752 AC1: AURA_TYPED_AUDIT=off drops the memo");
+                CHECK(rpa.find("Issue #4752") != std::string::npos,
+                      "4752 AC1: Ready cites the arming contract");
+                CHECK(rpa.find("hot_contract_harden_armed()") != std::string::npos,
+                      "4752 AC1: bit-9 guard kept live");
+                CHECK(read_file("docs/design/4752-harden-arming.md").empty(),
+                      "4752 AC1: no docs/design file");
+            }
+
+            // AC2: the writer keeps face and memo coherent in both directions.
+            {
+                apply_dev_audit_defaults();
+                CHECK(!production_defaults_active() && !hot_contract_harden_armed(),
+                      "4752 AC2: dev face leaves both off");
+                note_production_defaults_active(true);
+                CHECK(production_defaults_active() && hot_contract_harden_armed(),
+                      "4752 AC2: a production claim arms the memo");
+                note_production_defaults_active(false);
+                CHECK(!production_defaults_active() && !hot_contract_harden_armed(),
+                      "4752 AC2: dropping the face disarms the memo");
+            }
+
+            // AC3: a SPLIT face (claim latched without arming — the pre-#4752
+            // harness shape) still refuses multi-worker Ready loudly. The bit
+            // is a real guard, not a stale-memo detector that a harness can
+            // silence by accident.
+            {
+                const bool prev_prod = production_defaults_active();
+                const char* prev_sb = std::getenv("AURA_SANDBOX");
+                const std::string prev_sb_s = prev_sb ? prev_sb : "";
+                int fds[2] = {-1, -1};
+                CHECK(::pipe(fds) == 0, "4752 AC3: pipe");
+                const pid_t pid = ::fork();
+                if (pid == 0) {
+                    ::close(fds[0]);
+                    (void)!::dup2(fds[1], 2);
+                    ::close(fds[1]);
+                    ::alarm(30);
+                    ::unsetenv("AURA_SANDBOX");
+                    aura::serve::clear_steal_safety_transaction_for_test();
+                    aura::serve::clear_production_abi_selfcheck_for_test();
+                    note_hot_contract_harden_armed(false);
+                    aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                        .production_defaults_active.store(1, std::memory_order_relaxed);
+                    aura::serve::Scheduler sched(2);
+                    sched.run();
+                    ::_exit(99);
+                }
+                ::close(fds[1]);
+                std::string err;
+                char buf[512];
+                ssize_t n = 0;
+                while ((n = ::read(fds[0], buf, sizeof(buf))) > 0)
+                    err.append(buf, static_cast<std::size_t>(n));
+                ::close(fds[0]);
+                int st = 0;
+                if (pid > 0)
+                    ::waitpid(pid, &st, 0);
+                CHECK(pid > 0 && WIFSIGNALED(st) && WTERMSIG(st) == SIGABRT,
+                      "4752 AC3: split face refuses multi-worker Ready (SIGABRT)");
+                CHECK(err.find("fail_bits=0x200") != std::string::npos,
+                      "4752 AC3: refusal reports fail_bits=0x200");
+                note_production_defaults_active(prev_prod);
+                if (!prev_sb_s.empty())
+                    ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                else
+                    ::unsetenv("AURA_SANDBOX");
+            }
+
+            // AC4: the contract path (writer) reaches multi-worker Ready
+            // clean with no env override — the plain face the orch batch and
+            // production bootstrap use.
+            {
+                const bool prev_prod = production_defaults_active();
+                const char* prev_sb = std::getenv("AURA_SANDBOX");
+                const std::string prev_sb_s = prev_sb ? prev_sb : "";
+                const pid_t pid = ::fork();
+                if (pid == 0) {
+                    ::alarm(30);
+                    ::unsetenv("AURA_SANDBOX");
+                    aura::serve::clear_steal_safety_transaction_for_test();
+                    aura::serve::clear_production_abi_selfcheck_for_test();
+                    note_production_defaults_active(true);
+                    aura::serve::Scheduler sched(2);
+                    std::thread thr([&sched]() { sched.run(); });
+                    int latched = 0;
+                    for (int i = 0; i < 200 && latched == 0; ++i) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                        latched = aura_runtime_multi_worker_production_latched();
+                    }
+                    sched.stop();
+                    thr.join();
+                    if (latched != 1)
+                        ::_exit(3);
+                    if (aura::serve::g_production_abi_selfcheck_last_fail_bits.load(
+                            std::memory_order_relaxed) != 0)
+                        ::_exit(4);
+                    ::_exit(0);
+                }
+                int st = 0;
+                if (pid > 0)
+                    ::waitpid(pid, &st, 0);
+                CHECK(pid > 0 && WIFEXITED(st) && WEXITSTATUS(st) == 0,
+                      "4752 AC4: contract path Ready clean (no env override)");
+                apply_dev_audit_defaults();
+                if (!prev_sb_s.empty())
+                    ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                else
+                    ::unsetenv("AURA_SANDBOX");
+                (void)prev_prod;
+            }
+
+            // AC5: a *disarmed* face never refuses Ready. The ready probe
+            // reads face → memo → face precisely so a face drop in flight
+            // (dev/test restore, the orch-batch member transition) is not
+            // read as an unarmed production claim. Deterministic shape of
+            // the fail_bits=0x200 flake (#4752).
+            {
+                const char* prev_sb = std::getenv("AURA_SANDBOX");
+                const std::string prev_sb_s = prev_sb ? prev_sb : "";
+                const pid_t pid = ::fork();
+                if (pid == 0) {
+                    ::alarm(30);
+                    ::unsetenv("AURA_SANDBOX");
+                    aura::serve::clear_steal_safety_transaction_for_test();
+                    aura::serve::clear_production_abi_selfcheck_for_test();
+                    note_production_defaults_active(true);
+                    note_production_defaults_active(false); // face dropped
+                    aura::serve::Scheduler one(1);
+                    std::thread thr([&one]() { one.run(); });
+                    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+                    one.stop();
+                    thr.join();
+                    ::_exit(0);
+                }
+                int st = 0;
+                if (pid > 0)
+                    ::waitpid(pid, &st, 0);
+                CHECK(pid > 0 && WIFEXITED(st) && WEXITSTATUS(st) == 0,
+                      "4752 AC5: disarmed face Ready stays clean (no 0x200)");
+                apply_dev_audit_defaults();
+                if (!prev_sb_s.empty())
+                    ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+                else
+                    ::unsetenv("AURA_SANDBOX");
             }
         }
 

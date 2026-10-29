@@ -804,8 +804,8 @@ int run_test_orch_scope() {
 
         const auto prod_before = aura::compiler::typed_audit::g_typed_mutation_audit_counters
                                      .production_defaults_active.load(std::memory_order_relaxed);
-        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
-            .store(0, std::memory_order_relaxed);
+        // Issue #4752: face + derived harden memo are one writer.
+        aura::compiler::typed_audit::note_production_defaults_active(false);
 
         aura::serve::Scheduler sched(1);
         aura::orch::AgentScope scope_a(sched);
@@ -818,8 +818,7 @@ int run_test_orch_scope() {
         CHECK(!scope_a.handles().empty() && scope_a.handles()[0].fiber, "4096: A has a fiber");
         scope_a.handles_mut()[0].reclaimed_deferred_cleanup = true;
 
-        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
-            .store(1, std::memory_order_relaxed);
+        aura::compiler::typed_audit::note_production_defaults_active(true);
         const auto dir_a = scope_a.directory_snapshot();
         CHECK(dir_a.entries.size() == 1 && dir_a.entries[0].status == "reclaimed",
               "4096: A projects reclaimed");
@@ -879,8 +878,7 @@ int run_test_orch_scope() {
         };
         retire(scope_a);
         retire(scope_b);
-        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
-            .store(prod_before, std::memory_order_relaxed);
+        aura::compiler::typed_audit::note_production_defaults_active(prod_before != 0);
     }
 
     // ── #3216: identity-plane on scope-resolve / directory + facade.

@@ -287,6 +287,10 @@ extern "C" int aura_escape_blocks_move_elision(const char* binding) noexcept {
 // Issue #2346: weak-friendly probe for Fiber::is_steal_snapshot_hard_mode
 // production canary (serve layer must not import typed_mutation_audit.h).
 extern "C" int aura_production_defaults_active_probe() noexcept {
+    // Issue #4752: production_defaults_active() reads with acquire, which
+    // pairs with the release store in note_production_defaults_active() so a
+    // caller observing the face active also observes the arm memo written
+    // before it (no face/memo split under the Ready gate).
     return aura::compiler::typed_audit::production_defaults_active() ? 1 : 0;
 }
 

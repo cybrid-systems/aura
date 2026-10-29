@@ -345,8 +345,8 @@ int run_test_agent_apply_mutex() {
 
     // ── Issue #3728: region-concurrent spawn skips agent_apply_mu_ ──
     auto set_prod_3728 = [](bool on) {
-        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
-            .store(on ? 1u : 0u, std::memory_order_relaxed);
+        // Issue #4752: face + derived harden memo move together.
+        aura::compiler::typed_audit::note_production_defaults_active(on);
     };
 
     {
