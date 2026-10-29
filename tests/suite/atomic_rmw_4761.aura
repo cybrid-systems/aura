@@ -1,0 +1,68 @@
+;; atomic_rmw_4761.aura — Issue #4761: atomic read-modify-write.
+;;
+;; A  (atomic:update! "name" f) from many fibers never loses an update,
+;;    even when f yields between the read and the write
+;; B  (atomic:hash-update! h k f default) and std hash-update! likewise
+;; C  atomic:counter / atomic:add! / atomic:counter-value
+;; D  loud errors: unbound name, non-procedure f, missing key, bad counter
+
+(require "std/iter")
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ") (display msg) (newline))))
+(define (err? thunk) (try (error? (thunk)) (catch (e) #t)))
+
+(define nf 8)
+(define iters 50)
+(define (spawn-all thunk) (map (lambda (j) (fiber:spawn thunk)) (iota nf)))
+(define (join-all fs) (map fiber:join fs))
+(define (yielding-inc v) (fiber:yield) (+ v 1))
+
+;; ---- A ------------------------------------------------------------------
+(define n 0)
+(join-all (spawn-all (lambda () (let l ((i 0)) (if (< i iters) (begin (atomic:update! "n" yielding-inc) (l (+ i 1))))))))
+(assert! (= n (* nf iters)) "A: concurrent atomic:update! loses no update")
+(assert! (= (atomic:update! "n" (lambda (v) (* v 2))) (* 2 nf iters)) "A: returns the new value")
+(assert! (= n (* 2 nf iters)) "A: the binding holds the new value")
+(define s "a")
+(atomic:update! "s" (lambda (v) (string-append v "b")))
+(assert! (equal? s "ab") "A: works for non-numeric values")
+
+;; naive read/yield/write for contrast (informational only)
+(define naive 0)
+(join-all (spawn-all (lambda () (let l ((i 0)) (if (< i iters) (begin (let ((v naive)) (fiber:yield) (set! naive (+ v 1))) (l (+ i 1))))))))
+(display "  info: naive read-yield-set! total=") (display naive) (display " of ") (display (* nf iters)) (newline)
+
+;; ---- B ------------------------------------------------------------------
+(define h (make-hash))
+(join-all (spawn-all (lambda () (let l ((i 0)) (if (< i iters) (begin (atomic:hash-update! h "k" yielding-inc 0) (l (+ i 1))))))))
+(assert! (= (hash-ref h "k" -1) (* nf iters)) "B: concurrent atomic:hash-update! loses no update")
+(assert! (= (atomic:hash-update! h "k" (lambda (v) (- v 1))) (- (* nf iters) 1)) "B: existing key, no default")
+(atomic:hash-update! h "fresh" (lambda (v) (cons 1 v)) '())
+(assert! (equal? (hash-ref h "fresh" #f) '(1)) "B: missing key uses default")
+(hash-update! h "std" (lambda (v) (+ v 5)) 10)
+(assert! (= (hash-ref h "std" -1) 15) "B: std hash-update! still works")
+
+;; ---- C ------------------------------------------------------------------
+(define c (atomic:counter))
+(define c5 (atomic:counter 5))
+(join-all (spawn-all (lambda () (let l ((i 0)) (if (< i iters) (begin (atomic:add! c 1) (fiber:yield) (l (+ i 1))))))))
+(assert! (= (atomic:counter-value c) (* nf iters)) "C: concurrent atomic:add! loses no increment")
+(assert! (= (atomic:add! c5 10) 15) "C: add! returns the new value")
+(assert! (= (atomic:add! c5) 16) "C: add! defaults to 1")
+(assert! (= (atomic:counter-value c5) 16) "C: counter-value")
+
+;; ---- D ------------------------------------------------------------------
+(assert! (err? (lambda () (atomic:update! "no-such-binding-4761" (lambda (v) v)))) "D: unbound name is an error")
+(assert! (err? (lambda () (atomic:update! "n" 42))) "D: non-procedure f is an error")
+(assert! (err? (lambda () (atomic:hash-update! h "missing" (lambda (v) v)))) "D: missing key without default is an error")
+(assert! (err? (lambda () (atomic:add! (cons 1 2) 1))) "D: non-counter is an error")
+(assert! (= n (* 2 nf iters)) "D: a failed update leaves the binding alone")
+
+(if (= *fails* 0)
+    (begin (display "OK-4761 atomic read-modify-write") (newline))
+    (begin (display "FAIL-4761 count=") (display *fails*) (newline) (exit 1)))

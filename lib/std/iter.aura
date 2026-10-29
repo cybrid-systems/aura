@@ -92,8 +92,9 @@
 (define (hash-vals h)
   (hash-values h))
 
+; #4761: atomic -- concurrent hash-update! calls on one key never lose an update.
 (define (hash-update! h key f default)
-  (hash-set! h key (f (hash-ref h key default))))
+  (begin (atomic:hash-update! h key f default) (void)))
 
 (define (hash-merge! target src)
   (hash-keys-filter
