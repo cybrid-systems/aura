@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**490** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**495** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -11,7 +11,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 56 primitives (11%)
-- **core**: 399 primitives (81%)
+- **core**: 404 primitives (82%)
 - **internal-observable**: 34 primitives (7%)
 - **convenience**: 1 primitives (0%)
 
@@ -457,6 +457,14 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `arena:request-defrag` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:set-auto-compact-threshold` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 
+## Atomic: (5)
+
+- `atomic:add!` *[core]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `atomic:counter` *[core]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `atomic:counter-value` *[core]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `atomic:hash-update!` *[core]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `atomic:update!` *[core]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+
 ## Channel: (5)
 
 - `channel:close` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -697,7 +705,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (399)
+### Core builtins (must remain primitive) (404)
 
 - `%base64-decode` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` — `src/compiler/evaluator_primitives_char.cpp`
@@ -726,6 +734,11 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `assert` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `assv` — `src/compiler/evaluator_primitives_list.cpp`
 - `atan` — `src/compiler/evaluator_primitives_math.cpp`
+- `atomic:add!` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `atomic:counter` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `atomic:counter-value` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `atomic:hash-update!` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `atomic:update!` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
 - `aura-executable-path` — `src/compiler/evaluator_primitives_io.cpp`
 - `auto-rollback-on-panic` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `boolean?` — `src/compiler/evaluator_primitives_core.cpp`
