@@ -677,24 +677,48 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
     // Issue #1071: bounds-check string_heap_ before indexing (same
     // OOB family as #1040). is_string only checks the tag.
     add("eval", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !types::is_string(a[0]))
+        if (a.empty())
             return make_void();
-        const auto sidx = types::as_string_idx(a[0]);
-        if (sidx >= ev.string_heap_.size())
-            return make_void();
-        // Issue #4642: the program bytes leave the heap into the parser and
-        // then into the shared top env (a top-level define binds globally).
-        // The dispatch effect stays kEffectNone - the tenant stamp is the
-        // gate. In-range BEFORE the copy: on a mismatch the helper already
-        // emitted the IsolationDeny, so do not parse and do not eval_flat.
-        // The primitive-error shape is the site's failure shape for a
-        // refused program (the merr pair keeps the kind+message pair).
-        if (!ev.inrange_string_tenant_allows(sidx, aura::compiler::security::kEffectNone, "eval"))
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "eval: cross-tenant string denied by "
-                                        "WorkspaceIsolationPolicy",
-                                        ev.primitive_error_counter_ptr());
-        auto code = ev.string_at(sidx);
+        // Issue #4749: eval takes a DATUM as well as a string. Before this a
+        // list / symbol / number argument silently returned () - so
+        // code-as-data callers (a form built with (list 'lambda ...)) had to
+        // render their own source text before every eval, and a wrong argument
+        // looked like a successful evaluation of nothing. A datum is rendered
+        // by the value printer and then runs the string path unchanged: one
+        // parser, one eval face, and #4736's catchable parse-error shape.
+        std::string code;
+        if (!types::is_string(a[0])) {
+            const bool datum_like = types::is_pair(a[0]) || types::is_symbol(a[0]) ||
+                                    types::is_int(a[0]) || types::is_float(a[0]) ||
+                                    types::is_bool(a[0]) || types::is_vector(a[0]) ||
+                                    types::is_void(a[0]);
+            if (!datum_like)
+                return make_primitive_error(
+                    ev.string_heap_, ev.error_values_,
+                    "eval: expects a string or a datum (list, symbol, number, boolean, vector)",
+                    ev.primitive_error_counter_ptr());
+            code =
+                aura::compiler::format_value(a[0], ev.string_heap_, ev.pairs_, 0, &ev.primitives_,
+                                             ev.keyword_table(), ev.vector_heap_, ev.symbol_table_);
+        } else {
+            const auto sidx = types::as_string_idx(a[0]);
+            if (sidx >= ev.string_heap_.size())
+                return make_void();
+            // Issue #4642: the program bytes leave the heap into the parser and
+            // then into the shared top env (a top-level define binds globally).
+            // The dispatch effect stays kEffectNone - the tenant stamp is the
+            // gate. In-range BEFORE the copy: on a mismatch the helper already
+            // emitted the IsolationDeny, so do not parse and do not eval_flat.
+            // The primitive-error shape is the site's failure shape for a
+            // refused program (the merr pair keeps the kind+message pair).
+            if (!ev.inrange_string_tenant_allows(sidx, aura::compiler::security::kEffectNone,
+                                                 "eval"))
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "eval: cross-tenant string denied by "
+                                            "WorkspaceIsolationPolicy",
+                                            ev.primitive_error_counter_ptr());
+            code = ev.string_at(sidx);
+        }
         // Issue #4359: a stack flat dies when eval returns, and the
         // closure still holds that pointer. Callers then hang or abort.
         // Keep the program for the Evaluator lifetime.
