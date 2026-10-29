@@ -8,6 +8,7 @@ module;
 #include <expected>
 #include <format>
 #include <limits>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -2030,7 +2031,17 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                 // -> host accounting leak). Same lock
                                 // pattern as aura_make_pair at line 1330+.
                                 aura_lock_workspace_write();
-                                g_owned_pair_slots_.push_back(slot);
+                                {
+                                    // Issue #4755: the workspace hook is
+                                    // NOT a process-wide exclusion (it
+                                    // binds one Evaluator, and a write
+                                    // acquisition adopts a shared hold), so
+                                    // two fiber bodies could realloc this
+                                    // process-global vector at once. The
+                                    // registry owns its own mutex.
+                                    std::lock_guard<std::mutex> owned_pairs(g_owned_pair_slots_mtx);
+                                    g_owned_pair_slots_.push_back(slot);
+                                }
                                 aura_unlock_workspace_write();
                             }
                         }

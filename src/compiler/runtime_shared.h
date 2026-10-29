@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <atomic>
+#include <mutex>
 #include <vector>
 
 // ── PairSlot: unified pair storage format ──
@@ -111,7 +112,19 @@ extern PairSlotTable g_pair_slots;
 // Heap-owned pair slots from the IR MakePair mirror (one pointer per
 // interpreter cons). Process-exit cleanup frees them. The JIT cons hot
 // path does not push here; its slabs are aura_pair_tls_bump() (#898).
+//
+// Issue #4755: the registry is PROCESS-GLOBAL, so its guard must be too.
+// It used to rely on aura_lock_workspace_write() alone, and that hook is
+// not a process-wide lock: it binds to ONE Evaluator at a time
+// (g_lock_hooks.user_data is a single slot re-bound per service), and
+// lock_workspace_unique() ADOPTS any Workspace depth this thread already
+// holds (#4270) without upgrading it. Two fiber bodies evaluating under a
+// shared workspace hold therefore both "took" the write lock and both ran
+// push_back into this vector: the two reallocs free each other's buffer
+// (glibc double free / ASan heap-use-after-free in run_function). Every
+// reader/writer of g_owned_pair_slots_ takes g_owned_pair_slots_mtx.
 extern std::vector<PairSlot*> g_owned_pair_slots_;
+extern std::mutex g_owned_pair_slots_mtx;
 
 // Issue #4057: owner-principal stamps parallel to g_pair_slots (entry i is
 // the capability tenant that allocated g_pair_slots[i] via aura_alloc_pair /

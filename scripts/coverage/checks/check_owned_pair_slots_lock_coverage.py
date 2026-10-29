@@ -6,6 +6,13 @@
 # g_owned_pair_slots_. That vector reallocates, so the push stays inside
 # aura_lock_workspace_write / aura_unlock_workspace_write.
 #
+# Issue #4755: the workspace hook is NOT a process-wide exclusion (it binds
+# ONE Evaluator at a time, and lock_workspace_unique adopts a shared hold on
+# the calling thread), so the push must ALSO take the registry's own
+# process-global mutex, g_owned_pair_slots_mtx. Two overlapping fiber bodies
+# both "held" the workspace write lock and reallocated this vector at once
+# (glibc double free in IRInterpreter::run_function).
+#
 # aura_alloc_pair (#898) does not take that lock and does not push the
 # vector. The slot lives on a thread-local slab (aura_pair_tls_bump).
 # A shared fetch_add on that path does not scale; do not add one.
@@ -63,6 +70,13 @@ def main() -> int:
         push_at = win.find(needle)
         if not (0 <= lock_at < push_at < unlock_at):
             fails.append("IR lock / push / unlock are out of order")
+        # Issue #4755: the process-global registry owns its own mutex.
+        owned_at = win.rfind("g_owned_pair_slots_mtx")
+        if owned_at < 0 or not (lock_at < owned_at < push_at):
+            fails.append(
+                "#4755: IR owned push is not under g_owned_pair_slots_mtx "
+                "(the workspace hook is not a process-wide lock)"
+            )
 
     alloc_at = rt.find("int64_t aura_alloc_pair(")
     car_at = rt.find("int64_t aura_pair_car(", alloc_at if alloc_at >= 0 else 0)
