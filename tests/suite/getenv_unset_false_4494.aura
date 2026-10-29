@@ -1,9 +1,10 @@
 ;; expect: (#f dflt) caught
 ; Issue #4494: getenv of an unset variable is #f; channel:send of a payload it
 ; cannot deliver raises. #4744 delivers immediates (number/boolean/void/symbol)
-; on channel:send, so the rejected case is a Ref payload (a pair).
+; on channel:send and #4763 deep-copies lists/vectors/hashes, so the rejected
+; case is a closure.
 (display (list (getenv "AURA_4494_SURELY_UNSET") (or (getenv "AURA_4494_SURELY_UNSET") "dflt")))
 (display " ")
 (define c (channel:create 4))
-(display (try (begin (channel:send c (cons 1 2)) "silent") (catch (e) "caught")))
+(display (try (begin (channel:send c (lambda () 1)) "silent") (catch (e) "caught")))
 (newline)
