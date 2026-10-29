@@ -215,6 +215,10 @@ FlatParseResult parse(ParserState& s, std::string_view src) {
     }
 }
 
+// Issue #4760: quasiquote readers (defined after parse_list's prologue).
+static NodeId read_quasiquote_4760(ParserState& s);
+static NodeId read_unquote_operand_4760(ParserState& s);
+
 NodeId parse_expr(ParserState& s) {
     // Recursion depth guard: prevent stack overflow on deeply nested expressions
     static constexpr std::size_t MAX_PARSE_DEPTH = 500;
@@ -321,16 +325,15 @@ NodeId parse_expr(ParserState& s) {
         }
         case TokenKind::QuasiQuote: {
             s.lex.consume(); // consume `
-            auto quoted = parse_expr(s);
-            if (quoted == NULL_NODE)
+            auto id = read_quasiquote_4760(s); // Issue #4760
+            if (id == NULL_NODE)
                 return NULL_NODE;
-            auto id = expand_qq(s, quoted, 0);
             s.flat.set_loc(id, tok.line, tok.column);
             return id;
         }
         case TokenKind::Unquote: {
             s.lex.consume(); // consume ,
-            auto inner = parse_expr(s);
+            auto inner = read_unquote_operand_4760(s); // Issue #4760
             if (inner == NULL_NODE)
                 return NULL_NODE;
             // Represent (unquote inner) as a Call to variable 'unquote'
@@ -341,7 +344,7 @@ NodeId parse_expr(ParserState& s) {
         }
         case TokenKind::UnquoteSplicing: {
             s.lex.consume(); // consume ,@
-            auto inner = parse_expr(s);
+            auto inner = read_unquote_operand_4760(s); // Issue #4760
             if (inner == NULL_NODE)
                 return NULL_NODE;
             // Represent (unquote-splicing inner) as a Call to variable 'unquote-splicing'
@@ -403,6 +406,70 @@ NodeId parse_float(ParserState& s, Token tok) {
     }
 }
 
+// Issue #4760: quasiquote nesting level of the template being read. 0 = not
+// inside an active template (plain code, or a plain quote). 1 = directly
+// inside the outermost backquote: an unquote / unquote-splicing operand here
+// is CODE (read with quote_depth 0, level 0). >1 = a nested backquote: its
+// unquotes are data one level down. The template itself is read with
+// quote_depth > 0, so special-form keywords inside it (let, cond, define, ...)
+// keep their surface shape — the same data boundary #4743 gave quote.
+// Thread-local rather than a ParserState field so the exported parser module
+// interface is unchanged; every bracket restores it.
+namespace {
+thread_local int t_qq_level_4760 = 0;
+struct QqLevelScope4760 {
+    int saved_level;
+    int saved_qdepth;
+    int& qdepth;
+    QqLevelScope4760(int& qd, int level, int qdepth_now)
+        : saved_level(t_qq_level_4760), saved_qdepth(qd), qdepth(qd) {
+        t_qq_level_4760 = level;
+        qd = qdepth_now;
+    }
+    ~QqLevelScope4760() {
+        t_qq_level_4760 = saved_level;
+        qdepth = saved_qdepth;
+    }
+};
+} // namespace
+NodeId expand_qq(ParserState& s, NodeId expr, int depth);
+// Read the template after ` / (quasiquote. Active (outermost) templates expand
+// to list-building code; a nested one stays the datum (quasiquote X).
+static NodeId read_quasiquote_4760(ParserState& s) {
+    if (t_qq_level_4760 > 0 || s.quote_depth > 0) {
+        NodeId inner;
+        {
+            QqLevelScope4760 sc(s.quote_depth, t_qq_level_4760 > 0 ? t_qq_level_4760 + 1 : 0,
+                                s.quote_depth + 1);
+            inner = parse_expr(s);
+        }
+        if (inner == NULL_NODE)
+            return NULL_NODE;
+        auto qv = s.flat.add_variable(s.pool.intern("quasiquote"));
+        return s.flat.add_call(qv, std::vector<aura::ast::NodeId>{inner});
+    }
+    NodeId quoted;
+    {
+        QqLevelScope4760 sc(s.quote_depth, 1, s.quote_depth + 1);
+        quoted = parse_expr(s);
+    }
+    if (quoted == NULL_NODE)
+        return NULL_NODE;
+    return expand_qq(s, quoted, 0);
+}
+// Read the operand after , / ,@ / (unquote / (unquote-splicing.
+static NodeId read_unquote_operand_4760(ParserState& s) {
+    if (t_qq_level_4760 == 1) {
+        QqLevelScope4760 sc(s.quote_depth, 0, 0);
+        return parse_expr(s);
+    }
+    if (t_qq_level_4760 > 1) {
+        QqLevelScope4760 sc(s.quote_depth, t_qq_level_4760 - 1, s.quote_depth);
+        return parse_expr(s);
+    }
+    return parse_expr(s);
+}
+
 NodeId parse_case(ParserState& s);
 NodeId parse_do(ParserState& s);
 NodeId parse_let_values(ParserState& s);
@@ -427,6 +494,35 @@ NodeId parse_list(ParserState& s) {
     // came back as the lambda form, and (quote (if a b c)) hung the desugar
     // pass. Nested (quote ...) lists below are data too — the datum carries a
     // quote symbol, not a Quote node.
+    // Issue #4760: (quasiquote X) is the long form of `X — it was an unbound
+    // call. (unquote X) / (unquote-splicing X) inside an active template read
+    // their operand the same way , and ,@ do.
+    if (f.kind == TokenKind::Identifier &&
+        ((f.text == "quasiquote" && (s.quote_depth == 0 || t_qq_level_4760 > 0)) ||
+         ((f.text == "unquote" || f.text == "unquote-splicing") && t_qq_level_4760 > 0))) {
+        const std::string head(f.text);
+        s.lex.consume(); // the keyword
+        NodeId id = head == "quasiquote" ? read_quasiquote_4760(s) : NULL_NODE;
+        if (head != "quasiquote") {
+            auto inner = read_unquote_operand_4760(s);
+            if (inner != NULL_NODE) {
+                auto uv = s.flat.add_variable(s.pool.intern(head));
+                id = s.flat.add_call(uv, std::vector<aura::ast::NodeId>{inner});
+            }
+        }
+        if (id == NULL_NODE) {
+            skip_rparen(s);
+            return NULL_NODE;
+        }
+        if (s.lex.peek().kind == TokenKind::RParen)
+            s.lex.consume();
+        else {
+            s.defer("(" + head + " ...) takes exactly one operand");
+            return NULL_NODE;
+        }
+        s.flat.set_loc(id, f.line, f.column);
+        return id;
+    }
     if (f.kind == TokenKind::Identifier && s.quote_depth == 0) {
         auto kw = f.text;
         if (kw == "if")
@@ -2173,6 +2269,16 @@ static bool is_quasiquote(const aura::ast::FlatAST& flat, const aura::ast::Strin
            std::string(pool.resolve(callee.sym_id)) == "quasiquote";
 }
 
+// Issue #4760: code for the two-element list (<head> <elem>).
+static NodeId qq_list_4760(ParserState& s, std::string_view head, NodeId elem) {
+    auto tail = s.flat.add_call(s.flat.add_variable(s.pool.intern("cons")),
+                                std::vector<aura::ast::NodeId>{
+                                    elem, s.flat.add_quote(s.flat.add_literal(0))});
+    auto hq = s.flat.add_quote(s.flat.add_variable(s.pool.intern(std::string(head))));
+    return s.flat.add_call(s.flat.add_variable(s.pool.intern("cons")),
+                           std::vector<aura::ast::NodeId>{hq, tail});
+}
+
 NodeId expand_qq(ParserState& s, NodeId expr, int depth) {
     // Prevent stack overflow from exceessive quasiquote nesting
     if (depth > 4)
@@ -2188,6 +2294,10 @@ NodeId expand_qq(ParserState& s, NodeId expr, int depth) {
     // The keyword (if, lambda, etc.) is LOST by parse_list — we need to reconstruct it
     if (v.tag != NodeTag::Call) {
         // Variables and literals: (quote expr)
+        // Issue #4760: 'X inside a template is (quote X) with X still a
+        // template, so `(a ',x) substitutes x.
+        if (v.tag == NodeTag::Quote && !v.children.empty())
+            return qq_list_4760(s, "quote", expand_qq(s, v.child(0), depth));
         if (v.tag == NodeTag::Variable || v.tag == NodeTag::LiteralInt ||
             v.tag == NodeTag::LiteralFloat || v.tag == NodeTag::LiteralString ||
             v.tag == NodeTag::Quote) {
@@ -2313,10 +2423,9 @@ NodeId expand_qq(ParserState& s, NodeId expr, int depth) {
     // Handle unquote at depth > 0: (quote (unquote ...))
     if (depth > 0 && is_unquote(s.flat, s.pool, expr)) {
         if (v.children.size() > 1) {
-            auto inner = expand_qq(s, v.child(1), depth - 1);
-            auto unq_var = s.flat.add_variable(s.pool.intern("unquote"));
-            return s.flat.add_quote(
-                s.flat.add_call(unq_var, std::vector<aura::ast::NodeId>{inner}));
+            // Issue #4760: build (unquote <inner>) — quoting the expanded
+            // inner returned its list-building code as data.
+            return qq_list_4760(s, "unquote", expand_qq(s, v.child(1), depth - 1));
         }
         return s.flat.add_quote(expr);
     }
@@ -2331,10 +2440,7 @@ NodeId expand_qq(ParserState& s, NodeId expr, int depth) {
     // Handle unquote-splicing at depth > 0: (quote (unquote-splicing ...))
     if (depth > 0 && is_unquote_splicing(s.flat, s.pool, expr)) {
         if (v.children.size() > 1) {
-            auto inner = expand_qq(s, v.child(1), depth - 1);
-            auto unsplice_var = s.flat.add_variable(s.pool.intern("unquote-splicing"));
-            return s.flat.add_quote(
-                s.flat.add_call(unsplice_var, std::vector<aura::ast::NodeId>{inner}));
+            return qq_list_4760(s, "unquote-splicing", expand_qq(s, v.child(1), depth - 1));
         }
         return s.flat.add_quote(expr);
     }
@@ -2342,9 +2448,9 @@ NodeId expand_qq(ParserState& s, NodeId expr, int depth) {
     // Handle nested quasiquote
     if (is_quasiquote(s.flat, s.pool, expr)) {
         if (v.children.size() > 1) {
-            auto inner = expand_qq(s, v.child(1), depth + 1);
-            auto qq_var = s.flat.add_variable(s.pool.intern("quasiquote"));
-            return s.flat.add_call(qq_var, std::vector<aura::ast::NodeId>{inner});
+            // Issue #4760: the nested template is the datum (quasiquote ...),
+            // not a call to an unbound `quasiquote`.
+            return qq_list_4760(s, "quasiquote", expand_qq(s, v.child(1), depth + 1));
         }
     }
 
