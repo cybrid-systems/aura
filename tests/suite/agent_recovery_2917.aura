@@ -8,7 +8,7 @@
 (if (hash? s0)
     #t
     (begin (display "FAIL-2917 stats-hash\n") (set! ok #f)))
-(if (= (hash-ref s0 'schema) 2917)
+(if (= (hash-ref s0 "schema") 2917)
     #t
     (begin (display "FAIL-2917 schema\n") (set! ok #f)))
 
@@ -44,15 +44,15 @@
 
 ; Success rate counters advanced
 (define s1 (engine:metrics "query:agent-recovery-stats"))
-(if (and (integer? (hash-ref s1 'attempts-total))
-         (>= (hash-ref s1 'attempts-total) 1)
-         (>= (hash-ref s1 'success-total) 1)
-         (= (hash-ref s1 'last-status) 1))
+(if (and (integer? (hash-ref s1 "attempts-total"))
+         (>= (hash-ref s1 "attempts-total") 1)
+         (>= (hash-ref s1 "success-total") 1)
+         (= (hash-ref s1 "last-status") 1))
     #t
     (begin (display "FAIL-2917 counters\n") (set! ok #f)))
 
 ; No residual strict hold after successful recovery
-(if (= (hash-ref s1 'strict-hold) 0)
+(if (= (hash-ref s1 "strict-hold") 0)
     #t
     (begin (display "FAIL-2917 residual-strict-hold\n") (set! ok #f)))
 

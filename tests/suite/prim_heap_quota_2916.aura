@@ -22,14 +22,14 @@
     #t
     (begin (display "FAIL-2916 stats-hash\n") (set! ok #f)))
 
-(if (= (hash-ref s0 'schema) 2916)
+(if (= (hash-ref s0 "schema") 2916)
     #t
     (begin (display "FAIL-2916 schema\n") (set! ok #f)))
 
 ; Grow a few pairs so high-water is non-zero
 (define seed (list 1 2 3))
 (define s1 (engine:metrics "query:prim-heap-quota-stats"))
-(define psz (hash-ref s1 'pairs-size))
+(define psz (hash-ref s1 "pairs-size"))
 ; Soft limit just above current size — bulk list of 8 pairs must reject
 (if (= (resource:quota-set "pairs" (+ psz 1)) 1)
     #t
@@ -41,7 +41,7 @@
 
 ; Rejects counter should be visible
 (define s2 (engine:metrics "query:prim-heap-quota-stats"))
-(define rej (hash-ref s2 'rejects-total))
+(define rej (hash-ref s2 "rejects-total"))
 (if (and (integer? rej) (>= rej 1))
     #t
     (begin (display "FAIL-2916 rejects-total\n") (set! ok #f)))
@@ -54,7 +54,7 @@
 
 ; string soft quota: freeze at current size so any new intern errors
 (define ss (engine:metrics "query:prim-heap-quota-stats"))
-(define sl (hash-ref ss 'strings-size))
+(define sl (hash-ref ss "strings-size"))
 (resource:quota-set "strings" sl)
 (if (error? (string-append "2916-unique-prefix-" "xyz-quota-miss"))
     #t
@@ -64,33 +64,33 @@
 ; Issue #2997: lock SLO + recommend + schema-2997 on the same stats surface.
 (define long (list 1 2 3 4 5 6 7 8 9))
 (define s3 (engine:metrics "query:prim-heap-quota-stats"))
-(if (and (integer? (hash-ref s3 'lock-hold-ns)) (>= (hash-ref s3 'lock-hold-ns) 0))
+(if (and (integer? (hash-ref s3 "lock-hold-ns")) (>= (hash-ref s3 "lock-hold-ns") 0))
     #t
     (begin (display "FAIL-2997 lock-hold-ns\n") (set! ok #f)))
-(if (and (integer? (hash-ref s3 'lock-samples)) (>= (hash-ref s3 'lock-samples) 1))
+(if (and (integer? (hash-ref s3 "lock-samples")) (>= (hash-ref s3 "lock-samples") 1))
     #t
     (begin (display "FAIL-2997 lock-samples\n") (set! ok #f)))
-(if (integer? (hash-ref s3 'soft-hit-total))
+(if (integer? (hash-ref s3 "soft-hit-total"))
     #t
     (begin (display "FAIL-2997 soft-hit-total\n") (set! ok #f)))
-(if (and (integer? (hash-ref s3 'unlimited-bypass-total))
-         (>= (hash-ref s3 'unlimited-bypass-total) 1))
+(if (and (integer? (hash-ref s3 "unlimited-bypass-total"))
+         (>= (hash-ref s3 "unlimited-bypass-total") 1))
     #t
     (begin (display "FAIL-2997 unlimited-bypass-total\n") (set! ok #f)))
-(if (integer? (hash-ref s3 'recommend))
+(if (integer? (hash-ref s3 "recommend"))
     #t
     (begin (display "FAIL-2997 recommend\n") (set! ok #f)))
-(if (= (hash-ref s3 'schema-2997) 2997)
+(if (= (hash-ref s3 "schema-2997") 2997)
     #t
     (begin (display "FAIL-2997 schema-2997\n") (set! ok #f)))
 
 ; Soft-hit: limit just above a bulk list so 70% fires without reject.
 (define s4 (engine:metrics "query:prim-heap-quota-stats"))
-(define psz2 (hash-ref s4 'pairs-size))
+(define psz2 (hash-ref s4 "pairs-size"))
 (resource:quota-set "pairs" (+ psz2 20))
 (define soft (list 1 2 3 4 5 6 7 8))
 (define s5 (engine:metrics "query:prim-heap-quota-stats"))
-(if (and (integer? (hash-ref s5 'soft-hit-total)) (>= (hash-ref s5 'soft-hit-total) 1))
+(if (and (integer? (hash-ref s5 "soft-hit-total")) (>= (hash-ref s5 "soft-hit-total") 1))
     #t
     (begin (display "FAIL-2997 soft-hit under 70%\n") (set! ok #f)))
 (resource:quota-set "pairs" 0)

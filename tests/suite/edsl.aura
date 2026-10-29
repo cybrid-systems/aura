@@ -429,8 +429,9 @@
   (set-code "(define x 42)")
   (let ((root (query:root)))
     (check (not (mutate:splice root 0 "splice")))))
-  ;; splice with no code args should return #f
-  (check (not (mutate:splice 0 0 "splice")))
+  ;; splice with no code args is a structured bad-arg error (pair), not #f —
+  ;; same face the edsl:err-bad-arg-* ACs pin.
+  (check (pair? (mutate:splice 0 0 "splice")))
 
 
 ;; ═══════════════════════════════════════════════════════════════
