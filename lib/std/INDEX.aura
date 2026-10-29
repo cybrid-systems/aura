@@ -242,7 +242,7 @@
         (cond
           ((> (+ i (string-length sub)) (string-length str)) #f)
           ((string=? (substring str i (+ i (string-length sub))) sub) #t)
-          (else (loop (+ i 1)))))))
+          (else (loop (+ i 1))))))))
 
 ; Helper: convert any to string (used by by-tag for help text).
 (define (string?-> v)

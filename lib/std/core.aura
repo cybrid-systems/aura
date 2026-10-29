@@ -82,7 +82,7 @@
       (let take-n ((i 0) (src lst) (acc (list)))
         (cond
           ((or (null? src) (= i n)) (cons (reverse acc) (core:chunk n src)))
-          (else (take-n (+ i 1) (cdr src) (cons (car src) acc)))))))
+          (else (take-n (+ i 1) (cdr src) (cons (car src) acc))))))))
 
 ; ── (core:running-sum lst) ──
 ; Return the running (cumulative) sum of lst.
