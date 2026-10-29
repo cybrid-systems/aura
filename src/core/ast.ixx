@@ -8677,9 +8677,15 @@ public:
     // Issue #2122: after incremental wrap restamp, untouched live nodes may
     // still carry a pre-wrap node_gen_; lazy-align them here so eval stays
     // correct without an O(N) full restamp on the wrap path.
-    bool is_valid(const NodeId id) const
-        post(r : r == (id != NULL_NODE && id < tag_.size() && id < node_gen_.size() &&
-                       node_gen_[id] == generation_)) {
+    //
+    // Issue #4758: no `post` re-reading node_gen_ / generation_. Both are
+    // atomics a sibling fiber may legitimately advance between the body and
+    // the postcondition (make_ref_layout's #2122 lazy align, eval_flat_body's
+    // #3523 restamp_node_generation): the re-evaluated post saw
+    // node_gen_[id] go 1 -> 2 mid-call and SIGABRTed a correct `false`
+    // (callers re-check after restamping). The verdict below is computed from
+    // ONE load of each field; that snapshot is the contract.
+    bool is_valid(const NodeId id) const {
         // Issue #255: bump the check counter (lifetime total).
         is_valid_check_count_.fetch_add(1, std::memory_order_relaxed);
         if (id == NULL_NODE)
@@ -8704,13 +8710,15 @@ public:
         // make_ref_layout + Evaluator::stamp_query_stable_ref_export.
         // Related: #2122 (introduced the write-up — kept off the oracle),
         // #2421, #2125, #2759, #368, #1500, #3000, #3037, #3287, #3327, #3386.
-        if (node_gen_[id] != generation_) {
+        const std::uint16_t slot_gen = node_gen_[id]; // #4758: one load each
+        const std::uint16_t ws_gen = generation_;
+        if (slot_gen != ws_gen) {
             // Observe-only: bump the lazy-align metric for live slots so the
             // existing observability surface (restamp_lazy_align_total_)
             // still tracks the would-have-aligned cases; bump the stale
             // counter so the post-#2122 wire-up stays identical for Soft /
             // align-flag-off paths. Do not mutate node_gen_ — see above.
-            if (node_gen_[id] != 0 && !is_free_slot(id))
+            if (slot_gen != 0 && !is_free_slot(id))
                 restamp_lazy_align_total_.fetch_add(1, std::memory_order_relaxed);
             node_gen_stale_access_count_.fetch_add(1, std::memory_order_relaxed);
             return false;
@@ -9172,19 +9180,12 @@ public:
     // matches a never-COW'd workspace (epoch 0). After a COW advance
     // they become invalid unless pin_for_cow() was called — prefer
     // make_ref / make_safe_ref for full provenance capture.
-    [[nodiscard]] bool is_valid(const StableNodeRef& ref) const noexcept
-        post(r : r == (ref.id != NULL_NODE && ref.id < tag_.size() && ref.id < node_gen_.size() &&
-                       node_gen_[ref.id] == ref.gen && ref.gen == generation_ &&
-                       // Issue #368: generation_ is uint16_t; after
-                       // ~130K mutates a second wrap could match
-                       // the ref's captured gen by accident. Check
-                       // wrap_epoch explicitly (uint32_t, wraps
-                       // every ~2.6e14 mutates).
-                       ref.wrap_epoch == wrap_epoch_.load(std::memory_order_relaxed) &&
-                       // Issue #1500: COW epoch must match unless pinned.
-                       (ref.boundary_pinned || ref.cow_epoch_at_capture == workspace_cow_epoch_) &&
-                       // Issue #4315: production set-code install. 0 is not a fence.
-                       (install_id_ == 0 || ref.install_id_at_capture == install_id_))) {
+    // Issue #4758: no `post` re-reading the shared slot / workspace state (see
+    // is_valid(NodeId)): a sibling fiber's lazy align may advance
+    // node_gen_[ref.id] between the body and a re-evaluated postcondition.
+    // Checked below: id in range, slot gen == ref.gen == generation_,
+    // wrap_epoch (#368), cow epoch unless pinned (#1500), install id (#4315).
+    [[nodiscard]] bool is_valid(const StableNodeRef& ref) const noexcept {
         // Issue #255: bump the check counter (lifetime total).
         is_valid_check_count_.fetch_add(1, std::memory_order_relaxed);
         bool ok = ref.id != NULL_NODE && ref.id < tag_.size() && ref.id < node_gen_.size() &&
