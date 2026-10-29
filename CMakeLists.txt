@@ -2485,6 +2485,16 @@ add_dependencies(all_test_issue_targets test_rest_param_hygiene_eval_flat)
 aura_add_issue_test(test_pre_scan_quote_boundary)
 aura_issue_test_link_light(test_pre_scan_quote_boundary)
 add_dependencies(all_test_issue_targets test_pre_scan_quote_boundary)
+# Issue #4743: the operand of quote / ' is data — the parser no longer
+# desugars special-form heads inside it ((quote (cond (a 1))) evaluated to 1,
+# (quote (if a b c)) hung). Issue #4749: eval of a datum (list / symbol /
+# number) runs the string path instead of silently returning ().
+aura_add_issue_test(test_quote_datum_forms)
+aura_issue_test_link_light(test_quote_datum_forms)
+add_dependencies(all_test_issue_targets test_quote_datum_forms)
+aura_add_issue_test(test_eval_quoted_datum)
+aura_issue_test_link_light(test_eval_quoted_datum)
+add_dependencies(all_test_issue_targets test_eval_quoted_datum)
 # Issue #3155: FlatAST::compact_nodes() rebuilt live columns and remapped
 # marker / macro_dirty / type_id / topology, but did NOT rebuild/remap
 # provenance_ or schema_cache_. After ID remap, MacroIntroduced markers

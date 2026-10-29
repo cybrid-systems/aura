@@ -406,7 +406,15 @@ NodeId parse_list(ParserState& s) {
         return id;
     }
     auto f = s.lex.peek();
-    if (f.kind == TokenKind::Identifier) {
+    // Issue #4743: the operand of quote / ' is DATA, not code. Desugaring
+    // (if / let / define / cond / case / do / ...) applies only to forms the
+    // evaluator runs, so inside quote the list keeps its surface shape: the
+    // head stays a symbol atom and the tail stays its own list. Before this
+    // boundary (quote (cond (a 1))) was EVALUATED to 1, (quote (define (f x) x))
+    // came back as the lambda form, and (quote (if a b c)) hung the desugar
+    // pass. Nested (quote ...) lists below are data too — the datum carries a
+    // quote symbol, not a Quote node.
+    if (f.kind == TokenKind::Identifier && s.quote_depth == 0) {
         auto kw = f.text;
         if (kw == "if")
             return parse_if(s);
