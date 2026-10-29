@@ -48,6 +48,7 @@ namespace {
     using types::is_string;
     using types::make_bool;
     using types::make_cell;
+    using types::make_hash;
     using types::make_int;
     using types::make_string;
     using types::make_void;
@@ -100,6 +101,129 @@ namespace {
     // private cell is a GC root, so they capture safely.
     bool overlay_capturable(const EvalValue& v) {
         return !is_closure(v);
+    }
+
+    // ── Issue #4715 follow-up: structured conflict condition ────────────
+    //
+    // The historical contract is the string "fiber:cow-conflict: <name>"
+    // (tests and callers match that prefix), so it stays byte-identical and
+    // the condition fields ride along as trailing key=value pairs — the same
+    // additive shape query:mutation-log uses. Programmatic callers read the
+    // condition object from (fiber:overlay-conflict).
+    std::string overlay_conflict_message(const cow::ConflictInfo& ci) {
+        std::string out = "fiber:cow-conflict: " + ci.binding + " binding=" + ci.binding +
+                          " winner-fiber=" + std::to_string(ci.winner_fiber) +
+                          " our-epoch=" + std::to_string(ci.base_epoch) +
+                          " committed-epoch=" + std::to_string(ci.winner_epoch) +
+                          " our-seq=" + std::to_string(ci.base_seq) +
+                          " winner-seq=" + std::to_string(ci.winner_seq) +
+                          " kind=" + (ci.read_only ? "read-set" : "write-write");
+        out += ci.read_only
+                   ? " (a binding this overlay read was committed by another fiber after it began)"
+                   : " (the same binding was committed by another fiber after this overlay began)";
+        return out;
+    }
+
+    // Issue #4715 follow-up: the condition object. The epoch / sequence
+    // numbers are fixnums; binding, kind and winner-fiber are strings (the
+    // fiber key is a 64-bit token that does not fit the fixnum payload). A
+    // hash (not a list) so callers use the same (hash-ref cond "…") shape as
+    // every other report.
+    EvalValue overlay_conflict_condition(Evaluator& ev, const cow::ConflictInfo& ci) {
+        auto* ht = FlatHashTable::create(16);
+        if (!ht)
+            return make_bool(false);
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto put = [&](std::string_view k, const EvalValue& v) {
+            std::uint64_t h = 0xcbf29ce484222325ULL;
+            for (unsigned char c : k)
+                h = (h ^ c) * 0x100000001b3ULL;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < ht->capacity; ++at) {
+                const auto idx = ((h >> 1) + at) & (ht->capacity - 1);
+                if (meta[idx] != 0xFF)
+                    continue;
+                meta[idx] = fp;
+                keys[idx] =
+                    make_string(static_cast<std::uint64_t>(ev.push_string_heap(std::string(k))))
+                        .val;
+                vals[idx] = v.val;
+                ++ht->size;
+                return;
+            }
+        };
+        const auto str = [&ev](const std::string& s) {
+            return make_string(static_cast<std::uint64_t>(ev.push_string_heap(s)));
+        };
+        put("binding", str(ci.binding));
+        // The overlay key is a 64-bit token (scheduler fiber id, or the
+        // thread-key domain for CLI bodies) and does NOT fit the fixnum
+        // payload, so the winner is carried losslessly as a decimal string —
+        // make_int would trip the #1519 range contract on a high-bit key.
+        put("winner-fiber", str(std::to_string(ci.winner_fiber)));
+        put("winner-seq", make_int(static_cast<std::int64_t>(ci.winner_seq)));
+        put("our-epoch", make_int(static_cast<std::int64_t>(ci.base_epoch)));
+        put("committed-epoch", make_int(static_cast<std::int64_t>(ci.winner_epoch)));
+        put("our-seq", make_int(static_cast<std::int64_t>(ci.base_seq)));
+        put("kind", str(ci.read_only ? "read-set" : "write-write"));
+        put("read-only", make_bool(ci.read_only));
+        put("schema", make_int(4715));
+        // Publish under the workspace write lock: the hash arena may compact
+        // g_hash_tables on another thread (runtime_shared.h contract), and the
+        // owner stamp must land on the exact slot we just pushed.
+        aura_lock_workspace_write();
+        const auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        aura_hash_stamp_new_table_owner();
+        aura_unlock_workspace_write();
+        return make_hash(hidx);
+    }
+
+    // ── Issue #4715 follow-up: provenance record for an overlay commit ──
+    //
+    // The workspace mutation log is the AI-facing audit trail (query
+    // :mutation-log). An overlay commit changes env bindings, not AST nodes,
+    // so without this record the commit is invisible: target_node is
+    // NULL_NODE and the summary carries the committed bindings plus the
+    // winner / epoch info. A rejected commit leaves a RolledBack record
+    // naming the winner (the audit trail must show the dropped attempt).
+    // Runs under the registry lock (NotifyFn), so overlay commits append in
+    // commit order and the shared mutation-id counter is not raced by them.
+    void record_overlay_commit(Evaluator& ev, std::uint64_t epoch, const cow::CommitResult& r) {
+        aura::ast::FlatAST* flat = ev.workspace_flat();
+        if (!flat)
+            return;
+        // A rejected commit applied nothing, so the record names the dropped
+        // attempt's bindings; a successful one names what it published.
+        const auto& names = r.applied_names.empty() ? r.attempted_names : r.applied_names;
+        std::string bindings;
+        for (const auto& n : names) {
+            if (!bindings.empty())
+                bindings += ',';
+            bindings += n;
+        }
+        if (bindings.empty())
+            bindings = "-";
+        std::string summary;
+        const bool rejected = r.conflict_info.valid();
+        if (rejected) {
+            summary = std::format(
+                "bindings={} conflict={} winner-fiber={} our-epoch={} committed-epoch={} "
+                "our-seq={} winner-seq={} kind={}",
+                bindings, r.conflict_info.binding, r.conflict_info.winner_fiber,
+                r.conflict_info.base_epoch, r.conflict_info.winner_epoch, r.conflict_info.base_seq,
+                r.conflict_info.winner_seq, r.conflict_info.read_only ? "read-set" : "write-write");
+        } else {
+            summary = std::format("bindings={} epoch={} fast-forward={}", bindings, epoch,
+                                  r.fast_forward ? 1 : 0);
+        }
+        flat->add_mutation(aura::ast::NULL_NODE, "fiber:overlay-commit", "", "", summary,
+                           rejected ? aura::ast::MutationStatus::RolledBack
+                                    : aura::ast::MutationStatus::Committed);
     }
 
     // Copy one private cell payload. The cell identity is fixed once captured,
@@ -189,7 +313,7 @@ bool fiber_cow_overlay_capture_set(Evaluator& ev, std::string_view name, const E
     auto& reg = cow::registry<EvalValue>();
     const auto key = fiber_cow_overlay_key();
     EvalValue shadow = make_void();
-    if (!reg.read(owner, key, name, shadow)) {
+    if (!reg.peek(owner, key, name, shadow)) {
         // Only a top-level binding is overlay material. When the name resolves
         // to a local (parameter / let) cell the ordinary in-frame write stays:
         // the overlay is a rebind layer over the shared env, not over lexical
@@ -309,7 +433,8 @@ void register_fiber_cow_primitives(std::function<void(std::string, PrimFn)> add,
         if (name.empty())
             return make_bool(false);
         EvalValue local = make_void();
-        return make_bool(reg.read(owner, fiber_cow_overlay_key(), name, local));
+        // Membership probe only: peek() keeps it out of the read set.
+        return make_bool(reg.peek(owner, fiber_cow_overlay_key(), name, local));
     });
 
     // (fiber:overlay-commit) — merge the overlay into the shared env.
@@ -343,17 +468,38 @@ void register_fiber_cow_primitives(std::function<void(std::string, PrimFn)> add,
                                     ? private_cell
                                     : static_cast<std::uint64_t>(ev.alloc_cell(value));
                 ev.top_env().bind(name, make_cell(ci));
-            });
+            },
+            // #4715 follow-up: provenance record, appended under the registry
+            // lock so the audit trail lands in commit order.
+            [&ev, epoch](const cow::CommitResult& res) { record_overlay_commit(ev, epoch, res); });
         overlay_sync_tls(owner); // #4715 AC2: disarmed after commit (0 on success)
         if (!r.conflict.empty()) {
-            return make_primitive_error(
-                ev.string_heap_, ev.error_values_,
-                std::string("fiber:cow-conflict: ") + r.conflict +
-                    " was committed by another fiber after this overlay began",
-                ev.primitive_error_counter_ptr());
+            // The condition object is the structured form of the same
+            // verdict; the historical "fiber:cow-conflict: <name>" prefix is
+            // preserved at the head of the error string.
+            cow::ConflictInfo ci = r.conflict_info;
+            if (!ci.valid())
+                ci.binding = r.conflict;
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        overlay_conflict_message(ci),
+                                        ev.primitive_error_counter_ptr());
         }
         return make_bool(r.ok);
     });
+
+    // (fiber:overlay-conflict) — Issue #4715 follow-up: the structured
+    // condition of the last rejected commit by the calling fiber, as a hash
+    // (binding / winner-fiber / our-epoch / committed-epoch / our-seq /
+    // winner-seq / kind / read-only / schema), or #f when there is none.
+    add("fiber:overlay-conflict",
+        [&ev, &reg, owner, deny](std::span<const EvalValue>) -> EvalValue {
+            if (auto denied = deny(ev, "fiber"))
+                return *denied;
+            const auto ci = reg.last_conflict(owner, fiber_cow_overlay_key());
+            if (!ci)
+                return make_bool(false);
+            return overlay_conflict_condition(ev, *ci);
+        });
 
     // (fiber:overlay-rollback) — failure / cancel path: drop the overlay.
     add("fiber:overlay-rollback", [&reg, owner](std::span<const EvalValue>) -> EvalValue {
@@ -372,11 +518,13 @@ void register_fiber_cow_primitives(std::function<void(std::string, PrimFn)> add,
     // cannot go green.
     add("fiber:overlay-report", [&ev, &reg, owner, deny](std::span<const EvalValue>) -> EvalValue {
         const cow::OverlayStats s = reg.stats(owner);
+        // #4715 follow-up appends the read-set subset; every pre-follow-up
+        // field keeps its name and position so existing pins stay valid.
         std::string out = std::format(
             "begins={} commits={} fast-forward={} merged={} conflicts={} rollbacks={} writes={} "
-            "active={}",
+            "active={} read-conflicts={}",
             s.begins, s.commits, s.fast_forward, s.merged, s.conflicts, s.rollbacks, s.writes,
-            s.active);
+            s.active, s.read_conflicts);
         return make_string(ev.string_heap_.mint(out));
     });
 }

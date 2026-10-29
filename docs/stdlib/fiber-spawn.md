@@ -179,6 +179,7 @@ env top table:
 (fiber:overlay-commit)                ; merge; error on a write-write conflict
 (fiber:overlay-rollback)              ; drop the overlay, apply nothing
 (fiber:overlay-pending)               ; bindings held privately right now
+(fiber:overlay-conflict)              ; condition object of our last rejection, or #f
 (fiber:overlay-report)                ; deterministic stats string
 ```
 
@@ -195,9 +196,44 @@ torn).
 
 Commit is optimistic and **first-committer-wins**: the overlay scans every
 pending binding in sorted name order *before* applying anything, and a binding
-another fiber committed after this overlay began aborts the whole overlay with
-`fiber:cow-conflict: <name>` and applies nothing. There is no
-last-writer-wins merge.
+another fiber committed after this overlay began aborts the whole overlay and
+applies nothing. There is no last-writer-wins merge. Two validations run in
+that pre-apply pass, in this order:
+
+1. **write-write** — a binding this overlay wrote that another fiber committed
+   after it began;
+2. **read-set / stale read** — a binding this overlay *read* (ordinary env
+   reads are recorded while the overlay is open) that another fiber committed
+   after it began. Everything the body computed from that read is stale, so
+   committing it would be write skew; the commit is rejected instead.
+
+A rejected commit still returns the historical `fiber:cow-conflict: <name>`
+error string (the prefix existing callers match), with the condition appended
+as trailing fields:
+
+```text
+fiber:cow-conflict: <name> binding=<name> winner-fiber=<id>
+  our-epoch=<n> committed-epoch=<n> our-seq=<n> winner-seq=<n>
+  kind=write-write|read-set
+```
+
+The same verdict is a condition object (a hash) from
+`(fiber:overlay-conflict)`: `binding`, `winner-fiber`, `our-epoch`,
+`committed-epoch`, `our-seq`, `winner-seq`, `kind`, `read-only`,
+`schema`. `winner-fiber` is a decimal **string** — the overlay key is a
+64-bit token (scheduler fiber id, or the CLI thread-key domain) that does not
+fit the fixnum payload; the epoch / sequence fields are fixnums.
+
+Every overlay commit appends one record to the workspace mutation log
+(`query :mutation-log`): op `fiber:overlay-commit`, `target` = NULL_NODE,
+summary `bindings=<sorted names> epoch=<n> fast-forward=<0|1>`. A rejected
+commit appends a RolledBack record naming the winner:
+`bindings=<names> conflict=<name> winner-fiber=… our-epoch=… committed-epoch=…
+our-seq=… winner-seq=… kind=…`. The record needs a live workspace FlatAST
+(a `set-code` / `eval-current` program, or a CompilerService with a
+workspace); a pure-EDSL program has no workspace log to append to.
+`fiber:overlay-report` keeps its historical fields and appends
+`read-conflicts=<n>` (the stale-read subset of `conflicts`).
 
 Limits (documented, tracked under #4715):
 

@@ -5467,6 +5467,200 @@ def test_fiber_sibling_dispatch_across_rebind_4715_regression():
     )
 
 
+def _run_aura_4715(program, *, runs=1, timeout=180):
+    """Issue #4715: run an overlay program on the CLI thread backend."""
+    env = os.environ.copy()
+    env["AURA_TIER_JIT"] = "0"
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env["AURA_SANDBOX"] = "off"
+    env.pop("AURA_SOFT", None)
+    env.pop("AURA_FORCE_IR", None)
+    fd, path = tempfile.mkstemp(suffix=".aura", prefix="aura-4715-")
+    outs = []
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(program)
+        for attempt in range(runs):
+            r = subprocess.run([AURA, path], capture_output=True, text=True, timeout=timeout, env=env, cwd=str(REPO))
+            assert r.returncode == 0, f"#4715 run {attempt}: rc={r.returncode} err={str(r.stderr)[-600:]!r}"
+            lines = [ln.strip() for ln in (r.stdout or "").splitlines() if ln.strip()]
+            assert lines, f"#4715 run {attempt}: empty stdout err={str(r.stderr)[-600:]!r}"
+            outs.append(lines[-1])
+    finally:
+        os.remove(path)
+    return outs
+
+
+def test_fiber_cow_overlay_conflict_condition_4715():
+    """Issue #4715 follow-up: the conflict carries a structured condition.
+
+    The commit still returns the historical "fiber:cow-conflict: <name>"
+    string (existing callers match that prefix), and the same verdict now
+    carries binding / winner fiber / our epoch / committed epoch / sequences /
+    kind as trailing fields and as a condition object from
+    (fiber:overlay-conflict).
+    """
+    program = """
+(begin
+  (set-code "(define cow-seed 0)")
+  (eval-current)
+  #t)
+(define (cow-writer val)
+  (fiber:overlay-begin)
+  (fiber:overlay-set! "cow-cond" val)
+  (if (error? (fiber:overlay-commit)) 0 1))
+(fiber:overlay-begin)
+(fiber:overlay-set! "cow-cond" 2)
+(define win (fiber:join (fiber:spawn (lambda () (cow-writer 1)))))
+(define msg (try (fiber:overlay-commit) (catch (e) e)))
+(define cond (fiber:overlay-conflict))
+(define (has? s part) (>= (string-index s part) 0))
+(display
+ (list win
+       (if (and (string? msg)
+                (has? msg "fiber:cow-conflict: cow-cond ")
+                (has? msg "binding=cow-cond ")
+                (has? msg "winner-fiber=")
+                (has? msg "our-epoch=")
+                (has? msg "committed-epoch=")
+                (has? msg "our-seq=")
+                (has? msg "winner-seq=")
+                (has? msg "kind=write-write"))
+           "string-ok" "string-bad")
+       (if (and (hash? cond)
+                (string=? (hash-ref cond "binding") "cow-cond")
+                (string=? (hash-ref cond "kind") "write-write")
+                (eq? (hash-ref cond "read-only") #f)
+                (= (hash-ref cond "schema") 4715)
+                (string? (hash-ref cond "winner-fiber"))
+                (> (string-length (hash-ref cond "winner-fiber")) 0)
+                (>= (hash-ref cond "winner-seq") (hash-ref cond "our-seq")))
+           "cond-ok" "cond-bad")))
+(newline)
+"""
+    out = _run_aura_4715(program, runs=2)
+    for attempt, line in enumerate(out):
+        assert line.startswith("(1 string-ok cond-ok)"), (
+            f"#4715 condition run {attempt}: the commit must stay a "
+            f"fiber:cow-conflict string AND expose the condition object; got {line!r}"
+        )
+    cow = (REPO / "src/compiler/evaluator_primitives_fiber_cow.cpp").read_text(encoding="utf-8")
+    hh = (REPO / "src/compiler/fiber_cow_overlay.hh").read_text(encoding="utf-8")
+    assert "struct ConflictInfo" in hh and "winner_epoch" in hh, (
+        "#4715: the structured conflict condition (binding/winner/our epoch/"
+        "committed epoch) is gone from the overlay data layer"
+    )
+    assert '"fiber:overlay-conflict"' in cow and "overlay_conflict_message" in cow, (
+        "#4715: the condition-object primitive / message renderer is gone"
+    )
+
+
+def test_fiber_cow_overlay_write_skew_read_set_4715():
+    """Issue #4715 follow-up: a stale read cannot be committed (write skew).
+
+    B reads w=1, A commits w=5, then B commits a value computed from w. The
+    read set is validated against the commit log: B's commit must be rejected
+    with kind=read-set, nothing is applied, and the surviving w is A's 5.
+    """
+    program = """
+(define w 1)
+(define (cow-writer)
+  (fiber:overlay-begin)
+  (fiber:overlay-set! "w" 5)
+  (if (error? (fiber:overlay-commit)) 0 1))
+(fiber:overlay-begin)
+(define seen w)
+(fiber:overlay-define "zg" (+ seen 100))
+(define won (fiber:join (fiber:spawn (lambda () (cow-writer)))))
+(define msg (try (fiber:overlay-commit) (catch (e) e)))
+(define cond (fiber:overlay-conflict))
+(define (has? s part) (>= (string-index s part) 0))
+(display
+ (list seen won
+       (if (and (string? msg)
+                (has? msg "fiber:cow-conflict: w ")
+                (has? msg "binding=w ")
+                (has? msg "kind=read-set"))
+           "msg-ok" "msg-bad")
+       (if (and (hash? cond)
+                (eq? (hash-ref cond "read-only") #t)
+                (string=? (hash-ref cond "kind") "read-set"))
+           "cond-ok" "cond-bad")
+       (fiber:overlay-get "w" -1)
+       (fiber:overlay-get "zg" -1)
+       (if (and (has? (fiber:overlay-report) "read-conflicts=1")
+                (has? (fiber:overlay-report) "conflicts=1"))
+           "report-ok" "report-bad")))
+(newline)
+"""
+    out = _run_aura_4715(program, runs=3)
+    for attempt, line in enumerate(out):
+        assert line.startswith("(1 1 msg-ok cond-ok 5 -1 report-ok)"), (
+            f"#4715 write skew run {attempt}: a commit computed from a stale read "
+            f"must be rejected and apply nothing; got {line!r}"
+        )
+    hh = (REPO / "src/compiler/fiber_cow_overlay.hh").read_text(encoding="utf-8")
+    assert "ov.reads" in hh and "read_only" in hh, "#4715: the read-set validation arm (ov.reads / read_only) is gone"
+
+
+def test_fiber_cow_overlay_commit_mutation_log_4715():
+    """Issue #4715 follow-up: an overlay commit is on the mutation log.
+
+    The commit writes env bindings, not AST nodes, so it used to be invisible
+    to (query :mutation-log). It must now leave one record with
+    op=fiber:overlay-commit, the committed bindings and the epoch, and a
+    rejected commit must leave a RolledBack record naming the winner.
+    """
+    program = """
+(begin
+  (set-code "(define cow-seed 0)")
+  (eval-current)
+  #t)
+(define (ml) (let ((l (query :mutation-log 100))) (if (list? l) l (list))))
+(define (last-rec) (car (reverse (ml))))
+(define (has? s part) (>= (string-index s part) 0))
+(define n0 (length (ml)))
+(fiber:overlay-begin)
+(fiber:overlay-define "cow-prov" 77)
+(define ok (fiber:overlay-commit))
+(define rec (last-rec))
+(define n1 (length (ml)))
+(define (cow-writer val)
+  (fiber:overlay-begin)
+  (fiber:overlay-set! "cow-prov-c" val)
+  (if (error? (fiber:overlay-commit)) 0 1))
+(fiber:overlay-begin)
+(fiber:overlay-set! "cow-prov-c" 2)
+(fiber:join (fiber:spawn (lambda () (cow-writer 1))))
+(define msg (try (fiber:overlay-commit) (catch (e) e)))
+(define rec2 (last-rec))
+(display
+ (list (if (eq? ok #t) 1 0)
+       (- n1 n0)
+       (if (and (has? rec "op=fiber:overlay-commit")
+                (has? rec "sum=bindings=cow-prov ")
+                (has? rec "epoch="))
+           "commit-rec-ok" "commit-rec-bad")
+       (if (string? msg) 1 0)
+       (if (and (has? rec2 "op=fiber:overlay-commit")
+                (has? rec2 "conflict=cow-prov-c")
+                (has? rec2 "winner-fiber=")
+                (has? rec2 "kind=write-write"))
+           "rollback-rec-ok" "rollback-rec-bad")))
+(newline)
+"""
+    out = _run_aura_4715(program, runs=2)
+    for attempt, line in enumerate(out):
+        assert line.startswith("(1 1 commit-rec-ok 1 rollback-rec-ok)"), (
+            f"#4715 provenance run {attempt}: an overlay commit (and its rejected "
+            f"attempt) must leave a mutation-log record; got {line!r}"
+        )
+    cow = (REPO / "src/compiler/evaluator_primitives_fiber_cow.cpp").read_text(encoding="utf-8")
+    assert "record_overlay_commit" in cow and "fiber:overlay-commit" in cow, (
+        "#4715: the overlay-commit provenance record is gone"
+    )
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -5533,6 +5727,9 @@ for tf in [
     test_fiber_sibling_dispatch_across_rebind_4715_regression,
     test_serve_async_two_fiber_yield_reclaim_4706,
     test_fiber_gc_root_registry_4713,
+    test_fiber_cow_overlay_conflict_condition_4715,
+    test_fiber_cow_overlay_write_skew_read_set_4715,
+    test_fiber_cow_overlay_commit_mutation_log_4715,
 ]:
     try:
         tf()
@@ -5632,30 +5829,6 @@ subprocess.run(
 )
 
 sys.exit(1 if (snippet_rc != 0 or failed_s > 0) else 0)
-
-
-def _run_aura_4715(program, *, runs=1, timeout=180):
-    """Issue #4715: run an overlay program on the CLI thread backend."""
-    env = os.environ.copy()
-    env["AURA_TIER_JIT"] = "0"
-    env["AURA_PIPELINE_STRICT"] = "0"
-    env["AURA_SANDBOX"] = "off"
-    env.pop("AURA_SOFT", None)
-    env.pop("AURA_FORCE_IR", None)
-    fd, path = tempfile.mkstemp(suffix=".aura", prefix="aura-4715-")
-    outs = []
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(program)
-        for attempt in range(runs):
-            r = subprocess.run([AURA, path], capture_output=True, text=True, timeout=timeout, env=env, cwd=str(REPO))
-            assert r.returncode == 0, f"#4715 run {attempt}: rc={r.returncode} err={str(r.stderr)[-600:]!r}"
-            lines = [ln.strip() for ln in (r.stdout or "").splitlines() if ln.strip()]
-            assert lines, f"#4715 run {attempt}: empty stdout err={str(r.stderr)[-600:]!r}"
-            outs.append(lines[-1])
-    finally:
-        os.remove(path)
-    return outs
 
 
 def test_fiber_cow_overlay_disjoint_commit_4715():

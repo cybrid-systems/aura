@@ -1,0 +1,182 @@
+;; cow2_4715.aura — Issue #4715 COW-overlay semantics (review sections A-G
+;; plus the fcwN first-committer-wins loop).
+;;
+;; A  per-fiber isolation: two disjoint private overlays both commit
+;; B  first-committer-wins on one write-write round
+;; C  whole-overlay rollback applies nothing
+;; D  report counters (begins/commits/conflicts/rollbacks) are pinned
+;; E  structured conflict condition (string fields + hash object)
+;; F  stale-read (write skew) is REJECTED by read-set validation
+;; G  an overlay commit leaves a mutation-log provenance record
+;; H  fcwN loop: exactly one winner per round, N conflicts total
+;;
+;; The workspace must exist for G (set-code + eval-current install the
+;; FlatAST whose mutation log is the audit trail), so the script seeds it
+;; first; that seed is not part of any overlay.
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ") (display msg) (newline))))
+
+(set-code "(define cow-seed 0)")
+(eval-current)
+
+(define (cow-mlog n)
+  (let ((l (query :mutation-log n)))
+    (if (list? l) l (list))))
+(define (cow-has? s part) (>= (string-index s part) 0))
+(define (cow-body name val)
+  (fiber:overlay-begin)
+  (fiber:overlay-define name val)
+  (if (error? (fiber:overlay-commit)) 0 1))
+
+;; ── A: per-fiber isolation ────────────────────────────────────────────
+(define cow-fa (fiber:spawn (lambda () (cow-body "cow-a" 7))))
+(define cow-fb (fiber:spawn (lambda () (cow-body "cow-b" 9))))
+(define cow-a-sum (+ (fiber:join cow-fa) (fiber:join cow-fb)))
+(define cow-a-vals (list (fiber:overlay-get "cow-a" -1) (fiber:overlay-get "cow-b" -1)))
+(assert! (and (= cow-a-sum 2) (equal? cow-a-vals (list 7 9))) "A: disjoint per-fiber commits")
+
+;; ── B: first-committer-wins (single write-write round) ────────────────
+(define (cow-writer val)
+  (fiber:overlay-begin)
+  (fiber:overlay-define "cow-shared" val)
+  (if (error? (fiber:overlay-commit)) 0 1))
+(fiber:overlay-begin)
+(fiber:overlay-define "cow-shared" 10)
+(define cow-won (fiber:join (fiber:spawn (lambda () (cow-writer 20)))))
+(define cow-lost (if (error? (fiber:overlay-commit)) 0 1))
+(assert! (and (= cow-won 1) (= cow-lost 0) (= (fiber:overlay-get "cow-shared" -1) 20))
+         "B: first committer wins, the loser reports a conflict")
+
+;; ── C: whole-overlay rollback ────────────────────────────────────────
+(define cow-keep 41)
+(fiber:overlay-begin)
+(fiber:overlay-define "cow-drop" 1)
+(fiber:overlay-set! "cow-keep" 99)
+(define cow-pending (fiber:overlay-pending))
+(define cow-rolled (fiber:overlay-rollback))
+(assert! (and (= cow-pending 2) (eq? cow-rolled #t)
+              (= (fiber:overlay-get "cow-keep" -1) 41)
+              (= (fiber:overlay-get "cow-drop" -1) -1))
+         "C: rollback drops the whole overlay")
+
+;; ── E: structured conflict condition (write-write) ───────────────────
+(define (cow-conflict-body val)
+  (fiber:overlay-begin)
+  (fiber:overlay-set! "cow-c" val)
+  (if (error? (fiber:overlay-commit)) 0 1))
+(fiber:overlay-begin)
+(fiber:overlay-set! "cow-c" 2)
+(define cow-c-win (fiber:join (fiber:spawn (lambda () (cow-conflict-body 1)))))
+(define cow-c-msg (try (fiber:overlay-commit) (catch (e) e)))
+(define cow-c-cond (fiber:overlay-conflict))
+(assert! (and (= cow-c-win 1)
+              (string? cow-c-msg)
+              (cow-has? cow-c-msg "fiber:cow-conflict: cow-c ")
+              (cow-has? cow-c-msg "binding=cow-c ")
+              (cow-has? cow-c-msg "winner-fiber=")
+              (cow-has? cow-c-msg "our-epoch=")
+              (cow-has? cow-c-msg "committed-epoch=")
+              (cow-has? cow-c-msg "kind=write-write"))
+         "E: the conflict string carries binding/winner/epochs/kind (prefix kept)")
+(assert! (and (hash? cow-c-cond)
+              (string=? (hash-ref cow-c-cond "binding") "cow-c")
+              (string=? (hash-ref cow-c-cond "kind") "write-write")
+              (eq? (hash-ref cow-c-cond "read-only") #f)
+              (= (hash-ref cow-c-cond "schema") 4715)
+              (string? (hash-ref cow-c-cond "winner-fiber"))
+              (> (string-length (hash-ref cow-c-cond "winner-fiber")) 0)
+              (>= (hash-ref cow-c-cond "winner-seq") (hash-ref cow-c-cond "our-seq")))
+         "E: (fiber:overlay-conflict) returns the condition object")
+
+;; ── F: stale read / write skew is rejected ───────────────────────────
+;; B reads w=1, A commits w=5, B commits zg computed from the stale read.
+(define w 1)
+(define (cow-skew-writer)
+  (fiber:overlay-begin)
+  (fiber:overlay-set! "w" 5)
+  (if (error? (fiber:overlay-commit)) 0 1))
+(fiber:overlay-begin)
+(define cow-seen w)
+(fiber:overlay-define "zg" (+ cow-seen 100))
+(define cow-f-won (fiber:join (fiber:spawn (lambda () (cow-skew-writer)))))
+(define cow-f-msg (try (fiber:overlay-commit) (catch (e) e)))
+(define cow-f-cond (fiber:overlay-conflict))
+(assert! (and (= cow-seen 1) (= cow-f-won 1)
+              (string? cow-f-msg)
+              (cow-has? cow-f-msg "fiber:cow-conflict: w ")
+              (cow-has? cow-f-msg "binding=w ")
+              (cow-has? cow-f-msg "kind=read-set")
+              (eq? (hash-ref cow-f-cond "read-only") #t)
+              (string=? (hash-ref cow-f-cond "kind") "read-set"))
+         "F: a commit computed from a stale read is rejected (write skew)")
+(assert! (and (= (fiber:overlay-get "w" -1) 5)
+              (= (fiber:overlay-get "zg" -1) -1))
+         "F: the rejected overlay applied nothing")
+
+;; ── G: mutation-log provenance for an overlay commit ─────────────────
+(define cow-log0 (length (cow-mlog 200)))
+(fiber:overlay-begin)
+(fiber:overlay-define "cow-prov" 77)
+(define cow-prov-ok (fiber:overlay-commit))
+(define cow-log1 (cow-mlog 200))
+;; query :mutation-log is chronological (oldest first): our record is last.
+(define cow-prov-rec (car (reverse cow-log1)))
+(assert! (and (eq? cow-prov-ok #t) (= (length cow-log1) (+ cow-log0 1)))
+         "G: exactly one mutation-log record per overlay commit")
+(assert! (and (cow-has? cow-prov-rec "op=fiber:overlay-commit")
+              (cow-has? cow-prov-rec "sum=bindings=cow-prov ")
+              (cow-has? cow-prov-rec "epoch="))
+         "G: the record names the overlay commit and its bindings")
+
+;; ── D: report counters (after A,B,C,E,F,G) ───────────────────────────
+;; begins: A 2, B 3, C 1, E 3, F 3, G 1 = 10 (F's and H's spawned bodies
+;; auto-begin inside their body, so every open is counted);
+;; commits: A 2, B 1, E 1, F 1 (the writer), G 1 = 6;
+;; conflicts: B 1, E 1, F 1 (the read-set rejection) = 3, read-conflicts=1;
+;; rollbacks: C 1. Every field is pinned so a vacuous pass cannot go green.
+(define cow-report (fiber:overlay-report))
+(assert! (and (cow-has? cow-report "begins=10 ")
+              (cow-has? cow-report "commits=6 ")
+              (cow-has? cow-report "conflicts=3 ")
+              (cow-has? cow-report "rollbacks=1 ")
+              (cow-has? cow-report "read-conflicts=1")
+              (cow-has? cow-report "active=0"))
+         "D: overlay report counters are pinned (no vacuous pass)")
+
+;; ── H: fcwN first-committer-wins loop ────────────────────────────────
+(define (cow-fcw-write val)
+  (fiber:overlay-begin)
+  (fiber:overlay-define "cow-fcw" val)
+  (if (error? (fiber:overlay-commit)) 0 1))
+(define (cow-fcw-round i)
+  (fiber:overlay-begin)
+  (fiber:overlay-define "cow-fcw" (+ 100 i))
+  (define won (fiber:join (fiber:spawn (lambda () (cow-fcw-write (+ 200 i))))))
+  (define lost (if (error? (fiber:overlay-commit)) 0 1))
+  (list won lost))
+(define cow-fcw-rounds (map cow-fcw-round (list 0 1 2 3 4)))
+(assert! (and (= (length cow-fcw-rounds) 5)
+              (equal? cow-fcw-rounds
+                      (list (list 1 0) (list 1 0) (list 1 0) (list 1 0) (list 1 0)))
+              (= (fiber:overlay-get "cow-fcw" -1) 204))
+         "H: first-committer-wins holds for 5 same-base rounds")
+
+(define cow-report2 (fiber:overlay-report))
+(assert! (and (cow-has? cow-report2 "begins=20 ")
+              (cow-has? cow-report2 "commits=11 ")
+              (cow-has? cow-report2 "conflicts=8 ")
+              (cow-has? cow-report2 "read-conflicts=1")
+              (cow-has? cow-report2 "active=0"))
+         "H: 5 rounds add exactly 5 commits + 5 write-write conflicts")
+
+(if (= *fails* 0)
+    (begin (display "OK-4715 cow2 A-G + fcw5") (newline))
+    (begin
+      (display "FAIL-4715 fails=") (display *fails*) (newline)
+      (error "4715 cow2 suite failed")))
