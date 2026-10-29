@@ -1594,6 +1594,12 @@ public:
         // nullopt; the env refresh below installs a fresh closure.
         evaluator_.set_drop_ir_define_binding_fn(
             [this](const std::string& name) { this->clear_ir_define_env_binding(name); });
+        // Issue #4753: a define's dropped tree-walker generation stays
+        // resolvable to the define's current publication.
+        evaluator_.set_note_retired_define_closure_fn(
+            [this](std::uint64_t cid, const std::string& name) {
+                this->note_retired_tw_closure_(cid, name);
+            });
         evaluator_.set_mark_all_defines_dirty_fn([this]() { this->mark_all_defines_dirty(); });
         // Issue #3033: dual-topology abort → force-dirty + zero-restamp every
         // IR cache entry so should_relower is forced true (abort path leaves
@@ -13328,9 +13334,22 @@ public:
             // run the define's CURRENT publication. Only ids this evaluator
             // really published resolve; anything else still takes the strict
             // runtime-mint decide below (#4349 / #4450).
+            std::string retired_name;
+            bool have_retired = false;
             if (auto retired = retired_define_closure_owner_.find(cid);
                 retired != retired_define_closure_owner_.end()) {
-                const std::string retired_name = retired->second;
+                retired_name = retired->second;
+                have_retired = true;
+            } else if (auto tw_name = retired_tw_closure_name_(cid); tw_name.has_value()) {
+                // Issue #4753: a dropped tree-walker generation of a define
+                // (Issue #4583 must_deopt_closures_named drop). A caller that
+                // sampled the define's cell before the drop still holds this
+                // id; resolve it to the define's current publication exactly
+                // like a retired IR publication id.
+                retired_name = *tw_name;
+                have_retired = true;
+            }
+            if (have_retired) {
                 if (auto bit = ir_define_env_bindings_.find(retired_name);
                     bit != ir_define_env_bindings_.end() && bit->second &&
                     bit->second->interpreter) {
@@ -13343,6 +13362,24 @@ public:
                     ir_gate.lock();
                     if (ran == PinnedRun4717::Ok)
                         return out;
+                }
+                // Issue #4753: the define may have no IR publication for the
+                // moment (its binding is dropped while the cell already
+                // advertises the next publication, or a re-bind is between
+                // publications). The cell is the publication SSOT the caller
+                // itself resolved from, so run whatever it advertises now -
+                // that is the old-or-new half of the contract, and it never
+                // runs a body the cell no longer points at.
+                if (auto cell_cid = top_env_cell_closure_(retired_name);
+                    cell_cid && *cell_cid != cid && retired_resolve_depth_ < 4) {
+                    ++retired_resolve_depth_;
+                    if (ir_gate.owns_lock())
+                        ir_gate.unlock();
+                    auto resolved = evaluator_.apply_closure(*cell_cid, args);
+                    ir_gate.lock();
+                    --retired_resolve_depth_;
+                    if (resolved)
+                        return resolved;
                 }
                 return std::nullopt;
             }
@@ -13538,15 +13575,68 @@ public:
     // Retirement, not forgetting: the dropped closure id keeps resolving to
     // this define (see retire_ir_define_closure_), so a body that resolved
     // the cell just before the drop still dispatches.
+    //
+    // Issue #4753: never retire a publication the define top_env cell still
+    // advertises. A retired id resolves only while the define has a CURRENT
+    // publication to run (the #4715 rule), and neither of the drop sites
+    // guarantees one is in place at that instant: mutate:rebind drops its
+    // binding and only later re-evaluates the new body, and the
+    // mutation-boundary BFS drain can retire the freshly published id with
+    // nothing re-binding behind it. A fiber that sampled the cell inside
+    // either gap resolved an id with no owner row and no binding to resolve
+    // to, and died with "eval_flat: invalid closure"
+    // (suite/fiber_rebind_while_running: 1-331 catches per standalone run;
+    // the row contracts never-an-error). Deferring keeps the invariant
+    // "every id the cell can advertise is dispatchable": the cell keeps
+    // dispatching this publication (the old-or-new half of the contract)
+    // until bind_function_define_via_ir publishes its replacement, which
+    // retires it under the same gate (retire_ir_define_closure_) with a
+    // current publication in place. A define that is gone from the live
+    // workspace is still dropped here, so a removed define cannot resurrect
+    // (#2026).
     void clear_ir_define_env_binding(const std::string& name) {
         IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         auto it = ir_define_env_bindings_.find(name);
         if (it == ir_define_env_bindings_.end())
             return;
+        if (top_env_cell_holds_closure_(name, it->second->closure_id) &&
+            is_workspace_lambda_define(name))
+            return;
         retire_ir_define_closure_(name, it->second);
         ir_define_closure_owner_.erase(it->second->closure_id);
         ir_define_env_bindings_.erase(it);
     }
+
+
+    // Issue #4753: the define top_env cell publication (env binding ->
+    // cell), the same indirection the env read path uses. nullopt when the
+    // name has no cell or the cell does not hold a closure.
+    std::optional<aura::compiler::ClosureId> top_env_cell_closure_(const std::string& name) {
+        auto bound = evaluator_.top_env().lookup_binding(name);
+        if (!bound)
+            return std::nullopt;
+        types::EvalValue v = *bound;
+        if (types::is_cell(v)) {
+            const auto ci = types::as_cell_id(v);
+            if (ci >= evaluator_.cells().size())
+                return std::nullopt;
+            v = evaluator_.cells()[static_cast<std::size_t>(ci)];
+        }
+        if (!types::is_closure(v))
+            return std::nullopt;
+        return types::as_closure_id(v);
+    }
+
+    // Issue #4753: does the define top_env cell still advertise this id?
+    bool top_env_cell_holds_closure_(const std::string& name, aura::compiler::ClosureId cid) {
+        const auto cell = top_env_cell_closure_(name);
+        return cell.has_value() && *cell == cid;
+    }
+
+    // Issue #4753: retried retired-id resolutions per thread (one hop is
+    // the cell publication, a second can be an IR dispatch onto it).
+    static inline thread_local std::uint32_t retired_resolve_depth_ = 0;
+
 
     // Issue #4715 regression (agent-fibers-8): a define's superseded closure
     // ids keep resolving to that define.
@@ -13564,11 +13654,23 @@ public:
     // The id -> define name row is what the live index would have held, so a
     // superseded id dispatches exactly like a name lookup: the define's
     // CURRENT publication runs. Nothing is retained (no interpreter / module
-    // lifetime extension), the history is bounded per define, and
-    // mark_all_defines_dirty drops it on a workspace replace / ast:restore,
-    // where a value from the previous workspace must not resurrect at all
-    // (#2026 / #4349).
-    static constexpr std::size_t kRetiredDefineHistory = 8;
+    // lifetime extension) and mark_all_defines_dirty drops the record on a
+    // workspace replace / ast:restore, where a value from the previous
+    // workspace must not resurrect at all (#2026 / #4349).
+    //
+    // Issue #4753: the per-define record must outlive any fiber that can
+    // still be holding one of the define's retired ids. Eight ids was sized
+    // for "one or two publications in flight", but a fiber can be
+    // descheduled across a whole mutation window, and a window publishes
+    // more than once (rebind re-eval + the eval-current passes): measured on
+    // suite/fiber_rebind_while_running, a parked caller missed the 8-entry
+    // window in 4 of 5 runs (dispatch fell through to the strict
+    // runtime-mint deny). The cap is now a memory backstop only - one 8-byte
+    // id plus a name per publication, ~0.25 MB per define at the cap -
+    // instead of the resolution window. Every id retired within the define
+    // current 4096 publications still resolves to the define, and
+    // mark_all_defines_dirty still drops the whole record on a replace.
+    static constexpr std::size_t kRetiredDefineHistory = 4096;
     void retire_ir_define_closure_(const std::string& name,
                                    const std::shared_ptr<IRDefineEnvBinding>& binding) {
         if (!binding || name.empty())
@@ -13581,6 +13683,31 @@ public:
             retired_define_closure_owner_.erase(order.front());
             order.erase(order.begin());
         }
+    }
+
+    // Issue #4753: record a dropped tree-walker publication id against its
+    // define (see retired_tw_closure_owner_). Called from the evaluator
+    // under the closure shard locks, so this takes only the leaf mutex.
+    void note_retired_tw_closure_(std::uint64_t cid, const std::string& name) {
+        if (cid == 0 || name.empty())
+            return;
+        const auto id = static_cast<aura::compiler::ClosureId>(cid);
+        std::lock_guard<std::mutex> lk(retired_tw_closure_mtx_);
+        retired_tw_closure_owner_[id] = name;
+        auto& order = retired_tw_closure_order_[name];
+        order.push_back(id);
+        while (order.size() > kRetiredDefineHistory) {
+            retired_tw_closure_owner_.erase(order.front());
+            order.pop_front();
+        }
+    }
+
+    std::optional<std::string> retired_tw_closure_name_(aura::compiler::ClosureId cid) {
+        std::lock_guard<std::mutex> lk(retired_tw_closure_mtx_);
+        auto it = retired_tw_closure_owner_.find(cid);
+        if (it == retired_tw_closure_owner_.end())
+            return std::nullopt;
+        return it->second;
     }
 
     // ---- Define caching (shared by eval, eval_ir, define_function) -----
@@ -17000,6 +17127,16 @@ private:
     std::unordered_map<std::string, std::vector<aura::compiler::ClosureId>,
                        aura::core::TransparentStringHash, std::equal_to<>>
         retired_define_closure_order_;
+    // Issue #4753: dropped tree-walker publication ids of a define
+    // (must_deopt_closures_named drops the superseded generations). Their
+    // reporter runs under the closure shard locks, so this record has its
+    // own leaf mutex: dispatch (which holds ir_cache_gate_) may take it, and
+    // the reporter never takes the IR gate - the pair cannot invert.
+    std::mutex retired_tw_closure_mtx_;
+    std::unordered_map<aura::compiler::ClosureId, std::string> retired_tw_closure_owner_;
+    std::unordered_map<std::string, std::deque<aura::compiler::ClosureId>,
+                       aura::core::TransparentStringHash, std::equal_to<>>
+        retired_tw_closure_order_;
     // Issue #4682 (6b): tier stats + worker (worker joins in its dtor).
     TierStats4682 tier_stats_4682_;
     std::unique_ptr<TierWorker4682> tier_worker_4682_;

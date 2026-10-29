@@ -2438,6 +2438,13 @@ void Evaluator::must_deopt_closures_named(std::string_view name) {
                     std::memory_order_relaxed);
             }
             shard.map.erase(it);
+            // Issue #4753: a caller that resolved this define's cell to the
+            // dropped generation still holds the id. Report it (define name)
+            // so the IR define index keeps it resolvable to the define's
+            // current publication instead of denying with
+            // "eval_flat: invalid closure".
+            if (note_retired_define_closure_fn_)
+                note_retired_define_closure_fn_(static_cast<std::uint64_t>(id), key);
         }
     }
 }

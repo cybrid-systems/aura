@@ -903,6 +903,13 @@ void CompilerService::mark_all_defines_dirty() {
         // (#4349), so drop it with the index it belongs to.
         retired_define_closure_owner_.clear();
         retired_define_closure_order_.clear();
+        // Issue #4753: the dropped tree-walker publication record belongs to
+        // the same replaced workspace.
+        {
+            std::lock_guard<std::mutex> tw_lock(retired_tw_closure_mtx_);
+            retired_tw_closure_owner_.clear();
+            retired_tw_closure_order_.clear();
+        }
     }
     // Issue #1999 / #600 AC5 + Wave2: set-code soft-dirty is the
     // invalidate path for a full workspace replace. Mark every
