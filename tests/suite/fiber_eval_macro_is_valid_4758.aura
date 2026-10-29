@@ -1,0 +1,33 @@
+;; fiber_eval_macro_is_valid_4758.aura — Issue #4758: parallel fiber bodies
+;; running string `eval` after a top-level define that calls a defmacro name.
+;; The macro expand bumps the main flat's generation; live slots are aligned
+;; lazily by whichever body touches them first. FlatAST::is_valid's
+;; postcondition re-read node_gen_[id] after a sibling had aligned it and
+;; SIGABRTed (~20% of runs before the fix). Pass = exit 0 + OK line.
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+
+(defmacro (twice e) (list 'begin e e))
+(define (u) (twice 1))
+(u) ; value is #4759's concern; here only the generation bump matters
+
+(define (ev k)
+  (let loop ((i 0) (ok 0))
+    (if (= i 50)
+        ok
+        (loop (+ i 1) (if (= ((eval "(lambda (a) (* a 2))") k) (* 2 k)) (+ ok 1) ok)))))
+
+(define (round r)
+  (let ((rs (map fiber:join (map (lambda (k) (fiber:spawn (lambda () (ev k)))) (iota 8)))))
+    (assert! (equal? rs (map (lambda (k) 50) (iota 8)))
+             (string-append "round " (number->string r) ": 8 bodies x 50 evals"))))
+
+(round 0) (round 1) (round 2) (round 3) (round 4) (round 5)
+
+(if (= *fails* 0)
+    (begin (display "OK-4758 parallel eval after macro define") (newline))
+    (begin (display "FAIL-4758 fails=") (display *fails*) (newline) (error "4758 suite failed")))
