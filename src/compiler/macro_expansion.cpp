@@ -4357,6 +4357,17 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
                 bool is_dotted = (v.int_value & 1) != 0;
                 bool is_hygienic = (v.int_value & 2) != 0;
                 bool is_preserved = (v.int_value & 4) != 0;
+                // Issue #4759: a legacy `defmacro` is procedural - its body
+                // runs with the arguments bound as DATA and the resulting
+                // form is evaluated as code (eval_flat's legacy arm,
+                // eval_data_as_code). This pass only clones the body with the
+                // argument ASTs substituted, which for `(list 'begin e e)`
+                // evaluated the arguments and returned the expansion as data
+                // (`(twice 1)` -> `(begin 1 1)`, `(my-inc! z)` a no-op). Leave
+                // legacy call sites to the walker, the same path a
+                // single-form string `eval` already takes.
+                if (!is_hygienic && !is_preserved)
+                    continue;
                 local_macros[macro_name] = MD{&flat,     &pool,       std::move(params), body_id,
                                               is_dotted, is_hygienic, is_preserved};
             }

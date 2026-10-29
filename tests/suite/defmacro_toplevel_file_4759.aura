@@ -1,0 +1,48 @@
+;; defmacro_toplevel_file_4759.aura — Issue #4759: a top-level `defmacro`
+;; in a file behaved as a function. The static macro_expand_all pass cloned
+;; the procedural body with argument ASTs substituted, so arguments were
+;; evaluated and the expansion came back as data. Pass = exit 0 + OK line.
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+
+(defmacro (twice e) (list 'begin e e))
+(defmacro (my-inc! v) (list 'set! v (list '+ v 1)))
+(defmacro (my-cons a b) `(cons ,a ,b))
+(defmacro (tw2 e) (list (quote +) e e))
+(defmacro (swap! a b) (list 'let (list (list 'tmp a)) (list 'set! a b) (list 'set! b 'tmp)))
+(defmacro (my-unless c . body) (list 'if c #f (cons 'begin body)))
+
+(assert! (equal? (twice 1) 1) "top-level (twice 1) -> 1")
+(define (u2) (twice (+ 1 2)))
+(assert! (equal? (u2) 3) "in define: (twice (+ 1 2)) -> 3")
+(define z 0)
+(my-inc! z)
+(assert! (equal? z 1) "(my-inc! z) mutates z")
+(define (bump-twice!) (my-inc! z) (my-inc! z))
+(bump-twice!)
+(assert! (equal? z 3) "my-inc! inside a define body")
+(assert! (equal? (my-cons 1 2) (cons 1 2)) "quasiquote template macro")
+(assert! (equal? (tw2 3) 6) "(tw2 3) -> 6")
+(define p 1) (define q 2)
+(swap! p q)
+(assert! (and (= p 2) (= q 1)) "swap! via let template")
+(assert! (equal? (my-unless #f 1 2 3) 3) "rest-param macro")
+;; side effects run once per expansion use, args are not pre-evaluated
+(define hits 0)
+(define (hit!) (set! hits (+ hits 1)) hits)
+(twice (hit!))
+(assert! (equal? hits 2) "twice runs its argument form twice")
+
+;; workspace path
+(set-code "(defmacro (tw e) (list 'begin e e))\n(define (w) (tw 1))")
+(eval-current)
+(assert! (equal? (w) 1) "workspace: (w) -> 1")
+(assert! (equal? (eval "(begin (defmacro (tw7 e) (list 'begin e e)) (tw7 3))") 3) "single-form eval (control)")
+
+(if (= *fails* 0)
+    (begin (display "OK-4759 top-level defmacro in a file") (newline))
+    (begin (display "FAIL-4759 fails=") (display *fails*) (newline) (error "4759 suite failed")))
