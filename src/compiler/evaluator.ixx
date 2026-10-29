@@ -8371,11 +8371,24 @@ private:
     std::atomic<std::uint64_t> intern_pool_gen_shared_{0};
     std::atomic<const aura::ast::FlatAST*> float_intern_flat_shared_{nullptr};
     void bind_float_intern_flat(const aura::ast::FlatAST* f) noexcept {
+        // Issue #4745: the #4599 per-node memo is PER BODY but flat-scoped.
+        // A body that alternates flats (a closure call whose body lives in
+        // another flat tail-continues into it, then returns to its own) has
+        // to drop ITS OWN entries when IT switches. The shared "last flat"
+        // atomic below cannot answer that: under N bodies on two flats it
+        // usually already holds this body's NEW flat (a sibling stored it),
+        // so the clear was skipped and a stale entry survived - same node id,
+        // other flat. The next visit of that id in the current flat then
+        // read the other flat's clause list / kind and evaluated the wrong
+        // node (in the #4745 probe: the and callee Variable, whose value is
+        // the first-class and primitive; the #4747 face is a Void where an
+        // Int was expected). The body's own last flat lives in its Context.
+        if (float_intern_flat_ctx() != f)
+            clear_name_res_cache();
         if (float_intern_flat_shared_.load(std::memory_order_acquire) != f) {
             std::lock_guard<std::mutex> lock(intern_cache_mtx_);
             if (float_intern_flat_shared_.load(std::memory_order_relaxed) != f) {
                 float_intern_by_node_.clear();
-                clear_name_res_cache();
                 float_intern_flat_shared_.store(f, std::memory_order_release);
             }
         }
@@ -8383,6 +8396,13 @@ private:
     }
     void bind_sym_intern_pool(const ast::StringPool* p) noexcept {
         const auto gen = p ? p->intern_epoch() : 0;
+        // Issue #4745: SymIds are pool-local, so the per-body #4599 memo is
+        // pool-scoped as well. Clear it on THIS body's pool change - the
+        // shared atomic below can already hold the new pool because a
+        // sibling stored it, which is not this body's switch (see
+        // bind_float_intern_flat for the same residual).
+        if (sym_intern_pool_ctx() != p || intern_pool_gen_ctx() != gen)
+            clear_name_res_cache();
         const bool same = sym_intern_pool_shared_.load(std::memory_order_acquire) == p &&
                           intern_pool_gen_shared_.load(std::memory_order_relaxed) == gen;
         if (!same) {
@@ -8391,7 +8411,6 @@ private:
                 intern_pool_gen_shared_.load(std::memory_order_relaxed) != gen) {
                 string_intern_by_sym_.clear();
                 keyword_intern_by_sym_.clear();
-                clear_name_res_cache();
                 sym_intern_pool_shared_.store(p, std::memory_order_release);
                 intern_pool_gen_shared_.store(gen, std::memory_order_relaxed);
             }
