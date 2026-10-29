@@ -166,10 +166,12 @@ objective; a fitness may then be a list:
   dominated; entries that a newcomer dominates are dropped. Above
   `archive-max` the least-crowded entry (smallest crowding distance) is
   removed, so the front stays bounded and spread out.
-- **Guidance** - PSO/ABC/grid guidance still needs one number: the scalar
-  score is a weighted sum in MAXIMIZE space (`min` objectives negated).
-  Weights default to 1.0 each; set `weights` or call
-  `(swarm:scalarize fit weights directions)` yourself.
+- **Guidance** - every kind accepts a vector fitness. grid/boids only rank
+  it; pso/abc/fss compare through one number: the scalar score is a
+  weighted sum in MAXIMIZE space (`min` objectives negated), used for
+  personal bests, ABC feeding/roulette/greedy acceptance and FSS feeding,
+  with the raw vector kept in the archive. Weights default to 1.0 each; set
+  `weights` or call `(swarm:scalarize fit weights directions)` yourself.
 - **Hypervolume** - exact for two objectives against `hv-ref` (default: a
   point 10% below the front's per-objective minimum); reported as 0.0 for
   other arities, where `front-size` is the portable signal.

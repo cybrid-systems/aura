@@ -611,7 +611,9 @@
       (if (>= i n) #t
         (let ((f (swarm-list-ref fits i))
               (pf (swarm-list-ref *swarm-pbest-fit* i)))
-          (if (> f pf)
+          ; #4740: a vector fitness compares through its scalarized score in
+          ; MAXIMIZE space; the raw fitness is what gets stored (archive sees it).
+          (if (> (swarm-score f) (swarm-score pf))
               (begin
                 (set! *swarm-pbest-fit* (swarm-list-set *swarm-pbest-fit* i f))
                 (set! *swarm-pbest*
@@ -676,8 +678,9 @@
     (if (>= k n) (reverse acc) (loop (+ k 1) (cons 1.0 acc)))))
 
 (define (swarm-fss-sum-fits fits)
+  ; #4740: the volitive controller wants one number per fish.
   (let loop ((xs fits) (s 0.0))
-    (if (null? xs) s (loop (cdr xs) (+ s (car xs))))))
+    (if (null? xs) s (loop (cdr xs) (+ s (swarm-score (car xs)))))))
 
 (define (swarm-fss-sum-weights)
   (let loop ((xs *swarm-fss-weights*) (s 0.0))
@@ -762,14 +765,17 @@
                (xn (swarm-fss-swim xi))
                (fn (swarm-eval-one fitness-fn xn))
                (wi (swarm-list-ref *swarm-fss-weights* i)))
-          (if (> fn fi)
+          ; #4740: feeding compares scalarized scores; raw fitness is stored.
+          (if (> (swarm-score fn) (swarm-score fi))
               (begin
                 (set! *swarm-inds* (swarm-list-set *swarm-inds* i xn))
                 (set! *swarm-fits* (swarm-list-set *swarm-fits* i fn))
                 ; feeding: weight grows with improvement
                 (set! *swarm-fss-weights*
                       (swarm-list-set *swarm-fss-weights* i
-                                      (swarm-min 10.0 (+ wi (+ 0.1 (- fn fi)))))))
+                                      (swarm-min 10.0
+                                                 (+ wi (+ 0.1 (- (swarm-score fn)
+                                                                 (swarm-score fi))))))))
               ; mild weight decay when no improvement
               (set! *swarm-fss-weights*
                     (swarm-list-set *swarm-fss-weights* i
@@ -825,8 +831,11 @@
 
 ; Shift fitness to positive weights for roulette.
 (define (swarm-abc-weights fits)
-  (let ((mn (swarm-abc-min-fit fits)))
-    (swarm-map (lambda (f) (+ (- f mn) 0.01)) fits)))
+  ; #4740: roulette weights need numbers, so vector fitnesses are scored
+  ; first (min-shift keeps every source selectable).
+  (let* ((scored (swarm-map swarm-score fits))
+         (mn (swarm-abc-min-fit scored)))
+    (swarm-map (lambda (f) (+ (- f mn) 0.01)) scored)))
 
 (define (swarm-abc-roulette weights)
   (let* ((sum (let loop ((xs weights) (s 0.0))
@@ -887,7 +896,8 @@
          (xn (swarm-abc-neighbor x *swarm-inds* i))
          (fn (swarm-eval-one fitness-fn xn))
          (tr (swarm-list-ref *swarm-abc-trials* i)))
-    (if (> fn f0)
+    ; #4740: greedy acceptance on the scalarized score (raw fitness stored).
+    (if (> (swarm-score fn) (swarm-score f0))
         (begin
           (set! *swarm-inds* (swarm-list-set *swarm-inds* i xn))
           (set! *swarm-fits* (swarm-list-set *swarm-fits* i fn))
@@ -967,18 +977,20 @@
   (set! *swarm-inds* (swarm-ant-population-from-rank))
   ; 3) evaluate fitness on each operator type (string individual)
   (let* ((fits (swarm-eval-pop fitness-fn *swarm-inds*))
+         ; #4740: the pheromone mean is over scalarized scores.
          (mean (let ((n (swarm-length fits)))
                  (if (= n 0) 0.0
                    (let loop ((xs fits) (s 0.0))
                      (if (null? xs) (/ s n)
-                       (loop (cdr xs) (+ s (car xs)))))))))
+                       (loop (cdr xs) (+ s (swarm-score (car xs))))))))))
     (set! *swarm-fits* fits)
     (swarm-note-best! *swarm-inds* fits)
     ; 4) deposit / penalize trails from fitness feedback
     (let loop ((ops *swarm-inds*) (fs fits))
       (if (or (null? ops) (null? fs)) #t
         (begin
-          (pheromone:update (car ops) (swarm-ant-delta (car fs) mean))
+          (pheromone:update (car ops)
+                            (swarm-ant-delta (swarm-score (car fs)) mean))
           (loop (cdr ops) (cdr fs)))))
     #t))
 

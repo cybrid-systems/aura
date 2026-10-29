@@ -130,6 +130,70 @@
 (swarm:step! sphere)
 (assert! (= (hash-ref (swarm:report) "front-size") 0) "scalar run has an empty front")
 
+; AC6b (#4740 reopened): every continuous backend — not just grid — must
+; accept a list fitness. Guidance (personal best / feeding / roulette /
+; greedy acceptance) scalarizes; the Pareto archive keeps the raw vectors.
+(display "AC6b multi-objective across kinds\n")
+(define (mo-run kind gens)
+  (swarm:init (hash "kind" kind "dim" 1 "pop" 12 "bins" 12
+                    "bounds" (list (list 0.0 1.0))
+                    "objectives" 2 "directions" (list "max" "min")
+                    "seed" 5))
+  (let loop ((i 0))
+    (if (>= i gens) #t (begin (swarm:step! mo-fit) (loop (+ i 1)))))
+  (hash "front" (swarm:front) "report" (swarm:report)))
+
+(define mo-kinds (list "pso" "abc" "fss" "boids"))
+(for-each
+  (lambda (kind)
+    (let* ((r (mo-run kind 3))
+           (front (hash-ref r "front"))
+           (rep (hash-ref r "report")))
+      (assert! (> (length front) 1)
+               (string-append kind " mo archive holds a front"))
+      (assert! (= (length front) (hash-ref rep "front-size"))
+               (string-append kind " mo report front-size"))
+      (assert! (front-non-dominated? front (list "max" "min"))
+               (string-append kind " mo front non-dominated"))
+      (assert! (list? (hash-ref (car front) "fitness"))
+               (string-append kind " mo archive entry keeps the raw vector"))
+      (assert! (list? (hash-ref rep "best-fitness"))
+               (string-append kind " mo best-fitness is a vector"))
+      (assert! (= (length (hash-ref rep "best-fitness")) 2)
+               (string-append kind " mo best-fitness arity"))
+      (assert! (number? (hash-ref rep "best-fit"))
+               (string-append kind " mo leader score is a number"))))
+  mo-kinds)
+
+; the leader's reported score IS the scalarized form of the reported raw
+; vector — personal best, feeding and acceptance all compare that number
+(define (vfit ind) (list (car ind) (- 1.0 (car ind))))
+(swarm:init (hash "kind" "pso" "dim" 1 "pop" 10
+                  "bounds" (list (list 0.0 1.0)) "seed" 8
+                  "objectives" 2 "directions" (list "max" "max")))
+(let loop ((i 0))
+  (if (>= i 4) #t (begin (swarm:step! vfit) (loop (+ i 1)))))
+(define pso-rep (swarm:report))
+(assert! (= (hash-ref pso-rep "best-fit")
+            (swarm:scalarize (hash-ref pso-rep "best-fitness")))
+         "pso mo leader score is the scalarized best vector")
+(assert! (= (swarm:scalarize (list 0.25 0.75) (list) (list "max" "max"))
+            1.0)
+         "scalarize sums max objectives")
+
+; scalar runs stay out of the archive for the continuous kinds too
+(for-each
+  (lambda (kind)
+    (swarm:init (hash "kind" kind "dim" 1 "pop" 6
+                      "bounds" (list (list -1.0 1.0)) "seed" 7))
+    (swarm:step! sphere)
+    (swarm:step! sphere)
+    (assert! (= (hash-ref (swarm:report) "front-size") 0)
+             (string-append kind " scalar run has an empty front"))
+    (assert! (number? (hash-ref (swarm:report) "best-fitness"))
+             (string-append kind " scalar best-fitness is a number")))
+  (list "pso" "abc" "fss"))
+
 ; ── Issue #4741: bounded + isolated parallel evaluation ─────────
 (display "AC7 bounded parallel\n")
 (define (slow-fit ind)
