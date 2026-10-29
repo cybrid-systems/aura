@@ -330,6 +330,38 @@ bool fiber_cow_overlay_capture_set(Evaluator& ev, std::string_view name, const E
     return true;
 }
 
+
+// ── Issue #4761: atomic read-modify-write primitives ──────────────────────
+// (atomic:update! "name" f), (atomic:hash-update! h k f [default]),
+// (atomic:counter [init]), (atomic:add! c n), (atomic:counter-value c).
+// update!/hash-update! are optimistic CAS loops: read the current value
+// under the RMW lock, apply f OUTSIDE any lock (f may yield, spawn or
+// re-enter), then re-check under the lock and publish only if nobody moved
+// the slot in between; otherwise retry with the fresh value. So concurrent
+// atomic RMWs on one slot never lose an update. A plain set!/hash-set! racing
+// an RMW is not serialized against it (minimal scope, see #4761).
+namespace {
+
+std::mutex& atomic_rmw_mutex_4761() {
+    static std::mutex m;
+    return m;
+}
+
+struct AtomicCounters4761 {
+    std::shared_mutex mu;
+    std::vector<std::unique_ptr<std::atomic<std::int64_t>>> cells;
+};
+
+AtomicCounters4761& atomic_counters_4761() {
+    static auto* c = new AtomicCounters4761(); // leaked: outlives fiber threads
+    return *c;
+}
+
+constexpr std::string_view kAtomicCounterTag4761 = "%atomic-counter";
+constexpr int kAtomicMaxRetries4761 = 1'000'000;
+
+} // namespace
+
 void register_fiber_cow_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev) {
     auto& reg = cow::registry<EvalValue>();
     const void* const owner = static_cast<const void*>(&ev);
@@ -545,6 +577,184 @@ void register_fiber_cow_primitives(std::function<void(std::string, PrimFn)> add,
             s.active, s.read_conflicts);
         return make_string(ev.string_heap_.mint(out));
     });
+
+    // Issue #4761: atomic read-modify-write primitives (see the note above
+    // register_fiber_cow_primitives). Defined here: the evaluator fields are
+    // reachable only from this friend entry point.
+    auto atomic_err_4761 = [](Evaluator& ev, std::string msg) -> EvalValue {
+        return make_primitive_error(ev.string_heap_, ev.error_values_, std::move(msg),
+                                    ev.primitive_error_counter_ptr());
+    };
+
+    auto atomic_apply_4761 = [](Evaluator& ev, EvalValue fn,
+                                std::span<const EvalValue> args) -> std::optional<EvalValue> {
+        if (is_cell(fn)) {
+            const auto ci = as_cell_id(fn);
+            if (ci >= ev.cells_.size())
+                return std::nullopt;
+            fn = ev.cells_[ci];
+        }
+        if (is_primitive(fn)) {
+            auto prim = ev.primitives_.slot_lookup_fast(as_primitive_slot(fn));
+            if (!prim)
+                return std::nullopt;
+            return (*prim)(args);
+        }
+        if (is_closure(fn))
+            return ev.apply_closure(as_closure_id(fn), args);
+        return std::nullopt;
+    };
+
+    // Counter handle: (%atomic-counter . index).
+    auto atomic_counter_index_4761 = [](Evaluator& ev, const EvalValue& v) -> std::optional<std::size_t> {
+        if (!is_pair(v))
+            return std::nullopt;
+        std::lock_guard slock(ev.alloc_storage_lock_);
+        const auto pid = as_pair_idx(v);
+        if (pid >= ev.pairs_.size())
+            return std::nullopt;
+        const auto& pr = ev.pairs_[pid];
+        if (!is_string(pr.car) || !is_int(pr.cdr))
+            return std::nullopt;
+        const auto sidx = as_string_idx(pr.car);
+        if (sidx >= ev.string_heap_.size() ||
+            std::string_view(ev.string_heap_[sidx]) != kAtomicCounterTag4761)
+            return std::nullopt;
+        const auto idx = as_int(pr.cdr);
+        if (idx < 0)
+            return std::nullopt;
+        return static_cast<std::size_t>(idx);
+    };
+
+        add("atomic:update!", [&ev, atomic_err_4761, atomic_apply_4761](std::span<const EvalValue> a) -> EvalValue {
+            if (a.size() < 2)
+                return atomic_err_4761(ev, "atomic:update!: expected (atomic:update! name f)");
+            const std::string name = overlay_arg_name(ev.string_heap_, a[0]);
+            if (name.empty())
+                return atomic_err_4761(ev, "atomic:update!: name must be a string or symbol");
+            auto bound = ev.top_env().lookup(name);
+            if (!bound || !is_cell(*bound) || as_cell_id(*bound) >= ev.cells_.size())
+                return atomic_err_4761(ev, "atomic:update!: " + name +
+                                               " is not a top-level define (define it first)");
+            const auto ci = as_cell_id(*bound);
+            for (int attempt = 0; attempt < kAtomicMaxRetries4761; ++attempt) {
+                EvalValue old;
+                {
+                    std::lock_guard lk(atomic_rmw_mutex_4761());
+                    old = ev.cells_[ci];
+                }
+                const EvalValue arg[1] = {old};
+                auto nv = atomic_apply_4761(ev, a[1], arg);
+                if (!nv)
+                    return atomic_err_4761(ev, "atomic:update!: f is not a procedure of one argument");
+                if (is_error(*nv))
+                    return *nv;
+                {
+                    std::lock_guard lk(atomic_rmw_mutex_4761());
+                    if (ev.cells_[ci] == old) {
+                        ev.cells_[ci] = *nv;
+                        return *nv;
+                    }
+                }
+                std::this_thread::yield();
+            }
+            return atomic_err_4761(ev, "atomic:update!: too much contention on " + name);
+        });
+
+        add("atomic:hash-update!", [&ev, atomic_err_4761, atomic_apply_4761](std::span<const EvalValue> a) -> EvalValue {
+            if (a.size() < 3 || !is_hash(a[0]))
+                return atomic_err_4761(
+                    ev, "atomic:hash-update!: expected (atomic:hash-update! hash key f [default])");
+            auto ref = ev.primitives_.lookup("hash-ref");
+            auto has = ev.primitives_.lookup("hash-has-key?");
+            auto set = ev.primitives_.lookup("hash-set!");
+            if (!ref || !has || !set)
+                return atomic_err_4761(ev, "atomic:hash-update!: hash primitives unavailable");
+            const bool has_default = a.size() >= 4;
+            auto read = [&](bool& present) -> EvalValue {
+                present = is_bool(( *has)({a[0], a[1]})) && as_bool((*has)({a[0], a[1]}));
+                return present ? (*ref)({a[0], a[1]}) : (has_default ? a[3] : make_void());
+            };
+            for (int attempt = 0; attempt < kAtomicMaxRetries4761; ++attempt) {
+                EvalValue old;
+                bool present = false;
+                {
+                    std::lock_guard lk(atomic_rmw_mutex_4761());
+                    old = read(present);
+                }
+                if (!present && !has_default)
+                    return atomic_err_4761(ev, "atomic:hash-update!: key not found and no default");
+                const EvalValue arg[1] = {old};
+                auto nv = atomic_apply_4761(ev, a[2], arg);
+                if (!nv)
+                    return atomic_err_4761(ev,
+                                           "atomic:hash-update!: f is not a procedure of one argument");
+                if (is_error(*nv))
+                    return *nv;
+                {
+                    std::lock_guard lk(atomic_rmw_mutex_4761());
+                    bool now_present = false;
+                    const EvalValue cur = read(now_present);
+                    if (now_present == present && (!present || cur == old)) {
+                        (*set)({a[0], a[1], *nv});
+                        return *nv;
+                    }
+                }
+                std::this_thread::yield();
+            }
+            return atomic_err_4761(ev, "atomic:hash-update!: too much contention");
+        });
+
+        add("atomic:counter", [&ev, atomic_err_4761](std::span<const EvalValue> a) -> EvalValue {
+            std::int64_t init = 0;
+            if (!a.empty()) {
+                if (!is_int(a[0]))
+                    return atomic_err_4761(ev, "atomic:counter: initial value must be an integer");
+                init = as_int(a[0]);
+            }
+            auto& c = atomic_counters_4761();
+            std::size_t idx = 0;
+            {
+                std::unique_lock lk(c.mu);
+                idx = c.cells.size();
+                c.cells.push_back(std::make_unique<std::atomic<std::int64_t>>(init));
+            }
+            std::lock_guard slock(ev.alloc_storage_lock_);
+            const auto tag = ev.string_heap_.mint(std::string(kAtomicCounterTag4761));
+            const auto pid = ev.pairs_.size();
+            ev.pairs_.push_back({make_string(tag), make_int(static_cast<std::int64_t>(idx))});
+            return types::make_pair(pid);
+        });
+
+        auto counter_op = [&ev, atomic_err_4761, atomic_counter_index_4761](std::span<const EvalValue> a, std::string_view who,
+                                bool add_mode) -> EvalValue {
+            if (a.empty())
+                return atomic_err_4761(ev, std::string(who) + ": expected a counter");
+            auto idx = atomic_counter_index_4761(ev, a[0]);
+            if (!idx)
+                return atomic_err_4761(ev, std::string(who) + ": not an atomic:counter");
+            std::int64_t delta = 1;
+            if (add_mode && a.size() >= 2) {
+                if (!is_int(a[1]))
+                    return atomic_err_4761(ev, std::string(who) + ": delta must be an integer");
+                delta = as_int(a[1]);
+            }
+            auto& c = atomic_counters_4761();
+            std::shared_lock lk(c.mu);
+            if (*idx >= c.cells.size())
+                return atomic_err_4761(ev, std::string(who) + ": stale counter");
+            auto& cell = *c.cells[*idx];
+            if (!add_mode)
+                return make_int(cell.load(std::memory_order_seq_cst));
+            return make_int(cell.fetch_add(delta, std::memory_order_seq_cst) + delta);
+        };
+        add("atomic:add!", [counter_op](std::span<const EvalValue> a) -> EvalValue {
+            return counter_op(a, "atomic:add!", true);
+        });
+        add("atomic:counter-value", [counter_op](std::span<const EvalValue> a) -> EvalValue {
+            return counter_op(a, "atomic:counter-value", false);
+        });
+
 }
 
 } // namespace aura::compiler::primitives_detail
