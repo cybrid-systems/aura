@@ -1896,6 +1896,10 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
     // Issue #4066: bind under the inventory mutex rewrites a densify-old
     // stack copy to last_object_remap_ before the note is visible, and
     // blocks across recycle so the address noted is the one eval derefs.
+    // Issue #4765: the registry pointers as copied, before the moving-live
+    // bind below (the race-window revalidate compares against them).
+    const aura::ast::FlatAST* const snap_flat_4765 = cl_copy.flat;
+    const aura::ast::StringPool* const snap_pool_4765 = cl_copy.pool;
     aura::ast::TemporaryMovingLivePtrCanary tmp_flat;
     aura::ast::TemporaryMovingLivePtrCanary tmp_pool;
     aura::ast::ASTArena* live_arena = cl_copy.owner_arena != nullptr ? cl_copy.owner_arena : arena_;
@@ -2279,7 +2283,32 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                     cl_copy.env_id != NULL_ENV_ID &&
                     (is_env_frame_invalid(cl_copy.env_id) || is_env_frame_stale(cl_copy.env_id));
                 // Issue #1926: second revalidate after materialize (GC/erase race).
-                if (!revalidate_closure_snapshot(cid, cl_copy)) {
+                // Issue #4765: a sibling fiber's mutate:rebind + eval-current
+                // soft-restamps every live closure's bridge_epoch
+                // (expire_stale_live_closures_, #2569) between the copy and
+                // this check. The body did not move: the fiber body closure
+                // was refused (apply -> nullopt, fiber:join -> void). Adopt
+                // the new stamp when only the epoch changed.
+                bool restamped_4765 = false;
+                if (cl_copy.bridge_epoch != 0) {
+                    std::shared_lock<std::shared_mutex> rl(
+                        closures_shards_[closures_shard_index(cid)].mu);
+                    auto& sm = closures_shards_[closures_shard_index(cid)].map;
+                    auto lit = sm.find(cid);
+                    if (lit != sm.end()) {
+                        const auto& live = lit->second;
+                        if (live.lifetime_valid_for_views() &&
+                            live.lifetime_version == cl_copy.lifetime_version &&
+                            live.bridge_epoch != 0 && live.bridge_epoch != cl_copy.bridge_epoch &&
+                            !live.must_deopt_before_next_call && live.flat == snap_flat_4765 &&
+                            live.pool == snap_pool_4765 && live.body_id == cl_copy.body_id &&
+                            live.env_id == cl_copy.env_id) {
+                            cl_copy.bridge_epoch = live.bridge_epoch;
+                            restamped_4765 = true;
+                        }
+                    }
+                }
+                if (!restamped_4765 && !revalidate_closure_snapshot(cid, cl_copy)) {
                     if (metrics) {
                         metrics->compiler_closure_safe_fallbacks.fetch_add(
                             1, std::memory_order_relaxed);
