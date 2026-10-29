@@ -11345,6 +11345,70 @@ void Evaluator::finalize_define_mutate_invalidation(const aura::ast::FlatAST& fl
     }
 }
 
+// Issue #4753 follow-up (#4689 / #1687): a committed body mutation must be
+// visible to the next read of the define. A workspace function define is
+// published to its top_env cell as an IR define closure whose interpreter
+// holds its own IRModule snapshot taken at bind time; the #4753 deferral in
+// CompilerService::clear_ir_define_env_binding keeps that publication alive
+// while the cell still advertises it, so re-lowering the IR cache alone never
+// reaches a call. Re-evaluate the Define node from the live AST — the same
+// refresh mutate:set-body / mutate:rebind perform — so the cell advertises a
+// fresh tree-walker closure over the mutated body. Called from the generic
+// post-mutation cascade for every affected function define; the superseded IR
+// binding is retired by the deferred hard invalidate once the cell moved on.
+void Evaluator::refresh_define_env_publication(aura::ast::FlatAST& flat, const std::string& name,
+                                               aura::ast::NodeId define_id) {
+    if (!workspace_flat_ || !workspace_pool_ || name.empty())
+        return;
+    if (define_id == aura::ast::NULL_NODE || define_id >= flat.size() ||
+        flat.is_free_slot(define_id))
+        return;
+    // Only a TOP-LEVEL define is published to top_env; evaluating a nested
+    // define here would bind a local name in the global environment.
+    if (flat.top_define_of(define_id) != define_id)
+        return;
+    auto dv = flat.get(define_id);
+    if (dv.tag != aura::ast::NodeTag::Define || dv.children.empty())
+        return;
+    const auto body_id = dv.child(0);
+    if (body_id == aura::ast::NULL_NODE || body_id >= flat.size() ||
+        flat.get(body_id).tag != aura::ast::NodeTag::Lambda)
+        return; // value define: body already ran; re-eval would repeat effects
+    struct RestoreTopPool {
+        Env& top;
+        const aura::ast::StringPool* saved;
+        explicit RestoreTopPool(Env& t)
+            : top(t)
+            , saved(t.pool()) {}
+        ~RestoreTopPool() {
+            if (saved && saved != top.pool())
+                top.set_pool(saved);
+        }
+    } restore_top_pool(top_env());
+    // Issue #4541: mark before eval, or the pre-mutate closure wins the cache.
+    flat.mark_subtree_dirty(define_id);
+    flat.force_align_subtree_gen(define_id);
+    auto refreshed = eval_flat(flat, *workspace_pool_, define_id, top_env());
+    if (!refreshed)
+        return;
+    auto& tenv = top_env();
+    std::size_t ci = 0;
+    bool have = false;
+    if (auto existing = tenv.lookup_binding(name); existing && types::is_cell(*existing)) {
+        ci = types::as_cell_id(*existing);
+        have = true;
+    }
+    if (!have)
+        ci = alloc_cell(*refreshed);
+    else if (ci < cells().size()) {
+        // Issue #4715 AC2: same private-cell rule as rebind.
+        if (!fiber_cow_overlay_capture_define_cell(*this, name, *refreshed,
+                                                   static_cast<std::uint64_t>(ci)))
+            cells()[ci] = *refreshed;
+    }
+    tenv.bind(name, types::make_cell(ci));
+}
+
 // Issue #2812: queue define name for post-Guard BFS invalidate.
 void Evaluator::enqueue_cascade_bfs_invalidate(std::string name) noexcept {
     if (name.empty())
@@ -11722,6 +11786,11 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
         // Soft path under Guard: mark_dirty_upward + impact_scope.
         // Issue #2812: hard invalidate_function deferred to post-unlock.
         finalize_define_mutate_invalidation(flat, name, def_id, /*run_full=*/false);
+        // Issue #4753 follow-up: the committed body must be what the next
+        // read sees. Re-publish this function define from the live AST so
+        // the cell stops advertising the pre-mutation IR publication (whose
+        // IRModule snapshot cannot carry a scalar/body write).
+        refresh_define_env_publication(flat, name, def_id);
         if (define_needs_precise_invalidation_for_inval(flat, def_id)) {
             if (precise_2988)
                 enqueue_cascade_bfs_invalidate(name);

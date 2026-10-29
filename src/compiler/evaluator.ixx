@@ -3857,6 +3857,17 @@ public:
     void finalize_define_mutate_invalidation(const aura::ast::FlatAST& flat,
                                              const std::string& name, aura::ast::NodeId define_id,
                                              bool run_full_invalidate = true);
+    // Issue #4753 follow-up: re-publish a mutated workspace function define
+    // from the live AST. A retained IR publication keeps its own IRModule
+    // snapshot (IRDefineEnvBinding::module); a body mutation (tweak-literal,
+    // set-body inside a batch) cannot be represented there, so the env cell
+    // must advertise a fresh closure evaluated from the mutated tree. Same
+    // refresh mutate:set-body / mutate:rebind perform (mark_subtree_dirty +
+    // define eval + cell write), hoisted so the generic mutation cascade can
+    // apply it after any commit. Lambda bodies only: a value define's body
+    // has already run, so re-evaluating it would repeat its initializer.
+    void refresh_define_env_publication(aura::ast::FlatAST& flat, const std::string& name,
+                                        aura::ast::NodeId define_id);
     // Issue #2038 / #2762 / #2988: push-automatic cascade after successful
     // outermost MutationBoundaryGuard. Walks mutation log [log_begin, end)
     // (and defuse_affected_syms_) → mark_dirty_upward / mark_define_dirty /
