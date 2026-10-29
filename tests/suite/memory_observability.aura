@@ -185,8 +185,7 @@
 
 ;; set-memory-policy returns the previous policy, so calling it once more
 ;; without the auto-gc flag should give us our custom policy back.
-(set-memory-policy (hash "auto-gc" #f "warn-pct" 70))
-(define returned-prev (get-memory-policy))
+(define returned-prev (set-memory-policy (hash "auto-gc" #f "warn-pct" 70)))
 (check= #t (hash-ref returned-prev "auto-gc"))    ; previous was auto-gc on
 (check= 75 (hash-ref returned-prev "warn-pct"))    ; previous warn-pct
 (check= 90 (hash-ref returned-prev "critical-pct")) ; previous critical-pct

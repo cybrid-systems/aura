@@ -1,4 +1,4 @@
-;; expect: OK-4714S strings resolve through one payload accessor
+;; expect: OK-4714S strings through one accessor
 ; Issue #4714 follow-up (Row 2 prerequisite): the String payload is
 ; (space << 48) | slot, space 0 being the shared string heap, and every
 ; payload -> bytes read in the engine now goes through

@@ -57,8 +57,7 @@
 (check= 60 (hash-ref returned "critical-pct"))
 (check= 100 (hash-ref returned "sample-every"))
 
-(set-memory-policy (hash "warn-pct" 70))
-(define returned-prev (get-memory-policy))
+(define returned-prev (set-memory-policy (hash "warn-pct" 70)))
 (check= 50 (hash-ref returned-prev "warn-pct"))   ; prev had warn-pct=50
 (check= 60 (hash-ref returned-prev "critical-pct")) ; prev had critical-pct=60
 (check= 100 (hash-ref returned-prev "sample-every")) ; prev had sample-every=100
