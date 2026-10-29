@@ -1,0 +1,49 @@
+{
+  "issue": 4755,
+  "title": "two overlapping fiber bodies corrupt the shared heap (g_owned_pair_slots_ realloc race)",
+  "checks": [
+    {
+      "ac": "AC1_push_under_registry_lock",
+      "path": "src/compiler/ir_executor_impl.cpp",
+      "contains": [
+        "Issue #4755",
+        "std::lock_guard<std::mutex> owned_pairs(g_owned_pair_slots_mtx)",
+        "g_owned_pair_slots_.push_back(slot)"
+      ]
+    },
+    {
+      "ac": "AC2_registry_owns_its_lock",
+      "path": "src/compiler/runtime_ssot.cpp",
+      "contains": [
+        "Issue #4755",
+        "std::mutex g_owned_pair_slots_mtx",
+        "std::lock_guard<std::mutex> owned(g_owned_pair_slots_mtx)"
+      ]
+    },
+    {
+      "ac": "AC2_registry_lock_declared",
+      "path": "src/compiler/runtime_shared.h",
+      "contains": [
+        "Issue #4755",
+        "extern std::mutex g_owned_pair_slots_mtx;"
+      ]
+    },
+    {
+      "ac": "AC3_overlapping_fiber_row",
+      "path": "tests/suite/guard_overlap_fiber_4755.aura",
+      "contains": [
+        "Issue #4755",
+        "(fiber:spawn (lambda () (run-guards ROUNDS)))",
+        "overlap-ok"
+      ]
+    },
+    {
+      "ac": "AC4_structural_lint",
+      "path": "scripts/coverage/checks/check_owned_pair_slots_lock_coverage.py",
+      "contains": [
+        "Issue #4755",
+        "g_owned_pair_slots_mtx"
+      ]
+    }
+  ]
+}

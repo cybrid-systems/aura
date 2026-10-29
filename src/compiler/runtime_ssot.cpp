@@ -135,7 +135,13 @@ extern "C" void* aura_pair_seg_dir_base() {
 
 // IR MakePair mirror still records one malloc per interpreter cons.
 // Arena slots and JIT slabs are not listed here.
+//
+// Issue #4755: process-global storage, process-global lock. See the note on
+// the declaration in runtime_shared.h: the evaluator workspace hook is not
+// a process-wide exclusion (single bound Evaluator, and a write acquisition
+// adopts a shared hold), so two fiber bodies could push_back here at once.
 std::vector<PairSlot*> g_owned_pair_slots_;
+std::mutex g_owned_pair_slots_mtx;
 
 // Issue #4057: owner-principal stamps parallel to g_pair_slots — same SSOT
 // placement so the evaluator partition TUs and the JIT SOs share one table
@@ -699,13 +705,19 @@ extern "C" std::size_t aura_epoch_invariant_must_deopt_stale_live_closures(void)
 }
 
 // Issue #1998 / B-024: C accessor so tests need not name std::vector.
+// Issue #4755: reads the vector under the same process-global mutex as the
+// push path (a concurrent realloc would otherwise be read mid-move).
 extern "C" size_t aura_g_owned_pair_slots_size() {
+    std::lock_guard<std::mutex> owned(g_owned_pair_slots_mtx);
     return g_owned_pair_slots_.size();
 }
 
 namespace {
 struct PairSlotCleanup {
     ~PairSlotCleanup() {
+        // Issue #4755: walk and clear under the registry mutex so the
+        // iteration cannot observe a concurrent push_back's realloc.
+        std::lock_guard<std::mutex> owned(g_owned_pair_slots_mtx);
         for (auto* p : g_owned_pair_slots_) {
             std::free(p);
         }
