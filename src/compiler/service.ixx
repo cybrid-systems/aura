@@ -339,7 +339,9 @@ static void lock_park_aware_4765(std::recursive_mutex& m) {
     unpark_exec_holds_4765();
 }
 
-static void lock_ir_gate_body_safe_4765(std::recursive_mutex& gate) { lock_park_aware_4765(gate); }
+static void lock_ir_gate_body_safe_4765(std::recursive_mutex& gate) {
+    lock_park_aware_4765(gate);
+}
 
 // Issue #4765: exec_mtx taken by a walker that HOLDS the IR cache gate.
 // Owns the lock when it is free (or held by this thread); otherwise, once
@@ -19711,7 +19713,7 @@ public:
                 continue;
             add_closure(static_cast<std::int64_t>(bit->second->closure_id));
             if (bit->second->interpreter) {
-                ExecUnderGate4765 exec(bit->second->exec_mtx);  // #4765
+                ExecUnderGate4765 exec(bit->second->exec_mtx); // #4765
                 bit->second->interpreter->collect_active_gc_roots(out.compiler_closure_roots,
                                                                   current_epoch);
             }
@@ -19722,7 +19724,7 @@ public:
             if (!binding || !binding->interpreter)
                 continue;
             add_closure(static_cast<std::int64_t>(binding->closure_id));
-            ExecUnderGate4765 exec(binding->exec_mtx);  // #4765
+            ExecUnderGate4765 exec(binding->exec_mtx); // #4765
             binding->interpreter->collect_active_gc_roots(out.compiler_closure_roots,
                                                           current_epoch);
         }
@@ -19757,7 +19759,7 @@ public:
                 continue;
             bool active = false;
             {
-                ExecUnderGate4765 exec(binding->exec_mtx);  // #4765
+                ExecUnderGate4765 exec(binding->exec_mtx); // #4765
                 active = binding->interpreter->has_active_frames();
             }
             if (active) {
@@ -20044,21 +20046,21 @@ public:
                 (void)bname;
                 if (!binding || !binding->interpreter)
                     continue;
-                ExecUnderGate4765 exec(binding->exec_mtx);  // #4765
+                ExecUnderGate4765 exec(binding->exec_mtx); // #4765
                 binding->interpreter->walk_runtime_closures(
                     [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) { poison_ir(cl); });
             }
         } else {
             if (auto it = ir_define_env_bindings_.find(name);
                 it != ir_define_env_bindings_.end() && it->second && it->second->interpreter) {
-                ExecUnderGate4765 exec(it->second->exec_mtx);  // #4765
+                ExecUnderGate4765 exec(it->second->exec_mtx); // #4765
                 it->second->interpreter->walk_runtime_closures(
                     [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) { poison_ir(cl); });
             }
             for (auto& [bname, binding] : ir_define_env_bindings_) {
                 if (bname == name || !binding || !binding->interpreter)
                     continue;
-                ExecUnderGate4765 exec(binding->exec_mtx);  // #4765
+                ExecUnderGate4765 exec(binding->exec_mtx); // #4765
                 binding->interpreter->walk_runtime_closures(
                     [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) {
                         if (cl.name == name)
@@ -20521,7 +20523,7 @@ public:
             // Issue #4717: serialize the interpreter's mutable execution state
             // against a body running on a sibling fiber (exec_mtx; taken under
             // the cache gate, and the gate is never taken while holding it).
-            ExecUnderGate4765 exec(binding->exec_mtx);  // #4765
+            ExecUnderGate4765 exec(binding->exec_mtx); // #4765
             binding->interpreter->walk_runtime_closures([&]([[maybe_unused]] std::uint64_t cid,
                                                             IRClosure& cl) {
                 // Skip unstamped (legacy) and already-current stamps.
@@ -20618,7 +20620,7 @@ public:
             // Issue #4717: serialize the interpreter's mutable execution state
             // against a body running on a sibling fiber (exec_mtx; taken under
             // the cache gate, and the gate is never taken while holding it).
-            ExecUnderGate4765 exec(binding->exec_mtx);  // #4765
+            ExecUnderGate4765 exec(binding->exec_mtx); // #4765
             binding->interpreter->walk_runtime_closures(
                 [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) {
                     if (cl.env_id == kNull || static_cast<std::size_t>(cl.env_id) >= n)
@@ -20644,7 +20646,7 @@ public:
             // Issue #4717: serialize the interpreter's mutable execution state
             // against a body running on a sibling fiber (exec_mtx; taken under
             // the cache gate, and the gate is never taken while holding it).
-            ExecUnderGate4765 exec(binding->exec_mtx);  // #4765
+            ExecUnderGate4765 exec(binding->exec_mtx); // #4765
             binding->interpreter->walk_runtime_closures(
                 [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) {
                     if (cl.bridge_epoch != 0) {

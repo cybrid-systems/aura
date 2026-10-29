@@ -384,7 +384,7 @@ private:
 
     // Per-instance closure storage
     std::uint64_t next_closure_id_ = aura::compiler::types::make_ir_closure_id(0); // #907/#4502
-    std::atomic<std::uint64_t>* shared_closure_cursor_ = nullptr; // #4764
+    std::atomic<std::uint64_t>* shared_closure_cursor_ = nullptr;                  // #4764
     std::unordered_map<std::uint64_t, IRClosure> runtime_closures_;
     // Issue #4450: subset of runtime_closures_ minted while executing a
     // call (see owns_runtime_mint). in_runtime_call_ is RAII-set by

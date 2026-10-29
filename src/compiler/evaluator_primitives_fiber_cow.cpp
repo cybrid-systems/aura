@@ -506,7 +506,8 @@ void register_fiber_cow_primitives(std::function<void(std::string, PrimFn)> add,
                 // reader looked at. The in-place store is the same
                 // single-cell write a plain set! does (under the cells
                 // storage lock), so readers still see old or new.
-                if (auto existing = ev.top_env().lookup_binding(name); existing && is_cell(*existing)) {
+                if (auto existing = ev.top_env().lookup_binding(name);
+                    existing && is_cell(*existing)) {
                     const auto old_ci = as_cell_id(*existing);
                     std::lock_guard<std::recursive_mutex> lk(ev.cells_storage_mutex());
                     if (old_ci < ev.cells().size()) {

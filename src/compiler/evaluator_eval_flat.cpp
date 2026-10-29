@@ -3129,39 +3129,39 @@ ast::NodeId Evaluator::data_to_flat(const types::EvalValue& data, aura::ast::Fla
 // (closures made by an expansion keep pointing at its flat); past the cap new
 // expansions are retained on the Evaluator instead of cached.
 namespace {
-struct LegacyMacroSite4759 {
-    std::shared_ptr<aura::ast::FlatAST> flat;
-    std::shared_ptr<aura::ast::StringPool> pool;
-    aura::ast::NodeId root = aura::ast::NULL_NODE;
-};
-constexpr std::size_t kLegacyMacroSiteCap4759 = 4096;
-std::mutex& legacy_macro_site_mtx_4759() {
-    static std::mutex m;
-    return m;
-}
-std::unordered_map<std::string, LegacyMacroSite4759>& legacy_macro_sites_4759() {
-    static auto* m = new std::unordered_map<std::string, LegacyMacroSite4759>();
-    return *m;
-}
-[[maybe_unused]] static std::optional<LegacyMacroSite4759>
-legacy_macro_site_lookup_4759(const std::string& key) {
-    std::lock_guard lk(legacy_macro_site_mtx_4759());
-    auto& sites = legacy_macro_sites_4759();
-    auto it = sites.find(key);
-    if (it == sites.end())
-        return std::nullopt;
-    return it->second;
-}
-// False when the cache is full (caller retains the program itself).
-[[maybe_unused]] static bool legacy_macro_site_store_4759(const std::string& key,
-                                                          const LegacyMacroSite4759& site) {
-    std::lock_guard lk(legacy_macro_site_mtx_4759());
-    auto& sites = legacy_macro_sites_4759();
-    if (sites.size() >= kLegacyMacroSiteCap4759)
-        return false;
-    sites.emplace(key, site);
-    return true;
-}
+    struct LegacyMacroSite4759 {
+        std::shared_ptr<aura::ast::FlatAST> flat;
+        std::shared_ptr<aura::ast::StringPool> pool;
+        aura::ast::NodeId root = aura::ast::NULL_NODE;
+    };
+    constexpr std::size_t kLegacyMacroSiteCap4759 = 4096;
+    std::mutex& legacy_macro_site_mtx_4759() {
+        static std::mutex m;
+        return m;
+    }
+    std::unordered_map<std::string, LegacyMacroSite4759>& legacy_macro_sites_4759() {
+        static auto* m = new std::unordered_map<std::string, LegacyMacroSite4759>();
+        return *m;
+    }
+    [[maybe_unused]] static std::optional<LegacyMacroSite4759>
+    legacy_macro_site_lookup_4759(const std::string& key) {
+        std::lock_guard lk(legacy_macro_site_mtx_4759());
+        auto& sites = legacy_macro_sites_4759();
+        auto it = sites.find(key);
+        if (it == sites.end())
+            return std::nullopt;
+        return it->second;
+    }
+    // False when the cache is full (caller retains the program itself).
+    [[maybe_unused]] static bool legacy_macro_site_store_4759(const std::string& key,
+                                                              const LegacyMacroSite4759& site) {
+        std::lock_guard lk(legacy_macro_site_mtx_4759());
+        auto& sites = legacy_macro_sites_4759();
+        if (sites.size() >= kLegacyMacroSiteCap4759)
+            return false;
+        sites.emplace(key, site);
+        return true;
+    }
 } // namespace
 
 // Issue #4390: preserved, legacy defmacro, and eval_data_as_code share
@@ -7650,8 +7650,9 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 // Issue #4759: macro arguments are syntax data — identifiers
                                 // are symbols, string literals stay strings — so the
                                 // printed expansion re-reads as the same code.
-                                macro_env_4759->bind(md.params[i],
-                                               ast_to_data(*f, *p, v.child(i + 1), /*datum=*/true));
+                                macro_env_4759->bind(
+                                    md.params[i],
+                                    ast_to_data(*f, *p, v.child(i + 1), /*datum=*/true));
                             }
 
                             // Rest param: collect remaining args as a list
@@ -7660,7 +7661,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 EvalValue rest_list = make_void();
                                 for (std::size_t i = v.children.size() - 1; i >= regular_count + 1;
                                      --i) {
-                                    auto item = ast_to_data(*f, *p, v.child(i), /*datum=*/true); // #4759
+                                    auto item =
+                                        ast_to_data(*f, *p, v.child(i), /*datum=*/true); // #4759
                                     // Issue #4733: locked size+append (a fiber
                                     // body may build macro rest spines too).
                                     const auto pid =
@@ -7724,8 +7726,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                     return legacy_macro_run_4759(*hit);
                             }
                             // Evaluate macro body (quasiquote-expanded template) → produces data
-                            auto template_result =
-                                eval_flat(*md.flat, md.pool ? *md.pool : *p, md.body_id, *macro_env_4759);
+                            auto template_result = eval_flat(*md.flat, md.pool ? *md.pool : *p,
+                                                             md.body_id, *macro_env_4759);
                             if (!template_result)
                                 return template_result;
                             TwPinResult pin_template_4759(template_result);
@@ -7739,8 +7741,10 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                         fu->root = pr.root;
                                         LegacyMacroSite4759 site;
                                         site.root = pr.root;
-                                        site.flat = std::shared_ptr<aura::ast::FlatAST>(fu.release());
-                                        site.pool = std::shared_ptr<aura::ast::StringPool>(pu.release());
+                                        site.flat =
+                                            std::shared_ptr<aura::ast::FlatAST>(fu.release());
+                                        site.pool =
+                                            std::shared_ptr<aura::ast::StringPool>(pu.release());
                                         // Over the cap: still fine — `site` holds the
                                         // flat for this call; closures it makes are
                                         // kept alive by an intentional leak below.
