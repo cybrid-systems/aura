@@ -58,6 +58,10 @@ extern "C" void aura_fiber_release_pending_body_latest(void* evaluator) noexcept
 // wait). A collector that requested an epoch parks the calling fiber here
 // until the mark+sweep is done; one atomic load when no epoch is in flight.
 extern "C" void aura_tw_safepoint() noexcept;
+// Issue #4747: tree-walker threads on OTHER threads that run WITHOUT a
+// certified fiber segment (CLI thread-backend fiber bodies, plain host
+// threads). Both destructive sweeps stand down while one runs.
+extern "C" int aura_tw_plain_walkers_other() noexcept;
 // Issue #4713: observability — reclaims that ran with registered fiber
 // segments, and foreign fiber segments such a reclaim marked (a non-zero
 // cross count proves the multi-fiber mark path ran instead of the old

@@ -337,6 +337,10 @@ __attribute__((weak, used)) void* aura_tw_roots_detach() noexcept {
     return nullptr;
 }
 __attribute__((weak, used)) void aura_tw_safepoint() noexcept {}
+// Issue #4747: no evaluator linked -> no plain tree-walker thread to defer to.
+__attribute__((weak, used)) int aura_tw_plain_walkers_other() noexcept {
+    return 0;
+}
 __attribute__((weak, used)) std::uint64_t aura_tw_registry_reclaim_total() noexcept {
     return 0;
 }

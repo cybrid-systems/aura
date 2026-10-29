@@ -49,6 +49,10 @@ extern "C" std::int64_t aura_alloc_pair(std::int64_t car, std::int64_t cdr);
 // Issue #3988: production opcode-stride hold-budget poll (strong in
 // evaluator_fiber_mutation.cpp; weak 0 in fiber_bridge / stubs).
 extern "C" int aura_jit_poll_hold_budget_safepoint() noexcept;
+// Issue #4747: plain (non-fiber-segment) tree-walker threads on OTHER threads
+// — see the definition in evaluator_eval_flat.cpp. Weak no-op (0) in
+// light-link units that do not link the evaluator.
+extern "C" int aura_tw_plain_walkers_other() noexcept;
 
 namespace aura::compiler {
 
@@ -3179,6 +3183,20 @@ void IRInterpreter::maybe_reclaim_unreachable() {
     if (allocs_since_reclaim_ < kFileReclaimAllocs &&
         ev->file_heap_allocs_since_reclaim() < trigger)
         return;
+    // Issue #4747: a PLAIN tree-walker thread has its env frames and pins in
+    // its thread-local default segment. Neither this sweep's extra_roots
+    // (collect_tw_inflight_roots only adds THIS thread's walker roots plus
+    // registered fiber segments) nor the registry can see them, so sweeping
+    // here frees a live walker's roots: the CLI thread-backend fiber body read
+    // a top-level define back as Void and then looped forever on the spliced
+    // cells. Stand down exactly like the tree-walker sweep already does
+    // (#2738 / #4713) and back off one trigger interval, so the skip is not
+    // retried at the next instruction.
+    if (aura_tw_plain_walkers_other() > 0) {
+        allocs_since_reclaim_ = 0;
+        ev->reset_file_heap_allocs_since_reclaim();
+        return;
+    }
     struct Guard {
         bool& flag;
         explicit Guard(bool& f)
