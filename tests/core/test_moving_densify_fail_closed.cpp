@@ -4615,7 +4615,11 @@ static void ac3884_1_recover_rearms_sticky_on_lcp_reject() {
     CHECK(mut.find("Issue #3884") != std::string::npos, "ac3884_1: mut cites #3884");
     const auto anchor = mut.find("Issue #3185 AC1: same surface as Phase-5 densify entry");
     CHECK(anchor != std::string::npos, "ac3884_1: sticky-recovery #3185 anchor present");
-    const auto win = mut.substr(anchor, 5500);
+    // Issue #4751: window retargeted 5500 -> 7000. The zero-arena canary
+    // fold sits between the retry compact and the post-publish sticky clear;
+    // the clear token now lands ~6.8KB from the #3185 anchor. Every ordering
+    // row below keeps its exact token order (no widening past the clear).
+    const auto win = mut.substr(anchor, 7000);
     CHECK(win.find("if (densify_entry_lcp_blocked)") != std::string::npos,
           "ac3884_1: LCP skip branch present");
     CHECK(win.find("g_moving_incomplete_remap_sticky_densify_off.exchange") == std::string::npos,
@@ -4936,7 +4940,10 @@ static void ac4143_3_source_cite_clear_after_retry() {
     CHECK(mb.find("Issue #4143") != std::string::npos, "4143 AC3: recover cites #4143");
     const auto fn = mb.find("Evaluator::recover_moving_sticky_densify_off");
     CHECK(fn != std::string::npos, "4143 AC3: recover function present");
-    const auto win = mb.substr(fn, 8500);
+    // Issue #4751: window retargeted 8500 -> 9800 (the recovery canary fold
+    // shifts the post-publish clear ~8.7KB and the post-publish
+    // sticky_cleared resolution ~9.5KB out from the signature).
+    const auto win = mb.substr(fn, 9800);
     const auto compact = win.find("arena_group_->compact_all_moving_pinned()");
     const auto clear = win.find("clear_moving_incomplete_remap_sticky_densify_off_reason");
     CHECK(compact != std::string::npos && clear != std::string::npos && compact < clear,
@@ -5065,6 +5072,112 @@ static void ac4288_phase5_blocked_publish_closes_window() {
     aura::core::moving_densify_health::clear_agent_throttle_for_moving_densify();
     aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
     aura::core::densify_consistency::reset_densify_consistency_for_test();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+}
+
+// ── Issue #4751: zero-arena sticky-recovery retry folds the canary gate ──
+// #4288 closed the Phase-5 face of this hole: the #3857/#4066 temporary-canary
+// soft gate lives inside each arena's live_compact(Moving), so a window whose
+// ArenaGroup has no registered arena never consults the process-wide #3210
+// inventory and publishes vacuous-green. The sticky-recovery retry
+// (recover_moving_sticky_densify_off) re-enters the SAME
+// compact_all_moving_pinned() fan-out and had the same hole: with zero
+// registered arenas it published pin=true / objects_moved=0 and cleared the
+// sticky trap under a live temporary canary (measured below with a bare
+// Evaluator, whose ArenaGroup has no module arena registered — the
+// deterministic has_arena=0 face #4288 instrumented).
+static void ac4751_zero_arena_retry_folds_canary_gate() {
+    std::println("\n--- #4751: zero-arena recovery retry does not vacuous-green ---");
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura::core::moving_densify_health::reset_moving_densify_health_for_test();
+    aura::core::moving_densify_health::clear_agent_throttle_for_moving_densify();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    aura::core::densify_consistency::reset_moving_blocked_temp_canary_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::ast::set_moving_compact_enabled(1);
+    aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
+    aura::core::lifetime_consistency_proof::reset_densify_entry_lcp_blocked_for_test();
+    {
+        Evaluator ev;
+        CHECK(ev.arena_group().count() == 0,
+              "4751: zero registered arenas (the #4288 has_arena=0 face)");
+        // The #3210 note is a no-op once the sticky gate closes Moving
+        // (moving_compact_enabled() == 0), so a peer fiber notes its canary
+        // FIRST and the trap arms after — that is the inventory state this
+        // recovery actually observes. Note before arm, then assert the
+        // inventory is live.
+        int sentinel = 0;
+        aura::ast::note_temporary_moving_live_ptr(&sentinel);
+        std::vector<void*> live_temps;
+        CHECK(aura::ast::snapshot_temporary_moving_live_ptrs(live_temps) > 0,
+              "4751: peer canary is live in the #3210 inventory");
+        aura::ast::g_moving_incomplete_remap_sticky_densify_off.store(1, std::memory_order_release);
+        CHECK(aura::ast::moving_compact_enabled() == 0, "4751: sticky gate closes Moving admit");
+        const auto canary0 =
+            aura::core::densify_consistency::moving_blocked_temp_canary_total_v_read();
+        const auto rec = ev.recover_moving_sticky_densify_off(/*retry_densify=*/true);
+        const auto hs = aura::core::moving_densify_health::snapshot();
+        CHECK(rec.densify_retried, "4751: retry densify admitted under the feature gate");
+        CHECK(!rec.pin_contract_held, "4751: zero-arena retry publishes pin_contract_held=false");
+        CHECK(!rec.incomplete_remap, "4751: canary block is not an incomplete remap");
+        CHECK(!rec.success, "4751: retry is not a success under a live canary");
+        CHECK(!rec.sticky_cleared, "4751: no unified-success clear (sticky_cleared=false)");
+        CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(),
+              "4751: sticky trap stays armed");
+        CHECK(aura::ast::moving_compact_enabled() == 0, "4751: Moving admit stays closed");
+        CHECK(!hs.would_allow_mutate, "4751: published window closes would_allow");
+        CHECK(!hs.pin_contract_held, "4751: published pin_contract_held=false");
+        CHECK(hs.objects_moved == 0, "4751: nothing moved");
+        CHECK(aura::core::densify_consistency::moving_blocked_temp_canary_total_v_read() ==
+                  canary0 + 1,
+              "4751: fold bumps the blocked-temp-canary total once");
+    }
+    // Recovery entry is a no-op once the sticky is clear: the same evaluator
+    // shape with no live canary must still go green (the fold is canary-keyed,
+    // not a blanket block).
+    {
+        aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+        aura::ast::reset_temporary_moving_live_ptrs_for_test();
+        Evaluator ev2;
+        CHECK(ev2.arena_group().count() == 0, "4751: second evaluator also zero arenas");
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        aura::ast::set_moving_compact_enabled(1);
+        const auto rec = ev2.recover_moving_sticky_densify_off(/*retry_densify=*/true);
+        CHECK(rec.densify_retried && rec.success,
+              "4751: quiet zero-arena retry stays green (no canary, no block)");
+    }
+    // Source-cite: the fold sits between the retry compact fan-out and the
+    // publish / unified-success consumers it feeds.
+    const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mut.find("Issue #4751") != std::string::npos, "4751: mut cites #4751");
+    const auto fn = mut.find("Evaluator::recover_moving_sticky_densify_off");
+    CHECK(fn != std::string::npos, "4751: recover fn present");
+    if (fn != std::string::npos) {
+        // Issue #4751: 9200 covers the post-publish clear the fold shifted.
+        const auto win = mut.substr(fn, 9200);
+        const auto fold = win.find("if (!blocked && moving_temp_canary_live_())");
+        const auto bump = win.find("g_moving_blocked_temp_canary_total.fetch_add", fold);
+        const auto pub = win.find("publish_last_moving_densify_window(", fold);
+        const auto green = win.find("compute_moving_unified_success", fold);
+        const auto clear =
+            win.find("clear_moving_incomplete_remap_sticky_densify_off_reason", fold);
+        CHECK(fold != std::string::npos, "4751: fold present in the recovery retry");
+        CHECK(bump != std::string::npos && bump > fold, "4751: fold bumps the canary total");
+        CHECK(pub != std::string::npos && fold < pub, "4751: fold precedes the retry publish");
+        CHECK(green != std::string::npos && fold < green,
+              "4751: fold precedes the unified-success consumers");
+        CHECK(clear != std::string::npos && pub < clear,
+              "4751: sticky clear still follows the publish (#4143 order kept)");
+    }
+    CHECK(read_file("tests/core/test_issue_4751.cpp").empty(), "4751: no invent");
+    CHECK(read_file("docs/design/4751-zero-arena-retry.md").empty(), "4751: no docs/design");
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::moving_densify_health::clear_agent_throttle_for_moving_densify();
+    aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
+    aura::core::densify_consistency::reset_moving_blocked_temp_canary_for_test();
     aura::compiler::reset_mutation_concurrency_health_admit_for_test();
 }
 
@@ -6719,7 +6832,10 @@ static void ac4067_source_cite() {
                              : mb.find("compact_all_moving_pinned()", recover_fn);
     CHECK(compact != std::string::npos, "4067: retry compact");
     if (compact != std::string::npos) {
-        const auto arm = mb.substr(compact, 1400);
+        // Issue #4751: window retargeted 1400 -> 2800 (the zero-arena canary
+        // fold sits between the retry compact and its publish, pushing the
+        // publish ~2.5KB out; the ordering rows below are unchanged).
+        const auto arm = mb.substr(compact, 2800);
         CHECK(arm.find("publish_last_moving_densify_window(") != std::string::npos,
               "4067: compact arm publishes the retry window");
         CHECK(arm.find("Issue #4067") != std::string::npos,
@@ -7577,7 +7693,10 @@ static void ac4304_phase5_inflight_spans_publish() {
     const auto rec = mb.find("Evaluator::recover_moving_sticky_densify_off");
     CHECK(rec != std::string::npos, "4304: recover fn");
     if (rec != std::string::npos) {
-        const auto recwin = mb.substr(rec, 8000);
+        // Issue #4751: window retargeted 8000 -> 8400 (the recovery canary
+        // fold pushes the in-guard retry publish past 7.4KB; 8400 keeps the
+        // row original ~1KB headroom so it does not become a hair-trigger).
+        const auto recwin = mb.substr(rec, 8400);
         const auto g = recwin.find("DensifyInFlightGuard densify_inflight");
         CHECK(g != std::string::npos,
               "4304: recover still names DensifyInFlightGuard densify_inflight");
@@ -9540,6 +9659,10 @@ int run_test_moving_densify_fail_closed() {
     ac4143_4_wiring_no_invent();
     ac4287_blocked_retry_publish_closes_window();
     ac4288_phase5_blocked_publish_closes_window();
+
+    std::println("\n=== Issue #4751: zero-arena sticky-recovery retry folds "
+                 "the canary gate (#4288 sibling; extends fail_closed per #81967) ===");
+    ac4751_zero_arena_retry_folds_canary_gate();
 
     std::println("\n=== Issue #4144: EnvFrame pool_ aliases get lasting slot remap "
                  "(#3647 sibling; extends fail_closed per #81967) ===");
