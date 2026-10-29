@@ -1,0 +1,24 @@
+;; expect: 22 22 22 22 22 ok
+;; Issue #4747: a workspace define that calls another workspace define inside a
+;; named-let + append loop must return the same list on every call. The inner
+;; call runs in its own IR interpreter; the inner interpreter's file-mode
+;; reclaim only walked its own frames, so a reclaim at an inner instruction
+;; boundary released the outer interpreter's loop variables (the row list
+;; handed to the callee) and the next mint aliased them: call 2 returned 24
+;; elements with a row spliced in place of the `ei` argument.
+(require "std/mutate" all:)
+
+(set-code "(define (t4747-row ei lt fb ba mm truth) (list 'row ei lt fb ba mm truth)) (define (t4747-grid) (let loop ((eis (list #t #f)) (acc (list))) (if (null? eis) acc (let ((ei (car eis))) (loop (cdr eis) (append (list (t4747-row ei #f #f 0.0 #t 'dfe)) (let bl ((bs (list 0.01 0.02 0.03 0.05 0.08 0.1 0.15 0.2 0.3)) (a2 (list))) (if (null? bs) a2 (bl (cdr bs) (cons (t4747-row ei #f #t (car bs) #f 'dfe) a2)))) (if ei (list (t4747-row #t #t #f 0.0 #f 'sd) (t4747-row #t #t #t 0.05 #f 'sd)) (list)) acc))))))")
+(eval-current)
+
+;; prime the allocation counters (the reclaim trigger is allocation-based)
+(let loop ((i 0) (acc (list))) (if (= i 200) acc (loop (+ i 1) (cons (list i i) acc))))
+
+(define (len5)
+  (display (length (t4747-grid))) (display " ")
+  (display (length (t4747-grid))) (display " ")
+  (display (length (t4747-grid))) (display " ")
+  (display (length (t4747-grid))) (display " ")
+  (display (length (t4747-grid))) (display " ok")
+  (newline))
+(len5)

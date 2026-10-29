@@ -3168,6 +3168,8 @@ std::uint64_t IRInterpreter::alloc_cell() {
 }
 
 void IRInterpreter::maybe_reclaim_unreachable() {
+    if (std::getenv("AURA_GC_RECLAIM_OFF") != nullptr)
+        return;
     if (reclaiming_ || !context_.evaluator)
         return;
     auto* ev = context_.evaluator;
@@ -3219,6 +3221,25 @@ void IRInterpreter::maybe_reclaim_unreachable() {
     // pairs were treated as unreachable and erased ("cannot call: value",
     // #4481 reopen).
     ev->collect_tw_inflight_roots(roots);
+    // Issue #4747: the missing direction of #4617, IR -> IR. A workspace define
+    // called from another workspace define runs on that define's OWN
+    // IRInterpreter (IRDefineEnvBinding), so at this instruction boundary the
+    // CALLER's interpreter is suspended mid-frame on this same thread. The
+    // sweep above only walks THIS interpreter's call_stack_/linear_heap_/cells,
+    // so a reclaim fired here released the caller's live loop variables: rows
+    // it had already built came back spliced into the callee's arguments and
+    // the caller's accumulator list was re-minted underneath it (a repeated
+    // call returned 24 elements instead of 22, or looped forever on the cycle).
+    // The provider stack is thread-local and every drain publishes its frames
+    // (#4617), so asking it here covers every suspended interpreter on this
+    // thread — including this one, whose own roots are pushed twice (a
+    // duplicate root is harmless; the mark is conservative).
+    std::vector<std::int64_t> outer_ir_roots;
+    if (ir_inflight::collect(outer_ir_roots) > 0) {
+        roots.reserve(roots.size() + outer_ir_roots.size());
+        for (const auto raw : outer_ir_roots)
+            roots.push_back(types::EvalValue(raw));
+    }
 
     std::vector<std::uint64_t> live_ir;
     std::vector<std::uint8_t> live_cells;
