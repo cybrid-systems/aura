@@ -15,6 +15,11 @@
 //   AC4: no-forms source (empty / comment-only) still evaluates to ()
 //   AC5: source-cite — parser_impl.cpp + evaluator_primitives_eval.cpp cite
 //        #4736 and parse_define refuses EOF where ')' is required
+//   AC6: REOPENED — the lambda close was a SECOND site. parse_lambda consumed
+//        the end-of-input token where the body/params ')' was required, so
+//        (eval "(lambda (x) (+ x 1)") returned (value #t). The review probes
+//        below are reproduced verbatim; each unbalanced row must come back as
+//        (err <located parse-error>) and the balanced/empty rows must not.
 
 #include "test_harness.hpp"
 
@@ -25,6 +30,9 @@
 import std;
 import aura.compiler.service;
 import aura.compiler.value;
+import aura.core.arena; // ASTArena (the parser needs an allocator-backed pool)
+import aura.core.ast;
+import aura.parser.parser;
 
 namespace {
 
@@ -114,6 +122,62 @@ static void ac5_source_cite() {
           "AC5: eval returns a parse-error-valued failure");
 }
 
+// ── AC6: the reopened lambda site ────────────────────────────────────
+// The review's harness verbatim: t returns (value <procedure?>) on a
+// successful eval and (err <error>) on a raised one. Before the fix the
+// four unbalanced rows all came back (value #t) because parse_lambda ate
+// the end-of-input token where its close ')' was required.
+static void ac6_unbalanced_lambda_is_parse_error() {
+    std::println("\n--- #4736 AC6: an unbalanced lambda is a parse-error ---");
+    CompilerService cs;
+    const char* src = R"SRC(
+(define (t s) (try (let ((v (eval s))) (list 'value (procedure? v))) (catch (e) (list 'err e))))
+(and
+  (equal? (car (t "(+ 1 (* 2 3)")) 'err)
+  (equal? (car (t "(lambda (x) (+ x 1)")) 'err)
+  (equal? (car (t "(lambda (x) (if (> x 1) 1 2)")) 'err)
+  (equal? (car (t "(lambda (x)\n  (cond ((> x 1) 1)\n        (else 2))")) 'err)
+  (equal? (car (t "(lambda (x) (and (> x 0.15) (< x 5e+05) (> x 0.7))")) 'err)
+  (equal? (t "(lambda (x) (+ x 1))") (list 'value #t))
+  (equal? (eval "") (eval "; only a comment")))
+)SRC";
+    auto r = cs.eval(src);
+    const bool ok = r && is_bool(*r) && as_bool(*r);
+    if (!ok)
+        std::println("  [lambda-probes] one of the four unbalanced lambdas still reported a value");
+    CHECK(ok, "AC6: all four unbalanced lambdas are (err ...); the balanced/empty rows stay OK");
+}
+
+// AC6b: the parser itself must refuse the truncated lambda and say WHERE.
+// The eval face can only report a location if the deferred unclosed-list
+// diagnostic carries one, so assert it at the source of truth.
+static void ac6_unclosed_lambda_diagnostic_has_location() {
+    std::println("\n--- #4736 AC6: the unclosed-lambda diagnostic carries a location ---");
+    const char* kSources[] = {
+        "(lambda (x) (+ x 1)",                                 // body close missing
+        "(lambda (x) (if (> x 1) 1 2)",                        // if body, lambda close missing
+        "(lambda (x)\n  (cond ((> x 1) 1)\n        (else 2))", // multi-line cond
+        "(lambda (x) (and (> x 0.15) (< x 5e+05) (> x 0.7))",  // numeric body
+        "(lambda (x) (+ x 1",                                  // params close missing
+        "(lambda x (+ 1 2)",                                   // rest-arg shorthand close
+    };
+    for (const char* s : kSources) {
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat(s, flat, pool);
+        std::println("  src: {}", s);
+        CHECK(!pr.success && pr.root == aura::ast::NULL_NODE,
+              "AC6b: truncated lambda does not parse");
+        bool located_unclosed = false;
+        for (const auto& pe : pr.errors)
+            if (pe.location.valid() && pe.message.find("unclosed") != std::string::npos)
+                located_unclosed = true;
+        CHECK(located_unclosed, "AC6b: the unclosed-list diagnostic carries a location");
+    }
+}
+
 } // namespace
 
 int run_test_eval_parse_error_face() {
@@ -122,6 +186,8 @@ int run_test_eval_parse_error_face() {
     ac3_rebind_one_short_rejected();
     ac4_no_forms_stays_void();
     ac5_source_cite();
+    ac6_unbalanced_lambda_is_parse_error();
+    ac6_unclosed_lambda_diagnostic_has_location();
     std::println("\n=== #4736: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

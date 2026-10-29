@@ -95,27 +95,37 @@ FlatParseResult parse(ParserState& s, std::string_view src) {
         // Issue #4129: a malformed character literal must fail the form —
         // surface the deferred diagnostic, clear the root, and force
         // success=false so no caller evaluates a silently-truncated call.
+        // Issue #4736 (reopened): the flush now carries the position that
+        // s.defer() recorded, so an unclosed list/lambda reports WHERE the
+        // required ')' was missing ("1:22: unclosed lambda ...") instead of a
+        // bare message the eval face could not place.
         auto flush_deferred_char_error = [&r, &s]() {
             if (s.deferred_error.empty())
                 return;
+            auto loc = aura::diag::SourceLocation{s.deferred_line, s.deferred_column, 0};
+            auto formatted = loc.valid() ? std::format("{}: {}", loc.format(), s.deferred_error)
+                                         : s.deferred_error;
             if (r.error.empty())
-                r.error = s.deferred_error;
-            r.errors.push_back({s.deferred_error, aura::diag::SourceLocation{}});
+                r.error = formatted;
+            r.errors.push_back({s.deferred_error, loc});
             r.root = NULL_NODE;
             r.success = false;
         };
 
         r.root = parse_expr(s);
         if (r.root == NULL_NODE) {
+            // Issue #4736 (reopened): flush the deferred diagnostic FIRST.
+            // It is the specific cause (unclosed list / lambda / bad literal)
+            // and it carries a location; record_error() below only fills
+            // r.error when empty, so the located message wins over the
+            // generic "expected expression" wording.
+            flush_deferred_char_error();
             auto tok = s.lex.peek();
             if (tok.kind != TokenKind::EndOfFile) {
                 record_error("expected expression, got " + token_desc(tok), tok);
             } else {
                 record_error("expected expression, reached end of input");
             }
-            // Issue #4129: surface a malformed character literal even when
-            // the top-level expression itself failed.
-            flush_deferred_char_error();
             // If we recovered but got nothing, return as failure
             if (r.root == NULL_NODE)
                 return r;
@@ -348,6 +358,9 @@ NodeId parse_expr(ParserState& s) {
             // emits an Error whose text starts with "#\\"). Record the
             // deferred parse error instead of returning a silent
             // NULL_NODE that parse_list would consume as a closing ')'.
+            // Issue #4736 (reopened): this site keeps its #4129 spelling —
+            // scripts/check_character_literal_4129.py pins the exact guard and
+            // the malformed-literal face does not need a position.
             if (tok.text.starts_with("#\\") && s.deferred_error.empty())
                 s.deferred_error = "malformed character literal '" + std::string(tok.text) + "'";
             // Issue #4498: 1/2 — exact rationals are not supported.
@@ -501,8 +514,7 @@ NodeId parse_list(ParserState& s) {
             else if (s.lex.eof()) {
                 // Issue #4342: unclosed export list at EOF must fail the
                 // form (same silent-truncation face as parse_list).
-                if (s.deferred_error.empty())
-                    s.deferred_error = "unclosed export list: missing ')' before end of file";
+                s.defer("unclosed export list: missing ')' before end of file");
                 return aura::ast::NULL_NODE;
             }
             auto id = s.flat.add_export(syms);
@@ -530,8 +542,8 @@ NodeId parse_list(ParserState& s) {
             if (s.lex.peek().kind != TokenKind::RParen) {
                 // Issue #4342: unclosed dotted list at EOF fails the form
                 // (same silent-truncation face as the parse_list tail).
-                if (s.lex.eof() && s.deferred_error.empty())
-                    s.deferred_error = "unclosed list: missing ')' before end of file";
+                if (s.lex.eof())
+                    s.defer("unclosed list: missing ')' before end of file");
                 skip_rparen(s);
                 return NULL_NODE;
             }
@@ -557,8 +569,7 @@ NodeId parse_list(ParserState& s) {
     // error face as #4129 char literals: the top-level loop surfaces it
     // via flush → root cleared + success=false → load fails loudly.
     if (s.lex.eof()) {
-        if (s.deferred_error.empty())
-            s.deferred_error = "unclosed list: missing ')' before end of file";
+        s.defer("unclosed list: missing ')' before end of file");
         return aura::ast::NULL_NODE;
     }
     s.lex.consume(); // ')'
@@ -610,8 +621,14 @@ NodeId parse_lambda(ParserState& s) {
             if (s.lex.peek().kind == TokenKind::RParen)
                 break;
         }
-        if (s.lex.peek().kind == TokenKind::RParen)
-            s.lex.consume();
+        // Issue #4736 (reopened): the shorthand path had the same tolerant
+        // close as the params form — EOF where the body ')' belongs returned
+        // a lambda, so "(lambda x (+ 1 2)" parsed as a complete form.
+        if (s.lex.peek().kind != TokenKind::RParen) {
+            s.defer("unclosed lambda: missing ')' before end of file");
+            return NULL_NODE;
+        }
+        s.lex.consume(); // ')'
         if (body_exprs.empty())
             return NULL_NODE;
         auto body = body_exprs.size() == 1 ? body_exprs[0]
@@ -627,6 +644,14 @@ NodeId parse_lambda(ParserState& s) {
     std::vector<NodeId> annots; // parallel annotation node IDs (NULL_NODE = none)
     bool dotted = false;
     while (s.lex.peek().kind != TokenKind::RParen) {
+        // Issue #4736 (reopened): EOF inside the parameter list is an
+        // unclosed list, not an empty/degenerate parameter. The old loop let
+        // the ')' 'else' branch consume the end-of-input token and return
+        // NULL_NODE with no diagnostic at all.
+        if (s.lex.eof()) {
+            s.defer("unclosed lambda parameter list: missing ')' before end of file");
+            return NULL_NODE;
+        }
         // Check for dotted rest parameter: (lambda (x . rest) body)
         if (s.lex.peek().kind == TokenKind::Dot) {
             s.lex.consume(); // consume '.'
@@ -685,6 +710,12 @@ NodeId parse_lambda(ParserState& s) {
             }
         }
     }
+    // Issue #4736 (reopened): strict close for the parameter list (same
+    // face parse_define already had after the first #4736 round).
+    if (s.lex.peek().kind != TokenKind::RParen) {
+        s.defer("unclosed lambda parameter list: missing ')' before end of file");
+        return NULL_NODE;
+    }
     s.lex.consume(); // ')'
 
     // Parse multiple body expressions and wrap in begin
@@ -702,6 +733,14 @@ NodeId parse_lambda(ParserState& s) {
                                           : s.flat.add_begin(body_exprs.data(), body_exprs.size()));
     if (body == NULL_NODE)
         return NULL_NODE;
+    // Issue #4736 (reopened): THE site this reopening re-found. The old code
+    // consumed the end-of-input token here and returned a lambda, so
+    // "(lambda (x) (+ x 1)" parsed as a complete form and eval answered
+    // (value #t). EOF where the body ')' belongs is a located parse error.
+    if (s.lex.peek().kind != TokenKind::RParen) {
+        s.defer("unclosed lambda: missing ')' before end of file");
+        return NULL_NODE;
+    }
     s.lex.consume(); // ')'
     auto lid = s.flat.add_lambda(params, annots, body, dotted);
     s.flat.set_loc(lid, tok.line, tok.column);
@@ -769,8 +808,7 @@ NodeId parse_define(ParserState& s) {
             }
         }
         if (s.lex.peek().kind != TokenKind::RParen) {
-            if (s.deferred_error.empty())
-                s.deferred_error = "unclosed list: missing ')' before end of file";
+            s.defer("unclosed list: missing ')' before end of file");
             return NULL_NODE;
         }
         s.lex.consume(); // ')' after params
@@ -784,8 +822,7 @@ NodeId parse_define(ParserState& s) {
         }
         // Issue #4736: same strict close for the define form itself.
         if (s.lex.peek().kind != TokenKind::RParen) {
-            if (s.deferred_error.empty())
-                s.deferred_error = "unclosed list: missing ')' before end of file";
+            s.defer("unclosed list: missing ')' before end of file");
             return NULL_NODE;
         }
         s.lex.consume(); // ')' closing define
@@ -813,8 +850,7 @@ NodeId parse_define(ParserState& s) {
     // Issue #4736: (define name value  — EOF where ')' is required is a
     // parse error, not an auto-closed define.
     if (s.lex.peek().kind != TokenKind::RParen) {
-        if (s.deferred_error.empty())
-            s.deferred_error = "unclosed list: missing ')' before end of file";
+        s.defer("unclosed list: missing ')' before end of file");
         return NULL_NODE;
     }
     s.lex.consume(); // ')'
