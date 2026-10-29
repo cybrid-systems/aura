@@ -3485,7 +3485,12 @@ static void ac4642_8_source_cite_and_no_invent() {
     const auto ev_src = read_file("src/compiler/evaluator_primitives_eval.cpp");
     CHECK(!io.empty() && !ev_src.empty(), "AC8: the two production files are readable");
     // Issue #4714 follow-up: the heap copy goes through string_at().
-    CHECK(fence_precedes_copy_4642(ev_src, "add(\"eval\"", "auto code = ev.string_at(sidx);"),
+    // #4749 (#4743) hoisted the `std::string code;` declaration above the
+    // datum / string branch, so the string face ASSIGNS the copy instead of
+    // declaring it (`code = ev.string_at(sidx);`). The ordered pair is
+    // unchanged: the fence call still precedes the heap read, so the anchor
+    // is the read itself - the copy of the bytes out of string_heap_.
+    CHECK(fence_precedes_copy_4642(ev_src, "add(\"eval\"", "ev.string_at(sidx)"),
           "AC8: eval calls the in-range fence before the copy");
     CHECK(fence_precedes_copy_4642(io, "defer_std_host_prim(\"git-diff\"",
                                    "if (ev.string_at(mi) == \"staged\")"),
