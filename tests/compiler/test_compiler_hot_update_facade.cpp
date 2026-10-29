@@ -555,8 +555,12 @@ static void ac3219_eval_core_joint_after_production_facade() {
     CHECK(ixx.find("stamp_eval_core_joint_after_production_facade_") != std::string::npos,
           "ac3219 AC1: helper declared");
     CHECK(ixx.find("Issue #3219") != std::string::npos, "ac3219 AC1: service.ixx cites #3219");
-    CHECK(ixx.find("evaluator_.bump_defuse_version_for_test()") != std::string::npos,
-          "ac3219 AC1: helper bumps Evaluator defuse_version_");
+    // Issue #4730: the helper no longer calls the bare test bump; the bump
+    // is published by bump_defuse_and_ride_frames(), which advances
+    // defuse_version_ and rides the #4109 capture frames up inside ONE shard
+    // barrier. Same lockstep contract; the separate restamp window is gone.
+    CHECK(ixx.find("evaluator_.bump_defuse_and_ride_frames()") != std::string::npos,
+          "ac3219 AC1: helper bumps Evaluator defuse_version_ (#4730 publisher)");
     CHECK(ixx.find("bump_bridge_epoch()") != std::string::npos,
           "ac3219 AC1: helper bumps core bridge");
     {
@@ -1062,8 +1066,11 @@ static void ac3605_owner_scope_clock_isolation() {
             const auto gwin = ixx.substr(gpos, 400);
             CHECK(gwin.find("bump_bridge_epoch();") != std::string::npos,
                   "3605: global path keeps the core bridge dual-write");
-            CHECK(gwin.find("evaluator_.bump_defuse_version_for_test();") != std::string::npos,
-                  "3605: global path keeps the Evaluator defuse dual-write");
+            // Issue #4730: the defuse half is one helper that bumps inside
+            // the env-frame shard barrier and rides captures up in the same
+            // critical section; the global path still advances defuse_version_.
+            CHECK(gwin.find("(void)evaluator_.bump_defuse_and_ride_frames();") != std::string::npos,
+                  "3605: global path keeps the Evaluator defuse dual-write (#4730 publisher)");
         }
     }
     CHECK(build.find("check_facade_owner_scope_clock_skip_3605") != std::string::npos,
