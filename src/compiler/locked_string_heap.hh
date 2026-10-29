@@ -272,11 +272,20 @@ private:
                 Block* b = page->blocks[k].load(std::memory_order_relaxed);
                 if (b == nullptr)
                     continue;
-                b->~Block();
-                if (res_ != nullptr)
+                // Issue #4717: destroy the Block exactly ONCE. The
+                // resource path must destroy the placement-new'd Block by
+                // hand (deallocate does not run a destructor); the
+                // non-resource path must NOT, because delete b runs
+                // ~Block itself — doing both freed every string in the
+                // block twice (glibc "double free or corruption (!prev)"
+                // for any block holding a string past SSO, which is every
+                // heap used without a memory resource).
+                if (res_ != nullptr) {
+                    b->~Block();
                     res_->deallocate(b, sizeof(Block), alignof(Block));
-                else
+                } else {
                     delete b;
+                }
                 page->blocks[k].store(nullptr, std::memory_order_relaxed);
             }
             delete page;
