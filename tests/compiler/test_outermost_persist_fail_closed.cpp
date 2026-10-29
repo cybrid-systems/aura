@@ -230,8 +230,22 @@ static void ac4310_abort_restores_type_columns_and_cs() {
     CHECK(ast.find("void restore_type_columns") != std::string::npos, "4310: column restore");
     CHECK(ast.find("bump_type_cache_generation()") != std::string::npos,
           "4310: generation bump stays available");
-    CHECK(emb.find("defuse_version_.fetch_add(1, std::memory_order_release);") != std::string::npos,
-          "4310: enter defuse bump stays");
+    // Issue #4730: the enter bump moved into the barrier-publishing helper.
+    // The boundary TU still enters it on every non-heap-slot boundary, and
+    // the publisher still does the release fetch_add on defuse_version_.
+    CHECK(emb.find("bump_defuse_and_restamp(") != std::string::npos,
+          "4310: enter defuse bump stays (#4730 publisher)");
+    {
+        const auto env_src = read_file("src/compiler/evaluator_env.cpp");
+        const auto pub_pos = env_src.find("std::uint64_t Evaluator::bump_defuse_and_restamp(");
+        CHECK(pub_pos != std::string::npos, "4310: #4730 publisher defined");
+        const auto pub_end = env_src.find("\nstd::uint64_t Evaluator::", pub_pos + 1);
+        const auto pub_win =
+            env_src.substr(pub_pos, (pub_end == std::string::npos ? 1600 : pub_end - pub_pos));
+        CHECK(pub_win.find("defuse_version_.fetch_add(1, std::memory_order_release)") !=
+                  std::string::npos,
+              "4310: defuse release bump still published on the boundary path");
+    }
     CHECK(read_file("tests/compiler/test_issue_4310.cpp").empty(), "4310: no test_issue file");
     CHECK(read_file("docs/design/4310-type-column-abort.md").empty(), "4310: no design doc");
 

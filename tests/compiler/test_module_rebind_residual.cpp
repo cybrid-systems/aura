@@ -264,8 +264,27 @@ static void ac8_source_gate_4109() {
     CHECK(env_src.find("restamp_live_capture_frames") != std::string::npos,
           "AC8: ride-up helper defined in evaluator_env.cpp");
     const auto boundary_src = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-    CHECK(boundary_src.find("restamp_live_capture_frames") != std::string::npos,
-          "AC8: boundary bump rides still-valid captures up (#4109)");
+    // Issue #4730: enter/exit boundary no longer bump then restamp in two
+    // steps. bump_defuse_and_restamp() publishes the bump INSIDE the env-frame
+    // shard barrier and runs the locked #4109 restamp in the same critical
+    // section. The ride-up invariant is carried by that publisher, at BOTH
+    // boundary sites.
+    std::size_t boundary_bumps = 0;
+    for (auto bp = boundary_src.find("bump_defuse_and_restamp(cp.version"); bp != std::string::npos;
+         bp = boundary_src.find("bump_defuse_and_restamp(cp.version", bp + 1))
+        ++boundary_bumps;
+    CHECK(
+        boundary_bumps >= 2,
+        "AC8: boundary bump rides still-valid captures up (#4109, #4730 publisher at enter+exit)");
+    {
+        const auto pub_pos = env_src.find("std::uint64_t Evaluator::bump_defuse_and_restamp(");
+        CHECK(pub_pos != std::string::npos, "AC8: #4730 publisher defined in evaluator_env.cpp");
+        const auto pub_end = env_src.find("\nstd::uint64_t Evaluator::", pub_pos + 1);
+        const auto pub_win =
+            env_src.substr(pub_pos, (pub_end == std::string::npos ? 1600 : pub_end - pub_pos));
+        CHECK(pub_win.find("restamp_live_capture_frames_locked") != std::string::npos,
+              "AC8: publisher runs the #4109 restamp under its own barrier");
+    }
     CHECK(read_file("scripts/check_materialize_defuse_4109.py").find("4109") != std::string::npos,
           "AC8: #4109 linter present");
     const auto cmake = read_file("CMakeLists.txt");
