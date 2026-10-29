@@ -102,7 +102,7 @@
                (rest (cdr queue))
                (children (query :children current))
                (new-acc (cons current acc)))
-          (loop (append rest children) new-acc)))))
+          (loop (append rest children) new-acc))))))
 ; ── Issue #278 — high-level "all defines / all calls" wrappers ──
 ;     The (query:defines / calls / defines-by-marker /
 ;     calls-by-marker) primitives are implemented as C++

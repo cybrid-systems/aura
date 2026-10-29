@@ -187,4 +187,4 @@
                                       (if (= spec 97) (weekday-name (timestamp->weekday t))
                                         (if (= spec 87) (number->string (timestamp->iso-week t))
                                           (string-append "%" (list->string (list spec))))))))))))))
-              (loop (+ i 1) (string-append result "%")))))))))
+              (loop (+ i 1) (string-append result "%"))))))))))
