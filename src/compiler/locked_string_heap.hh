@@ -734,8 +734,30 @@ public:
     void resize(size_type n) {
         Guard g(mu_, lock_observer_);
         write_gen_.fetch_add(1, std::memory_order_release);
+        // Issue #4754: GCC 16 at -O3 (Release + -Werror) inlines these two
+        // std::vector::resize calls from a call site that resizes a young,
+        // small heap (tests/core/test_locked_string_heap.cpp:283,
+        // AC5's h.resize(2)) and mis-sizes the vector's own reallocation
+        // buffer: it claims the element store writes 8 bytes into a
+        // "region of size 2" (plus a family of "region of size 0" notes at
+        // offsets 16..20) pointing inside
+        // /usr/include/c++/16/bits/stl_construct.h:133. The report is
+        // wrong — slot_free_ is a byte per slot and resize(n, 0) never
+        // writes past its own allocation; the offsets it invents come from
+        // the inlined-away old buffer, not from this function. GCC 15 and
+        // earlier and every clang do not emit it, so the suppression is
+        // fenced to __GNUC__ >= 16 (clang reports __GNUC__ == 4) and kept
+        // as narrow as possible: it covers exactly these two statements and
+        // is popped before the rest of the function.
+#if defined(__GNUC__) && __GNUC__ >= 16
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
         v_.resize(n);
         slot_free_.resize(n, 0);
+#if defined(__GNUC__) && __GNUC__ >= 16
+#pragma GCC diagnostic pop
+#endif
         // Issue #4714: a claimed index past the new end no longer exists.
         if (claimed_.size() > n)
             claimed_.resize(n);
