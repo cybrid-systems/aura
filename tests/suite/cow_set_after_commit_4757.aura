@@ -1,0 +1,74 @@
+;; cow_set_after_commit_4757.aura — Issue #4757: after a fiber overlay
+;; commits a binding, a later (set! x ...) from ANY procedure body must
+;; still write that binding (or be captured by an open overlay).
+;;
+;; A  fiber / fresh-closure / main-thread procedure set! after a commit
+;; B  repeated commits keep one binding (commit, set!, commit, set!)
+;; C  multi-round first-committer-wins via plain set!: exactly one winner
+;;    per round, every sibling's set! captured privately each round
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ") (display msg) (display " x=") (display x) (newline))))
+
+;; ---- A ------------------------------------------------------------------
+(define x 0)
+(define (bump v) (fiber:join (fiber:spawn (lambda () (set! x v) x))))
+(assert! (and (= (bump 1) 1) (= x 1)) "A: plain fiber set! before any commit")
+(fiber:join (fiber:spawn (lambda () (fiber:overlay-begin) (set! x 2) (fiber:overlay-commit))))
+(assert! (= x 2) "A: overlay commit is visible")
+(assert! (and (= (bump 3) 3) (= x 3)) "A: fiber set! after commit (pre-commit closure)")
+(define (bump2 v) (fiber:join (fiber:spawn (lambda () (set! x v) x))))
+(assert! (and (= (bump2 4) 4) (= x 4)) "A: fiber set! after commit (fresh closure)")
+(define (mset v) (set! x v) x)
+(assert! (and (= (mset 5) 5) (= x 5)) "A: main-thread procedure set! after commit")
+(set! x 6)
+(assert! (= x 6) "A: top-level set! after commit")
+
+;; ---- B ------------------------------------------------------------------
+(define (ovl-set v) (fiber:join (fiber:spawn (lambda () (fiber:overlay-begin) (set! x v) (fiber:overlay-commit) x))))
+(ovl-set 10)
+(assert! (and (= (mset 11) 11) (= x 11)) "B: set! after 2nd commit")
+(ovl-set 12)
+(assert! (and (= (bump 13) 13) (= x 13)) "B: fiber set! after 3rd commit")
+(assert! (and (= (ovl-set 14) 14) (= x 14)) "B: commit after set! after commit")
+
+;; ---- C ------------------------------------------------------------------
+(define hot 0)
+(define go #f)
+(define (wait-go) (let l () (if go #t (begin (fiber:yield) (l)))))
+(define (body j r)
+  (fiber:overlay-begin)
+  (set! hot (+ (* 100 r) j))
+  (let ((pend (fiber:overlay-pending)))
+    (wait-go)
+    (list j pend (try (begin (fiber:overlay-commit) 'win) (catch (e) 'lose)))))
+(define (count-wins rs) (length (filter (lambda (r) (eq? (list-ref r 2) 'win)) rs)))
+(define (round r)
+  (set! go #f)
+  (let ((fs (map (lambda (j) (fiber:spawn (lambda () (body j r)))) (iota 4))))
+    (let ((t (+ (monotonic-ms) 20))) (let l () (if (< (monotonic-ms) t) (l))))
+    (set! go #t)
+    (let* ((rs (map fiber:join fs))
+           (wins (count-wins rs))
+           (pends (map (lambda (r) (list-ref r 1)) rs))
+           (winner (car (filter (lambda (r) (eq? (list-ref r 2) 'win)) (append rs (list (list -1 0 'win)))))))
+      (display (list 'round r rs 'hot hot)) (newline)
+      (assert! (= wins 1) (string-append "C: round " (number->string r) " has exactly one winner"))
+      (assert! (equal? pends (list 1 1 1 1)) (string-append "C: round " (number->string r) " every set! hot captured"))
+      (assert! (= hot (+ (* 100 r) (car winner))) (string-append "C: round " (number->string r) " hot is the winner's value")))))
+(round 0)
+(round 1)
+(round 2)
+(set! hot -1)
+(assert! (= hot -1) "C: top-level set! after rounds")
+
+(if (= *fails* 0)
+    (begin (display "OK-4757 set! after overlay commit") (newline))
+    (begin
+      (display "FAIL-4757 fails=") (display *fails*) (newline)
+      (error "4757 suite failed")))
