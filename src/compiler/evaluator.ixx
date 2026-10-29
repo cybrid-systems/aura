@@ -3796,6 +3796,15 @@ public:
     void set_drop_ir_define_binding_fn(std::function<void(const std::string&)> fn) {
         drop_ir_define_binding_fn_ = std::move(fn);
     }
+    // Issue #4349 / #4753: a workspace REPLACE (ast:restore) must not keep a
+    // pre-replace publication dispatchable, even while the define's top_env
+    // cell still advertises it. The #4753 deferral in
+    // clear_ir_define_env_binding covers only the supersede-by-new-
+    // publication window inside one workspace; a replaced workspace's
+    // publications are retired unconditionally.
+    void set_invalidate_ir_define_binding_fn(std::function<void(const std::string&)> fn) {
+        invalidate_ir_define_binding_fn_ = std::move(fn);
+    }
     void set_mark_all_defines_dirty_fn(std::function<void()> fn) {
         mark_all_defines_dirty_fn_ = std::move(fn);
     }
@@ -8167,6 +8176,8 @@ private:
     std::function<void(bool)> boundary_prep_batch_fn_ = nullptr;
     // Issue #3681: clear_ir_define_env_binding for the mutated name only.
     std::function<void(const std::string&)> drop_ir_define_binding_fn_ = nullptr;
+    // Issue #4349 / #4753: workspace-replace invalidate (no #4753 deferral).
+    std::function<void(const std::string&)> invalidate_ir_define_binding_fn_ = nullptr;
     std::function<void()> mark_all_defines_dirty_fn_ = nullptr;
     // Issue #4753: dropped tree-walker publication ids (define name) that
     // stay resolvable to the define's current publication.

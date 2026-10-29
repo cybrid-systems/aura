@@ -1594,6 +1594,14 @@ public:
         // nullopt; the env refresh below installs a fresh closure.
         evaluator_.set_drop_ir_define_binding_fn(
             [this](const std::string& name) { this->clear_ir_define_env_binding(name); });
+        // Issue #4349 / #4753: ast:restore is a workspace REPLACE. Its cone
+        // invalidate retires the pre-replace publication unconditionally -
+        // the #4753 deferral (cell still advertises the id) is for a
+        // supersede-by-new-publication inside one workspace only, and here
+        // the caller must not observe the replaced workspace's body (#4349).
+        evaluator_.set_invalidate_ir_define_binding_fn([this](const std::string& name) {
+            this->invalidate_ir_define_binding_for_replace(name);
+        });
         // Issue #4753: a define's dropped tree-walker generation stays
         // resolvable to the define's current publication.
         evaluator_.set_note_retired_define_closure_fn(
@@ -13610,6 +13618,20 @@ public:
     // current publication in place. A define that is gone from the live
     // workspace is still dropped here, so a removed define cannot resurrect
     // (#2026).
+    // Issue #4349 / #4753: the workspace-replace face of
+    // clear_ir_define_env_binding. A replaced workspace's publication must
+    // never stay dispatchable (a cell that still advertises it would run the
+    // rolled-back body, #4349), so this path never defers: retire + erase.
+    void invalidate_ir_define_binding_for_replace(const std::string& name) {
+        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
+        auto it = ir_define_env_bindings_.find(name);
+        if (it == ir_define_env_bindings_.end())
+            return;
+        retire_ir_define_closure_(name, it->second);
+        ir_define_closure_owner_.erase(it->second->closure_id);
+        ir_define_env_bindings_.erase(it);
+    }
+
     void clear_ir_define_env_binding(const std::string& name) {
         IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         auto it = ir_define_env_bindings_.find(name);
