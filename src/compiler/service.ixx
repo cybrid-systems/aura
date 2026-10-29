@@ -13013,6 +13013,10 @@ public:
                                              std::memory_order_release);
         binding->interpreter->set_next_closure_id(
             next_ir_define_closure_id_.load(std::memory_order_acquire));
+        // Issue #4764: mint every closure id from the shared source, so a
+        // define dispatched mid-call cannot reuse an id the caller already
+        // minted but has not published yet.
+        binding->interpreter->set_shared_closure_cursor(&next_ir_define_closure_id_);
 
         auto result = binding->interpreter->execute();
         publish_ir_closure_cursor_(binding->interpreter->next_closure_id());
