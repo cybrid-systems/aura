@@ -228,7 +228,7 @@
         "\\\"enabled\\\":" (if (list-ref r 5) "true" "false") ","
         "\\\"scope\\\":\\\"" (if (eq? (list-ref r 6) :workspace) "workspace"
                                (if (string? (list-ref r 6)) (list-ref r 6) (symbol->string (list-ref r 6)))) "\\\""
-        "}")
+        "}"))
       *rules*)) "]"))
   (write-file filename json-str)
   (display "Saved ")(display (length *rules*))(display " rules to ")
