@@ -53,6 +53,11 @@ def main() -> int:
     must("pheromone:update", "AC1", swarm)
     must("fiber:spawn", "AC1", swarm)
     must("fiber:join", "AC1", swarm)
+    # AC1 (#4740 reopened): vector fitness comparison sites scalarize through
+    # swarm-score instead of calling > on a pair.
+    must("(> (swarm-score f) (swarm-score pf))", "AC1", swarm)
+    must("(> (swarm-score fn) (swarm-score f0))", "AC1", swarm)
+    must("(> (swarm-score fn) (swarm-score fi))", "AC1", swarm)
 
     # AC2
     must("pso:init", "AC2", pso)
@@ -64,6 +69,12 @@ def main() -> int:
     # AC3
     must("OK-2874", "AC3", suite)
     must("sphere", "AC3", suite)
+    # AC3 (#4740 reopened): a list fitness is exercised on every continuous
+    # backend, not just grid — the suite pins the kind matrix.
+    must("AC6b multi-objective across kinds", "AC3", suite)
+    must('(list "pso" "abc" "fss" "boids")', "AC3", suite)
+    must("front-non-dominated?", "AC3", suite)
+    must("scalarized best vector", "AC3", suite)
     # example file removed in #1655 cleanup wave 9 (folded into suite)
 
     # AC4
