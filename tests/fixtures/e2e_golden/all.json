@@ -117,9 +117,13 @@
         "suffix",
         "contains",
         "split",
-        "join"
+        "join",
+        "split-5k-oneshot",
+        "split-2k-lines",
+        "split-words-basic",
+        "split-words-long"
       ],
-      "min_passes": 7
+      "min_passes": 11
     },
     "commercial_readiness_stdlib_surface": {
       "source": "tests/e2e/commercial_readiness/commercial_readiness_stdlib_surface.aura",
