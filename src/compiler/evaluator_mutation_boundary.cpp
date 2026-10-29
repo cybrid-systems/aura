@@ -8835,6 +8835,29 @@ Evaluator::recover_moving_sticky_densify_off(bool retry_densify) noexcept {
             fold_remap_(compact_r, false);
             out.pin_contract_held = compact_r.pin_contract_held && !densify_entry_lcp_blocked;
             out.incomplete_remap = compact_r.moving_incomplete_remap_any;
+            // Issue #4751: the #3857/#4066 temporary-canary soft gate lives
+            // INSIDE each arena's live_compact(Moving) — the #4288 Phase-5
+            // zero-arena hole, reopened on this retry path. With no
+            // registered arena (fresh Evaluator / module arenas not yet
+            // bound) the fan-out runs no live_compact, so the process-wide
+            // #3210 inventory was never consulted: the retry published
+            // pin=true / objects_moved=0 and cleared the sticky trap while a
+            // live temporary canary existed. Fold the inventory into the same
+            // blocked aggregate the publish + unified-success predicate
+            // consume. The arena path already refuses to relocate under a
+            // live canary, so this ADDS no relocate skip — it only closes the
+            // zero-arena bookkeeping hole (mirror of the #4288 fold).
+            bool blocked = compact_r.moving_blocked_precondition_any;
+            if (!blocked && moving_temp_canary_live_()) {
+                blocked = true;
+                aura::core::densify_consistency::g_moving_blocked_temp_canary_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+            // Issue #4751: a blocked window (arena fan-out OR process-wide
+            // canary fold) never holds the pin contract, so the published
+            // window + unified-success predicate cannot go vacuous-green.
+            if (blocked)
+                out.pin_contract_held = false;
             // Issue #4067: the retry window must be published.
             const auto root_fail =
                 static_cast<std::uint64_t>(compact_r.root_remap_stable_ref_fail_total +
@@ -8842,7 +8865,9 @@ Evaluator::recover_moving_sticky_densify_off(bool retry_densify) noexcept {
             // Issue #4287: soft-gate keeps default pin true with
             // objects_moved==0. Fold blocked so would_allow is not
             // vacuous-green. Sticky clear stays unified-success.
-            const bool blocked = compact_r.moving_blocked_precondition_any;
+            // Issue #4751: `blocked` already carries the process-wide canary
+            // fold above, so the retry window closes on a live canary even
+            // with zero registered arenas.
             const bool pin_for_publish = compact_r.pin_contract_held && !blocked;
             aura::core::moving_densify_health::publish_last_moving_densify_window(
                 /*had_moving_densify=*/true, pin_for_publish, compact_r.moving_incomplete_remap_any,
@@ -8857,7 +8882,7 @@ Evaluator::recover_moving_sticky_densify_off(bool retry_densify) noexcept {
             // so no concurrent relocate ran under incomplete cover.
             if (out.sticky_was_on &&
                 aura::core::moving_densify_health::compute_moving_unified_success(
-                    compact_r.moving_blocked_precondition_any, compact_r.pin_contract_held,
+                    blocked, compact_r.pin_contract_held,
                     static_cast<std::uint64_t>(compact_r.root_remap_stable_ref_fail_total),
                     static_cast<std::uint64_t>(compact_r.root_remap_closure_capture_fail_total),
                     static_cast<std::uint64_t>(compact_r.objects_moved_total),

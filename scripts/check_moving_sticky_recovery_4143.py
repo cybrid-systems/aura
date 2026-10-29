@@ -83,9 +83,12 @@ def main() -> int:
         ok = ok and good
 
     fn = mut.find(FN)
-    # 8500 chars covers the full recovery body through the post-publish
-    # sticky_cleared resolution and the success computation.
-    win = mut[fn : fn + 8500] if fn >= 0 else ""
+    # 9800 chars covers the full recovery body through the post-publish
+    # sticky_cleared resolution and the success computation. Issue #4751:
+    # 8500 -> 9800 after the zero-arena canary fold shifted the clear (~8.7KB)
+    # and the sticky_cleared resolution (~9.5KB) later in the body (ordering
+    # rows unchanged).
+    win = mut[fn : fn + 9800] if fn >= 0 else ""
     code_only = _strip_comments(win)
 
     compact = win.find(COMPACT)
