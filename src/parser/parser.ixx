@@ -1,5 +1,6 @@
 module;
 #include <cstddef>
+#include <cstdint>
 #include <format>
 #include <string>
 #include <string_view>
@@ -76,6 +77,25 @@ namespace detail {
         // a malformed literal fails the form instead of being silently
         // consumed by parse_list's recovery as a closing ')'.
         std::string deferred_error;
+        // Issue #4736 (reopened): where the deferred diagnostic was raised.
+        // EOF where a ')' is required has no token of its own, so the eval
+        // face could only say "unclosed list" with no position. s.defer()
+        // stamps the live token here and parse() formats it into the
+        // ParseError, giving "(err parse-error: 1:22: unclosed lambda ...)".
+        std::uint32_t deferred_line = 0;
+        std::uint32_t deferred_column = 0;
+
+        // Issue #4736 (reopened): record a deferred diagnostic ONCE, at the
+        // token where it was detected. Every "missing ')' before end of file"
+        // site funnels through here so the position travels with the message.
+        void defer(std::string msg) {
+            if (!deferred_error.empty())
+                return;
+            auto t = lex.peek();
+            deferred_line = t.line;
+            deferred_column = t.column;
+            deferred_error = std::move(msg);
+        }
         // Issue #4490: >0 while parsing a quoted datum. #( ... ) inside a
         // quote becomes the reserved callee "#vector" so quote builds a
         // real vector instead of the list (vector ...).

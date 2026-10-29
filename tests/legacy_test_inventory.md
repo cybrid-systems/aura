@@ -32,8 +32,8 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 94 | 94 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 277 | 277 | P0 — high volume; strong domain suite foothold |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 95 | 95 | P0 — well-contained, batch drivers already exist |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 276 | 276 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 108 | 108 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 26 | 26 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 61 | 61 | P1 — domain hygiene suite exists |
@@ -1118,13 +1118,13 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (94)
+### `arena_compaction` — Arena / compaction / GC (95)
 
 **Target:** tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (94)
+#### domain/ (95)
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/orch/test_agent_name_table_isolation.cpp` (—) [large, domain_suite, theme_orch] — AC1: source cites #2078; no process-static OrchAgentNameTable;
@@ -1162,6 +1162,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_epoch_invariant_soft_prod.cpp` (—) [domain_suite, theme_compiler] — AC1: production Restricted, AURA_EPOCH_INVARIANT unset → mode == 1
 - `tests/compiler/test_epoch_invariant_walk.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Soft off → zero walks (single mode load)
 - `tests/compiler/test_escape_move_elision_gate.cpp` (—) [large, domain_suite, theme_compiler] — AC1: escape-after-move binding → MoveOp emitted; blocked counter bumps
+- `tests/compiler/test_eval_parse_error_face.cpp` (—) [domain_suite, theme_compiler] — AC1: (eval "(+ 1 (* 2 3)") is a catchable parse-error
 - `tests/core/test_force_compact_hard_mutex.cpp` (—) [domain_suite, theme_core] — LifetimePin + EnvFrameLifetimeGuard (no gen bump / pin invalidate while held).
 - `tests/serve/test_gc_batch.cpp` (—) [large, batch_driver, domain_suite, theme_serve] — tests/serve/test_gc_batch.cpp — GC batch driver (arena theme; default-build).
 - `tests/compiler/test_gc_closures_mtx_flush_sweep.cpp` (—) [domain_suite, theme_compiler] — AC1: concurrent gc_root_count + register_active_closure + compact_sweep
@@ -1221,13 +1222,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (277)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (276)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (277)
+#### domain/ (276)
 
 - `tests/compiler/test_abort_ir_cache_fence_first.cpp` (—) [large, domain_suite, theme_compiler] — AC1: All 3 abort entry points in evaluator_mutation_boundary.cpp
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
@@ -1321,7 +1322,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_envframe_bridge_invalidate.cpp` (—) [domain_suite, theme_compiler] — Issue #1916 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_envframe_dualpath_stale_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #417/#418/#543/#602 (#1978 renamed): issue# moved from filename to header.
 - `tests/reflect/test_error_kind_names_wire.cpp` (—) [domain_suite, theme_reflect] — Wire C1 into business: P2996 validates name tables used by
-- `tests/compiler/test_eval_parse_error_face.cpp` (—) [domain_suite, theme_compiler] — AC1: (eval "(+ 1 (* 2 3)") is a catchable parse-error
 - `tests/compiler/test_evolution_audit_decision_forensic.cpp` (—) [large, domain_suite, theme_compiler] — AC1: additive forensic-source enum (stable int)
 - `tests/compiler/test_exhausted_min_dirty_reemit.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Continuous Defuse fail to exhaust → force-JIT mask set +
 - `tests/orch/test_failure_policy_bridge.cpp` (—) [large, domain_suite, theme_orch] — Issue #2756 — WorkflowFailurePolicy composition (batch + AgentScope +
