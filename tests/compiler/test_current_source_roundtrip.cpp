@@ -1887,6 +1887,60 @@ static void ac4729_merge_and_restore_keep_provenance() {
           "4729: ast:restore writes a rollback entry with the discarded ids");
 }
 
+// Issue #4772 (first step): ast:snapshot is a read of the workspace, so its
+// mutation guard rides the #4346 quiet path. It must not bump defuse_version_
+// (that invalidated every define-keyed cache per snapshot and paid the
+// O(workspace) panic-checkpoint unparse + exit restamp / densify walks), and
+// the arm must not leak onto the next real mutation. Snapshot / restore /
+// diff semantics are unchanged.
+static void ac4772_snapshot_quiet_guard() {
+    std::println("\n--- #4772: ast:snapshot takes the quiet (read-only) guard ---");
+    CompilerService cs;
+    std::string src = "(define (f4772 x) (+ x 1))\n";
+    for (int i = 0; i < 40; ++i)
+        src += std::format("(define (w4772f{} x) (* x {}))\n", i, i);
+    CHECK(set_code(cs, src), "4772: set-code workspace");
+    CHECK(cs.eval("(eval-current)").has_value(), "4772: eval-current binds");
+    CHECK(cs.eval("(mutate:rebind \"f4772\" \"(lambda (x) (+ x 10))\" \"4772\")").has_value(),
+          "4772: rebind before snapshot (snapshot source differs from set-code)");
+    CHECK(cs.eval("(eval-current)").has_value(), "4772: eval-current after rebind");
+    const auto dv0 = cs.evaluator().defuse_version();
+    auto sid = cs.eval("(ast:snapshot \"4772\")");
+    CHECK(sid && is_int(*sid) && as_int(*sid) >= 0, "4772: snapshot id");
+    const auto dv1 = cs.evaluator().defuse_version();
+    CHECK(dv1 == dv0, "4772: ast:snapshot does not bump defuse_version (read-only guard)");
+    auto sid2 = cs.eval("(ast:snapshot \"4772b\")");
+    CHECK(sid2 && is_int(*sid2) && as_int(*sid2) > as_int(*sid), "4772: second snapshot id");
+    CHECK(cs.evaluator().defuse_version() == dv0, "4772: repeated snapshots stay quiet");
+    auto live = cs.eval("(f4772 1)");
+    CHECK(live && is_int(*live) && as_int(*live) == 11,
+          "4772: bound define still callable after snapshot (no re-eval needed)");
+    // The quiet arm must not leak: the next real mutation still bumps.
+    CHECK(cs.eval("(mutate:rebind \"f4772\" \"(lambda (x) (+ x 100))\" \"4772\")").has_value(),
+          "4772: rebind after snapshot");
+    CHECK(cs.evaluator().defuse_version() > dv1,
+          "4772: a mutate:rebind after the snapshot still bumps defuse_version");
+    CHECK(cs.eval("(eval-current)").has_value(), "4772: eval-current after second rebind");
+    auto moved = cs.eval("(f4772 1)");
+    CHECK(moved && is_int(*moved) && as_int(*moved) == 101, "4772: rebind applied");
+    auto diff = cs.eval(std::format("(ast:diff {})", as_int(*sid)));
+    CHECK(diff && !is_void(*diff), "4772: ast:diff against the quiet snapshot reports changes");
+    auto st = cs.eval(std::format("(ast:restore {})", as_int(*sid)));
+    CHECK(st && is_bool(*st) && as_bool(*st), "4772: restore the quiet snapshot");
+    CHECK(cs.eval("(eval-current)").has_value(), "4772: eval-current after restore");
+    auto back = cs.eval("(f4772 1)");
+    CHECK(back && is_int(*back) && as_int(*back) == 11, "4772: restore brings back the snapshot");
+    auto filler = cs.eval("(w4772f7 3)");
+    CHECK(filler && is_int(*filler) && as_int(*filler) == 21, "4772: filler intact after restore");
+    const auto prim = read_file("src/compiler/evaluator_primitives_ast.cpp");
+    const auto at = prim.find("add(\"ast:snapshot\"");
+    const auto arm = prim.find("ev.heap_slot_quiet_for_next_boundary_ = true;", at);
+    const auto acq = prim.find("MutationBoundaryGuard::try_acquire(", at);
+    CHECK(at != std::string::npos && arm != std::string::npos && acq != std::string::npos &&
+              arm < acq,
+          "4772: ast:snapshot arms the quiet guard before try_acquire");
+}
+
 int run_test_current_source_roundtrip() {
     std::println("=== Issue #2921: current-source / snapshot roundtrip matrix ===");
     // Before any set-code in this process: the epoch must still be 0 so the
@@ -1909,6 +1963,7 @@ int run_test_current_source_roundtrip() {
     ac4598_transitive_rebind_and_restore();
     ac4598_phase3_snapshot_share_and_stamp_restore();
     ac4598_phase4_snapshot_cap_counts_copies();
+    ac4772_snapshot_quiet_guard();
     ac4357_workspace_bools();
     ac4475_workspace_floats();
     run_4450_runtime_mint_ids();
