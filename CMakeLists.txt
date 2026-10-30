@@ -3935,6 +3935,19 @@ if(TARGET all_test_issue_targets)
     add_dependencies(all_test_issue_targets test_json_io_cap_batch)
 endif()
 
+# Issue #4747 GAP 2: the collector rule needs a body class the plain-walker
+# count does not cover. Serve-scheduled bodies own an attached tree-walker
+# segment (#4713), so aura_tw_plain_walkers_other() is 0 for them and only
+# aura_ir_active_drains_total() (bde9e33cd) stands the file-heap sweeps down
+# while a sibling body sits inside its IR drain. tests/compiler/
+# test_fibers_serve_ir_sibling_collector.cpp starts both bodies through
+# aura::serve::Scheduler and reproduces the #4747 hold-vs-mint shape.
+aura_add_issue_test(test_fibers_serve_ir_sibling_collector)
+aura_issue_test_link_light(test_fibers_serve_ir_sibling_collector)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_fibers_serve_ir_sibling_collector)
+endif()
+
 
 # Domain batch: StableNodeRef / validate / tenant / wire ACs (Stream A6) (8 members + driver). Stream S2.
 add_executable(test_stable_ref_validate_batch
