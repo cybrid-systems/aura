@@ -56,6 +56,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <print>
 #include <string>
 #include <thread>
@@ -63,6 +64,11 @@
 import std;
 import aura.compiler.service;
 import aura.compiler.value;
+
+// Issue #4791: the drain-begin half of the #4768 sweep gate (runtime_ssot.cpp).
+extern "C" std::uint64_t aura_gc_sweep_gate_body_hits_total() noexcept;
+extern "C" std::uint64_t aura_gc_sweep_gate_body_waits_total() noexcept;
+extern "C" void aura_gc_sweep_gate_set_drain_nowait(int on) noexcept;
 
 namespace {
 
@@ -141,7 +147,8 @@ struct Round {
     bool overlapped = false;
 };
 
-static Round run_sibling_round(std::int64_t rows, std::int64_t step, std::int64_t mints) {
+static Round run_sibling_round(std::int64_t rows, std::int64_t step, std::int64_t mints,
+                               bool simultaneous = false) {
     Round out;
     CompilerService cs;
     auto& ev = cs.evaluator();
@@ -211,7 +218,9 @@ static Round run_sibling_round(std::int64_t rows, std::int64_t step, std::int64_
     // first sweep -- so A is inside the drain before any sibling sweep checks.
     // Without this, the row would also measure the check-then-act entry window
     // every counter-based stand-down has.
-    {
+    // Issue #4791: the simultaneous-spawn row skips this handshake on purpose;
+    // it is the row that measures that entry window.
+    if (!simultaneous) {
         const auto start_deadline = std::chrono::steady_clock::now() + kHoldStartBudget;
         while (a_beg.load() == 0 && std::chrono::steady_clock::now() < start_deadline)
             std::this_thread::sleep_for(std::chrono::microseconds(200));
@@ -307,6 +316,98 @@ void ac1_sibling_hold() {
           std::format("AC1: {}/{} rounds returned the exact held sum", held_ok, kRounds));
 }
 
+// Issue #4791: SIMULTANEOUS spawn - both bodies are queued back to back, so
+// either body's first IR drain can begin while the other body's sweep already
+// holds the gate and has read the drain count. Before #4791 the drain begin
+// only published the count (check-then-act from the sweep's side) and the late
+// body minted straight under the release: ~1 round in 10 corrupted in 2 of 5
+// runs. Now a drain begin that finds the gate held waits the sweep out.
+//
+// The row uses a shorter hold spin than AC1: the window is at body START, so a
+// long hold only makes each round slower without hitting it more often.
+// AURA_4791_ROUNDS overrides the round count (acceptance ran 100).
+constexpr std::int64_t kSimRowSpin = 1500;
+constexpr std::int64_t kSimChurnMints = 200000;
+
+static int sim_rounds() {
+    const char* e = std::getenv("AURA_4791_ROUNDS");
+    if (e != nullptr && *e != 0) {
+        const int n = std::atoi(e);
+        if (n > 0)
+            return n;
+    }
+    return 20;
+}
+
+struct SimTally {
+    int ok = 0;
+    int bad = 0;
+    int unfinished = 0;
+    int serialised = 0;
+    std::uint64_t hits = 0;
+    std::uint64_t waits = 0;
+};
+
+static SimTally run_sim_arm(int rounds, bool nowait) {
+    SimTally t;
+    aura_gc_sweep_gate_set_drain_nowait(nowait ? 1 : 0);
+    const auto hits0 = aura_gc_sweep_gate_body_hits_total();
+    const auto waits0 = aura_gc_sweep_gate_body_waits_total();
+    for (int i = 0; i < rounds; ++i) {
+        const auto r = run_sibling_round(kRows, kSimRowSpin, kSimChurnMints, /*simultaneous=*/true);
+        if (!r.a_finished || !r.b_finished || r.minted != kSimChurnMints) {
+            ++t.unfinished;
+            std::println("  {} round {}: unfinished held={} minted={}", nowait ? "nowait" : "gate",
+                         i, r.held, r.minted);
+            continue;
+        }
+        if (!r.overlapped)
+            ++t.serialised;
+        if (r.held == kExpectedSum) {
+            ++t.ok;
+        } else {
+            ++t.bad;
+            std::println("  {} round {}: held={} (corrupted)", nowait ? "nowait" : "gate", i,
+                         r.held);
+        }
+    }
+    t.hits = aura_gc_sweep_gate_body_hits_total() - hits0;
+    t.waits = aura_gc_sweep_gate_body_waits_total() - waits0;
+    aura_gc_sweep_gate_set_drain_nowait(0);
+    return t;
+}
+
+// AC4: the fixed gate - zero corruption over the simultaneous rounds, and the
+//      instrumented window count shows the row actually reached the window
+//      (hits > 0 across the run) and that every hit waited.
+// AC5 (measurement, informational unless AURA_4791_CONTROL=1): the same rows
+//      with the drain-begin wait disarmed (the pre-#4791 behaviour) - prints
+//      how often the window was hit and how many rounds corrupted.
+void ac4_simultaneous_spawn() {
+    std::println("\n--- #4791 AC4: simultaneous spawn, drain begin participates in the gate ---");
+    const int rounds = sim_rounds();
+    const auto g = run_sim_arm(rounds, /*nowait=*/false);
+    std::println("  gate arm: {} rounds ok={} corrupted={} unfinished={} serial={} "
+                 "window-hits={} waited={}",
+                 rounds, g.ok, g.bad, g.unfinished, g.serialised, g.hits, g.waits);
+    CHECK(g.unfinished == 0,
+          std::format("AC4: every simultaneous round finished ({} unfinished)", g.unfinished));
+    CHECK(g.bad == 0,
+          std::format("AC4: zero corrupted simultaneous-spawn rounds ({}/{} ok)", g.ok, rounds));
+    CHECK(g.waits == g.hits,
+          std::format("AC4: every window hit waited the sweep out ({} hits, {} waits)", g.hits,
+                      g.waits));
+    const char* ctl = std::getenv("AURA_4791_CONTROL");
+    if (ctl != nullptr && *ctl == '1') {
+        std::println("\n--- #4791 AC5: control arm (drain begin does not wait; pre-fix) ---");
+        const auto c = run_sim_arm(rounds, /*nowait=*/true);
+        std::println("  control arm: {} rounds ok={} corrupted={} unfinished={} serial={} "
+                     "window-hits={} waited={}",
+                     rounds, c.ok, c.bad, c.unfinished, c.serialised, c.hits, c.waits);
+        CHECK(c.waits == 0, "AC5: the control arm never waits a drain begin");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -320,6 +421,7 @@ int main() {
     ::setenv("AURA_SANDBOX", "off", 1);
     ac2_control();
     ac1_sibling_hold();
+    ac4_simultaneous_spawn();
     if (prev_sandbox != nullptr)
         ::setenv("AURA_SANDBOX", saved_sandbox.c_str(), 1);
     else
