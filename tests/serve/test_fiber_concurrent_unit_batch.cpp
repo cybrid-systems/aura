@@ -13,6 +13,7 @@
 
 #include <atomic>
 #include <cstdlib> // Issue #4768: setenv/unsetenv for the control-arm probe
+#include <ctime>   // Issue #4737: CLOCK_PROCESS_CPUTIME_ID for the AC1 cost row
 #include <fstream>
 #include <print>
 #include <string>
@@ -2082,28 +2083,57 @@ constexpr const char* kClosureCycleProgram = R"AURA(
          (_y (eval-current)))
     k))
 (define (block-sum k0)
-  (let loop ((k k0) (acc 0))
-    (if (< k (+ k0 100))
-        (let* ((t0 (monotonic-ms)) (_ (cycle k)) (t1 (monotonic-ms)))
-          (loop (+ k 1) (+ acc (- t1 t0))))
-        acc)))
-(define blocks (map (lambda (k0) (block-sum k0)) (list 0 100 200 300)))
-(- (list-ref blocks 3) (list-ref blocks 0))
+  (let loop ((k k0))
+    (if (< k (+ k0 100)) (begin (cycle k) (loop (+ k 1))) k0)))
 )AURA";
 
 int run_4737_closure_snapshot_flat_smoke() {
     std::println("\n=== #4737: ast:snapshot/restore cost from a closure frame ===");
     CompilerService cs;
-    auto v = cs.eval(kClosureCycleProgram);
-    CHECK(v.has_value(), "#4737 closure-driven snapshot cycle evaluates");
-    CHECK(v && is_int(*v), "#4737 closure-driven snapshot cycle returns an int");
-    const long long delta = (v && is_int(*v)) ? static_cast<long long>(as_int(*v)) : 1LL << 40;
-    std::println("  #4737 block3-minus-block0-ms = {}", delta);
-    // AC1: the last 100 of 400 closure-driven cycles cost no more than the
-    // first 100 plus 150 ms of CI slack (pre-fix the delta was seconds).
-    CHECK(delta <= 150,
-          "[#4737] AC1 ast:snapshot+ast:restore cost does not grow per cycle when driven "
-          "from a closure frame (block3 - block0 <= 150 ms)");
+    CHECK(cs.eval(kClosureCycleProgram).has_value(), "#4737 closure-driven snapshot cycle setup");
+    // AC1: the last 100 of 400 closure-driven cycles may cost at most 1.5x the
+    // per-cycle cost of the first 100.
+    //
+    // The unit is CPU time, measured here and not inside the programme. This
+    // binary runs in the issue tier beside other binaries, and wall clock is
+    // unusable for that: a descheduled stretch lands in whichever block it
+    // lands in. Measured on a 14-core box at load 3-5 with four copies of this
+    // binary pinned to two cores, the wall-clock block3/block0 ratio reached
+    // 130% and 172% from scheduling alone while the cost itself was flat
+    // (8x100 cycles gave 38 39 42 41 46 44 42 46 - no monotone growth, and
+    // 63 -> 47 inside one run). CPU time does not count descheduled time, so
+    // contention cancels; a genuine per-cycle leak still shows in every block
+    // (pre-fix the delta was seconds, an order of magnitude).
+    //
+    // Each block runs through the same for-each lambda as before: the closure
+    // frame is the shape the bug needed, so the driver is kept even though one
+    // map call now covers a single 100-cycle block.
+    long long block_cpu_ms[4] = {0, 0, 0, 0};
+    for (int i = 0; i < 4; ++i) {
+        const std::string form =
+            "(map (lambda (k0) (block-sum k0)) (list " + std::to_string(i * 100) + "))";
+        timespec t0{};
+        timespec t1{};
+        ::clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t0);
+        auto v = cs.eval(form);
+        ::clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t1);
+        CHECK(v.has_value(), "#4737 closure-driven snapshot cycle evaluates");
+        block_cpu_ms[i] =
+            (static_cast<long long>(t1.tv_sec) - static_cast<long long>(t0.tv_sec)) * 1000LL +
+            (static_cast<long long>(t1.tv_nsec) - static_cast<long long>(t0.tv_nsec)) / 1000000LL;
+    }
+    std::println("  #4737 CPU ms per 100 closure-driven cycles: {} {} {} {}", block_cpu_ms[0],
+                 block_cpu_ms[1], block_cpu_ms[2], block_cpu_ms[3]);
+    const long long b0 = block_cpu_ms[0];
+    const long long b3 = block_cpu_ms[3];
+    // Floor the denominator so a sub-10 ms block on a very fast machine does
+    // not turn a millisecond of quantisation into a percentage.
+    const long long den = b0 > 10 ? b0 : 10;
+    const long long growth = b3 <= b0 ? 0 : (100 * (b3 - b0)) / den;
+    std::println("  #4737 per-cycle CPU growth block3-vs-block0 = {}%", growth);
+    CHECK(growth <= 150,
+          "[#4737] AC1 ast:snapshot+ast:restore per-cycle CPU cost does not grow when driven "
+          "from a closure frame (block3 <= block0 + 150% of block0)");
     // AC2: source contract - the root-slot list is deduped.
     {
         std::string arena;
@@ -2236,8 +2266,24 @@ int run_4768_string_list_two_fibers() {
         CHECK(!ch.empty(), "#4768 SL AC1 read evaluator_primitives_char.cpp");
         CHECK(ch.find("ev.mint_pair(make_int(*it), result") != std::string::npos,
               "[#4768] SL AC1 string->list mints through mint_pair");
-        CHECK(ch.find("ev.pairs_.size()") == std::string::npos,
-              "[#4768] SL AC1 no raw pairs_.size() mint in the char primitives");
+        // Issue #4768 SL AC1: the no-raw-mint contract belongs to the
+        // string->list handler, not to the whole TU. list->string's reader
+        // (idx >= ev.pairs_.size()) predates #4768 and is read-only; a
+        // file-wide substring match conflated the two and was red from birth
+        // (masked while the #4737 row ahead of it stopped the binary). Window
+        // on the handler: every pair it builds goes through the locked
+        // allocator, and it never touches the arena vector itself.
+        const auto st = ch.find("add(\"string->list\"");
+        const auto ls = ch.find("add(\"list->string\"");
+        const bool win = st != std::string::npos && ls != std::string::npos && ls > st;
+        CHECK(win, "[#4768] SL AC1 locate the string->list handler window");
+        const std::string sl = win ? ch.substr(st, ls - st) : std::string();
+        CHECK(sl.find("ev.mint_pair(") != std::string::npos,
+              "[#4768] SL AC1 the string->list handler mints through ev.mint_pair");
+        CHECK(sl.find("ev.pairs_.push_back") == std::string::npos &&
+                  sl.find("ev.pairs_.size()") == std::string::npos,
+              "[#4768] SL AC1 the string->list mint never reads the arena vector raw "
+              "(pairs_.size()/pairs_.push_back); the list->string reader is out of scope");
     }
     // AC2: two fiber bodies build + walk fresh char lists while the main
     // thread mints; every list must have exactly KN elements (no splice).
