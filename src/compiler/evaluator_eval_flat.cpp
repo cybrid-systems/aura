@@ -7740,9 +7740,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 // Issue #4759: macro arguments are syntax data — identifiers
                                 // are symbols, string literals stay strings — so the
                                 // printed expansion re-reads as the same code.
-                                macro_env_4759->bind(
-                                    md.params[i],
-                                    legacy_macro_arg_4775(v.child(i + 1)));
+                                macro_env_4759->bind(md.params[i],
+                                                     legacy_macro_arg_4775(v.child(i + 1)));
                             }
 
                             // Rest param: collect remaining args as a list
@@ -7751,8 +7750,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 EvalValue rest_list = make_void();
                                 for (std::size_t i = v.children.size() - 1; i >= regular_count + 1;
                                      --i) {
-                                    auto item =
-                                        legacy_macro_arg_4775(v.child(i)); // #4759/#4775
+                                    auto item = legacy_macro_arg_4775(v.child(i)); // #4759/#4775
                                     // Issue #4733: locked size+append (a fiber
                                     // body may build macro rest spines too).
                                     const auto pid =

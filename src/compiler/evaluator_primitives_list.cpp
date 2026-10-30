@@ -484,8 +484,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 // The shared comparison is the one equal? uses.
                 bool denied = false;
                 bool overflow = false;
-                const bool hit =
-                    values_equal(ev, pairs[idx].car, val, "member", denied, overflow);
+                const bool hit = values_equal(ev, pairs[idx].car, val, "member", denied, overflow);
                 if (denied) {
                     return make_primitive_error(string_heap, error_values,
                                                 "member: cross-tenant slot read denied (#4505)",

@@ -110,6 +110,10 @@ void workspace_driver_release_fiber_4778(std::uint64_t fiber_id) noexcept {
             if (d.fiber == fiber_id)
                 d.fiber = 0;
     } catch (...) {
+        // [SILENCE-PRIM-#4778] deliberate: this release hook is noexcept and runs
+        // from the fiber:join teardown, so a mutex/system_error must not escape
+        // into a join. Clearing the driver row is best-effort; a missed reset is
+        // corrected by the next acquire.
     }
 }
 
@@ -439,9 +443,8 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                 }
             }
         }
-        auto fork_base_4776 =
-            std::make_shared<const std::unordered_map<std::string, std::string>>(
-                top_define_texts_4776(fork_base_source_4776));
+        auto fork_base_4776 = std::make_shared<const std::unordered_map<std::string, std::string>>(
+            top_define_texts_4776(fork_base_source_4776));
         // Issue #1994 / Wave1 B-09: unique workspace lock, adopt outer Guard.
         Evaluator::WorkspaceUniqueIfNeeded wlock(ev);
         // Issue #1566: tenant isolation on workspace structural ops.
@@ -589,7 +592,8 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     });
 
     // (workspace :switch id) → #t
-    (*w_impls)["workspace:switch"] = PrimFn{[&ev, destroy_defuse_index, worldline_driver_error_4778](
+    (*w_impls)["workspace:switch"] = PrimFn{[&ev, destroy_defuse_index,
+                                             worldline_driver_error_4778](
                                                 std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
             return make_bool(false);
@@ -831,9 +835,8 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         [&ev, destroy_defuse_index, worldline_driver_error_4778,
          detach_frames_from_pool](std::span<const EvalValue> a) -> EvalValue {
             // Issue #4778: another fiber body drives the worldline.
-            if (const auto h4778 =
-                    worldline_foreign_driver_4778(&ev, ev.workspace_tree_,
-                                                  static_cast<std::uint64_t>(fiber_body_id_4778()));
+            if (const auto h4778 = worldline_foreign_driver_4778(
+                    &ev, ev.workspace_tree_, static_cast<std::uint64_t>(fiber_body_id_4778()));
                 h4778 != 0)
                 return worldline_driver_error_4778("workspace:delete", h4778);
             if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
@@ -1086,9 +1089,8 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         [&ev, destroy_defuse_index, worldline_driver_error_4778,
          detach_frames_from_pool](std::span<const EvalValue> a) -> EvalValue {
             // Issue #4778: another fiber body drives the worldline.
-            if (const auto h4778 =
-                    worldline_foreign_driver_4778(&ev, ev.workspace_tree_,
-                                                  static_cast<std::uint64_t>(fiber_body_id_4778()));
+            if (const auto h4778 = worldline_foreign_driver_4778(
+                    &ev, ev.workspace_tree_, static_cast<std::uint64_t>(fiber_body_id_4778()));
                 h4778 != 0)
                 return worldline_driver_error_4778("workspace:discard", h4778);
             if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
@@ -1154,12 +1156,11 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     //   set-code failure reports "rejected", never "merged".
     (*w_impls)["workspace:merge"] = PrimFn{[&ev, get_ws_source, worldline_driver_error_4778,
                                             destroy_defuse_index](const auto& a) -> EvalValue {
-            // Issue #4778: another fiber body drives the worldline.
-            if (const auto h4778 =
-                    worldline_foreign_driver_4778(&ev, ev.workspace_tree_,
-                                                  static_cast<std::uint64_t>(fiber_body_id_4778()));
-                h4778 != 0)
-                return worldline_driver_error_4778("workspace :merge", h4778);
+        // Issue #4778: another fiber body drives the worldline.
+        if (const auto h4778 = worldline_foreign_driver_4778(
+                &ev, ev.workspace_tree_, static_cast<std::uint64_t>(fiber_body_id_4778()));
+            h4778 != 0)
+            return worldline_driver_error_4778("workspace :merge", h4778);
         if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
             return make_bool(false);
         auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
@@ -1431,9 +1432,8 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                 symbols = "-";
             ev.workspace_flat_->add_mutation(
                 aura::ast::NULL_NODE, "workspace:merge", "", "",
-                "merge child=" + child_name + " symbols=(" + symbols +
-                    ") child-mutations=" + std::to_string(child_mutations) +
-                    " carried=" + std::to_string(carried_count));
+                "merge child=" + child_name + " symbols=(" + symbols + ") child-mutations=" +
+                    std::to_string(child_mutations) + " carried=" + std::to_string(carried_count));
         }
 
         std::string result = "(";
