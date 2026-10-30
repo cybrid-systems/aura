@@ -242,7 +242,7 @@ set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS 
 # -fcontracts consumer must link a handle_contract_violation) and the single
 # process-wide fiber_ctx thread_local. Linking aura::core supplies both, sets
 # -fcontracts on the consumer, and pulls no Evaluator / reflect / serve code.
-# Override hook: aura_set_contract_violation_hook() (see README "Embedding").
+# Override hook: aura_set_contract_violation_hook() (see docs/embedding.md).
 add_library(aura_core STATIC
     src/core/contract_handler.cpp
     src/core/fiber_context.cpp)
@@ -550,6 +550,41 @@ set_target_properties(aura_serve_fiber_objects PROPERTIES POSITION_INDEPENDENT_C
 target_include_directories(aura_serve_fiber_objects PRIVATE src src/compiler)
 aura_test_compile_options(aura_serve_fiber_objects)
 target_compile_definitions(aura_serve_fiber_objects PRIVATE AURA_ALLOW_IR_SOA_SINGLE_MARK=1)
+
+# Issue #4774: aura::fiber_rt - the serve Fiber + Scheduler runtime as a
+# standalone static library, with NO Evaluator / JIT / reflect dependency.
+# fiber.cpp / scheduler.cpp reach the evaluator only through C-ABI hooks;
+# fiber_bridge.cpp carries their weak no-op defaults and fiber_rt_defaults.cpp
+# the two remaining setters (kept out of aura_serve_fiber_objects on purpose,
+# see that file). A host does
+#   target_link_libraries(my_app PRIVATE aura::fiber_rt)   # pulls aura::core
+# and gets aura::serve::Scheduler / Fiber, fiber_ctx and the contract handler.
+# See docs/embedding.md.
+add_library(aura_fiber_rt STATIC
+    $<TARGET_OBJECTS:aura_serve_fiber_objects>
+    src/serve/fiber_rt_defaults.cpp)
+add_library(aura::fiber_rt ALIAS aura_fiber_rt)
+set_target_properties(aura_fiber_rt PROPERTIES POSITION_INDEPENDENT_CODE ON EXPORT_NAME fiber_rt)
+target_include_directories(aura_fiber_rt PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>)
+target_link_libraries(aura_fiber_rt PUBLIC aura_core)
+# Installs into the aura::core export set (install(EXPORT) above; export sets
+# are resolved at generate time). Public headers are the serve
+# fiber/scheduler closure (scheduler.h -> fiber.h, worker.h, ws_deque.h,
+# metrics.h, core/atomic_fence_port.h, compiler/lock_order_audit.h), which
+# include only each other and the standard library.
+target_include_directories(aura_fiber_rt PUBLIC
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/aura>)
+install(TARGETS aura_fiber_rt EXPORT aura-targets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    COMPONENT aura_core)
+install(FILES src/serve/scheduler.h src/serve/fiber.h src/serve/worker.h src/serve/ws_deque.h
+    src/serve/metrics.h
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/aura/serve COMPONENT aura_core)
+install(FILES src/core/atomic_fence_port.h
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/aura/core COMPONENT aura_core)
+install(FILES src/compiler/lock_order_audit.h
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/aura/compiler COMPONENT aura_core)
 
 # ── IR tests ─────────────────────────────────────────────────────
 add_executable(test_ir tests/compiler/test_ir.cpp)
@@ -4024,6 +4059,16 @@ aura_issue_test_link_light(test_pcv_workspace_batch)
 add_test(NAME test_pcv_workspace_batch_verification COMMAND ./test_pcv_workspace_batch)
 if(TARGET all_test_issue_targets)
     add_dependencies(all_test_issue_targets test_pcv_workspace_batch)
+endif()
+
+# Issue #4774: links ONLY aura::fiber_rt (-> aura::core): the serve Fiber +
+# Scheduler run on worker threads with no Evaluator / JIT in the binary.
+add_executable(test_aura_fiber_rt_embed tests/core/test_aura_fiber_rt_embed.cpp)
+target_compile_options(test_aura_fiber_rt_embed PRIVATE -Wall -Wextra)
+target_link_libraries(test_aura_fiber_rt_embed PRIVATE aura::fiber_rt)
+add_test(NAME test_aura_fiber_rt_embed_verification COMMAND ./test_aura_fiber_rt_embed)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_aura_fiber_rt_embed)
 endif()
 
 # Issue #4774: links ONLY aura::core (no aura_test_objects / evaluator) —
