@@ -1,0 +1,47 @@
+;; defmacro_nested_param_4775.aura — Issue #4775 (decision: SUPPORT).
+;; A legacy defmacro whose template calls another legacy defmacro with one of
+;; its OWN parameters hands the inner macro the call-site datum, as the
+;; pre-#4759 static subst pass did. Before the fix (d 21) reached (+ y y) as
+;; the symbol y -> "type mismatch - expected Int, got Value".
+;; Pass = exit 0 + OK line.
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+
+(defmacro (e4775 y) (+ y y))
+(defmacro (d4775 y) (e4775 y))
+(assert! (equal? (d4775 21) 42) "(d y) -> (e y): inner sees the datum 21")
+
+;; a different outer parameter name than the inner one
+(defmacro (k4775 q) (e4775 q))
+(assert! (equal? (k4775 5) 10) "(k q) -> (e q)")
+
+;; three levels
+(defmacro (t4775 w) (d4775 w))
+(assert! (equal? (t4775 4) 8) "three-level delegation")
+
+;; a symbol-taking inner macro gets the CALLER's symbol (template composition)
+(defmacro (my-inc! v) (list 'set! v (list '+ v 1)))
+(defmacro (inc-twice! v) (list 'begin (list 'my-inc! v) (list 'my-inc! v)))
+(defmacro (inc-via! v) (my-inc! v))
+(define z 0)
+(inc-twice! z)
+(assert! (equal? z 2) "list-built inner call keeps syntax data")
+(define zz 10)
+(inc-via! zz)
+(assert! (equal? zz 11) "zz mutated through nested delegation")
+
+;; control rows (#4716 AC9 shape): literal argument, no outer parameter
+(defmacro (d4716b) (e4775 21))
+(assert! (equal? (d4716b) 42) "literal argument still 42")
+
+;; a call site in a define body re-expands per argument
+(define (f4775 a) (+ a (d4775 3)))
+(assert! (equal? (f4775 1) 7) "in define body")
+
+(if (= *fails* 0)
+    (begin (display "OK-4775 nested legacy defmacro parameter") (newline))
+    (begin (display "FAIL-4775 fails=") (display *fails*) (newline) (error "4775 suite failed")))
