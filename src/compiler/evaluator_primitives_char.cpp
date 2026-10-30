@@ -160,11 +160,15 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         EvalValue result = make_void();
         for (auto it = cps.rbegin(); it != cps.rend(); ++it) {
-            auto pid = ev.pairs_.size();
-            ev.pairs_.push_back({make_int(*it), result});
-            // Issue #4656: every pair mint on the production face carries an
-            // owner stamp, so a foreign tenant cannot read this fresh list.
-            ev.note_inrange_pair_mint(pid);
+            // Issue #4767: mint through the locked allocator. This loop used a
+            // raw pairs_.push_back with pairs_.size() read OUTSIDE
+            // alloc_storage_lock_, so two bodies calling (string->list ...) at
+            // the same time read the same size and both linked their list to
+            // that one id: the two chains splice into each other, which a live
+            // walk can see as a cycle (the #4747/#4767 livelock) or as a
+            // truncated list (a guard that silently passes). mint_pair also
+            // recycles freed slots and stamps the owner (#4656).
+            const auto pid = ev.mint_pair(make_int(*it), result, /*check_quota=*/false);
             result = make_pair(pid);
         }
         return result;

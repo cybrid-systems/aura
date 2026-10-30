@@ -1,0 +1,30 @@
+;; test: (string->list) mints its pairs under alloc_storage_lock_ (#4767)
+;; expect: SPLICE-CHECK bad=0
+;;
+;; Issue #4747/#4767: the char registration of string->list built its list with
+;; a raw pairs_.push_back and read pairs_.size() outside alloc_storage_lock_
+;; (every other mint, incl. cons, takes it).  Two fibre bodies calling
+;; (string->list KEY) at once therefore read the SAME size and both linked
+;; their chain to that one pair id, so the two lists splice into each other.
+;; A live walk over the spliced chain sees a cycle (the app-face livelock: one
+;; aura-fiber thread at 100% CPU, coordinator parked in channel:recv) or a
+;; truncated list (a guard that silently passes).  Each iteration below builds
+;; and walks its own fresh list; any length other than 17 is one splice.
+(define (wlen xs cap)
+  (let loop ((ys xs) (n 0))
+    (if (null? ys) n (if (>= n cap) (+ cap 1) (loop (cdr ys) (+ n 1))))))
+(define KEY "should-arbitrate?")
+(define (job rounds)
+  (let loop ((i 0) (bad 0))
+    (if (>= i rounds)
+        bad
+        (let ((n (try (wlen (string->list KEY) 64) (catch (e) -1))))
+          (loop (+ i 1) (if (= n 17) bad (+ bad 1)))))))
+(define (wave)
+  (foldl + 0 (map fiber:join
+                  (map (lambda (i) (fiber:spawn (lambda () (job 500))))
+                       (list 0 1)))))
+(let loop ((w 0) (bad 0))
+  (if (< w 20)
+      (loop (+ w 1) (+ bad (wave)))
+      (begin (display "SPLICE-CHECK bad=") (display bad) (newline))))
