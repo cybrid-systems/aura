@@ -234,6 +234,31 @@ int run_test_pcv_exclusive_with_set() {
         CHECK(exclusive_us > 0 && shared_us > 0, "bench ran");
     }
 
+    // ── Issue #4769: two element types in one TU ──
+    // share_storage used to be a templated friend defined in-class, so the
+    // second instantiation below re-defined it and the TU failed to compile.
+    // Merely compiling this block is the regression test; the checks pin
+    // that ADL still finds a distinct share_storage per element type.
+    {
+        std::println("\n--- #4769: PCV<NodeId> + PCV<int> + PCV<uint64_t> in one TU ---");
+        PersistentChildVector<int> ints;
+        ints = ints.with_push_back(-1).with_push_back(-2);
+        PersistentChildVector<std::uint64_t> wide;
+        wide = wide.with_push_back(std::uint64_t{1} << 40);
+        auto nodes = make_n(3);
+        auto si = share_storage(ints);
+        auto sw = share_storage(wide);
+        auto sn = share_storage(nodes);
+        CHECK(si && sw && sn, "4769: share_storage resolves for every element type");
+        CHECK(ints.use_count() == 2 && wide.use_count() == 2 && nodes.use_count() == 2,
+              "4769: share_storage pins the shared storage of each PCV");
+        CHECK(ints[1] == -2 && wide[0] == (std::uint64_t{1} << 40) && nodes[2] == 2,
+              "4769: element values intact across instantiations");
+        SafePCVSpan<int> ispan(ints.columnar_accessor(), share_storage(ints));
+        CHECK(ispan.size() == 2 && ispan[0] == -1 && ispan.use_count() == 3,
+              "4769: SafePCVSpan<int> keeps storage via share_storage");
+    }
+
     // OOB / empty no-ops
     {
         std::println("\n--- edge: OOB / empty ---");

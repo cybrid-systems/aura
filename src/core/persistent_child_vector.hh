@@ -658,11 +658,15 @@ public:
     // access grants read of the private data_; SafePCVSpan
     // uses this to grab the shared_ptr without needing a
     // public member.
-    template <typename U>
-    friend typename PersistentChildVector<U>::StoragePtr
-    share_storage(const PersistentChildVector<U>& v) noexcept {
-        return v.data_;
-    }
+    // Issue #4769: this used to be a *templated* friend defined in
+    // the class body (`template <typename U> friend ... share_storage(
+    // const PersistentChildVector<U>&) { ... }`). Every instantiation of
+    // PersistentChildVector<T> re-defined the same namespace-scope
+    // function template, so a TU that instantiated two element types
+    // (e.g. PCV<NodeId> + PCV<int>) failed with "redefinition of
+    // share_storage". It is now a non-template hidden friend: one
+    // distinct overload per T, found by ADL exactly as before.
+    friend auto share_storage(const PersistentChildVector& v) noexcept { return v.data_; }
 
 private:
     // Internal storage. Holds a unique_ptr<T[]> (mutable,
