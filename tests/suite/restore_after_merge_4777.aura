@@ -1,0 +1,42 @@
+;; restore_after_merge_4777.aura — Issue #4777. ast:snapshot -> workspace
+;; :merge -> ast:restore -> eval-current restored the SOURCE but f kept the
+;; merged binding: the merge installs a fresh flat via set-code, its
+;; per-define gen16 stamps restart and matched the snapshot's, so the restore
+;; saw "unchanged" and never republished f. Pass = exit 0 + OK line.
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+
+(set-code "(define f (lambda (x) 1))\n(define g (lambda (x) 7))") (eval-current)
+(define w (workspace :create "cand"))
+(workspace :switch w) (mutate:rebind "f" "(lambda (x) 2)" "child") (eval-current)
+(workspace :switch 0) (eval-current)
+(define snap (ast:snapshot "pre-merge"))
+(workspace :merge w) (eval-current)
+(assert! (= (f 0) 2) "merge applied f=2")
+(assert! (eq? (ast:restore snap) #t) "restore ok")
+(eval-current)
+(assert! (= (f 0) 1) "after restore + eval-current f=1 (matches source)")
+(eval-current)
+(assert! (= (f 0) 1) "second eval-current still 1")
+(assert! (= (g 0) 7) "g untouched")
+
+;; plain set-code after the snapshot (same stamp-lineage break)
+(define snap3 (ast:snapshot "pre-set-code"))
+(set-code "(define f (lambda (x) 4))\n(define g (lambda (x) 7))") (eval-current)
+(assert! (= (f 0) 4) "set-code f=4")
+(ast:restore snap3) (eval-current)
+(assert! (= (f 0) 1) "restore over set-code -> f=1")
+
+;; control: snapshot / rebind / restore without merge
+(define snap2 (ast:snapshot "x"))
+(mutate:rebind "g" "(lambda (x) 9)" "r") (eval-current)
+(ast:restore snap2) (eval-current)
+(assert! (= (g 0) 7) "control: g restored to 7")
+
+(if (= *fails* 0)
+    (begin (display "OK-4777 restore after merge") (newline))
+    (begin (display "FAIL-4777 fails=") (display *fails*) (newline) (error "4777 suite failed")))

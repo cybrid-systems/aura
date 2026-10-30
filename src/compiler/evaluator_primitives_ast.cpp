@@ -73,6 +73,7 @@ collect_reachable_define_sources(aura::ast::FlatAST& flat, aura::ast::StringPool
 [[nodiscard]] std::shared_ptr<FlatSnapshotDefineStamps>
 collect_define_stamps(aura::ast::FlatAST& flat, aura::ast::StringPool& pool) {
     auto stamps = std::make_shared<FlatSnapshotDefineStamps>();
+    stamps->live_flat = &flat; // Issue #4777
     const auto root = flat.root;
     if (root == aura::ast::NULL_NODE || root >= flat.size() || flat.is_free_slot(root))
         return stamps;
@@ -838,16 +839,31 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                     rolled_first = 0;
                     rolled_last = 0;
                     rolled_count = 0;
+                    // Issue #4777: the stamps compare subtree_gen_ cells of
+                    // the SAME flat lineage. A workspace :merge installs a
+                    // fresh FlatAST via set-code (gens restart, so a merged
+                    // define can carry the snapshot's gen16 again) and a
+                    // plain set-code resets the log below the snapshot's
+                    // counter. Either way the stamp diff reports "unchanged"
+                    // and f kept the merged binding; use the source diff.
+                    // Any flat swap since the capture (stamps->live_flat
+                    // differs) is the general form of the same break.
+                    bool stamp_lineage_broken_4777 = pre_next_mutation_id < snap_next_mutation_id;
                     for (const auto& rec : ev.workspace_flat_->all_mutations()) {
                         if (rec.mutation_id < snap_next_mutation_id)
                             continue;
+                        if (rec.operator_name == "workspace:merge")
+                            stamp_lineage_broken_4777 = true;
                         if (rolled_count == 0)
                             rolled_first = rec.mutation_id;
                         rolled_last = rec.mutation_id;
                         ++rolled_count;
                     }
                     const std::shared_ptr<FlatSnapshotDefineStamps> stamps = snap_entry.stamps;
-                    const bool have_stamps = stamps && !stamps->by_name.empty();
+                    if (stamps && stamps->live_flat != ev.workspace_flat_)
+                        stamp_lineage_broken_4777 = true;
+                    const bool have_stamps =
+                        stamps && !stamps->by_name.empty() && !stamp_lineage_broken_4777;
                     std::unordered_map<std::string, std::pair<aura::ast::NodeId, std::uint16_t>>
                         live_stamp_defs;
                     std::unordered_map<std::string, std::string> live_defs;

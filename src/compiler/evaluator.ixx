@@ -2348,6 +2348,10 @@ export struct DefineStamp {
 };
 export struct FlatSnapshotDefineStamps {
     std::unordered_map<std::string, DefineStamp> by_name;
+    // Issue #4777: the live FlatAST the gen16 cells were read from. The
+    // stamps are only comparable against that same flat lineage; a
+    // set-code / workspace :merge installs a fresh flat whose cells restart.
+    const void* live_flat = nullptr;
 };
 
 // Issue #4575: result of Evaluator::enter_soft_session. The launcher
