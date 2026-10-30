@@ -1,0 +1,35 @@
+;; expect: strlist-ok
+;; Issue #4768 (the #4733 family): (string->list) minted its pairs with
+;; pairs_.size() + a raw pairs_.push_back, OUTSIDE alloc_storage_lock_, while
+;; hash-keys / hash-values in the sibling primitive partitions lock for
+;; exactly the same reason. Two fiber bodies minting at once can therefore
+;; read the same size (two cons cells share one index: another fiber's
+;; argument, a spliced chain, "not a pair") and race the vector growth. The
+;; mint now goes through mint_pair(), which holds the heap lock across
+;; size+append, stamps the tenant owner (#4656) and bumps the reclaim
+;; counter. A regression shows up as a wrong list length (cap+1 = cycle) or a
+;; heap-metadata abort, never as a benign mismatch.
+(define KEY "should-arbitrate?")
+(define KN 17)
+(define (wlen xs cap)
+  (let loop ((ys xs) (n 0))
+    (if (null? ys) n (if (>= n cap) (+ cap 1) (loop (cdr ys) (+ n 1))))))
+(define (job rounds)
+  (let loop ((i 0) (bad 0))
+    (if (>= i rounds)
+        bad
+        (let ((n (wlen (string->list KEY) 64)))
+          (loop (+ i 1) (if (= n KN) bad (+ bad 1)))))))
+(define (trial)
+  (let* ((f1 (fiber:spawn (lambda () (job 2000))))
+         (f2 (fiber:spawn (lambda () (job 2000))))
+         (r1 (fiber:join f1))
+         (r2 (fiber:join f2)))
+    (if (and (number? r1) (number? r2))
+        (+ r1 r2)
+        1000000)))
+(define bad 0)
+(let loop ((t 0)) (if (< t 20) (begin (set! bad (+ bad (trial))) (loop (+ t 1))) #t))
+(if (= bad 0)
+    (begin (display "strlist-ok") (newline))
+    (begin (display "strlist-bad=") (display bad) (newline) (exit 1)))

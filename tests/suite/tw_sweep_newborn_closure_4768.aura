@@ -1,0 +1,61 @@
+;; expect: newborn-ok
+;; Issue #4768: the file-heap sweep erased a closure a sibling body had just
+;; minted. The sweep's stand-down check ("no foreign walker, no foreign IR
+;; drain") passed while both fiber bodies were still in the spawn hand-off;
+;; the bodies then started walking and minted their named-let closures, and
+;; the release loop - which iterated the closure map as it stood at RELEASE
+;; time - freed those ids because the mark had never seen them (the pin
+;; watermark only covers ids minted before the spawn). The body then died with
+;; "type error: invalid closure: eval_flat" (load-sensitive; 8/8 at load ~12
+;; on the pre-fix binary). Both sweeps now snapshot the closure-id cursor at
+;; the stand-down check and keep every id at/above it (newborn), the same rule
+;; the pair/vector/cell/string release already uses.
+;;
+;; The row is the 40-trial 2-fibre workspace-define mint + coordinator
+;; back-edge shape; a regression reports either the invalid-closure error or a
+;; value mismatch.
+(require "std/mutate" all:)
+
+(set-code "(define (guards-version) \"guards.v1\") (define (guard-critical-days) 2.0) (define (guard-action r) (if (pair? r) (car r) r)) (define (guard-days-grid) (let loop ((d 20.0) (acc (list))) (if (< d 0.0) acc (loop (- d 0.5) (cons d acc))))) (define (guard-exp-high-never-monitor f rows) (let loop ((ds (guard-days-grid)) (n 0)) (if (null? ds) n (loop (cdr ds) (if (eq? (guard-action (f 'high (car ds))) 'monitor) (+ n 1) n))))) (define (guard-exp-critical-alert f rows) (let loop ((ds (guard-days-grid)) (n 0)) (cond ((null? ds) n) ((>= (car ds) (guard-critical-days)) (loop (cdr ds) n)) (else (loop (cdr ds) (+ n (if (eq? (guard-action (f 'high (car ds))) 'alert-planner) 0 1) (if (eq? (guard-action (f 'medium (car ds))) 'alert-planner) 0 1))))))) (define (guard-frozen-grid) (let loop ((ps (list -0.5 -0.3 -0.2 0.2 0.3 0.5)) (acc (list))) (if (null? ps) acc (loop (cdr ps) (let inner ((xs (list 300000 900000 1600000)) (acc2 acc)) (if (null? xs) acc2 (inner (cdr xs) (cons (hash \"pct\" (car ps) \"exposure\" (car xs) \"frozen\" #t \"confidence\" 0.95) (cons (hash \"pct\" (car ps) \"exposure\" (car xs) \"frozen\" #t \"confidence\" 0.5) acc2))))))))) (define (guard-arb-frozen-never f rows) (let loop ((rs (append rows (guard-frozen-grid))) (n 0)) (cond ((null? rs) n) ((not (hash-ref (car rs) \"frozen\")) (loop (cdr rs) n)) (else (loop (cdr rs) (if (eq? (f (car rs) (hash-ref (car rs) \"exposure\")) #f) n (+ n 1))))))) (define (guard-claim-row ei lt fb ba mm truth) (hash \"amount\" 100000 \"edi-increase\" ei \"lead-time-miss\" lt \"forecast-bias\" fb \"bias-amount\" ba \"market-mismatch\" mm \"truth\" truth)) (define (guard-claims-grid) (let loop ((eis (list #t #f)) (acc (list))) (if (null? eis) acc (let ((ei (car eis))) (loop (cdr eis) (append (list (guard-claim-row ei #f #f 0.0 #t 'demand-forecast-error)) (let bl ((bs (list 0.01 0.02 0.03 0.05 0.08 0.1 0.15 0.2 0.3)) (a2 (list))) (if (null? bs) a2 (bl (cdr bs) (cons (guard-claim-row ei #f #t (car bs) #f 'demand-forecast-error) a2)))) (if ei (list (guard-claim-row #t #t #f 0.0 #f 'supplier-delay) (guard-claim-row #t #t #t 0.05 #f 'supplier-delay)) (list)) acc)))))) (define (guard-claims-evidence-not-unknown f rows) (let loop ((rs (append rows (guard-claims-grid))) (n 0)) (if (null? rs) n (let* ((c (car rs)) (labelled (not (eq? (hash-ref c \"truth\") 'unknown))) (evidence (or (hash-ref c \"lead-time-miss\") (hash-ref c \"forecast-bias\") (hash-ref c \"market-mismatch\")))) (loop (cdr rs) (if (and labelled evidence (eq? (f c) 'unknown)) (+ n 1) n)))))) (define (guard-registry) (list (list \"exp.high-never-monitor\" \"expedite-response\" \"hard\" \"high risk must never map to monitor\" guard-exp-high-never-monitor) (list \"exp.critical-alert\" \"expedite-response\" \"no-regress\" \"inventory-days < critical (2.0): medium/high risk must alert-planner\" guard-exp-critical-alert) (list \"arb.frozen-never\" \"should-arbitrate?\" \"hard\" \"never arbitrate a frozen-horizon change (recall on frozen cases = 0)\" guard-arb-frozen-never) (list \"claims.evidence-not-unknown\" \"claim-root-cause\" \"hard\" \"labelled rows with evidence are never 'unknown\" guard-claims-evidence-not-unknown)))")
+(eval-current)
+
+
+(define (cand-exp risk days) (list 'monitor 'alt))
+(define (cand-arb e ex) #f)
+(define (cand-claims c) 'unknown)
+(define (mk-row i)
+  (hash "amount" (+ 100000 (* i 1000)) "edi-increase" #t "lead-time-miss" #t
+        "forecast-bias" #t "bias-amount" 0.2 "market-mismatch" #f
+        "frozen" (= 0 (modulo i 3)) "exposure" (+ 300000 (* i 1000))
+        "confidence" 0.9 "truth" 'supplier-delay))
+(define (mk-rows n)
+  (let loop ((i 0) (acc (list))) (if (= i n) acc (loop (+ i 1) (cons (mk-row i) acc)))))
+(define ROWS (mk-rows 60))
+(define (run-guards rounds)
+  (let loop ((i 0) (w 0) (a 0) (b 0) (c 0) (d 0))
+    (if (= i rounds)
+        (list (+ i w) (list 'bad a 'sample b 'more c 'more2 d))
+        (loop (+ i 1) (+ w 1)
+              (guard-exp-high-never-monitor cand-exp ROWS)
+              (guard-exp-critical-alert cand-exp ROWS)
+              (guard-arb-frozen-never cand-arb ROWS)
+              (guard-claims-evidence-not-unknown cand-claims ROWS)))))
+(define ROUNDS 20)
+(define EXPECTED (run-guards ROUNDS))
+(define (spin n)
+  (let loop ((i 0) (acc (list)))
+    (if (= i n) (length acc) (loop (+ i 1) (cons (list i i) acc)))))
+(define bad 0)
+(define (trial)
+  (let* ((f1 (fiber:spawn (lambda () (run-guards ROUNDS))))
+         (f2 (fiber:spawn (lambda () (run-guards ROUNDS))))
+         (sp (spin 4000))
+         (r1 (fiber:join f1))
+         (r2 (fiber:join f2)))
+    (if (and (equal? r1 EXPECTED) (equal? r2 EXPECTED))
+        #t
+        (begin (set! bad (+ bad 1)) #f))))
+(let loop ((t 0)) (if (< t 40) (begin (trial) (loop (+ t 1))) #t))
+(if (= bad 0)
+    (begin (display "newborn-ok") (newline))
+    (begin (display "newborn-mismatch=") (display bad) (newline) (exit 1)))

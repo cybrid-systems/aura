@@ -5,6 +5,7 @@ module;
 
 #include "runtime_shared.h"
 #include "messaging_bridge.h"
+
 #include "security_capabilities.h"
 #include "core/fiber_context.hh" // Issue #4716: fiber-local execution context
 #include "serve/fiber.h"
@@ -22,6 +23,10 @@ module aura.compiler.evaluator;
 
 import std;
 import aura.compiler.value;
+
+// Issue #4768: body-liveness for the file-heap sweep gate (runtime_ssot.cpp).
+extern "C" void aura_fiber_body_enter() noexcept;
+extern "C" void aura_fiber_body_exit() noexcept;
 
 namespace aura::compiler::primitives_detail {
 
@@ -1894,8 +1899,19 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             // goes away.
             {
                 std::lock_guard<std::mutex> lock(s_thread_fiber_threads_mtx);
+                // Issue #4768: the CLI std::thread backend is the one body
+                // class with NO certified tree-walker segment (the serve
+                // backend's Fiber attaches one on resume, so its frames are
+                // visible to the sweep registry). Mark this body live for its
+                // whole lifetime: a file-heap sweep that starts while it runs
+                // either sees this counter and stands down, or this body sees
+                // the sweep gate and waits (see aura_fiber_body_enter).
                 s_thread_fiber_threads.emplace(fid, std::make_pair(static_cast<const void*>(&ev),
-                                                                   std::thread(complete_fiber)));
+                                                                   std::thread([complete_fiber]() {
+                                                                       aura_fiber_body_enter();
+                                                                       complete_fiber();
+                                                                       aura_fiber_body_exit();
+                                                                   })));
             }
             return make_int(fid);
         }

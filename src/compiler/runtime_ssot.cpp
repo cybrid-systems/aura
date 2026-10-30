@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <new>
+#include <thread>
 #include <vector>
 
 // JIT runtime registers the real lock/top-cell clearer. Null when JIT
@@ -175,6 +176,102 @@ extern "C" void aura_ir_drain_begin() noexcept {
 
 extern "C" void aura_ir_drain_end() noexcept {
     g_ir_active_drains.fetch_sub(1, std::memory_order_acq_rel);
+}
+
+// Issue #4768: AURA_GC_RECLAIM_OFF is the control-arm knob for the file-heap
+// sweeps. It used to gate ONLY the IR-side sweep, so a "destructive GC off"
+// arm still ran the tree-walker sweep and every experiment that read the knob
+// as "collector off" (including #4768's own original premise) measured a
+// process in which half the collector was still running. BOTH sweeps now
+// consult it, and each one counts the sweep it disarmed. The pair is the
+// probe: a control arm that reads (query:reclaim-off-skips-ir/-tw) can prove both
+// halves were skipped instead of inferring it from one half's silence.
+//
+// The counters are bumped only when the sweep had ALREADY passed its
+// allocation trigger and its stand-down checks - i.e. when the sweep would
+// have run but for the knob. A plain counter-at-entry would be satisfied by
+// unrelated stand-downs and prove nothing.
+std::atomic<std::uint64_t> g_gc_reclaim_off_skips_ir{0};
+std::atomic<std::uint64_t> g_gc_reclaim_off_skips_tw{0};
+
+extern "C" void aura_gc_reclaim_off_note_ir_skip() noexcept {
+    g_gc_reclaim_off_skips_ir.fetch_add(1, std::memory_order_relaxed);
+}
+
+extern "C" void aura_gc_reclaim_off_note_tw_skip() noexcept {
+    g_gc_reclaim_off_skips_tw.fetch_add(1, std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_gc_reclaim_off_skips_ir_total() noexcept {
+    return g_gc_reclaim_off_skips_ir.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_gc_reclaim_off_skips_tw_total() noexcept {
+    return g_gc_reclaim_off_skips_tw.load(std::memory_order_relaxed);
+}
+
+// Issue #4768: the quiescence gate for the file-heap sweeps.
+//
+// The stand-down counters decide whether a sweep may run, but a fiber body can
+// START between that decision and the release. It then mints into slots the
+// mark never saw - a fresh closure, or a reused pair/vector index - and the
+// release frees them underneath the body ("invalid closure: eval_flat",
+// "expected Int, got Pair"). The gate closes the window in both directions:
+// a sweep asserts it BEFORE it reads the counters, and a body asserts its own
+// liveness BEFORE it tests the gate. With seq_cst on both sides either the
+// sweep sees the body (and stands down) or the body sees the sweep (and waits
+// it out); both being missed is excluded by the total order.
+//
+// The counters are process-wide: an Evaluator is shared by every fiber body,
+// and the file heap is one heap. The thread-local depth lets a body's own
+// thread exclude itself from "other bodies" (its own values are roots of the
+// sweep it runs).
+std::atomic<int> g_fiber_bodies_running{0};
+std::atomic<bool> g_file_heap_sweep_active{false};
+namespace {
+thread_local int t_fiber_body_depth = 0;
+thread_local bool t_sweep_gate_owner = false;
+} // namespace
+
+extern "C" bool aura_gc_sweep_try_begin() noexcept {
+    if (t_sweep_gate_owner)
+        return false; // nested sweep on the owning thread
+    bool expected = false;
+    if (!g_file_heap_sweep_active.compare_exchange_strong(expected, true,
+                                                          std::memory_order_seq_cst))
+        return false; // another thread owns the sweep
+    t_sweep_gate_owner = true;
+    return true;
+}
+
+extern "C" void aura_gc_sweep_end() noexcept {
+    if (!t_sweep_gate_owner)
+        return;
+    t_sweep_gate_owner = false;
+    g_file_heap_sweep_active.store(false, std::memory_order_seq_cst);
+}
+
+extern "C" void aura_fiber_body_enter() noexcept {
+    g_fiber_bodies_running.fetch_add(1, std::memory_order_seq_cst);
+    ++t_fiber_body_depth;
+    // A sweep that asserted the gate before this body incremented has already
+    // (or is about to) read the counters and will not see this body: wait for
+    // it instead of minting under its release. A sweep owner never waits on
+    // its own gate (a native finalizer inside a sweep may re-enter Aura and
+    // start a body); that path is covered by the newborn bounds instead.
+    while (!t_sweep_gate_owner && g_file_heap_sweep_active.load(std::memory_order_seq_cst))
+        std::this_thread::yield();
+}
+
+extern "C" void aura_fiber_body_exit() noexcept {
+    if (t_fiber_body_depth > 0)
+        --t_fiber_body_depth;
+    g_fiber_bodies_running.fetch_sub(1, std::memory_order_seq_cst);
+}
+
+extern "C" int aura_fiber_bodies_running_other() noexcept {
+    const int self = t_fiber_body_depth > 0 ? 1 : 0;
+    return g_fiber_bodies_running.load(std::memory_order_seq_cst) - self;
 }
 
 // Issue #4057: owner-principal stamps parallel to g_pair_slots — same SSOT

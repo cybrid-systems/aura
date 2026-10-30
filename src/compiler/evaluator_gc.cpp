@@ -27,6 +27,28 @@ import aura.core.lifetime_pin;
 
 namespace aura::compiler {
 
+// Issue #4768: the closure-id cursor as it stood at the SWEEP'S STAND-DOWN
+// CHECK, published by each sweep's caller on the sweeping thread. The
+// stand-down check is the point at which the sweep certifies quiescence;
+// every closure minted by another body AFTER that point carries an id
+// at/above this snapshot and must survive the sweep even though the mark
+// cannot see it. The two callers live in other partitions (the IR sweep's
+// check in ir_executor_impl.cpp, the tree-walker's in evaluator_eval_flat.cpp),
+// so the value travels through this thread-local instead of a new Evaluator
+// member (a new member would recompile the module surface for a sweep-local
+// value). Same thread publishes and consumes.
+namespace {
+    thread_local std::uint64_t t_gc_sweep_closure_hi = 0;
+}
+
+extern "C" void aura_gc_sweep_publish_closure_hi(std::uint64_t v) noexcept {
+    t_gc_sweep_closure_hi = v;
+}
+
+extern "C" std::uint64_t aura_gc_sweep_published_closure_hi() noexcept {
+    return t_gc_sweep_closure_hi;
+}
+
 using types::EvalValue;
 // Issue #918 Phase 1: explicit using-declarations (no `using namespace`).
 using types::as_bool;
@@ -1518,6 +1540,12 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         ~Active() { flag = false; }
     } active(file_reclaim_active_);
 
+    // Issue #4768: keep every closure minted after the caller's stand-down
+    // check (newborn). See aura_gc_sweep_publish_closure_hi.
+    const std::uint64_t closure_hi_at_mark = aura_gc_sweep_published_closure_hi() != 0
+                                                 ? aura_gc_sweep_published_closure_hi()
+                                                 : closure_id_watermark();
+
     if (view.live_ir)
         view.live_ir->clear();
     if (view.live_ir_cells)
@@ -1662,7 +1690,8 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         for (auto& cl_sh : closures_shards_) {
             for (auto it = cl_sh.map.begin(); it != cl_sh.map.end();) {
                 const auto id = it->first;
-                if (id < gc_safe_closure_id() || live_tw.contains(id) || seen_ir.contains(id)) {
+                if (id < gc_safe_closure_id() || id >= closure_hi_at_mark || live_tw.contains(id) ||
+                    seen_ir.contains(id)) {
                     ++it;
                     continue;
                 }
@@ -1803,6 +1832,11 @@ void Evaluator::note_live_set_for_reclaim_trigger(const std::size_t live_objects
 
 bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
                                        std::span<const types::EvalValue> held) {
+    // Issue #4768: newborn-closure bound published at the caller's stand-down
+    // check (see aura_gc_sweep_publish_closure_hi).
+    const std::uint64_t closure_hi_at_mark = aura_gc_sweep_published_closure_hi() != 0
+                                                 ? aura_gc_sweep_published_closure_hi()
+                                                 : closure_id_watermark();
     // Same destructive-GC predicate as compact_sweep, plus an
     // EnvFrameLifetimeGuard: freelist reuse would alias a held index.
     // A whole-eval mutation boundary is NOT a skip — file mode holds
@@ -2077,7 +2111,8 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         for (auto& cl_sh : closures_shards_) {
             for (auto it = cl_sh.map.begin(); it != cl_sh.map.end();) {
                 const auto id = it->first;
-                if (id < gc_safe_closure_id() || live_tw.contains(id) || seen_ir.contains(id)) {
+                if (id < gc_safe_closure_id() || id >= closure_hi_at_mark || live_tw.contains(id) ||
+                    seen_ir.contains(id)) {
                     ++it;
                     continue;
                 }
