@@ -5405,7 +5405,7 @@ def test_fiber_sibling_dispatch_across_rebind_4715_regression():
     """Issue #4715 regression: a body keeps dispatching the define it resolved.
 
     This is the class-2 pre-push bench agent-fibers-8
-    (bench/cases/agent/fibers.aura): eight fiber bodies call a sibling
+    (tests/fixtures/bench/fibers_4715.aura): eight fiber bodies call a sibling
     `pure` define while the parent runs (mutate:rebind "hot" ...) +
     (eval-current). The parent's (eval-current) re-specialises every
     workspace lambda twice, and bind_function_define_via_ir minted a fresh
@@ -5425,7 +5425,7 @@ def test_fiber_sibling_dispatch_across_rebind_4715_regression():
       (b) source rows: the retired-id history, its dispatch consult and its
           workspace-replace clear are still in place.
     """
-    bench_case = REPO / "bench/cases/agent/fibers.aura"
+    bench_case = REPO / "tests/fixtures/bench/fibers_4715.aura"
     env = os.environ.copy()
     env["AURA_PIPELINE_STRICT"] = "0"
     env["AURA_SANDBOX"] = "off"
