@@ -752,6 +752,62 @@ static void ac3729_1_scope_export_import_recv() {
     reset_all_agent_scopes_for_test();
 }
 
+// Issue #4756: the #4026 typed deny does not depend on the source body's
+// liveness. A source body that is already Done when the token is exported
+// is the normal liaison state; the import proxy slot must not be read as a
+// #3598 Done-path-cleaned ghost (find retired it and recv degraded to
+// `orch:agent-recv: unknown agent` instead of the typed deny).
+static void ac4756_done_source_proxy_deny() {
+    std::println("\n--- #4756: import proxy recv deny survives a done source body ---");
+    reset_all_agent_scopes_for_test();
+    ac3727_set_prod(false);
+    CompilerService cs1;
+    CompilerService cs2;
+    // Export while the source body is still live (the token snapshots it),
+    // then finish the body: the import below then creates the proxy for an
+    // already-Done source fiber. That is the interleaving the batch raced.
+    auto spawned = cs1.eval(R"((hash-ref (orch:scope-spawn "done-4756"
+        (lambda ()
+          (let loop ((i 0))
+            (if (< i 100000000) (begin (fiber:yield) (loop (+ i 1))) 1)))) "ok"))");
+    CHECK(spawned && is_bool(*spawned) && as_bool(*spawned), "4756: scope-spawn ok");
+    auto tok_v = cs1.eval(R"((orch:agent-export-via-token "done-4756"))");
+    CHECK(tok_v && is_string(*tok_v), "4756: export of a live-body source returns a token");
+    if (!(tok_v && is_string(*tok_v))) {
+        reset_all_agent_scopes_for_test();
+        return;
+    }
+    const auto idx = as_string_idx(*tok_v);
+    const auto heap = cs1.evaluator().string_heap();
+    CHECK(idx < heap.size() && !heap[idx].empty(), "4756: token interned");
+    if (idx >= heap.size())
+        return;
+    const std::string hash(heap[idx]);
+    CHECK(cs1.evaluator().handoff_tokens_ && cs1.evaluator().handoff_tokens_->contains(hash),
+          "4756: source stash holds the token");
+    // Finish the source body before the import: the proxy is then created
+    // for a Done (source-owned) fiber.
+    (void)cs1.eval(R"((orch:scope-cancel-all))");
+    auto joined = cs1.eval(
+        R"((if (string=? (hash-ref (orch:scope-join-all :timeout-ms 5000) "status" "") "ok") 1 0))");
+    CHECK(joined && is_int(*joined) && as_int(*joined) == 1, "4756: source body is Done");
+    const std::string recv_prog = std::format(R"(
+        (let ((p (orch:agent-import-via-token "{}")))
+          (if (= (string-length p) 0)
+              -1
+              (let ((m (orch:agent-recv p :wait #f :timeout-ms 0)))
+                (if (and (not (hash-ref m "ok"))
+                         (string=? (hash-ref m "status" "") "recv-proxy-denied")
+                         (= (hash-ref m "schema-4026" 0) 4026))
+                    1 0))))
+    )",
+                                              hash);
+    auto recv = cs2.eval(recv_prog);
+    CHECK(recv && is_int(*recv) && as_int(*recv) == 1,
+          "4756: done-source import proxy recv stays the #4026 typed deny");
+    reset_all_agent_scopes_for_test();
+}
+
 static void ac3729_2_stash_bounded() {
     std::println("\n--- #3729 AC2: unimported export is bounded ---");
     reset_all_agent_scopes_for_test();
@@ -1293,6 +1349,7 @@ int run_test_agent_name_table_isolation() {
     ac3937_5_soft_and_source();
     ac4393_live_name_reuse();
     ac3729_1_scope_export_import_recv();
+    ac4756_done_source_proxy_deny();
     ac3729_2_stash_bounded();
     ac3729_4_join_observe_only();
     ac3729_5_soft_miss_and_source();

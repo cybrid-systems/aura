@@ -3500,6 +3500,16 @@ inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) no
 // never match. Cost: two bool loads + fiber-null check + one is_done load
 // — no new atomic, no getenv (AC3).
 [[nodiscard]] inline bool slot_is_reclaimable_clean(const AgentHandle& h) noexcept {
+    // Issue #4756: an import proxy is never a reclaimable clean ghost. It
+    // reserves nothing and only *observes* the source-owned fiber, so a
+    // done body is its normal liaison state — not a Done-path-cleaned
+    // owner slot. #3598's find-retire erased the proxy slot and turned the
+    // #4026 recv typed deny into `orch:agent-recv: unknown agent` (a
+    // RefError, not the deny hash) whenever the source body had finished
+    // first, and it dereferenced the borrowed fiber after the source could
+    // retire it. Keep the proxy slot until the owning Evaluator drains it.
+    if (h.import_proxy)
+        return false;
     if (h.must_wait_reclaimed || h.reclaimed_deferred_cleanup)
         return false;
     if (h.fiber && !h.fiber->is_done())
