@@ -70,6 +70,9 @@ using types::make_string;
 using types::make_vector;
 using types::make_void;
 
+// Issue #4778: defined in evaluator_primitives_workspace.cpp.
+void workspace_driver_release_fiber_4778(std::uint64_t fiber_id) noexcept;
+
 namespace {
 
     struct FiberResult {
@@ -108,6 +111,16 @@ namespace {
             return static_cast<std::int64_t>(aura::serve::g_current_fiber->id());
         return s_tls_fiber_body_id;
     }
+} // namespace
+
+// Issue #4778: the fiber body running on this thread (scheduler fiber id or
+// CLI thread-backend body id), 0 on the host. Read by the workspace driver
+// claim in evaluator_primitives_workspace.cpp.
+std::int64_t fiber_body_id_4778() noexcept {
+    return current_fiber_body_id();
+}
+
+namespace {
 
     // Arm cancellation for fid. Always re-arms (kDelivered -> kPending).
     void fiber_cancel_request(int64_t fid) {
@@ -2119,7 +2132,11 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         struct PendingBodyRootRelease {
             void* ev;
             std::uint64_t fid;
-            ~PendingBodyRootRelease() { aura_fiber_release_pending_body(ev, fid); }
+            ~PendingBodyRootRelease() {
+                aura_fiber_release_pending_body(ev, fid);
+                // Issue #4778: a joined body no longer drives a worldline.
+                workspace_driver_release_fiber_4778(fid);
+            }
         };
         const PendingBodyRootRelease pending_body_root_release{static_cast<void*>(&ev),
                                                                static_cast<std::uint64_t>(fid)};

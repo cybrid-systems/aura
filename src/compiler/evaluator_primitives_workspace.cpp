@@ -61,6 +61,58 @@ using types::make_string;
 using types::make_vector;
 using types::make_void;
 
+// Issue #4778: the active workspace (WorkspaceTree::active_idx_,
+// ev.workspace_flat_/pool_) is Evaluator-global, not per fiber. Since #4717
+// fiber bodies run in parallel, so N bodies doing `workspace :switch w` raced
+// each other: one fiber's mutate:rebind landed in another fiber's worldline
+// or in root. Decision (option 2 of the issue): a worldline is driven by ONE
+// fiber at a time. The first fiber body that switches onto a non-root
+// workspace becomes the driver; until it switches back to 0 (or is joined)
+// another fiber body's switch / merge / delete / discard is an error. Use
+// per-fiber COW overlays (#4715) for parallel trials. The host thread (fiber
+// id 0) is not a parallel body: it may always switch and its switch clears
+// the claim.
+std::int64_t fiber_body_id_4778() noexcept; // evaluator_primitives_messaging.cpp
+struct WorldlineDriver4778 {
+    const void* tree = nullptr;
+    std::uint64_t fiber = 0; // 0 = no fiber body holds the worldline
+};
+std::mutex& worldline_driver_mtx_4778() {
+    static std::mutex m;
+    return m;
+}
+std::unordered_map<const void*, WorldlineDriver4778>& worldline_drivers_4778() {
+    static auto* m = new std::unordered_map<const void*, WorldlineDriver4778>();
+    return *m;
+}
+// Fiber id holding the worldline of evaluator `key` (tree `tree`) other than
+// the caller, or 0.
+std::uint64_t worldline_foreign_driver_4778(const void* key, const void* tree,
+                                            std::uint64_t caller) {
+    if (caller == 0)
+        return 0;
+    std::lock_guard lk(worldline_driver_mtx_4778());
+    auto& m = worldline_drivers_4778();
+    auto it = m.find(key);
+    if (it == m.end() || it->second.tree != tree || it->second.fiber == 0 ||
+        it->second.fiber == caller)
+        return 0;
+    return it->second.fiber;
+}
+// Called from the fiber:join body-release hook (evaluator_primitives_messaging.cpp): a joined
+// fiber no longer drives any worldline.
+void workspace_driver_release_fiber_4778(std::uint64_t fiber_id) noexcept {
+    if (fiber_id == 0)
+        return;
+    try {
+        std::lock_guard lk(worldline_driver_mtx_4778());
+        for (auto& [k, d] : worldline_drivers_4778())
+            if (d.fiber == fiber_id)
+                d.fiber = 0;
+    } catch (...) {
+    }
+}
+
 // Issue #4776: top-level define texts of a source (name -> unparsed define,
 // first define of a name wins - the same normalization workspace :merge
 // applies to the root side). Nested begin is the multi-form root.
@@ -138,6 +190,17 @@ std::unordered_map<std::string, std::string> top_define_texts_4776(const std::st
 
 void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                                    std::function<void()> destroy_defuse_index) {
+    // Issue #4778: see WorldlineDriver4778.
+    auto worldline_driver_error_4778 = [&ev](std::string_view op,
+                                             std::uint64_t holder) -> EvalValue {
+        return make_primitive_error(
+            ev.string_heap_, ev.error_values_,
+            std::format("{}: the active worldline is driven by fiber {}; a parallel fiber body "
+                        "must not switch workspaces - use per-fiber overlays (#4715) instead "
+                        "(#4778)",
+                        op, holder),
+            ev.primitive_error_counter_ptr());
+    };
 
     // Issue #2628: private PrimFn table for op-dispatch (not public names).
     auto w_impls = std::make_shared<std::unordered_map<std::string, PrimFn>>();
@@ -526,7 +589,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     });
 
     // (workspace :switch id) → #t
-    (*w_impls)["workspace:switch"] = PrimFn{[&ev, destroy_defuse_index](
+    (*w_impls)["workspace:switch"] = PrimFn{[&ev, destroy_defuse_index, worldline_driver_error_4778](
                                                 std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
             return make_bool(false);
@@ -535,8 +598,25 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             return make_bool(false);
         auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
         auto idx = static_cast<std::uint32_t>(as_int(a[0]));
-        if (!wt->set_active(idx))
+        // Issue #4778: claim the worldline before switching (check + claim
+        // under one lock so two bodies cannot both pass); undo on failure.
+        const auto caller_4778 = static_cast<std::uint64_t>(fiber_body_id_4778());
+        WorldlineDriver4778 prev_claim_4778{};
+        {
+            std::lock_guard lk(worldline_driver_mtx_4778());
+            auto& d = worldline_drivers_4778()[&ev];
+            if (d.tree != ev.workspace_tree_)
+                d = WorldlineDriver4778{ev.workspace_tree_, 0};
+            if (caller_4778 != 0 && d.fiber != 0 && d.fiber != caller_4778)
+                return worldline_driver_error_4778("workspace :switch", d.fiber);
+            prev_claim_4778 = d;
+            d.fiber = (caller_4778 != 0 && idx != 0) ? caller_4778 : 0;
+        }
+        if (!wt->set_active(idx)) {
+            std::lock_guard lk(worldline_driver_mtx_4778());
+            worldline_drivers_4778()[&ev] = prev_claim_4778;
             return make_bool(false);
+        }
         // Issue #2785: single bind block (was duplicate assign — incomplete
         // refactor). Issue #141: COW stays lazy (no ensure_local_flat on
         // switch). Issue #738: sync COW epoch into flat for StableNodeRef.
@@ -748,8 +828,14 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     // Issue #2789: delete_child recursively tombstones the whole subtree
     // (descendants before parent). Rebind evaluator if active is under idx.
     add("workspace:delete",
-        [&ev, destroy_defuse_index,
+        [&ev, destroy_defuse_index, worldline_driver_error_4778,
          detach_frames_from_pool](std::span<const EvalValue> a) -> EvalValue {
+            // Issue #4778: another fiber body drives the worldline.
+            if (const auto h4778 =
+                    worldline_foreign_driver_4778(&ev, ev.workspace_tree_,
+                                                  static_cast<std::uint64_t>(fiber_body_id_4778()));
+                h4778 != 0)
+                return worldline_driver_error_4778("workspace:delete", h4778);
             if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
                 return make_bool(false);
             // Issue #1294 Phase 1: capability gate for workspace control.
@@ -997,8 +1083,14 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     //   → #t on success
     //   Discards a child workspace's local changes, resetting to parent state.
     add("workspace:discard",
-        [&ev, destroy_defuse_index,
+        [&ev, destroy_defuse_index, worldline_driver_error_4778,
          detach_frames_from_pool](std::span<const EvalValue> a) -> EvalValue {
+            // Issue #4778: another fiber body drives the worldline.
+            if (const auto h4778 =
+                    worldline_foreign_driver_4778(&ev, ev.workspace_tree_,
+                                                  static_cast<std::uint64_t>(fiber_body_id_4778()));
+                h4778 != 0)
+                return worldline_driver_error_4778("workspace:discard", h4778);
             if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
                 return make_bool(false);
             auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
@@ -1060,8 +1152,14 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     //   Issue #4589: the root keeps one define per name. A child text
     //   that differs replaces the parent; an unchanged name is omitted.
     //   set-code failure reports "rejected", never "merged".
-    (*w_impls)["workspace:merge"] = PrimFn{[&ev, get_ws_source,
+    (*w_impls)["workspace:merge"] = PrimFn{[&ev, get_ws_source, worldline_driver_error_4778,
                                             destroy_defuse_index](const auto& a) -> EvalValue {
+            // Issue #4778: another fiber body drives the worldline.
+            if (const auto h4778 =
+                    worldline_foreign_driver_4778(&ev, ev.workspace_tree_,
+                                                  static_cast<std::uint64_t>(fiber_body_id_4778()));
+                h4778 != 0)
+                return worldline_driver_error_4778("workspace :merge", h4778);
         if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
             return make_bool(false);
         auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
