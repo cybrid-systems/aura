@@ -4642,6 +4642,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     std::lock_guard<std::mutex> lk(tally->mu);
                     tally->errors.emplace_back(body_name, ex.what());
                 } catch (...) {
+                    // [SILENCE-PRIM-#615]: non-std throw is counted as a
+                    // body error (#4783), surfaced via join err-count.
                     std::lock_guard<std::mutex> lk(tally->mu);
                     tally->errors.emplace_back(body_name, "unknown-exception");
                 }
