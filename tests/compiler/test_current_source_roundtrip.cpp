@@ -1807,6 +1807,48 @@ static void ac4589_merge_child_define_wins() {
 }
 
 
+// Issue #4779: trial / merge cycles made later root rebinds linearly slower.
+// refresh_define_env_publication re-bound the define name on every committed
+// mutation and Env::bind APPENDS (#2739), so top_env grew one duplicate `f`
+// row per cycle and every Env::set_pool rekey walked all of them. Pass: after
+// 60 trial cycles + 20 merge cycles top_env still holds one `f` row.
+static void ac4779_trial_merge_cycles_do_not_grow_top_env() {
+    std::println("\n--- #4779: trial/merge cycles keep top_env flat ---");
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    struct RestoreEnv {
+        ~RestoreEnv() {
+            unsetenv("AURA_SANDBOX");
+            unsetenv("AURA_PIPELINE_STRICT");
+        }
+    } restore_env;
+    CompilerService cs;
+    const auto prog = std::string(R"AURA(
+(set-code "(define f (lambda (x) 0))\n(define g (lambda (x) (f x)))") (eval-current)
+(define (body k) (string-append "(lambda (x) " (number->string k) ")"))
+(define (cycle i merge?)
+  (let ((w (workspace :create "t")))
+    (workspace :switch w) (mutate:rebind "f" (body i) "trial") (eval-current)
+    (workspace :switch 0) (eval-current)
+    (if merge? (begin (workspace :merge w) (eval-current)))
+    (workspace :delete w)))
+(let loop ((i 1)) (if (<= i 80) (begin (cycle i (> i 60)) (loop (+ i 1)))))
+(mutate:rebind "f" (body 7) "root") (eval-current)
+(f 0)
+)AURA");
+    auto v = cs.eval(prog);
+    CHECK(v && is_int(*v) && as_int(*v) == 7, "4779: cycles ran and the root rebind is live");
+    std::size_t f_rows = 0;
+    {
+        auto& top = cs.evaluator().top_env();
+        for (const auto& b : std::as_const(top).bindings())
+            if (b.first == "f")
+                ++f_rows;
+    }
+    std::println("  #4779 top_env `f` rows after 80 cycles = {}", f_rows);
+    CHECK(f_rows >= 1 && f_rows <= 2, "4779: no duplicate top_env row per committed mutation");
+}
+
 // Issue #4729: workspace :merge used to wipe the root mutation log /
 // last-mutation-provenance (the merge installs a fresh FlatAST through
 // set-code) and the child's mutations were never recorded; ids restarted at
@@ -1951,6 +1993,7 @@ int run_test_current_source_roundtrip() {
     ac4588_error_data_propagates();
     ac4589_merge_child_define_wins();
     ac4729_merge_and_restore_keep_provenance();
+    ac4779_trial_merge_cycles_do_not_grow_top_env();
     ac_dual_workspace();
     ac_snapshot_workspace();
     ac_roundtrip_table();

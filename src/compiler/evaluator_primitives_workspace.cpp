@@ -1378,14 +1378,17 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         // child's mutations were never recorded anywhere in the root).
         // Capture the audit identity of both flats before the swap so
         // the merged flat can carry it.
-        std::pmr::vector<aura::ast::MutationRecord> carried_log(std::pmr::get_default_resource());
+        // Issue #4779: do NOT copy the log here. The pre-merge flat stays
+        // alive on the arena (set-code keeps old flats for macro bodies),
+        // so a copy left a full log behind on every merge - O(merges x log)
+        // memory (3.7 GB over 3000 merge cycles). The log is MOVED from the
+        // pre-merge flat onto the merged one below.
         std::uint64_t carried_next = 1;
         std::uint64_t child_mutations = 0;
-        if (ev.workspace_flat_) {
-            const auto& root_log = ev.workspace_flat_->all_mutations();
-            carried_log.assign(root_log.begin(), root_log.end());
+        std::size_t carried_count = 0;
+        aura::ast::FlatAST* const pre_merge_flat_4779 = ev.workspace_flat_;
+        if (ev.workspace_flat_)
             carried_next = ev.workspace_flat_->next_mutation_id();
-        }
         if (child_idx < tree->size() && tree->nodes_[child_idx].flat)
             child_mutations = tree->nodes_[child_idx].flat->all_mutations().size();
         const std::string child_name = tree->nodes_[child_idx].name;
@@ -1401,7 +1404,21 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             // across the flat swap, then append the merge itself so
             // (query :mutation-log N) and
             // (query:last-mutation-provenance) see the merge.
-            ev.workspace_flat_->adopt_mutation_log(carried_log, carried_next);
+            if (pre_merge_flat_4779 && pre_merge_flat_4779 != ev.workspace_flat_) {
+                std::pmr::vector<aura::ast::MutationRecord>& old_log =
+                    pre_merge_flat_4779->all_mutations();
+                std::pmr::vector<aura::ast::MutationRecord>& new_log =
+                    ev.workspace_flat_->all_mutations();
+                carried_count = old_log.size();
+                if (new_log.empty() && old_log.get_allocator() == new_log.get_allocator()) {
+                    new_log.swap(old_log);
+                } else {
+                    new_log.insert(new_log.begin(), old_log.begin(), old_log.end());
+                    old_log.clear();
+                    old_log.shrink_to_fit();
+                }
+            }
+            ev.workspace_flat_->adopt_mutation_log({}, carried_next);
             std::string symbols;
             for (const auto& rep : reports) {
                 if (!rep.want_merged)
@@ -1416,7 +1433,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                 aura::ast::NULL_NODE, "workspace:merge", "", "",
                 "merge child=" + child_name + " symbols=(" + symbols +
                     ") child-mutations=" + std::to_string(child_mutations) +
-                    " carried=" + std::to_string(carried_log.size()));
+                    " carried=" + std::to_string(carried_count));
         }
 
         std::string result = "(";
