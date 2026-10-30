@@ -1015,6 +1015,61 @@ int Scheduler::next_worker_id_load_aware() {
 //     (e.g., by send/recv or thread pool completion), the IO thread
 //     enqueues it to a worker.
 
+// ── evaluate_start_gate — the #3586 / #3476 / #3950 start decision ──
+//
+// Issue #4756: these gates read the production face; that decision used
+// to be taken inside run(), i.e. inside whichever thread the owner
+// started. The process-lifetime orch scheduler holder starts run() on a
+// helper thread, so a caller that armed production, spawned (lazily
+// starting the holder) and then restored the dev face in the same block
+// could have its legitimately armed start refused: the helper thread read
+// the face after the caller's restore (intermittent #3586 FATAL in
+// test_orch_agent_batch's test_orch_obs_facade member). Deciding here —
+// on the caller's thread, exactly once — makes the gate read the face the
+// owner started under, and keeps the refusal itself unchanged: an
+// unarmed multi-worker start still aborts (chaos_soak_production_gate
+// AC1 drives Scheduler(2).run() directly).
+void Scheduler::evaluate_start_gate() {
+    if (start_gate_evaluated_.exchange(true, std::memory_order_acq_rel))
+        return;
+    // Issue #3586: unarmed multi-worker is silent Soft (I6). Refuse
+    // start unless production bootstrap is latched or AURA_SANDBOX=off.
+    // Armed / single-worker: one probe load, no getenv.
+    if (workers_.size() > 1 && aura_production_defaults_active_probe() == 0) {
+        const char* sb = std::getenv("AURA_SANDBOX");
+        const bool sandbox_off = sb && *sb && std::strcmp(sb, "off") == 0;
+        if (!sandbox_off) {
+            std::fprintf(stderr, "FATAL: multi-worker needs production bootstrap "
+                                 "(apply_production_security_defaults) or AURA_SANDBOX=off\n");
+            std::fflush(stderr);
+            std::abort();
+        }
+    }
+    // Issue #3476: weld production Ready before WorkerThread::start so
+    // g_production_multi_worker_latched is not host-optional (I3/I6).
+    // workers_.size()>1 → aura_runtime_require_production_multi_worker
+    // (abort on Soft / sandbox=off / residual when self-check is required).
+    // Single-worker / Soft unit / light-link uses require_production_abi
+    // (#3098 AC3 — no abort). Caller of multi-worker Ready must not be
+    // tests/light-link without production defaults (function header).
+    if (workers_.size() > 1 && production_abi_selfcheck_required()) {
+        (void)aura_runtime_require_production_multi_worker();
+        // Issue #3950: Ready consults residual-zero SSOT here (same abort
+        // shape as ABI self-check). Helper already aborts; this is the
+        // production door next to require_production_multi_worker so
+        // coverage sees the accessor, not only the ABI TU.
+        // Soft / sandbox=off / N==1 skip this arm.
+        if (steal_safety_production_residual_zero_v_read() == 0) {
+            std::fprintf(stderr, "FATAL: multi-worker Ready residual-zero failed (#3950) "
+                                 "— steal-safety residuals must be 0 before WorkerThread::start\n");
+            std::fflush(stderr);
+            std::abort();
+        }
+    } else {
+        (void)aura_runtime_require_production_abi();
+    }
+}
+
 void Scheduler::run() {
     // Issue #4424: do not replace a live g_scheduler. parallel-intend used
     // to run a stack Scheduler on a helper thread while serve was already
@@ -1044,42 +1099,12 @@ void Scheduler::run() {
         workers_[i]->set_metrics(&metrics_.worker(i));
     }
 
-    // Issue #3586: unarmed multi-worker is silent Soft (I6). Refuse
-    // start unless production bootstrap is latched or AURA_SANDBOX=off.
-    // Armed / single-worker: one probe load, no getenv.
-    if (workers_.size() > 1 && aura_production_defaults_active_probe() == 0) {
-        const char* sb = std::getenv("AURA_SANDBOX");
-        const bool sandbox_off = sb && *sb && std::strcmp(sb, "off") == 0;
-        if (!sandbox_off) {
-            std::fprintf(stderr, "FATAL: multi-worker needs production bootstrap "
-                                 "(apply_production_security_defaults) or AURA_SANDBOX=off\n");
-            std::fflush(stderr);
-            std::abort();
-        }
-    }
-    // Issue #3476: weld production Ready before WorkerThread::start so
-    // g_production_multi_worker_latched is not host-optional (I3/I6).
-    // workers_.size()>1 → aura_runtime_require_production_multi_worker
-    // (abort on Soft / sandbox=off / residual when self-check is required).
-    // Single-worker / Soft unit / light-link uses require_production_abi
-    // (#3098 AC3 — no abort). Caller of multi-worker Ready must not be
-    // tests/light-link without production defaults (function header).
-    if (workers_.size() > 1 && production_abi_selfcheck_required()) {
-        (void)aura_runtime_require_production_multi_worker();
-        // Issue #3950: Ready consults residual-zero SSOT here (same abort
-        // shape as ABI self-check). Helper already aborts; this is the
-        // production door in Scheduler::run so coverage sees the accessor
-        // next to require_production_multi_worker, not only the ABI TU.
-        // Soft / sandbox=off / N==1 skip this arm.
-        if (steal_safety_production_residual_zero_v_read() == 0) {
-            std::fprintf(stderr, "FATAL: multi-worker Ready residual-zero failed (#3950) "
-                                 "— steal-safety residuals must be 0 before WorkerThread::start\n");
-            std::fflush(stderr);
-            std::abort();
-        }
-    } else {
-        (void)aura_runtime_require_production_abi();
-    }
+    // Issue #4756: the #3586 / #3476 / #3950 start gates are decided
+    // here, once, on the thread that asked for the pool. See
+    // evaluate_start_gate(): a host that starts the pool on another
+    // thread (the orch scheduler holder) must decide before it hands the
+    // face window over, not after.
+    evaluate_start_gate();
 
     // Start all workers
     for (auto& w : workers_) {

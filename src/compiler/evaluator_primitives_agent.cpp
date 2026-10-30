@@ -3554,6 +3554,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // kept spawning onto them, so every later scope-spawn body never
             // ran and scope-join-all reported timeout (all waiters unwoken).
             sched->set_idle_auto_stop(false);
+            // Issue #4756: decide the #3586 / #3476 / #3950 start gates on
+            // THIS thread, before the runner exists. The caller owns the
+            // production face window it started the holder under (obs
+            // facade: apply_production_audit_defaults → spawn → dev
+            // restore); leaving the decision to the new thread raced that
+            // restore and aborted a start that was armed when requested.
+            sched->evaluate_start_gate();
             runner = std::thread([this] { sched->run(); });
         }
         ~OrchSchedHolder() {

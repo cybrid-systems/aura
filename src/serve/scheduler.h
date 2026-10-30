@@ -79,6 +79,18 @@ public:
         return idle_auto_stop_.load(std::memory_order_acquire);
     }
 
+    // Issue #4756: decide the #3586 / #3476 / #3950 start gates on the
+    // CALLER's thread, once per Scheduler. run() calls this first, so a
+    // plain run() is unchanged; a host that starts the pool on another
+    // thread (the process-lifetime orch scheduler holder) calls it before
+    // it starts that thread. Reading the gate inside the new thread made
+    // the decision race the caller's own face transition: a member that
+    // armed production, spawned (which lazily starts the holder) and then
+    // restored the dev face in the same block aborted with the #3586 FATAL
+    // on a start that was armed when it was requested. The refusal itself
+    // is unchanged — an unarmed multi-worker start still aborts.
+    void evaluate_start_gate();
+
     // ── Event management ────────────────────────────
     // Register a fiber's eventfd with the epoll instance.
     // Called during fiber spawn or session setup.
@@ -327,6 +339,11 @@ private:
     // Issue #4726: false when the owner keeps this scheduler for the process
     // lifetime (the orch static holder); the IO loop then never self-stops.
     std::atomic<bool> idle_auto_stop_{true};
+    // Issue #4756: one-shot latch for evaluate_start_gate() (the #3586 /
+    // #3476 / #3950 start decision). evaluate_start_gate() sets it before
+    // the gates run; run() then reuses the decision instead of reading the
+    // production face a second time from the worker-starting thread.
+    std::atomic<bool> start_gate_evaluated_{false};
     // Issue #4004: true until ~Scheduler (store false before fiber destroy).
     std::shared_ptr<std::atomic<bool>> handoff_source_live_{
         std::make_shared<std::atomic<bool>>(true)};
