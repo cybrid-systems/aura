@@ -397,6 +397,9 @@ def _eff_timeout(bin_name: str, timeout: int) -> int:
         or bin_name.startswith("test_jit_")
         or bin_name.startswith("test_issues_jit_late")
         or bin_name.startswith("test_issues_fiber")
+        # The sibling-collector race test runs 10 rounds of a ~4s IR spin
+        # (kRoundBudget is 120s); at jobs=4 the default 60s cannot hold it.
+        or bin_name.startswith("test_fibers_")
         or bin_name.startswith("test_orch_")
         or bin_name.startswith("test_fiber_orch_")
         or "stress" in bin_name
