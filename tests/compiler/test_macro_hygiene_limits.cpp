@@ -1777,7 +1777,13 @@ static void ac4078_workspace_same_tree() {
 
 static void ac4078_eval_skips_half_tree() {
     std::println("\n--- #4078 AC2: eval / eval-current do not run the half tree ---");
-    const char* src = "(defmacro (d y) (e y)) (defmacro (e y) (* y 2)) (d 3)";
+    // Issue #4759: a legacy defmacro no longer runs through the static
+    // macro_expand_all pass - the walker arm expands it - so it cannot spend a
+    // hygiene pass. The #4078 invariant (a refused pass cap must never let eval
+    // run the half tree) is exercised on the face that still takes passes: the
+    // hygienic chain has the same AST shape as AC1's two-pass macrodefs.
+    const char* src =
+        "(define-hygienic-macro (d y) (e y)) (define-hygienic-macro (e y) (* y 2)) (d 3)";
     {
         reset_all();
         CompilerService cs;
@@ -3226,17 +3232,16 @@ static void ac4390_legacy_eval_macro_denies_without_mse() {
         reset_all();
         CompilerService cs;
         auto ok = cs.eval_ir(repro);
-        std::string sym;
-        // Issue #4727: the source atom comes back as an interned SYMBOL, not
-        // a string-heap entry. The name is the contract, not the slot.
-        if (ok && is_symbol(*ok)) {
-            const auto sidx = as_symbol_idx(*ok);
-            if (static_cast<std::size_t>(sidx) < cs.evaluator().symbol_table().size())
-                sym = cs.evaluator().symbol_table()[static_cast<std::size_t>(sidx)];
-        }
-        CHECK(ok.has_value() && sym == "tmp",
-              std::format("4390: Off defmacro returns source symbol tmp (got {} / {})",
-                          describe_eval_4390(ok), sym));
+        // Issue #4759: a legacy defmacro expands in the walker arm and its
+        // template is evaluated as code, so the Off (no MSE gate) path runs
+        // the let template and yields 2. The pre-#4759 static half-expansion
+        // returned the source atom `tmp` unevaluated - the bug #4759 fixed.
+        // #4390 still owns here: Off does not deny, and the deny sentinel is
+        // not armed by a plain eval.
+        CHECK(ok.has_value() && is_int(*ok) && as_int(*ok) == 2,
+              std::format("4390: Off defmacro evaluates its template (got {})",
+                          describe_eval_4390(ok)));
+        CHECK(!(ok && is_symbol(*ok)), "4390: Off defmacro returns no source symbol");
     }
     {
         reset_all();
@@ -3288,17 +3293,12 @@ static void ac4390_legacy_eval_macro_denies_without_mse() {
         CompilerService cs;
         grant_self_evo_production();
         auto ok = cs.eval_ir(repro);
-        std::string sym;
-        // Issue #4727: the source atom comes back as an interned SYMBOL, not
-        // a string-heap entry. The name is the contract, not the slot.
-        if (ok && is_symbol(*ok)) {
-            const auto sidx = as_symbol_idx(*ok);
-            if (static_cast<std::size_t>(sidx) < cs.evaluator().symbol_table().size())
-                sym = cs.evaluator().symbol_table()[static_cast<std::size_t>(sidx)];
-        }
-        CHECK(ok.has_value() && sym == "tmp",
-              std::format("4390: a MacroSelfEvo grant still expands (got {} / {})",
-                          describe_eval_4390(ok), sym));
+        // Issue #4759: with the grant the walker arm runs the same template to
+        // 2; the invariant is that a MacroSelfEvo grant still expands the
+        // legacy macro end-to-end (it is not denied).
+        CHECK(ok.has_value() && is_int(*ok) && as_int(*ok) == 2,
+              std::format("4390: a MacroSelfEvo grant still expands (got {})",
+                          describe_eval_4390(ok)));
     }
 
     {

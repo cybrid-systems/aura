@@ -830,8 +830,14 @@ static void ac4716_fiber_execution_context() {
     {
         std::println("\n--- AC9: macro expansion through the converted accessors ---");
         CompilerService cs;
-        auto r = cs.eval("(defmacro (d4716 y) (e4716 y)) (defmacro (e4716 y) (+ y y)) "
-                         "(d4716 21)");
+        // Issue #4759: a legacy defmacro's arguments are syntax data bound in
+        // the walker arm, not ASTs substituted into the body. A nested call
+        // therefore has to hand the inner macro data its template can
+        // evaluate - (e4716 21), not the outer parameter name, which would
+        // reach (+ y y) as the symbol y. Two levels still run, and the value
+        // is still the expansion's 42.
+        auto r = cs.eval("(defmacro (e4716 y) (+ y y)) (defmacro (d4716) (e4716 21)) "
+                         "(d4716)");
         CHECK(r && is_int(*r) && as_int(*r) == 42, "4716 AC9: expansion value 42");
         // The depth mirror is a "last known depth" diagnostic (not restored
         // to 0 by design, #2806), so the isolation check is the OTHER
