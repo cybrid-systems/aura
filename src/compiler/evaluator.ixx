@@ -2350,7 +2350,7 @@ export struct DefineStamp {
     // Issue #4792: define_ver_ cell at capture (content version; 0 =
     // unknown). The restore diff compares (root, ver), not gen16.
     std::uint64_t ver = 0;
-    std::string source;      // unparsed define source (lazy, built once)
+    std::string source; // unparsed define source (lazy, built once)
     bool has_source = false;
 };
 export struct FlatSnapshotDefineStamps {
@@ -7421,7 +7421,7 @@ private:
     struct FlatSnapshot {
         std::shared_ptr<const aura::ast::FlatAST::Image> flat;
         std::shared_ptr<const aura::ast::StringPool::Image> pool;
-        bool has_flat = false; // true if both flat + pool are valid
+        bool has_flat = false;    // true if both flat + pool are valid
         bool source_lazy = false; // snapshot_sources_[id] not built yet
         // Issue #263: metadata captured at snapshot time for restore checks.
         std::uint16_t flat_generation = 0;

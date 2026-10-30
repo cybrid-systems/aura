@@ -398,7 +398,8 @@ public:
 
 private:
     [[nodiscard]] bool same_as_chunk(const std::vector<T>& ch, std::size_t lo) const {
-        if constexpr (std::is_trivially_copyable_v<T> && std::has_unique_object_representations_v<T>) {
+        if constexpr (std::is_trivially_copyable_v<T> &&
+                      std::has_unique_object_representations_v<T>) {
             return ch.empty() ||
                    std::memcmp(ch.data(), Base::data() + lo, ch.size() * sizeof(T)) == 0;
         } else if constexpr (requires(const T& a, const T& b) {
@@ -561,7 +562,8 @@ public:
     void mark_all_dirty() noexcept { touch(); }
     [[nodiscard]] image_type capture(const image_type* base, std::size_t* fresh_out = nullptr,
                                      std::size_t* total_out = nullptr) {
-        const bool was = std::atomic_ref<std::uint8_t>(changed_).exchange(0, std::memory_order_relaxed);
+        const bool was =
+            std::atomic_ref<std::uint8_t>(changed_).exchange(0, std::memory_order_relaxed);
         if (total_out)
             *total_out += 1;
         if (base && *base && (!was || **base == static_cast<const Map&>(*this)))
@@ -574,7 +576,8 @@ public:
         return img ? *img == static_cast<const Map&>(*this) : Map::empty();
     }
     void restore_from(const image_type& img, const image_type* base) {
-        const bool was = std::atomic_ref<std::uint8_t>(changed_).exchange(0, std::memory_order_relaxed);
+        const bool was =
+            std::atomic_ref<std::uint8_t>(changed_).exchange(0, std::memory_order_relaxed);
         if (base && *base && !was && *base == img)
             return;
         if (img)

@@ -1832,12 +1832,11 @@ public:
                 this->populate_dep_graph_one_4682_(name, log_before);
             });
         // Issue #4793: re-walk only the changed defines (stamp path).
-        evaluator_.set_restore_dep_graph_fns(
-            [this]() { return this->restore_dep_graph_synced_(); },
-            [this](const std::vector<std::string>& names) {
-                this->restore_dep_graph_names_(names);
-            },
-            [this]() { this->restore_dep_graph_advance_(); });
+        evaluator_.set_restore_dep_graph_fns([this]() { return this->restore_dep_graph_synced_(); },
+                                             [this](const std::vector<std::string>& names) {
+                                                 this->restore_dep_graph_names_(names);
+                                             },
+                                             [this]() { this->restore_dep_graph_advance_(); });
         // Issue #1495 / #2813: lazy partial re-lower of dirty defines on
         // (eval-current) + push_post_mutate_incremental_cascade under Guard.
         // Production requirement: this MUST be wired. Leaving it null

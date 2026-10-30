@@ -27,7 +27,7 @@ module;
 #include <utility>
 #include <vector>
 #include "core/persistent_child_vector.hh"
-#include "core/cow_column.hh"        // Issue #4772: chunk-tracked COW columns
+#include "core/cow_column.hh" // Issue #4772: chunk-tracked COW columns
 #include "core/cpp26_contract_stats.h"
 #include "core/provenance_tracker.hh"   // #2125: maybe_stamp_stable_ref_isolation_tenant
 #include "core/flatast_restamp.hh"      // FlatAST decomp step 1: RestampPolicy SSOT
@@ -553,7 +553,8 @@ public:
         std::unique_lock<std::shared_mutex> write_lock(mtx_.mutable_get());
         auto img = std::make_shared<Image>();
         const Image* base = image_base_.get();
-        img->buf = buf_.capture(base ? &base->buf : nullptr, &img->fresh_chunks, &img->total_chunks);
+        img->buf =
+            buf_.capture(base ? &base->buf : nullptr, &img->fresh_chunks, &img->total_chunks);
         img->tbl =
             hash_tbl_.capture(base ? &base->tbl : nullptr, &img->fresh_chunks, &img->total_chunks);
         img->hash_capacity = hash_capacity_;
@@ -1239,13 +1240,14 @@ private:
 // means adding it here — the copy, the image capture and the delta restore
 // all expand this one list.
 #define AURA_FLATAST_COW_COLUMNS(X)                                                                \
-    X(tag_) X(int_val_) X(float_val_) X(sym_id_) X(children_) X(parent_) X(incoming_parent_edges_) \
-    X(param_begin_) X(param_count_) X(cap_require_count_) X(param_data_) X(param_annot_data_)     \
-    X(line_) X(col_) X(marker_) X(provenance_) X(dirty_) X(ppa_dirty_) X(verify_dirty_)          \
-    X(verification_dirty_) X(macro_dirty_) X(type_id_) X(type_cache_gen_)                        \
-    X(type_cache_binding_gen_) X(schema_cache_) X(error_kind_) X(node_gen_) X(free_list_)        \
-    X(value_cache_) X(node_first_mutation_) X(match_info_) X(region_by_sym_dense_)               \
-    X(region_by_lambda_dense_) X(define_ver_)
+    X(tag_)                                                                                        \
+    X(int_val_) X(float_val_) X(sym_id_) X(children_) X(parent_) X(incoming_parent_edges_)         \
+        X(param_begin_) X(param_count_) X(cap_require_count_) X(param_data_) X(param_annot_data_)  \
+            X(line_) X(col_) X(marker_) X(provenance_) X(dirty_) X(ppa_dirty_) X(verify_dirty_)    \
+                X(verification_dirty_) X(macro_dirty_) X(type_id_) X(type_cache_gen_)              \
+                    X(type_cache_binding_gen_) X(schema_cache_) X(error_kind_) X(node_gen_)        \
+                        X(free_list_) X(value_cache_) X(node_first_mutation_) X(match_info_)       \
+                            X(region_by_sym_dense_) X(region_by_lambda_dense_) X(define_ver_)
 #define AURA_FLATAST_COW_MAPS(X) X(region_by_sym_) X(region_by_lambda_id_)
 // Issue #4772: the CONTENT subset — the columns that define what the tree is
 // (topology, literals, params, positions, slot liveness). The rest are
@@ -1253,9 +1255,10 @@ private:
 // mutation metadata): images still capture them, but a capture that wrote
 // only caches is a share hit, and the restore oracle compares content.
 #define AURA_FLATAST_COW_CONTENT_COLUMNS(X)                                                        \
-    X(tag_) X(int_val_) X(float_val_) X(sym_id_) X(children_) X(parent_) X(incoming_parent_edges_) \
-    X(param_begin_) X(param_count_) X(cap_require_count_) X(param_data_) X(param_annot_data_)     \
-    X(line_) X(col_) X(marker_) X(provenance_) X(node_gen_) X(free_list_)
+    X(tag_)                                                                                        \
+    X(int_val_) X(float_val_) X(sym_id_) X(children_) X(parent_) X(incoming_parent_edges_)         \
+        X(param_begin_) X(param_count_) X(cap_require_count_) X(param_data_) X(param_annot_data_)  \
+            X(line_) X(col_) X(marker_) X(provenance_) X(node_gen_) X(free_list_)
 
 export class FlatAST {
     // ── Issue #2413 / #2488 — concurrent access contract (read this) ───
@@ -2068,7 +2071,8 @@ public:
     // param_data_ via resize(+n, NULL_NODE). Same single-threaded
     // mutation contract — concurrent resize vs annotation slice
     // readers is UB (reallocation invalidates spans).
-    cow::TrackedColumn<NodeId> param_annot_data_; // per-param annotation node IDs (NULL_NODE = none)
+    cow::TrackedColumn<NodeId>
+        param_annot_data_; // per-param annotation node IDs (NULL_NODE = none)
     // Source location (line/col, 1-based)
     cow::TrackedColumn<std::uint32_t> line_;
     cow::TrackedColumn<std::uint32_t> col_;
@@ -4016,8 +4020,7 @@ public:
         atomic_batch_commits_.store(other.atomic_batch_commits_.load());
         verification_coverage_feedback_total_.store(
             other.verification_coverage_feedback_total_.load());
-        verification_assert_failure_total_.store(
-            other.verification_assert_failure_total_.load());
+        verification_assert_failure_total_.store(other.verification_assert_failure_total_.load());
         verify_loop_cycles_total_.store(other.verify_loop_cycles_total_.load());
         macro_expansion_dirty_total_.store(other.macro_expansion_dirty_total_.load());
         macro_self_modify_dirty_total_.store(other.macro_self_modify_dirty_total_.load());
@@ -4089,9 +4092,9 @@ public:
                 return 0;
             return define_ver_.at(top);
         }
-        std::size_t fresh_chunks = 0; // chunks this capture allocated
+        std::size_t fresh_chunks = 0;         // chunks this capture allocated
         std::size_t content_fresh_chunks = 0; // of those, CONTENT-column chunks
-        std::size_t total_chunks = 0; // chunks the image references
+        std::size_t total_chunks = 0;         // chunks the image references
         [[nodiscard]] std::uint16_t subtree_gen_at(NodeId top) const noexcept {
             if (top == NULL_NODE || top >= subtree_gen.size)
                 return 0;
@@ -4100,9 +4103,9 @@ public:
         // Share of the image's chunks that this capture owns (1.0 = a full
         // deep copy, ~0 = a delta over the previous image).
         [[nodiscard]] double weight() const noexcept {
-            return total_chunks == 0 ? 1.0
-                                     : static_cast<double>(fresh_chunks) /
-                                           static_cast<double>(total_chunks);
+            return total_chunks == 0
+                       ? 1.0
+                       : static_cast<double>(fresh_chunks) / static_cast<double>(total_chunks);
         }
     };
     [[nodiscard]] std::shared_ptr<const Image> capture_image() {
@@ -4165,7 +4168,8 @@ public:
     }
     // A self-contained FlatAST holding the image's content (O(n)); used for
     // lazy unparse of a snapshot's source and for tests.
-    [[nodiscard]] static std::shared_ptr<FlatAST> materialize(const std::shared_ptr<const Image>& img) {
+    [[nodiscard]] static std::shared_ptr<FlatAST>
+    materialize(const std::shared_ptr<const Image>& img) {
         auto f = std::make_shared<FlatAST>();
         f->assign_from_image(img);
         f->image_base_.reset();
@@ -4232,7 +4236,7 @@ private:
                 return true;
         return false;
     }
-    std::shared_ptr<const Image> image_base_;      // columns' dirty bits are relative to this
+    std::shared_ptr<const Image> image_base_;       // columns' dirty bits are relative to this
     std::shared_ptr<const Image> subtree_gen_base_; // subtree_gen_'s bits are relative to this
 
 public:
@@ -6466,8 +6470,8 @@ public:
             macro_dirty_;
     };
     [[nodiscard]] DirtySoaSnapshot snapshot_dirty_soa() const {
-        return DirtySoaSnapshot{dirty_.view(), ppa_dirty_.view(), verify_dirty_.view(), verification_dirty_.view(),
-                                macro_dirty_.view()};
+        return DirtySoaSnapshot{dirty_.view(), ppa_dirty_.view(), verify_dirty_.view(),
+                                verification_dirty_.view(), macro_dirty_.view()};
     }
     void restore_dirty_soa(DirtySoaSnapshot&& snap) {
         if (snap.dirty_.empty())
@@ -6510,8 +6514,8 @@ public:
         std::pmr::vector<std::uint32_t> schema_cache;
     };
     [[nodiscard]] TypeColumnSnapshot snapshot_type_columns() const {
-        return TypeColumnSnapshot{true, type_id_.view(), type_cache_gen_.view(), type_cache_binding_gen_.view(),
-                                  schema_cache_.view()};
+        return TypeColumnSnapshot{true, type_id_.view(), type_cache_gen_.view(),
+                                  type_cache_binding_gen_.view(), schema_cache_.view()};
     }
     void restore_type_columns(TypeColumnSnapshot&& snap) noexcept {
         if (!snap.captured)

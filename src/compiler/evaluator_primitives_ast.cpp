@@ -924,8 +924,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                     // empty resolved set reports every live define as
                     // removed — what the source diff reported too) unless
                     // the #4777 lineage check sends it to the source diff.
-                    const bool have_stamps = stamps &&
-                                             (stamps->lazy || !stamps->by_name.empty()) &&
+                    const bool have_stamps = stamps && (stamps->lazy || !stamps->by_name.empty()) &&
                                              !stamp_lineage_broken_4777;
                     if (have_stamps && cross_epoch_4792)
                         ++ev.ast_restore_cross_epoch_stamp_total_;
