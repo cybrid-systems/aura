@@ -45,7 +45,7 @@ def main() -> int:
     cmake = _read("CMakeLists.txt")
 
     must("Issue #2422", "AC1", ast)
-    must("std::pmr::vector<std::uint32_t> subtree_gen_", "AC1", ast)
+    must("cow::TrackedColumn<std::uint32_t> subtree_gen_", "AC1", ast)  # #4772 COW column
     must("std::atomic_ref<std::uint32_t>", "AC1", ast)
     must("load_subtree_gen", "AC1", ast_src)
     must_not("std::pmr::vector<std::uint16_t> subtree_gen_", "AC1", ast)
