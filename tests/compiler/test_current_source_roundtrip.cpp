@@ -1983,6 +1983,97 @@ static void ac4772_snapshot_quiet_guard() {
           "4772: ast:snapshot arms the quiet guard before try_acquire");
 }
 
+// Issue #4772: ast:snapshot is a structural-sharing image. After a one-define
+// edit a snapshot copies only the chunks the edit wrote (O(changes), not
+// O(workspace)); every image restores exactly (column oracle), the source
+// string is lazy and still byte-identical for ast:diff, and restoring
+// between worldlines in any order gives the right bindings.
+static void ac4772_structural_sharing() {
+    std::println("\n--- #4772: ast:snapshot structural sharing ---");
+    CompilerService cs;
+    std::string src = "(define (g4772 x) (+ x 0))\n";
+    for (int i = 0; i < 600; ++i)
+        src += std::format("(define (s4772f{} x) (* x {}))\n", i, i);
+    CHECK(set_code(cs, src), "4772s: set-code W=600");
+    CHECK(cs.eval("(eval-current)").has_value(), "4772s: eval-current");
+    std::vector<std::int64_t> ids;
+    auto s0 = cs.eval("(ast:snapshot \"4772s-0\")");
+    CHECK(s0 && is_int(*s0) && as_int(*s0) >= 0, "4772s: base snapshot");
+    ids.push_back(as_int(*s0));
+    const auto fresh0 = snap_stat(cs, "ast-snapshot-chunks-fresh");
+    const auto shared0 = snap_stat(cs, "ast-snapshot-chunks-shared");
+    constexpr int kForks = 6;
+    for (int k = 1; k <= kForks; ++k) {
+        CHECK(cs.eval(std::format("(mutate:rebind \"g4772\" \"(lambda (x) (+ x {}))\" \"4772s\")",
+                                  k * 10))
+                  .has_value(),
+              "4772s: rebind one define");
+        auto s = cs.eval(std::format("(ast:snapshot \"4772s-{}\")", k));
+        CHECK(s && is_int(*s) && as_int(*s) >= 0, "4772s: fork snapshot id");
+        ids.push_back(as_int(*s));
+        CHECK(cs.evaluator().workspace_equals_snapshot_image(static_cast<std::size_t>(as_int(*s))),
+              "4772s: fresh image equals the live workspace");
+    }
+    const auto fresh = snap_stat(cs, "ast-snapshot-chunks-fresh") - fresh0;
+    const auto shared = snap_stat(cs, "ast-snapshot-chunks-shared") - shared0;
+    std::println("4772s diag: fork chunks fresh={} shared={}", fresh, shared);
+    CHECK(fresh > 0 && shared > 4 * fresh,
+          "4772s AC1: one-define forks share most chunks (O(changes) capture)");
+    CHECK(snap_stat(cs, "ast-snapshot-lazy-sources") >= kForks,
+          "4772s AC2: fork snapshots defer the O(workspace) unparse");
+    // AC3: lazy source is built on demand and matches the live unparse.
+    auto live_src = workspace_source(cs);
+    auto d = cs.eval(std::format("(ast:diff {})", ids.back()));
+    CHECK(d.has_value(), "4772s AC3: ast:diff against a lazy snapshot");
+    CHECK(snap_stat(cs, "ast-snapshot-lazy-source-builds") >= 1,
+          "4772s AC3: ast:diff materialized the lazy source");
+    CHECK(!live_src.empty(), "4772s AC3: live source present");
+    // AC4: restore worldlines out of order; bindings + column oracle exact.
+    const int order[] = {3, 0, 6, 1, 5, 2, 4, 0};
+    for (int k : order) {
+        auto st = cs.eval(std::format("(ast:restore {})", ids[static_cast<std::size_t>(k)]));
+        CHECK(st && is_bool(*st) && as_bool(*st), "4772s AC4: restore fork");
+        const auto rid = static_cast<std::size_t>(ids[static_cast<std::size_t>(k)]);
+        const bool eq = cs.evaluator().workspace_equals_snapshot_image(rid);
+        if (!eq)
+            std::println("4772s diag: restore {} differs in: {}", k,
+                         cs.evaluator().snapshot_image_diff(rid));
+        CHECK(eq, "4772s AC4: restored workspace equals the image (content columns)");
+        CHECK(cs.eval("(eval-current)").has_value(), "4772s AC4: eval-current after restore");
+        auto v = cs.eval("(g4772 1)");
+        CHECK(v && is_int(*v) && as_int(*v) == 1 + k * 10, "4772s AC4: restored binding value");
+        auto f = cs.eval("(s4772f599 2)");
+        CHECK(f && is_int(*f) && as_int(*f) == 1198, "4772s AC4: filler intact");
+    }
+    // AC5: an edit after a restore does not leak into the image it came from.
+    CHECK(cs.eval("(mutate:rebind \"g4772\" \"(lambda (x) (+ x 777))\" \"4772s\")").has_value(),
+          "4772s AC5: rebind after restore");
+    auto st = cs.eval(std::format("(ast:restore {})", ids[0]));
+    CHECK(st && is_bool(*st) && as_bool(*st), "4772s AC5: restore base again");
+    CHECK(cs.eval("(eval-current)").has_value(), "4772s AC5: eval-current");
+    auto v0 = cs.eval("(g4772 1)");
+    CHECK(v0 && is_int(*v0) && as_int(*v0) == 1, "4772s AC5: base image untouched by later edits");
+    // AC6: retention — far more snapshots than the image bound; the oldest
+    // ids fall back to source restore and still give the right content.
+    const auto cap_images = aura::compiler::Evaluator::kMaxAstSnapshotImages;
+    for (std::size_t i = 0; i < cap_images + 8; ++i) {
+        if (i % 2 == 0)
+            (void)cs.eval(std::format(
+                "(mutate:rebind \"g4772\" \"(lambda (x) (+ x {}))\" \"4772s\")", 1000 + i));
+        (void)cs.eval("(ast:snapshot)");
+    }
+    CHECK(cs.evaluator().ast_snapshot_image_count() <= cap_images,
+          "4772s AC6: distinct images bounded");
+    CHECK(cs.evaluator().ast_snapshot_deep_flat_count() <=
+              aura::compiler::Evaluator::kMaxAstSnapshotDeepFlats,
+          "4772s AC6: deep-copy equivalents bounded by the #4271 cap");
+    auto old = cs.eval(std::format("(ast:restore {})", ids[2]));
+    CHECK(old && is_bool(*old) && as_bool(*old), "4772s AC6: evicted id still restores");
+    CHECK(cs.eval("(eval-current)").has_value(), "4772s AC6: eval-current");
+    auto v2 = cs.eval("(g4772 1)");
+    CHECK(v2 && is_int(*v2) && as_int(*v2) == 21, "4772s AC6: evicted id restores right content");
+}
+
 int run_test_current_source_roundtrip() {
     std::println("=== Issue #2921: current-source / snapshot roundtrip matrix ===");
     // Before any set-code in this process: the epoch must still be 0 so the
@@ -2007,6 +2098,7 @@ int run_test_current_source_roundtrip() {
     ac4598_phase3_snapshot_share_and_stamp_restore();
     ac4598_phase4_snapshot_cap_counts_copies();
     ac4772_snapshot_quiet_guard();
+    ac4772_structural_sharing();
     ac4357_workspace_bools();
     ac4475_workspace_floats();
     run_4450_runtime_mint_ids();

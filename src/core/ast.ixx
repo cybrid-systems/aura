@@ -27,6 +27,7 @@ module;
 #include <utility>
 #include <vector>
 #include "core/persistent_child_vector.hh"
+#include "core/cow_column.hh"        // Issue #4772: chunk-tracked COW columns
 #include "core/cpp26_contract_stats.h"
 #include "core/provenance_tracker.hh"   // #2125: maybe_stamp_stable_ref_isolation_tenant
 #include "core/flatast_restamp.hh"      // FlatAST decomp step 1: RestampPolicy SSOT
@@ -534,6 +535,64 @@ public:
     // Evaluator intern tables cannot HIT a stale heap index.
     [[nodiscard]] std::uint64_t intern_epoch() const noexcept { return intern_epoch_; }
 
+public:
+    // Issue #4772: structural-sharing pool image (see FlatAST::Image). buf_
+    // is append-only, so a snapshot after an edit that interned a few new
+    // names copies only the buffer's tail chunk(s).
+    struct Image {
+        cow::ColumnImage<char> buf;
+        cow::ColumnImage<SymId> tbl;
+        std::uint32_t hash_capacity = 0;
+        std::uint32_t entry_count = 0;
+        std::uint64_t intern_epoch = 0;
+        std::size_t fresh_chunks = 0;
+        std::size_t total_chunks = 0;
+        [[nodiscard]] std::size_t data_size() const noexcept { return buf.size; }
+    };
+    [[nodiscard]] std::shared_ptr<const Image> capture_image() {
+        std::unique_lock<std::shared_mutex> write_lock(mtx_.mutable_get());
+        auto img = std::make_shared<Image>();
+        const Image* base = image_base_.get();
+        img->buf = buf_.capture(base ? &base->buf : nullptr, &img->fresh_chunks, &img->total_chunks);
+        img->tbl =
+            hash_tbl_.capture(base ? &base->tbl : nullptr, &img->fresh_chunks, &img->total_chunks);
+        img->hash_capacity = hash_capacity_;
+        img->entry_count = entry_count_;
+        img->intern_epoch = intern_epoch_;
+        std::shared_ptr<const Image> out = std::move(img);
+        image_base_ = out;
+        return out;
+    }
+    void assign_from_image(const std::shared_ptr<const Image>& img) {
+        if (!img)
+            return;
+        std::unique_lock<std::shared_mutex> write_lock(mtx_.mutable_get());
+        const Image* base = image_base_.get();
+        buf_.restore_from(img->buf, base ? &base->buf : nullptr);
+        hash_tbl_.restore_from(img->tbl, base ? &base->tbl : nullptr);
+        hash_capacity_ = img->hash_capacity;
+        entry_count_ = img->entry_count;
+        intern_epoch_ = img->intern_epoch;
+        image_base_ = img;
+    }
+    [[nodiscard]] static std::shared_ptr<StringPool>
+    materialize(const std::shared_ptr<const Image>& img) {
+        auto p = std::make_shared<StringPool>();
+        p->assign_from_image(img);
+        p->image_base_.reset();
+        return p;
+    }
+    [[nodiscard]] bool equals_image(const Image& img) const {
+        return buf_.equals_image(img.buf) && hash_tbl_.equals_image(img.tbl) &&
+               hash_capacity_ == img.hash_capacity && entry_count_ == img.entry_count;
+    }
+    [[nodiscard]] bool clean_since_image() const noexcept {
+        return image_base_ && buf_.clean() && hash_tbl_.clean();
+    }
+
+private:
+    std::shared_ptr<const Image> image_base_;
+
 private:
     static std::uint64_t hash_str(std::string_view s) {
         // FNV-1a
@@ -571,10 +630,10 @@ private:
     }
 
     // Backing store: contiguous null-terminated strings
-    std::pmr::vector<char> buf_;
+    cow::TrackedColumn<char> buf_;
 
     // Open-addressing hash table (SymId → offset into buf_)
-    std::pmr::vector<SymId> hash_tbl_;
+    cow::TrackedColumn<SymId> hash_tbl_;
     std::uint32_t hash_capacity_ = 0;
     std::uint32_t entry_count_ = 0;
     // Issue #2062: thread-safe intern via OwnedSharedMutex (placement-new
@@ -1172,6 +1231,31 @@ private:
     std::pmr::memory_resource* resource_;
     std::shared_ptr<vector_type> data_;
 };
+
+// Issue #4772: the columns a wholesale FlatAST copy mirrors (operator=), in
+// declaration order. Each is a cow::TrackedColumn / cow::TrackedMap, so a
+// snapshot image shares every chunk no write touched since the previous
+// image (see core/cow_column.hh). Adding a column that operator= copies
+// means adding it here — the copy, the image capture and the delta restore
+// all expand this one list.
+#define AURA_FLATAST_COW_COLUMNS(X)                                                                \
+    X(tag_) X(int_val_) X(float_val_) X(sym_id_) X(children_) X(parent_) X(incoming_parent_edges_) \
+    X(param_begin_) X(param_count_) X(cap_require_count_) X(param_data_) X(param_annot_data_)     \
+    X(line_) X(col_) X(marker_) X(provenance_) X(dirty_) X(ppa_dirty_) X(verify_dirty_)          \
+    X(verification_dirty_) X(macro_dirty_) X(type_id_) X(type_cache_gen_)                        \
+    X(type_cache_binding_gen_) X(schema_cache_) X(error_kind_) X(node_gen_) X(free_list_)        \
+    X(value_cache_) X(node_first_mutation_) X(match_info_) X(region_by_sym_dense_)               \
+    X(region_by_lambda_dense_)
+#define AURA_FLATAST_COW_MAPS(X) X(region_by_sym_) X(region_by_lambda_id_)
+// Issue #4772: the CONTENT subset — the columns that define what the tree is
+// (topology, literals, params, positions, slot liveness). The rest are
+// derived caches / indices (dirty bits, type & value caches, region index,
+// mutation metadata): images still capture them, but a capture that wrote
+// only caches is a share hit, and the restore oracle compares content.
+#define AURA_FLATAST_COW_CONTENT_COLUMNS(X)                                                        \
+    X(tag_) X(int_val_) X(float_val_) X(sym_id_) X(children_) X(parent_) X(incoming_parent_edges_) \
+    X(param_begin_) X(param_count_) X(cap_require_count_) X(param_data_) X(param_annot_data_)     \
+    X(line_) X(col_) X(marker_) X(provenance_) X(node_gen_) X(free_list_)
 
 export class FlatAST {
     // ── Issue #2413 / #2488 — concurrent access contract (read this) ───
@@ -1862,10 +1946,10 @@ public:
     // structural_mtx_ as documented in FlatAST #2413 — not every
     // column access takes flatast_mutex_. Do not assume lock-free
     // concurrent add_node vs tag_[id] (reallocation race).
-    std::pmr::vector<NodeTag> tag_;
-    std::pmr::vector<std::int64_t> int_val_;
-    std::pmr::vector<double> float_val_;
-    std::pmr::vector<SymId> sym_id_;
+    cow::TrackedColumn<NodeTag> tag_;
+    cow::TrackedColumn<std::int64_t> int_val_;
+    cow::TrackedColumn<double> float_val_;
+    cow::TrackedColumn<SymId> sym_id_;
     // Issue #220/#221/#2036: per-node children — fully PCV-backed.
     // Each node has its own PersistentChildVector<NodeId> (COW /
     // immutable; src/core/persistent_child_vector.hh). Accessors
@@ -1879,7 +1963,8 @@ public:
     // valid across rollback (#177 / restore_children).
     // Heap std::vector (not pmr/arena): pmr::vector realloc was
     // leaving aliased PCV slots sharing one control block (#300).
-    std::vector<PersistentChildVector<NodeId>> children_;
+    cow::TrackedColumn<PersistentChildVector<NodeId>, std::vector<PersistentChildVector<NodeId>>>
+        children_;
     // Issue #2959 fix: graveyard for children_ buffers swapped out by
     // restore_children_locked. Lock-free get() readers copy PCV handles
     // out of the buffer without holding any lock (seqlock fast path);
@@ -1937,14 +2022,14 @@ public:
     // Never acquire while another thread holds this and waits for
     // structural (classic AB-BA deadlock).
     OwnedSharedMutex metadata_mtx_;
-    std::pmr::vector<NodeId> parent_;
+    cow::TrackedColumn<NodeId> parent_;
     // Issue #1689: inverted multi-parent edge index.
     // For each child NodeId, list of (parent, child_index) edges that
     // reference it. Enables O(deg) parent lookup for remove-node (vs O(N*C)).
     // Mutable: rebuild may run from const collect/lookup paths.
     // When dirty, next lookup rebuilds from children_; locked structural
     // mutates keep the index fresh via incremental updates.
-    mutable std::pmr::vector<std::pmr::vector<std::pair<NodeId, std::uint32_t>>>
+    mutable cow::TrackedColumn<std::pmr::vector<std::pair<NodeId, std::uint32_t>>>
         incoming_parent_edges_;
     // Issue #2416: atomic dirty flag (match tag_arity_index_dirty_).
     // mark → store(true, release); rebuild → store(false, release);
@@ -1959,24 +2044,24 @@ public:
     // Issue #2451: (param_begin_, param_count_) is a non-atomic
     // publish pair. Writers set begin then count last (after arena
     // data is complete); readers under post-parse contract only.
-    std::pmr::vector<std::uint32_t> param_begin_;
-    std::pmr::vector<std::uint32_t> param_count_;
-    std::pmr::vector<std::uint32_t> cap_require_count_;
+    cow::TrackedColumn<std::uint32_t> param_begin_;
+    cow::TrackedColumn<std::uint32_t> param_count_;
+    cow::TrackedColumn<std::uint32_t> cap_require_count_;
     // Issue #2449: param_data_ is a shared arena (not per-node SoA
     // alone). Grown by builder insert under the single-threaded
     // mutation contract — concurrent insert vs param_begin_/count
     // slice readers is UB until parallel-parse hardens this column.
-    std::pmr::vector<SymId> param_data_;
+    cow::TrackedColumn<SymId> param_data_;
     // Issue #2450: param_annot_data_ grows in lockstep with
     // param_data_ via resize(+n, NULL_NODE). Same single-threaded
     // mutation contract — concurrent resize vs annotation slice
     // readers is UB (reallocation invalidates spans).
-    std::pmr::vector<NodeId> param_annot_data_; // per-param annotation node IDs (NULL_NODE = none)
+    cow::TrackedColumn<NodeId> param_annot_data_; // per-param annotation node IDs (NULL_NODE = none)
     // Source location (line/col, 1-based)
-    std::pmr::vector<std::uint32_t> line_;
-    std::pmr::vector<std::uint32_t> col_;
+    cow::TrackedColumn<std::uint32_t> line_;
+    cow::TrackedColumn<std::uint32_t> col_;
     // Type information (L6.5+): type_id per node, 0 = DYNAMIC
-    std::pmr::vector<SyntaxMarker> marker_;
+    cow::TrackedColumn<SyntaxMarker> marker_;
     // Issue #367: per-node provenance id (0 = no provenance).
     // Refers to the side-table in MarkerProvenanceTable; the
     // table stores macro_def_id + expansion_id + mutation_id
@@ -1985,16 +2070,16 @@ public:
     // fields on Node) keeps the per-node struct size
     // unchanged and lets us add provenance at any time
     // without touching every FlatAST consumer.
-    std::pmr::vector<std::uint32_t> provenance_;
+    cow::TrackedColumn<std::uint32_t> provenance_;
     // Issue #2423: dirty_ column concurrent access (shared readers /
     // exclusive writers). Dedicated mutex — NOT structural_mtx_ — so
     // mark_dirty under StructuralMutationGuard cannot deadlock.
     // LOCK ORDER if combined with structural: structural → dirty_column.
     mutable OwnedSharedMutex dirty_column_mtx_;
-    std::pmr::vector<std::uint8_t> dirty_;
+    cow::TrackedColumn<std::uint8_t> dirty_;
     // Issue #277: per-node PPA dirty bitmask (orthogonal to DirtyReason
     // which is full at 8 bits). OR'd with kPpaHintDirty on dirty_ when set.
-    std::pmr::vector<std::uint8_t> ppa_dirty_;
+    cow::TrackedColumn<std::uint8_t> ppa_dirty_;
     // Issue #437: per-node verification dirty bitmask (orthogonal to
     // DirtyReason which is full at 8 bits). Bit definitions:
     //   0x01 = Assertion (assertion failed)
@@ -2005,7 +2090,7 @@ public:
     // is_dirty() callers still see "this node needs work".
     // Issue #2440: mutable so const accessors can atomic_ref load;
     // concurrent RMW under dirty_column_mtx_ + atomic_ref (#2439/#2440).
-    mutable std::pmr::vector<std::uint8_t> verify_dirty_;
+    mutable cow::TrackedColumn<std::uint8_t> verify_dirty_;
     // Issue #469: verification_dirty_ column. Mirrors
     // verify_dirty_'s pattern; populated by
     // apply_verification_dirty_bits (called from
@@ -2014,7 +2099,7 @@ public:
     //   kCoverageFeedbackDirty = 0x01
     //   kAssertFailureDirty = 0x02
     // Issue #2440: mutable for atomic_ref in const readers.
-    mutable std::pmr::vector<std::uint8_t> verification_dirty_;
+    mutable cow::TrackedColumn<std::uint8_t> verification_dirty_;
     // Issue #290: macro_dirty_ column. Mirrors
     // verification_dirty_'s pattern; populated by
     // apply_macro_dirty_bits (called from clone_macro_body
@@ -2027,10 +2112,10 @@ public:
     //                            node)
     // Issue #2441: mutable for atomic_ref in const readers;
     // concurrent RMW under dirty_column_mtx_ + fetch_or.
-    mutable std::pmr::vector<std::uint8_t> macro_dirty_;
+    mutable cow::TrackedColumn<std::uint8_t> macro_dirty_;
     // Issue #339: per-node occurrence-narrowing staleness
     // column. When a mutation affects a predicate or a
-    std::pmr::vector<std::uint32_t> type_id_;
+    cow::TrackedColumn<std::uint32_t> type_id_;
     // Issue #412: per-node type cache generation. Parallel to
     // type_id_; stores the type_cache_generation_ at the time
     // the cache entry was populated. On cache hit, the
@@ -2043,7 +2128,7 @@ public:
     // a polymorphic type that still has TYPE_VAR children but
     // the binding structure didn't change). 0 = no cache
     // entry yet (matches type_id_ == 0 semantics).
-    std::pmr::vector<std::uint32_t> type_cache_gen_;
+    cow::TrackedColumn<std::uint32_t> type_cache_gen_;
     // Issue #412 follow-up #1: per-binding generation
     // column. Parallel to type_cache_gen_; stores the
     // gen of THE SPECIFIC BINDING the cache entry is
@@ -2057,7 +2142,7 @@ public:
     // matches → entry is fresh. This is finer-grained
     // than the global gen alone (which over-invalidates
     // when a different binding mutates).
-    std::pmr::vector<std::uint32_t> type_cache_binding_gen_;
+    cow::TrackedColumn<std::uint32_t> type_cache_binding_gen_;
     // Issue #390: per-node schema cache column.
     // Parallel to type_id_; stores the pre-computed
     // type for nodes whose schema was determined by
@@ -2065,7 +2150,7 @@ public:
     // schema (the type checker will infer normally).
     // Non-zero = the type checker can use this as a
     // cache hit signal (avoids re-inference).
-    std::pmr::vector<std::uint32_t> schema_cache_;
+    cow::TrackedColumn<std::uint32_t> schema_cache_;
     // Issue #412 follow-up #1: per-binding generation
     // map. SymId → uint32_t. Each binding has its own
     // gen counter that bumps only when THAT binding's
@@ -2093,7 +2178,7 @@ public:
     // Issue #79: per-node error kind, 0 = no error, non-zero = ErrorKind
     // enum value. Populated by the type-checker and runtime evaluator;
     // queryable via the AuraQuery `(has-error? N)` clause.
-    std::pmr::vector<std::uint8_t> error_kind_;
+    cow::TrackedColumn<std::uint8_t> error_kind_;
     // Issue #447: tag+arity pre-index for query:pattern.
     // Index: (NodeTag, arity) → list of NodeIds matching.
     // arity is a 16-bit value (high byte = min children,
@@ -2230,7 +2315,7 @@ public:
     // are released along with the rest of the arena's memory.
     // This eliminates the need for free_persistent_state() at process
     // exit.
-    std::pmr::vector<std::int64_t> value_cache_;
+    cow::TrackedColumn<std::int64_t> value_cache_;
     // Issue #2457: shared_ptr COW — FlatAST copy shares the log
     // (O(1)); first append/erase/clear after share detaches.
     CowPmrVector<MutationRecord> mutation_log_;
@@ -2290,7 +2375,7 @@ public:
     // exit reader runs under the workspace boundary lock.
     mutable std::atomic<std::uint64_t> linear_ops_live_{0};
     mutable std::atomic<std::uint64_t> match_sites_live_{0};
-    std::pmr::vector<std::uint32_t> node_first_mutation_;
+    cow::TrackedColumn<std::uint32_t> node_first_mutation_;
     // Issue #320: per-node epoch tracking. Records the
     // last mutation_epoch_ at which this node was
     // touched (marked dirty or structurally mutated).
@@ -2329,7 +2414,7 @@ public:
     // (unit flats, Soft). Rebirth restarts generation_/wrap/cow, so
     // is_valid compares this against the ref's install_id_at_capture.
     std::uint32_t install_id_ = 0;
-    std::pmr::vector<std::uint16_t> node_gen_;
+    cow::TrackedColumn<std::uint16_t> node_gen_;
     // Issue #261: free-list of recycled NodeId slots. Slots on the
     // free list have node_gen_[id] == 0 (tombstone). add_node()
     // pops from here before bump-appending new slots.
@@ -2340,7 +2425,7 @@ public:
     // externally serialized with add_node (workspace_mtx / single-
     // thread mutation contract — see FlatAST #2413 concurrent access
     // contract). Not atomic: vector reallocation is not lock-free.
-    std::pmr::vector<NodeId> free_list_;
+    cow::TrackedColumn<NodeId> free_list_;
     // Issue #255: reference stability observability counters.
     // The reference stability mechanism (generation_ + node_gen_
     // + StableNodeRef) is a candidate for std::meta-based
@@ -2371,7 +2456,7 @@ public:
     // atomic_ref; resize exclusive under subtree_gen_mtx_.
     // LOCK ORDER if combined with structural: structural → subtree_gen.
     mutable OwnedSharedMutex subtree_gen_mtx_;
-    mutable std::pmr::vector<std::uint32_t> subtree_gen_;
+    mutable cow::TrackedColumn<std::uint32_t> subtree_gen_;
     // Issue #457: generation_ / node_gen_ lifecycle
     // observability counters. All stats-only (relaxed
     // ordering). Bumped in bump_generation() (wrap
@@ -3490,7 +3575,7 @@ public:
         return add_node(tag, m);
     }
 
-    std::vector<MatchClauseInfo> match_info_;
+    cow::TrackedColumn<MatchClauseInfo, std::vector<MatchClauseInfo>> match_info_;
     // Issue #150 Phase 1: region annotation side-tables.
     // region_by_sym_ is keyed by the define's SymId (the
     // function's bound name). region_by_lambda_id_ is keyed by
@@ -3504,8 +3589,8 @@ public:
     // Issue #2443: region_table_mtx_ guards maps + dense SoA.
     // LOCK ORDER if combined with structural: structural → region_table.
     mutable OwnedSharedMutex region_table_mtx_;
-    std::pmr::unordered_map<SymId, std::uint8_t> region_by_sym_;
-    std::pmr::unordered_map<NodeId, std::uint8_t> region_by_lambda_id_;
+    cow::TrackedMap<std::pmr::unordered_map<SymId, std::uint8_t>> region_by_sym_;
+    cow::TrackedMap<std::pmr::unordered_map<NodeId, std::uint8_t>> region_by_lambda_id_;
     // Issue #2446 / #2444 / #2443 / #1520: dense SoA side-tables for
     // region lookups (index = SymId/NodeId, 0 = unset, else region+1).
     // Cap keeps memory bounded. mutable for atomic_ref load in const
@@ -3513,8 +3598,8 @@ public:
     // atomic_ref. #2444 = region_by_sym_dense_; Issue #2446 =
     // region_by_lambda_dense_ + region_by_lambda_id_.
     static constexpr std::size_t kRegionDenseCap = 65536;
-    mutable std::pmr::vector<std::uint8_t> region_by_sym_dense_;
-    mutable std::pmr::vector<std::uint8_t> region_by_lambda_dense_;
+    mutable cow::TrackedColumn<std::uint8_t> region_by_sym_dense_;
+    mutable cow::TrackedColumn<std::uint8_t> region_by_lambda_dense_;
     // Issue #255: explicit custom move constructor. The
     // 4 std::atomic observability members (added for #255)
     // make the implicit move ctor deleted by some compiler
@@ -3861,114 +3946,254 @@ public:
         summary_flags_.store(other.summary_flags_.load(std::memory_order_relaxed),
                              std::memory_order_release);
     }
+    // Issue #4772: the wholesale copy is split into its column half (the
+    // structurally shared part of a snapshot image) and its scalar half
+    // (carried by the image shell). operator= = columns + scalars + finish,
+    // and assign_from_image() = delta columns + the same scalars + finish,
+    // so a direct restore keeps exactly the #107 copy semantics.
     FlatAST& operator=(const FlatAST& other) {
         if (this != &other) {
-            tag_ = other.tag_;
-            int_val_ = other.int_val_;
-            float_val_ = other.float_val_;
-            sym_id_ = other.sym_id_;
-            children_ = other.children_;
-            children_retired_.clear();
-            parent_ = other.parent_;
-            incoming_parent_edges_ = other.incoming_parent_edges_;
-            incoming_parent_index_dirty_.store(
-                other.incoming_parent_index_dirty_.load(std::memory_order_relaxed),
-                std::memory_order_relaxed);
-            incoming_parent_index_rebuilds_.store(other.incoming_parent_index_rebuilds_.load());
-            incoming_parent_index_lookups_.store(other.incoming_parent_index_lookups_.load());
-            incoming_parent_index_hits_.store(other.incoming_parent_index_hits_.load());
-            param_begin_ = other.param_begin_;
-            param_count_ = other.param_count_;
-            cap_require_count_ = other.cap_require_count_;
-            param_data_ = other.param_data_;
-            param_annot_data_ = other.param_annot_data_;
-            line_ = other.line_;
-            col_ = other.col_;
-            // Issue #1893: hygiene / dirty metadata SoA — required for
-            // capture_workspace_snapshot / atomic-batch :snapshot? restore
-            // to preserve MacroIntroduced + provenance after rollback.
-            marker_ = other.marker_;
-            provenance_ = other.provenance_;
-            dirty_ = other.dirty_;
-            ppa_dirty_ = other.ppa_dirty_;
-            verify_dirty_ = other.verify_dirty_;
-            verification_dirty_ = other.verification_dirty_;
-            macro_dirty_ = other.macro_dirty_;
-            type_id_ = other.type_id_;
-            type_cache_gen_ = other.type_cache_gen_;
-            type_cache_binding_gen_ = other.type_cache_binding_gen_;
-            // Issue #2417: share snapshot (copy) of atomic shared_ptr.
-            binding_gens_.store(other.binding_gens_.load(std::memory_order_acquire),
-                                std::memory_order_release);
-            schema_cache_ = other.schema_cache_;
-            error_kind_ = other.error_kind_;
-            node_gen_ = other.node_gen_;
-            free_list_ = other.free_list_;
-            value_cache_ = other.value_cache_;
-            // Issue #2457: share COW logs (O(1)); was deep-copy.
-            mutation_log_ = other.mutation_log_;
-            narrowing_log_ = other.narrowing_log_;
-            node_first_mutation_ = other.node_first_mutation_;
-            next_mutation_id_ = other.next_mutation_id_;
-            generation_.store(other.generation_.load(std::memory_order_acquire));
-            bump_generation_count_.store(other.bump_generation_count_.load());
-            is_valid_check_count_.store(other.is_valid_check_count_.load());
-            stable_ref_invalidations_.store(other.stable_ref_invalidations_.load());
-            atomic_batch_commits_.store(other.atomic_batch_commits_.load());
-            verification_coverage_feedback_total_.store(
-                other.verification_coverage_feedback_total_.load());
-            verification_assert_failure_total_.store(
-                other.verification_assert_failure_total_.load());
-            verify_loop_cycles_total_.store(other.verify_loop_cycles_total_.load());
-            macro_expansion_dirty_total_.store(other.macro_expansion_dirty_total_.load());
-            macro_self_modify_dirty_total_.store(other.macro_self_modify_dirty_total_.load());
-            macro_restamp_after_flat_total_.store(other.macro_restamp_after_flat_total_.load());
-            children_call_count_.store(other.children_call_count_.load());
-            parent_of_call_count_.store(other.parent_of_call_count_.load());
-            mark_dirty_upward_call_count_.store(other.mark_dirty_upward_call_count_.load());
-            mark_dirty_total_nodes_.store(other.mark_dirty_total_nodes_.load());
-            mark_dirty_truncated_count_.store(other.mark_dirty_truncated_count_.load());
-            mark_dirty_boundary_prune_count_.store(other.mark_dirty_boundary_prune_count_.load());
-            auto_compact_on_commit_count_.store(other.auto_compact_on_commit_count_.load());
-            live_nodes_threshold_warn_count_.store(other.live_nodes_threshold_warn_count_.load());
-            compaction_free_list_threshold_ = other.compaction_free_list_threshold_;
-            max_live_nodes_warn_ = other.max_live_nodes_warn_;
-            rollback_compaction_triggered_.store(other.rollback_compaction_triggered_.load());
-            node_recycle_total_.store(other.node_recycle_total_.load());
-            node_slot_reuse_count_.store(other.node_slot_reuse_count_.load());
-            node_compact_total_.store(other.node_compact_total_.load());
-            soft_compact_count_.store(other.soft_compact_count_.load());
-            stale_ref_auto_refresh_count_.store(other.stale_ref_auto_refresh_count_.load());
-            match_info_ = other.match_info_;
-            region_by_sym_ = other.region_by_sym_;
-            region_by_lambda_id_ = other.region_by_lambda_id_;
-            region_by_sym_dense_ = other.region_by_sym_dense_;
-            region_by_lambda_dense_ = other.region_by_lambda_dense_;
-            children_column_soa_hits_.store(other.children_column_soa_hits_.load());
-            pcv_pin_count_.store(other.pcv_pin_count_.load());
-            region_dense_hits_.store(other.region_dense_hits_.load());
-            region_map_lookups_.store(other.region_map_lookups_.load());
-            root = other.root;
-            bump_generation_suppressed_ = other.bump_generation_suppressed_;
-            atomic_batch_bumps_saved_ = other.atomic_batch_bumps_saved_;
-            // Issue #4598: columns were copied wholesale — mirror the counts
-            // and the summary bit-set.
-            linear_ops_live_.store(other.linear_ops_live_.load(std::memory_order_relaxed),
-                                   std::memory_order_relaxed);
-            match_sites_live_.store(other.match_sites_live_.load(std::memory_order_relaxed),
-                                    std::memory_order_relaxed);
-            summary_flags_.store(other.summary_flags_.load(std::memory_order_relaxed),
-                                 std::memory_order_release);
-            // Issue #3402: dest keeps its own runtime_resource_. Never
-            // copy pmr dense columns that alias another arena; rebuild
-            // from children_ on the next children_columnar call.
-            child_data_.clear();
-            child_begin_.clear();
-            child_count_.clear();
-            dense_dirty_ = true;
+#define AURA_4772_COPY_COL(c) c = other.c;
+            AURA_FLATAST_COW_COLUMNS(AURA_4772_COPY_COL)
+            AURA_FLATAST_COW_MAPS(AURA_4772_COPY_COL)
+#undef AURA_4772_COPY_COL
+            copy_scalars_from_(other);
+            finish_wholesale_assign_();
+            image_base_.reset();
         }
         return *this;
     }
+    // Issue #4772: every non-column member operator= mirrors (verbatim from
+    // the pre-#4772 body; the column assigns moved to the X-macro list).
+    void copy_scalars_from_(const FlatAST& other) {
+        incoming_parent_index_dirty_.store(
+            other.incoming_parent_index_dirty_.load(std::memory_order_relaxed),
+            std::memory_order_relaxed);
+        incoming_parent_index_rebuilds_.store(other.incoming_parent_index_rebuilds_.load());
+        incoming_parent_index_lookups_.store(other.incoming_parent_index_lookups_.load());
+        incoming_parent_index_hits_.store(other.incoming_parent_index_hits_.load());
+        // Issue #1893: hygiene / dirty metadata SoA — required for
+        // capture_workspace_snapshot / atomic-batch :snapshot? restore
+        // to preserve MacroIntroduced + provenance after rollback.
+        // Issue #2417: share snapshot (copy) of atomic shared_ptr.
+        binding_gens_.store(other.binding_gens_.load(std::memory_order_acquire),
+                            std::memory_order_release);
+        // Issue #2457: share COW logs (O(1)); was deep-copy.
+        mutation_log_ = other.mutation_log_;
+        narrowing_log_ = other.narrowing_log_;
+        next_mutation_id_ = other.next_mutation_id_;
+        generation_.store(other.generation_.load(std::memory_order_acquire));
+        bump_generation_count_.store(other.bump_generation_count_.load());
+        is_valid_check_count_.store(other.is_valid_check_count_.load());
+        stable_ref_invalidations_.store(other.stable_ref_invalidations_.load());
+        atomic_batch_commits_.store(other.atomic_batch_commits_.load());
+        verification_coverage_feedback_total_.store(
+            other.verification_coverage_feedback_total_.load());
+        verification_assert_failure_total_.store(
+            other.verification_assert_failure_total_.load());
+        verify_loop_cycles_total_.store(other.verify_loop_cycles_total_.load());
+        macro_expansion_dirty_total_.store(other.macro_expansion_dirty_total_.load());
+        macro_self_modify_dirty_total_.store(other.macro_self_modify_dirty_total_.load());
+        macro_restamp_after_flat_total_.store(other.macro_restamp_after_flat_total_.load());
+        children_call_count_.store(other.children_call_count_.load());
+        parent_of_call_count_.store(other.parent_of_call_count_.load());
+        mark_dirty_upward_call_count_.store(other.mark_dirty_upward_call_count_.load());
+        mark_dirty_total_nodes_.store(other.mark_dirty_total_nodes_.load());
+        mark_dirty_truncated_count_.store(other.mark_dirty_truncated_count_.load());
+        mark_dirty_boundary_prune_count_.store(other.mark_dirty_boundary_prune_count_.load());
+        auto_compact_on_commit_count_.store(other.auto_compact_on_commit_count_.load());
+        live_nodes_threshold_warn_count_.store(other.live_nodes_threshold_warn_count_.load());
+        compaction_free_list_threshold_ = other.compaction_free_list_threshold_;
+        max_live_nodes_warn_ = other.max_live_nodes_warn_;
+        rollback_compaction_triggered_.store(other.rollback_compaction_triggered_.load());
+        node_recycle_total_.store(other.node_recycle_total_.load());
+        node_slot_reuse_count_.store(other.node_slot_reuse_count_.load());
+        node_compact_total_.store(other.node_compact_total_.load());
+        soft_compact_count_.store(other.soft_compact_count_.load());
+        stale_ref_auto_refresh_count_.store(other.stale_ref_auto_refresh_count_.load());
+        children_column_soa_hits_.store(other.children_column_soa_hits_.load());
+        pcv_pin_count_.store(other.pcv_pin_count_.load());
+        region_dense_hits_.store(other.region_dense_hits_.load());
+        region_map_lookups_.store(other.region_map_lookups_.load());
+        root = other.root;
+        bump_generation_suppressed_ = other.bump_generation_suppressed_;
+        atomic_batch_bumps_saved_ = other.atomic_batch_bumps_saved_;
+        // Issue #4598: columns were copied wholesale — mirror the counts
+        // and the summary bit-set.
+        linear_ops_live_.store(other.linear_ops_live_.load(std::memory_order_relaxed),
+                               std::memory_order_relaxed);
+        match_sites_live_.store(other.match_sites_live_.load(std::memory_order_relaxed),
+                                std::memory_order_relaxed);
+        summary_flags_.store(other.summary_flags_.load(std::memory_order_relaxed),
+                             std::memory_order_release);
+    }
+    void finish_wholesale_assign_() {
+        children_retired_.clear();
+        // Issue #3402: dest keeps its own runtime_resource_. Never
+        // copy pmr dense columns that alias another arena; rebuild
+        // from children_ on the next children_columnar call.
+        child_data_.clear();
+        child_begin_.clear();
+        child_count_.clear();
+        dense_dirty_ = true;
+    }
+    // ── Issue #4772: structural-sharing snapshot images ──────────────
+    // An Image is an immutable capture of everything operator= mirrors:
+    // the scalar half lives in `shell` (a column-less FlatAST), every
+    // column is a list of shared fixed-size chunks. capture_image() shares
+    // each chunk no write touched since the previous image of this flat
+    // (image_base_) and copies the rest, so a snapshot after a one-define
+    // edit is O(changed chunks + chunk count) instead of an O(n) deep
+    // copy; assign_from_image() is the matching delta restore. subtree_gen_
+    // (not mirrored by operator=) is captured too, against its own base, so
+    // the restore stamp diff can read the capture-time cells lazily.
+    struct Image {
+        std::shared_ptr<FlatAST> shell; // scalars only (columns empty)
+#define AURA_4772_IMG_FIELD(c) decltype(FlatAST::c)::image_type c;
+        AURA_FLATAST_COW_COLUMNS(AURA_4772_IMG_FIELD)
+        AURA_FLATAST_COW_MAPS(AURA_4772_IMG_FIELD)
+#undef AURA_4772_IMG_FIELD
+        cow::ColumnImage<std::uint32_t> subtree_gen;
+        std::size_t node_count = 0;
+        std::size_t fresh_chunks = 0; // chunks this capture allocated
+        std::size_t content_fresh_chunks = 0; // of those, CONTENT-column chunks
+        std::size_t total_chunks = 0; // chunks the image references
+        [[nodiscard]] std::uint16_t subtree_gen_at(NodeId top) const noexcept {
+            if (top == NULL_NODE || top >= subtree_gen.size)
+                return 0;
+            return static_cast<std::uint16_t>(subtree_gen.at(top) & 0xFFFFu);
+        }
+        // Share of the image's chunks that this capture owns (1.0 = a full
+        // deep copy, ~0 = a delta over the previous image).
+        [[nodiscard]] double weight() const noexcept {
+            return total_chunks == 0 ? 1.0
+                                     : static_cast<double>(fresh_chunks) /
+                                           static_cast<double>(total_chunks);
+        }
+    };
+    [[nodiscard]] std::shared_ptr<const Image> capture_image() {
+        auto img = std::make_shared<Image>();
+        img->shell = std::make_shared<FlatAST>();
+        img->shell->copy_scalars_from_(*this);
+        const Image* base = image_base_.get();
+        std::size_t fresh = 0;
+        std::size_t total = 0;
+        std::size_t content_fresh = 0;
+#define AURA_4772_CAP(c)                                                                           \
+    {                                                                                              \
+        std::size_t f = 0;                                                                         \
+        img->c = c.capture(base ? &base->c : nullptr, &f, &total);                                 \
+        fresh += f;                                                                                \
+        if (is_content_column_(#c))                                                                \
+            content_fresh += f;                                                                    \
+    }
+        AURA_FLATAST_COW_COLUMNS(AURA_4772_CAP)
+        AURA_FLATAST_COW_MAPS(AURA_4772_CAP)
+#undef AURA_4772_CAP
+        {
+            std::unique_lock<std::shared_mutex> wlock(subtree_gen_mtx_.mutable_get());
+            const Image* gbase = subtree_gen_base_.get();
+            img->subtree_gen =
+                subtree_gen_.capture(gbase ? &gbase->subtree_gen : nullptr, &fresh, &total);
+        }
+        img->node_count = size();
+        img->fresh_chunks = fresh;
+        img->content_fresh_chunks = content_fresh;
+        img->total_chunks = total;
+        std::shared_ptr<const Image> out = std::move(img);
+        image_base_ = out;
+        subtree_gen_base_ = out;
+        return out;
+    }
+    // Delta restore: afterwards the flat is exactly what `*this = <the flat
+    // the image was captured from>` would leave (same columns, same scalars,
+    // same post-assign resets). Chunks clean since image_base_ and shared
+    // with `img` are skipped. subtree_gen_ is left alone, as operator= does.
+    void assign_from_image(const std::shared_ptr<const Image>& img) {
+        if (!img)
+            return;
+        const Image* base = image_base_.get();
+#define AURA_4772_RST(c) c.restore_from(img->c, base ? &base->c : nullptr);
+        AURA_FLATAST_COW_COLUMNS(AURA_4772_RST)
+        AURA_FLATAST_COW_MAPS(AURA_4772_RST)
+#undef AURA_4772_RST
+        copy_scalars_from_(*img->shell);
+        finish_wholesale_assign_();
+        image_base_ = img;
+    }
+    // A self-contained FlatAST holding the image's content (O(n)); used for
+    // lazy unparse of a snapshot's source and for tests.
+    [[nodiscard]] static std::shared_ptr<FlatAST> materialize(const std::shared_ptr<const Image>& img) {
+        auto f = std::make_shared<FlatAST>();
+        f->assign_from_image(img);
+        f->image_base_.reset();
+        return f;
+    }
+    // Test / debug oracle: every mirrored column equals the image.
+    [[nodiscard]] bool equals_image(const Image& img) const {
+        bool ok = true;
+#define AURA_4772_EQ(c) ok = ok && c.equals_image(img.c);
+        AURA_FLATAST_COW_COLUMNS(AURA_4772_EQ)
+        AURA_FLATAST_COW_MAPS(AURA_4772_EQ)
+#undef AURA_4772_EQ
+        return ok && root == img.shell->root;
+    }
+    // Issue #4772: restore oracle — the CONTENT columns (and root) equal the
+    // image. Cache columns may legitimately diverge after a restore (the
+    // restore marks the replaced defines dirty).
+    [[nodiscard]] bool content_equals_image(const Image& img) const {
+        bool ok = true;
+#define AURA_4772_EQ(c) ok = ok && c.equals_image(img.c);
+        AURA_FLATAST_COW_CONTENT_COLUMNS(AURA_4772_EQ)
+#undef AURA_4772_EQ
+        return ok && root == img.shell->root;
+    }
+    // Debug: names of mirrored columns / maps that differ from the image.
+    [[nodiscard]] std::string image_diff_columns(const Image& img) const {
+        std::string out;
+#define AURA_4772_DIFF(c)                                                                          \
+    if (!c.equals_image(img.c)) {                                                                  \
+        out += #c;                                                                                 \
+        out += ' ';                                                                                \
+    }
+        AURA_FLATAST_COW_COLUMNS(AURA_4772_DIFF)
+        AURA_FLATAST_COW_MAPS(AURA_4772_DIFF)
+#undef AURA_4772_DIFF
+        if (root != img.shell->root)
+            out += "root ";
+        return out;
+    }
+    // True when no mirrored column / map was written since image_base_.
+    [[nodiscard]] bool clean_since_image() const noexcept {
+        if (!image_base_)
+            return false;
+        bool ok = true;
+#define AURA_4772_CLEAN(c) ok = ok && c.clean();
+        AURA_FLATAST_COW_COLUMNS(AURA_4772_CLEAN)
+        AURA_FLATAST_COW_MAPS(AURA_4772_CLEAN)
+#undef AURA_4772_CLEAN
+        return ok;
+    }
+    [[nodiscard]] const std::shared_ptr<const Image>& image_base() const noexcept {
+        return image_base_;
+    }
+
+private:
+    [[nodiscard]] static bool is_content_column_(std::string_view name) noexcept {
+        static constexpr std::string_view kContent[] = {
+#define AURA_4772_NAME(c) #c,
+            AURA_FLATAST_COW_CONTENT_COLUMNS(AURA_4772_NAME)
+#undef AURA_4772_NAME
+        };
+        for (auto n : kContent)
+            if (n == name)
+                return true;
+        return false;
+    }
+    std::shared_ptr<const Image> image_base_;      // columns' dirty bits are relative to this
+    std::shared_ptr<const Image> subtree_gen_base_; // subtree_gen_'s bits are relative to this
+
+public:
     explicit FlatAST(std::pmr::polymorphic_allocator<std::byte> alloc = {})
         : tag_(alloc)
         , int_val_(alloc)
@@ -4035,7 +4260,7 @@ public:
     // a no-op, then dedupe-abandon aliases on the detached vector.
     void release_children_for_teardown() {
         std::vector<PersistentChildVector<NodeId>> doomed;
-        doomed.swap(children_);
+        children_.swap(doomed);
         std::unordered_set<const void*> seen;
         for (auto& pcv : doomed) {
             const void* id = pcv.storage_identity();
@@ -5009,7 +5234,7 @@ public:
     // Issue #1689: rebuild child→[(parent,idx)...] from children_ SoA.
     void rebuild_incoming_parent_index() const {
         const auto n = size();
-        incoming_parent_edges_.assign(n, {});
+        incoming_parent_edges_.assign(n, std::pmr::vector<std::pair<NodeId, std::uint32_t>>{});
         for (NodeId id = 0; id < n; ++id) {
             if (is_free_slot(id) || id >= children_.size())
                 continue;
@@ -6082,7 +6307,7 @@ public:
         // wholesale) — same reader discipline as get_soa_safe. Single-
         // threaded callers pay one uncontended shared lock.
         SoAReadGuard guard(this);
-        return children_; // vector copy ctor; each PCV is shared_ptr copy
+        return children_.view(); // vector copy ctor; each PCV is shared_ptr copy
     }
 
     // Issue #221 / #2455: restore children_ from a pre-captured snapshot.
@@ -6162,7 +6387,7 @@ public:
         // swapped-in snapshot, and get_soa_safe readers block on the
         // exclusive mutex.
         children_retired_.push_back(std::move(snapshot));
-        children_retired_.back().swap(children_);
+        children_.swap(children_retired_.back());
         // Bound graveyard growth: destroy the oldest retiree only under the
         // SoA exclusive section — get_soa_safe readers are blocked by it,
         // and a fast-path reader sampled that many restores ago cannot
@@ -6197,8 +6422,8 @@ public:
             macro_dirty_;
     };
     [[nodiscard]] DirtySoaSnapshot snapshot_dirty_soa() const {
-        return DirtySoaSnapshot{dirty_, ppa_dirty_, verify_dirty_, verification_dirty_,
-                                macro_dirty_};
+        return DirtySoaSnapshot{dirty_.view(), ppa_dirty_.view(), verify_dirty_.view(), verification_dirty_.view(),
+                                macro_dirty_.view()};
     }
     void restore_dirty_soa(DirtySoaSnapshot&& snap) {
         if (snap.dirty_.empty())
@@ -6218,7 +6443,7 @@ public:
         std::pmr::vector<std::uint32_t> provenance;
     };
     [[nodiscard]] MarkerProvenanceSnapshot snapshot_marker_provenance() const {
-        return MarkerProvenanceSnapshot{marker_, provenance_};
+        return MarkerProvenanceSnapshot{marker_.view(), provenance_.view()};
     }
     void restore_marker_provenance(MarkerProvenanceSnapshot&& snap) noexcept {
         if (snap.marker.empty())
@@ -6241,8 +6466,8 @@ public:
         std::pmr::vector<std::uint32_t> schema_cache;
     };
     [[nodiscard]] TypeColumnSnapshot snapshot_type_columns() const {
-        return TypeColumnSnapshot{true, type_id_, type_cache_gen_, type_cache_binding_gen_,
-                                  schema_cache_};
+        return TypeColumnSnapshot{true, type_id_.view(), type_cache_gen_.view(), type_cache_binding_gen_.view(),
+                                  schema_cache_.view()};
     }
     void restore_type_columns(TypeColumnSnapshot&& snap) noexcept {
         if (!snap.captured)
@@ -6340,7 +6565,7 @@ public:
 
     // Issue #1502: capture parent_ SoA column for strong topology
     // rollback (pairs with snapshot_children). O(n) vector copy.
-    std::pmr::vector<NodeId> snapshot_parent() const { return parent_; }
+    std::pmr::vector<NodeId> snapshot_parent() const { return parent_.view(); }
 
     // Issue #1502: restore parent_ from a pre-captured snapshot.
     // Pads if the live flat grew during a failed mutation (same
@@ -6410,7 +6635,7 @@ public:
 
     // Issue #266: capture / restore sym_id_ for fine-grained rollback
     // of bulk rename operations (mutate:rename-symbol).
-    std::pmr::vector<SymId> snapshot_sym_id() const { return sym_id_; }
+    std::pmr::vector<SymId> snapshot_sym_id() const { return sym_id_.view(); }
     void restore_sym_id(std::pmr::vector<SymId>&& snapshot) {
         sym_id_ = std::move(snapshot);
         bump_generation();
@@ -6423,7 +6648,7 @@ public:
         std::pmr::vector<std::uint32_t> param_count;
     };
     ParamColumnsSnapshot snapshot_param_columns() const {
-        return {param_data_, param_begin_, param_count_};
+        return {param_data_.view(), param_begin_.view(), param_count_.view()};
     }
     void restore_param_columns(ParamColumnsSnapshot&& snapshot) {
         param_data_ = std::move(snapshot.param_data);
@@ -6443,7 +6668,7 @@ public:
         std::pmr::vector<std::uint8_t> macro_dirty;
     };
     [[nodiscard]] MetadataColumnsSnapshot snapshot_metadata_columns() const {
-        return {marker_, provenance_, dirty_, macro_dirty_};
+        return {marker_.view(), provenance_.view(), dirty_.view(), macro_dirty_.view()};
     }
     void restore_metadata_columns(MetadataColumnsSnapshot&& snapshot) noexcept {
         marker_ = std::move(snapshot.marker);
@@ -7374,8 +7599,8 @@ public:
             for (const auto& mi : match_info_)
                 wire_write_match_clause_info(buf, mi);
         }
-        wire_write_map_u32_u8(buf, region_by_sym_);
-        wire_write_map_u32_u8(buf, region_by_lambda_id_);
+        wire_write_map_u32_u8(buf, region_by_sym_.view());
+        wire_write_map_u32_u8(buf, region_by_lambda_id_.view());
         buf.insert(buf.end(), reinterpret_cast<const char*>(&root),
                    reinterpret_cast<const char*>(&root) + 4);
         // Issue #277: optional v2 extension — PPA dirty column.
@@ -7499,8 +7724,8 @@ public:
             for (std::uint32_t i = 0; i < mi_count; ++i)
                 ast.match_info_[i] = wire_read_match_clause_info(buf, pos);
 
-            wire_read_map_u32_u8(buf, pos, ast.region_by_sym_);
-            wire_read_map_u32_u8(buf, pos, ast.region_by_lambda_id_);
+            wire_read_map_u32_u8(buf, pos, ast.region_by_sym_.mut());
+            wire_read_map_u32_u8(buf, pos, ast.region_by_lambda_id_.mut());
             std::memcpy(&ast.root, &buf[pos], 4);
             pos += 4;
             // Issue #277: backward-compatible optional PPA dirty column.
@@ -7765,7 +7990,7 @@ public:
     // primitive to walk all nodes in O(n) without a per-node
     // accessor call.
     [[nodiscard]] const std::pmr::vector<std::uint8_t>& dirty_column() const noexcept {
-        return dirty_;
+        return dirty_.view();
     }
     // Issue #277: PPA dirty accessors (orthogonal column).
     void mark_ppa_dirty(NodeId id, std::uint8_t ppa_reasons);
@@ -7780,13 +8005,13 @@ public:
     void clear_ppa_dirty_for(NodeId id, std::uint8_t ppa_mask);
 
     [[nodiscard]] const std::pmr::vector<std::uint8_t>& ppa_dirty_column() const noexcept {
-        return ppa_dirty_;
+        return ppa_dirty_.view();
     }
     // Issue #190: read-only view of the marker column for
     // observability/aggregation. Used by the (syntax-marker-counts)
     // primitive to walk all nodes in O(n).
     [[nodiscard]] const std::pmr::vector<SyntaxMarker>& marker_column() const noexcept {
-        return marker_;
+        return marker_.view();
     }
 
     // Issue #367: per-node provenance accessor + setter.
@@ -7805,7 +8030,7 @@ public:
         return provenance_[id];
     }
     [[nodiscard]] const std::pmr::vector<std::uint32_t>& provenance_column() const noexcept {
-        return provenance_;
+        return provenance_.view();
     }
 
     // ── Node validation (NodeMeta invariants) ─────────────────
@@ -9771,8 +9996,11 @@ public:
         if (top == NULL_NODE || top >= subtree_gen_.size())
             return 0;
         // atomic_ref: no torn 32-bit read; gen lives in low 16 bits.
-        const auto word =
-            std::atomic_ref<std::uint32_t>(subtree_gen_[top]).load(std::memory_order_acquire);
+        // Issue #4772: read through the const face so a load never marks
+        // the COW chunk dirty (the cell is mutable for atomic_ref only).
+        const auto word = std::atomic_ref<std::uint32_t>(
+                              const_cast<std::uint32_t&>(std::as_const(subtree_gen_)[top]))
+                              .load(std::memory_order_acquire);
         return static_cast<std::uint16_t>(word & 0xFFFFu);
     }
     void store_subtree_gen(NodeId top, std::uint16_t gen) noexcept {

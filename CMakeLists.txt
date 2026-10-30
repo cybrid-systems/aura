@@ -4774,6 +4774,13 @@ aura_add_issue_test(test_current_source_roundtrip)
 aura_issue_test_link_light(test_current_source_roundtrip)
 add_dependencies(all_test_issue_targets test_current_source_roundtrip)
 
+# Issue #4772: chunk-tracked COW columns (header-only unit test).
+add_executable(test_cow_column_4772 tests/core/test_cow_column_4772.cpp)
+target_include_directories(test_cow_column_4772 PRIVATE src)
+target_compile_features(test_cow_column_4772 PUBLIC cxx_std_26)
+add_test(NAME test_cow_column_4772_verification COMMAND ./test_cow_column_4772)
+add_dependencies(all_test_issue_targets test_cow_column_4772)
+
 # Issue #2922: extract ast_unparse library + pretty options (no Evaluator)
 aura_add_issue_test(test_ast_unparse)
 aura_issue_test_link_light(test_ast_unparse)

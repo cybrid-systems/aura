@@ -8371,7 +8371,8 @@ int main() {
             const auto op_at = body.find("const std::string_view ast_restore_op = \"ast:restore\"");
             const auto req_at = body.find("require_effect");
             const auto acq_at = body.find("try_acquire");
-            const auto wr_at = body.find("*ev.workspace_flat_ = *");
+            // Issue #4772: the flat write is the image delta assign.
+            const auto wr_at = body.find("ev.workspace_flat_->assign_from_image(");
             const auto can_at = body.find("if (can_direct)");
             CHECK(can_at != std::string::npos && op_at != std::string::npos &&
                       req_at != std::string::npos && acq_at != std::string::npos &&
