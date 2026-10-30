@@ -11406,7 +11406,14 @@ void Evaluator::refresh_define_env_publication(aura::ast::FlatAST& flat, const s
                                                    static_cast<std::uint64_t>(ci)))
             cells()[ci] = *refreshed;
     }
-    tenv.bind(name, types::make_cell(ci));
+    // Issue #4779: the name already advertises cell ci - do not bind it
+    // again. Env::bind always APPENDS (#2739 shadowing), so re-binding the
+    // same cell on every committed mutation grew top_env by one entry per
+    // mutate:rebind (3000 trial cycles -> 3600 duplicate `f` rows) and every
+    // Env::set_pool rekey on a workspace switch / define refresh walked
+    // them all: root rebind cost grew linearly with the mutation history.
+    if (!have)
+        tenv.bind(name, types::make_cell(ci));
 }
 
 // Issue #2812: queue define name for post-Guard BFS invalidate.
