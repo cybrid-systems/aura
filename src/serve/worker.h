@@ -312,6 +312,12 @@ private:
     // scheduler's liveness check sees staged fibers immediately.
     std::mutex inject_mutex_;
     std::deque<Fiber*> inject_queue_;
+    // Issue #4783: lock-free "inject_queue_ non-empty" hint for the Phase-4
+    // park predicate. Remote enqueue (host-thread spawn) stages into
+    // inject_queue_, never local_queue_, so the old predicate
+    // (!local_queue_.empty_approx()) stayed false after notify_one and the
+    // worker slept the full 100 ms park — the scope-join ~100 ms floor.
+    std::atomic<bool> inject_pending_{false};
 
     // The OS thread
     std::jthread thread_;

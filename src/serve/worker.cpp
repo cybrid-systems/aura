@@ -251,6 +251,7 @@ void WorkerThread::enqueue(Fiber* fiber) {
         // join iteration 1, ok 0/200).
         std::lock_guard<std::mutex> lock(inject_mutex_);
         inject_queue_.push_back(fiber);
+        inject_pending_.store(true, std::memory_order_release);
     }
 
     if (auto* m = worker_metrics_.load(std::memory_order_acquire)) {
@@ -260,7 +261,15 @@ void WorkerThread::enqueue(Fiber* fiber) {
         uint64_t val = 1;
         ::write(wake_evfd_, &val, sizeof(val));
     }
-    wake_cv_.notify_one();
+    if (g_worker_ctx == &ctx_) {
+        wake_cv_.notify_one();
+    } else {
+        // Issue #4783: pair the remote notify with wake_mutex_ so it cannot
+        // land between the parker's predicate check and its sleep (lost
+        // wakeup → full 100 ms park). Same pairing as stop() (#2573).
+        std::lock_guard<std::mutex> lock(wake_mutex_);
+        wake_cv_.notify_one();
+    }
 }
 
 // ── drain_injections — owner-thread absorption of remote enqueues ────
@@ -277,6 +286,7 @@ bool WorkerThread::drain_injections() {
         if (inject_queue_.empty())
             return false;
         batch.swap(inject_queue_);
+        inject_pending_.store(false, std::memory_order_release);
     }
     for (Fiber* fiber : batch) {
         if (fiber->is_done() || fiber->is_reclaimed()) {
@@ -863,7 +873,9 @@ void WorkerThread::run() {
             // Wait on condition variable
             std::unique_lock<std::mutex> lock(wake_mutex_);
             wake_cv_.wait_for(lock, park_ms, [this]() {
-                return !local_queue_.empty_approx() || !running_.load(std::memory_order_acquire);
+                return !local_queue_.empty_approx() ||
+                       inject_pending_.load(std::memory_order_acquire) ||
+                       !running_.load(std::memory_order_acquire);
             });
         } else {
             // Record busy time
