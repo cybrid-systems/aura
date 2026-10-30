@@ -3201,6 +3201,31 @@ namespace {
         sites.emplace(key, site);
         return true;
     }
+    // Issue #4775: decision = SUPPORT (option 1). A legacy defmacro whose
+    // template calls another legacy defmacro with one of its OWN parameters,
+    // `(defmacro (d y) (e y))`, hands `e` the datum bound to `y` - what the
+    // pre-#4759 static subst pass produced - instead of the symbol `y` (which
+    // reached e's `(+ y y)` as a type mismatch). Each running template pushes
+    // its param env here; an inner legacy macro argument that is a bare
+    // Variable naming a parameter of the innermost frame, and that resolves
+    // in the caller env to that same binding (not a let shadow), is
+    // substituted. Any other argument stays syntax data (#4759).
+    struct LegacyMacroFrame4775 {
+        const Env* env = nullptr;
+        const std::vector<std::string>* params = nullptr;
+    };
+    thread_local std::vector<LegacyMacroFrame4775> t_legacy_macro_frames_4775;
+    struct LegacyMacroFrameGuard4775 {
+        LegacyMacroFrameGuard4775(const Env* e, const std::vector<std::string>* ps) {
+            t_legacy_macro_frames_4775.push_back({e, ps});
+        }
+        ~LegacyMacroFrameGuard4775() {
+            if (!t_legacy_macro_frames_4775.empty())
+                t_legacy_macro_frames_4775.pop_back();
+        }
+        LegacyMacroFrameGuard4775(const LegacyMacroFrameGuard4775&) = delete;
+        LegacyMacroFrameGuard4775& operator=(const LegacyMacroFrameGuard4775&) = delete;
+    };
 } // namespace
 
 // Issue #4390: preserved, legacy defmacro, and eval_data_as_code share
@@ -7690,6 +7715,24 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             std::optional<Env> macro_env_4759;
                             macro_env_4759.emplace(&eval_env);
                             macro_env_4759->set_primitives(&primitives_);
+                            // Issue #4775: see LegacyMacroFrame4775.
+                            auto legacy_macro_arg_4775 = [&](aura::ast::NodeId arg) -> EvalValue {
+                                if (!t_legacy_macro_frames_4775.empty()) {
+                                    auto an = f->get(arg);
+                                    if (an.tag == aura::ast::NodeTag::Variable) {
+                                        const auto& fr = t_legacy_macro_frames_4775.back();
+                                        auto nm = std::string(p->resolve(an.sym_id));
+                                        if (fr.env && fr.params &&
+                                            std::ranges::find(*fr.params, nm) != fr.params->end()) {
+                                            auto outer = fr.env->lookup(nm);
+                                            auto here = eval_env.lookup(nm);
+                                            if (outer && here && *outer == *here)
+                                                return *outer;
+                                        }
+                                    }
+                                }
+                                return ast_to_data(*f, *p, arg, /*datum=*/true);
+                            };
 
 
                             for (std::size_t i = 0; i < regular_count && i + 1 < v.children.size();
@@ -7699,7 +7742,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 // printed expansion re-reads as the same code.
                                 macro_env_4759->bind(
                                     md.params[i],
-                                    ast_to_data(*f, *p, v.child(i + 1), /*datum=*/true));
+                                    legacy_macro_arg_4775(v.child(i + 1)));
                             }
 
                             // Rest param: collect remaining args as a list
@@ -7709,7 +7752,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 for (std::size_t i = v.children.size() - 1; i >= regular_count + 1;
                                      --i) {
                                     auto item =
-                                        ast_to_data(*f, *p, v.child(i), /*datum=*/true); // #4759
+                                        legacy_macro_arg_4775(v.child(i)); // #4759/#4775
                                     // Issue #4733: locked size+append (a fiber
                                     // body may build macro rest spines too).
                                     const auto pid =
@@ -7785,8 +7828,11 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                     return legacy_macro_run_4759(*hit);
                             }
                             // Evaluate macro body (quasiquote-expanded template) → produces data
-                            auto template_result = eval_flat(*md.flat, md.pool ? *md.pool : *p,
-                                                             md.body_id, *macro_env_4759);
+                            auto template_result = [&] {
+                                LegacyMacroFrameGuard4775 frame_4775(&*macro_env_4759, &md.params);
+                                return eval_flat(*md.flat, md.pool ? *md.pool : *p, md.body_id,
+                                                 *macro_env_4759);
+                            }();
                             if (!template_result)
                                 return template_result;
                             TwPinResult pin_template_4759(template_result);
