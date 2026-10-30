@@ -1699,6 +1699,36 @@ inline void maybe_decay_mailbox_bp_recent() noexcept {
     }
 }
 
+// Issue #4785: BP admit retry hint. The gauge only decays after the
+// quiet window (#2398, default 30 s) measured from the LAST BP event on
+// the gauge that rejected the spawn. A flat 50 ms hint made hosts spin
+// ~600 rejected retries per window. Report the time left until that
+// window ends (min 1 ms); window 0 / unknown keeps the legacy 50 ms.
+[[nodiscard]] inline std::uint64_t
+mailbox_bp_admit_retry_after_ms(std::string_view scope_id) noexcept {
+    constexpr std::uint64_t kLegacyRetryMs = 50;
+    const auto window_ms = resolve_mailbox_bp_window_ms();
+    if (window_ms == 0)
+        return kLegacyRetryMs;
+    if (scope_id == kBpScopeProcessBucket)
+        scope_id = {};
+    std::uint64_t last_us = 0;
+    if (scope_id.empty()) {
+        last_us = g_mailbox_bp_last_event_us.load(std::memory_order_acquire);
+    } else if (auto gauge = lookup_scope_bp_gauge(scope_id)) {
+        last_us = gauge->last_event_us.load(std::memory_order_acquire);
+    }
+    if (last_us == 0)
+        return kLegacyRetryMs;
+    const auto now_us = orch_now_us();
+    const auto window_us = window_ms * 1000ULL;
+    const auto elapsed_us = now_us > last_us ? now_us - last_us : 0;
+    if (elapsed_us >= window_us)
+        return 1;
+    // +1 ms: decay is strict ">" window (maybe_decay_mailbox_bp_recent).
+    return (window_us - elapsed_us + 999) / 1000 + 1;
+}
+
 inline void snapshot_orch_stats(std::uint64_t& spawned, std::uint64_t& joined, std::uint64_t& sends,
                                 std::uint64_t& recvs, std::uint64_t& failures,
                                 std::uint64_t& parallel_batches) noexcept {
@@ -2885,7 +2915,11 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
             h.quota_dimension = "mailbox-bp";
             h.quota_used = bp_recent;
             h.quota_limit = thr_limit;
-            h.retry_after_ms = 50;
+            // Issue #4785: hint = remaining quiet window, not a flat 50 ms.
+            // thr_limit==0 is the spec override "always reject" (#2591):
+            // no window will ever admit, keep the legacy hint.
+            h.retry_after_ms =
+                thr_limit == 0 ? std::uint64_t{50} : mailbox_bp_admit_retry_after_ms(scope_id);
             h.error =
                 "AdmissionRejected: mailbox backpressure (bp_recent=" + std::to_string(bp_recent) +
                 " >= threshold=" + std::to_string(thr_limit) +

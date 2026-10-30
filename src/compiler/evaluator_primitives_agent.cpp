@@ -3709,6 +3709,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // no put, old mailbox / body-stack untouched (#2661). Same
             // shape as the quota-reject hash + existing #3220 lifecycle
             // and #3251 deny-class keys (no new query key, AC1).
+            // Issue #4785: capture the same-name slot's mailbox BEFORE find()
+            // (find retires a Done-path-cleaned slot, and put replaces a
+            // done one). Its queued backlog is handed to the replacement
+            // below instead of dying with the old mailbox.
+            std::shared_ptr<aura::serve::mf_mailbox::MultiFiberMailbox> prev_mailbox;
+            if (!name.empty() && ev.agent_names_)
+                prev_mailbox = ev.agent_names_->mailbox_of(name);
             if (!name.empty()) {
                 const auto* pending = ev.agent_names_->find(name);
                 if (pending &&
@@ -3922,14 +3929,34 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // Issue #3467: put is non-consuming on deny — if the name is
             // still Reclaimed-pending, keep the handle and report !ok.
             bool put_refused = false;
+            aura::orch::AgentHandle* stored = nullptr;
             if (ok) {
                 // Issue #4393: nullptr means the occupant is still pending
                 // or still running. The fresh handle was not stored.
                 // Cancel it and transfer the agents_active one-shot.
-                if (ev.agent_names_->put(std::move(handle)) == nullptr) {
+                stored = ev.agent_names_->put(std::move(handle));
+                if (stored == nullptr) {
                     ok = false;
                     put_refused = true;
                     aura::orch::release_refused_spawn(handle);
+                }
+            }
+            // Issue #4785: same-name respawn used to return ok while the
+            // old mailbox's queued messages vanished with it. The
+            // replacement now takes the backlog over (FIFO, ahead of any
+            // later send). Messages the new mailbox cannot accept (no
+            // mailbox attached / backpressure / closed) are counted and
+            // reported as dropped-messages — never silent.
+            std::int64_t inherited_messages = 0;
+            std::int64_t dropped_messages = 0;
+            if (ok && stored && prev_mailbox && prev_mailbox != stored->mailbox) {
+                auto backlog = prev_mailbox->take_all_for_handover();
+                for (auto& m : backlog) {
+                    if (stored->mailbox && stored->mailbox->push(std::move(m)) ==
+                                               aura::serve::mf_mailbox::PushStatus::Ok)
+                        ++inherited_messages;
+                    else
+                        ++dropped_messages;
                 }
             }
 
@@ -3990,6 +4017,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"schema", make_int(1588)},
                 {"schema-2011", make_int(2011)},
                 {"quota-exceeded", make_bool(quota_exceeded)},
+                // Issue #4785: same-name respawn mailbox handover face.
+                {"inherited-messages", make_int(inherited_messages)},
+                {"dropped-messages", make_int(dropped_messages)},
             };
             if (put_refused) {
                 auto eidx =

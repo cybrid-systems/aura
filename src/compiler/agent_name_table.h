@@ -143,6 +143,21 @@ struct AgentNameTable {
         return &ins->second;
     }
 
+    // Issue #4785: the queued mailbox of a same-name slot, read WITHOUT the
+    // find() retire/recycle side effects (a Done-path-cleaned slot is
+    // erased by find, and its queued messages died with it). The shared
+    // pointer keeps the mailbox alive across that retire so spawn-agent
+    // can hand the backlog to the replacement. nullptr when no slot / no
+    // mailbox.
+    std::shared_ptr<aura::serve::mf_mailbox::MultiFiberMailbox>
+    mailbox_of(const std::string& name) const {
+        std::lock_guard<std::mutex> lock(impl_->mu_);
+        auto it = impl_->agents_.find(name);
+        if (it == impl_->agents_.end())
+            return nullptr;
+        return it->second.mailbox;
+    }
+
     aura::orch::AgentHandle* find(const std::string& name) {
         std::lock_guard<std::mutex> lock(impl_->mu_);
         auto it = impl_->agents_.find(name);

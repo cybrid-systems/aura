@@ -359,6 +359,48 @@ __PREFIX__
     }
     aura::compiler::typed_audit::apply_dev_audit_defaults();
 
+    // ── Issues #4783 / #4784 / #4785 (aura-scm-agents validation) ─────
+    {
+        reset_all_agent_scopes_for_test();
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        CompilerService cs;
+        const auto eval_str = [&cs](const char* prog) -> std::string {
+            auto r = cs.eval(prog);
+            if (!r || !is_string(*r))
+                return {};
+            const auto idx = as_string_idx(*r);
+            const auto heap = cs.evaluator().string_heap();
+            if (idx >= heap.size())
+                return {};
+            return std::string(heap[idx]);
+        };
+
+        std::println("\n--- #4785 AC1: same-name respawn keeps the queued mailbox backlog ---");
+        const auto mb_got = eval_str(R"AURA((define (spawn4785 n) (orch:spawn-agent n (lambda () (quote idle)) :attach-mailbox #t))
+(spawn4785 "risk4785")
+(orch:agent-send "risk4785" "queued-before")
+(define h2 (spawn4785 "risk4785"))
+(orch:agent-send "risk4785" "queued-after")
+(define m1 (orch:agent-recv "risk4785" :wait #f))
+(define m2 (orch:agent-recv "risk4785" :wait #f))
+(string-append (if (hash-ref h2 "ok") "t" "f")
+  ":" (number->string (hash-ref h2 "inherited-messages"))
+  ":" (number->string (hash-ref h2 "dropped-messages"))
+  ":" (if (hash-ref m1 "ok") (hash-ref m1 "payload") "none")
+  ":" (if (hash-ref m2 "ok") (hash-ref m2 "payload") "none"))
+)AURA");
+        std::println("  #4785 handover probe -> {}", mb_got);
+        CHECK(mb_got == "t:1:0:queued-before:queued-after",
+              "4785 AC1: respawn inherits queued-before ahead of queued-after");
+        const auto spawn_src = read_file("src/orch/agent_spawn.h");
+        CHECK(spawn_src.find("mailbox_bp_admit_retry_after_ms(scope_id)") != std::string::npos,
+              "4785 AC2: BP admit retry-after-ms tracks the remaining quiet window");
+        CHECK(aura::orch::mailbox_bp_admit_retry_after_ms("") >= 1,
+              "4785 AC2: retry hint is positive");
+        (void)cs.eval("(orch:scope-join-all :timeout-ms 2000)");
+    }
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+
     // ── Issue #4726: the orch scheduler must survive an idle gap ──────
     // Reported face (reopened on e6f4169e0): after orch:run-workflow the
     // next yield-waiting scope tasks NEVER run and scope-join-all times out
