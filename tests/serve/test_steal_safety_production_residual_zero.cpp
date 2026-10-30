@@ -624,16 +624,30 @@ int run_test_steal_safety_production_residual_zero() {
     // ── #3950: Scheduler::run Ready aborts on residual-zero ──
     {
         std::println("\n--- #3950: Ready residual-zero abort ---");
+        // Issue #4756: the #3950 Ready residual-zero abort is decided in
+        // Scheduler::evaluate_start_gate() on the caller's thread (the orch
+        // holder decides it before its runner exists); run() decides that
+        // gate before w->start(). Contract unchanged: the residual-zero
+        // consult belongs to the multi-worker Ready arm and is decided
+        // before every WorkerThread::start().
         const auto sched = read_file("src/serve/scheduler.cpp");
+        const auto gate_pos = sched.find("void Scheduler::evaluate_start_gate()");
         const auto run_pos = sched.find("void Scheduler::run()");
         CHECK(run_pos != std::string::npos, "3950 AC3: Scheduler::run found");
+        CHECK(gate_pos != std::string::npos, "3950 AC3: evaluate_start_gate found");
+        const auto gate_end =
+            gate_pos == std::string::npos ? std::string::npos : sched.find("\n}\n", gate_pos);
         const auto start_pos = sched.find("w->start()", run_pos);
-        const auto multi_pos = sched.find("aura_runtime_require_production_multi_worker", run_pos);
-        const auto rz_pos = sched.find("steal_safety_production_residual_zero_v_read", run_pos);
-        CHECK(multi_pos != std::string::npos && start_pos != std::string::npos &&
-                  multi_pos < start_pos,
+        const auto gate_call_pos = sched.find("evaluate_start_gate();", run_pos);
+        CHECK(gate_call_pos != std::string::npos && start_pos != std::string::npos &&
+                  gate_call_pos < start_pos,
+              "3950 AC2: start gate decided before WorkerThread::start");
+        const auto multi_pos = sched.find("aura_runtime_require_production_multi_worker", gate_pos);
+        const auto rz_pos = sched.find("steal_safety_production_residual_zero_v_read", gate_pos);
+        CHECK(multi_pos != std::string::npos && gate_end != std::string::npos &&
+                  multi_pos > gate_pos && multi_pos < gate_end,
               "3950 AC2: residual consult next to multi-worker Ready");
-        CHECK(rz_pos != std::string::npos && rz_pos < start_pos,
+        CHECK(rz_pos != std::string::npos && rz_pos > multi_pos && rz_pos < gate_end,
               "3950 AC1: residual-zero before WorkerThread::start");
         CHECK(sched.find("Issue #3950") != std::string::npos, "3950: scheduler cites");
         CHECK(sched.find("#include \"steal_safety.h\"") != std::string::npos,

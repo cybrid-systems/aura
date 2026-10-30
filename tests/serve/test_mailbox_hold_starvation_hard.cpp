@@ -3891,12 +3891,25 @@ static void ac3951_1_no_edge_ready_or_owner_poll() {
     CHECK(rz != std::string::npos, "3951 AC1: residual-zero accessor");
     CHECK(sh.find("aura_mutation_hold_no_edge_still_held() == 0") != std::string::npos,
           "3951 AC1: no-edge AND-ed under multi latch");
+    // Issue #4756: the #3950 Ready residual-zero abort is decided in
+    // Scheduler::evaluate_start_gate() on the caller's thread, before any
+    // runner exists; run() decides that gate before w->start(). The
+    // invariant asserted here is unchanged: the residual-zero refusal
+    // precedes every WorkerThread::start().
     const auto sched = read_file("src/serve/scheduler.cpp");
+    const auto gate_pos = sched.find("void Scheduler::evaluate_start_gate()");
     const auto run_pos = sched.find("void Scheduler::run()");
+    const auto gate_end =
+        gate_pos == std::string::npos ? std::string::npos : sched.find("\n}\n", gate_pos);
     const auto start_pos = sched.find("w->start()", run_pos);
-    const auto rz_sched = sched.find("steal_safety_production_residual_zero_v_read", run_pos);
-    CHECK(rz_sched != std::string::npos && start_pos != std::string::npos && rz_sched < start_pos,
+    const auto rz_sched = sched.find("steal_safety_production_residual_zero_v_read", gate_pos);
+    CHECK(gate_pos != std::string::npos && rz_sched != std::string::npos &&
+              gate_end != std::string::npos && rz_sched > gate_pos && rz_sched < gate_end,
           "3951 AC1: Ready abort on residual-zero before start (#3950)");
+    const auto gate_call_pos = sched.find("evaluate_start_gate();", run_pos);
+    CHECK(gate_call_pos != std::string::npos && start_pos != std::string::npos &&
+              gate_call_pos < start_pos,
+          "3951 AC1: run() decides the start gate before WorkerThread::start");
     CHECK(sched.find("no unlock") != std::string::npos,
           "3951 AC1: idle poll is re-arm only (no foreign unlock)");
     const auto wc = read_file("src/serve/worker.cpp");
