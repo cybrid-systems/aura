@@ -2300,6 +2300,10 @@ export struct WorkspaceNode {
     std::size_t memory_used = 0;
     std::size_t memory_budget = 0;
     std::uint64_t cow_refused_count = 0;
+    // Issue #4776: fork base for the three-way workspace :merge - the
+    // parent's top-level define texts (name -> unparsed define) captured at
+    // workspace :create. Null = no base recorded (legacy two-way merge).
+    std::shared_ptr<const std::unordered_map<std::string, std::string>> merge_base;
 };
 
 export struct WorkspaceTree {
@@ -19821,6 +19825,7 @@ inline bool WorkspaceTree::delete_child(std::uint32_t idx) {
     n.cow_epoch = 0;
     n.generation = 0;
     n.has_own_flat = false;
+    n.merge_base.reset(); // Issue #4776
     delete owned_flat;
     delete owned_pool;
     return true;
