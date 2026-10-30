@@ -295,6 +295,113 @@ int run_test_typed_audit_commit_readiness_live_policy() {
               "3416 AC6: no invent test_issue_3416");
     }
 
+    // ── #4786: reason-1 no-live-TC arm joins the ADMIT exempt set ──
+    // The #3414 arm denies out-of-boundary admits with force_reason 1 while
+    // no commit TC is in TLS; the only retire path is a boundary commit,
+    // which that same deny refuses. The admission consumer therefore
+    // exempts *only* the missing-authority variant; a live-TC
+    // CONFLICT/TIMEOUT (also reason 1) keeps refusing. One exempt set:
+    // typed_mutation_audit.h::commit_readiness_admit_exempted (17 | 6 |
+    // 1-from-no-TC).
+    {
+        std::println(
+            "\n--- #4786 AC: solve-from-missing-authority is the only exempt reason 1 ---");
+        using namespace aura::compiler::typed_audit;
+        CHECK(h.find("kSolveForceReasonCode = 1") != std::string::npos,
+              "4786 AC1: solve force-reason constant");
+        CHECK(h.find("commit_readiness_admit_exempted") != std::string::npos,
+              "4786 AC1: one exempt-set helper");
+
+        // AC1: the provenance bit is stamped by the #3414 no-TC arm itself.
+        const auto live_policy_body = find_fn_body(
+            h, "inline CommitReadinessInput commit_readiness_live_policy() noexcept {", 14000);
+        const auto arm_pos = live_policy_body.find("in.solve_status = 2");
+        CHECK(arm_pos != std::string::npos, "4786 AC1: #3414 no-TC arm present");
+        if (arm_pos != std::string::npos) {
+            CHECK(live_policy_body.substr(arm_pos, 420)
+                          .find("in.solve_status_missing_authority = true") != std::string::npos,
+                  "4786 AC1: no-TC arm stamps missing-authority provenance");
+        }
+        // AC1: exactly the two no-TC arms set it (live_policy + the #4081
+        // remount-reproof feasibility probe). No live-TC fill site does.
+        {
+            std::size_t n = 0;
+            std::size_t pos = 0;
+            while ((pos = h.find("solve_status_missing_authority = true", pos)) !=
+                   std::string::npos) {
+                ++n;
+                ++pos;
+            }
+            CHECK(n == 2, "4786 AC1: only the no-TC arms set the provenance bit");
+        }
+
+        // AC2: no-live-TC deny → reason 1, exempt for admission only.
+        {
+            CommitReadinessInput no_tc;
+            no_tc.solve_status = 2;
+            no_tc.solve_status_missing_authority = true;
+            const auto r = commit_readiness(no_tc);
+            CHECK(r.force_reason_code == 1 && !r.would_allow_commit,
+                  "4786 AC2: no-TC arm reads reason 1 / would_allow=0");
+            CHECK(r.solve_from_missing_authority,
+                  "4786 AC2: surface carries the missing-authority provenance");
+            // The pre-#4786 admit signal was exactly
+            //   {r.would_allow_commit, r.force_reason_code != 0}
+            // → this row denied admission (the wedge). The surface still
+            // reads that deny; only the admit consumer exempts it.
+            CHECK(!r.would_allow_commit && r.force_reason_code != 0,
+                  "4786 AC2: surface keeps the deny (only admission exempts)");
+            CHECK(commit_readiness_admit_exempted(r),
+                  "4786 AC2: admit consumer exempts it (next mutate re-proves)");
+        }
+
+        // AC3: a real live-TC solve deny is reason 1 too — never exempted.
+        {
+            CommitReadinessInput conflict;
+            conflict.solve_status = 1;
+            const auto r = commit_readiness(conflict);
+            CHECK(r.force_reason_code == 1 && !r.would_allow_commit,
+                  "4786 AC3: live-TC CONFLICT reads reason 1 deny");
+            CHECK(!r.solve_from_missing_authority, "4786 AC3: live-TC deny has no provenance");
+            CHECK(!commit_readiness_admit_exempted(r),
+                  "4786 AC3: live-TC CONFLICT still refuses admission");
+
+            CommitReadinessInput timeout_live;
+            timeout_live.solve_status = 2;
+            const auto r2 = commit_readiness(timeout_live);
+            CHECK(r2.force_reason_code == 1 && !r2.solve_from_missing_authority,
+                  "4786 AC3: live-TC TIMEOUT has no provenance");
+            CHECK(!commit_readiness_admit_exempted(r2),
+                  "4786 AC3: live-TC TIMEOUT still refuses admission");
+
+            CommitReadiness ok{};
+            CHECK(!commit_readiness_admit_exempted(ok), "4786 AC3: ok row is not exempt");
+            CommitReadiness blame{};
+            blame.force_reason_code = 2;
+            CHECK(!commit_readiness_admit_exempted(blame), "4786 AC3: blame row is not exempt");
+        }
+
+        // AC4: the security-schedule admit is the one consumer; the
+        // readiness surface keeps reporting the deny.
+        {
+            const auto gate = read_file("src/orch/security_schedule_gate.h");
+            CHECK(!gate.empty(), "4786 AC4: gate readable");
+            CHECK(gate.find("commit_readiness_admit_exempted") != std::string::npos,
+                  "4786 AC4: gate consults the exempt set");
+            CHECK(gate.find("kRemountLastZeroForceReasonCode)\n        return {true, false}") ==
+                      std::string::npos,
+                  "4786 AC4: no scattered reason-17 exempt row left in the gate");
+            CHECK(gate.find("kAutoPartialFromConeForceReasonCode)\n        return {true, false}") ==
+                      std::string::npos,
+                  "4786 AC4: no scattered reason-6 exempt row left in the gate");
+        }
+
+        // AC5: no invent.
+        CHECK(read_file("tests/compiler/test_issue_4786.cpp").empty(),
+              "4786 AC5: no test_issue_4786");
+        CHECK(read_file("docs/design/4786-reason1.md").empty(), "4786 AC5: no docs/design");
+    }
+
     std::println("\n=== Issue #3379 done ===");
     return g_failed == 0 ? 0 : 1;
 }
