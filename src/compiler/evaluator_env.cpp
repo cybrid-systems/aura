@@ -2492,6 +2492,52 @@ void Evaluator::must_deopt_closures_named(std::string_view name) {
     }
 }
 
+void Evaluator::retire_superseded_define_closure(std::string_view name, ClosureId published) {
+    if (name.empty())
+        return;
+    // Issue #4779: decide what to drop under the generations lock only;
+    // the closures shard lock is taken afterwards (never nested inside).
+    bool have_drop = false;
+    ClosureId drop_id = 0;
+    {
+        std::lock_guard<std::mutex> g(define_closure_gens_mu_);
+        auto& gen = define_closure_gens_[std::string(name)];
+        if (gen.has_cur && gen.cur == published)
+            return;
+        if (gen.has_prev && gen.prev != published) {
+            have_drop = true;
+            drop_id = gen.prev;
+        }
+        gen.prev = gen.cur;
+        gen.has_prev = gen.has_cur;
+        gen.cur = published;
+        gen.has_cur = true;
+        if (gen.has_prev && gen.prev == published)
+            gen.has_prev = false;
+    }
+    if (!have_drop)
+        return;
+    const std::string key(name);
+    bool dropped = false;
+    {
+        auto& shard = closures_shards_[closures_shard_index(drop_id)];
+        std::unique_lock<std::shared_mutex> wlock(shard.mu);
+        auto it = shard.map.find(drop_id);
+        // Only a generation this define published (named by it) is ours to
+        // retire; an id reused by another closure is left alone.
+        if (it != shard.map.end() && it->second.name == key) {
+            bump_closures_apply_epoch(); // Issue #3832: appliers re-read
+            invalidate_closure_lifetime(it->second);
+            shard.map.erase(it);
+            dropped = true;
+        }
+    }
+    // Issue #4753: a caller still holding the id resolves to the define's
+    // current publication instead of "eval_flat: invalid closure".
+    if (dropped && note_retired_define_closure_fn_)
+        note_retired_define_closure_fn_(static_cast<std::uint64_t>(drop_id), key);
+}
+
 void Evaluator::walk_active_closures(const ActiveClosureWalkFn& fn) {
     if (!fn)
         return;

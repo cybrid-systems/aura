@@ -9945,8 +9945,13 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             store_cell_value(ci, *vv);
                         // Issue #3681: name the closure so set-body can
                         // must-deopt this view after the define is dirtied.
-                        if (is_closure(*vv))
+                        if (is_closure(*vv)) {
                             name_live_closure(as_closure_id(*vv), name);
+                            // Issue #4779: retire the generation before the
+                            // one this re-define superseded.
+                            if (&eval_env == &top_)
+                                retire_superseded_define_closure(name, as_closure_id(*vv));
+                        }
                         return *vv;
                     }
 
@@ -9986,8 +9991,13 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             me.bind_symid(v.sym_id, make_cell(ci));
                         else
                             me.bind(std::string(name), make_cell(ci));
-                        if (is_closure(*vv))
+                        if (is_closure(*vv)) {
                             name_live_closure(as_closure_id(*vv), name);
+                            // Issue #4779: retire the generation before the
+                            // one this re-define superseded.
+                            if (&eval_env == &top_)
+                                retire_superseded_define_closure(name, as_closure_id(*vv));
+                        }
                         return *vv;
                     }
 
@@ -10012,8 +10022,13 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     store_cell_value(ci, *vv);
                     // Issue #3681: name the closure so set-body can
                     // must-deopt this view after the define is dirtied.
-                    if (is_closure(*vv))
+                    if (is_closure(*vv)) {
                         name_live_closure(as_closure_id(*vv), name);
+                        // Issue #4779: retire the generation before the one
+                        // this re-define superseded.
+                        if (&eval_env == &top_)
+                            retire_superseded_define_closure(name, as_closure_id(*vv));
+                    }
                     return *vv;
                 }
                 case aura::ast::NodeTag::Begin: {
