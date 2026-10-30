@@ -375,6 +375,36 @@ __PREFIX__
             return std::string(heap[idx]);
         };
 
+        std::println("\n--- #4784 AC1: supervise-batch retry-n re-applies a throwing task ---");
+        const auto retry_got = eval_str(R"AURA((define c4784 (atomic:counter 0))
+(define r (orch:supervise-batch
+            (vector (lambda () (if (< (atomic:add! c4784 1) 3) (error "flaky") (quote ok))))
+            (orch:compose-workflow (quote retry-n) :max-retries 2)))
+(string-append (hash-ref r "status")
+  ":" (number->string (hash-ref r "ok-count"))
+  ":" (number->string (hash-ref r "err-count"))
+  ":" (number->string (hash-ref r "retry-count"))
+  ":" (number->string (atomic:counter-value c4784)))
+)AURA");
+        std::println("  #4784 retry probe -> {}", retry_got);
+        CHECK(retry_got == "ok:1:0:2:3", "4784 AC1: flaky task recovers on the 3rd attempt");
+        const auto exhaust_got = eval_str(R"AURA((define c4784b (atomic:counter 0))
+(define r (orch:supervise-batch
+            (vector (lambda () (begin (atomic:add! c4784b 1) (error "always"))))
+            (orch:compose-workflow (quote retry-n) :max-retries 1)))
+(string-append (hash-ref r "status")
+  ":" (number->string (hash-ref r "err-count"))
+  ":" (number->string (atomic:counter-value c4784b)))
+)AURA");
+        std::println("  #4784 exhaust probe -> {}", exhaust_got);
+        CHECK(exhaust_got == "partial:1:2", "4784 AC1: exhausted retries stay partial (1 + 1 attempts)");
+        const auto ign_got = eval_str(R"AURA((define w (orch:compose-workflow (quote collect-all) :max-retries 2))
+(string-append (if (hash-ref w "max-retries-ignored") "ignored" "kept")
+  ":" (number->string (hash-ref w "max-retries-requested")))
+)AURA");
+        std::println("  #4784 collect-all probe -> {}", ign_got);
+        CHECK(ign_got == "ignored:2", "4784 AC2: collect-all flags :max-retries as ignored");
+
         std::println("\n--- #4785 AC1: same-name respawn keeps the queued mailbox backlog ---");
         const auto mb_got = eval_str(R"AURA((define (spawn4785 n) (orch:spawn-agent n (lambda () (quote idle)) :attach-mailbox #t))
 (spawn4785 "risk4785")
