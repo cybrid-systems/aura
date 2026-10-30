@@ -827,6 +827,8 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         // restore path — SymIds, mutation_log_, type_id_, value_cache_
         // are all preserved bit-for-bit.
         bool did_direct = false;
+        bool dep_graph_synced_pre = false;
+        bool dep_graph_synced_post = false;
         // Issue #4729: a restore used to only TRUNCATE the log back to the
         // snapshot copy, so a rolled-back mutation left no trace at all.
         // These capture the audit identity of the records the restore
@@ -941,6 +943,13 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                     // Issue #4772: delta assign from the image — chunks the
                     // workspace has not written since its own image base and
                     // that the snapshot shares with that base are skipped.
+                    // Issue #4793: dep-graph upkeep may re-walk only the changed
+                    // defines when the graph is in sync with the pre-swap
+                    // workspace (every unchanged define's edges are then
+                    // already recorded). Sampled before the swap replaces
+                    // the log.
+                    dep_graph_synced_pre =
+                        ev.restore_dep_graph_synced_fn_ && ev.restore_dep_graph_synced_fn_();
                     ev.workspace_flat_->assign_from_image(snap_entry.flat);
                     ev.workspace_pool_->assign_from_image(snap_entry.pool);
                     if (stamps && stamps->lazy)
@@ -1111,15 +1120,54 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                             for (const auto& nm : added)
                                 ev.mark_define_dirty_fn_(nm);
                         }
-                        if ((!added.empty() || !removed.empty() || !changed.empty()) &&
-                            ev.repopulate_workspace_dep_graph_fn_)
-                            ev.repopulate_workspace_dep_graph_fn_();
+                        if (!added.empty() || !removed.empty() || !changed.empty()) {
+                            // The stamp diff names every define whose content
+                            // differs, so with a graph in sync before the swap
+                            // only the drop cone needs a re-walk (the full
+                            // rebuild is additive: defines outside the cone
+                            // re-record the edges they already have). An added define
+                            // can turn a free Variable in an unchanged body
+                            // into an edge, and the source diff is not exact
+                            // (#4777/#4782 lineage breaks) - both rebuild.
+                            // Kill switch: AURA_RESTORE_DEP_GRAPH_FULL=1.
+                            // Read per restore (not cached) so an in-process
+                            // A/B (the regression test) can flip it.
+                            const char* dep_full_env = std::getenv("AURA_RESTORE_DEP_GRAPH_FULL");
+                            const bool dep_graph_full_env = dep_full_env && dep_full_env[0] == '1';
+                            if (have_stamps && added.empty() && dep_graph_synced_pre &&
+                                !dep_graph_full_env && ev.restore_dep_graph_names_fn_) {
+                                // The drop cone above erased the edges of every
+                                // changed define AND of its transitive callers
+                                // (invalidate_function), so re-walk the whole
+                                // cone, not just `changed`.
+                                std::unordered_set<std::string> gone(removed.begin(),
+                                                                     removed.end());
+                                std::vector<std::string> walk;
+                                walk.reserve(drop.size());
+                                for (const auto& nm : drop)
+                                    if (!gone.count(nm))
+                                        walk.push_back(nm);
+                                ev.restore_dep_graph_names_fn_(walk);
+                                ++ev.ast_restore_dep_graph_incremental_total_;
+                                dep_graph_synced_post = true;
+                            } else if (ev.repopulate_workspace_dep_graph_fn_) {
+                                ev.repopulate_workspace_dep_graph_fn_();
+                                ++ev.ast_restore_dep_graph_full_total_;
+                                dep_graph_synced_post = true;
+                            }
+                        }
                     } else if (!small_diff) {
                         aura::compiler::MarkAllClearsIrOwners clear_ir_owners;
                         if (ev.mark_all_defines_dirty_fn_)
                             ev.mark_all_defines_dirty_fn_();
-                        if (ev.pre_cache_workspace_defines_fn_)
+                        if (ev.pre_cache_workspace_defines_fn_) {
                             ev.pre_cache_workspace_defines_fn_();
+                            ++ev.ast_restore_dep_graph_full_total_;
+                            dep_graph_synced_post = true;
+                        }
+                    } else {
+                        // Empty diff: the graph stays as in sync as before.
+                        dep_graph_synced_post = dep_graph_synced_pre;
                     }
                     did_direct = true;
                 } catch (...) {
@@ -1149,6 +1197,11 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                             std::to_string(rolled_count) + " ids=" + std::to_string(rolled_first) +
                             ".." + std::to_string(rolled_last));
                 }
+                // The rollback entry changes no define: a graph in sync just
+                // before it stays in sync after it, so the next restore (or a
+                // single rebind, #4682) keeps its incremental path.
+                if (dep_graph_synced_post && ev.restore_dep_graph_advance_fn_)
+                    ev.restore_dep_graph_advance_fn_();
             }
             // Issue #2920: restamp text cache *after* Guard exit (exit may
             // invalidate on log growth). Snapshot source is workspace unparse
