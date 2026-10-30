@@ -5384,6 +5384,16 @@ public:
     // pre-reemit closure without touching a later re-eval of the same name.
     void name_live_closure(ClosureId cid, std::string_view name);
     void must_deopt_closures_named(std::string_view name);
+    // Issue #4779: a top-level define re-evaluated by eval-current (after a
+    // workspace switch / merge / set-code) publishes a fresh closure while
+    // the superseded generation stays in closures_ forever: every later
+    // closures walk (resync_live_closure_env_versions_on_invalidate,
+    // must_deopt_closures_named) paid for the whole switch / merge history.
+    // Keep one superseded generation as grace (a caller may still be
+    // running it) and drop the one before it, exactly like the #4583 drop
+    // of poisoned rebind generations (reported through
+    // note_retired_define_closure_fn_, #4753).
+    void retire_superseded_define_closure(std::string_view name, ClosureId published);
     // Issue #4378 (asan-verify heap-use-after-free, 2026-10-07): expire
     // tree-walker / fiber-held closures whose captured flat is `doomed`.
     // Workspace child delete/discard frees the child's local FlatAST
@@ -8294,6 +8304,16 @@ private:
     // stay resolvable to the define's current publication.
     std::function<void(std::uint64_t, const std::string&)> note_retired_define_closure_fn_ =
         nullptr;
+    // Issue #4779: per top-level define name, the closure generation it
+    // currently publishes and the one it superseded (kept as grace).
+    struct DefineClosureGenerations4779 {
+        ClosureId cur = 0;
+        ClosureId prev = 0;
+        bool has_cur = false;
+        bool has_prev = false;
+    };
+    std::mutex define_closure_gens_mu_;
+    std::unordered_map<std::string, DefineClosureGenerations4779> define_closure_gens_;
     // Issue #3033 / #3117: dual-topology abort IR-cache fence (set by
     // CompilerService on init; null when standalone).
     std::function<void()> abort_ir_cache_begin_force_fn_ = nullptr;

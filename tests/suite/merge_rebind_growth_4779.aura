@@ -1,0 +1,53 @@
+;; merge_rebind_growth_4779.aura — Issue #4779. Every workspace trial / merge
+;; cycle left history behind (a duplicate top_env row per committed rebind,
+;; a full mutation-log copy per merge, and one superseded define closure per
+;; re-define), so later root rebinds slowed with the merge count and RSS
+;; grew without bound (3000 merges -> 3.7 GB). Superseded define closures
+;; are now retired after one grace generation; a value held from an older
+;; generation keeps resolving.
+;; Pass = exit 0 + OK line.
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+
+(set-code "(define f (lambda (x) 0))\n(define g (lambda (x) (f x)))") (eval-current)
+(define (body k) (string-append "(lambda (x) " (number->string k) ")"))
+
+;; held reference across several root re-defines (grace + retire path)
+(define old f)
+(mutate:rebind "f" (body 1) "r1") (eval-current)
+(mutate:rebind "f" (body 2) "r2") (eval-current)
+(mutate:rebind "f" (body 3) "r3") (eval-current)
+(assert! (= (f 1) 3) "rebind: f publishes the latest body")
+(assert! (= (g 1) 3) "rebind: g calls the latest f")
+(assert! (= (old 1) 3) "rebind: a held older generation still resolves")
+
+(define (root-rb n)
+  (let ((t0 (current-time-ms)))
+    (let loop ((i 1))
+      (if (<= i n) (begin (mutate:rebind "f" (body i) "m") (eval-current) (loop (+ i 1)))))
+    (max 1 (- (current-time-ms) t0))))
+(define (merge-cycle i)
+  (let ((w (workspace :create "t")))
+    (workspace :switch w) (mutate:rebind "f" (body i) "trial") (eval-current)
+    (workspace :switch 0) (eval-current)
+    (workspace :merge w) (eval-current)
+    (workspace :delete w)))
+
+(define early (root-rb 100))
+(let loop ((i 1)) (if (<= i 3000) (begin (merge-cycle i) (loop (+ i 1)))))
+(define late (root-rb 100))
+(display (list "root-rebind-ms early" early "late" late)) (newline)
+(assert! (= (f 1) 100) "merge: f publishes the last root rebind")
+(assert! (= (g 7) 100) "merge: g still calls the latest f")
+(merge-cycle 4242)
+(assert! (= (f 1) 4242) "merge: a final merge publishes the child's f")
+;; 69d360068: ~9x slower after 3000 merges (here ~1.4x); 3x bound for noisy CI.
+(assert! (<= late (max (* 3 early) (+ early 60))) "merge: root rebind cost does not grow with merge count")
+
+(if (= *fails* 0)
+    (begin (display "OK-4779 merge-driven rebind growth") (newline))
+    (begin (display "FAIL-4779 fails=") (display *fails*) (newline) (error "4779 suite failed")))
