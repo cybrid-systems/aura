@@ -206,6 +206,22 @@ def build_cases() -> list[Case]:
                 env=_env,
             )
         )
+    for _w in ("10", "100", "1000"):
+        # Issue #4772: snapshot after a one-define edit, W in {10,100,1000}.
+        # Report-only until the structural-COW snapshot lands.
+        cases.append(
+            Case(
+                name=f"agent-snapshot-w{_w}",
+                klass="agent",
+                path="bench/cases/agent/snapshot_scale.aura",
+                expect="20",
+                short=False,
+                gated=False,
+                timeout_s=120,
+                tier="full",
+                env={"BENCH_W": _w},
+            )
+        )
     cases.append(
         Case(
             name="agent-rollback",

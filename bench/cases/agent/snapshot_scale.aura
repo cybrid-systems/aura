@@ -1,0 +1,26 @@
+; Issue #4772: ast:snapshot latency vs workspace size W after a one-define
+; edit (the worldline fork shape: mutate:rebind one define, then snapshot).
+; BENCH_W filler defines, 20 rebind+snapshot cycles; only the snapshot is
+; timed. The goal is a snapshot cost that does not grow with W.
+; Checksum: number of snapshots that returned an id (20).
+(define W (let ((s (getenv "BENCH_W"))) (if (string? s) (string->number s) 100)))
+(define (fill k acc)
+  (if (= k 0) acc
+      (fill (- k 1) (string-append acc "(define w" (number->string k) " (lambda (x) (* x " (number->string k) ")))\n"))))
+(set-code (string-append "(define f (lambda (x) (+ x 0)))\n" (fill W "")))
+(eval-current)
+(define ok 0)
+(define spent 0)
+(let loop ((i 0))
+  (if (< i 20)
+      (begin
+        (mutate:rebind "f" (string-append "(lambda (x) (+ x " (number->string i) "))") "bench")
+        (let ((t0 (monotonic-ms)))
+          (if (>= (ast:snapshot) 0) (set! ok (+ ok 1)) 0)
+          (set! spent (+ spent (- (monotonic-ms) t0))))
+        (loop (+ i 1)))))
+(display "BENCH snapshot-scale ")
+(display ok)
+(display " ")
+(display spent)
+(newline)

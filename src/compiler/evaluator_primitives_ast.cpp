@@ -325,9 +325,22 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             // defuse_version_ + rollback. ok = false on every error path so
             // the Guard's dtor triggers rollback consistently.
             bool ok = true;
+            // Issue #4772: a snapshot reads the workspace; it does not edit
+            // the tree. Enter the guard on the #4346 quiet path (same arming
+            // as maybe_auto_guard_heap_mutate): the ctor skips the panic
+            // checkpoint unparse of every define, enter/exit skip the
+            // defuse bumps, and exit skips the restamp / densify / linear
+            // walks that scale with the workspace. Measured at W=1000 the
+            // guard was ~2/3 of each snapshot. The exit re-checks the
+            // mutation log, so a snapshot that did log a write still takes
+            // the full exit (fail-safe). enter_mutation_boundary consumes the
+            // arm and stamps this guard's own checkpoint heap_slot_only.
+            ev.heap_slot_quiet_for_next_boundary_ = true;
             // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
             auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
                 ev, /*pending=*/1, &ok);
+            // Issue #4772: never leak the arm onto a later AST boundary.
+            ev.heap_slot_quiet_for_next_boundary_ = false;
             if (!guard_r) {
                 // Issue #2966: observable fail — guard quota/reject.
                 ev.note_ast_snapshot_fail(kSnapFailGuard);
