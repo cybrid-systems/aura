@@ -50,6 +50,14 @@
 //         subprocess; the shard -> bindings inversion is gone).
 //   AC24: #4745 — a pure closure called through an inner lambda from 8 parallel
 //         fiber bodies returns only #t/#f, never a leaked primitive value.
+//   AC25: #4771 — begin_at(historical base_seq): a commit that landed after
+//         the worldline snapshot but before the overlay opened is a conflict;
+//         begin() / current-base still fast-forward as before.
+//   AC26: #4771 — prepare/finalize two-phase commit: prepare applies and logs
+//         nothing, reserves the names (sibling gets busy, overlay kept),
+//         finalize publishes and cannot conflict; stale ticket is refused.
+//   AC27: #4771 — prepare/cancel (WAL write failed): no ghost claim is left
+//         in the log, so a later overlay from the same base commits cleanly.
 
 #include "test_harness.hpp"
 #include "compiler/fiber_cow_overlay.hh" // Issue #4715
@@ -846,6 +854,146 @@ void ac18_cow_overlay_moved_base_merge() {
     }
 }
 
+// ── Issue #4771: worldline primitives on the overlay data layer ──────
+void ac25_cow_overlay_begin_at_historical_base() {
+    std::println("--- #4771 AC25: begin_at(historical base_seq) sees post-snapshot commits");
+    using Store = aura::compiler::cow::OverlayRegistry<std::string>;
+    auto noop = [](const std::string&, const std::string&) {};
+    {
+        // The exact issue shape: snapshot, mainline commits, THEN the
+        // worldline opens its overlay. begin() would take the post-commit seq
+        // as base and miss the stale write; begin_at() uses the snapshot's.
+        Store R;
+        int owner = 0;
+        const std::uint64_t snapshot_epoch = 1;
+        const auto snapshot_seq = R.current_seq(&owner);
+        CHECK(snapshot_seq == 0, "AC25: empty log starts at seq 0");
+        R.begin(&owner, 0, 1);
+        R.write(&owner, 0, "rule", "v1", 1);
+        const auto main_commit = R.commit(&owner, 0, 2, noop);
+        CHECK(main_commit.ok && R.current_seq(&owner) == 1,
+              "AC25: mainline commit after the snapshot advances the log");
+        R.begin_at(&owner, 7, snapshot_epoch, snapshot_seq);
+        CHECK(R.base_seq(&owner, 7) == snapshot_seq, "AC25: overlay base is the snapshot seq");
+        R.write(&owner, 7, "rule", "v2", snapshot_epoch);
+        const auto c = R.commit(&owner, 7, 2, noop);
+        CHECK(!c.ok && c.conflict == "rule" && c.applied == 0,
+              "AC25: stale worldline commit conflicts on 'rule' (was ok=1 before #4771)");
+        CHECK(c.conflict_info.winner_seq == 1 && c.conflict_info.base_seq == snapshot_seq &&
+                  !c.conflict_info.read_only,
+              "AC25: structured condition names the post-snapshot winner");
+    }
+    {
+        // Control: plain begin() keeps the historical "base = now" contract.
+        Store R;
+        int owner = 0;
+        R.begin(&owner, 0, 1);
+        R.write(&owner, 0, "rule", "v1", 1);
+        R.commit(&owner, 0, 2, noop);
+        R.begin(&owner, 7, 2);
+        R.write(&owner, 7, "rule", "v2", 2);
+        const auto c = R.commit(&owner, 7, 2, noop);
+        CHECK(c.ok && c.fast_forward, "AC25: begin() at the current base still commits");
+    }
+    {
+        // A base ahead of the log is clamped (a base cannot be in the future)
+        // and an untouched snapshot base commits like begin().
+        Store R;
+        int owner = 0;
+        R.begin_at(&owner, 3, 4, 999);
+        CHECK(R.base_seq(&owner, 3) == 0, "AC25: future base_seq clamps to current seq");
+        R.write(&owner, 3, "other", "x", 4);
+        CHECK(R.commit(&owner, 3, 4, noop).ok, "AC25: disjoint worldline commit succeeds");
+    }
+}
+
+void ac26_cow_overlay_two_phase_commit() {
+    std::println("--- #4771 AC26: prepare/finalize two-phase commit");
+    using Store = aura::compiler::cow::OverlayRegistry<int>;
+    Store reg;
+    std::unordered_map<std::string, int> shared;
+    auto apply = [&shared](const std::string& n, const int& v) { shared[n] = v; };
+    const void* owner = "ac26";
+    constexpr std::uint64_t epoch = 5;
+    reg.begin(owner, 1, epoch);
+    reg.begin(owner, 2, epoch);
+    reg.write(owner, 1, "rule-a", 10, epoch);
+    reg.write(owner, 1, "rule-b", 11, epoch);
+    reg.write(owner, 2, "rule-b", 20, epoch);
+    const auto t = reg.prepare(owner, 1, epoch);
+    CHECK(t.valid() && t.result.attempted_names.size() == 2,
+          "AC26: prepare issues a ticket covering both names");
+    CHECK(shared.empty() && reg.current_seq(owner) == 0,
+          "AC26: prepare applies nothing and logs no claim");
+    CHECK(!reg.write(owner, 1, "rule-c", 1, epoch), "AC26: a prepared overlay is frozen");
+    const auto sib = reg.commit(owner, 2, epoch, apply);
+    CHECK(!sib.ok && sib.busy && sib.conflict == "rule-b" && sib.applied == 0,
+          "AC26: sibling commit on a reserved name is busy, not applied");
+    CHECK(reg.active(owner, 2) && reg.pending(owner, 2) == 1,
+          "AC26: busy keeps the sibling overlay for a retry");
+    CHECK(reg.stats(owner).conflicts == 0, "AC26: busy is not counted as a conflict");
+    const auto sib_prep = reg.prepare(owner, 2, epoch);
+    CHECK(!sib_prep.valid() && sib_prep.result.busy, "AC26: sibling prepare is busy too");
+    // ... caller persists its WAL record here ...
+    const auto f = reg.finalize(t, apply);
+    CHECK(f.ok && f.applied == 2 && shared["rule-a"] == 10 && shared["rule-b"] == 11,
+          "AC26: finalize publishes the prepared write set");
+    CHECK(reg.current_seq(owner) == 2 && !reg.active(owner, 1),
+          "AC26: finalize logs both claims and closes the overlay");
+    CHECK(!reg.finalize(t, apply).ok && !reg.cancel(t), "AC26: a used ticket is refused");
+    const auto retry = reg.commit(owner, 2, epoch, apply);
+    CHECK(!retry.ok && !retry.busy && retry.conflict == "rule-b" && shared["rule-b"] == 11,
+          "AC26: after finalize the sibling retry is a real write-write conflict");
+    const auto st = reg.stats(owner);
+    CHECK(st.prepares == 1 && st.commits == 1 && st.conflicts == 1 && st.active == 0,
+          "AC26: stats record 1 prepare, 1 commit, 1 conflict");
+    // A conflicting prepare drops the overlay exactly like commit().
+    reg.begin_at(owner, 3, epoch, 0);
+    reg.write(owner, 3, "rule-a", 99, epoch);
+    const auto bad = reg.prepare(owner, 3, epoch);
+    CHECK(!bad.valid() && !bad.result.busy && bad.result.conflict == "rule-a" &&
+              !reg.active(owner, 3),
+          "AC26: conflicting prepare reports the name and drops the overlay");
+}
+
+void ac27_cow_overlay_prepare_cancel_no_ghost() {
+    std::println("--- #4771 AC27: cancel after a failed WAL write leaves no ghost commit");
+    using Store = aura::compiler::cow::OverlayRegistry<int>;
+    Store reg;
+    std::unordered_map<std::string, int> shared;
+    auto apply = [&shared](const std::string& n, const int& v) { shared[n] = v; };
+    const void* owner = "ac27";
+    constexpr std::uint64_t epoch = 2;
+    const auto snap = reg.current_seq(owner);
+    reg.begin_at(owner, 1, epoch, snap);
+    reg.begin_at(owner, 2, epoch, snap);
+    reg.write(owner, 1, "rule", 1, epoch);
+    reg.write(owner, 2, "rule", 2, epoch);
+    const auto t = reg.prepare(owner, 1, epoch);
+    CHECK(t.valid(), "AC27: prepare ok");
+    const bool wal_ok = false; // simulated ENOSPC / EIO, process stays up
+    if (!wal_ok)
+        CHECK(reg.cancel(t), "AC27: cancel the prepared ticket");
+    CHECK(shared.empty() && reg.current_seq(owner) == snap && !reg.active(owner, 1),
+          "AC27: nothing applied, no claim logged, overlay dropped");
+    const auto c = reg.commit(owner, 2, epoch, apply);
+    CHECK(c.ok && shared["rule"] == 2,
+          "AC27: the sibling from the same base commits (no ghost conflict)");
+    const auto st = reg.stats(owner);
+    CHECK(st.cancels == 1 && st.rollbacks == 1 && st.conflicts == 0 && st.commits == 1,
+          "AC27: stats record the cancel as a rollback");
+    // rollback() on a prepared overlay also releases its reservations.
+    reg.begin(owner, 5, epoch);
+    reg.begin(owner, 6, epoch);
+    reg.write(owner, 5, "x", 1, epoch);
+    reg.write(owner, 6, "x", 2, epoch);
+    const auto t5 = reg.prepare(owner, 5, epoch);
+    CHECK(t5.valid() && reg.rollback(owner, 5), "AC27: rollback a prepared overlay");
+    CHECK(!reg.finalize(t5, apply).ok, "AC27: a rolled-back ticket cannot finalize");
+    CHECK(reg.commit(owner, 6, epoch, apply).ok && shared["x"] == 2,
+          "AC27: rollback released the reservation");
+}
+
 // ── #4717: the evaluator split cite ─────────────────────────────────
 // P4 splits the shared body state: the thread-backend body no longer takes
 // the CLI body/commit lock (the lock shrinks to the CLI main's commit
@@ -1184,9 +1332,14 @@ int run_test_fiber_spawn_cli() {
     ac23_parallel_eval_no_deadlock();
     // Issue #4745 — per-body #4599 memo invalidation (flat/pool scoped).
     ac24_closure_in_fibers_boolean_4745();
-    std::println("\n=== #2656/#2685/#2686/#3394/#4131/#4720/#4717/#4715/#4733/#4734/#4745: {} "
-                 "passed, {} failed ===",
-                 g_passed, g_failed);
+    // Issue #4771 — worldline primitives (historical base, two-phase commit).
+    ac25_cow_overlay_begin_at_historical_base();
+    ac26_cow_overlay_two_phase_commit();
+    ac27_cow_overlay_prepare_cancel_no_ghost();
+    std::println(
+        "\n=== #2656/#2685/#2686/#3394/#4131/#4720/#4717/#4715/#4733/#4734/#4745/#4771: {} "
+        "passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
