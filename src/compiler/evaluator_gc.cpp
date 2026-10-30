@@ -1573,6 +1573,27 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         if (m)
             push_env(*m);
     }
+    // Issue #4790 (item 3): in FILE mode every frame is a root, by design.
+    //
+    // The tree-walker reclaim seeds its frame mark from the live Env stack
+    // plus the closure table (live closure -> env_id -> parent chain). This
+    // path has neither:
+    //   * it runs at an IR instruction boundary that can be nested inside a
+    //     live tree-walked evaluation (#4481 / #4617). That evaluator's Env
+    //     stack is C++ locals on the fiber stack;
+    //     collect_tw_inflight_roots hands over their BINDINGS (values),
+    //     never the EnvIds, and FileModeReclaimView carries cells and
+    //     closure env vectors, not env-frame ids;
+    //   * an Env can hold a frame id (parent_id_ / cap_snapshot
+    //     source_frame) while no closure value reaches it, and the
+    //     EnvFrameLifetimeGuard registry does not cover every Env.
+    // Freelisting such a frame lets the next capture restamp it under the
+    // holder (#4459 reuse) - silent aliasing of a live lexical binding.
+    // Until an EnvId root set exists for this path, rooting every frame is
+    // the only safe rule. Consequence: a dead capture frame keeps its
+    // bindings (and their cells/pairs/strings) alive until compact or
+    // truncate renumbers. Frame recycling for the CLI/serve path is the
+    // tree-walker sweep (#4459 / #4787), not this one.
     {
         std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
         for (std::size_t i = 0; i < kEnvFramesShardCount; ++i)
@@ -1584,17 +1605,15 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
                 roots.push_back(b.second);
         }
     }
-    {
-        std::lock_guard lock(cap_snap_mtx_);
-        for (const auto& entry : cap_snap_cache_) {
-            for (auto sp = entry.second; sp; sp = sp->parent) {
-                for (const auto& b : sp->bindings_)
-                    roots.push_back(b.second);
-                for (const auto& b : sp->bindings_symid_)
-                    roots.push_back(b.second);
-            }
-        }
-    }
+    // Issue #4790: the capture-snapshot cache is NOT an additional root
+    // here. A snapshot is an exact copy of its source frame's bindings
+    // (cap_snap_for_frame copies them under the frame's shard lock), every
+    // frame is rooted directly above, and this path never clears or
+    // rewrites a frame. #4608 rooted the cache so a snapshot binding could
+    // not be released under the cache; that is subsumed by the frame root,
+    // and rooting it only made every file-mode mark walk the whole cache
+    // for values already marked. (#4787 removed the same over-rooting from
+    // the tree-walker mark, where it resurrected every dead capture frame.)
     // Issue #4608: the intern caches hold string indices (symbol
     // names, quote literals, keywords). They are roots: a cached
     // index must never be released under the cache.

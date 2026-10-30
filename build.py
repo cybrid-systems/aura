@@ -10078,6 +10078,28 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4608 string-heap reclaim linter failed — run python3 scripts/check_string_heap_reclaim_4608.py")
         return r
+    # Issue #4790: three pre-existing frame/GC items that #4787 exposed by
+    # making EnvFrame slot REUSE hot. (1) the #4459 reuse path restamps an
+    # ALREADY PUBLISHED slot, so it now takes that slot's EnvFramesShard
+    # exclusive lock (the allocation comment always claimed it did; the
+    # unlocked rewrite was a data race no STW sweep ever observed).
+    # (2) arena exhaustion at kMaxSlots no longer hands a capture caller
+    # NULL_ENV_ID: the #4459 freelist is consulted, then the allocation
+    # site fails loudly (env_frame_arena::fail) instead of building a
+    # closure with no capture. (3) the file-mode reclaim's "every frame is
+    # a root" rule carries its written justification (no EnvId root set for
+    # a suspended tree-walker stack, #4481/#4617) and the capture-snapshot
+    # cache is no longer an additional root there (subsumed by the frame
+    # roots, the #4787 argument). Runtime doors live in
+    # tests/compiler/test_envframe_epoch_batch.cpp (run_4790_*).
+    framegc4790_script = ROOT / "scripts" / "check_frame_gc_4790.py"
+    if not framegc4790_script.exists():
+        fail(f"missing {framegc4790_script}")
+        return 1
+    r = run([sys.executable, str(framegc4790_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4790 frame/GC linter failed — run python3 scripts/check_frame_gc_4790.py")
+        return r
     # Issue #4613: the file-mode reclaim recycled pairs, cells, closures
     # and strings, but three primitives minted their objects OUTSIDE the
     # evaluator mint path: vector->list pushed the pairs straight into
