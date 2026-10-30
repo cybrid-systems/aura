@@ -1239,26 +1239,70 @@ private:
 // image (see core/cow_column.hh). Adding a column that operator= copies
 // means adding it here — the copy, the image capture and the delta restore
 // all expand this one list.
-#define AURA_FLATAST_COW_COLUMNS(X)                                                                \
-    X(tag_)                                                                                        \
-    X(int_val_) X(float_val_) X(sym_id_) X(children_) X(parent_) X(incoming_parent_edges_)         \
-        X(param_begin_) X(param_count_) X(cap_require_count_) X(param_data_) X(param_annot_data_)  \
-            X(line_) X(col_) X(marker_) X(provenance_) X(dirty_) X(ppa_dirty_) X(verify_dirty_)    \
-                X(verification_dirty_) X(macro_dirty_) X(type_id_) X(type_cache_gen_)              \
-                    X(type_cache_binding_gen_) X(schema_cache_) X(error_kind_) X(node_gen_)        \
-                        X(free_list_) X(value_cache_) X(node_first_mutation_) X(match_info_)       \
-                            X(region_by_sym_dense_) X(region_by_lambda_dense_) X(define_ver_)
+// clang-format off
+#define AURA_FLATAST_COW_COLUMNS(X) \
+    X(tag_) \
+    X(int_val_) \
+    X(float_val_) \
+    X(sym_id_) \
+    X(children_) \
+    X(parent_) \
+    X(incoming_parent_edges_) \
+    X(param_begin_) \
+    X(param_count_) \
+    X(cap_require_count_) \
+    X(param_data_) \
+    X(param_annot_data_) \
+    X(line_) \
+    X(col_) \
+    X(marker_) \
+    X(provenance_) \
+    X(dirty_) \
+    X(ppa_dirty_) \
+    X(verify_dirty_) \
+    X(verification_dirty_) \
+    X(macro_dirty_) \
+    X(type_id_) \
+    X(type_cache_gen_) \
+    X(type_cache_binding_gen_) \
+    X(schema_cache_) \
+    X(error_kind_) \
+    X(node_gen_) \
+    X(free_list_) \
+    X(value_cache_) \
+    X(node_first_mutation_) \
+    X(match_info_) \
+    X(region_by_sym_dense_) \
+    X(region_by_lambda_dense_) \
+    X(define_ver_)
+// clang-format on
 #define AURA_FLATAST_COW_MAPS(X) X(region_by_sym_) X(region_by_lambda_id_)
 // Issue #4772: the CONTENT subset — the columns that define what the tree is
 // (topology, literals, params, positions, slot liveness). The rest are
 // derived caches / indices (dirty bits, type & value caches, region index,
 // mutation metadata): images still capture them, but a capture that wrote
 // only caches is a share hit, and the restore oracle compares content.
-#define AURA_FLATAST_COW_CONTENT_COLUMNS(X)                                                        \
-    X(tag_)                                                                                        \
-    X(int_val_) X(float_val_) X(sym_id_) X(children_) X(parent_) X(incoming_parent_edges_)         \
-        X(param_begin_) X(param_count_) X(cap_require_count_) X(param_data_) X(param_annot_data_)  \
-            X(line_) X(col_) X(marker_) X(provenance_) X(node_gen_) X(free_list_)
+// clang-format off
+#define AURA_FLATAST_COW_CONTENT_COLUMNS(X) \
+    X(tag_) \
+    X(int_val_) \
+    X(float_val_) \
+    X(sym_id_) \
+    X(children_) \
+    X(parent_) \
+    X(incoming_parent_edges_) \
+    X(param_begin_) \
+    X(param_count_) \
+    X(cap_require_count_) \
+    X(param_data_) \
+    X(param_annot_data_) \
+    X(line_) \
+    X(col_) \
+    X(marker_) \
+    X(provenance_) \
+    X(node_gen_) \
+    X(free_list_)
+// clang-format on
 
 export class FlatAST {
     // ── Issue #2413 / #2488 — concurrent access contract (read this) ───
