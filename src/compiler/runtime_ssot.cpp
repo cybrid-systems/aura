@@ -167,11 +167,28 @@ std::mutex g_owned_pair_slots_mtx;
 std::atomic<int> g_ir_active_drains{0};
 
 extern "C" int aura_ir_active_drains_total() noexcept {
-    return g_ir_active_drains.load(std::memory_order_acquire);
+    // Issue #4791: seq_cst, the sweep half of the drain-begin handshake below.
+    return g_ir_active_drains.load(std::memory_order_seq_cst);
 }
 
+// Issue #4791: the drain-begin half of the #4768 sweep gate. Defined with the
+// gate further down; forward-declared here so the drain count can use it.
+extern "C" void aura_gc_sweep_gate_wait_for_body() noexcept;
+
 extern "C" void aura_ir_drain_begin() noexcept {
-    g_ir_active_drains.fetch_add(1, std::memory_order_acq_rel);
+    // Issue #4791: a serve-scheduled body is NOT counted by
+    // aura_fiber_body_enter (only the CLI thread backend is); its only
+    // stand-down input is this drain count. Publishing it was check-then-act
+    // from the sweep's side: a sweep that had already asserted the gate and
+    // read the count could not see a drain that began after the read, and the
+    // body then minted into slots that sweep released (#4791: held list
+    // spliced / sibling mint harvested with SIMULTANEOUS spawn). Same Dekker
+    // shape as the body counter: publish (seq_cst) BEFORE testing the gate,
+    // and wait a gate that is held out. Either the sweep's read sees this
+    // drain (and stands down) or this drain sees the sweep (and waits until
+    // its release is done).
+    g_ir_active_drains.fetch_add(1, std::memory_order_seq_cst);
+    aura_gc_sweep_gate_wait_for_body();
 }
 
 extern "C" void aura_ir_drain_end() noexcept {
@@ -251,16 +268,79 @@ extern "C" void aura_gc_sweep_end() noexcept {
     g_file_heap_sweep_active.store(false, std::memory_order_seq_cst);
 }
 
+// Issue #4791: how often a body start (body enter or IR drain begin) found a
+// sweep holding the gate - i.e. how often the check-then-act window was hit.
+// Before #4791 a drain begin in this state minted straight under the release.
+std::atomic<std::uint64_t> g_gc_sweep_gate_body_hits{0};
+// Issue #4791: how many of those hits actually waited the sweep out (0 under
+// the AURA_GC_GATE_DRAIN_NOWAIT control arm for the drain half).
+std::atomic<std::uint64_t> g_gc_sweep_gate_body_waits{0};
+
+// Issue #4791: the walker safepoint (evaluator_eval_flat.cpp). Weak: this TU
+// also links into units without the tree walker.
+extern "C" void aura_tw_safepoint() noexcept __attribute__((weak));
+
+namespace {
+// Issue #4791: the measurement control arm. AURA_GC_GATE_DRAIN_NOWAIT=1 keeps
+// the drain begin publishing but makes it NOT wait a held gate - the pre-#4791
+// behaviour - so a single binary can show the window being hit and the
+// corruption it causes. Read once; a test flips it through
+// aura_gc_sweep_gate_set_drain_nowait.
+std::atomic<int> g_gate_drain_nowait{-1};
+bool gate_drain_nowait() noexcept {
+    int v = g_gate_drain_nowait.load(std::memory_order_relaxed);
+    if (v < 0) {
+        const char* e = std::getenv("AURA_GC_GATE_DRAIN_NOWAIT");
+        v = (e != nullptr && *e != 0 && *e != '0') ? 1 : 0;
+        g_gate_drain_nowait.store(v, std::memory_order_relaxed);
+    }
+    return v != 0;
+}
+
+void gate_wait_held_sweep(bool may_skip) noexcept {
+    // A sweep owner never waits on its own gate (a native finalizer inside a
+    // sweep may re-enter Aura and start a body); that path is covered by the
+    // newborn bounds instead.
+    if (t_sweep_gate_owner || !g_file_heap_sweep_active.load(std::memory_order_seq_cst))
+        return;
+    g_gc_sweep_gate_body_hits.fetch_add(1, std::memory_order_relaxed);
+    if (may_skip && gate_drain_nowait())
+        return;
+    g_gc_sweep_gate_body_waits.fetch_add(1, std::memory_order_relaxed);
+    while (g_file_heap_sweep_active.load(std::memory_order_seq_cst)) {
+        // The sweep may be a tree-walker collector waiting (bounded) for this
+        // body's attached fiber segment to park. A waiting body is between
+        // frames, so park it instead of letting that collector time out.
+        if (aura_tw_safepoint != nullptr)
+            aura_tw_safepoint();
+        std::this_thread::yield();
+    }
+}
+} // namespace
+
+extern "C" void aura_gc_sweep_gate_wait_for_body() noexcept {
+    gate_wait_held_sweep(/*may_skip=*/true);
+}
+
+extern "C" std::uint64_t aura_gc_sweep_gate_body_hits_total() noexcept {
+    return g_gc_sweep_gate_body_hits.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_gc_sweep_gate_body_waits_total() noexcept {
+    return g_gc_sweep_gate_body_waits.load(std::memory_order_relaxed);
+}
+
+extern "C" void aura_gc_sweep_gate_set_drain_nowait(int on) noexcept {
+    g_gate_drain_nowait.store(on != 0 ? 1 : 0, std::memory_order_relaxed);
+}
+
 extern "C" void aura_fiber_body_enter() noexcept {
     g_fiber_bodies_running.fetch_add(1, std::memory_order_seq_cst);
     ++t_fiber_body_depth;
     // A sweep that asserted the gate before this body incremented has already
     // (or is about to) read the counters and will not see this body: wait for
-    // it instead of minting under its release. A sweep owner never waits on
-    // its own gate (a native finalizer inside a sweep may re-enter Aura and
-    // start a body); that path is covered by the newborn bounds instead.
-    while (!t_sweep_gate_owner && g_file_heap_sweep_active.load(std::memory_order_seq_cst))
-        std::this_thread::yield();
+    // it instead of minting under its release.
+    gate_wait_held_sweep(/*may_skip=*/false);
 }
 
 extern "C" void aura_fiber_body_exit() noexcept {
