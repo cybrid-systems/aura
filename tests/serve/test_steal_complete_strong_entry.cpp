@@ -660,25 +660,73 @@ int run_test_steal_complete_strong_entry() {
         // ── Issue #3476: Scheduler::run welds Ready before WorkerThread::start.
         {
             std::println("\n=== Issue #3476: Scheduler::run production Ready weld ===");
+            // Issue #4756: the #3586 / #3476 / #3950 start decision moved
+            // into Scheduler::evaluate_start_gate(), decided on the
+            // caller's thread before a runner thread exists. The #3476
+            // invariant is unchanged and is now carried by the gate: the
+            // size gate, the multi-worker Ready and the single-worker ABI
+            // arm all live inside evaluate_start_gate(), and run() must
+            // decide that gate before w->start().
             const auto sched_cpp = read_file("src/serve/scheduler.cpp");
+            const auto gate_pos = sched_cpp.find("void Scheduler::evaluate_start_gate()");
             const auto run_pos = sched_cpp.find("void Scheduler::run()");
+            CHECK(gate_pos != std::string::npos, "3476 AC1: Scheduler::evaluate_start_gate found");
             CHECK(run_pos != std::string::npos, "3476 AC6: Scheduler::run found");
+            const auto gate_end = gate_pos == std::string::npos ? std::string::npos
+                                                                : sched_cpp.find("\n}\n", gate_pos);
             const auto start_pos = sched_cpp.find("w->start()", run_pos);
+            const auto gate_call_pos = sched_cpp.find("evaluate_start_gate();", run_pos);
+            CHECK(gate_call_pos != std::string::npos && start_pos != std::string::npos &&
+                      gate_call_pos < start_pos,
+                  "3476 AC1: run() decides the start gate before WorkerThread::start");
             const auto multi_pos =
-                sched_cpp.find("aura_runtime_require_production_multi_worker", run_pos);
-            const auto abi_pos = sched_cpp.find("aura_runtime_require_production_abi()", run_pos);
-            const auto size_pos = sched_cpp.find("workers_.size() > 1", run_pos);
-            CHECK(size_pos != std::string::npos && size_pos < start_pos,
-                  "3476 AC1: workers_.size()>1 gate before start");
-            CHECK(multi_pos != std::string::npos && multi_pos < start_pos,
+                sched_cpp.find("aura_runtime_require_production_multi_worker", gate_pos);
+            const auto abi_pos = sched_cpp.find("aura_runtime_require_production_abi()", gate_pos);
+            const auto size_pos = sched_cpp.find("workers_.size() > 1", gate_pos);
+            CHECK(size_pos != std::string::npos && gate_end != std::string::npos &&
+                      size_pos > gate_pos && size_pos < gate_end,
+                  "3476 AC1: workers_.size()>1 gate inside evaluate_start_gate");
+            CHECK(multi_pos != std::string::npos && gate_end != std::string::npos &&
+                      multi_pos > gate_pos && multi_pos < gate_end,
                   "3476 AC1: multi-worker Ready before WorkerThread::start");
-            CHECK(abi_pos != std::string::npos && abi_pos < start_pos,
+            CHECK(abi_pos != std::string::npos && gate_end != std::string::npos &&
+                      abi_pos > gate_pos && abi_pos < gate_end,
                   "3476 AC3: single-worker uses require_production_abi before start");
             CHECK(sched_cpp.find("Issue #3476") != std::string::npos, "3476 AC6: scheduler cites");
             CHECK(sched_cpp.find("g_3476_") == std::string::npos, "3476 AC4: no new g_3476_*");
             CHECK(read_file("docs/design/3476-scheduler-ready-weld.md").empty(),
                   "3476 AC6: no docs/design");
             CHECK(read_file("tests/serve/test_issue_3476.cpp").empty(), "3476 AC5: no invent");
+
+            // AC1 runtime (the ordering is a property of the gate, not of
+            // comment placement): an unarmed multi-worker gate refuses with
+            // no worker thread in existence at all. run() is never entered
+            // here; evaluate_start_gate() is the exact call the orch holder
+            // makes before it starts its runner thread (#4756), so the
+            // refusal provably precedes every WorkerThread::start().
+            {
+                std::println("\n--- #3476 AC1: start gate refuses before any worker starts ---");
+                const char* prev_sb = std::getenv("AURA_SANDBOX");
+                const std::string prev_sb_s = prev_sb ? prev_sb : "";
+                const pid_t pid = ::fork();
+                if (pid == 0) {
+                    ::alarm(10);
+                    ::unsetenv("AURA_SANDBOX");
+                    aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                        .production_defaults_active.store(0, std::memory_order_relaxed);
+                    aura::serve::Scheduler gate_only(2);
+                    gate_only.evaluate_start_gate();
+                    ::_exit(99);
+                }
+                int gst = 0;
+                if (pid > 0)
+                    ::waitpid(pid, &gst, 0);
+                CHECK(pid > 0 && WIFSIGNALED(gst) && WTERMSIG(gst) == SIGABRT,
+                      "3476 AC1: unarmed multi-worker start gate refuses before "
+                      "WorkerThread::start");
+                if (!prev_sb_s.empty())
+                    ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            }
 
             // AC3 live: single-worker Soft does not abort (require_production_abi).
             {
