@@ -7697,7 +7697,19 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             };
                             // A define in the expansion re-keys top_ onto the
                             // expansion's pool (#4373); restore the caller's.
-                            auto legacy_macro_run_4759 = [&](const LegacyMacroSite4759& site) {
+                            auto legacy_macro_run_4759 =
+                                [&](const LegacyMacroSite4759& site) -> EvalResult {
+                                // Issue #4421 / #3688: the expansion is parsed into
+                                // its own flat and evaluated as real code, so a
+                                // shorthand `define` in the template arrives as a
+                                // Define node - not the eval_data_as_code branch
+                                // that refuses. A refused commit window must not
+                                // install that binding either: refuse before the
+                                // expansion runs, with the same TypeError IR and
+                                // eval_flat use.
+                                if (production_eval_flat_commit_readiness_refuse(
+                                        static_cast<CompilerMetrics*>(compiler_metrics_)))
+                                    return eval_flat_commit_readiness_refused();
                                 auto saved_pool = top_env().pool();
                                 auto r = eval_flat(*site.flat, *site.pool, site.root, eval_env);
                                 if (saved_pool && top_env().pool() != saved_pool)
