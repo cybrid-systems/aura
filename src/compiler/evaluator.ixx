@@ -2356,6 +2356,11 @@ export struct FlatSnapshotDefineStamps {
     // stamps are only comparable against that same flat lineage; a
     // set-code / workspace :merge installs a fresh flat whose cells restart.
     const void* live_flat = nullptr;
+    // Issue #4772: by_name not built yet. ast:snapshot no longer walks the
+    // workspace; the first restore fills by_name from the restored tree with
+    // gen16 read from the image's subtree_gen_ capture (the same cells the
+    // eager walk read), then clears the flag.
+    bool lazy = false;
 };
 
 // Issue #4575: result of Evaluator::enter_soft_session. The launcher
@@ -7367,10 +7372,18 @@ private:
     // instead of deep-copying O(workspace) columns again. Shared copies
     // are frozen: every consumer only reads them (restore assigns FROM
     // them; the #4271 cap drops the shared_ptr).
+    // Issue #4772: flat/pool are structural-sharing IMAGES, not deep
+    // copies. A capture shares every column chunk the workspace has not
+    // written since the previous image (FlatAST::capture_image), so a
+    // snapshot after a one-define edit costs O(changed chunks); restore is
+    // the matching delta assign. The source string is lazy (source_lazy):
+    // it is unparsed from the image only when a consumer asks for it
+    // (snapshot_source_at — ast:diff, source-fallback restore, eviction).
     struct FlatSnapshot {
-        std::shared_ptr<aura::ast::FlatAST> flat;
-        std::shared_ptr<aura::ast::StringPool> pool;
+        std::shared_ptr<const aura::ast::FlatAST::Image> flat;
+        std::shared_ptr<const aura::ast::StringPool::Image> pool;
         bool has_flat = false; // true if both flat + pool are valid
+        bool source_lazy = false; // snapshot_sources_[id] not built yet
         // Issue #263: metadata captured at snapshot time for restore checks.
         std::uint16_t flat_generation = 0;
         std::size_t flat_size = 0;
@@ -7391,6 +7404,16 @@ private:
     std::vector<FlatSnapshot> snapshot_flats_;
     // Issue #4782: bumped by every ast:restore that rewrote the workspace.
     std::uint64_t ast_restore_epoch_{0};
+    // Issue #4772: the snapshot's workspace source text. Builds it from the
+    // image on first use when the capture deferred the unparse.
+    const std::string& snapshot_source_at(std::size_t id);
+    // Issue #4772: #4271 retention over images. Each distinct image weighs
+    // the share of its chunks it owns (a set-code capture = 1 deep copy, a
+    // delta capture ~0). Drop the oldest distinct image while the summed
+    // weight exceeds kMaxAstSnapshotDeepFlats or the distinct count exceeds
+    // kMaxAstSnapshotImages; a dropped entry keeps its (materialized) source
+    // for the set-code fallback.
+    void trim_ast_snapshot_images();
     // Issue #4598 phase 3: snapshot share + restore stamp counters (Agent
     // observability via query:workspace-snapshot-stats; C++ tests read the
     // public accessors).
@@ -7398,6 +7421,12 @@ private:
     std::uint64_t ast_snapshot_share_misses_total_{0};
     std::uint64_t ast_restore_stamp_republish_total_{0};
     std::uint64_t ast_restore_stamp_unparse_total_{0};
+    // Issue #4772: image capture accounting (chunks this snapshot copied vs
+    // shared from the previous image) and lazy-source counters.
+    std::uint64_t ast_snapshot_chunks_fresh_total_{0};
+    std::uint64_t ast_snapshot_chunks_shared_total_{0};
+    std::uint64_t ast_snapshot_lazy_source_total_{0};
+    std::uint64_t ast_snapshot_lazy_source_builds_total_{0};
     // Issue #4271: drop counter for deep FlatAST snapshot eviction (see
     // public kMaxAstSnapshotDeepFlats).
     std::uint64_t ast_snapshot_deep_flat_drops_total_{0};
@@ -10024,14 +10053,27 @@ public:
     // Issue #4271: max live deep FlatAST copies retained for ast:snapshot.
     // Older snapshots keep source for fallback restore; ids stay stable.
     static constexpr std::size_t kMaxAstSnapshotDeepFlats = 32;
+    // Issue #4772: bound on distinct delta images (each holds one chunk
+    // pointer per column chunk even when it owns none).
+    static constexpr std::size_t kMaxAstSnapshotImages = 256;
+    // Issue #4772: deep-copy equivalents retained (sum of image weights,
+    // rounded up) — what the #4271 cap bounds now that captures share.
     [[nodiscard]] std::size_t ast_snapshot_deep_flat_count() const noexcept {
+        std::unordered_set<const aura::ast::FlatAST::Image*> seen;
+        double w = 0.0;
+        for (const auto& s : snapshot_flats_)
+            if (s.has_flat && s.flat && seen.insert(s.flat.get()).second)
+                w += s.flat->weight();
+        return static_cast<std::size_t>(std::ceil(w - 1e-9));
+    }
+    [[nodiscard]] std::size_t ast_snapshot_image_count() const noexcept {
         // Issue #4598 residual: count DISTINCT frozen copies, not entries.
         // Phase 3 shares one frozen copy across any number of share-hit
         // snapshots and the #4271 cap now bounds copies (a shared entry
         // costs one handle, not a workspace-sized deep copy). Counting
         // entries here would report a deep count above the cap whenever the
         // share path wins, contradicting the bounded-retention contract.
-        std::unordered_set<const aura::ast::FlatAST*> seen;
+        std::unordered_set<const aura::ast::FlatAST::Image*> seen;
         for (const auto& s : snapshot_flats_)
             if (s.has_flat && s.flat)
                 seen.insert(s.flat.get());
@@ -10052,6 +10094,38 @@ public:
     }
     [[nodiscard]] std::uint64_t ast_restore_stamp_unparse_total() const noexcept {
         return ast_restore_stamp_unparse_total_;
+    }
+    [[nodiscard]] std::uint64_t ast_snapshot_chunks_fresh_total() const noexcept {
+        return ast_snapshot_chunks_fresh_total_;
+    }
+    [[nodiscard]] std::uint64_t ast_snapshot_chunks_shared_total() const noexcept {
+        return ast_snapshot_chunks_shared_total_;
+    }
+    [[nodiscard]] std::uint64_t ast_snapshot_lazy_source_total() const noexcept {
+        return ast_snapshot_lazy_source_total_;
+    }
+    [[nodiscard]] std::uint64_t ast_snapshot_lazy_source_builds_total() const noexcept {
+        return ast_snapshot_lazy_source_builds_total_;
+    }
+    // Issue #4772: test oracle — the live workspace equals snapshot `id`'s
+    // image column-for-column (false when the entry holds no image).
+    [[nodiscard]] bool workspace_equals_snapshot_image(std::size_t id) const {
+        if (id >= snapshot_flats_.size() || !snapshot_flats_[id].has_flat || !workspace_flat_ ||
+            !workspace_pool_)
+            return false;
+        return workspace_flat_->content_equals_image(*snapshot_flats_[id].flat) &&
+               workspace_pool_->equals_image(*snapshot_flats_[id].pool);
+    }
+    // Issue #4772: debug — mirrored columns of the live flat that differ from
+    // snapshot `id`'s image ("pool" when the pool differs).
+    [[nodiscard]] std::string snapshot_image_diff(std::size_t id) const {
+        if (id >= snapshot_flats_.size() || !snapshot_flats_[id].has_flat || !workspace_flat_ ||
+            !workspace_pool_)
+            return "no-image";
+        auto out = workspace_flat_->image_diff_columns(*snapshot_flats_[id].flat);
+        if (!workspace_pool_->equals_image(*snapshot_flats_[id].pool))
+            out += "pool";
+        return out;
     }
     // Issue #548: panic-checkpoint lifecycle counters
     // + bump helpers. Public so the

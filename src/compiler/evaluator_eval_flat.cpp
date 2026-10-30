@@ -11410,10 +11410,9 @@ std::int64_t Evaluator::capture_workspace_snapshot_under_lock(std::string_view n
     workspace_flat_->recycle_dead_nodes();
     FlatSnapshot fs;
     try {
-        fs.flat = std::make_unique<aura::ast::FlatAST>();
-        fs.pool = std::make_unique<aura::ast::StringPool>();
-        *fs.flat = *workspace_flat_;
-        *fs.pool = *workspace_pool_;
+        // Issue #4772: structural-sharing images (see ast:snapshot).
+        fs.flat = workspace_flat_->capture_image();
+        fs.pool = workspace_pool_->capture_image();
         fs.has_flat = true;
         fs.flat_generation = workspace_flat_->generation();
         fs.flat_size = workspace_flat_->size();
@@ -11426,6 +11425,8 @@ std::int64_t Evaluator::capture_workspace_snapshot_under_lock(std::string_view n
         // [SILENCE-PRIM-#615] OOM / copy failure during snapshot — keep
         // source-only snapshot (has_flat=false); same contract as
         // ast:snapshot deep-copy path (#1669 class A).
+        fs.flat.reset();
+        fs.pool.reset();
         fs.has_flat = false;
     }
     fs.restore_epoch = ast_restore_epoch_; // Issue #4782
@@ -11433,6 +11434,8 @@ std::int64_t Evaluator::capture_workspace_snapshot_under_lock(std::string_view n
     snapshot_sources_.push_back(source);
     snapshot_names_.push_back(std::string(name));
     snapshot_flats_.push_back(std::move(fs));
+    // Issue #4271 / #4772: same retention bound as ast:snapshot.
+    trim_ast_snapshot_images();
     return static_cast<std::int64_t>(id);
 }
 
@@ -11707,9 +11710,10 @@ bool Evaluator::restore_workspace_snapshot_under_lock(std::size_t id) noexcept {
     if (id < snapshot_flats_.size() && snapshot_flats_[id].has_flat && snapshot_flats_[id].flat &&
         snapshot_flats_[id].pool) {
         try {
-            *workspace_flat_ = *snapshot_flats_[id].flat;
-            *workspace_pool_ = *snapshot_flats_[id].pool;
-            workspace_flat_->recycle_dead_nodes();
+            // Issue #4772: delta assign from the structural-sharing image.
+            workspace_flat_->assign_from_image(snapshot_flats_[id].flat);
+            workspace_pool_->assign_from_image(snapshot_flats_[id].pool);
+            // No recycle_dead_nodes(): see the ast:restore primitive (#4772).
             update_shared_tree_root();
             last_post_restore_report_ = workspace_flat_->validate_post_restore();
             last_post_restore_violations_ = last_post_restore_report_.violations;

@@ -63,46 +63,6 @@ collect_reachable_define_sources(aura::ast::FlatAST& flat, aura::ast::StringPool
 }
 
 
-// Issue #4598 phase 3: define change stamps — (name -> root NodeId,
-// subtree_gen_ cell) for every reachable Define. No unparse: the cheap
-// half of collect_reachable_define_sources, an O(nodes) walk. Built from
-// the LIVE flat at snapshot capture (the wholesale copy does not mirror
-// subtree_gen_, and the restore diff needs the pre-capture cell values;
-// mark_dirty_upward's note_subtree_content_write keeps the cells
-// sound for every guard-window content change).
-[[nodiscard]] std::shared_ptr<FlatSnapshotDefineStamps>
-collect_define_stamps(aura::ast::FlatAST& flat, aura::ast::StringPool& pool) {
-    auto stamps = std::make_shared<FlatSnapshotDefineStamps>();
-    stamps->live_flat = &flat; // Issue #4777
-    const auto root = flat.root;
-    if (root == aura::ast::NULL_NODE || root >= flat.size() || flat.is_free_slot(root))
-        return stamps;
-    std::vector<unsigned char> seen(static_cast<std::size_t>(flat.size()), 0);
-    std::vector<aura::ast::NodeId> pending;
-    pending.push_back(root);
-    while (!pending.empty()) {
-        const auto cur = pending.back();
-        pending.pop_back();
-        if (cur == aura::ast::NULL_NODE || cur >= flat.size() ||
-            seen[static_cast<std::size_t>(cur)] || flat.is_free_slot(cur))
-            continue;
-        seen[static_cast<std::size_t>(cur)] = 1;
-        const auto v = flat.get(cur);
-        if (v.tag == aura::ast::NodeTag::Define && v.sym_id != aura::ast::INVALID_SYM) {
-            auto nm = std::string(pool.resolve(v.sym_id));
-            if (!nm.empty()) {
-                auto& st = stamps->by_name[nm];
-                st.root = cur;
-                st.gen16 = flat.load_subtree_gen(cur);
-                st.has_source = false;
-            }
-        }
-        for (auto child : v.children)
-            pending.push_back(child);
-    }
-    return stamps;
-}
-
 // Issue #4598 phase 3: live-side stamp walk for the restore diff — same
 // walk, no unparse, no capture. Compared against the snapshot's stamps so
 // an unchanged define costs one integer compare instead of a full unparse.
@@ -134,6 +94,130 @@ collect_define_change_stamps(aura::ast::FlatAST& flat, aura::ast::StringPool& po
     }
     return out;
 }
+// Issue #4772: resolve a lazy stamp holder. `flat` is the workspace right
+// after the image assign (its content IS the snapshot), so the reachable
+// walk sees the snapshot's names and roots; the gens come from the image's
+// subtree_gen_ capture, i.e. the cells as they were at ast:snapshot.
+void resolve_lazy_define_stamps(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                const aura::ast::FlatAST::Image& img,
+                                FlatSnapshotDefineStamps& stamps) {
+    stamps.by_name.clear();
+    stamps.lazy = false;
+    const auto root = flat.root;
+    if (root == aura::ast::NULL_NODE || root >= flat.size() || flat.is_free_slot(root))
+        return;
+    std::vector<unsigned char> seen(static_cast<std::size_t>(flat.size()), 0);
+    std::vector<aura::ast::NodeId> pending;
+    pending.push_back(root);
+    while (!pending.empty()) {
+        const auto cur = pending.back();
+        pending.pop_back();
+        if (cur == aura::ast::NULL_NODE || cur >= flat.size() ||
+            seen[static_cast<std::size_t>(cur)] || flat.is_free_slot(cur))
+            continue;
+        seen[static_cast<std::size_t>(cur)] = 1;
+        const auto v = std::as_const(flat).get(cur);
+        if (v.tag == aura::ast::NodeTag::Define && v.sym_id != aura::ast::INVALID_SYM) {
+            auto nm = std::string(pool.resolve(v.sym_id));
+            if (!nm.empty()) {
+                auto& st = stamps.by_name[nm];
+                st.root = cur;
+                st.gen16 = img.subtree_gen_at(cur);
+                st.has_source = false;
+            }
+        }
+        for (auto child : v.children)
+            pending.push_back(child);
+    }
+}
+
+} // namespace aura::compiler::primitives_detail
+
+namespace aura::compiler {
+
+// Issue #4772: lazy snapshot source. The image is the workspace content at
+// capture, so unparsing a materialized copy yields exactly the string the
+// pre-#4772 eager unparse stored.
+const std::string& Evaluator::snapshot_source_at(std::size_t id) {
+    static const std::string kEmpty;
+    if (id >= snapshot_sources_.size())
+        return kEmpty;
+    if (id < snapshot_flats_.size()) {
+        auto& fs = snapshot_flats_[id];
+        if (fs.source_lazy && fs.flat && fs.pool) {
+            try {
+                auto flat = aura::ast::FlatAST::materialize(fs.flat);
+                auto pool = aura::ast::StringPool::materialize(fs.pool);
+                snapshot_sources_[id] = aura::ast::unparse_to_string(*flat, *pool, flat->root, {});
+                ++ast_snapshot_lazy_source_builds_total_;
+                // Every entry sharing this image has the same content.
+                for (std::size_t j = 0; j < snapshot_flats_.size() && j < snapshot_sources_.size();
+                     ++j) {
+                    if (j != id && snapshot_flats_[j].source_lazy &&
+                        snapshot_flats_[j].flat == fs.flat) {
+                        snapshot_sources_[j] = snapshot_sources_[id];
+                        snapshot_flats_[j].source_lazy = false;
+                    }
+                }
+                fs.source_lazy = false;
+            } catch (...) {
+                // [SILENCE-PRIM-#615] OOM while materializing: leave the
+                // entry lazy (the direct restore path still works).
+            }
+        }
+    }
+    return snapshot_sources_[id];
+}
+
+void Evaluator::trim_ast_snapshot_images() {
+    // Issue #4271 / #4598 residual / #4772: count DISTINCT images, weigh
+    // each by the share of chunks it owns, and drop the OLDEST distinct
+    // image from every entry holding it while over either bound. A dropped
+    // entry first materializes its lazy source so the set-code fallback
+    // keeps working (ids stay stable).
+    auto totals = [this]() {
+        std::unordered_map<const aura::ast::FlatAST::Image*, char> seen;
+        double w = 0.0;
+        for (const auto& s : snapshot_flats_)
+            if (s.has_flat && s.flat && seen.emplace(s.flat.get(), 0).second)
+                w += s.flat->weight();
+        return std::pair<double, std::size_t>{w, seen.size()};
+    };
+    auto [w, distinct] = totals();
+    while (w > static_cast<double>(kMaxAstSnapshotDeepFlats) + 1e-9 ||
+           distinct > kMaxAstSnapshotImages) {
+        const aura::ast::FlatAST::Image* oldest = nullptr;
+        for (const auto& s : snapshot_flats_) {
+            if (s.has_flat && s.flat) {
+                oldest = s.flat.get();
+                break;
+            }
+        }
+        if (!oldest)
+            break;
+        double dropped_w = 0.0;
+        for (std::size_t i = 0; i < snapshot_flats_.size(); ++i) {
+            auto& s = snapshot_flats_[i];
+            if (s.has_flat && s.flat.get() == oldest) {
+                if (s.source_lazy)
+                    (void)snapshot_source_at(i);
+                dropped_w = s.flat->weight();
+                s.flat.reset();
+                s.pool.reset();
+                s.has_flat = false;
+                s.stamps.reset();
+                ++ast_snapshot_deep_flat_drops_total_;
+            }
+        }
+        w -= dropped_w;
+        --distinct;
+    }
+}
+
+} // namespace aura::compiler
+
+namespace aura::compiler::primitives_detail {
+
 // Issue #918 Phase 1: explicit using-declarations (no `using namespace`).
 using types::as_bool;
 using types::as_cell_id;
@@ -357,16 +441,31 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             }
 
             // Issue #2918: workspace unparse only (current-source :workspace).
-            auto source_opt = workspace_source_string();
-            if (!source_opt) {
-                ok = false;
-                ev.note_ast_snapshot_fail(kSnapFailEmptySource);
-                return make_int(-1);
+            // Issue #4772: the unparse is O(workspace), so it is deferred.
+            // A valid #2920 text stamp is the snapshot string as-is (the
+            // set-code text, comments and all). Otherwise the entry stores no
+            // text yet (source_lazy): snapshot_source_at() unparses the
+            // captured image on first use — byte-identical to unparsing the
+            // live flat now, since the image is that flat's content.
+            std::string source;
+            bool source_lazy = false;
+            if (ev.workspace_source_text_valid_ && !ev.workspace_source_text_.empty() &&
+                ev.workspace_source_text_generation_ == ev.workspace_flat_->generation()) {
+                source = ev.workspace_source_text_;
+            } else if (ev.workspace_flat_->size() == 0) {
+                auto source_opt = workspace_source_string();
+                if (!source_opt) {
+                    ok = false;
+                    ev.note_ast_snapshot_fail(kSnapFailEmptySource);
+                    return make_int(-1);
+                }
+                source = std::move(*source_opt);
+            } else {
+                source_lazy = true;
             }
-            auto source = std::move(*source_opt);
             // Issue #2966: empty set-code / vacuous workspace is not a
             // usable denseness checkpoint — fail with :empty-source.
-            if (source.empty() && ev.workspace_flat_->size() == 0) {
+            if (!source_lazy && source.empty() && ev.workspace_flat_->size() == 0) {
                 ok = false;
                 ev.note_ast_snapshot_fail(kSnapFailEmptySource);
                 return make_int(-1);
@@ -380,158 +479,87 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                     name = ev.string_at(name_idx);
             }
 
-            // (#107 part 6) Take a direct deep copy of the workspace's
-            // flat + pool. The snapshot's std::unique_ptr<FlatAST> uses
-            // std::pmr::get_default_resource() (heap); the data is
-            // self-contained and does not alias the workspace. On
-            // restore, we copy-assign back into the workspace pool/flat
-            // (whose pmr vectors use the arena allocator) — the arena
-            // ends up with the restored data, and the snapshot retains
-            // its own heap copy for subsequent restores.
+            // (#107 part 6) Capture the workspace's flat + pool so
+            // ast:restore can assign them back losslessly (no reparse).
+            // Issue #4772: the capture is a structural-sharing IMAGE, not a
+            // deep copy. Every column chunk the workspace has not written
+            // since its previous image (the last capture or restore) is
+            // shared by pointer; only written chunks are copied, and a
+            // written chunk whose bytes still equal the previous image is
+            // shared too. A snapshot after a one-define edit therefore costs
+            // O(changed chunks + chunk count), not O(workspace). The image
+            // is immutable: the live flat keeps mutating its own contiguous
+            // columns, never the chunks an image holds.
+            // Issue #4598 phase 3 share hits are now exact by construction:
+            // a capture that copied no chunk IS the previous image's content
+            // (the #4613 set-code case is a fresh FlatAST with no base, so
+            // it always copies). The source-text probe, the generation
+            // re-stamp, the pre-copy recycle_dead_nodes (#261: dead slots in
+            // shared chunks cost nothing) and the eager define-stamp walk
+            // are gone; stamps resolve at the first restore from the image's
+            // subtree_gen_ capture.
             Evaluator::FlatSnapshot fs;
-            // Issue #4598 phase 3: content-addressed share between snapshot
-            // entries. A prior snapshot whose captured copy matches the live
-            // flat's object-independent state (same generation, size, pool
-            // mint watermark — the pool is append-only) is provably
-            // bit-identical to the live workspace: share that FROZEN copy
-            // instead of deep-copying O(workspace) columns again. The live
-            // object itself is never shared — it keeps mutating in place,
-            // and a snapshot aliasing it would observe later writes.
-            const Evaluator::FlatSnapshot* share_src = nullptr;
-            if (ev.workspace_flat_ && ev.workspace_pool_) {
-                for (std::size_t i = ev.snapshot_flats_.size(); i-- > 0;) {
-                    const auto& it = ev.snapshot_flats_[i];
-                    if (it.has_flat && it.flat && it.pool && it.flat.get() != ev.workspace_flat_ &&
-                        it.flat_generation == ev.workspace_flat_->generation() &&
-                        it.flat_size == ev.workspace_flat_->size() &&
-                        // The pool is append-only: the captured watermark
-                        // must be a PREFIX of the live pool (C1's SymIds
-                        // stay valid under any later mint — observed in the
-                        // #4598 loop: the restore tail re-mints a few body
-                        // syms, so equality never holds post-restore).
-                        it.pool_size <= ev.workspace_pool_->data_size() &&
-                        // Issue #4613 residual: set-code allocates a FRESH
-                        // FlatAST, whose generation restarts at 1 and whose
-                        // node count is often unchanged when only a literal
-                        // changes. The generation/size/watermark triple is
-                        // therefore NOT a content identity across set-code:
-                        // sharing on it alone handed back a frozen copy of an
-                        // older source (and kept every #4271 snapshot entry
-                        // aliased to one copy, so the cap never dropped).
-                        // Only the same workspace source text is provably the
-                        // same tree.
-                        i < ev.snapshot_sources_.size() && ev.snapshot_sources_[i] == source) {
-                        share_src = &it;
-                        break;
-                    }
-                }
-            }
-            if (share_src) {
-                fs.flat = share_src->flat;
-                fs.pool = share_src->pool;
+            try {
+                fs.flat = ev.workspace_flat_->capture_image();
+                fs.pool = ev.workspace_pool_->capture_image();
                 fs.has_flat = true;
-                fs.flat_generation = share_src->flat_generation;
-                fs.flat_size = share_src->flat_size;
-                fs.cow_epoch = share_src->cow_epoch;
-                fs.pool_size = share_src->pool_size;
-                // Issue #4782: shared stamps are only sound in the epoch
-                // they were read in. A share across a restore re-reads the
-                // live cells (O(nodes), no unparse) for this entry.
-                if (share_src->restore_epoch == ev.ast_restore_epoch_)
-                    fs.stamps = share_src->stamps;
+                fs.flat_generation = ev.workspace_flat_->generation();
+                fs.flat_size = ev.workspace_flat_->size();
+                // Lazy stamps: an empty holder, resolved at first restore
+                // (by_name filled from the restored tree + image cells).
+                fs.stamps = std::make_shared<FlatSnapshotDefineStamps>();
+                fs.stamps->lazy = true;
+                fs.stamps->live_flat = ev.workspace_flat_; // Issue #4777
+                if (ev.workspace_tree_) {
+                    auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
+                    if (auto* node = wt->active())
+                        fs.cow_epoch = node->cow_epoch;
+                }
+                const auto fresh = fs.flat->fresh_chunks + fs.pool->fresh_chunks;
+                const auto total = fs.flat->total_chunks + fs.pool->total_chunks;
+                ev.ast_snapshot_chunks_fresh_total_ += fresh;
+                ev.ast_snapshot_chunks_shared_total_ += total - fresh;
+                // A share hit: no CONTENT chunk changed since the previous
+                // image. Cache-column chunks (dirty bits, type / value
+                // caches), the subtree_gen_ stamp column and the append-only
+                // pool tail (names interned by unrelated evals) may still be
+                // copied — a handful of chunks, never O(workspace).
+                if (fs.flat->content_fresh_chunks == 0)
+                    ++ev.ast_snapshot_share_hits_total_;
                 else
-                    fs.stamps = collect_define_stamps(*ev.workspace_flat_, *ev.workspace_pool_);
-                ++ev.ast_snapshot_share_hits_total_;
-            } else {
+                    ++ev.ast_snapshot_share_misses_total_;
+            } catch (...) {
+                // [SILENCE-PRIM-#615] OOM during capture — store the
+                // source anyway so the snapshot at least exists for
+                // diff / fallback restore.
+                fs.flat.reset();
+                fs.pool.reset();
+                fs.has_flat = false;
+                fs.stamps.reset();
                 ++ev.ast_snapshot_share_misses_total_;
-                // Issue #261: reclaim unreachable NodeId slots before the
-                // deep copy so long-running sessions don't amplify dead
-                // slots into every snapshot.
-                ev.workspace_flat_->recycle_dead_nodes();
-
-                try {
-                    fs.flat = std::make_shared<aura::ast::FlatAST>();
-                    fs.pool = std::make_shared<aura::ast::StringPool>();
-                    *fs.flat = *ev.workspace_flat_;
-                    *fs.pool = *ev.workspace_pool_;
-                    fs.has_flat = true;
-                    fs.flat_generation = ev.workspace_flat_->generation();
-                    fs.flat_size = ev.workspace_flat_->size();
-                    // Issue #4598 phase 3: capture the per-define change
-                    // stamps from the LIVE flat before anything else can
-                    // bump the cells (the wholesale copy does not mirror
-                    // subtree_gen_, and the restore diff needs the
-                    // pre-capture values to be sound).
-                    fs.stamps = collect_define_stamps(*ev.workspace_flat_, *ev.workspace_pool_);
-                    if (ev.workspace_tree_) {
-                        auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
-                        if (auto* node = wt->active())
-                            fs.cow_epoch = node->cow_epoch;
-                    }
-                } catch (...) {
-                    // [SILENCE-PRIM-#615] OOM during deep copy — store the
-                    // source anyway so the snapshot at least exists for
-                    // diff / fallback restore.
-                    fs.has_flat = false;
-                    fs.stamps.reset();
+                if (source_lazy) {
+                    if (auto s = workspace_source_string())
+                        source = std::move(*s);
+                    source_lazy = false;
                 }
             }
             if (ev.workspace_pool_)
                 fs.pool_size = ev.workspace_pool_->data_size();
             fs.restore_epoch = ev.ast_restore_epoch_; // Issue #4782
+            fs.source_lazy = source_lazy;
+            if (source_lazy)
+                ++ev.ast_snapshot_lazy_source_total_;
 
             auto id = ev.snapshot_sources_.size();
-            ev.snapshot_sources_.push_back(source);
+            ev.snapshot_sources_.push_back(std::move(source));
             ev.snapshot_names_.push_back(name);
             ev.snapshot_flats_.push_back(std::move(fs));
             // Issue #4271: drop oldest deep FlatAST copies when over cap.
             // Source strings remain so ast:restore can fall back to set-code;
-            // snapshot ids stay stable (no renumber).
-            //
-            // Issue #4598 residual: the cap bounds DISTINCT frozen FlatAST+pool
-            // copies, not entries. Phase 3 lets a share hit alias one frozen
-            // copy across many entries, so entry-counting evicted a copy that
-            // later entries still alias — resetting those handles frees no
-            // memory AND silently demotes the affected ids to the O(workspace)
-            // source-reparse restore path. Measured after 101 shared snapshots
-            // at W=200: ast:restore 7.3 ms (reparse fallback) vs 0.18 ms on the
-            // direct copy. Count unique flat pointers and, when over cap, drop
-            // the OLDEST distinct copy from every entry holding it; an entry
-            // sharing a still-live copy stays directly restorable at zero
-            // extra memory.
-            {
-                auto distinct_copies = [&ev]() {
-                    std::unordered_map<const aura::ast::FlatAST*, char> seen;
-                    for (const auto& s : ev.snapshot_flats_)
-                        if (s.has_flat && s.flat)
-                            seen.emplace(s.flat.get(), 0);
-                    return seen.size();
-                };
-                std::size_t deep = distinct_copies();
-                while (deep > Evaluator::kMaxAstSnapshotDeepFlats) {
-                    // Oldest distinct copy (first entry still holding one).
-                    const aura::ast::FlatAST* oldest = nullptr;
-                    for (const auto& s : ev.snapshot_flats_) {
-                        if (s.has_flat && s.flat) {
-                            oldest = s.flat.get();
-                            break;
-                        }
-                    }
-                    if (!oldest)
-                        break;
-                    // Drop every handle to that copy — one distinct copy, so
-                    // deep falls by exactly one however many entries alias it.
-                    for (auto& s : ev.snapshot_flats_) {
-                        if (s.has_flat && s.flat.get() == oldest) {
-                            s.flat.reset();
-                            s.pool.reset();
-                            s.has_flat = false;
-                            ++ev.ast_snapshot_deep_flat_drops_total_;
-                        }
-                    }
-                    --deep;
-                }
-            }
+            // snapshot ids stay stable (no renumber). Issue #4772: the cap
+            // bounds deep-copy EQUIVALENTS (image weights) plus a distinct-
+            // image bound — see Evaluator::trim_ast_snapshot_images.
+            ev.trim_ast_snapshot_images();
             // Issue #2966: clear last fail reason on success.
             ev.note_ast_snapshot_ok();
             return make_int(static_cast<std::int64_t>(id));
@@ -842,7 +870,8 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                     // monotonic append, so everything from there on is the
                     // delta this restore rolls back).
                     pre_next_mutation_id = ev.workspace_flat_->next_mutation_id();
-                    const std::uint64_t snap_next_mutation_id = snap_entry.flat->next_mutation_id();
+                    const std::uint64_t snap_next_mutation_id =
+                        snap_entry.flat->shell->next_mutation_id();
                     rolled_first = 0;
                     rolled_last = 0;
                     rolled_count = 0;
@@ -875,8 +904,13 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                     // source diff (sound) for this restore.
                     if (snap_entry.restore_epoch != ev.ast_restore_epoch_)
                         stamp_lineage_broken_4777 = true;
-                    const bool have_stamps =
-                        stamps && !stamps->by_name.empty() && !stamp_lineage_broken_4777;
+                    // Issue #4772: a lazy holder takes the stamp path (an
+                    // empty resolved set reports every live define as
+                    // removed — what the source diff reported too) unless
+                    // the #4777 lineage check sends it to the source diff.
+                    const bool have_stamps = stamps &&
+                                             (stamps->lazy || !stamps->by_name.empty()) &&
+                                             !stamp_lineage_broken_4777;
                     std::unordered_map<std::string, std::pair<aura::ast::NodeId, std::uint16_t>>
                         live_stamp_defs;
                     std::unordered_map<std::string, std::string> live_defs;
@@ -888,11 +922,21 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                             live_defs = collect_reachable_define_sources(*ev.workspace_flat_,
                                                                          *ev.workspace_pool_);
                     }
-                    *ev.workspace_flat_ = *snap_entry.flat;
-                    *ev.workspace_pool_ = *snap_entry.pool;
-                    // Issue #261: recycle any slots that became
-                    // unreachable across restore iterations.
-                    ev.workspace_flat_->recycle_dead_nodes();
+                    // Issue #4772: delta assign from the image — chunks the
+                    // workspace has not written since its own image base and
+                    // that the snapshot shares with that base are skipped.
+                    ev.workspace_flat_->assign_from_image(snap_entry.flat);
+                    ev.workspace_pool_->assign_from_image(snap_entry.pool);
+                    if (stamps && stamps->lazy)
+                        resolve_lazy_define_stamps(*ev.workspace_flat_, *ev.workspace_pool_,
+                                                   *snap_entry.flat, *stamps);
+                    // Issue #4772: no recycle_dead_nodes() here. The restored
+                    // flat IS the image (its size is the capture's, so restore
+                    // iterations cannot grow it — the #261 concern), and an
+                    // O(workspace) sweep that frees slots would make the live
+                    // flat diverge from the image it was just restored from
+                    // (the next snapshot could no longer share it). The next
+                    // mutation's own recycle (#4583) reclaims dead slots.
                     ev.update_shared_tree_root();
                     // Issue #263: verify generation/span consistency after restore.
                     ev.last_post_restore_report_ = ev.workspace_flat_->validate_post_restore();
@@ -905,9 +949,11 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                     std::vector<std::string> added;
                     std::vector<std::string> removed;
                     std::unordered_map<std::string, std::string> snap_defs;
+                    // Issue #4772: the workspace now holds the snapshot's
+                    // content, so its defines are the snapshot's defines.
                     if (!have_stamps)
-                        snap_defs =
-                            collect_reachable_define_sources(*snap_entry.flat, *snap_entry.pool);
+                        snap_defs = collect_reachable_define_sources(*ev.workspace_flat_,
+                                                                     *ev.workspace_pool_);
                     changed.reserve(4);
                     if (have_stamps) {
                         for (const auto& [nm, st] : stamps->by_name) {
@@ -948,11 +994,13 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                             return nullptr;
                         auto& st = it->second;
                         if (!st.has_source) {
+                            // Issue #4772: unparse from the restored workspace
+                            // (bit-identical to the image; node ids align).
                             if (st.root != aura::ast::NULL_NODE &&
-                                st.root < snap_entry.flat->size() &&
-                                !snap_entry.flat->is_free_slot(st.root)) {
-                                st.source = aura::ast::unparse_to_string(*snap_entry.flat,
-                                                                         *snap_entry.pool, st.root);
+                                st.root < ev.workspace_flat_->size() &&
+                                !ev.workspace_flat_->is_free_slot(st.root)) {
+                                st.source = aura::ast::unparse_to_string(
+                                    *ev.workspace_flat_, *ev.workspace_pool_, st.root);
                                 ++ev.ast_restore_stamp_unparse_total_;
                             }
                             st.has_source = true;
@@ -1063,32 +1111,10 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         }
         if (did_direct) {
             ++ev.ast_restore_epoch_; // Issue #4782
-            // Issue #4598 phase 3: re-stamp the identity of every snapshot
-            // entry sharing THIS frozen copy. The restore assign mirrors the
-            // capture generation, but boundary-exit machinery may advance
-            // the live generation afterwards (e.g. the entry stamped gen 0
-            // on a never-bumped fresh flat); the live content is
-            // bit-identical to the copy the moment the direct assign lands,
-            // so tracking the post-restore generation keeps the share probe
-            // exact for the rebind → restore → snapshot loop. Object identity
-            // scopes the restamp — only entries sharing this copy (identical
-            // content by construction); any later mutation bumps the live
-            // generation and breaks the match (miss → fresh capture).
-            if (ev.workspace_flat_ && id < ev.snapshot_flats_.size() &&
-                ev.snapshot_flats_[id].flat) {
-                const auto* restored = ev.snapshot_flats_[id].flat.get();
-                const auto post_gen = ev.workspace_flat_->generation();
-                const auto post_size = ev.workspace_flat_->size();
-                const auto post_pool =
-                    ev.workspace_pool_ ? ev.workspace_pool_->data_size() : std::size_t{0};
-                for (auto& s : ev.snapshot_flats_) {
-                    if (s.has_flat && s.flat.get() == restored) {
-                        s.flat_generation = post_gen;
-                        s.flat_size = post_size;
-                        s.pool_size = post_pool;
-                    }
-                }
-            }
+            // Issue #4598 phase 3 re-stamped the share identity of every entry
+            // aliasing this copy here. Issue #4772: share hits are now exact
+            // by construction (the assign leaves the workspace's dirty bits
+            // relative to this image), so there is nothing to re-stamp.
             // Issue #4729: the direct assign mirrored the snapshot's log,
             // so the rolled-back suffix disappeared silently. Keep the id
             // counter monotonic across the swap and append one rollback
@@ -1107,15 +1133,21 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             // Issue #2920: restamp text cache *after* Guard exit (exit may
             // invalidate on log growth). Snapshot source is workspace unparse
             // at snapshot time (#2918).
-            if (id < ev.snapshot_sources_.size())
-                ev.note_workspace_source_text(ev.snapshot_sources_[id]);
+            // Issue #4772: a lazy entry has no text yet — drop the stale
+            // stamp instead (current-source unparses on demand).
+            if (id < ev.snapshot_sources_.size()) {
+                if (id < ev.snapshot_flats_.size() && ev.snapshot_flats_[id].source_lazy)
+                    ev.invalidate_workspace_source_text();
+                else
+                    ev.note_workspace_source_text(ev.snapshot_sources_[id]);
+            }
             return make_bool(true);
         }
 
         // Source-based fallback (existing behavior). Holds its own
         // unique_lock inside set-code; we must not be holding ours
         // (we released above by scope).
-        auto& source = ev.snapshot_sources_[id];
+        const std::string source = ev.snapshot_source_at(id); // Issue #4772: lazy
         auto source_idx = ev.string_heap_.mint(source);
 
         auto set_fn = ev.primitives_.lookup("set-code");
@@ -1172,7 +1204,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                 return make_void();
         }
 
-        auto& old_source = ev.snapshot_sources_[id];
+        const std::string old_source = ev.snapshot_source_at(id); // Issue #4772: lazy
 
         // Issue #2918: workspace unparse only (not current_flat_ / bare current-source).
         auto new_opt = workspace_source_string();

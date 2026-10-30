@@ -1388,6 +1388,17 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                       static_cast<std::int64_t>(ev->ast_restore_stamp_republish_total()));
             insert_kv("ast-restore-stamp-unparse",
                       static_cast<std::int64_t>(ev->ast_restore_stamp_unparse_total()));
+            // Issue #4772: structural-sharing snapshot images.
+            insert_kv("ast-snapshot-chunks-fresh",
+                      static_cast<std::int64_t>(ev->ast_snapshot_chunks_fresh_total()));
+            insert_kv("ast-snapshot-chunks-shared",
+                      static_cast<std::int64_t>(ev->ast_snapshot_chunks_shared_total()));
+            insert_kv("ast-snapshot-lazy-sources",
+                      static_cast<std::int64_t>(ev->ast_snapshot_lazy_source_total()));
+            insert_kv("ast-snapshot-lazy-source-builds",
+                      static_cast<std::int64_t>(ev->ast_snapshot_lazy_source_builds_total()));
+            insert_kv("ast-snapshot-images",
+                      static_cast<std::int64_t>(ev->ast_snapshot_image_count()));
             insert_kv("schema-2966", 2966);
             insert_kv("issue-2966", 2966);
             return query_hash_finish(ht, string_heap, overflowed);
