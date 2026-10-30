@@ -68,8 +68,10 @@ using types::make_void;
 // Issue #4628: the structural comparison equal? uses, shared with the
 // member primitive (R7RS 6.4: member compares the elements with
 // equal?). Defined in evaluator_primitives_runtime.cpp (same module).
+// Issue #4780: overflow reports a walk that gave up (nesting deeper than
+// the cap, or a cyclic spine); callers raise an error, never answer.
 bool values_equal(Evaluator& ev, const EvalValue& x, const EvalValue& y, std::string_view op,
-                  bool& denied);
+                  bool& denied, bool& overflow);
 
 namespace {
 
@@ -481,11 +483,18 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 // structurally equal pair, vector or float was never found.
                 // The shared comparison is the one equal? uses.
                 bool denied = false;
-                const bool hit = values_equal(ev, pairs[idx].car, val, "member", denied);
+                bool overflow = false;
+                const bool hit =
+                    values_equal(ev, pairs[idx].car, val, "member", denied, overflow);
                 if (denied) {
                     return make_primitive_error(string_heap, error_values,
                                                 "member: cross-tenant slot read denied (#4505)",
                                                 counter);
+                }
+                if (overflow) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        "member: structure nested too deep or cyclic (#4780)", counter);
                 }
                 if (hit)
                     return v;

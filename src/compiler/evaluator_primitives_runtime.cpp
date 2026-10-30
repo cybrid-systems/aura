@@ -479,9 +479,21 @@ struct StructuralEqual {
     // Issue #4530: set on the first cross-tenant denial; one IsolationDeny
     // per denied call (the latch skips re-emits).
     mutable bool denied = false;
+    // Issue #4780: set when the walk gave up (car/vector nesting deeper
+    // than kMaxDepth, or a cdr spine longer than the pair heap, i.e. a
+    // cycle). The caller raises a primitive error instead of answering;
+    // the old cap silently answered #t past depth 64, and depth also grew
+    // along the cdr spine, so any two lists sharing their first 64
+    // elements compared equal.
+    mutable bool overflow = false;
+    static constexpr int kMaxDepth = 1024;
     bool operator()(const EvalValue& x, const EvalValue& y, int depth) const {
-        if (depth > 64)
-            return true;
+        if (denied || overflow)
+            return false;
+        if (depth > kMaxDepth) {
+            overflow = true;
+            return false;
+        }
         if (x == y)
             return true;
         // Nested only: unify empty-list sentinels (void ↔ int 0) so
@@ -521,21 +533,42 @@ struct StructuralEqual {
             return false;
         }
         if (is_pair(x) && is_pair(y)) {
-            auto xi = as_pair_idx(x), yi = as_pair_idx(y);
-            if (xi < e.pairs().size() && yi < e.pairs().size()) {
+            // Issue #4780: walk the cdr spine iteratively at a constant
+            // depth (only car / vector-element descent nests), so list
+            // length is unbounded and never trips the depth cap.
+            EvalValue cx = x, cy = y;
+            const std::size_t spine_cap = e.pairs().size() + 1;
+            std::size_t steps = 0;
+            while (is_pair(cx) && is_pair(cy)) {
+                if (cx == cy)
+                    return true;
+                auto xi = as_pair_idx(cx), yi = as_pair_idx(cy);
+                if (xi >= e.pairs().size() || yi >= e.pairs().size())
+                    return false;
                 // Issue #4530: the spine walk answers structural
                 // facts — gate the visited slots like string-join.
-                if (!denied && (!e.inrange_slot_tenant_allows(xi, /*vector_heap=*/false,
-                                                              /*required_effects=*/0, op) ||
-                                !e.inrange_slot_tenant_allows(yi, /*vector_heap=*/false,
-                                                              /*required_effects=*/0, op))) {
+                if (!e.inrange_slot_tenant_allows(xi, /*vector_heap=*/false,
+                                                  /*required_effects=*/0, op) ||
+                    !e.inrange_slot_tenant_allows(yi, /*vector_heap=*/false,
+                                                  /*required_effects=*/0, op)) {
                     denied = true;
                     return false;
                 }
-                return (*this)(e.pairs()[xi].car, e.pairs()[yi].car, depth + 1) &&
-                       (*this)(e.pairs()[xi].cdr, e.pairs()[yi].cdr, depth + 1);
+                if (++steps > spine_cap) {
+                    // More spine cells than the heap holds: a cycle.
+                    overflow = true;
+                    return false;
+                }
+                const EvalValue car_x = e.pairs()[xi].car, car_y = e.pairs()[yi].car;
+                if (!(*this)(car_x, car_y, depth + 1))
+                    return false;
+                cx = e.pairs()[xi].cdr;
+                cy = e.pairs()[yi].cdr;
             }
-            return false;
+            // Tails (nil sentinel / improper tail / length mismatch) are
+            // compared at nested depth so the void<->0 nil unification
+            // above still applies, exactly as the recursive cdr did.
+            return (*this)(cx, cy, depth + 1);
         }
         if (is_vector(x) && is_vector(y)) {
             auto xi = as_vector_idx(x), yi = as_vector_idx(y);
@@ -561,7 +594,8 @@ struct StructuralEqual {
 // denied out-parameter reports a cross-tenant read refusal (#4505) so the
 // caller raises a primitive error instead of answering "not equal".
 bool values_equal(Evaluator& ev, const EvalValue& x, const EvalValue& y, std::string_view op,
-                  bool& denied) {
+                  bool& denied, bool& overflow) {
+    overflow = false;
     // Issue #1137: int vs empty-list (void) are never equal — including 0
     // vs '(). Must check before any deep walk; also equal? is not lowered
     // to IR Eq. Quote of () is void (kSpecialVoid); bare 0 is fixnum.
@@ -572,6 +606,7 @@ bool values_equal(Evaluator& ev, const EvalValue& x, const EvalValue& y, std::st
     StructuralEqual eq{ev, op};
     const bool res = eq(x, y, 0);
     denied = eq.denied;
+    overflow = eq.overflow;
     return res;
 }
 
@@ -612,10 +647,16 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         // Issue #4628: the structural comparison is shared with the member
         // primitive (R7RS 6.4: member compares the elements with equal?).
         bool denied = false;
-        const bool eq_res = values_equal(ev, a[0], a[1], "equal?", denied);
+        bool overflow = false;
+        const bool eq_res = values_equal(ev, a[0], a[1], "equal?", denied, overflow);
         if (denied)
             return make_primitive_error(ev.string_heap_, ev.error_values_,
                                         "equal?: cross-tenant string slot read denied (#4505)",
+                                        ev.primitive_error_counter_ptr());
+        // Issue #4780: a walk that gave up is an error, never a verdict.
+        if (overflow)
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "equal?: structure nested too deep or cyclic (#4780)",
                                         ev.primitive_error_counter_ptr());
         return make_bool(eq_res);
     });
