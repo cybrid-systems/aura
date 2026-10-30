@@ -234,6 +234,24 @@ target_sources(aura PRIVATE
 
 set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
+
+# Issue #4774: aura::core — the embeddable runtime core as ONE static target.
+# The header-only pieces an embedder wants (core/persistent_child_vector.hh,
+# compiler/fiber_cow_overlay.hh, core/fiber_context.hh) need two .cpp files
+# at link time: the C++26 contract violation handler (PCV uses pre(), so a
+# -fcontracts consumer must link a handle_contract_violation) and the single
+# process-wide fiber_ctx thread_local. Linking aura::core supplies both, sets
+# -fcontracts on the consumer, and pulls no Evaluator / reflect / serve code.
+# Override hook: aura_set_contract_violation_hook() (see README "Embedding").
+add_library(aura_core STATIC
+    src/core/contract_handler.cpp
+    src/core/fiber_context.cpp)
+add_library(aura::core ALIAS aura_core)
+target_include_directories(aura_core PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>)
+target_compile_features(aura_core PUBLIC cxx_std_26)
+target_compile_options(aura_core PUBLIC -fcontracts)
+target_link_libraries(aura_core PUBLIC stdc++exp pthread)
  
 
 
@@ -3965,6 +3983,16 @@ aura_issue_test_link_light(test_pcv_workspace_batch)
 add_test(NAME test_pcv_workspace_batch_verification COMMAND ./test_pcv_workspace_batch)
 if(TARGET all_test_issue_targets)
     add_dependencies(all_test_issue_targets test_pcv_workspace_batch)
+endif()
+
+# Issue #4774: links ONLY aura::core (no aura_test_objects / evaluator) —
+# proves the core headers + contract handler embed with a single target.
+add_executable(test_aura_core_embed tests/core/test_aura_core_embed.cpp)
+target_compile_options(test_aura_core_embed PRIVATE -Wall -Wextra)
+target_link_libraries(test_aura_core_embed PRIVATE aura::core)
+add_test(NAME test_aura_core_embed_verification COMMAND ./test_aura_core_embed)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_aura_core_embed)
 endif()
 
 # Domain batch: Arena compact hooks / dtor / force compact ACs (Stream A9) (7 members + driver). Stream S2.

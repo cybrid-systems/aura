@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 899 | Preferred destination suites |
-| **Total scanned** | **899** | |
+| `tests/core/test_*.cpp` | 900 | Preferred destination suites |
+| **Total scanned** | **900** | |
 
 ### Related artifacts
 
@@ -36,7 +36,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 276 | 276 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 108 | 108 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 26 | 26 | P1 — small, already partially batched |
-| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 61 | 61 | P1 — domain hygiene suite exists |
+| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 62 | 62 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 88 | 88 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 53 | 53 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 132 | 132 | P2 — often thin schema probes; collapse into obs matrix |
@@ -261,6 +261,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_audit_ring_publish.cpp`
 - `tests/compiler/test_audit_trail_lockfree.cpp`
 - `tests/compiler/test_audit_wal_force_multi_tenant.cpp`
+- `tests/core/test_aura_core_embed.cpp`
 - `tests/compiler/test_aura_jit_unused_fn_lock.cpp`
 - `tests/compiler/test_aura_result_error_policy.cpp`
 - `tests/compiler/test_aura_sandbox_env.cpp`
@@ -1659,15 +1660,16 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_linear_lightweight_abort_clear.cpp` (—) [domain_suite, theme_compiler] — Fix contract (AC1–AC5 from the issue body):
 - `tests/core/test_type_registry_ownership.cpp` (—) [small, domain_suite, theme_core] — Issue #1835/#1837 (#1978 renamed): issue# moved from filename to header.
 
-### `edsl_hygiene` — EDSL / macro hygiene / reflect (61)
+### `edsl_hygiene` — EDSL / macro hygiene / reflect (62)
 
 **Target:** tests/core/test_macro_reflect_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain hygiene suite exists
 
-#### domain/ (61)
+#### domain/ (62)
 
 - `tests/reflect/test_ast_pod_reflect_b3.cpp` (—) [domain_suite, theme_reflect] — Wave B3: small AST public PODs via auto_serialize / to_json.
+- `tests/core/test_aura_core_embed.cpp` (—) [domain_suite, theme_core] — fiber_context) — no aura_test_objects, no evaluator, no reflect. It proves
 - `tests/reflect/test_cache_header_magic_a2.cpp` (—) [small, domain_suite, theme_reflect] — Wave A2: CacheHeader::magic[8] round-trips via auto_serialize;
 - `tests/compiler/test_capability_macro_self_evo_reason_uniformity.cpp` (—) [domain_suite, theme_compiler] — Fix contract (AC1–AC8):
 - `tests/compiler/test_clone_walk_gensym_ceiling.cpp` (—) [domain_suite, theme_compiler] — Issue #3816 — after rename_binding deny, production aborts before
