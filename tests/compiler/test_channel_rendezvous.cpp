@@ -20,8 +20,16 @@
 // was rejected with a primitive error VALUE that a body drops.
 //
 //   AC8: fixnum / bool / void / float payloads are delivered (FIFO too)
-//   AC9: a Ref payload is rejected with the kind named, nothing queued
+//   AC9: an undeliverable payload (a closure, at any depth) is rejected with
+//        the kind named, nothing queued — #4763 superseded "every Ref" for
+//        list / vector / hash, which are now deep-copied
 //   AC10: source contract + manifest
+//
+// Issue #4763 — a list / vector / hash sent on a channel is deep-copied: the
+// sender serialises it and the receiver rebuilds it in its own heap, so a
+// sender-side mutation after the send is invisible to the receiver.
+//
+//   AC11: structured payloads cross a fiber boundary as copies
 
 #include "test_harness.hpp"
 
@@ -50,12 +58,16 @@ using aura::compiler::types::as_bool;
 using aura::compiler::types::as_float;
 using aura::compiler::types::as_int;
 using aura::compiler::types::as_string_idx;
+using aura::compiler::types::EvalValue;
 using aura::compiler::types::is_bool;
+using aura::compiler::types::is_closure;
 using aura::compiler::types::is_error;
 using aura::compiler::types::is_float;
+using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
 using aura::compiler::types::is_string;
+using aura::compiler::types::is_vector;
 using aura::compiler::types::is_void;
 using aura::compiler::types::make_bool;
 using aura::compiler::types::make_float;
@@ -175,7 +187,11 @@ static void ac3_source() {
     auto src = read_file("src/compiler/evaluator_primitives_messaging.cpp");
     CHECK(!src.empty(), "AC3: read messaging");
     CHECK(src.find("Issue #2483") != std::string::npos, "AC3: cites #2483");
-    auto spos = src.find("channel:send");
+    // Issue #4763: anchor on the REGISTRATION, not the bare name — the
+    // file's leading prose now mentions "channel:send" (deep-copy
+    // comment) hundreds of lines before the lambda, so anchoring on the
+    // first occurrence would window over a comment and miss the send path.
+    auto spos = src.find(R"(add("channel:send")");
     CHECK(spos != std::string::npos, "AC3: channel:send present");
     if (spos != std::string::npos) {
         // Issue #4700 widened the windows: the cooperative channel park
@@ -188,7 +204,8 @@ static void ac3_source() {
               "AC3: no buggy wait Or short-circuit");
         CHECK(win.find("ch_ptr") != std::string::npos, "AC3: channels_mtx_ released before wait");
     }
-    auto rpos = src.find("channel:recv");
+    // Same registration anchor as send (see above).
+    auto rpos = src.find(R"(add("channel:recv")");
     CHECK(rpos != std::string::npos, "AC3: channel:recv present");
     if (rpos != std::string::npos) {
         // Issue #4700: the fiber-cooperative receive path sits between the
@@ -384,7 +401,15 @@ static void ac8_immediate_payload_4744() {
           "AC8: mixed immediate payloads keep FIFO order");
 }
 
-// AC9: an undeliverable (Ref) payload is named, and nothing is queued.
+// AC9: an undeliverable payload is named, and nothing is queued.
+//
+// Issue #4763 superseded the "every Ref payload is rejected" rule that AC9
+// was written against: a list / vector / hash is now deep-copied on
+// channel:send (AC11), so those kinds ARE deliverable. What still cannot
+// cross a body boundary is a value whose identity is body-local — a closure.
+// It must still be rejected LOUDLY with the offending kind named (the #4494
+// lesson: a silent drop turns a type mismatch into a deadlock), and nothing
+// may be queued by the rejected send.
 static void ac9_undeliverable_payload_4744() {
     std::println("\n--- #4744 AC9: undeliverable payload is named, not dropped ---");
     CompilerService cs;
@@ -397,20 +422,35 @@ static void ac9_undeliverable_payload_4744() {
     if (!create || !send || !try_recv)
         return;
     auto id = as_int((*create)({make_int(4)}));
-    auto pair = cs.eval("(list 1 2)");
-    CHECK(pair && is_pair(*pair), "AC9: a pair payload value is available");
-    if (!pair)
+    auto closure = cs.eval("(lambda (x) x)");
+    CHECK(closure && is_closure(*closure), "AC9: a closure payload value is available");
+    if (!closure)
         return;
-    auto rejected = (*send)({make_int(id), *pair});
-    CHECK(is_error(rejected), "AC9: send of a pair returns an error value");
+    auto rejected = (*send)({make_int(id), *closure});
+    CHECK(is_error(rejected), "AC9: send of a closure returns an error value");
     // The message names the payload kind, so a caller can act on it.
-    bool named = false;
-    auto& sh = ev.string_heap_mut();
-    for (std::size_t i = 0; i < sh.size(); ++i) {
-        if (sh[i].find("unsupported payload type (pair)") != std::string::npos)
-            named = true;
+    auto names_kind = [&ev](const char* needle) {
+        auto& heap = ev.string_heap_mut();
+        for (std::size_t i = 0; i < heap.size(); ++i) {
+            if (heap[i].find(needle) != std::string::npos)
+                return true;
+        }
+        return false;
+    };
+    CHECK(names_kind("unsupported payload type (closure)"),
+          "AC9: the reject names the payload kind (closure)");
+    // The same holds at depth: a closure nested inside a structured payload is
+    // still body-local state, so the reject names the nesting instead of
+    // byte-serialising it.
+    auto nested = cs.eval("(list 1 (lambda (y) y))");
+    CHECK(nested && is_pair(*nested), "AC9: a nested-closure payload value is available");
+    if (nested) {
+        auto nested_rejected = (*send)({make_int(id), *nested});
+        CHECK(is_error(nested_rejected),
+              "AC9: send of a list holding a closure returns an error value");
+        CHECK(names_kind("unsupported payload type (closure nested in a list/vector/hash)"),
+              "AC9: the nested reject names the payload kind and where it sat");
     }
-    CHECK(named, "AC9: the reject names the payload kind (pair)");
     // Nothing was enqueued: the next payload a receiver sees is the one sent
     // AFTER the rejected send.
     (void)(*send)({make_int(id), make_int(11)});
@@ -437,6 +477,196 @@ static void ac10_source_4744() {
           "AC10: manifest declares issue 4744");
 }
 
+// ── Issue #4763: structured payloads are deep-copied ───────────────
+// A list / vector / hash is serialised on channel:send and rebuilt in the
+// receiving body, so a sender-side mutation AFTER the send cannot reach the
+// receiver. Before #4763 a structured payload was a Ref naming the sender's
+// heap, so it was rejected outright (the rule AC9 was written against).
+static void ac11_deep_copy_4763() {
+    std::println("\n--- #4763 AC11: structured payloads are deep-copied ---");
+    // Heap-allocated like AC5: a stuck worker must not run ~Scheduler.
+    // One worker: a multi-worker Scheduler refuses to start without the
+    // production security bootstrap, and latching that process-global state
+    // from a test file would leak into the other batch members. The receive
+    // is a fiber-level read of an already-queued message, so one worker is
+    // enough to prove the copy crosses a fiber boundary.
+    auto* sched = new aura::serve::Scheduler(1);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    (void)cs.eval("1"); // warm registry
+
+    auto create = lookup_prim(ev, "channel:create");
+    auto send = lookup_prim(ev, "channel:send");
+    auto recv = lookup_prim(ev, "channel:recv");
+    auto car = lookup_prim(ev, "car");
+    auto cdr = lookup_prim(ev, "cdr");
+    auto set_car = lookup_prim(ev, "set-car!");
+    auto vec_ref = lookup_prim(ev, "vector-ref");
+    auto vec_len = lookup_prim(ev, "vector-length");
+    auto vec_set = lookup_prim(ev, "vector-set!");
+    auto hash_make = lookup_prim(ev, "hash");
+    auto hash_ref = lookup_prim(ev, "hash-ref");
+    auto hash_set = lookup_prim(ev, "hash-set!");
+    CHECK(create && send && recv && car && cdr && set_car && vec_ref && vec_len && vec_set &&
+              hash_make && hash_ref && hash_set,
+          "AC11: channel + structure prims registered");
+    if (!create || !send || !recv || !car || !cdr || !set_car || !vec_ref || !vec_len || !vec_set ||
+        !hash_make || !hash_ref || !hash_set)
+        return;
+
+    // Buffered, so the send never has to park: the deep copy is taken when
+    // the message is enqueued, before the receiver ever runs.
+    auto id_v = (*create)({make_int(8)});
+    CHECK(is_int(id_v), "AC11: create returns id");
+    if (!is_int(id_v))
+        return;
+    auto id = as_int(id_v);
+
+    auto& sh = ev.string_heap_mut();
+    const auto key_k = make_string(static_cast<std::uint64_t>(sh.mint("k")));
+    const auto key_n = make_string(static_cast<std::uint64_t>(sh.mint("n")));
+
+    // Sender side: a nested list, a nested vector, and a hash holding both.
+    auto list_opt = cs.eval("(list 1 (list 2 3) 4)");
+    auto vec_opt = cs.eval("(vector 1 (vector 2 3) 4)");
+    CHECK(list_opt && is_pair(*list_opt), "AC11: a list payload value is available");
+    CHECK(vec_opt && is_vector(*vec_opt), "AC11: a vector payload value is available");
+    if (!list_opt || !vec_opt)
+        return;
+    const EvalValue list_v = *list_opt;
+    const EvalValue vec_v = *vec_opt;
+    EvalValue hash_v = (*hash_make)({});
+    (void)(*hash_set)({hash_v, key_k, list_v});
+    (void)(*hash_set)({hash_v, key_n, make_int(7)});
+    CHECK(is_hash(hash_v), "AC11: a hash payload value is available");
+
+    const auto sent_list = (*send)({make_int(id), list_v});
+    const auto sent_vec = (*send)({make_int(id), vec_v});
+    const auto sent_hash = (*send)({make_int(id), hash_v});
+    CHECK(is_bool(sent_list) && as_bool(sent_list),
+          "AC11: a list payload is delivered, not rejected");
+    CHECK(is_bool(sent_vec) && as_bool(sent_vec),
+          "AC11: a vector payload is delivered, not rejected");
+    CHECK(is_bool(sent_hash) && as_bool(sent_hash),
+          "AC11: a hash payload is delivered, not rejected");
+
+    // Mutate the SENDER side in place, after the sends.
+    const auto list_inner = (*car)({(*cdr)({list_v})});
+    CHECK(is_pair(list_inner), "AC11: the list nests a pair");
+    if (is_pair(list_inner))
+        (void)(*set_car)({list_inner, make_int(99)});
+    const auto vec_nested = (*vec_ref)({vec_v, make_int(1)});
+    CHECK(is_vector(vec_nested), "AC11: the vector nests a vector");
+    if (is_vector(vec_nested))
+        (void)(*vec_set)({vec_nested, make_int(0), make_int(99)});
+    (void)(*vec_set)({vec_v, make_int(2), make_int(99)});
+    (void)(*hash_set)({hash_v, key_n, make_int(99)});
+    // Guard against a vacuous row: the sender's own view MUST show the writes
+    // (otherwise "the receiver is unaffected" would prove nothing).
+    const auto live_inner_car = is_pair(list_inner) ? (*car)({list_inner}) : make_void();
+    const auto live_vec_2 = (*vec_ref)({vec_v, make_int(2)});
+    const auto live_hash_n = (*hash_ref)({hash_v, key_n});
+    CHECK(is_int(live_inner_car) && as_int(live_inner_car) == 99,
+          "AC11: the sender-side list really was mutated");
+    CHECK(is_int(live_vec_2) && as_int(live_vec_2) == 99,
+          "AC11: the sender-side vector really was mutated");
+    CHECK(is_int(live_hash_n) && as_int(live_hash_n) == 99,
+          "AC11: the sender-side hash really was mutated");
+
+    // The receiver runs on its own fiber and reads the queued copies.
+    struct Observed {
+        bool list_shape = false;
+        bool list_copy = false;
+        bool vec_shape = false;
+        bool vec_copy = false;
+        bool hash_value = false;
+        bool hash_copy = false;
+        bool hash_list_value = false;
+    };
+    // Written only by the fiber; read after the scheduler thread joins, so a
+    // plain struct is ordered by that join.
+    Observed obs;
+    PrimFn recv_fn = *recv;
+    PrimFn car_fn = *car;
+    PrimFn cdr_fn = *cdr;
+    PrimFn vref_fn = *vec_ref;
+    PrimFn vlen_fn = *vec_len;
+    PrimFn href_fn = *hash_ref;
+    const EvalValue fiber_key_k = key_k;
+    const EvalValue fiber_key_n = key_n;
+    sched->spawn([&] {
+        const auto got_list = recv_fn({make_int(id)});
+        const auto got_vec = recv_fn({make_int(id)});
+        const auto got_hash = recv_fn({make_int(id)});
+        if (is_pair(got_list)) {
+            const auto e1 = car_fn({got_list});
+            const auto rest = cdr_fn({got_list});
+            const auto e2 = is_pair(rest) ? car_fn({rest}) : make_void();
+            const auto rest2 = is_pair(rest) ? cdr_fn({rest}) : make_void();
+            const auto e3 = is_pair(rest2) ? car_fn({rest2}) : make_void();
+            obs.list_shape =
+                is_int(e1) && as_int(e1) == 1 && is_pair(e2) && is_int(e3) && as_int(e3) == 4;
+            if (is_pair(e2)) {
+                const auto inner_car = car_fn({e2});
+                const auto inner_tail = cdr_fn({e2});
+                const auto inner_cadr = is_pair(inner_tail) ? car_fn({inner_tail}) : make_void();
+                obs.list_copy = is_int(inner_car) && as_int(inner_car) == 2 && is_int(inner_cadr) &&
+                                as_int(inner_cadr) == 3;
+            }
+        }
+        if (is_vector(got_vec) && is_int(vlen_fn({got_vec})) && as_int(vlen_fn({got_vec})) == 3) {
+            const auto v0 = vref_fn({got_vec, make_int(0)});
+            const auto v1 = vref_fn({got_vec, make_int(1)});
+            const auto v2 = vref_fn({got_vec, make_int(2)});
+            obs.vec_shape = is_int(v0) && as_int(v0) == 1 && is_int(v2) && as_int(v2) == 4;
+            if (is_vector(v1)) {
+                const auto n0 = vref_fn({v1, make_int(0)});
+                const auto n1 = vref_fn({v1, make_int(1)});
+                obs.vec_copy = is_int(n0) && as_int(n0) == 2 && is_int(n1) && as_int(n1) == 3;
+            }
+        }
+        if (is_hash(got_hash)) {
+            const auto hn = href_fn({got_hash, fiber_key_n});
+            const auto hk = href_fn({got_hash, fiber_key_k});
+            obs.hash_value = is_int(hn) && as_int(hn) == 7;
+            obs.hash_copy =
+                obs.hash_value && is_pair(hk) && is_int(car_fn({hk})) && as_int(car_fn({hk})) == 1;
+            const auto hk_tail = is_pair(hk) ? cdr_fn({hk}) : make_void();
+            const auto hk_cadr = is_pair(hk_tail) ? car_fn({hk_tail}) : make_void();
+            // The hash value is the nested list (1 (2 3) 4): its second
+            // element is the inner list, whose car the sender set to 99.
+            obs.hash_list_value =
+                is_pair(hk_cadr) && is_int(car_fn({hk_cadr})) && as_int(car_fn({hk_cadr})) == 2;
+        }
+    });
+
+    std::atomic<bool> finished{false};
+    std::thread runner([&] {
+        sched->run();
+        finished.store(true, std::memory_order_release);
+    });
+    runner.detach();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (!finished.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const bool scheduler_done = finished.load(std::memory_order_acquire);
+    CHECK(scheduler_done, "AC11: the receiving fiber finished");
+    if (!scheduler_done) {
+        std::println("AC11: FAIL — the receiving fiber never returned (#4763)");
+        std::fflush(stdout);
+        std::fflush(stderr);
+        std::_Exit(1);
+    }
+    CHECK(obs.list_shape, "AC11: the received list has the sender's pre-send shape");
+    CHECK(obs.list_copy, "AC11: a sender-side set-car! is invisible in the received list");
+    CHECK(obs.vec_shape, "AC11: the received vector has the sender's pre-send shape");
+    CHECK(obs.vec_copy, "AC11: a sender-side vector-set! is invisible in the received vector");
+    CHECK(obs.hash_value, "AC11: the received hash has the sender's pre-send value");
+    CHECK(obs.hash_copy, "AC11: a sender-side hash-set! is invisible in the received hash");
+    CHECK(obs.hash_list_value, "AC11: the hash's list value survived the copy");
+    delete sched;
+}
+
 } // namespace
 
 int run_test_channel_rendezvous() {
@@ -453,6 +683,8 @@ int run_test_channel_rendezvous() {
     ac8_immediate_payload_4744();
     ac9_undeliverable_payload_4744();
     ac10_source_4744();
+    // Issue #4763 — structured payloads are deep-copied on send.
+    ac11_deep_copy_4763();
     std::println("\n=== #2483 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
