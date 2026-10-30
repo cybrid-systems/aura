@@ -1,7 +1,7 @@
 # Legacy test inventory
 
 **Issue:** [#1957](https://github.com/cybrid-systems/aura/issues/1957)
-**Generated:** 2026-10-30 by `scripts/tools/inventory_legacy_tests.py`
+**Generated:** 2026-10-31 by `scripts/tools/inventory_legacy_tests.py`
 **Status:** living document — re-run the script after consolidations.
 
 ## Purpose
@@ -1609,7 +1609,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_scheduler_gc_defer_pending_panic_steal.cpp` (—) [large, domain_suite, theme_serve] — AC1: pending checkpoint → GCCollector::request deferred; collect skips
 - `tests/serve/test_scheduler_gc_safepoint_mutation_coordination.cpp` (—) [domain_suite, theme_serve] — test_scheduler_gc_safepoint_mutation_coordination.cpp —
 - `tests/serve/test_scheduler_llm_bottleneck_adaptive_steal_gc.cpp` (—) [domain_suite, theme_serve] — test_scheduler_llm_bottleneck_adaptive_steal_gc.cpp — Issue #754:
-- `tests/orch/test_scope_join_tree_visibility.cpp` (—) [domain_suite, theme_orch] — tests/orch/test_scope_join_tree_visibility.cpp
+- `tests/orch/test_scope_join_tree_visibility.cpp` (—) [large, domain_suite, theme_orch] — tests/orch/test_scope_join_tree_visibility.cpp
 - `tests/orch/test_security_schedule_gate.cpp` (—) [large, domain_suite, theme_orch] — tests/orch/test_security_schedule_gate.cpp
 - `tests/serve/test_steal_complete_gc_defer.cpp` (—) [large, domain_suite, theme_serve] — AC1: try_steal_from success always invokes aura_evaluator_on_steal_complete
 - `tests/serve/test_steal_complete_restamp_txn.cpp` (—) [large, domain_suite, theme_serve] — AC1: on_steal_complete is the sole restamp entry (source-cite + gate)
