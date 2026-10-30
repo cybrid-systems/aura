@@ -240,19 +240,33 @@ namespace {
         if (depth > 64)
             return false;
         if (pairs && is_pair(a) && is_pair(b)) {
-            auto ai = as_pair_idx(a), bi = as_pair_idx(b);
-            if (ai >= pairs->size() || bi >= pairs->size())
-                return false;
-            if (tenant_ev &&
-                (!tenant_ev->inrange_slot_tenant_allows(ai, /*vector_heap=*/false,
-                                                        /*required_effects=*/0, tenant_op) ||
-                 !tenant_ev->inrange_slot_tenant_allows(bi, /*vector_heap=*/false,
-                                                        /*required_effects=*/0, tenant_op)))
-                return false;
-            return eval_hash_keys_eq((*pairs)[ai].car, (*pairs)[bi].car, sh, pairs, vh, depth + 1,
-                                     tenant_ev, tenant_op) &&
-                   eval_hash_keys_eq((*pairs)[ai].cdr, (*pairs)[bi].cdr, sh, pairs, vh, depth + 1,
-                                     tenant_ev, tenant_op);
+            // Issue #4780: walk the cdr spine iteratively at a constant
+            // depth so a list key longer than 64 elements can still match
+            // an equal key (the recursive cdr hit the depth cap -> false).
+            EvalValue ca = a, cb = b;
+            std::size_t steps = 0;
+            const std::size_t spine_cap = pairs->size() + 1;
+            while (is_pair(ca) && is_pair(cb)) {
+                if (ca.val == cb.val)
+                    return true;
+                auto ai = as_pair_idx(ca), bi = as_pair_idx(cb);
+                if (ai >= pairs->size() || bi >= pairs->size())
+                    return false;
+                if (tenant_ev &&
+                    (!tenant_ev->inrange_slot_tenant_allows(ai, /*vector_heap=*/false,
+                                                            /*required_effects=*/0, tenant_op) ||
+                     !tenant_ev->inrange_slot_tenant_allows(bi, /*vector_heap=*/false,
+                                                            /*required_effects=*/0, tenant_op)))
+                    return false;
+                if (++steps > spine_cap) // cyclic spine
+                    return false;
+                if (!eval_hash_keys_eq((*pairs)[ai].car, (*pairs)[bi].car, sh, pairs, vh,
+                                       depth + 1, tenant_ev, tenant_op))
+                    return false;
+                ca = (*pairs)[ai].cdr;
+                cb = (*pairs)[bi].cdr;
+            }
+            return eval_hash_keys_eq(ca, cb, sh, pairs, vh, depth + 1, tenant_ev, tenant_op);
         }
         if (vh && is_vector(a) && is_vector(b)) {
             auto ai = as_vector_idx(a), bi = as_vector_idx(b);
