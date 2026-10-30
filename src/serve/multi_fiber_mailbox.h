@@ -1695,6 +1695,27 @@ public:
         return queue_.empty();
     }
 
+    // Issue #4785: same-name respawn handover. Moves every queued message
+    // out (FIFO order kept, to_fiber cleared — the old attacher is gone)
+    // and releases their inflight credit, so a replacement mailbox can
+    // re-enqueue them instead of the old mailbox dying with them. Not a
+    // recv: pop counters / tenant re-install do not apply.
+    [[nodiscard]] std::vector<MailMessage> take_all_for_handover() {
+        ::aura::compiler::lock_order::AuditScope mailbox_rank(
+            ::aura::compiler::lock_order::Level::Mailbox);
+        std::lock_guard lock(mu_);
+        std::vector<MailMessage> out;
+        out.reserve(queue_.size());
+        for (auto& m : queue_) {
+            m.to_fiber = 0;
+            out.push_back(std::move(m));
+        }
+        const auto n = queue_.size();
+        queue_.clear();
+        dec_inflight_(n);
+        return out;
+    }
+
     // Push with backpressure: when size >= high_water, reject.
     // Issue #1595 / #2010: linear-viol: filter runs first (before lock), pure
     // string prefix — fiber-stack safe, no Evaluator/GC/provenance on hot path.
