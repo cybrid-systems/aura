@@ -1831,6 +1831,13 @@ public:
             [this](const std::string& name, std::uint64_t log_before) {
                 this->populate_dep_graph_one_4682_(name, log_before);
             });
+        // Issue #4793: re-walk only the changed defines (stamp path).
+        evaluator_.set_restore_dep_graph_fns(
+            [this]() { return this->restore_dep_graph_synced_(); },
+            [this](const std::vector<std::string>& names) {
+                this->restore_dep_graph_names_(names);
+            },
+            [this]() { this->restore_dep_graph_advance_(); });
         // Issue #1495 / #2813: lazy partial re-lower of dirty defines on
         // (eval-current) + push_post_mutate_incremental_cascade under Guard.
         // Production requirement: this MUST be wired. Leaving it null
@@ -9467,6 +9474,62 @@ public:
                                         [&](aura::ast::SymId s, const std::string&) {
                                             return !ws_flat->defines_for_sym(s).empty();
                                         });
+        dep_sync_log_4682_ = ws_flat->mutation_log_size();
+        dep_sync_last_id_4682_ = log_last_id_4682_(*ws_flat, dep_sync_log_4682_);
+    }
+    // Issue #4793: ast:restore stamp path — the graph is in sync with the live log now.
+    [[nodiscard]] bool restore_dep_graph_synced_() {
+        auto* ws_flat = evaluator_.workspace_flat();
+        if (!ws_flat || dep_sync_flat_4682_ != ws_flat)
+            return false;
+        const auto n = ws_flat->mutation_log_size();
+        return dep_sync_log_4682_ == n && dep_sync_last_id_4682_ == log_last_id_4682_(*ws_flat, n);
+    }
+    // ast:restore stamp path: re-walk the restored roots whose content
+    // changed, plus every Define nested under them (the full rebuild walks
+    // those too), then mark the graph in sync. O(changed bodies), not O(W).
+    // The caller only takes this path when the graph was in sync before
+    // the swap and no define was added; every other define's edges and
+    // ir_cache_v2_ shell are then exactly what the (additive) full rebuild
+    // would leave.
+    std::uint64_t restore_dep_graph_names_walked_ = 0;
+    void restore_dep_graph_names_(const std::vector<std::string>& names) {
+        auto* ws_flat = evaluator_.workspace_flat();
+        auto* ws_pool = evaluator_.workspace_pool();
+        if (!ws_flat || !ws_pool)
+            return;
+        auto is_define = [&](aura::ast::SymId s, const std::string&) {
+            return !ws_flat->defines_for_sym(s).empty();
+        };
+        std::vector<aura::ast::NodeId> stack;
+        for (const auto& name : names) {
+            const auto sym = ws_pool->find_by_name(name);
+            if (!sym)
+                continue;
+            for (auto root : ws_flat->defines_for_sym(*sym)) {
+                stack.assign(1, root);
+                while (!stack.empty()) {
+                    const auto nid = stack.back();
+                    stack.pop_back();
+                    if (nid >= ws_flat->size() || ws_flat->is_free_slot(nid))
+                        continue;
+                    auto nv = ws_flat->get(nid);
+                    if (nv.tag == aura::ast::NodeTag::Define) {
+                        populate_dep_graph_define_4682_(*ws_flat, *ws_pool, nid, is_define);
+                        ++restore_dep_graph_names_walked_;
+                    }
+                    for (auto c : nv.children)
+                        stack.push_back(c);
+                }
+            }
+        }
+        restore_dep_graph_advance_();
+    }
+    void restore_dep_graph_advance_() {
+        auto* ws_flat = evaluator_.workspace_flat();
+        if (!ws_flat)
+            return;
+        dep_sync_flat_4682_ = ws_flat;
         dep_sync_log_4682_ = ws_flat->mutation_log_size();
         dep_sync_last_id_4682_ = log_last_id_4682_(*ws_flat, dep_sync_log_4682_);
     }
@@ -18968,6 +19031,29 @@ public:
                 return true;
         }
         return false;
+    }
+
+    // ast:restore dep-graph upkeep (test hooks): every caller->callee edge,
+    // sorted, plus each ir_cache_v2_ shell's source hash ("name#hash") so a
+    // test can compare the incremental restore result with a full rebuild.
+    [[nodiscard]] std::vector<std::string> public_dep_graph_fingerprint() {
+        std::vector<std::string> out;
+        {
+            std::shared_lock dep_read(dep_graph_mtx_);
+            for (const auto& [caller, entry] : dep_graph_)
+                for (const auto& callee : entry.calls)
+                    out.push_back(caller + "->" + callee);
+        }
+        {
+            IrCacheGate ir_gate(ir_cache_gate_);
+            for (const auto& [name, entry] : ir_cache_v2_)
+                out.push_back(name + "#" + std::to_string(entry.source_hash));
+        }
+        std::sort(out.begin(), out.end());
+        return out;
+    }
+    [[nodiscard]] std::uint64_t public_restore_dep_graph_names_walked() const noexcept {
+        return restore_dep_graph_names_walked_;
     }
 
     // Issue #1376: test hook — route through locked record_dependency.

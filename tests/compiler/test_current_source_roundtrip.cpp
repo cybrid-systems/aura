@@ -1929,6 +1929,103 @@ static void ac4729_merge_and_restore_keep_provenance() {
           "4729: ast:restore writes a rollback entry with the discarded ids");
 }
 
+// Issue #4793: ast:restore rebuilt the whole dep graph (unparse + hash +
+// body walk of every define, O(W)) after every non-empty diff. With the graph
+// in sync before the swap and an exact stamp diff without added defines, only
+// the drop cone (changed defines + their transitive callers) is re-walked.
+// The same restore sequence run once incrementally and once with the full
+// rebuild (AURA_RESTORE_DEP_GRAPH_FULL=1) must leave the same dep graph and
+// ir_cache_v2_ source hashes after every restore, across cross-epoch
+// restores, edge-changing bodies, eval-current and a rebind in between.
+struct DepGraphRun4793 {
+    std::vector<std::vector<std::string>> fps;
+    int exact = 0;
+    int cheap = 0;
+    std::int64_t incremental = 0;
+    std::int64_t full = 0;
+};
+static DepGraphRun4793 run_restore_dep_graph_4793() {
+    DepGraphRun4793 out;
+    CompilerService cs;
+    std::string src = "(define (b4793) 1)\n(define (u4793) (+ (b4793) 1))\n";
+    for (int i = 0; i < 200; ++i)
+        src += std::format("(define (w4793f{} x) (+ x {}))\n", i, i);
+    CHECK(set_code(cs, src), "4793: set-code W=200");
+    CHECK(cs.eval("(eval-current)").has_value(), "4793: eval-current");
+    // S0: b=1, u calls b. S1: b calls w7. S2: u calls w9 instead of b.
+    const char* edits[] = {"(mutate:rebind \"b4793\" \"(lambda () (w4793f7 1))\" \"4793\")",
+                           "(mutate:rebind \"u4793\" \"(lambda () (+ (w4793f9 2) 1))\" \"4793\")",
+                           "(mutate:rebind \"b4793\" \"(lambda () 5)\" \"4793\")"};
+    std::vector<std::int64_t> ids;
+    for (int k = 0; k < 3; ++k) {
+        auto s = cs.eval(std::format("(ast:snapshot \"4793-{}\")", k));
+        CHECK(s && is_int(*s) && as_int(*s) >= 0, "4793: snapshot id");
+        ids.push_back(s && is_int(*s) ? as_int(*s) : -1);
+        CHECK(cs.eval(edits[k]).has_value(), "4793: rebind");
+        CHECK(cs.eval("(eval-current)").has_value(), "4793: eval-current after rebind");
+    }
+    const std::int64_t want_u[] = {2, 9, 12};
+    const auto inc0 = snap_stat(cs, "ast-restore-dep-graph-incremental");
+    const auto full0 = snap_stat(cs, "ast-restore-dep-graph-full");
+    auto restore = [&](int j) {
+        const auto walked_before = cs.public_restore_dep_graph_names_walked();
+        auto r = cs.eval(std::format("(ast:restore {})", ids[j]));
+        CHECK(r && is_bool(*r) && as_bool(*r), "4793: restore ok");
+        out.fps.push_back(cs.public_dep_graph_fingerprint());
+        if (cs.public_restore_dep_graph_names_walked() - walked_before <= 4)
+            ++out.cheap;
+        CHECK(cs.eval("(eval-current)").has_value(), "4793: eval-current after restore");
+        out.fps.push_back(cs.public_dep_graph_fingerprint());
+        auto u = cs.eval("(u4793)");
+        if (u && is_int(*u) && as_int(*u) == want_u[j])
+            ++out.exact;
+    };
+    for (int j : {0, 2, 1, 0, 1, 2, 2, 0})
+        restore(j);
+    CHECK(cs.eval("(mutate:rebind \"b4793\" \"(lambda () (w4793f11 3))\" \"4793\")").has_value(),
+          "4793: rebind after restores");
+    CHECK(cs.eval("(eval-current)").has_value(), "4793: eval-current");
+    out.fps.push_back(cs.public_dep_graph_fingerprint());
+    for (int j : {1, 0, 2})
+        restore(j);
+    out.incremental = snap_stat(cs, "ast-restore-dep-graph-incremental") - inc0;
+    out.full = snap_stat(cs, "ast-restore-dep-graph-full") - full0;
+    return out;
+}
+static void ac4793_restore_dep_graph_incremental() {
+    std::println("\n--- #4793: ast:restore re-walks only the changed cone ---");
+    unsetenv("AURA_RESTORE_DEP_GRAPH_FULL");
+    const auto inc = run_restore_dep_graph_4793();
+    setenv("AURA_RESTORE_DEP_GRAPH_FULL", "1", 1);
+    const auto full = run_restore_dep_graph_4793();
+    unsetenv("AURA_RESTORE_DEP_GRAPH_FULL");
+    std::println("  #4793 incremental run: incremental={} full={}; full run: incremental={} "
+                 "full={}",
+                 inc.incremental, inc.full, full.incremental, full.full);
+    int same = 0;
+    const std::size_t n = std::min(inc.fps.size(), full.fps.size());
+    for (std::size_t i = 0; i < n; ++i) {
+        if (inc.fps[i] == full.fps[i]) {
+            ++same;
+            continue;
+        }
+        std::println("4793 diag: checkpoint {} differs", i);
+        for (const auto& e : inc.fps[i])
+            if (!std::binary_search(full.fps[i].begin(), full.fps[i].end(), e))
+                std::println("  only incremental: {}", e);
+        for (const auto& e : full.fps[i])
+            if (!std::binary_search(inc.fps[i].begin(), inc.fps[i].end(), e))
+                std::println("  only full: {}", e);
+    }
+    CHECK(inc.fps.size() == 23 && full.fps.size() == 23, "4793: all checkpoints taken");
+    CHECK(same == 23, "4793 AC2: dep graph + ir_cache_v2 hashes == full-rebuild run, every step");
+    CHECK(inc.exact == 11 && full.exact == 11, "4793 AC1: every restore leaves its bindings");
+    CHECK(inc.incremental >= 9, "4793 AC3: restores take the incremental dep-graph path");
+    CHECK(inc.cheap == 11, "4793 AC3: each restore re-walks O(changed cone), not O(W)");
+    CHECK(full.incremental == 0 && full.full >= 9,
+          "4793: AURA_RESTORE_DEP_GRAPH_FULL=1 keeps the full rebuild");
+}
+
 // Issue #4772 (first step): ast:snapshot is a read of the workspace, so its
 // mutation guard rides the #4346 quiet path. It must not bump defuse_version_
 // (that invalidated every define-keyed cache per snapshot and paid the
@@ -2182,6 +2279,7 @@ int run_test_current_source_roundtrip() {
     ac4772_snapshot_quiet_guard();
     ac4772_structural_sharing();
     ac4792_cross_epoch_restore_keeps_stamps();
+    ac4793_restore_dep_graph_incremental();
     ac4357_workspace_bools();
     ac4475_workspace_floats();
     run_4450_runtime_mint_ids();

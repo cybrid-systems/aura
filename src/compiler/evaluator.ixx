@@ -3948,6 +3948,32 @@ public:
     void set_repopulate_workspace_dep_graph_fn(std::function<void()> fn) {
         repopulate_workspace_dep_graph_fn_ = std::move(fn);
     }
+    // Issue #4793: ast:restore stamp path — re-walk only the restored defines whose
+    // content changed instead of rebuilding the whole dep graph (O(W)
+    // unparse + hash + body walk per restore). restore_dep_graph_synced_fn_
+    // answers whether the graph is in sync with the live log right now;
+    // restore_dep_graph_names_fn_ re-walks the named roots (and the Define
+    // nodes under them) and re-syncs; restore_dep_graph_advance_fn_ marks
+    // the graph in sync with the current log (the caller vouches for it,
+    // e.g. over the rollback entry appended after the swap).
+    std::function<bool()> restore_dep_graph_synced_fn_;
+    std::function<void(const std::vector<std::string>&)> restore_dep_graph_names_fn_;
+    std::function<void()> restore_dep_graph_advance_fn_;
+    void set_restore_dep_graph_fns(std::function<bool()> synced,
+                                   std::function<void(const std::vector<std::string>&)> names,
+                                   std::function<void()> advance) {
+        restore_dep_graph_synced_fn_ = std::move(synced);
+        restore_dep_graph_names_fn_ = std::move(names);
+        restore_dep_graph_advance_fn_ = std::move(advance);
+    }
+    std::uint64_t ast_restore_dep_graph_incremental_total_ = 0;
+    std::uint64_t ast_restore_dep_graph_full_total_ = 0;
+    [[nodiscard]] std::uint64_t ast_restore_dep_graph_incremental_total() const noexcept {
+        return ast_restore_dep_graph_incremental_total_;
+    }
+    [[nodiscard]] std::uint64_t ast_restore_dep_graph_full_total() const noexcept {
+        return ast_restore_dep_graph_full_total_;
+    }
     // Issue #1495: prefer partial re-lower of dirty ir_cache_v2_
     // defines before tree-walker eval-current (AI set-body hot path).
     //

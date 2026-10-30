@@ -1391,6 +1391,12 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             // Issue #4792: cross-restore-epoch restores that kept the stamp diff.
             insert_kv("ast-restore-cross-epoch-stamp",
                       static_cast<std::int64_t>(ev->ast_restore_cross_epoch_stamp_total()));
+            // Issue #4793: ast:restore dep-graph upkeep — per-changed-define re-walk vs
+            // full workspace rebuild.
+            insert_kv("ast-restore-dep-graph-incremental",
+                      static_cast<std::int64_t>(ev->ast_restore_dep_graph_incremental_total()));
+            insert_kv("ast-restore-dep-graph-full",
+                      static_cast<std::int64_t>(ev->ast_restore_dep_graph_full_total()));
             // Issue #4772: structural-sharing snapshot images.
             insert_kv("ast-snapshot-chunks-fresh",
                       static_cast<std::int64_t>(ev->ast_snapshot_chunks_fresh_total()));
