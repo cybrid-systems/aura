@@ -650,11 +650,24 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         }
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
-                // contract).
-                aura_hash_stamp_new_table_owner();
+                // Issue #4788: publish under the same locks every other
+                // g_hash_tables writer takes ((hash), hash-set! grow, the
+                // reclaim). json-parse runs on fiber worker threads, so the
+                // unlocked size()+push_back raced a concurrent publish: two
+                // threads reallocating the vector freed the same block
+                // (glibc "double free or corruption") and could also hand
+                // out the same index twice. Index read, push and owner
+                // stamp are one critical section now.
+                std::size_t hidx = 0;
+                {
+                    std::lock_guard hlock(ev.hash_tables_mutex());
+                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    hidx = g_hash_tables.size();
+                    g_hash_tables.push_back(ht);
+                    // Issue #4110: stamp the owner parallel to the table (SSOT helper;
+                    // runtime_ssot contract).
+                    aura_hash_stamp_new_table_owner();
+                }
                 return types::make_hash(hidx);
             };
 
