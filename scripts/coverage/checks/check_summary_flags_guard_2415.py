@@ -62,7 +62,7 @@ def main() -> int:
     must("GUARDED_BY(flatast_mutex_)", "AC2", ast)
     must("free_list_", "AC2", ast)
     # free_list annotation nearby
-    fl = ast.find("std::pmr::vector<NodeId> free_list_")
+    fl = ast.find("cow::TrackedColumn<NodeId> free_list_")  # #4772
     fl_region = ast[max(0, fl - 600) : fl + 80] if fl >= 0 else ""
     must("GUARDED_BY(flatast_mutex_)", "AC2", fl_region)
     must("2415 AC2", "AC2", test)

@@ -102,18 +102,20 @@ def main() -> int:
     must_not("restamp_subtree_generation(subtree_root);\n    // Issue #4598 phase 3", "AC1", ast_impl)
 
     # AC2 snapshot share — frozen copies only
-    must("std::shared_ptr<aura::ast::FlatAST> flat;", "AC2", evixx)
-    must("std::shared_ptr<aura::ast::StringPool> pool;", "AC2", evixx)
+    must("std::shared_ptr<const aura::ast::FlatAST::Image> flat;", "AC2", evixx)  # #4772 COW image
+    must("std::shared_ptr<const aura::ast::StringPool::Image> pool;", "AC2", evixx)
     must("std::size_t pool_size = 0;", "AC2", evixx)
-    must("it.flat.get() != ev.workspace_flat_ &&", "AC2", prim)
-    must("it.flat_generation == ev.workspace_flat_->generation()", "AC2", prim)
-    must("it.pool_size <= ev.workspace_pool_->data_size()", "AC2", prim)
+    must("fs.flat = ev.workspace_flat_->capture_image();", "AC2", prim)
+    must("fs.pool = ev.workspace_pool_->capture_image();", "AC2", prim)
+    # #4772: share hits are exact by construction (no copied content chunk)
+    must("if (fs.flat->content_fresh_chunks == 0)", "AC2", prim)
     # Issue #4613 residual: set-code allocates a FRESH FlatAST whose
     # generation restarts at 1 and whose node count can be unchanged when
     # only a literal changes — the triple above is not a content identity
     # across set-code. A share needs the same workspace source text too,
     # or an older snapshot's frozen copy is served for new source.
-    must("ev.snapshot_sources_[i] == source", "AC2", prim)
+    # #4613 set-code case: a fresh FlatAST has no base image, so it always copies
+    must("the #4613 set-code case is a fresh FlatAST with no base", "AC2", prim)
     must("++ev.ast_snapshot_share_hits_total_;", "AC2", prim)
     must("++ev.ast_snapshot_share_misses_total_;", "AC2", prim)
     must(
@@ -124,10 +126,12 @@ def main() -> int:
     must("[[nodiscard]] std::uint64_t ast_snapshot_share_hits_total() const noexcept", "AC2", evixx)
 
     # AC3 stamp capture at snapshot
-    must("collect_define_stamps(aura::ast::FlatAST& flat, aura::ast::StringPool& pool)", "AC3", prim)
-    must("st.gen16 = flat.load_subtree_gen(cur);", "AC3", prim)
-    must("fs.stamps = collect_define_stamps(*ev.workspace_flat_, *ev.workspace_pool_);", "AC3", prim)
-    must("fs.stamps = share_src->stamps;", "AC3", prim)
+    # #4772: stamps resolve lazily at first restore from the image cells
+    must("void resolve_lazy_define_stamps(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,", "AC3", prim)
+    must("st.gen16 = img.subtree_gen_at(cur);", "AC3", prim)
+    must("st.ver = img.define_ver_at(cur); // Issue #4792", "AC3", prim)
+    must("fs.stamps = std::make_shared<FlatSnapshotDefineStamps>();", "AC3", prim)
+    must("fs.stamps->lazy = true;", "AC3", prim)
     must("std::unordered_map<std::string, DefineStamp> by_name;", "AC3", evixx)
 
     # AC4 restore stamp diff — no full unparse on the hot path
@@ -136,7 +140,7 @@ def main() -> int:
         "AC4",
         prim,
     )
-    must("else if (it->second.second != st.gen16)", "AC4", prim)
+    must("it->second.second != st.ver", "AC4", prim)  # #4792: define_ver_ replaces gen16
     must("auto snap_source_of = [&](const std::string& nm) -> const std::string* {", "AC4", prim)
     must("st.source = aura::ast::unparse_to_string(", "AC4", prim)
     must("++ev.ast_restore_stamp_unparse_total_;", "AC4", prim)
@@ -179,10 +183,10 @@ def main() -> int:
     # Phase 3 aliases one frozen copy across share-hit entries; entry-counting
     # evicted an aliased copy (frees nothing) and demoted the affected ids to
     # the O(workspace) source reparse (7.3 ms vs 0.18 ms at W=200).
-    must("Issue #4598 residual: the cap bounds DISTINCT frozen FlatAST+pool", "AC9", prim)
-    must("std::size_t deep = distinct_copies();", "AC9", prim)
+    must("Issue #4271 / #4598 residual / #4772: count DISTINCT images", "AC9", prim)
+    must("auto [w, distinct] = totals();", "AC9", prim)
     must("if (s.has_flat && s.flat.get() == oldest) {", "AC9", prim)
-    must("std::unordered_set<const aura::ast::FlatAST*> seen;", "AC9", evixx)
+    must("std::unordered_map<const aura::ast::FlatAST::Image*, char> seen;", "AC9", prim)
     must("4598p4 AC14: distinct-copy count stays 1", "AC9", round_test)
     must("4598p4 AC14: shared burst does not evict the live copy", "AC9", round_test)
 
