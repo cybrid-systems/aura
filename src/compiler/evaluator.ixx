@@ -7381,8 +7381,16 @@ private:
         // restore so snapshots that never restore pay nothing.
         std::size_t pool_size = 0;
         std::shared_ptr<FlatSnapshotDefineStamps> stamps;
+        // Issue #4782: ast_restore_epoch_ at capture. FlatAST copy-assign
+        // does not mirror subtree_gen_, so a direct restore swaps content
+        // under unchanged cells — stamps captured before ANY later restore
+        // can match a cell whose define now holds different content
+        // (S0 -> rebind -> S1 -> restore S0 -> restore S1 kept S0's p).
+        std::uint64_t restore_epoch = 0;
     };
     std::vector<FlatSnapshot> snapshot_flats_;
+    // Issue #4782: bumped by every ast:restore that rewrote the workspace.
+    std::uint64_t ast_restore_epoch_{0};
     // Issue #4598 phase 3: snapshot share + restore stamp counters (Agent
     // observability via query:workspace-snapshot-stats; C++ tests read the
     // public accessors).

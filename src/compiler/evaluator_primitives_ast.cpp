@@ -434,7 +434,13 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                 fs.flat_size = share_src->flat_size;
                 fs.cow_epoch = share_src->cow_epoch;
                 fs.pool_size = share_src->pool_size;
-                fs.stamps = share_src->stamps;
+                // Issue #4782: shared stamps are only sound in the epoch
+                // they were read in. A share across a restore re-reads the
+                // live cells (O(nodes), no unparse) for this entry.
+                if (share_src->restore_epoch == ev.ast_restore_epoch_)
+                    fs.stamps = share_src->stamps;
+                else
+                    fs.stamps = collect_define_stamps(*ev.workspace_flat_, *ev.workspace_pool_);
                 ++ev.ast_snapshot_share_hits_total_;
             } else {
                 ++ev.ast_snapshot_share_misses_total_;
@@ -472,6 +478,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             }
             if (ev.workspace_pool_)
                 fs.pool_size = ev.workspace_pool_->data_size();
+            fs.restore_epoch = ev.ast_restore_epoch_; // Issue #4782
 
             auto id = ev.snapshot_sources_.size();
             ev.snapshot_sources_.push_back(source);
@@ -862,6 +869,12 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                     const std::shared_ptr<FlatSnapshotDefineStamps> stamps = snap_entry.stamps;
                     if (stamps && stamps->live_flat != ev.workspace_flat_)
                         stamp_lineage_broken_4777 = true;
+                    // Issue #4782: a restore since the capture swapped
+                    // content under the (unmirrored) subtree_gen_ cells, so
+                    // equal gen16 no longer implies equal content. Use the
+                    // source diff (sound) for this restore.
+                    if (snap_entry.restore_epoch != ev.ast_restore_epoch_)
+                        stamp_lineage_broken_4777 = true;
                     const bool have_stamps =
                         stamps && !stamps->by_name.empty() && !stamp_lineage_broken_4777;
                     std::unordered_map<std::string, std::pair<aura::ast::NodeId, std::uint16_t>>
@@ -1049,6 +1062,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             }
         }
         if (did_direct) {
+            ++ev.ast_restore_epoch_; // Issue #4782
             // Issue #4598 phase 3: re-stamp the identity of every snapshot
             // entry sharing THIS frozen copy. The restore assign mirrors the
             // capture generation, but boundary-exit machinery may advance
@@ -1123,6 +1137,8 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         if (is_error(result))
             return result;
         const bool ok_fallback = is_bool(result) ? as_bool(result) : false;
+        if (ok_fallback)
+            ++ev.ast_restore_epoch_; // Issue #4782
         if (ok_fallback && ev.workspace_flat_) {
             ev.workspace_flat_->adopt_mutation_log(carried_log, carried_next);
             if (!carried_log.empty()) {

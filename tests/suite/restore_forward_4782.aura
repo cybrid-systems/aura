@@ -1,0 +1,40 @@
+;; restore_forward_4782.aura — Issue #4782. S0 -> rebind -> S1 -> restore S0
+;; -> restore S1 left the SOURCE at S1 while calls still ran S0's p: FlatAST
+;; copy-assign does not mirror subtree_gen_, so after restore S0 the live p
+;; cell still held S1's gen16 and the stamp diff saw "unchanged". Stamps are
+;; now only trusted inside the restore epoch they were captured in.
+;; Pass = exit 0 + OK line.
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+
+(set-code "(define p (lambda (x) (> x 10)))\n(define e4782 (lambda (x) (p x)))") (eval-current)
+(define S0 (ast:snapshot "s0"))
+(mutate:rebind "p" "(lambda (x) (> x 3))" "v2") (eval-current)
+(assert! (eq? (e4782 5) #t) "rebind v2 live")
+(define S1 (ast:snapshot "s1"))
+(assert! (eq? (ast:restore S0) #t) "restore S0 ok")
+(eval-current)
+(assert! (eq? (e4782 5) #f) "after restore S0: caller runs S0 p")
+(assert! (eq? (ast:restore S1) #t) "restore S1 ok")
+(eval-current)
+(assert! (eq? (p 5) #t) "forward restore S1: p runs S1 body")
+(assert! (eq? (e4782 5) #t) "forward restore S1: caller runs S1 p")
+;; and back again, twice
+(ast:restore S0) (eval-current)
+(assert! (eq? (e4782 5) #f) "second restore S0")
+(ast:restore S1) (eval-current)
+(assert! (eq? (e4782 5) #t) "second forward restore S1")
+;; a snapshot taken after a restore keeps the stamp path and stays exact
+(define S2 (ast:snapshot "s2"))
+(mutate:rebind "p" "(lambda (x) (> x 100))" "v3") (eval-current)
+(assert! (eq? (e4782 50) #f) "rebind v3 live")
+(ast:restore S2) (eval-current)
+(assert! (eq? (e4782 5) #t) "restore S2 (post-restore capture) -> S1 body")
+
+(if (= *fails* 0)
+    (begin (display "OK-4782 forward restore") (newline))
+    (begin (display "FAIL-4782 fails=") (display *fails*) (newline) (error "4782 suite failed")))

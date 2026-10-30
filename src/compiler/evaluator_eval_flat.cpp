@@ -11428,6 +11428,7 @@ std::int64_t Evaluator::capture_workspace_snapshot_under_lock(std::string_view n
         // ast:snapshot deep-copy path (#1669 class A).
         fs.has_flat = false;
     }
+    fs.restore_epoch = ast_restore_epoch_; // Issue #4782
     auto id = snapshot_sources_.size();
     snapshot_sources_.push_back(source);
     snapshot_names_.push_back(std::string(name));
@@ -11721,6 +11722,7 @@ bool Evaluator::restore_workspace_snapshot_under_lock(std::size_t id) noexcept {
             }
             if (pre_cache_workspace_defines_fn_)
                 pre_cache_workspace_defines_fn_();
+            ++ast_restore_epoch_; // Issue #4782: stamps captured before are stale
             return true;
         } catch (...) {
             // [SILENCE-PRIM-#615] restore_workspace_snapshot_under_lock is
