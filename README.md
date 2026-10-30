@@ -18,4 +18,20 @@ no evaluator code.
 target_link_libraries(my_app PRIVATE aura::core)   # in this build tree
 ```
 
+Out of tree, install the core component and use `find_package`:
+
+```bash
+cmake -S . -B build -G Ninja && cmake --build build --target aura_core
+cmake --install build --prefix /opt/aura --component aura_core
+```
+
+```cmake
+find_package(aura CONFIG REQUIRED)                 # -DCMAKE_PREFIX_PATH=/opt/aura
+target_link_libraries(my_app PRIVATE aura::core)
+```
+
+Installed headers live under `include/aura/` (`core/persistent_child_vector.hh`,
+`core/fiber_context.hh`, `compiler/fiber_cow_overlay.hh`), so the same
+`#include "core/..."` paths work in and out of the tree.
+
 `tests/core/test_aura_core_embed.cpp` is the reference consumer.

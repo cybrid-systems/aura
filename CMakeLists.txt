@@ -252,6 +252,34 @@ target_include_directories(aura_core PUBLIC
 target_compile_features(aura_core PUBLIC cxx_std_26)
 target_compile_options(aura_core PUBLIC -fcontracts)
 target_link_libraries(aura_core PUBLIC stdc++exp pthread)
+
+# Issue #4774: install(EXPORT) so an out-of-tree host finds aura::core with
+#   find_package(aura CONFIG REQUIRED)
+#   target_link_libraries(my_app PRIVATE aura::core)
+# Installs libaura_core.a, the embeddable headers (self-contained: they only
+# include each other and the standard library) and aura-config.cmake.
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+target_include_directories(aura_core PUBLIC
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/aura>)
+set_target_properties(aura_core PROPERTIES EXPORT_NAME core)
+install(TARGETS aura_core EXPORT aura-targets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    COMPONENT aura_core)
+install(FILES src/core/persistent_child_vector.hh src/core/fiber_context.hh
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/aura/core COMPONENT aura_core)
+install(FILES src/compiler/fiber_cow_overlay.hh
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/aura/compiler COMPONENT aura_core)
+install(EXPORT aura-targets NAMESPACE aura::
+    FILE aura-targets.cmake
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/aura COMPONENT aura_core)
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/aura-config.cmake.in
+"@PACKAGE_INIT@\ninclude(\"\${CMAKE_CURRENT_LIST_DIR}/aura-targets.cmake\")\ncheck_required_components(aura)\n")
+configure_package_config_file(${CMAKE_CURRENT_BINARY_DIR}/aura-config.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/aura-config.cmake
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/aura)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/aura-config.cmake
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/aura COMPONENT aura_core)
  
 
 
