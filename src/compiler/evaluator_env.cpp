@@ -620,6 +620,21 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
                 if (const auto* hit = local_symid_binding(*p, s))
                     return *hit;
             }
+            // Issue #4781: a hop that is a delegated-capture call env
+            // (#4350) keeps its closure's free variables in cap_snap_, not
+            // in its arrays. A stack child of that env (the try/catch
+            // handler env, an inline-lambda frame, ...) must see them at
+            // the hop's own lexical position - right after the hop's
+            // locals, the same order the hop's own lookup uses. Without
+            // this a (catch (e) p) inside a closure body read p as
+            // unbound (or as a same-named primitive / global).
+            if (p->cap_snap_) {
+                for (const CapSnapshot* snap = p->cap_snap_.get(); snap;
+                     snap = snap->parent.get()) {
+                    if (auto it = snap->name_index_.find(n); it != snap->name_index_.end())
+                        return snap->bindings_[it->second].second;
+                }
+            }
         }
         // Fall through to SoA / top_env (do not return nullopt here).
     }
@@ -4869,6 +4884,15 @@ EvalValue* Env::lookup_cell_ptr(std::string_view n, std::vector<EvalValue>* cell
                 return nullptr;
             }
         }
+        // Issue #4781: the hop's delegated capture (see Env::lookup).
+        if (p->cap_snap_) {
+            std::optional<std::uint64_t> snap_cell;
+            if (cap_snap_cell(p->cap_snap_, n, snap_cell)) {
+                if (snap_cell && *snap_cell < cells->size())
+                    return &(*cells)[*snap_cell];
+                return nullptr;
+            }
+        }
     }
     // 4. Issue #2870 / #2566: live top_ free-var cells after parent miss
     //    (named-let free-var set! of top-level define; empty materialize).
@@ -5030,6 +5054,12 @@ std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
                     return as_cell_id(b.second);
                 return std::nullopt;
             }
+        }
+        // Issue #4781: the hop's delegated capture (see Env::lookup).
+        if (p->cap_snap_) {
+            std::optional<std::uint64_t> snap_cell;
+            if (cap_snap_cell(p->cap_snap_, n, snap_cell))
+                return snap_cell;
         }
     }
     // 4. Issue #2870 / #2566: live top_ free-var cells after parent miss.
