@@ -279,10 +279,53 @@ namespace {
     // reject never reaches here (#2158 AC5).
     // Placed after WorkspaceSwapGuard so #3442 AC3 (resolve_aura_agent
     // window has no extra atomic) stays a pointer walk.
-    void apply_spawn_closure_maybe_locked(Evaluator& ev, std::uint64_t cid,
-                                          std::uint64_t region_key) {
+    // Issue #4783: per-scope body outcome tally for orch:scope-spawn /
+    // orch:scope-join-all. The body used to swallow every error, so a
+    // throwing body joined as ok:#t status:ok. Bodies now record their
+    // failure (name + message) here and join-all drains it into
+    // err-count / errors / status partial (same face as supervise-batch).
+    // reclaim_epoch: bumped by a non-Ok join; a body spawned before the
+    // bump that had not started yet is cancelled deterministically (counted
+    // in cancelled-count at the next join) instead of running "0-2 of 4"
+    // times at some later point.
+    struct ScopeBodyTally {
+        std::mutex mu;
+        std::vector<std::pair<std::string, std::string>> errors;
+        std::uint64_t ok = 0;
+        std::uint64_t cancelled = 0;
+        std::atomic<std::uint64_t> reclaim_epoch{0};
+    };
+    std::mutex g_scope_body_tally_mu;
+    std::unordered_map<const void*, std::shared_ptr<ScopeBodyTally>> g_scope_body_tallies;
+    std::shared_ptr<ScopeBodyTally> scope_body_tally(const void* scope) {
+        std::lock_guard<std::mutex> lk(g_scope_body_tally_mu);
+        auto& slot = g_scope_body_tallies[scope];
+        if (!slot)
+            slot = std::make_shared<ScopeBodyTally>();
+        return slot;
+    }
+
+    // Issue #4783: message of an error value (tenant-fenced like display).
+    std::string spawn_body_error_message(Evaluator& ev, const EvalValue& v) {
+        std::string msg = "runtime error";
+        if (!types::is_error(v))
+            return msg;
+        const auto idx = types::as_error_idx(v);
+        if (idx < ev.error_values_.size() && types::is_string(ev.error_values_[idx])) {
+            const auto sidx = types::as_string_idx(ev.error_values_[idx]);
+            if (ev.inrange_string_tenant_allows(sidx, /*required_effects=*/0,
+                                                "orch:scope-join-all"))
+                msg = ev.copy_string_heap_at(sidx);
+        }
+        return msg;
+    }
+
+    // Issue #4783: returns the body failure (nullopt = applied cleanly).
+    std::optional<std::string> apply_spawn_closure_maybe_locked(Evaluator& ev, std::uint64_t cid,
+                                                                std::uint64_t region_key) {
         if (cid == 0)
-            return;
+            return std::nullopt;
+        std::optional<std::string> failure;
         if (region_key == 0)
             region_key = Evaluator::parallel_task_region_key();
         const auto prev_tls = Evaluator::parallel_task_region_key();
@@ -296,12 +339,17 @@ namespace {
         const bool region_fast = aura::compiler::typed_audit::production_defaults_active() &&
                                  ev.workspace_region_concurrency_enabled() &&
                                  ev.scoped_parallel_enabled() && region_key != 0;
-        auto run = [&ev, cid]() {
+        auto run = [&ev, cid, &failure]() {
             if (!agent_cid_live(ev, cid)) {
                 agent_note_closure_freed_call(ev);
+                failure = "closure-freed";
                 return;
             }
-            (void)ev.apply_closure(cid, {});
+            auto opt = ev.apply_closure(cid, {});
+            if (!opt)
+                failure = "apply-failed";
+            else if (types::is_error(*opt))
+                failure = spawn_body_error_message(ev, *opt);
         };
         ev.gate_spawn_apply_region(region_key, region_fast, run, [](std::uint64_t wait_us) {
             aura::orch::g_orch_module_stats.agent_apply_lock_acquisitions_total.fetch_add(
@@ -315,6 +363,7 @@ namespace {
             else
                 Evaluator::clear_parallel_task_region_key();
         }
+        return failure;
     }
 
     // Issue #4394: orch:supervise-batch apply. Same gate as spawn-agent
@@ -3883,7 +3932,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     // non-zero region key are the isolation token
                     // (production region concurrency). Issue #4423:
                     // SingleWriter / Soft/Off / key==0 keep the lock.
-                    apply_spawn_closure_maybe_locked(ev, *cid, region_key);
+                    (void)apply_spawn_closure_maybe_locked(ev, *cid, region_key);
                 } catch (...) {
                     // [SILENCE-PRIM-#615] swallow: agent body errors surface
                     // via join/status only (#1669 class B intentional-state).
@@ -4563,17 +4612,38 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 }
             }
 
-            auto body = [&ev, cid, region_key]() {
+            // Issue #4783: body outcome tally of the target scope.
+            auto tally = scope_body_tally(static_cast<const void*>(&scope));
+            const auto spawn_epoch = tally->reclaim_epoch.load(std::memory_order_acquire);
+            auto body = [&ev, cid, region_key, tally, spawn_epoch, body_name = name]() {
                 if (!cid)
                     return;
+                // Issue #4783: a non-Ok join already reclaimed this task
+                // before it started — never run it late; report cancelled.
+                if (tally->reclaim_epoch.load(std::memory_order_acquire) != spawn_epoch) {
+                    std::lock_guard<std::mutex> lk(tally->mu);
+                    ++tally->cancelled;
+                    return;
+                }
                 try {
                     // Same per-Evaluator apply gate as orch:spawn-agent.
                     // Issue #3728 / #4423: skip agent_apply_mu_ for disjoint
                     // region keys only while ScopedParallel is on.
-                    apply_spawn_closure_maybe_locked(ev, *cid, region_key);
-                } catch (...) {
+                    if (auto fail = apply_spawn_closure_maybe_locked(ev, *cid, region_key)) {
+                        std::lock_guard<std::mutex> lk(tally->mu);
+                        tally->errors.emplace_back(body_name, std::move(*fail));
+                    } else {
+                        std::lock_guard<std::mutex> lk(tally->mu);
+                        ++tally->ok;
+                    }
+                } catch (const std::exception& ex) {
                     // [SILENCE-PRIM-#615]: agent body errors surface via
-                    // join/status only (#1669 class B intentional-state).
+                    // join/status (#4783: now counted, not dropped).
+                    std::lock_guard<std::mutex> lk(tally->mu);
+                    tally->errors.emplace_back(body_name, ex.what());
+                } catch (...) {
+                    std::lock_guard<std::mutex> lk(tally->mu);
+                    tally->errors.emplace_back(body_name, "unknown-exception");
                 }
             };
             aura::orch::AgentSpec spec;
@@ -5100,6 +5170,22 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // Issue #3643: :tree #t joins the whole subtree (default local,
             // #3496 AC1 — root join leaves descendants live).
             const auto jr = scope->join_all(policy, fail_pol, tree_join);
+            // Issue #4783: drain this scope's body outcome tally. Always
+            // bump reclaim_epoch so a body that had not started (or that
+            // finishes after drain) cannot pollute the next join — including
+            // Ok+partial, where JoinStatus is Ok but some bodies failed.
+            const auto body_tally_key = static_cast<const void*>(scope);
+            auto body_tally = scope_body_tally(body_tally_key);
+            body_tally->reclaim_epoch.fetch_add(1, std::memory_order_acq_rel);
+            std::vector<std::pair<std::string, std::string>> body_errors;
+            std::uint64_t body_ok_n = 0;
+            std::uint64_t body_cancelled_n = 0;
+            {
+                std::lock_guard<std::mutex> lk(body_tally->mu);
+                body_errors.swap(body_tally->errors);
+                body_ok_n = std::exchange(body_tally->ok, 0);
+                body_cancelled_n = std::exchange(body_tally->cancelled, 0);
+            }
             // Issue #4115: join_all ran the end-of-join Reclaimed-pending
             // sweep (production; Soft / Off no-op). Capture the outcome
             // before the #3467 settled-drop retires the slot.
@@ -5192,8 +5278,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             const bool join_guard_deny = descendants_live && !tree_join &&
                                          aura::compiler::typed_audit::production_defaults_active();
             if (scope == root) {
-                if (tree_settled_now)
+                if (tree_settled_now) {
                     aura::orch::drop_agent_scope(static_cast<void*>(&ev));
+                    // Issue #4783: the scope is gone; live bodies keep their
+                    // own shared_ptr, the table entry must not outlive it.
+                    std::lock_guard<std::mutex> lk(g_scope_body_tally_mu);
+                    g_scope_body_tallies.erase(body_tally_key);
+                }
             }
             const char* st = "ok";
             switch (jr.status) {
@@ -5213,14 +5304,33 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     st = "reclaimed";
                     break;
             }
+            // Issue #4783: every fiber finished but some bodies failed →
+            // partial (supervise-batch vocabulary), never a silent ok.
+            const bool body_failed = !body_errors.empty();
+            if (jr.status == aura::serve::JoinStatus::Ok && body_failed)
+                st = "partial";
             const auto sidx = ev.push_string_heap(st);
             const auto fail_eff_idx =
                 ev.push_string_heap(aura::orch::on_join_fail_action_name(join_fail_effective));
             aura::orch::g_orch_module_stats.scope_join_all_total.fetch_add(
                 1, std::memory_order_relaxed);
+            // errors: list of (name . message), spawn-completion order.
+            EvalValue body_errors_list = make_void();
+            for (auto it = body_errors.rbegin(); it != body_errors.rend(); ++it) {
+                const auto n_idx = ev.push_string_heap(it->first);
+                const auto m_idx = ev.push_string_heap(it->second);
+                const auto cell = ev.push_pair(make_string(n_idx), make_string(m_idx));
+                const auto lst = ev.push_pair(types::make_pair(cell), body_errors_list);
+                body_errors_list = types::make_pair(lst);
+            }
             std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"ok", make_bool(jr.status == aura::serve::JoinStatus::Ok && !join_guard_deny)},
+                {"ok", make_bool(jr.status == aura::serve::JoinStatus::Ok && !join_guard_deny &&
+                                 !body_failed)},
                 {"status", make_string(sidx)},
+                {"err-count", make_int(static_cast<std::int64_t>(body_errors.size()))},
+                {"body-ok-count", make_int(static_cast<std::int64_t>(body_ok_n))},
+                {"cancelled-count", make_int(static_cast<std::int64_t>(body_cancelled_n))},
+                {"errors", body_errors_list},
                 {"wait-us", make_int(static_cast<std::int64_t>(jr.wait_us + auto_wait_us))},
                 {"drain-ms", make_int(static_cast<std::int64_t>(policy.drain_ms))},
                 {"schema", make_int(2588)},
