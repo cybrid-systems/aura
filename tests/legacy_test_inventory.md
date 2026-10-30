@@ -1,7 +1,7 @@
 # Legacy test inventory
 
 **Issue:** [#1957](https://github.com/cybrid-systems/aura/issues/1957)
-**Generated:** 2026-10-29 by `scripts/tools/inventory_legacy_tests.py`
+**Generated:** 2026-10-30 by `scripts/tools/inventory_legacy_tests.py`
 **Status:** living document — re-run the script after consolidations.
 
 ## Purpose
@@ -1523,7 +1523,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_aot_bridge_checkpoint_version_steal.cpp` (—) [domain_suite, theme_compiler] — test_aot_bridge_checkpoint_version_steal.cpp — Issue #653 / #3813:
 - `tests/serve/test_boundary_yield_steal_metrics.cpp` (—) [domain_suite, theme_serve] — AC1: high-frequency MB yield → yield_mutation_boundary_total + hold_ns
 - `tests/compiler/test_capability_high_risk_promote.cpp` (—) [domain_suite, theme_compiler] — AC1: Registry-only grant self-evo → has_capability true without relying
-- `tests/compiler/test_channel_rendezvous.cpp` (—) [domain_suite, theme_compiler] — AC1: rendezvous send blocks until concurrent recv
+- `tests/compiler/test_channel_rendezvous.cpp` (—) [large, domain_suite, theme_compiler] — AC1: rendezvous send blocks until concurrent recv
 - `tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp` (—) [large, domain_suite, theme_serve] — Issue #2380 — nightly production-concurrency profile: lock-order canary +
 - `tests/serve/test_chaos_steal_mutation_gc.cpp` (—) [large, domain_suite, theme_serve] — test_chaos_steal_mutation_gc.cpp — Issue #2315 + #2931:
 - `tests/compiler/test_compile_primitive_guard.cpp` (—) [domain_suite, theme_compiler] — Issue #1896 (#1978 renamed): issue# moved from filename to header.
