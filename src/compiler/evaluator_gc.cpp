@@ -1986,21 +1986,33 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         if (last_eval_current_result_)
             work.push_back(*last_eval_current_result_);
     }
-    // Issue #4608: the capability snapshots hold bindings (and so
-    // string values). The file-mode reclaim walks the whole snapshot
-    // cache; the tree-walker reclaim must do the same or a snapshot
-    // binding could be released under the snapshot.
-    {
-        std::lock_guard<std::mutex> snap_lock(cap_snap_mtx_);
-        for (const auto& entry : cap_snap_cache_) {
-            for (auto sp = entry.second; sp; sp = sp->parent) {
-                for (const auto& b : sp->bindings_)
-                    work.push_back(b.second);
-                for (const auto& b : sp->bindings_symid_)
-                    work.push_back(b.second);
-            }
-        }
-    }
+    // Issue #4787: the capture-snapshot cache is NOT a root set.
+    //
+    // #4608 made every cached CapSnapshot a root so that a snapshot's
+    // bindings (and their string/hash slots) could not be released under
+    // the cache. That is unnecessary for the tree walker: a snapshot is an
+    // exact copy of its source frame's bindings (cap_snap_for_frame copies
+    // bindings_ / bindings_symid_ under the frame's shard lock, and frames
+    // are immutable after fill), so every value a live snapshot holds is
+    // already marked through the frame it was built from - and that frame
+    // is marked because the live Env holding the snapshot is walked below
+    // (push_env + note_frame(snapshot->source_frame)).
+    //
+    // Worse, it made the GC defeat itself: the cache is keyed per capture
+    // frame and only evicted on reuse / truncate / compact, so every call
+    // that materialises a closure leaves one entry behind. Rooting those
+    // bindings resurrected each dead capture frame's cell -> closure ->
+    // capture-frame chain, so live_frame marked every frame the sweep was
+    // supposed to free (measured: live=3 of 40017 before the cache roots,
+    // live=40016 after). EnvFrame slots were then never recycled and the
+    // arena filled to kMaxSlots; at that point alloc_env_frame returns
+    // NULL_ENV_ID and a closure is built with no capture, so its free
+    // variables read unbound far from the cause ("8:32: unbound variable:
+    // cap" inside an inner named let, #4787).
+    //
+    // Entries for frames the sweep does NOT mark live are dropped below
+    // with the frame (dead_snaps), which also bounds the cache to the live
+    // capture frames instead of growing one entry per call.
     // Issue #4632: inactive workspace define closures live in the
     // switch snapshot, not in the shared cells. Mark them so a
     // reclaim between switches does not erase the closure the next

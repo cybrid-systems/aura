@@ -14,6 +14,7 @@
 //   Issue #4343 — O(1) SymId index on Env (top-level define lookup)
 //   Issue #4448 — cap_snap_cache_ invalidation on compact / truncate
 //                 (EnvId reuse / renumber must not serve stale captures)
+//   Issue #4787 — dead capture frames reclaimed (the snapshot cache is not a root)
 // Pattern: CHECK() + run_* AC blocks (test_env_lookup_batch precedent).
 // Source: cmake/AuraDomainTests.cmake · all_test_issue_targets.
 
@@ -1517,6 +1518,91 @@ static void run_4448_cap_snap_invalidation() {
     }
 }
 
+// ── Issue #4787 — dead capture frames must be reclaimable ──────────────
+// An inner named let allocates its own capture frames per call (the letrec
+// parent copy + the loop closure's capture) and every materialise of the
+// loop closure caches a CapSnapshot for the capture frame. Once the call
+// returns those frames are dead. #4608 made the whole snapshot cache a GC
+// root, which resurrected each dead capture frame's value -> closure ->
+// capture-frame chain: the sweep freelisted nothing (measured: live=3 of
+// 40017 frames before the cache roots, live=40016 after), the EnvFrame
+// arena grew with every call and filled to kMaxSlots. alloc_env_frame then
+// returns NULL_ENV_ID and the closure is built with NO capture, so the free
+// variable reads unbound far from the cause (#4787, "8:32: unbound
+// variable: cap" after ~520k calls).
+//
+// Discriminator: a second identical batch after a reclaim must REUSE the
+// first batch's slots. Pre-fix the cache keeps batch 1 alive and the arena
+// grows by the same amount again.
+static void run_4787_capture_frames_reclaimed() {
+    using aura::compiler::Env;
+    using aura::compiler::types::make_closure;
+    using aura::compiler::types::make_int;
+    std::println("\n=== Issue #4787: dead capture frames are reclaimed ===");
+
+    aura::ast::StringPool pool;
+    Evaluator ev;
+
+    // One inner named-let call, shaped like the interpreter's: the outer
+    // frame holds the free cap, the loop closure's capture frame holds the
+    // recursive loop closure (whose captured env is the outer frame) and is
+    // parented at that outer frame.
+    auto named_let_call = [&](int i) {
+        Env outer;
+        outer.set_pool(&pool);
+        outer.bind_symid(pool.intern("cap"), make_int(i));
+        const auto cap_id = ev.alloc_env_frame_from_env(outer, NULL_ENV_ID);
+        CHECK(cap_id != NULL_ENV_ID, "4787: outer capture frame allocated");
+
+        Closure c_outer;
+        c_outer.env_id = cap_id;
+        c_outer.pool = &pool;
+        const auto cid_outer = ev.register_active_closure(c_outer);
+
+        Env recursive;
+        recursive.set_pool(&pool);
+        recursive.bind_symid(pool.intern("loop"), make_closure(cid_outer));
+        const auto loop_id = ev.alloc_env_frame_from_env(recursive, cap_id);
+        CHECK(loop_id != NULL_ENV_ID, "4787: loop capture frame allocated");
+
+
+        Closure c_loop;
+        c_loop.env_id = loop_id;
+        c_loop.pool = &pool;
+        const auto cid_loop = ev.register_active_closure(c_loop);
+
+        auto env = ev.materialize_call_env(c_loop); // caches the CapSnapshot
+        auto cap = env.lookup("cap");               // free var, via the parent frame
+        CHECK(cap.has_value() && is_int(*cap) && as_int(*cap) == i,
+              "4787: a named-let free variable resolves through the capture chain");
+        (void)cid_loop;
+    };
+
+
+    const std::size_t base = ev.env_frames_size();
+    constexpr int kCalls = 512;
+    for (int i = 0; i < kCalls; ++i)
+        named_let_call(i);
+    const std::size_t after_batch1 = ev.env_frames_size();
+    CHECK(after_batch1 >= base + 2 * static_cast<std::size_t>(kCalls),
+          "4787 AC1: each call netted two capture frames (precondition)");
+
+    const bool swept = ev.reclaim_tw_unreachable({}, {});
+    CHECK(swept, "4787 AC1: the tree-walker reclaim ran");
+
+    const std::size_t before_batch2 = ev.env_frames_size();
+    for (int i = 0; i < kCalls; ++i)
+        named_let_call(i);
+    const std::size_t after_batch2 = ev.env_frames_size();
+    std::println("4787 frames: base={} batch1={} batch2={}", base, after_batch1, after_batch2);
+    CHECK(after_batch2 - before_batch2 <= 8,
+          "4787 AC1: dead capture frames are reused, not leaked");
+
+    // AC2: the free variable still resolves after the capture frames were
+    // reclaimed (and rebuilt from their frames where still live).
+    named_let_call(7);
+}
+
 } // namespace aura_envframe_epoch_batch
 
 int main() {
@@ -1548,10 +1634,12 @@ int main() {
     aura_envframe_epoch_batch::run_4343_symid_index_lookup();
     std::println("\n=== Issue #4448: cap_snap_cache_ invalidation ===");
     aura_envframe_epoch_batch::run_4448_cap_snap_invalidation();
+    std::println("\n=== Issue #4787: dead capture frames are reclaimed ===");
+    aura_envframe_epoch_batch::run_4787_capture_frames_reclaimed();
     if (::aura::test::g_failed)
         return 1;
     std::println("envframe/epoch batch "
-                 "(#1360/#1365/#1728/#1739/#1756/#1948/#2017/#2930/#3267/#4343/#4448): OK "
+                 "(#1360/#1365/#1728/#1739/#1756/#1948/#2017/#2930/#3267/#4343/#4448/#4787): OK "
                  "({} "
                  "passed)",
                  ::aura::test::g_passed);
