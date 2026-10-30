@@ -1,0 +1,51 @@
+;; expect: catch-capture-ok
+;; Issue #4781: a (try ... (catch (e) ...)) handler - and an inline
+;; ((lambda (x) ...) ...) frame - inside a closure body could not see the
+;; closure's captured variables (the enclosing procedure's params): "unbound
+;; variable: p". Those stack child envs reach the call env through parent_,
+;; but the parent_ walk only checked each hop's arrays, not the hop's #4350
+;; delegated capture snapshot, where a materialized closure call keeps its
+;; free variables. Showed up both in fibers and on the main thread.
+(define fails 0)
+(define (chk name got want)
+  (if (not (equal? got want))
+      (begin (set! fails (+ fails 1))
+             (display "FAIL ") (display name) (display " got=") (display got) (newline))))
+(define (j f) (try (fiber:join f) (catch (e) (list 'join-err e))))
+;; the issue's a/b/c/d/m cases
+(define (a p) (fiber:spawn (lambda () (try p (catch (e) 0)))))
+(define (b)   (fiber:spawn (lambda () (let ((loc 7)) (try (error "x") (catch (e) loc))))))
+(define (c p) (fiber:spawn (lambda () (try (error "x") (catch (e) p)))))
+(define (d p) (fiber:spawn (lambda () (let ((p2 p)) (try (error "x") (catch (e) p2))))))
+(define (m p) (try (error "x") (catch (e) p)))
+(chk "a" (j (a 1)) 1)
+(chk "b" (j (b)) 7)
+(chk "c" (j (c 3)) 3)
+(chk "d" (j (d 4)) 4)
+(chk "m" (m 5) 5)
+(chk "c+" (j (fiber:spawn (let ((p 3)) (lambda () (try (error "x") (catch (e) (+ p 100))))))) 103)
+(define (c5 p) (fiber:spawn (lambda () (try (error "x") (catch (e) (let ((z 1)) (+ z p)))))))
+(chk "catch-let" (j (c5 3)) 4)
+;; main thread: closure whose body catches
+(define (mk p) (lambda () (try (error "x") (catch (e) p))))
+(chk "main-closure" ((mk 5)) 5)
+;; inline lambda frame inside a captured body
+(define (c3 p) (fiber:spawn (lambda () ((lambda (x) (+ x p)) 1))))
+(chk "inline-lambda" (j (c3 3)) 4)
+(define (mk2 p) (lambda () ((lambda (x) (+ x p)) 1)))
+(chk "inline-lambda-main" ((mk2 3)) 4)
+(define (mk3 p) (lambda () (try (error "x") (catch (e) (list p e)))))
+(chk "catch-uses-both" (car ((mk3 1))) 1)
+;; search.aura shape: a wave of 3 candidate fibers, one throws; the
+;; coordinator must get all 3 results back
+(define (eval-cand i threshold)
+  (fiber:spawn (lambda ()
+    (try (if (= i 1) (error "boom") (* i 10))
+         (catch (e) (list 'failed i threshold))))))
+(define (wave threshold)
+  (map j (map (lambda (i) (eval-cand i threshold)) (list 0 1 2))))
+(chk "wave" (wave 42) (list 0 (list 'failed 1 42) 20))
+(chk "one-display" (list (m 5) ((mk 6)) (j (c 7))) '(5 6 7))
+(if (= fails 0)
+    (begin (display "catch-capture-ok") (newline))
+    (begin (display "catch-capture-fails=") (display fails) (newline) (exit 1)))
