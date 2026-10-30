@@ -13,6 +13,7 @@ module;
 #include "core/densify_consistency_report.h"  // Issue #2368: DensifyRemapPairingResult
 #include "typed_mutation_audit.h" // Issue #3612: densify pairing fail shares the #3548 green-face strip
 #include "serve/fiber.h"          // Issue #2498: orphan_root_release registration on fiber context
+#include "env_frame_arena.hh"     // Issue #4790: loud EnvFrame arena exhaustion
 
 #include <cstdlib> // Issue #2930: getenv AURA_BRIDGE_EPOCH_LEGACY_TRUST
 
@@ -1551,17 +1552,17 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitiv
     //     size, and slot contents stay guarded by the per-id
     //     EnvFramesShard lock exactly as before;
     //   * slot REUSE rewrites an already-published slot, so it still runs
-    //     under that id's shard lock (taken after allocation).
+    //     under that id's shard lock (Issue #4790: it did not; see the
+    //     reuse branch below for the lock and the ordering proof).
     //
     // The all-shard barrier now exists only on scan paths that need a
     // frozen snapshot (truncate_env_frames_to_checkpoint, compact).
     std::lock_guard<std::mutex> alloc_lock(env_frame_alloc_mtx_);
     if (env_frames_.size() >= NULL_ENV_ID) {
-        // 4G envs reached. Return NULL to signal overflow;
-        // callers should treat this as fatal (env allocation
-        // exhausted) — but we keep going rather than abort
-        // to make the failure mode visible.
-        return NULL_ENV_ID;
+        // 4G envs reached (unreachable: the store caps at kMaxSlots
+        // first). Issue #4790: an exhausted arena fails loudly at the
+        // allocation site; it never hands a capture caller NULL_ENV_ID.
+        env_frame_arena::fail(env_frames_.size(), EnvFrameStore::kMaxSlots);
     }
     // Issue #4459: reuse a frame the tree-walker sweep cleared.
     // In-place restamp keeps the binding vectors' capacity so the
@@ -1576,6 +1577,23 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitiv
             continue;
         if (id < env_frame_on_freelist_.size())
             env_frame_on_freelist_[id] = 0;
+        // Issue #4790: a reused slot is ALREADY PUBLISHED, so the restamp
+        // below rewrites memory a shard-locked reader may be reading. Every
+        // reader of a published slot (lookup / materialize_call_env, the
+        // typecheck and metrics iterations, the GC mark) holds that id's
+        // EnvFramesShard shared lock, so the rewrite must hold it
+        // exclusive. #4459 ran the sweep at a safepoint and stop-the-world
+        // hid the missing lock; a park-during-sweep or any concurrently
+        // allocating body makes the unlocked rewrite a data race on
+        // bindings_ / bindings_symid_ / bindings_linear_ownership_state_ /
+        // parent_id / version_ / env_gen_stamp_.
+        //
+        // Lock order is alloc -> shard: env_frame_alloc_mtx_ is the leaf
+        // allocation serialization and alloc_env_frame is its only user,
+        // while the sweep takes all sixteen shards and never takes this
+        // mutex, so the order cannot cycle.
+        std::unique_lock<std::shared_mutex> wlock(
+            env_frame_shards_[env_frame_shard_index(id)].mu); // Issue #4790
         EnvFrame& fr = env_frames_[id];
         fr.bindings_.clear();
         fr.bindings_symid_.clear();
@@ -1586,7 +1604,10 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitiv
         fr.version_ = defuse_version_.load(std::memory_order_acquire);
         fr.env_gen_stamp_ = env_generation_;
         fr.set_owner(this);
+        wlock.unlock(); // ends the #4790 shard critical section
         {
+            // Issue #4448: drop the previous occupant's snapshot (and any
+            // empty one built in the window before this fill).
             std::lock_guard<std::mutex> snap_lock(cap_snap_mtx_);
             cap_snap_cache_.erase(id);
         }
@@ -1610,8 +1631,15 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitiv
     // constructed frame (bindings empty, but every scalar written).
     fr.set_owner(this);
     const auto new_id = env_frames_.push_back(std::move(fr));
-    if (new_id == NULL_ENV_ID) [[unlikely]]
-        return NULL_ENV_ID;
+    if (new_id == NULL_ENV_ID) [[unlikely]] {
+        // Issue #4790: the store refused the append and the #4459 freelist
+        // (drained above) was empty, so the arena is genuinely at
+        // kMaxSlots. Propagating NULL here made every capture caller build
+        // a closure with NO capture; its free variables then read unbound
+        // hundreds of calls later (#4787: "8:32: unbound variable: cap").
+        // Fail at the allocation site instead.
+        env_frame_arena::fail(env_frames_.size(), EnvFrameStore::kMaxSlots);
+    }
     const EnvId id = static_cast<EnvId>(new_id);
     // Issue #4580: publish the new size with release — is_valid_env_id
     // reads this atomic, so unlocked audit readers never race the growth.

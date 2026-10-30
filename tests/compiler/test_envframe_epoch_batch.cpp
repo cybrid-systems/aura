@@ -15,6 +15,8 @@
 //   Issue #4448 — cap_snap_cache_ invalidation on compact / truncate
 //                 (EnvId reuse / renumber must not serve stale captures)
 //   Issue #4787 — dead capture frames reclaimed (the snapshot cache is not a root)
+//   Issue #4790 — reuse takes the slot shard lock; exhaustion is loud;
+//                 the file-mode reclaim is frame-conservative (documented)
 // Pattern: CHECK() + run_* AC blocks (test_env_lookup_batch precedent).
 // Source: cmake/AuraDomainTests.cmake · all_test_issue_targets.
 
@@ -23,6 +25,7 @@
 #include "compiler/hot_update_registry.hh"
 #include "compiler/observability_metrics.h"
 #include "compiler/runtime_shared.h"
+#include "compiler/env_frame_arena.hh" // Issue #4790: loud arena exhaustion
 
 #include <atomic>
 #include <cstdint>
@@ -1548,7 +1551,7 @@ static void run_4787_capture_frames_reclaimed() {
     // recursive loop closure (whose captured env is the outer frame) and is
     // parented at that outer frame.
     auto named_let_call = [&](int i) {
-        Env outer;
+        aura::compiler::Env outer;
         outer.set_pool(&pool);
         outer.bind_symid(pool.intern("cap"), make_int(i));
         const auto cap_id = ev.alloc_env_frame_from_env(outer, NULL_ENV_ID);
@@ -1603,6 +1606,193 @@ static void run_4787_capture_frames_reclaimed() {
     named_let_call(7);
 }
 
+// ── Issue #4790 — three items #4787 exposed by making reuse hot ────────
+// One inner named-let call, the #4787 shape: the outer frame holds the free
+// cap, the loop closure's capture frame holds the recursive loop closure
+// and is parented at that outer frame. materialize_call_env caches the
+// CapSnapshot for the loop frame.
+static void run_4790_named_let_call(Evaluator& ev, aura::ast::StringPool& pool, int i) {
+    using aura::compiler::Env;
+    using aura::compiler::types::make_closure;
+    using aura::compiler::types::make_int;
+
+    aura::compiler::Env outer;
+    outer.set_pool(&pool);
+    outer.bind_symid(pool.intern("cap"), make_int(i));
+    const EnvId cap_id = ev.alloc_env_frame_from_env(outer, NULL_ENV_ID);
+    CHECK(cap_id != NULL_ENV_ID, "4790: outer capture frame allocated");
+
+    Closure c_outer;
+    c_outer.env_id = cap_id;
+    c_outer.pool = &pool;
+    const auto cid_outer = ev.register_active_closure(c_outer);
+
+    Env recursive;
+    recursive.set_pool(&pool);
+    recursive.bind_symid(pool.intern("loop"), make_closure(cid_outer));
+    const EnvId loop_id = ev.alloc_env_frame_from_env(recursive, cap_id);
+    CHECK(loop_id != NULL_ENV_ID, "4790: loop capture frame allocated");
+
+    Closure c_loop;
+    c_loop.env_id = loop_id;
+    c_loop.pool = &pool;
+    const auto cid_loop = ev.register_active_closure(c_loop);
+
+    auto env = ev.materialize_call_env(c_loop); // caches the CapSnapshot
+    auto cap = env.lookup("cap");               // free var, via the parent frame
+    CHECK(cap.has_value() && is_int(*cap) && as_int(*cap) == i,
+          "4790: a named-let free variable resolves through the capture chain");
+    (void)cid_loop;
+}
+
+// AC1: the #4459 reuse path rewrites a PUBLISHED EnvFrame slot, so it must
+// hold that slot's EnvFramesShard exclusive lock. Discriminator: a second
+// body iterates every published frame through env_frame_for_test, which
+// takes the same shard SHARED. A restamp outside the lock (pre-#4790) is a
+// data race on bindings_ / bindings_symid_ / parent_id against that
+// reader; TSan reports it. The loop also asserts reuse actually happened
+// (a fresh batch after a reclaim does not grow the arena).
+static void run_4790_reuse_takes_shard_lock() {
+    std::println("\n=== Issue #4790: the reuse path holds the slot's shard lock ===");
+    aura::ast::StringPool pool;
+    Evaluator ev;
+
+    std::atomic<bool> stop{false};
+    std::atomic<std::uint64_t> frame_reads{0};
+    std::thread reader([&] {
+        while (!stop.load(std::memory_order_acquire)) {
+            const auto n = ev.env_frames_size();
+            std::uint64_t touched = 0;
+            for (std::size_t i = 0; i < n; ++i) {
+                const auto& fr = ev.env_frame_for_test(static_cast<EnvId>(i));
+                touched += fr.bindings_.size() + fr.bindings_symid_.size();
+                touched += fr.parent_id == NULL_ENV_ID ? 0 : 1;
+            }
+            frame_reads.fetch_add(touched, std::memory_order_relaxed);
+            std::this_thread::yield();
+        }
+    });
+
+    const auto base = ev.env_frames_size();
+    constexpr int kRounds = 64;
+    constexpr int kCallsPerRound = 8;
+    for (int round = 0; round < kRounds; ++round) {
+        for (int i = 0; i < kCallsPerRound; ++i)
+            run_4790_named_let_call(ev, pool, round * kCallsPerRound + i);
+        // Freelists the round's dead capture frames; the next round
+        // restamps those slots (the #4459 reuse path).
+        const bool swept = ev.reclaim_tw_unreachable({}, {});
+        CHECK(swept, "4790 AC1: the sweep ran between capture rounds");
+    }
+    stop.store(true, std::memory_order_release);
+    reader.join();
+
+    CHECK(frame_reads.load() > 0, "4790 AC1: the second body read published frames");
+    const auto grown = ev.env_frames_size() - base;
+    std::println("4790 reuse: base={} grown={} reads={}", base, grown, frame_reads.load());
+    // 64 rounds x 8 calls x 2 frames = 1024 slots without recycling.
+    CHECK(grown <= 64, "4790 AC1: the capture+reclaim loop reuses slots");
+}
+
+// AC2: frame-slot exhaustion is loud at the allocation site. The test
+// drives a real Evaluator to EnvFrameStore::kMaxSlots: the #4459 freelist
+// is empty, so the store refuses the append. Pre-#4790 that returned
+// NULL_ENV_ID and every capture caller built a closure with NO capture
+// (the #4787 presentation); post-#4790 the allocation site raises the
+// typed environment-arena failure instead. g_throw_on_exhaustion is the
+// test switch that turns the production fatal into a catchable throw so
+// the runner survives.
+static void run_4790_env_frame_exhaustion_is_loud() {
+    using aura::compiler::EnvFrameStore;
+    std::println("\n=== Issue #4790: EnvFrame arena exhaustion is loud ===");
+
+    aura::ast::StringPool pool;
+    Evaluator ev;
+    constexpr std::size_t kCap = EnvFrameStore::kMaxSlots;
+    static_assert(EnvFrameStore::kMaxSlots == 1048576, "4790: the documented slot cap");
+
+    aura::compiler::env_frame_arena::g_throw_on_exhaustion.store(true);
+    const auto exhausted_before = aura::compiler::env_frame_arena::g_exhausted_total.load();
+
+    std::size_t caught_live = 0;
+    std::size_t caught_cap = 0;
+    bool threw = false;
+    try {
+        while (ev.env_frames_size() < kCap)
+            (void)ev.alloc_env_frame(NULL_ENV_ID);
+        // One past the last slot, with the #4459 freelist empty.
+        (void)ev.alloc_env_frame(NULL_ENV_ID);
+    } catch (const aura::compiler::env_frame_arena::Exhausted& e) {
+        threw = true;
+        caught_live = e.live_frames;
+        caught_cap = e.max_slots;
+    }
+    std::println("4790 exhaustion: size={} threw={} live={} cap={}", ev.env_frames_size(), threw,
+                 caught_live, caught_cap);
+    CHECK(threw, "4790 AC2: allocation at kMaxSlots raises instead of returning NULL");
+    CHECK(caught_live == kCap, "4790 AC2: the failure reports the full arena");
+    CHECK(caught_cap == kCap, "4790 AC2: the failure names kMaxSlots");
+    CHECK(ev.env_frames_size() == kCap, "4790 AC2: the arena is exactly at the cap");
+
+    // The capture path: an exhausted arena must not hand a closure a NULL
+    // capture. Pre-#4790 alloc_env_frame_from_env returned NULL_ENV_ID here.
+    bool cap_threw = false;
+    EnvId cap_id = NULL_ENV_ID;
+    try {
+        aura::compiler::Env outer;
+        outer.set_pool(&pool);
+        outer.bind_symid(pool.intern("cap"), aura::compiler::types::make_int(7));
+        cap_id = ev.alloc_env_frame_from_env(outer);
+    } catch (const aura::compiler::env_frame_arena::Exhausted&) {
+        cap_threw = true;
+    }
+    CHECK(cap_threw && cap_id == NULL_ENV_ID,
+          "4790 AC2: a capture at the cap raises; no silently captureless closure");
+    CHECK(aura::compiler::env_frame_arena::g_exhausted_total.load() >= exhausted_before + 2,
+          "4790 AC2: both exhaustion exits are counted");
+    aura::compiler::env_frame_arena::g_throw_on_exhaustion.store(false);
+}
+
+// AC3: the file-mode reclaim stays frame-conservative on purpose (the
+// written justification lives at the root rule in evaluator_gc.cpp: the
+// path has no EnvId root set for a suspended tree-walker stack, so
+// freelisting a frame whose id is still held would alias a live binding).
+// This door pins both halves: file mode recycles no frame, and the
+// tree-walker sweep on the SAME evaluator still does (#4787 stays green).
+static void run_4790_file_mode_reclaim_is_conservative() {
+    std::println("\n=== Issue #4790: the file-mode reclaim is frame-conservative ===");
+    aura::ast::StringPool pool;
+    Evaluator ev;
+
+    constexpr int kCalls = 32;
+    for (int i = 0; i < kCalls; ++i)
+        run_4790_named_let_call(ev, pool, i);
+    const auto after_batch1 = ev.env_frames_size();
+    CHECK(after_batch1 >= 2u * kCalls, "4790 AC3: batch 1 allocated capture frames");
+
+    Evaluator::FileModeReclaimView view;
+    const bool filed = ev.reclaim_file_mode_unreachable(view);
+    CHECK(filed, "4790 AC3: the file-mode reclaim ran");
+    CHECK(ev.env_frames_size() == after_batch1,
+          "4790 AC3: the file-mode reclaim drops no frame (documented conservative)");
+
+    for (int i = 0; i < kCalls; ++i)
+        run_4790_named_let_call(ev, pool, i);
+    const auto after_batch2 = ev.env_frames_size();
+    std::println("4790 file-mode: batch1={} batch2={}", after_batch1, after_batch2);
+    CHECK(after_batch2 - after_batch1 >= 2u * kCalls,
+          "4790 AC3: a fresh batch after a file-mode reclaim still grows (no frame recycling)");
+
+    const bool swept = ev.reclaim_tw_unreachable({}, {});
+    CHECK(swept, "4790 AC3: the tree-walker reclaim ran on the same evaluator");
+    const auto before_batch3 = ev.env_frames_size();
+    for (int i = 0; i < kCalls; ++i)
+        run_4790_named_let_call(ev, pool, i);
+    const auto after_batch3 = ev.env_frames_size();
+    CHECK(after_batch3 - before_batch3 <= 8,
+          "4790 AC3: the tree-walker reclaim still recycles the frames (#4787 green)");
+}
+
 } // namespace aura_envframe_epoch_batch
 
 int main() {
@@ -1636,12 +1826,17 @@ int main() {
     aura_envframe_epoch_batch::run_4448_cap_snap_invalidation();
     std::println("\n=== Issue #4787: dead capture frames are reclaimed ===");
     aura_envframe_epoch_batch::run_4787_capture_frames_reclaimed();
+    std::println("\n=== Issue #4790: reuse lock / loud exhaustion / file-mode frame rule ===");
+    aura_envframe_epoch_batch::run_4790_reuse_takes_shard_lock();
+    aura_envframe_epoch_batch::run_4790_env_frame_exhaustion_is_loud();
+    aura_envframe_epoch_batch::run_4790_file_mode_reclaim_is_conservative();
     if (::aura::test::g_failed)
         return 1;
-    std::println("envframe/epoch batch "
-                 "(#1360/#1365/#1728/#1739/#1756/#1948/#2017/#2930/#3267/#4343/#4448/#4787): OK "
-                 "({} "
-                 "passed)",
-                 ::aura::test::g_passed);
+    std::println(
+        "envframe/epoch batch "
+        "(#1360/#1365/#1728/#1739/#1756/#1948/#2017/#2930/#3267/#4343/#4448/#4787/#4790): OK "
+        "({} "
+        "passed)",
+        ::aura::test::g_passed);
     return 0;
 }
