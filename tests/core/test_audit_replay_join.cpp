@@ -2783,6 +2783,95 @@ static void ac4695_se_wal_miss_class_and_truncated_replay() {
     cleanup();
 }
 
+// Issue #4766: a replayed head is bounded by the rows the window carries.
+// A foreign / poisoned WAL seq must never become ring.seq, and after a
+// replay the head may only count what the ring actually holds.
+static void ac4766_replay_seq_sanity() {
+    std::println("\n--- #4766: replayed ring head is sanity-bounded ---");
+    using aura::core::security_event::append_security_event;
+    using aura::core::security_event::g_security_event_ring;
+    using aura::core::security_event::kSecurityEventRingSize;
+    using aura::core::security_event::kSecurityEventSeqSanityCeiling;
+    using aura::core::security_event::SecurityEventKind;
+    using aura::core::security_event_wal::hydrate_security_event_ring_from_wal_replay;
+    using aura::core::security_event_wal::SecurityEventWalRecord;
+
+    reset_all();
+    auto& ring = g_security_event_ring();
+    // AC1: without a replay the head is exactly the appended-event count.
+    for (int i = 0; i < 5; ++i) {
+        append_security_event(ring, SecurityEventKind::EffectAllow, 7, 4766, 1, 0, "test:4766",
+                              "append", false);
+    }
+    CHECK(ring.seq.load(std::memory_order_relaxed) == 5, "4766 AC1: head == appended events");
+    CHECK(ring.total.load(std::memory_order_relaxed) == 5, "4766 AC1: total == appended events");
+
+    // AC2: the observed poison head (~7.3e17) is a foreign seq and must not be
+    // hydrated; the window is renumbered from its row count instead.
+    constexpr std::uint64_t kPoison = 729059029241643733ull;
+    std::vector<SecurityEventWalRecord> poison;
+    for (std::uint64_t i = 0; i < 8; ++i) {
+        SecurityEventWalRecord rec{};
+        rec.seq = kPoison + i;
+        rec.mutation_id = 476600 + i;
+        rec.kind = static_cast<std::uint8_t>(SecurityEventKind::EffectDeny);
+        rec.denied = 1;
+        std::memcpy(rec.op, "test:4766", 9);
+        std::memcpy(rec.reason, "poison", 6);
+        poison.push_back(rec);
+    }
+    hydrate_security_event_ring_from_wal_replay(poison);
+    const auto poison_head = g_security_event_ring().seq.load(std::memory_order_relaxed);
+    CHECK(poison_head == poison.size(),
+          "4766 AC2: a foreign seq window renumbers to the replayed row count");
+    CHECK(poison_head < kSecurityEventSeqSanityCeiling,
+          "4766 AC2: hydrated head stays under the seq sanity ceiling");
+    CHECK(aura::core::security_event_wal::g_security_event_wal_metrics()
+                  .security_event_wal_replay_foreign_seq_total.load() == 1,
+          "4766 AC2: foreign seq window is counted");
+    // Every renumbered row is traceable: one slot per seq, payload intact.
+    std::uint64_t rows = 0;
+    for (std::uint64_t s = 0; s < poison_head; ++s) {
+        const auto& e = ring.ring[s % kSecurityEventRingSize];
+        if (e.seq == s && e.denied)
+            ++rows;
+    }
+    CHECK(rows == poison.size(), "4766 AC2: renumbered rows keep one seq each");
+    CHECK(ring.ring[poison.size() - 1].mutation_id == 476600 + poison.size() - 1,
+          "4766 AC2: last renumbered row keeps its payload");
+
+    // AC3: a plausible stamped window still keeps the durable head (#4445).
+    std::vector<SecurityEventWalRecord> legit;
+    for (std::uint64_t i = 0; i < 4; ++i) {
+        SecurityEventWalRecord rec{};
+        rec.seq = 1000 + i;
+        rec.mutation_id = 476610 + i;
+        rec.kind = static_cast<std::uint8_t>(SecurityEventKind::EffectAllow);
+        rec.denied = 0;
+        legit.push_back(rec);
+    }
+    hydrate_security_event_ring_from_wal_replay(legit);
+    CHECK(g_security_event_ring().seq.load(std::memory_order_relaxed) == 1004,
+          "4766 AC3: plausible window keeps max wal seq + 1");
+    CHECK(aura::core::security_event_wal::g_security_event_wal_metrics()
+                  .security_event_wal_replay_foreign_seq_total.load() == 1,
+          "4766 AC3: plausible window is not counted as foreign");
+    // AC4: appends continue from the adopted head.
+    append_security_event(ring, SecurityEventKind::EffectAllow, 7, 4766, 1, 0, "test:4766",
+                          "append", false);
+    CHECK(ring.seq.load(std::memory_order_relaxed) == 1005, "4766 AC4: append continues at head");
+
+    // AC5: source cite + no new query key / no parked files.
+    CHECK(read_file("src/core/security_event_wal.hh").find("kSecurityEventSeqSanityCeiling") !=
+              std::string::npos,
+          "4766: hydrate rejects a foreign seq");
+    CHECK(read_file("src/core/security_event.hh").find("kSecurityEventSeqSanityCeiling") !=
+              std::string::npos,
+          "4766: sanity ceiling is a core contract");
+    CHECK(read_file("tests/compiler/test_issue_4766.cpp").empty(), "4766: no test_issue_4766.cpp");
+    CHECK(read_file("docs/design/4766-seq-sanity.md").empty(), "4766: no design doc");
+}
+
 int run_test_audit_replay_join() {
     std::println("=== Issue #3143: typed_mid SSOT + audit-replay-join query surface ===");
     ac1_typedmid_first_stamp_order();
@@ -2820,6 +2909,7 @@ int run_test_audit_replay_join() {
     ac4445_hydrate_keeps_wal_seq();
     ac4520_default_retention_bounded_replay();
     ac4695_se_wal_miss_class_and_truncated_replay();
+    ac4766_replay_seq_sanity();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

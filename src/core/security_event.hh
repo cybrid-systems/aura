@@ -99,6 +99,18 @@ struct SecurityEvent {
 // for fast seq%size mask; rejected silently if not).
 constexpr std::size_t kSecurityEventRingSize = 1024;
 
+// Issue #4766: sanity ceiling for a SecurityEvent seq that a durable WAL
+// replay may adopt as the live ring head. A live ring bumps `seq` once per
+// appended event, so reaching 2^40 (~1.1e12) appends is far beyond any
+// deployment's lifetime at any audit rate. A larger value cannot have been
+// produced by this process's ring: it is a foreign / corrupt archived seq
+// (byte-shifted record, poisoned segment from an older build). Adopting one
+// as `ring.seq` made every O(head) ring drain spin (#4766: a 7.3e17 head
+// hung test_security_capability_batch), and every later append re-persisted
+// it, so one bad segment kept the poison alive across restarts. Replay must
+// renumber such a window instead of trusting its seq.
+inline constexpr std::uint64_t kSecurityEventSeqSanityCeiling = 1ull << 40;
+
 struct SecurityEventRing {
     std::array<SecurityEvent, kSecurityEventRingSize> ring{};
     std::atomic<std::uint64_t> seq{0};

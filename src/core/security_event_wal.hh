@@ -287,6 +287,11 @@ struct SecurityEventWalMetrics {
     // durable WAL path" apart from "no such record". Appended at struct END
     // (#2906). Stored by enable(); Soft / WAL-off never sets it.
     std::atomic<std::uint64_t> security_event_wal_replay_truncated{0};
+    // Issue #4766: replay windows rejected because a stamped seq was at/above
+    // kSecurityEventSeqSanityCeiling (foreign / corrupt archived seq). The
+    // window is renumbered from its row count instead of adopting the seq, so
+    // the live ring head stays bounded. Appended at struct END (#2906).
+    std::atomic<std::uint64_t> security_event_wal_replay_foreign_seq_total{0};
 };
 
 inline SecurityEventWalMetrics& g_security_event_wal_metrics() noexcept {
@@ -772,6 +777,7 @@ struct SecurityEventWal {
         m.security_event_wal_segments.store(0, std::memory_order_relaxed);
         m.security_event_wal_segment_prune_total.store(0, std::memory_order_relaxed);
         m.security_event_wal_replay_truncated.store(0, std::memory_order_relaxed);
+        m.security_event_wal_replay_foreign_seq_total.store(0, std::memory_order_relaxed);
         ::aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
         last_seq_persisted = 0;
         segment_index = 0;
@@ -869,6 +875,10 @@ inline void fill_hydrated_security_event(SecurityEvent& slot, const SecurityEven
 // match the WAL, and the next append evicts the oldest replayed row.
 // pre-#4027 rows renumber from base = max(0, n_total - n) so head and
 // slot order still agree. No new query key. WAL format unchanged.
+// Issue #4766: a stamped seq at/above kSecurityEventSeqSanityCeiling is a
+// foreign / corrupt archived seq — it cannot come from a live ring — so the
+// whole window is renumbered from its row count instead of adopting it as
+// ring.seq (see kSecurityEventSeqSanityCeiling).
 inline void hydrate_security_event_ring_from_wal_replay(
     const std::vector<SecurityEventWalRecord>& replayed) noexcept {
     if (replayed.empty())
@@ -896,10 +906,28 @@ inline void hydrate_security_event_ring_from_wal_replay(
             max_plus = rec.seq + 1;
     }
 
+    // Issue #4766: a replay may only adopt a head that the window itself
+    // justifies. A stamped seq at/above the sanity ceiling cannot have been
+    // produced by a live ring in this deployment, so treat the window as
+    // foreign and renumber it (below) rather than pinning ring.seq to a value
+    // no append in this process could reach.
+    bool foreign_seq = false;
+    for (const auto& rec : replayed) {
+        if (rec.seq >= ::aura::core::security_event::kSecurityEventSeqSanityCeiling) {
+            foreign_seq = true;
+            break;
+        }
+    }
+    if (foreign_seq)
+        g_security_event_wal_metrics().security_event_wal_replay_foreign_seq_total.fetch_add(
+            1, std::memory_order_relaxed);
+
     auto& ring = g_security_event_ring();
     std::uint64_t next_seq = 0;
-    if (!any_stamped) {
-        // Every rec.seq is 0. Keep the newest ring-sized suffix.
+    if (!any_stamped || foreign_seq) {
+        // Every rec.seq is 0, or the window carries a foreign seq (#4766).
+        // Keep the newest ring-sized suffix and renumber it from the row
+        // count so the head stays bounded and traceable to the rows.
         const auto n = n_total > ring_cap ? ring_cap : n_total;
         const auto base = n_total - n; // max(0, n_total - n)
         for (std::uint64_t i = 0; i < n; ++i) {
