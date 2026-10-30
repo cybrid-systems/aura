@@ -1676,6 +1676,11 @@ struct CommitReadinessInput {
     // Issue #4011: fold #3789 remount-last-zero strip into live policy.
     // Existing latch; documented force_reason 17. Do not stamp Reject.
     bool remount_last_zero_strip = false;
+    // Issue #4786: solve_status was forced to TIMEOUT-class by the #3414
+    // no-live-commit-TC authority arm, NOT by a live TypeChecker solve.
+    // Only the no-TC arm may set this; a live-TC CONFLICT/TIMEOUT solve
+    // keeps it false so the admission exemption below cannot admit it.
+    bool solve_status_missing_authority = false;
 };
 
 struct CommitReadiness {
@@ -1686,6 +1691,10 @@ struct CommitReadiness {
     // Stable int: 0=ok 1=solve 2=blame 3=linear 4=truncate 5=empty_cs
     // 6=auto_partial 9=cone_truncate (#2621; 7–8 reserved by #2613 advisory)
     std::int64_t force_reason_code = 0;
+    // Issue #4786: true only when force_reason 1 came from the #3414
+    // no-live-commit-TC authority arm (no live TC in TLS). Appended at
+    // struct END per #2906 (never insert mid-struct).
+    bool solve_from_missing_authority = false;
 };
 
 // Issue #4294: re-land #4171 vacuous-empty deny on the commit-audit
@@ -1775,6 +1784,39 @@ inline constexpr std::int64_t kRemountLastZeroForceReasonCode = 17;
 // Issue #2610: auto_partial-from-cone force reason (the #3347 remirror
 // armed the pending latch; cleared only by the next infer_flat_partial).
 inline constexpr std::int64_t kAutoPartialFromConeForceReasonCode = 6;
+// Issue #4786: "solve" force reason (CONFLICT/TIMEOUT solve, or the #3414
+// no-live-commit-TC authority arm — see solve_from_missing_authority).
+inline constexpr std::int64_t kSolveForceReasonCode = 1;
+
+// Issue #4786: the ONE exempt set for the *admission* consumer
+// (MutationBoundaryGuard::try_acquire / orch mutate admit via
+// security_schedule_gate.h::commit_readiness_live_signals). Every entry
+// is a self-healing-wedge reason: while it stands, the only path that can
+// clear it is a successful mutate, and the admission gate is what refuses
+// that mutate. Exempting it here lets the re-prove flow run; the
+// commit_readiness surface itself (evolution-snapshot / commit-health
+// queries / last-proof stamps) keeps reporting would_allow=false +
+// the reason code for Agent visibility, and every other reason (2 blame,
+// 3 linear, 4 truncate, 5 empty_cs, 9 cone_truncate, 10-16 faces) still
+// refuses admission.
+//
+//   17 remount-last-zero strip (#4011): retired by the next live proof.
+//    6 auto_partial-from-cone (#4540/#2610): retired by the next
+//      infer_flat_partial.
+//    1 solve from the #3414 no-live-TC arm (#4786): the arm denies when
+//      no commit TypeChecker is bound in TLS and the last proof is not a
+//      green stamp in the current invalidate gen. An out-of-boundary
+//      admit call (Guard acquire before the boundary opens) can never
+//      satisfy it: the green rebind only happens inside a boundary
+//      commit, which the deny itself refuses — and a bounded wait never
+//      converges (verified). A live-TC CONFLICT/TIMEOUT keeps
+//      solve_from_missing_authority=false and is NOT exempt.
+[[nodiscard]] inline bool commit_readiness_admit_exempted(const CommitReadiness& r) noexcept {
+    if (r.force_reason_code == kRemountLastZeroForceReasonCode ||
+        r.force_reason_code == kAutoPartialFromConeForceReasonCode)
+        return true;
+    return r.force_reason_code == kSolveForceReasonCode && r.solve_from_missing_authority;
+}
 inline std::atomic<std::uint8_t> g_last_proof_linear_ok{0};
 // Issue #4534: last stamped proof face scalars for the fidelity stats
 // handler (readiness bp / force reason code / occurrence consistency).
@@ -3949,8 +3991,12 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
             const bool stamped = outcome == kTypeLinearProofOutcomeStamped;
             const bool gen_ok = g_rehydrate_miss_invalidate_gen.load(std::memory_order_acquire) ==
                                 g_rehydrate_miss_green_bind_gen.load(std::memory_order_relaxed);
-            if (faces_clear && !(stamped && gen_ok) && without_remount.solve_status == 0)
+            if (faces_clear && !(stamped && gen_ok) && without_remount.solve_status == 0) {
                 without_remount.solve_status = 2;
+                // Issue #4786: same provenance as the live_policy arm — the
+                // remount-reproof feasibility probe is not a live-TC solve.
+                without_remount.solve_status_missing_authority = true;
+            }
         }
         const auto without_r = commit_readiness(without_remount);
         defer_remount_reproof = without_r.would_allow_commit && ready.linear_ok;
@@ -4629,9 +4675,14 @@ commit_readiness_mutable_4170(CommitReadinessInput in) noexcept {
     }
 
     // 5) solve — CONFLICT / TIMEOUT (not SOLVED).
+    // Issue #4786: carry the provenance of the deny so the admission
+    // consumer can tell an unretirable no-TC posture from a real
+    // live-TC solve deny (see commit_readiness_admit_exempted).
     if (in.solve_status != 0) {
         const auto bp = in.solve_status == 2 ? 2000u : 2500u;
-        return (set("solve", false, bp), r);
+        set("solve", false, bp);
+        r.solve_from_missing_authority = in.solve_status_missing_authority;
+        return r;
     }
 
     // 6) Issue #2716 / #2750: occurrence hard-faces. When production/Full
@@ -4877,8 +4928,12 @@ commit_readiness_mutable_4170(CommitReadinessInput in) noexcept {
             !in.pending_full_solve_residual && !in.cone_outside_goal_drop_face &&
             !in.occurrence_empty_after_fence_face && !in.refined_consistency_drift &&
             !in.region_type_cross_talk_face && !in.remount_last_zero_strip;
-        if (faces_clear && !(stamped && gen_ok) && in.solve_status == 0)
+        if (faces_clear && !(stamped && gen_ok) && in.solve_status == 0) {
             in.solve_status = 2; // TIMEOUT-class → commit_readiness "solve"
+            // Issue #4786: mark the provenance — this deny has no live TC
+            // behind it and no caller-side path that can retire it.
+            in.solve_status_missing_authority = true;
+        }
     }
     return in;
 }

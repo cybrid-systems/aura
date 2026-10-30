@@ -357,8 +357,7 @@ inline std::pair<bool, bool> commit_readiness_live_signals() noexcept {
     // commit-health queries) still reports would_allow=false + 17 for
     // Agent visibility (#4011 AC1); only this admit consumer exempts
     // the self-healing reason so the re-prove flow can run.
-    if (r.force_reason_code == aura::compiler::typed_audit::kRemountLastZeroForceReasonCode)
-        return {true, false};
+    // (Decision below: commit_readiness_admit_exempted — the ONE exempt set.)
     // Issue #2610/#3347-residual: auto_partial-from-cone (force 6) is the
     // same self-healing wedge shape as reason 17 — the readiness consult's
     // own remirror (aura_force_residual_castop_undermark_into_cone) arms
@@ -373,7 +372,20 @@ inline std::pair<bool, bool> commit_readiness_live_signals() noexcept {
     // commit-health queries) still reports would_allow=false + 6 for
     // Agent visibility; only this admit consumer exempts the self-healing
     // reason so the re-infer flow can run (same scoping as #4011 above).
-    if (r.force_reason_code == aura::compiler::typed_audit::kAutoPartialFromConeForceReasonCode)
+    // Issue #4786: reason 1 from the #3414 no-live-commit-TC authority arm
+    // is the same self-healing wedge. A spawn's define leaves the process
+    // green face invalidated (steal-complete LCP drop / arena-compact
+    // rebind / no proof stamped yet in this gen) while no commit TC is
+    // bound in TLS; every out-of-boundary admit (Guard acquire runs
+    // BEFORE the boundary opens) then reports force_reason 1 and refuses
+    // the very mutate whose boundary commit would re-prove and rebind
+    // green. A bounded readiness wait does not converge (verified through
+    // the CLI). The exempt set is keyed on
+    // solve_from_missing_authority, so a live-TC CONFLICT/TIMEOUT solve
+    // (the genuine deny this gate exists for) still refuses admission.
+    // See typed_mutation_audit.h::commit_readiness_admit_exempted for the
+    // written invariant.
+    if (aura::compiler::typed_audit::commit_readiness_admit_exempted(r))
         return {true, false};
     return {r.would_allow_commit, r.force_reason_code != 0};
 }

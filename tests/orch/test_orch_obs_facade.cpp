@@ -1149,6 +1149,55 @@ int run_test_orch_obs_facade() {
         CHECK(read_file("tests/orch/test_issue_3940.cpp").empty(), "3940: no test_issue_3940");
     }
 
+    // ── #4756 mechanism 3: typed-deny stress loop (env-gated) ──
+    // The batch file documents one SIGSEGV in the typed-deny path
+    // (recv-under-boundary while this fiber holds the Guard with the spawn
+    // body live; the next eval's tree-walker lookup is where it lands) that
+    // has never reproduced in 20+ plain batch runs. AURA_TYPED_DENY_LOOP=<n>
+    // replays the #3940 shape n times in ONE process so the crash site is
+    // reachable without n full batch runs. Unset (every plain run) → zero
+    // iterations and zero extra work.
+    if (const char* loop_env = std::getenv("AURA_TYPED_DENY_LOOP")) {
+        const int loops = std::atoi(loop_env);
+        if (loops > 0) {
+            std::println("\n--- #4756 M3: typed-deny loop x{} ---", loops);
+            aura::compiler::typed_audit::apply_production_audit_defaults();
+            int denials = 0;
+            for (int i = 0; i < loops; ++i) {
+                CompilerService cs_loop;
+                auto& ev_loop = cs_loop.evaluator();
+                using EvLoop = std::remove_reference_t<decltype(ev_loop)>;
+                const auto agent_name = std::format("m3-{}", i);
+                if (!cs_loop
+                         .eval(std::format("(orch:spawn-agent \"{}\" (lambda () 0) "
+                                           ":attach-mailbox #t)",
+                                           agent_name))
+                         .has_value())
+                    continue;
+                auto* hp_loop = ev_loop.agent_names_->find(agent_name);
+                if (!hp_loop || !hp_loop->ok || !hp_loop->mailbox)
+                    continue;
+                bool loop_ok = true;
+                auto gr_loop = EvLoop::MutationBoundaryGuard::try_acquire(ev_loop, 1, &loop_ok);
+                if (!gr_loop)
+                    continue;
+                {
+                    auto guard_loop = std::move(*gr_loop);
+                    auto ask = aura::orch::agent_ask(*hp_loop, std::format("ping-{}", i), 50);
+                    if (ask.status == "recv-under-boundary")
+                        ++denials;
+                }
+                // The documented crash manifests on the NEXT eval after the
+                // deny intern (tree-walker lookup over a torn string heap).
+                (void)cs_loop.eval("(+ 1 1)");
+            }
+            std::println("  #4756 M3: loop done denials={}/{}", denials, loops);
+            aura::compiler::typed_audit::apply_dev_audit_defaults();
+            // Evidence only: denials==0 is reported, not asserted — the
+            // signal this loop looks for is the crash, not a count.
+        }
+    }
+
     // ── Issue #3733: overflow contract + missing live atomics on the hash ──
     // Fresh Evaluator: the shared `cs` interned thousands of stats keys
     // before this block (plus #3673's second service). Query the facade
