@@ -293,6 +293,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             // contract as string/pair indices).
             ev.cells_.clear();
             ev.cells_.shrink_to_fit();
+            ev.truncate_cell_nil_marks(0); // Issue #4789
             ev.error_values_.clear();
             ev.error_values_.shrink_to_fit();
             for (auto* fht : g_hash_tables)

@@ -422,6 +422,7 @@ bool Evaluator::restore_panic_checkpoint() {
             }
             if (panic_safe_cells_size_ > 0 && panic_safe_cells_size_ <= cells_.size()) {
                 cells_.resize(panic_safe_cells_size_);
+                truncate_cell_nil_marks(cells_.size()); // Issue #4789
             }
             if (panic_safe_pairs_size_ > 0 && panic_safe_pairs_size_ <= pairs_.size()) {
                 pairs_.resize(panic_safe_pairs_size_);

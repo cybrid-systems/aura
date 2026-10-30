@@ -3484,7 +3484,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         auto name_str = string_at_or(name_idx);
                         auto ci = alloc_cell(make_void());
                         const_cast<Env&>(env).bind(name_str, make_cell(ci));
-                        cells_[ci] = *val;
+                        store_cell_value(ci, *val);
                         return *val;
                     }
                     return val;
@@ -3595,7 +3595,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         auto name_str = string_at_or(name_idx);
                         auto cell_idx = const_cast<Env&>(env).lookup_cell_index(name_str);
                         if (cell_idx && *cell_idx < cells_.size()) {
-                            cells_[*cell_idx] = *val;
+                            store_cell_value(*cell_idx, *val);
                             return *val;
                         }
                     }
@@ -7175,7 +7175,10 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 return EvalResult(*cval);
                             }
                             const auto ci = as_cell_id(*cval);
-                            if (ci < cells_.size() && !is_void(cells_[ci])) {
+                            // Issue #4789: a cell that explicitly holds '()
+                            // is a value, not an uninitialized placeholder.
+                            if (ci < cells_.size() &&
+                                (!is_void(cells_[ci]) || cell_nil_assigned(ci))) {
                                 remember_resolved_var(current_id, v.sym_id, eval_env, *cval);
                                 return EvalResult(cells_[ci]);
                             }
@@ -7243,6 +7246,11 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         if (is_cell(*val)) {
                             auto ci = as_cell_id(*val);
                             if (ci < cells_.size() && !is_void(cells_[ci]))
+                                return cells_[ci];
+                            // Issue #4789: '() stored by let/letrec/define/
+                            // set! is the binding's value - never replace it
+                            // with a same-named primitive.
+                            if (ci < cells_.size() && cell_nil_assigned(ci))
                                 return cells_[ci];
                             std::string var_name(name);
                             auto slot = primitives_.slot_for_name(var_name);
@@ -9589,7 +9597,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         // body must not run.
                         if (is_error(*vv))
                             return vv;
-                        cells_[ci] = *vv;
+                        store_cell_value(ci, *vv);
                         // Body evaluated in *tail_env (recursive refs need the child env).
                         // Issue #2871: TCO into body — named-let desugars to
                         // (letrec ((name lambda)) (name inits)); the call that
@@ -9766,6 +9774,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             me.bind_symid_with_linear_state(v.sym_id, std::move(*vv), lin_state);
                         } else {
                             auto ci = alloc_cell(*vv);
+                            if (types::is_void(*vv))
+                                note_cell_nil_assigned(ci); // Issue #4789
                             me.bind_symid_with_linear_state(v.sym_id, make_cell(ci), lin_state);
                         }
                         // Issue #2871: TCO into let body (tail position).
@@ -9888,7 +9898,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         // when no overlay is open, then the original path).
                         if (!primitives_detail::fiber_cow_overlay_capture_define_cell(
                                 *this, name, *vv, static_cast<std::uint64_t>(ci)))
-                            cells_[ci] = *vv;
+                            store_cell_value(ci, *vv);
                         // Issue #3681: name the closure so set-body can
                         // must-deopt this view after the define is dirtied.
                         if (is_closure(*vv))
@@ -9926,6 +9936,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         // A private NEW binding is the workspace / EDSL face
                         // (fiber:overlay-define + bind_define_value_in_env).
                         auto ci = alloc_cell(*vv);
+                        if (types::is_void(*vv))
+                            note_cell_nil_assigned(ci); // Issue #4789
                         if (v.sym_id != aura::ast::INVALID_SYM)
                             me.bind_symid(v.sym_id, make_cell(ci));
                         else
@@ -9953,7 +9965,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         me.unbind_local(std::string(name));
                         return vv;
                     }
-                    cells_[ci] = *vv;
+                    store_cell_value(ci, *vv);
                     // Issue #3681: name the closure so set-body can
                     // must-deopt this view after the define is dirtied.
                     if (is_closure(*vv))
@@ -10553,7 +10565,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     auto cell_idx = eval_env.lookup_cell_index(std::string(name));
                     if (cell_idx) {
                         if (*cell_idx < cells_.size())
-                            cells_[*cell_idx] = *val;
+                            store_cell_value(*cell_idx, *val);
                         return *val;
                     }
                     // Fallback 1: direct binding in current env
@@ -10590,7 +10602,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 if (is_cell(it->second)) {
                                     const auto ci = as_cell_id(it->second);
                                     if (ci < cells_.size())
-                                        cells_[ci] = *val;
+                                        store_cell_value(ci, *val);
                                 } else {
                                     it->second = *val;
                                 }
@@ -10621,7 +10633,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 if (is_cell(b.second)) {
                                     const auto ci = as_cell_id(b.second);
                                     if (ci < cells_.size())
-                                        cells_[ci] = *val;
+                                        store_cell_value(ci, *val);
                                 } else {
                                     b.second = *val;
                                 }
@@ -10635,7 +10647,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                     if (is_cell(it->second)) {
                                         const auto ci = as_cell_id(it->second);
                                         if (ci < cells_.size())
-                                            cells_[ci] = *val;
+                                            store_cell_value(ci, *val);
                                     } else {
                                         it->second = *val;
                                     }
@@ -10672,7 +10684,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                     if (is_cell(b.second)) {
                                         const auto ci = as_cell_id(b.second);
                                         if (ci < cells_.size())
-                                            cells_[ci] = *val;
+                                            store_cell_value(ci, *val);
                                     } else {
                                         b.second = *val;
                                     }
@@ -10741,6 +10753,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             auto& me = const_cast<Env&>(eval_env);
 
                             auto ci = alloc_cell(*child_result);
+                            if (types::is_void(*child_result))
+                                note_cell_nil_assigned(ci); // Issue #4789
                             me.bind(std::string(var_name), make_cell(ci));
                         }
                     }

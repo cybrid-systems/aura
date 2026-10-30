@@ -6564,14 +6564,56 @@ private:
                 continue;
             if (id < cell_on_freelist_eval_.size())
                 cell_on_freelist_eval_[id] = 0;
+            // Issue #4789: a reused id is a NEW cell - it must not keep the
+            // previous cell's "explicitly holds '()" mark.
+            if (id < cell_nil_assigned_.size())
+                cell_nil_assigned_[id] = 0;
             cells_[id] = v;
             return id;
         }
         cells_.push_back(v);
         if (cell_on_freelist_eval_.size() < cells_.size())
             cell_on_freelist_eval_.resize(cells_.size(), 0);
+        if (cells_.size() - 1 < cell_nil_assigned_.size())
+            cell_nil_assigned_[cells_.size() - 1] = 0;
         return cells_.size() - 1;
     }
+
+public:
+    // Issue #4789: '() and an uninitialized letrec / define placeholder are
+    // the same EvalValue (void), so a void cell alone cannot tell "bound to
+    // the empty list" from "not initialized yet". The Variable read treats
+    // a void cell as a placeholder and prefers a same-named primitive (the
+    // (define ceil ceil) re-export face), which turned
+    //   (let ((log '())) (set! log (cons 1 log)) log)
+    // into (1 . #<prim log>). Every store of an actual '() VALUE into a cell
+    // (let init, letrec init, set!, define) records it here, so the read
+    // returns '() for such a cell. Only void stores take the lock; a mark is
+    // cleared when the id is re-minted (alloc_cell) or truncated.
+    void note_cell_nil_assigned(std::size_t ci) {
+        std::lock_guard lock(alloc_storage_lock_);
+        if (cell_nil_assigned_.size() <= ci)
+            cell_nil_assigned_.resize(ci + 1, 0);
+        cell_nil_assigned_[ci] = 1;
+    }
+    // Store v into cell ci (bounds-checked by the caller) and record a '()
+    // store (Issue #4789).
+    void store_cell_value(std::size_t ci, const types::EvalValue& v) {
+        cells_[ci] = v;
+        if (types::is_void(v))
+            note_cell_nil_assigned(ci);
+    }
+    [[nodiscard]] bool cell_nil_assigned(std::size_t ci) const {
+        std::lock_guard lock(alloc_storage_lock_);
+        return ci < cell_nil_assigned_.size() && cell_nil_assigned_[ci] != 0;
+    }
+    void truncate_cell_nil_marks(std::size_t n) {
+        std::lock_guard lock(alloc_storage_lock_);
+        if (cell_nil_assigned_.size() > n)
+            cell_nil_assigned_.resize(n);
+    }
+
+private:
     // Forward decl: MemoryPolicy is defined further down in the class
     // (after the long state-decl block). The build_policy_hash helper
     // (which needs it as a parameter) is also defined further down.
@@ -6981,6 +7023,9 @@ public:
     // suite/ast_viz and fuzz seed edge_qq_nested (Issue #1397 lock
     // added without same-thread re-entrancy).
     mutable std::recursive_mutex alloc_storage_lock_;
+    // Issue #4789: cell ids that hold an explicitly stored '() (see
+    // note_cell_nil_assigned). Guarded by alloc_storage_lock_.
+    std::vector<std::uint8_t> cell_nil_assigned_;
     // Issue #2652: FlatHashTable store + key string compare under multi-fiber
     // (aether:stats-bump! / hash-set!). Separate from alloc_storage_lock_
     // so pure pair/string growth is not serialized with hash probes.
