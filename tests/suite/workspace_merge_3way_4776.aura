@@ -1,0 +1,75 @@
+;; workspace_merge_3way_4776.aura — Issue #4776. workspace :merge wrote the
+;; child's WHOLE snapshot back to root: a root edit made after the fork was
+;; reverted (lost update), a define both sides edited merged silently, and
+;; merging a deleted id returned a silent #f. The merge is now three-way
+;; against the fork base captured at workspace :create.
+;; Pass = exit 0 + OK line.
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+
+;; p1: child edits f, root edits g after the fork -> both survive
+(set-code "(define f (lambda (x) 1))\n(define g (lambda (x) 1))") (eval-current)
+(define w (workspace :create "cand"))
+(workspace :switch w)
+(mutate:rebind "f" "(lambda (x) 2)" "child edits f") (eval-current)
+(workspace :switch 0) (eval-current)
+(mutate:rebind "g" "(lambda (x) 3)" "root edits g after fork") (eval-current)
+(define mr (workspace :merge w))
+(eval-current)
+(assert! (equal? mr "((\"f\" . \"merged\"))") "p1: only the child's f is reported merged")
+(assert! (and (= (f 0) 2) (= (g 0) 3)) "p1: child f=2 and root g=3 both kept")
+(set-code (current-source :workspace)) (eval-current)
+(assert! (and (= (f 0) 2) (= (g 0) 3)) "p1: reload from source keeps both")
+
+;; p2: both edit f -> conflict, nothing written
+(set-code "(define f (lambda (x) 1))\n(define g (lambda (x) 1))") (eval-current)
+(define w2 (workspace :create "cand2"))
+(workspace :switch w2)
+(mutate:rebind "f" "(lambda (x) 2)" "child") (eval-current)
+(workspace :switch 0) (eval-current)
+(mutate:rebind "f" "(lambda (x) 3)" "root") (eval-current)
+(define mr2 (workspace :merge w2))
+(eval-current)
+(assert! (equal? mr2 "((\"f\" . \"conflict\"))") "p2: write/write is a conflict")
+(assert! (= (f 0) 3) "p2: root f kept (merge wrote nothing)")
+
+;; p2b: a conflict on one name rejects the clean ones too (atomic)
+(set-code "(define f (lambda (x) 1))\n(define h (lambda (x) 1))") (eval-current)
+(define w3 (workspace :create "cand3"))
+(workspace :switch w3)
+(mutate:rebind "f" "(lambda (x) 2)" "child f") (eval-current)
+(mutate:rebind "h" "(lambda (x) 2)" "child h") (eval-current)
+(workspace :switch 0) (eval-current)
+(mutate:rebind "f" "(lambda (x) 3)" "root f") (eval-current)
+(define mr3 (workspace :merge w3))
+(eval-current)
+(assert! (and (string? mr3) (string-contains? mr3 "\"conflict\"") (string-contains? mr3 "\"rejected\""))
+         "p2b: conflict + rejected reported")
+(assert! (and (= (f 0) 3) (= (h 0) 1)) "p2b: nothing written")
+
+;; control: root untouched since the fork -> plain fast-forward merge
+(set-code "(define f (lambda (x) 1))") (eval-current)
+(define w4 (workspace :create "cand4"))
+(workspace :switch w4)
+(mutate:rebind "f" "(lambda (x) 5)" "child") (eval-current)
+(workspace :switch 0) (eval-current)
+(assert! (equal? (workspace :merge w4) "((\"f\" . \"merged\"))") "control: merged")
+(eval-current)
+(assert! (= (f 0) 5) "control: f=5")
+
+;; p3: merging a deleted / unknown id is an error
+(define w5 (workspace :create "cand5"))
+(workspace:delete w5)
+(assert! (equal? (try (begin (workspace :merge w5) "no-error") (catch (e) "error")) "error")
+         "p3: merge of a deleted workspace raises")
+(assert! (equal? (try (begin (workspace :merge 9999) "no-error") (catch (e) "error")) "error")
+         "p3: merge of an unknown id raises")
+(assert! (= (f 0) 5) "p3: root unchanged")
+
+(if (= *fails* 0)
+    (begin (display "OK-4776 three-way workspace merge") (newline))
+    (begin (display "FAIL-4776 fails=") (display *fails*) (newline) (error "4776 suite failed")))

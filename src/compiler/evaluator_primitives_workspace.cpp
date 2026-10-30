@@ -61,6 +61,43 @@ using types::make_string;
 using types::make_vector;
 using types::make_void;
 
+// Issue #4776: top-level define texts of a source (name -> unparsed define,
+// first define of a name wins - the same normalization workspace :merge
+// applies to the root side). Nested begin is the multi-form root.
+std::unordered_map<std::string, std::string> top_define_texts_4776(const std::string& source) {
+    std::unordered_map<std::string, std::string> out;
+    if (source.empty())
+        return out;
+    aura::ast::StringPool pool;
+    aura::ast::FlatAST flat;
+    auto pr = aura::parser::parse_to_flat(source, flat, pool);
+    if (!pr.success || pr.root == aura::ast::NULL_NODE)
+        return out;
+    flat.root = pr.root;
+    std::vector<aura::ast::NodeId> stack{pr.root};
+    std::vector<aura::ast::NodeId> order;
+    while (!stack.empty()) {
+        const auto id = stack.back();
+        stack.pop_back();
+        if (id == aura::ast::NULL_NODE || id >= flat.size())
+            continue;
+        const auto v = flat.get(id);
+        if (v.tag == aura::ast::NodeTag::Begin) {
+            for (auto it = v.children.rbegin(); it != v.children.rend(); ++it)
+                stack.push_back(*it);
+            continue;
+        }
+        if (v.tag == aura::ast::NodeTag::Define && v.sym_id != aura::ast::INVALID_SYM)
+            order.push_back(id);
+    }
+    for (const auto id : order) {
+        auto nm = std::string(pool.resolve(flat.get(id).sym_id));
+        if (!nm.empty() && !out.contains(nm))
+            out.emplace(std::move(nm), unparse_node(flat, pool, id, 0));
+    }
+    return out;
+}
+
 // Issue #4435: parser output is User. Copy MacroIntroduced from the
 // still-live displaced subtree onto the reparsed nodes. False means the
 // old id is gone or the shape differs — caller must not set_child.
@@ -324,6 +361,24 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
 
     // (workspace :create name) → workspace ID (COW, no clone until mutate)
     (*w_impls)["workspace:create"] = PrimFn{[&ev](std::span<const EvalValue> a) -> EvalValue {
+        // Issue #4776: the fork base of the three-way merge - the parent's
+        // define texts now. Read before the unique lock (current-source
+        // reads the workspace).
+        std::string fork_base_source_4776;
+        if (ev.workspace_flat_ && ev.workspace_pool_) {
+            if (auto src_fn = ev.primitives_.lookup("current-source")) {
+                std::uint64_t ws_kw = ev.intern_keyword_slot(":workspace");
+                auto src = (*src_fn)({types::make_keyword(ws_kw)});
+                if (is_string(src)) {
+                    auto sidx = as_string_idx(src);
+                    if (sidx < ev.string_heap_.size())
+                        fork_base_source_4776 = ev.string_at(sidx);
+                }
+            }
+        }
+        auto fork_base_4776 =
+            std::make_shared<const std::unordered_map<std::string, std::string>>(
+                top_define_texts_4776(fork_base_source_4776));
         // Issue #1994 / Wave1 B-09: unique workspace lock, adopt outer Guard.
         Evaluator::WorkspaceUniqueIfNeeded wlock(ev);
         // Issue #1566: tenant isolation on workspace structural ops.
@@ -358,6 +413,8 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             name = "ws-" + std::to_string(wt->size());
         auto parent_idx = wt->active_idx();
         auto id = wt->create_child(name, parent_idx, ev.workspace_flat_, ev.workspace_pool_);
+        if (id < wt->size())
+            wt->nodes_[id].merge_base = std::move(fork_base_4776); // Issue #4776
         return make_int(static_cast<std::int64_t>(id));
     }};
 
@@ -1009,8 +1066,18 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             return make_bool(false);
         auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
         auto child_idx = static_cast<std::uint32_t>(as_int(a[0]));
-        if (child_idx == 0 || child_idx >= tree->size())
+        // Issue #4776: merging an unknown or deleted workspace is an error,
+        // not a silent #f that reads like "nothing to merge".
+        if (as_int(a[0]) < 0 || child_idx >= tree->size() ||
+            (child_idx != 0 && tree->is_tombstone(child_idx)))
+            return make_primitive_error(
+                ev.string_heap_, ev.error_values_,
+                std::format("workspace :merge: no such workspace {} (unknown or deleted) (#4776)",
+                            as_int(a[0])),
+                ev.primitive_error_counter_ptr());
+        if (child_idx == 0)
             return make_bool(false);
+        const auto merge_base_4776 = tree->nodes_[child_idx].merge_base;
 
         // Get child's source
         auto child_source = get_ws_source(child_idx);
@@ -1096,6 +1163,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         struct MergeReport {
             std::string name;
             bool want_merged = false;
+            bool conflict = false; // Issue #4776
         };
         std::vector<MergeReport> reports;
         std::string merged;
@@ -1144,6 +1212,26 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                             reports.push_back(MergeReport{form.name, false});
                         continue;
                     }
+                    // Issue #4776: three-way (base / root / child). A child
+                    // text equal to the fork base is not a child edit: keep
+                    // root's (possibly newer) define. Both sides edited
+                    // since the fork -> conflict.
+                    if (merge_base_4776) {
+                        auto bit = merge_base_4776->find(form.name);
+                        const bool child_edited =
+                            bit == merge_base_4776->end() || bit->second != it->second;
+                        const bool root_edited =
+                            bit == merge_base_4776->end() || bit->second != parent_text;
+                        if (!child_edited) {
+                            append_form(parent_text);
+                            continue;
+                        }
+                        if (root_edited) {
+                            append_form(parent_text);
+                            reports.push_back(MergeReport{form.name, false, true});
+                            continue;
+                        }
+                    }
                     append_form(it->second);
                     reports.push_back(MergeReport{form.name, true});
                 }
@@ -1156,6 +1244,17 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                     reports.push_back(MergeReport{name, false});
                     continue;
                 }
+                // Issue #4776: a name in the base but gone from root was
+                // deleted on root after the fork. An unchanged child copy
+                // stays deleted; an edited one conflicts.
+                if (merge_base_4776) {
+                    auto bit = merge_base_4776->find(name);
+                    if (bit != merge_base_4776->end()) {
+                        if (bit->second != text)
+                            reports.push_back(MergeReport{name, false, true});
+                        continue;
+                    }
+                }
                 append_form(text);
                 reports.push_back(MergeReport{name, true});
             }
@@ -1164,12 +1263,16 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         // set-code installs the spliced source on the active root.
         // A non-bool or #f result did not apply the child text.
         bool want_apply = false;
+        bool any_conflict_4776 = false;
         for (const auto& rep : reports) {
-            if (rep.want_merged) {
+            if (rep.want_merged)
                 want_apply = true;
-                break;
-            }
+            if (rep.conflict)
+                any_conflict_4776 = true;
         }
+        // Issue #4776: a merge with a conflict writes nothing (atomic).
+        if (any_conflict_4776)
+            want_apply = false;
         bool applied = false;
         // Issue #4729: set-code installs a FRESH FlatAST on the arena —
         // empty mutation log, next_mutation_id_ back at 1. The merge
@@ -1223,7 +1326,8 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         for (const auto& rep : reports) {
             if (!first)
                 result += ' ';
-            const char* status = (rep.want_merged && applied) ? "merged" : "rejected";
+            const char* status =
+                rep.conflict ? "conflict" : ((rep.want_merged && applied) ? "merged" : "rejected");
             result += "(\"";
             result += rep.name;
             result += "\" . \"";
