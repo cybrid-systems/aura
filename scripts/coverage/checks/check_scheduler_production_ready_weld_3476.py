@@ -47,24 +47,42 @@ def main() -> int:
     test = _read("tests/serve/test_steal_complete_strong_entry.cpp")
     build = _read("build.py")
 
+    # Issue #4756: the start gates live in Scheduler::evaluate_start_gate()
+    # so the owner decides them on its own thread, before a runner thread
+    # exists (the process-lifetime orch holder starts run() from a helper;
+    # reading the face there raced the caller's own face transition). The
+    # #3476 contract is unchanged and now stronger: run() calls the gate
+    # before w->start(), and the holder calls it before starting run().
     run = sched.find("void Scheduler::run()")
+    gate = sched.find("void Scheduler::evaluate_start_gate()")
     if run < 0:
         fails.append("AC6: Scheduler::run missing")
+    if gate < 0:
+        fails.append("AC1: Scheduler::evaluate_start_gate missing")
+    if gate < 0:
         win = ""
+        start = -1
     else:
-        start = sched.find("w->start()", run)
-        win = sched[run:start] if start > run else sched[run : run + 2500]
+        start = sched.find("w->start()", gate)
+        win = sched[gate:start] if start > gate else sched[gate : gate + 2500]
         if start < 0:
             fails.append("AC1: w->start() missing")
         must("Issue #3476", "AC6 cite", win)
         must("workers_.size() > 1", "AC1 size gate", win)
         must("aura_runtime_require_production_multi_worker", "AC1 Ready", win)
         must("aura_runtime_require_production_abi()", "AC3 single-worker ABI", win)
-        if start > run:
-            if sched.find("aura_runtime_require_production_multi_worker", run) > start:
+        if start > gate:
+            if sched.find("aura_runtime_require_production_multi_worker", gate) > start:
                 fails.append("AC1: multi-worker Ready must dominate w->start()")
-            if sched.find("aura_runtime_require_production_abi()", run) > start:
+            if sched.find("aura_runtime_require_production_abi()", gate) > start:
                 fails.append("AC3: single-worker ABI must dominate w->start()")
+    if run >= 0:
+        call = sched.find("evaluate_start_gate();", run)
+        run_start = sched.find("w->start()", run)
+        if call < 0:
+            fails.append("AC1/#4756: Scheduler::run must call evaluate_start_gate()")
+        elif run_start > 0 and call > run_start:
+            fails.append("AC1/#4756: the start gate must be decided before w->start()")
 
     must("g_production_multi_worker_latched.store(1", "AC2 latch in Ready", abi)
     must("aura_runtime_require_production_multi_worker", "AC1 Ready def", abi)

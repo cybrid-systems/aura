@@ -53,13 +53,16 @@
 #include "serve/scheduler.h"
 
 #include <atomic>
+#include <csignal>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <print>
 #include <string>
 #include <string_view>
+#include <sys/wait.h>
 #include <thread>
+#include <unistd.h>
 
 import std;
 import aura.compiler.service;
@@ -116,6 +119,46 @@ void reset_counters() {
 
 int run_test_orch_obs_facade() {
     std::println("=== Issue #2589: orch-module-stats facade (parallel residual) ===");
+
+    // ── Issue #4756: the multi-worker start gate is decided on the
+    // starting thread ──
+    // The orch holder starts its Scheduler on a helper thread. The #3586 /
+    // #3476 / #3950 gates used to be read inside that helper, i.e. after
+    // this member's own face window closed (arm → spawn → dev restore in
+    // the #3251 block), so a legitimately armed start could be refused.
+    // evaluate_start_gate() now runs on the caller's thread before the
+    // runner exists; the refusal itself is unchanged. The fork here runs
+    // before this member creates any orch scheduler, so the child inherits
+    // no worker threads.
+    {
+        std::println("\n--- #4756: unarmed multi-worker start still refuses ---");
+        const auto agent_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto sched_cpp = read_file("src/serve/scheduler.cpp");
+        CHECK(agent_src.find("sched->evaluate_start_gate();") != std::string::npos,
+              "4756: the orch holder decides the start gate before its runner thread");
+        CHECK(sched_cpp.find("void Scheduler::evaluate_start_gate()") != std::string::npos,
+              "4756: Scheduler::evaluate_start_gate exists");
+        CHECK(sched_cpp.find("multi-worker needs production bootstrap") != std::string::npos &&
+                  sched_cpp.find("std::abort()") != std::string::npos,
+              "4756: the unarmed multi-worker refusal is unchanged");
+        const pid_t pid = ::fork();
+        if (pid == 0) {
+            ::alarm(10);
+            aura::compiler::typed_audit::note_production_defaults_active(false);
+            ::unsetenv("AURA_SANDBOX");
+            aura::serve::Scheduler sched(2);
+            sched.evaluate_start_gate();
+            ::_exit(99);
+        }
+        int st = 0;
+        if (pid > 0)
+            ::waitpid(pid, &st, 0);
+        // The batch installs a SIGABRT dump handler in this process, so the
+        // forked child reports the refusal as _exit(128 + SIGABRT).
+        const bool refused = pid > 0 && ((WIFSIGNALED(st) && WTERMSIG(st) == SIGABRT) ||
+                                         (WIFEXITED(st) && WEXITSTATUS(st) == 128 + SIGABRT));
+        CHECK(refused, "4756 AC: unarmed multi-worker start still aborts (safety property)");
+    }
 
     // ── AC4: src/orch/README.md documents the unified facade ──
     {
@@ -965,6 +1008,21 @@ int run_test_orch_obs_facade() {
         CHECK(cs3673.eval(R"((orch:spawn-agent "3673-a" (lambda () 0) :attach-mailbox #t))")
                   .has_value(),
               "3673 setup: mailbox agent spawned");
+        // Issue #4756: the production admit gate also consults #2553
+        // commit readiness. A spawn's define can leave the process
+        // reporting force-reason=solve while its post-mutate typecheck is
+        // in flight, and the next global-exclusive acquire is then refused
+        // with `AdmissionRejected: security-schedule:commit-not-ready` — a
+        // setup race, not the Policy A face this member measures.
+        auto cr_int = [&cs3673](const char* key) -> std::int64_t {
+            auto r = cs3673.eval(std::format(
+                "(hash-ref (engine:metrics \"query:type-incremental-fidelity-stats\") \"{}\")",
+                key));
+            return (r && is_int(*r)) ? as_int(*r) : -1;
+        };
+        std::println("  #3673 setup: commit-readiness reason={} allow={}",
+                     cr_int("commit-readiness-force-reason"),
+                     cr_int("commit-readiness-would-allow"));
         auto& ev3673 = cs3673.evaluator();
         using Evaluator3673 = std::remove_reference_t<decltype(ev3673)>;
         bool guard_ok = true;
@@ -972,6 +1030,9 @@ int run_test_orch_obs_facade() {
             auto guard_r =
                 Evaluator3673::MutationBoundaryGuard::try_acquire(ev3673, /*pending=*/1, &guard_ok);
             CHECK(guard_r.has_value(), "3673 setup: Guard try_acquire");
+            if (!guard_r)
+                std::println("  #3673 setup: Guard try_acquire rejected: {}",
+                             guard_r.error().message);
             if (guard_r) {
                 auto guard = std::move(*guard_r);
                 // AC1: production + Guard-live + wait=#t → typed deny, not empty.
