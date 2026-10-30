@@ -6340,6 +6340,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 // parallel-intend kwargs projection
                 {"failure-policy", push_str(aura::orch::failure_policy_name(pp.failure_policy))},
                 {"max-retries", make_int(static_cast<std::int64_t>(pp.max_retries))},
+                // Issue #4784: a :max-retries the chosen batch policy does not
+                // consume (anything but retry-n) used to vanish silently.
+                // Echo what was asked and flag that it was ignored.
+                {"max-retries-requested", make_int(static_cast<std::int64_t>(max_retries))},
+                {"max-retries-ignored", make_bool(max_retries > 0 && w.batch_policy != FP::RetryN)},
                 {"consecutive-fail-limit",
                  make_int(static_cast<std::int64_t>(pp.consecutive_fail_limit))},
                 {"retry-backoff-ms", make_int(static_cast<std::int64_t>(pp.retry_backoff_ms))},
@@ -6593,7 +6598,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             struct SuperviseTally {
                 std::atomic<std::uint32_t> ok{0};
                 std::atomic<std::uint32_t> err{0};
+                // Issue #4784: RetryN re-applies performed on the watch arm.
+                std::atomic<std::uint32_t> retries{0};
             };
+            // Issue #4784: the watch arm (default) never re-ran a throwing
+            // task -- RetryN only armed scope RestartN, which fires on stall /
+            // join-fail, not on a body that returned an error. Mirror the
+            // parallel_intend #2007 loop: up to max_retries extra applies.
+            const std::uint32_t watch_max_attempts = batch == FP::RetryN ? max_retries + 1u : 1u;
             auto tally = std::make_shared<SuperviseTally>();
             if (watch_scope) {
                 // Spawn into the child so watch_all / RestartN have specs_
@@ -6604,38 +6616,54 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     aura::orch::AgentSpec spec;
                     spec.name = "supervise-batch-" + std::to_string(ti);
                     spec.region_key = rkey;
-                    spec.body = [&ev, cid, rkey, skip_mu, use_eval_gate, caller_apply_hold,
-                                 tally]() {
-                        try {
-                            SuperviseRegionTls region_tls(rkey);
-                            // Issue #4723: record what this task actually did
-                            // so the watch face can report real counts.
-                            bool applied = false;
-                            run_supervised_apply(
-                                ev, skip_mu, use_eval_gate, caller_apply_hold, rkey, [&] {
-                                    if (!agent_cid_live(ev, cid)) {
-                                        agent_note_closure_freed_call(ev);
-                                        return;
-                                    }
-                                    auto opt = ev.apply_closure(cid, {});
-                                    applied = opt.has_value() && !types::is_error(*opt);
-                                    // Issue #4050: stamp body progress on this
-                                    // one-shot slot (coop registration is
-                                    // fiber-local, #2540). Progress at
-                                    // apply_closure return is enough: the body
-                                    // then exits, so the fiber clock reads Done
-                                    // instead of a stale injected coop window.
-                                    (void)aura::orch::agent_poll();
-                                });
-                            if (applied)
-                                tally->ok.fetch_add(1, std::memory_order_relaxed);
-                            else
-                                tally->err.fetch_add(1, std::memory_order_relaxed);
-                        } catch (...) {
-                            tally->err.fetch_add(1, std::memory_order_relaxed);
-                            // [SILENCE-PRIM-#3726] agent body errors surface
-                            // via join/status only (#1669 class B).
+                    spec.body = [&ev, cid, rkey, skip_mu, use_eval_gate, caller_apply_hold, tally,
+                                 watch_max_attempts, retry_backoff_ms]() {
+                        // Issue #4723: record what this task actually did
+                        // so the watch face can report real counts.
+                        bool applied = false;
+                        for (std::uint32_t attempt = 0; attempt < watch_max_attempts && !applied;
+                             ++attempt) {
+                            if (attempt > 0) {
+                                // Issue #4784: RetryN extra attempt.
+                                if (aura::serve::g_current_fiber &&
+                                    aura::serve::g_current_fiber->is_cancel_requested())
+                                    break;
+                                if (!agent_cid_live(ev, cid))
+                                    break;
+                                tally->retries.fetch_add(1, std::memory_order_relaxed);
+                                aura::serve::parallel_orch::g_parallel_orch_stats.retries_performed
+                                    .fetch_add(1, std::memory_order_relaxed);
+                                if (retry_backoff_ms > 0)
+                                    aura::orch::fiber_sleep_ms(retry_backoff_ms);
+                            }
+                            try {
+                                SuperviseRegionTls region_tls(rkey);
+                                run_supervised_apply(
+                                    ev, skip_mu, use_eval_gate, caller_apply_hold, rkey, [&] {
+                                        if (!agent_cid_live(ev, cid)) {
+                                            agent_note_closure_freed_call(ev);
+                                            return;
+                                        }
+                                        auto opt = ev.apply_closure(cid, {});
+                                        applied = opt.has_value() && !types::is_error(*opt);
+                                        // Issue #4050: stamp body progress on this
+                                        // one-shot slot (coop registration is
+                                        // fiber-local, #2540). Progress at
+                                        // apply_closure return is enough: the body
+                                        // then exits, so the fiber clock reads Done
+                                        // instead of a stale injected coop window.
+                                        (void)aura::orch::agent_poll();
+                                    });
+                            } catch (...) {
+                                applied = false;
+                                // [SILENCE-PRIM-#3726] agent body errors surface
+                                // via join/status only (#1669 class B).
+                            }
                         }
+                        if (applied)
+                            tally->ok.fetch_add(1, std::memory_order_relaxed);
+                        else
+                            tally->err.fetch_add(1, std::memory_order_relaxed);
                     };
                     // Issue #4725: same pending-body pin as orch:scope-spawn
                     // -- the one-shot closure is a tree-walker temporary and
@@ -6846,6 +6874,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"watch-scope", make_bool(watch_scope)},
                 {"stall-timeout-ms", make_int(static_cast<std::int64_t>(stall_timeout_ms))},
                 {"apply-total", make_int(static_cast<std::int64_t>(apply_total))},
+                // Issue #4784: RetryN re-applies this call performed (watch
+                // arm tally; parallel arm BatchResult retries).
+                {"retry-count", make_int(static_cast<std::int64_t>(
+                                    watch_scope ? tally->retries.load(std::memory_order_relaxed)
+                                                : r.batch.retries_performed))},
+                {"max-retries-effective",
+                 make_int(static_cast<std::int64_t>(batch == FP::RetryN ? max_retries : 0))},
                 {"schema", make_int(aura::orch::kWorkflowApplySugarIssue)},
                 {"schema-2852", make_int(aura::orch::kWorkflowApplySugarIssue)},
                 {"schema-3206", make_int(aura::orch::kWorkflowResidualActionIssue)},
