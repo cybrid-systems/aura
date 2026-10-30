@@ -1,0 +1,88 @@
+;; workspace_fiber_driver_4778.aura — Issue #4778. Since #4717 fiber bodies
+;; run in parallel, and the active workspace is Evaluator-global. N bodies
+;; doing `workspace :switch w` / mutate:rebind / eval-current cross-talked and
+;; rewrote root's f. Decision: one fiber drives the worldline at a time; a
+;; second body's switch is an explicit error (use #4715 overlays instead).
+;; Invariants pinned: root f is never changed, a body never observes another
+;; body's value, a refused body sees the #4778 error, and after the joins the
+;; host can switch / drive again. Pass = exit 0 + OK line.
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+
+(set-code "(define f (lambda (x) 0))") (eval-current)
+(define N 8)
+(define res (make-vector N -1))
+(define refused (make-vector N #f))
+(define (body i)
+  (let ((w (workspace :create (string-append "fw" (number->string i)))))
+    (try
+     (begin
+       (workspace :switch w)
+       (mutate:rebind "f" (string-append "(lambda (x) " (number->string (+ 100 i)) ")") "fiber")
+       (eval-current)
+       (fiber:yield)
+       (vector-set! res i (try (f 0) (catch (e) -2)))
+       (workspace :switch 0)
+       (eval-current))
+     (catch (e) (vector-set! refused i #t)))
+    i))
+(define (spawn-all n)
+  (let loop ((i 0) (acc (list)))
+    (if (= i n) acc (loop (+ i 1) (cons (let ((k i)) (fiber:spawn (lambda () (body k)))) acc)))))
+(define fs (spawn-all N))
+(for-each (lambda (x) (try (fiber:join x) (catch (e) #f))) fs)
+;; the host takes the worldline back
+(workspace :switch 0)
+(eval-current)
+
+(define (count-ok i acc)
+  (if (= i N) acc
+      (let ((v (vector-ref res i)))
+        (count-ok (+ i 1)
+                  (if (or (= v (+ 100 i)) (and (= v -1) (vector-ref refused i))) acc (+ acc 1))))))
+(assert! (= (count-ok 0 0) 0) "no body observed another body's worldline")
+(assert! (= (f 0) 0) "root f unchanged after parallel bodies")
+(define (count-true v i acc) (if (= i N) acc (count-true v (+ i 1) (if (vector-ref v i) (+ acc 1) acc))))
+(define drove (let loop ((i 0) (acc 0)) (if (= i N) acc (loop (+ i 1) (if (= (vector-ref res i) (+ 100 i)) (+ acc 1) acc)))))
+(assert! (= (+ drove (count-true refused 0 0)) N) "every body either drove its worldline or was refused")
+(assert! (>= drove 1) "at least one body drove a worldline")
+
+;; a refused switch is an explicit #4778 error, not a silent #f
+(define c (workspace :create "hostc"))
+(define blocker-ready #f)
+(define release #f)
+(define holder
+  (fiber:spawn (lambda ()
+                 (workspace :switch c)
+                 (set! blocker-ready #t)
+                 (let wait () (if release #t (begin (fiber:yield) (wait))))
+                 (workspace :switch 0)
+                 #t)))
+(define msg
+  (fiber:join
+   (fiber:spawn (lambda ()
+                  (let wait () (if blocker-ready #t (begin (fiber:yield) (wait))))
+                  (let ((m (try (begin (workspace :switch c) "no-error")
+                                (catch (e) (if (string? e) e "error")))))
+                    (set! release #t)
+                    m)))))
+(fiber:join holder)
+(assert! (not (equal? msg "no-error")) "second body's switch is refused")
+(workspace :switch 0)
+;; host drives normally after the joins
+(define h (workspace :create "host"))
+(assert! (eq? (workspace :switch h) #t) "host switch after joins")
+(mutate:rebind "f" "(lambda (x) 7)" "host")
+(eval-current)
+(assert! (= (f 0) 7) "host child worldline")
+(workspace :switch 0)
+(eval-current)
+(assert! (= (f 0) 0) "root still 0")
+
+(if (= *fails* 0)
+    (begin (display "OK-4778 single-driver worldline") (newline))
+    (begin (display "FAIL-4778 fails=") (display *fails*) (newline) (error "4778 suite failed")))
