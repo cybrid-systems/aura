@@ -260,8 +260,8 @@ namespace {
                     return false;
                 if (++steps > spine_cap) // cyclic spine
                     return false;
-                if (!eval_hash_keys_eq((*pairs)[ai].car, (*pairs)[bi].car, sh, pairs, vh,
-                                       depth + 1, tenant_ev, tenant_op))
+                if (!eval_hash_keys_eq((*pairs)[ai].car, (*pairs)[bi].car, sh, pairs, vh, depth + 1,
+                                       tenant_ev, tenant_op))
                     return false;
                 ca = (*pairs)[ai].cdr;
                 cb = (*pairs)[bi].cdr;
