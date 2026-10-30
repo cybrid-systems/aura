@@ -48,6 +48,15 @@ import aura.compiler.soa_view;
 // in runtime_ssot.cpp). Their IR frame set is published only through the
 // thread-local ir_inflight provider stack, which this thread cannot read.
 extern "C" int aura_ir_active_drains_total() noexcept;
+// Issue #4768: the process-wide skip probe for the control-arm knob.
+extern "C" void aura_gc_reclaim_off_note_tw_skip() noexcept;
+// Issue #4768: publish the closure-id cursor at the stand-down check (see
+// aura_gc_sweep_publish_closure_hi).
+extern "C" void aura_gc_sweep_publish_closure_hi(std::uint64_t v) noexcept;
+// Issue #4768: the sweep gate + body-liveness counter (runtime_ssot.cpp).
+extern "C" bool aura_gc_sweep_try_begin() noexcept;
+extern "C" void aura_gc_sweep_end() noexcept;
+extern "C" int aura_fiber_bodies_running_other() noexcept;
 // Issue #4078: production expand deny must not eval the require import form.
 extern "C" int aura_hygiene_expand_deny_blocks_eval(void) noexcept;
 extern "C" const char* aura_macro_hygiene_last_limit_reason_string(void) noexcept;
@@ -1439,8 +1448,38 @@ void Evaluator::maybe_reclaim_tw_unreachable() {
     // aura_tw_plain_walkers_other. A body running IR on another thread is the
     // sibling hole: its live IR frames are thread-local roots this collector
     // cannot mark, so it stands down for that body class too.
-    if (aura_tw_plain_walkers_other() > 0 || aura_ir_active_drains_total() > 0)
+    // Issue #4768: assert the sweep gate BEFORE the stand-down read (see
+    // aura_gc_sweep_try_begin): a body that starts now is either visible to
+    // the read below or waits in aura_fiber_body_enter until the sweep ends.
+    struct SweepGate4768 {
+        bool held;
+        SweepGate4768()
+            : held(aura_gc_sweep_try_begin()) {}
+        ~SweepGate4768() {
+            if (held)
+                aura_gc_sweep_end();
+        }
+        SweepGate4768(const SweepGate4768&) = delete;
+        SweepGate4768& operator=(const SweepGate4768&) = delete;
+    } sweep_gate_4768;
+    if (!sweep_gate_4768.held)
         return;
+    // Issue #4768: snapshot BEFORE the stand-down read; a sibling body that
+    // starts walking after this point mints newborn ids the release must keep.
+    aura_gc_sweep_publish_closure_hi(closure_id_watermark());
+    if (aura_tw_plain_walkers_other() > 0 || aura_ir_active_drains_total() > 0 ||
+        aura_fiber_bodies_running_other() > 0)
+        return;
+    // Issue #4768: same knob, same point as the IR-side sweep: after the
+    // trigger and after the stand-down checks. Both halves now mean what the
+    // knob says they mean; the skip counters are the probe that BOTH were
+    // disarmed (query:reclaim-off-skips).
+    if (std::getenv("AURA_GC_RECLAIM_OFF") != nullptr) {
+        tw_closure_allocs_.store(0, std::memory_order_relaxed);
+        reset_file_heap_allocs_since_reclaim();
+        aura_gc_reclaim_off_note_tw_skip();
+        return;
+    }
     TwStwHandle stw;
     if (!tw_stw_begin(stw, kTwStwWaitBudget)) {
         // Issue #4713: a running body did not park inside the budget (or

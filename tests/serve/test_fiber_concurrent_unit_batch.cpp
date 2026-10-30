@@ -12,6 +12,7 @@
 #include "compiler/messaging_bridge.h"
 
 #include <atomic>
+#include <cstdlib> // Issue #4768: setenv/unsetenv for the control-arm probe
 #include <fstream>
 #include <print>
 #include <string>
@@ -2125,6 +2126,152 @@ int run_4737_closure_snapshot_flat_smoke() {
 }
 } // namespace aura_fiber_run_wave65_4737
 
+
+// Wave 66 (#4768): AURA_GC_RECLAIM_OFF must disarm BOTH file-heap sweeps (the
+// IR sweep and the tree-walker sweep), the string->list pair mint takes the
+// heap lock, and the sweeps keep closures minted while they are in flight.
+namespace aura_fiber_run_wave66_4768 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+
+// Issue #4768: the control-arm skip probes (defined in runtime_ssot.cpp).
+extern "C" std::uint64_t aura_gc_reclaim_off_skips_ir_total() noexcept;
+extern "C" std::uint64_t aura_gc_reclaim_off_skips_tw_total() noexcept;
+extern "C" std::uint64_t aura_tw_registry_reclaim_total() noexcept;
+
+namespace {
+    std::string read_src_4768(const char* rel) {
+        for (const char* base : {"", "../"}) {
+            std::ifstream in(std::string(base) + rel);
+            if (!in)
+                continue;
+            std::string s((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            if (!s.empty())
+                return s;
+        }
+        return {};
+    }
+} // namespace
+
+// Issue #4768: the tree-walker workload that drives the file-heap trigger
+// (cons mints go through mint_pair -> file_heap_allocs_since_reclaim_).
+constexpr const char* kTwLoop4768 = R"AURA(
+(define (mk4768 n) (let loop ((i 0) (acc '())) (if (= i n) acc (loop (+ i 1) (cons (list i i) acc)))))
+(length (mk4768 600))
+)AURA";
+// The IR face: a workspace define runs on its own IRDefineEnvBinding
+// interpreter, whose MakePair dispatch also mints through the evaluator.
+constexpr const char* kSetCodeIr4768 =
+    "(set-code \"(define (w4768 n) (let loop ((i 0) (acc (list))) (if (= i n) acc (loop (+ i 1) "
+    "(cons (list i i) acc)))))\")";
+
+int run_4768_reclaim_off_both_sweeps() {
+    std::println("\n=== #4768: AURA_GC_RECLAIM_OFF disarms BOTH file-heap sweeps ===");
+    CompilerService cs;
+    // AC1: source contract - one knob, two sweeps, two skip counters.
+    {
+        const auto ir = read_src_4768("src/compiler/ir_executor_impl.cpp");
+        const auto tw = read_src_4768("src/compiler/evaluator_eval_flat.cpp");
+        const auto ssot = read_src_4768("src/compiler/runtime_ssot.cpp");
+        const auto q = read_src_4768("src/compiler/evaluator_primitives_query.cpp");
+        CHECK(!ir.empty() && !tw.empty() && !ssot.empty(), "#4768 AC1 read sweep sources");
+        CHECK(ir.find("AURA_GC_RECLAIM_OFF") != std::string::npos,
+              "[#4768] AC1 IR sweep consults AURA_GC_RECLAIM_OFF");
+        CHECK(tw.find("AURA_GC_RECLAIM_OFF") != std::string::npos,
+              "[#4768] AC1 tree-walker sweep consults AURA_GC_RECLAIM_OFF");
+        CHECK(ssot.find("aura_gc_reclaim_off_skips_ir_total") != std::string::npos &&
+                  ssot.find("aura_gc_reclaim_off_skips_tw_total") != std::string::npos,
+              "[#4768] AC1 both skip counters live in the SSOT TU");
+        CHECK(q.find("query:reclaim-off-skips-ir") != std::string::npos &&
+                  q.find("query:reclaim-off-skips-tw") != std::string::npos,
+              "[#4768] AC1 control-arm probe prims registered");
+    }
+
+    // AC2: knob set -> BOTH sweeps observed to skip, and the walker's
+    // collector does not run (the counter the old experiments trusted).
+    ::setenv("AURA_GC_RECLAIM_OFF", "1", 1);
+    auto& ev = cs.evaluator();
+    const auto ir0 = aura_gc_reclaim_off_skips_ir_total();
+    const auto tw0 = aura_gc_reclaim_off_skips_tw_total();
+    const auto runs0 = ev.file_heap_reclaim_runs_for_test();
+    const auto twr0 = aura_tw_registry_reclaim_total();
+    CHECK(cs.eval(kTwLoop4768).has_value(), "#4768 AC2 TW workload (knob on)");
+    CHECK(cs.eval(kSetCodeIr4768).has_value(), "#4768 AC2 set-code (knob on)");
+    CHECK(cs.eval("(eval-current)").has_value(), "#4768 AC2 eval-current (knob on)");
+    CHECK(cs.eval("(w4768 600)").has_value(), "#4768 AC2 IR workload (knob on)");
+    CHECK(cs.eval(kTwLoop4768).has_value(), "#4768 AC2 second TW workload (knob on)");
+    const auto ir1 = aura_gc_reclaim_off_skips_ir_total();
+    const auto tw1 = aura_gc_reclaim_off_skips_tw_total();
+    const auto runs1 = ev.file_heap_reclaim_runs_for_test();
+    const auto twr1 = aura_tw_registry_reclaim_total();
+    std::println("  #4768 skips ir {}->{} tw {}->{} runs {}->{} tw-reclaims {}->{}", ir0, ir1, tw0,
+                 tw1, runs0, runs1, twr0, twr1);
+    CHECK(ir1 > ir0, "[#4768] AC2 IR sweep observed to SKIP under AURA_GC_RECLAIM_OFF");
+    CHECK(tw1 > tw0, "[#4768] AC2 tree-walker sweep observed to SKIP under AURA_GC_RECLAIM_OFF");
+    CHECK(runs1 == runs0, "[#4768] AC2 no tree-walker sweep ran with the knob set");
+    CHECK(twr1 == twr0, "[#4768] AC2 the walker's collector did not run with the knob set");
+
+    // AC3: control - knob cleared, the walker's collector runs and the skip
+    // counter freezes. This is what makes AC2's counter meaningful.
+    ::unsetenv("AURA_GC_RECLAIM_OFF");
+    const auto sk_tw0 = aura_gc_reclaim_off_skips_tw_total();
+    CHECK(cs.eval(kTwLoop4768).has_value(), "#4768 AC3 TW workload (knob off)");
+    const auto sk_tw1 = aura_gc_reclaim_off_skips_tw_total();
+    const auto twr2 = aura_tw_registry_reclaim_total();
+    std::println("  #4768 control tw-reclaims {}->{} skip {}", twr1, twr2, sk_tw1 - sk_tw0);
+    CHECK(twr2 > twr1, "[#4768] AC3 control: the tree-walker sweep runs with the knob unset");
+    CHECK(sk_tw1 == sk_tw0,
+          "[#4768] AC3 control: the skip counter stays frozen with the knob unset");
+    return g_failed ? 1 : 0;
+}
+
+int run_4768_string_list_two_fibers() {
+    std::println("\n=== #4768: string->list mints through mint_pair (2 fibers) ===");
+    // AC1: source contract - the #4733 family fix shape.
+    {
+        const auto ch = read_src_4768("src/compiler/evaluator_primitives_char.cpp");
+        CHECK(!ch.empty(), "#4768 SL AC1 read evaluator_primitives_char.cpp");
+        CHECK(ch.find("ev.mint_pair(make_int(*it), result") != std::string::npos,
+              "[#4768] SL AC1 string->list mints through mint_pair");
+        CHECK(ch.find("ev.pairs_.size()") == std::string::npos,
+              "[#4768] SL AC1 no raw pairs_.size() mint in the char primitives");
+    }
+    // AC2: two fiber bodies build + walk fresh char lists while the main
+    // thread mints; every list must have exactly KN elements (no splice).
+    constexpr const char* kStrListProg = R"AURA(
+(define KEY "should-arbitrate?")
+(define KN 17)
+(define (wlen xs cap)
+  (let loop ((ys xs) (n 0))
+    (if (null? ys) n (if (>= n cap) (+ cap 1) (loop (cdr ys) (+ n 1))))))
+(define (job rounds)
+  (let loop ((i 0) (bad 0))
+    (if (>= i rounds) bad
+        (let ((n (wlen (string->list KEY) 64)))
+          (loop (+ i 1) (if (= n KN) bad (+ bad 1)))))))
+(define (trial)
+  (let* ((f1 (fiber:spawn (lambda () (job 800))))
+         (f2 (fiber:spawn (lambda () (job 800))))
+         (r1 (fiber:join f1))
+         (r2 (fiber:join f2)))
+    (if (and (number? r1) (number? r2)) (+ r1 r2) 1000000)))
+(define bad 0)
+(let loop ((t 0)) (if (< t 6) (begin (set! bad (+ bad (trial))) (loop (+ t 1))) #t))
+bad
+)AURA";
+    CompilerService cs;
+    auto v = cs.eval(kStrListProg);
+    CHECK(v.has_value(), "#4768 SL AC2 two-fiber string->list program evaluates");
+    CHECK(v && is_int(*v), "[#4768] SL AC2 returns a count");
+    CHECK(v && is_int(*v) && as_int(*v) == 0,
+          "[#4768] SL AC2 every concurrent (string->list) has its full length");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave66_4768
+
 int main() {
 
 
@@ -2424,6 +2571,14 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave65_4737 ########");
     if (int rc = aura_fiber_run_wave65_4737::run_4737_closure_snapshot_flat_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave66_4768 ########");
+    if (int rc = aura_fiber_run_wave66_4768::run_4768_reclaim_off_both_sweeps(); rc != 0)
+        return rc;
+    if (int rc = aura_fiber_run_wave66_4768::run_4768_string_list_two_fibers(); rc != 0)
         return rc;
 
     return 0;

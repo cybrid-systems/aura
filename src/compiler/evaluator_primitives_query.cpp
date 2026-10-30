@@ -69,6 +69,11 @@ import aura.core.lifetime_pin;      // Issue #2350: linear pin miss rate for typ
 import aura.core.envframe_lifetime; // Issue #2500: active_guard_depth for compact policy
 import aura.core.arena;             // Issue #2500: g_force_compact_blocked_* + arena frag
 
+// Issue #4768: AURA_GC_RECLAIM_OFF disarms BOTH file-heap sweeps; these count
+// the sweeps each half skipped (the control-arm probe).
+extern "C" std::uint64_t aura_gc_reclaim_off_skips_ir_total() noexcept;
+extern "C" std::uint64_t aura_gc_reclaim_off_skips_tw_total() noexcept;
+
 // Issue #1610: IR stamp + JIT hygiene counters (C linkage; avoid module cycles).
 extern "C" std::uint64_t aura_hygiene_ir_macro_marker_total();
 extern "C" std::uint64_t aura_hygiene_ir_provenance_stamped_total();
@@ -2562,6 +2567,22 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         "query:tw-root-cross-marks", [](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
             return make_int(static_cast<std::int64_t>(aura_tw_registry_cross_marks_total()));
+        });
+    // Issue #4768: the AURA_GC_RECLAIM_OFF control-arm probe. Each counter
+    // moves only when that sweep had passed its allocation trigger AND its
+    // stand-down checks, i.e. when the knob disarmed a sweep that would have
+    // run. A control arm reads the pair to prove BOTH file-heap sweeps were
+    // skipped; before #4768 only the IR half had a gate, so the walker's
+    // collector kept running under a knob that claimed destructive GC was off.
+    ObservabilityPrims::register_stats_impl(
+        "query:reclaim-off-skips-ir", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            return make_int(static_cast<std::int64_t>(aura_gc_reclaim_off_skips_ir_total()));
+        });
+    ObservabilityPrims::register_stats_impl(
+        "query:reclaim-off-skips-tw", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            return make_int(static_cast<std::int64_t>(aura_gc_reclaim_off_skips_tw_total()));
         });
 
     // Issue #443: query:verify-tool-stats. Returns the

@@ -59,6 +59,15 @@ extern "C" int aura_tw_plain_walkers_other() noexcept;
 // the thread-local ir_inflight provider stack, so a sweep on this thread cannot
 // mark them. See the definition in runtime_ssot.cpp.
 extern "C" int aura_ir_active_drains_total() noexcept;
+// Issue #4768: the process-wide skip probe for the control-arm knob.
+extern "C" void aura_gc_reclaim_off_note_ir_skip() noexcept;
+// Issue #4768: publish the closure-id cursor at the stand-down check so the
+// sweep can keep closures minted while it is in flight (newborn rule).
+extern "C" void aura_gc_sweep_publish_closure_hi(std::uint64_t v) noexcept;
+// Issue #4768: the sweep gate + body-liveness counter (runtime_ssot.cpp).
+extern "C" bool aura_gc_sweep_try_begin() noexcept;
+extern "C" void aura_gc_sweep_end() noexcept;
+extern "C" int aura_fiber_bodies_running_other() noexcept;
 extern "C" void aura_ir_drain_begin() noexcept;
 extern "C" void aura_ir_drain_end() noexcept;
 
@@ -3204,8 +3213,6 @@ std::uint64_t IRInterpreter::alloc_cell() {
 }
 
 void IRInterpreter::maybe_reclaim_unreachable() {
-    if (std::getenv("AURA_GC_RECLAIM_OFF") != nullptr)
-        return;
     if (reclaiming_ || !context_.evaluator)
         return;
     auto* ev = context_.evaluator;
@@ -3224,13 +3231,54 @@ void IRInterpreter::maybe_reclaim_unreachable() {
     // cells. Stand down exactly like the tree-walker sweep already does
     // (#2738 / #4713) and back off one trigger interval, so the skip is not
     // retried at the next instruction.
+    // Issue #4768: assert the sweep gate BEFORE the stand-down read. A body
+    // that starts now either shows up in that read (and this sweep stands
+    // down) or waits in aura_fiber_body_enter until the release is done -
+    // never both missed, so nothing is freed under a body that started
+    // between the decision and the release.
+    struct SweepGate4768 {
+        bool held;
+        SweepGate4768()
+            : held(aura_gc_sweep_try_begin()) {}
+        ~SweepGate4768() {
+            if (held)
+                aura_gc_sweep_end();
+        }
+        SweepGate4768(const SweepGate4768&) = delete;
+        SweepGate4768& operator=(const SweepGate4768&) = delete;
+    } sweep_gate_4768;
+    if (!sweep_gate_4768.held)
+        return;
     // Issue #4747: subtract this interpreter — the sweeping body is itself a
     // drain. What remains are bodies this sweep cannot mark.
     const int foreign_drains =
         aura_ir_active_drains_total() - (drain_depth_.load(std::memory_order_acquire) > 0 ? 1 : 0);
-    if (aura_tw_plain_walkers_other() > 0 || foreign_drains > 0) {
+    // Issue #4768: snapshot BEFORE the stand-down read. A body that starts
+    // after this line mints ids at/above the snapshot, and the sweep's
+    // release keeps them instead of erasing a closure the mark never saw.
+    aura_gc_sweep_publish_closure_hi(ev->closure_id_watermark());
+    // Issue #4768: a thread-backend fiber body (CLI/serve) holds its live
+    // values in a plain tree-walker segment of its worker thread - the
+    // counters above cannot certify it while it sits in a primitive wait or
+    // between frames, so it is the body counter that covers the whole body
+    // lifetime. Any foreign body stands the sweep down.
+    if (aura_tw_plain_walkers_other() > 0 || foreign_drains > 0 ||
+        aura_fiber_bodies_running_other() > 0) {
         allocs_since_reclaim_ = 0;
         ev->reset_file_heap_allocs_since_reclaim();
+        return;
+    }
+    // Issue #4768: AURA_GC_RECLAIM_OFF disarms BOTH file-heap sweeps. The gate
+    // sits HERE - after the trigger and after the stand-down checks - so the
+    // skip counter it bumps means "this sweep would have run and the knob
+    // stopped it", not "a sweep was called". The tree-walker sweep
+    // (Evaluator::maybe_reclaim_tw_unreachable) consults the same knob at the
+    // same point; before #4768 it had no gate at all, which is why every
+    // control arm that used this knob still ran the walker's collector.
+    if (std::getenv("AURA_GC_RECLAIM_OFF") != nullptr) {
+        allocs_since_reclaim_ = 0;
+        ev->reset_file_heap_allocs_since_reclaim();
+        aura_gc_reclaim_off_note_ir_skip();
         return;
     }
     struct Guard {
