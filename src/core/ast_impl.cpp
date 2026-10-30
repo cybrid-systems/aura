@@ -1217,6 +1217,8 @@ void FlatAST::note_subtree_content_write(NodeId node) noexcept {
     // (same discipline as bump_generation_subtree — a lock-free store
     // racing a vector resize could write through a stale buffer and LOSE
     // a bump, which for stamps is a correctness hazard, not a perf one).
+    // Issue #4792: the define's content version follows every write.
+    mint_define_ver(top);
     {
         std::unique_lock<std::shared_mutex> wlock(subtree_gen_mtx_.mutable_get());
         if (subtree_gen_.size() < size())
@@ -1279,6 +1281,8 @@ void FlatAST::bump_generation_subtree(NodeId subtree_root) noexcept {
     if (top == NULL_NODE)
         return; // no enclosing Define → cannot scope
     // Issue #2422: exclusive for resize + atomic store of gen cell.
+    // Issue #4792: the define's content version follows every write.
+    mint_define_ver(top);
     {
         std::unique_lock<std::shared_mutex> wlock(subtree_gen_mtx_.mutable_get());
         if (subtree_gen_.size() < size())

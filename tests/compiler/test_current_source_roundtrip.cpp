@@ -1935,6 +1935,88 @@ static void ac4729_merge_and_restore_keep_provenance() {
 // O(workspace) panic-checkpoint unparse + exit restamp / densify walks), and
 // the arm must not leak onto the next real mutation. Snapshot / restore /
 // diff semantics are unchanged.
+// Issue #4792: after one ast:restore, restoring an OLDER snapshot used to
+// fall back to the O(workspace) source diff (#4782 restore-epoch rule).
+// define_ver_ cells now travel with the content through the image restore
+// and are never reused, so every cross-epoch restore keeps the stamp diff
+// (unparse O(changed defines)) and stays exact.
+static void ac4792_cross_epoch_restore_keeps_stamps() {
+    std::println("\n--- #4792: cross-epoch restore keeps the stamp diff ---");
+    CompilerService cs;
+    std::string src = "(define (b4792) 1)\n(define (u4792) (+ (b4792) 1))\n";
+    for (int i = 0; i < 200; ++i)
+        src += std::format("(define (w4792f{} x) (+ x {}))\n", i, i);
+    CHECK(set_code(cs, src), "4792: set-code W=200");
+    CHECK(cs.eval("(eval-current)").has_value(), "4792: eval-current");
+    std::vector<std::int64_t> ids;
+    std::vector<std::int64_t> vals;
+    for (int k = 1; k <= 3; ++k) {
+        auto s = cs.eval(std::format("(ast:snapshot \"4792-{}\")", k));
+        CHECK(s && is_int(*s) && as_int(*s) >= 0, "4792: snapshot id");
+        ids.push_back(s && is_int(*s) ? as_int(*s) : -1);
+        vals.push_back(k);
+        CHECK(cs.eval(std::format("(mutate:rebind \"b4792\" \"(lambda () {})\" \"4792\")", k + 1))
+                  .has_value(),
+              "4792: rebind");
+        CHECK(cs.eval("(eval-current)").has_value(), "4792: eval-current after rebind");
+    }
+    const int order[] = {0, 1, 2, 0, 2, 1, 1, 0, 2};
+    int cross_ok = 0;
+    int cheap_ok = 0;
+    int exact_ok = 0;
+    for (int step = 0; step < 9; ++step) {
+        const int j = order[step];
+        const auto unp_before = snap_stat(cs, "ast-restore-stamp-unparse");
+        const auto cross_before = snap_stat(cs, "ast-restore-cross-epoch-stamp");
+        auto r = cs.eval(std::format("(ast:restore {})", ids[j]));
+        CHECK(r && is_bool(*r) && as_bool(*r), "4792: restore ok");
+        const auto unp = snap_stat(cs, "ast-restore-stamp-unparse") - unp_before;
+        const auto cross = snap_stat(cs, "ast-restore-cross-epoch-stamp") - cross_before;
+        CHECK(cs.eval("(eval-current)").has_value(), "4792: eval-current after restore");
+        auto b = cs.eval("(b4792)");
+        auto u = cs.eval("(u4792)");
+        auto w = cs.eval("(w4792f123 1)");
+        if (b && is_int(*b) && as_int(*b) == vals[j] && u && is_int(*u) &&
+            as_int(*u) == vals[j] + 1 && w && is_int(*w) && as_int(*w) == 124)
+            ++exact_ok;
+        else
+            std::println("4792 diag: step {} snap {} b={} u={}", step, j,
+                         b && is_int(*b) ? as_int(*b) : -999, u && is_int(*u) ? as_int(*u) : -999);
+        if (step > 0 && cross == 1)
+            ++cross_ok;
+        if (unp <= 5)
+            ++cheap_ok;
+        else
+            std::println("4792 diag: step {} unparse delta {}", step, unp);
+    }
+    CHECK(exact_ok == 9, "4792 AC1: every cross-epoch restore leaves the snapshot's bindings");
+    CHECK(cross_ok == 8, "4792 AC2: cross-epoch restores take the stamp diff (not source diff)");
+    CHECK(cheap_ok == 9, "4792 AC3: each restore unparses O(changed defines), not O(workspace)");
+    // #4782 face across epochs: restore an old snapshot, edit, capture,
+    // then hop between the new capture and an older one.
+    CHECK(cs.eval(std::format("(ast:restore {})", ids[0])).has_value(), "4792: restore S0");
+    CHECK(cs.eval("(mutate:rebind \"b4792\" \"(lambda () 100)\" \"4792\")").has_value(),
+          "4792: rebind after restore");
+    CHECK(cs.eval("(eval-current)").has_value(), "4792: eval-current");
+    auto s3 = cs.eval("(ast:snapshot \"4792-post\")");
+    CHECK(s3 && is_int(*s3), "4792: post-restore snapshot");
+    CHECK(cs.eval(std::format("(ast:restore {})", ids[1])).has_value(), "4792: restore S1");
+    CHECK(cs.eval("(eval-current)").has_value(), "4792: eval-current");
+    auto b1 = cs.eval("(u4792)");
+    CHECK(b1 && is_int(*b1) && as_int(*b1) == 3, "4792 AC4: S1 caller sees S1 body");
+    CHECK(
+        cs.eval(std::format("(ast:restore {})", s3 && is_int(*s3) ? as_int(*s3) : -1)).has_value(),
+        "4792: restore post-restore snapshot");
+    CHECK(cs.eval("(eval-current)").has_value(), "4792: eval-current");
+    auto b3 = cs.eval("(u4792)");
+    CHECK(b3 && is_int(*b3) && as_int(*b3) == 101,
+          "4792 AC4: post-restore capture restores its own edit");
+    CHECK(cs.eval(std::format("(ast:restore {})", ids[0])).has_value(), "4792: restore S0 again");
+    CHECK(cs.eval("(eval-current)").has_value(), "4792: eval-current");
+    auto b0 = cs.eval("(u4792)");
+    CHECK(b0 && is_int(*b0) && as_int(*b0) == 2, "4792 AC4: back to S0");
+}
+
 static void ac4772_snapshot_quiet_guard() {
     std::println("\n--- #4772: ast:snapshot takes the quiet (read-only) guard ---");
     CompilerService cs;
@@ -2099,6 +2181,7 @@ int run_test_current_source_roundtrip() {
     ac4598_phase4_snapshot_cap_counts_copies();
     ac4772_snapshot_quiet_guard();
     ac4772_structural_sharing();
+    ac4792_cross_epoch_restore_keeps_stamps();
     ac4357_workspace_bools();
     ac4475_workspace_floats();
     run_4450_runtime_mint_ids();

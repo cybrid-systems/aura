@@ -1,0 +1,44 @@
+;; restore_cross_epoch_4792.aura — Issue #4792. After one ast:restore,
+;; restoring an older snapshot fell back to the O(workspace) source diff
+;; (#4782 restore-epoch rule). define_ver_ content stamps now travel with
+;; the image restore, so cross-epoch restores keep the stamp diff. This
+;; suite pins the semantics: hopping between three snapshots in any order
+;; always leaves exactly the snapshot's bindings.
+;; Pass = exit 0 + OK line.
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+
+(set-code "(define q (lambda (x) (+ x 1)))\n(define c4792 (lambda (x) (* 10 (q x))))\n(define k4792 (lambda (x) (- x 1)))") (eval-current)
+(define S0 (ast:snapshot "s0"))
+(mutate:rebind "q" "(lambda (x) (+ x 2))" "v2") (eval-current)
+(define S1 (ast:snapshot "s1"))
+(mutate:rebind "q" "(lambda (x) (+ x 3))" "v3") (eval-current)
+(define S2 (ast:snapshot "s2"))
+
+(define (hop id expect label)
+  (ast:restore id) (eval-current)
+  (assert! (= (c4792 0) expect) label)
+  (assert! (= (k4792 5) 4) (string-append label " (untouched define)")))
+
+(hop S0 10 "restore S0")
+(hop S2 30 "S0 -> S2")
+(hop S1 20 "S2 -> S1")
+(hop S0 10 "S1 -> S0")
+(hop S1 20 "S0 -> S1")
+(hop S2 30 "S1 -> S2")
+(hop S2 30 "S2 -> S2")
+;; edit after a restore, capture, and hop across epochs
+(hop S0 10 "back to S0")
+(mutate:rebind "q" "(lambda (x) (+ x 7))" "v7") (eval-current)
+(define S3 (ast:snapshot "s3"))
+(hop S1 20 "S3-epoch -> S1")
+(hop S3 70 "S1 -> S3")
+(hop S0 10 "S3 -> S0")
+
+(if (= *fails* 0)
+    (begin (display "OK-4792 cross-epoch restore") (newline))
+    (begin (display "FAIL-4792 fails=") (display *fails*) (newline) (error "4792 suite failed")))

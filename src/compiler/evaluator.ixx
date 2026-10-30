@@ -2347,6 +2347,9 @@ export struct WorkspaceTree {
 export struct DefineStamp {
     aura::ast::NodeId root = aura::ast::NULL_NODE;
     std::uint16_t gen16 = 0; // subtree_gen_ cell of the define at capture
+    // Issue #4792: define_ver_ cell at capture (content version; 0 =
+    // unknown). The restore diff compares (root, ver), not gen16.
+    std::uint64_t ver = 0;
     std::string source;      // unparsed define source (lazy, built once)
     bool has_source = false;
 };
@@ -7399,11 +7402,18 @@ private:
         // under unchanged cells — stamps captured before ANY later restore
         // can match a cell whose define now holds different content
         // (S0 -> rebind -> S1 -> restore S0 -> restore S1 kept S0's p).
+        // Issue #4792: the restore diff now compares define_ver_ cells,
+        // which the image restore DOES mirror, so a cross-epoch restore
+        // keeps the stamp path; the epoch is diagnostic only.
         std::uint64_t restore_epoch = 0;
     };
     std::vector<FlatSnapshot> snapshot_flats_;
     // Issue #4782: bumped by every ast:restore that rewrote the workspace.
     std::uint64_t ast_restore_epoch_{0};
+    // Issue #4792: direct restores of a snapshot captured in an earlier
+    // restore epoch that still took the stamp diff (pre-#4792 they all
+    // fell back to the O(workspace) source diff).
+    std::uint64_t ast_restore_cross_epoch_stamp_total_{0};
     // Issue #4772: the snapshot's workspace source text. Builds it from the
     // image on first use when the capture deferred the unparse.
     const std::string& snapshot_source_at(std::size_t id);
@@ -10094,6 +10104,9 @@ public:
     }
     [[nodiscard]] std::uint64_t ast_restore_stamp_unparse_total() const noexcept {
         return ast_restore_stamp_unparse_total_;
+    }
+    [[nodiscard]] std::uint64_t ast_restore_cross_epoch_stamp_total() const noexcept {
+        return ast_restore_cross_epoch_stamp_total_;
     }
     [[nodiscard]] std::uint64_t ast_snapshot_chunks_fresh_total() const noexcept {
         return ast_snapshot_chunks_fresh_total_;

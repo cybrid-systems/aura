@@ -66,9 +66,11 @@ collect_reachable_define_sources(aura::ast::FlatAST& flat, aura::ast::StringPool
 // Issue #4598 phase 3: live-side stamp walk for the restore diff — same
 // walk, no unparse, no capture. Compared against the snapshot's stamps so
 // an unchanged define costs one integer compare instead of a full unparse.
-[[nodiscard]] std::unordered_map<std::string, std::pair<aura::ast::NodeId, std::uint16_t>>
+// Issue #4792: the stamp is the define_ver_ content version (mirrored by
+// the image restore, never reused), not the u16 subtree_gen_ cell.
+[[nodiscard]] std::unordered_map<std::string, std::pair<aura::ast::NodeId, std::uint64_t>>
 collect_define_change_stamps(aura::ast::FlatAST& flat, aura::ast::StringPool& pool) {
-    std::unordered_map<std::string, std::pair<aura::ast::NodeId, std::uint16_t>> out;
+    std::unordered_map<std::string, std::pair<aura::ast::NodeId, std::uint64_t>> out;
     const auto root = flat.root;
     if (root == aura::ast::NULL_NODE || root >= flat.size() || flat.is_free_slot(root))
         return out;
@@ -86,8 +88,7 @@ collect_define_change_stamps(aura::ast::FlatAST& flat, aura::ast::StringPool& po
         if (v.tag == aura::ast::NodeTag::Define && v.sym_id != aura::ast::INVALID_SYM) {
             auto nm = std::string(pool.resolve(v.sym_id));
             if (!nm.empty())
-                out.insert_or_assign(std::move(nm),
-                                     std::make_pair(cur, flat.load_subtree_gen(cur)));
+                out.insert_or_assign(std::move(nm), std::make_pair(cur, flat.load_define_ver(cur)));
         }
         for (auto child : v.children)
             pending.push_back(child);
@@ -123,6 +124,7 @@ void resolve_lazy_define_stamps(aura::ast::FlatAST& flat, aura::ast::StringPool&
                 auto& st = stamps.by_name[nm];
                 st.root = cur;
                 st.gen16 = img.subtree_gen_at(cur);
+                st.ver = img.define_ver_at(cur); // Issue #4792
                 st.has_source = false;
             }
         }
@@ -902,7 +904,19 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                     // content under the (unmirrored) subtree_gen_ cells, so
                     // equal gen16 no longer implies equal content. Use the
                     // source diff (sound) for this restore.
-                    if (snap_entry.restore_epoch != ev.ast_restore_epoch_)
+                    // Issue #4792: no longer a lineage break. The diff
+                    // compares define_ver_ cells, which assign_from_image
+                    // restores together with the content and which are
+                    // minted from a never-reused counter, so equal
+                    // (root, ver) means equal content in every epoch.
+                    const bool cross_epoch_4792 = snap_entry.restore_epoch != ev.ast_restore_epoch_;
+                    // Kill switch / A-B bench: AURA_RESTORE_EPOCH_SOURCE_DIFF=1
+                    // restores the pre-#4792 rule (cross-epoch -> source diff).
+                    static const bool epoch_source_diff_4792 = [] {
+                        const char* e = std::getenv("AURA_RESTORE_EPOCH_SOURCE_DIFF");
+                        return e && e[0] == '1';
+                    }();
+                    if (cross_epoch_4792 && epoch_source_diff_4792)
                         stamp_lineage_broken_4777 = true;
                     // Issue #4772: a lazy holder takes the stamp path (an
                     // empty resolved set reports every live define as
@@ -911,7 +925,9 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                     const bool have_stamps = stamps &&
                                              (stamps->lazy || !stamps->by_name.empty()) &&
                                              !stamp_lineage_broken_4777;
-                    std::unordered_map<std::string, std::pair<aura::ast::NodeId, std::uint16_t>>
+                    if (have_stamps && cross_epoch_4792)
+                        ++ev.ast_restore_cross_epoch_stamp_total_;
+                    std::unordered_map<std::string, std::pair<aura::ast::NodeId, std::uint64_t>>
                         live_stamp_defs;
                     std::unordered_map<std::string, std::string> live_defs;
                     if (ev.workspace_flat_ && ev.workspace_pool_) {
@@ -960,7 +976,11 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                             auto it = live_stamp_defs.find(nm);
                             if (it == live_stamp_defs.end())
                                 added.push_back(nm);
-                            else if (it->second.second != st.gen16)
+                            // Issue #4792: unchanged only when the same
+                            // define node carries the same minted content
+                            // version; an unknown (0) version is changed.
+                            else if (it->second.first != st.root || it->second.second != st.ver ||
+                                     st.ver == 0)
                                 changed.push_back(nm);
                         }
                         for (const auto& [nm, _] : live_stamp_defs) {
