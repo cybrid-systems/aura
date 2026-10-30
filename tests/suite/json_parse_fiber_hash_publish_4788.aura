@@ -1,0 +1,36 @@
+;; expect: json-fiber-ok
+;; Issue #4788: json-parse published every parsed object's hash table into the
+;; process-wide g_hash_tables with an UNLOCKED size() + push_back. Fiber bodies
+;; run on worker threads, so concurrent json-parse calls raced the vector
+;; growth (glibc "double free or corruption", SIGSEGV) and could hand the same
+;; table index to two objects. The publish now holds hash_tables_mutex() +
+;; alloc_storage_lock_ across size + append + owner stamp. A regression
+;; shows up as a crash or as a wrong value read back from a parsed object.
+(define (range n) (let loop ((i (- n 1)) (acc (list))) (if (< i 0) acc (loop (- i 1) (cons i acc)))))
+(define (entry i)
+  (string-append "\"k" (number->string i) "\":{\"id\":" (number->string i)
+                 ",\"tags\":[1,2,{\"t\":\"x\"}],\"m\":{\"n\":{\"v\":" (number->string i) "}}}"))
+(define (build n)
+  (let loop ((i 1) (acc (entry 0)))
+    (if (>= i n) (string-append "{" acc "}") (loop (+ i 1) (string-append acc "," (entry i))))))
+(define DOC (build 150))
+;; one parse: check a few nested values survived intact
+(define (check-doc h)
+  (let loop ((i 0) (bad 0))
+    (if (>= i 150)
+        bad
+        (let* ((o (hash-ref h (string-append "k" (number->string i))))
+               (ok (and (hash? o) (equal? (hash-ref o "id") i))))
+          (loop (+ i 25) (if ok bad (+ bad 1)))))))
+(define (job rounds)
+  (let loop ((r 0) (bad 0))
+    (if (>= r rounds) bad (loop (+ r 1) (+ bad (check-doc (json-parse DOC)))))))
+(define (trial)
+  (let* ((fs (map (lambda (k) (fiber:spawn (lambda () (job 3)))) (range 4)))
+         (rs (map fiber:join fs)))
+    (apply + (map (lambda (r) (if (number? r) r 1000)) rs))))
+(define bad 0)
+(for-each (lambda (t) (set! bad (+ bad (trial)))) (range 15))
+(if (= bad 0)
+    (begin (display "json-fiber-ok") (newline))
+    (begin (display "json-fiber-bad=") (display bad) (newline) (exit 1)))
