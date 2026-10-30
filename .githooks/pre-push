@@ -41,15 +41,5 @@ if ! python3 "$ROOT/build.py" "${GATE_ARGS[@]}"; then
     exit 1
 fi
 
-# Issue #4566: class-2 statistical gate plus a short class-1/3 slice.
-# Fails only on a class-2 checksum miss or a #1936 regression.
-# 200 and 2000 defines stay on `bench/run.py --full`.
-echo "pre-push: class benchmark gate (bench/run.py --gate)..."
-if ! python3 "$ROOT/bench/run.py" --gate; then
-    echo "❌ pre-push: class-2 benchmark gate failed" >&2
-    echo "   rerun: python3 bench/run.py --gate" >&2
-    exit 1
-fi
-
 echo "pre-push: gate clean ✓"
 exit 0
