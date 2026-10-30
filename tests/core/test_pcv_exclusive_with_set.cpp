@@ -2,6 +2,7 @@
 // @reason: Issue #2140 — PCV exclusive (refcount==1) in-place with_set path.
 //
 //   AC1: with_set exclusive → no alloc (same storage, with_set_exclusive metric)
+//        (Issue #4770: exclusive path only for rvalue receivers)
 //   AC2: SafePCVSpan live → with_set COWs; span sees pre-mutation data
 //   AC3: MutationCheckpoint / snapshot_children rollback restores children
 //   AC4: shared with_set COW; exclusive pair; #2058 lineage metrics still work
@@ -111,12 +112,13 @@ int run_test_pcv_exclusive_with_set() {
         const void* id0 = p.storage_identity();
         const auto ex0 = g_pcv_hotpath_metrics().with_set_exclusive_total.load();
         const auto ca0 = g_pcv_hotpath_metrics().cow_alloc_total.load();
-        auto q = p.with_set(7, 777);
+        // Issue #4770: the in-place fast path is reserved for rvalue
+        // receivers (the caller gives up p), like cow_set.
+        auto q = std::move(p).with_set(7, 777);
         CHECK(q[7] == 777, "value written");
         CHECK(q.storage_identity() == id0, "same storage (no alloc)");
-        CHECK(p.storage_identity() == id0, "receiver same storage");
-        CHECK(p[7] == 777, "exclusive: receiver sees update (sole owner)");
-        CHECK(q.use_count() == 2, "p and q share exclusive-written storage");
+        CHECK(q.use_count() == 1, "q is the sole owner of the exclusive-written storage");
+        CHECK(p.empty() && p.storage_identity() == nullptr, "receiver moved-from");
         CHECK(g_pcv_hotpath_metrics().with_set_exclusive_total.load() > ex0, "exclusive metric");
         CHECK(g_pcv_hotpath_metrics().cow_alloc_total.load() == ca0, "no COW alloc");
         CHECK(g_pcv_hotpath_metrics().with_set_cow_total.load() == 0, "no with_set COW");
@@ -208,9 +210,10 @@ int run_test_pcv_exclusive_with_set() {
             // with_set exclusive returns *this sharing with assignment:
             // cur = cur.with_set → use_count 1 after move-assign of shared_ptr
             for (std::size_t i = 0; i < OPS; ++i) {
-                cur = cur.with_set(i % N, static_cast<NodeId>(i));
-                // After assignment from exclusive with_set, cur has use_count 1
-                // (temp destroyed). Next with_set is exclusive again.
+                // Issue #4770: rvalue receiver → exclusive in-place path.
+                cur = std::move(cur).with_set(i % N, static_cast<NodeId>(i));
+                // cur stays the sole owner, so the next with_set is
+                // exclusive again.
             }
         });
         double shared_us = bench([&] {
@@ -257,6 +260,61 @@ int run_test_pcv_exclusive_with_set() {
         SafePCVSpan<int> ispan(ints.columnar_accessor(), share_storage(ints));
         CHECK(ispan.size() == 2 && ispan[0] == -1 && ispan.use_count() == 3,
               "4769: SafePCVSpan<int> keeps storage via share_storage");
+    }
+
+    // ── Issue #4770: const / lvalue with_set never mutates the receiver ──
+    {
+        std::println("\n--- #4770: with_set on a uniquely-held lvalue / const& is pure COW ---");
+        set_pcv_tls_scratch_for_test(false);
+        reset_pcv_hotpath_metrics_for_test();
+        PCV k;
+        k = k.with_push_back(1).with_push_back(2).with_push_back(3);
+        CHECK(k.is_unique(), "4770: receiver is the sole owner");
+        const PCV& ck = k;
+        const void* id0 = ck.storage_identity();
+        const auto ex0 = g_pcv_hotpath_metrics().with_set_exclusive_total.load();
+        const auto cow0 = g_pcv_hotpath_metrics().with_set_cow_total.load();
+        PCV k2 = ck.with_set(0, 9);
+        CHECK(ck[0] == 1, "4770: const receiver unchanged (was 9 before the fix)");
+        CHECK(k2[0] == 9 && k2[1] == 2 && k2[2] == 3, "4770: result carries the write");
+        CHECK(ck.storage_identity() == id0 && k2.storage_identity() != id0,
+              "4770: result got fresh storage, receiver kept its own");
+        CHECK(k.is_unique() && k2.is_unique(), "4770: no aliasing between receiver and result");
+        CHECK(g_pcv_hotpath_metrics().with_set_exclusive_total.load() == ex0,
+              "4770: lvalue with_set never takes the exclusive path");
+        CHECK(g_pcv_hotpath_metrics().with_set_cow_total.load() > cow0,
+              "4770: lvalue with_set counted as COW");
+
+        // Persistent idiom: `old` taken *after* the version is uniquely held
+        // must keep the rollback baseline even though `next` is derived from
+        // the same handle.
+        PCV rules = make_n(4);
+        PCV next = rules.with_set(2, 4242);
+        PCV old = rules;
+        CHECK(rules[2] == 2 && old[2] == 2 && next[2] == 4242,
+              "4770: rollback baseline survives with_set on the unique handle");
+
+        // Non-const lvalue receiver behaves the same as const&.
+        PCV m = make_n(3);
+        PCV m2 = m.with_set(1, 77);
+        CHECK(m[1] == 1 && m2[1] == 77, "4770: non-const lvalue receiver unchanged");
+
+        // Rvalue receiver keeps the #2140 zero-alloc fast path.
+        PCV r = make_n(3);
+        const void* rid = r.storage_identity();
+        PCV r2 = std::move(r).with_set(1, 55);
+        CHECK(r2[1] == 55 && r2.storage_identity() == rid,
+              "4770: rvalue with_set still exclusive in-place (#2140)");
+        CHECK(g_pcv_hotpath_metrics().with_set_exclusive_total.load() > ex0,
+              "4770: rvalue path counted exclusive");
+
+        // Rvalue on shared storage still COWs: the other holder is intact.
+        PCV s = make_n(3);
+        PCV pin = s;
+        PCV s2 = std::move(s).with_set(0, 11);
+        CHECK(pin[0] == 0 && s2[0] == 11 && s2.storage_identity() != pin.storage_identity(),
+              "4770: rvalue with_set on shared storage COWs");
+        clear_pcv_tls_scratch_for_test();
     }
 
     // OOB / empty no-ops

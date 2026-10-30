@@ -44,8 +44,11 @@
 //  — cow_* / with_set exclusive + ensure_unique + in-place writes avoid a
 //  new allocation and the second atomic refcount trip. Snapshot /
 //  SafePCVSpan holders keep use_count()>1 so with_* still allocate
-//  (COW correctness). Issue #2140 extends exclusive in-place to const
-//  with_set (AI multi-round local replace-one-child). Issue #2906: FlatAST
+//  (COW correctness). Issue #2140 extends exclusive in-place to
+//  with_set (AI multi-round local replace-one-child); Issue #4770 limits
+//  that fast path to rvalue receivers (`std::move(v).with_set(i, x)`) —
+//  with_set on an lvalue / const& always COWs and never modifies the
+//  receiver, even when it is the sole owner. Issue #2906: FlatAST
 //  locked mutate paths (set_child_locked / insert_child_locked /
 //  remove_child_locked) force exclusive ownership by moving children_[id]
 //  out, mutating the local PCV (cow_* → unique in-place when sole holder),
@@ -554,12 +557,20 @@ public:
     }
 
     // Issue #2140: when this handle is the sole storage owner
-    // (use_count()==1), write in place and return *this without allocating.
-    // Shared storage (snapshot / SafePCVSpan / multi-holder) always COWs so
-    // observers keep pre-mutation data. Empty / OOB is a no-op.
-    PersistentChildVector with_set(size_type i, const T& v) const {
+    // (use_count()==1), write in place and return the same storage
+    // without allocating. Shared storage (snapshot / SafePCVSpan /
+    // multi-holder) always COWs so observers keep pre-mutation data.
+    // Empty / OOB is a no-op.
+    // Issue #4770: the in-place fast path is only legal when the caller
+    // gives up the receiver, i.e. on an rvalue (`std::move(v).with_set`)
+    // — exactly like cow_set. The lvalue / const overload below always
+    // COWs so `auto old = v; auto next = v.with_set(...)` (or any const&
+    // view of a uniquely-held PCV) never sees the receiver change. The
+    // previous const overload wrote through the sole-owner receiver,
+    // breaking the header contract "with_set does NOT modify the receiver".
+    PersistentChildVector with_set(size_type i, const T& v) && {
         if (i >= size_)
-            return *this; // no-op
+            return std::move(*this); // no-op
         // Exclusive path: sole owner may mutate the element buffer in place.
         // unique_ptr<T[]>::get() yields T* even through const Storage — same
         // discipline as cow_set (#2058). Never write when use_count()>1.
@@ -567,11 +578,23 @@ public:
             data_->data.get()[i] = v;
             AURA_PCV_NOTE(unique_inplace_total);
             AURA_PCV_NOTE(with_set_exclusive_total);
-            return *this; // same storage identity, updated element
+            return std::move(*this); // same storage identity, updated element
         }
-        // Shared / live snapshot / same-gen span: still COW (never write
-        // through an alias). Issue #3429: TLS freelist first (#2406);
-        // heap only on miss. Exclusive / stale-exclusive stay in-place above.
+        return with_set_cow(i, v);
+    }
+
+    // Issue #4770: const / lvalue receiver — never mutates *this.
+    PersistentChildVector with_set(size_type i, const T& v) const& {
+        if (i >= size_)
+            return *this; // no-op
+        return with_set_cow(i, v);
+    }
+
+private:
+    // Shared / const-receiver path: always COW (never write through an
+    // alias or a caller-visible receiver). Issue #3429: TLS freelist
+    // first (#2406); heap only on miss.
+    PersistentChildVector with_set_cow(size_type i, const T& v) const {
         auto out = tls_pcv_acquire(size_);
         if (!out)
             out = heap_pcv_allocate(size_);
@@ -586,6 +609,7 @@ public:
         return result;
     }
 
+public:
     // ── Issue #2058: unique-path / COW hybrid mutators ────────
     // Non-const: when this is the sole storage owner, write in place
     // (zero alloc, no extra atomic). When shared (snapshot / pin /
