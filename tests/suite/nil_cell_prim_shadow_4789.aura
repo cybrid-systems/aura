@@ -1,0 +1,41 @@
+;; expect: nil-cell-ok
+;; Issue #4789: a let / letrec / define binding whose name is also a builtin
+;; primitive (log, list, sqrt, abs, ...) and whose value is '() read back as
+;; the PRIMITIVE once it was cell-boxed (set! or capture): '() and an
+;; uninitialized letrec placeholder are the same void value, and the
+;; Variable read prefers a same-named primitive for a void cell (the
+;; (define ceil ceil) re-export face). So
+;;   (let ((log '())) (set! log (cons 1 log)) log)  => (1 . #<prim log>)
+;; Stores of an actual '() into a cell are now recorded and read as '().
+(define fails 0)
+(define (chk name got want)
+  (if (not (equal? got want))
+      (begin (set! fails (+ fails 1))
+             (display "FAIL ") (display name) (display " got=") (display got) (newline))))
+;; h1: the issue's shape - set! with cons whose RHS reads the shadowed name
+(chk "h1" (let ((log '())) (set! log (cons 1 log)) (set! log (cons 2 log)) log) '(2 1))
+;; h2: set! back to '() then read
+(chk "h2" (let ((log (list 1))) (set! log (list)) log) '())
+;; h3: inside a procedure, accumulate in a loop
+(define (collect n)
+  (let ((list '()))
+    (let loop ((i 0)) (if (< i n) (begin (set! list (cons i list)) (loop (+ i 1)))))
+    list))
+(chk "h3" (collect 3) '(2 1 0))
+;; h4: captured by a closure (cell-boxed by capture, no set!)
+(chk "h4" (let ((abs '())) ((lambda () abs))) '())
+(chk "h4b" (let ((sqrt '())) (let ((f (lambda () (null? sqrt)))) (f))) #t)
+;; letrec bound to '()
+(chk "letrec" (letrec ((sqrt '())) sqrt) '())
+;; internal define bound to '() and set!
+(define (g) (define log '()) (set! log (cons 9 log)) log)
+(chk "define" (g) '(9))
+;; fiber body
+(chk "fiber" (fiber:join (fiber:spawn (lambda () (let ((log '())) (set! log (cons 1 log)) log)))) '(1))
+;; the prim re-export face must keep working
+(define (c) (define abs abs) (abs -3))
+(chk "reexport" (c) 3)
+(chk "reexport-letrec" (letrec ((f (lambda (x) (abs x)))) (f -4)) 4)
+(if (= fails 0)
+    (begin (display "nil-cell-ok") (newline))
+    (begin (display "nil-cell-fails=") (display fails) (newline) (exit 1)))
