@@ -1245,7 +1245,7 @@ private:
     X(verification_dirty_) X(macro_dirty_) X(type_id_) X(type_cache_gen_)                        \
     X(type_cache_binding_gen_) X(schema_cache_) X(error_kind_) X(node_gen_) X(free_list_)        \
     X(value_cache_) X(node_first_mutation_) X(match_info_) X(region_by_sym_dense_)               \
-    X(region_by_lambda_dense_)
+    X(region_by_lambda_dense_) X(define_ver_)
 #define AURA_FLATAST_COW_MAPS(X) X(region_by_sym_) X(region_by_lambda_id_)
 // Issue #4772: the CONTENT subset — the columns that define what the tree is
 // (topology, literals, params, positions, slot liveness). The rest are
@@ -1796,6 +1796,12 @@ public:
                 reset_node_slot(id, tag, m);
             }
             node_slot_reuse_count_.fetch_add(1, std::memory_order_relaxed);
+            // Issue #4792: a recycled slot must not inherit the previous
+            // define's version cell.
+            if (tag == NodeTag::Define)
+                mint_define_ver(id);
+            else
+                clear_define_ver(id);
             return id;
         }
         auto id = static_cast<NodeId>(tag_.size());
@@ -1933,6 +1939,12 @@ public:
             incoming_parent_edges_[id].clear();
         }
         node_gen_.push_back(generation_);
+        // Issue #4792: Define birth mints a content version; any other
+        // birth drops a stale cell a larger previous state left behind.
+        if (tag == NodeTag::Define)
+            mint_define_ver(id);
+        else
+            clear_define_ver(id);
         return id;
     }
 
@@ -2457,6 +2469,19 @@ public:
     // LOCK ORDER if combined with structural: structural → subtree_gen.
     mutable OwnedSharedMutex subtree_gen_mtx_;
     mutable cow::TrackedColumn<std::uint32_t> subtree_gen_;
+    // Issue #4792: per-top-level-Define CONTENT version stamp. Unlike
+    // subtree_gen_ (a per-define u16 counter that operator= / restore do
+    // not mirror), define_ver_ is a mirrored column: images capture it,
+    // assign_from_image / operator= / move restore it with the content, so
+    // a cell always describes the content it sits next to. Values come
+    // from one process-wide monotonic counter (define_ver_mint_) and are
+    // never reused, so (root, ver) equal => same content, across any
+    // number of ast:restore swaps and across flats. 0 = never minted
+    // (unknown; consumers treat it as changed). Leaf lock define_ver_mtx_
+    // (nothing is acquired under it).
+    mutable OwnedSharedMutex define_ver_mtx_;
+    cow::TrackedColumn<std::uint64_t> define_ver_;
+    static inline std::atomic<std::uint64_t> define_ver_mint_{0};
     // Issue #457: generation_ / node_gen_ lifecycle
     // observability counters. All stats-only (relaxed
     // ordering). Bumped in bump_generation() (wrap
@@ -3737,6 +3762,8 @@ public:
             children_retired_ = std::move(other.children_retired_);
             parent_ = std::move(other.parent_);
             incoming_parent_edges_ = std::move(other.incoming_parent_edges_);
+            // Issue #4792: version cells travel with the content.
+            define_ver_ = std::move(other.define_ver_);
             incoming_parent_index_dirty_.store(
                 other.incoming_parent_index_dirty_.load(std::memory_order_relaxed),
                 std::memory_order_relaxed);
@@ -4055,6 +4082,13 @@ public:
 #undef AURA_4772_IMG_FIELD
         cow::ColumnImage<std::uint32_t> subtree_gen;
         std::size_t node_count = 0;
+        // Issue #4792: the define content version cell at capture (the
+        // define_ver_ column image; 0 = unknown).
+        [[nodiscard]] std::uint64_t define_ver_at(NodeId top) const noexcept {
+            if (top == NULL_NODE || top >= define_ver_.size)
+                return 0;
+            return define_ver_.at(top);
+        }
         std::size_t fresh_chunks = 0; // chunks this capture allocated
         std::size_t content_fresh_chunks = 0; // of those, CONTENT-column chunks
         std::size_t total_chunks = 0; // chunks the image references
@@ -4087,8 +4121,13 @@ public:
         if (is_content_column_(#c))                                                                \
             content_fresh += f;                                                                    \
     }
-        AURA_FLATAST_COW_COLUMNS(AURA_4772_CAP)
-        AURA_FLATAST_COW_MAPS(AURA_4772_CAP)
+        {
+            // Issue #4792: define_ver_ is in the column list; hold its leaf
+            // lock across the capture so a concurrent mint cannot tear it.
+            std::shared_lock<std::shared_mutex> vlock(define_ver_mtx_.mutable_get());
+            AURA_FLATAST_COW_COLUMNS(AURA_4772_CAP)
+            AURA_FLATAST_COW_MAPS(AURA_4772_CAP)
+        }
 #undef AURA_4772_CAP
         {
             std::unique_lock<std::shared_mutex> wlock(subtree_gen_mtx_.mutable_get());
@@ -4114,8 +4153,11 @@ public:
             return;
         const Image* base = image_base_.get();
 #define AURA_4772_RST(c) c.restore_from(img->c, base ? &base->c : nullptr);
-        AURA_FLATAST_COW_COLUMNS(AURA_4772_RST)
-        AURA_FLATAST_COW_MAPS(AURA_4772_RST)
+        {
+            std::unique_lock<std::shared_mutex> vlock(define_ver_mtx_.mutable_get());
+            AURA_FLATAST_COW_COLUMNS(AURA_4772_RST)
+            AURA_FLATAST_COW_MAPS(AURA_4772_RST)
+        }
 #undef AURA_4772_RST
         copy_scalars_from_(*img->shell);
         finish_wholesale_assign_();
@@ -5185,6 +5227,8 @@ public:
         const bool was_linear = id < tag_.size() && is_linear_op_tag(tag_[id]) &&
                                 id < node_gen_.size() && node_gen_[id] != 0;
         tag_[id] = tag;
+        if (tag == NodeTag::Define)
+            mint_define_ver(id); // Issue #4792
         const bool now_linear = is_linear_op_tag(tag);
         if (was_linear && !now_linear)
             linear_ops_live_.fetch_sub(1, std::memory_order_relaxed);
@@ -10002,6 +10046,35 @@ public:
                               const_cast<std::uint32_t&>(std::as_const(subtree_gen_)[top]))
                               .load(std::memory_order_acquire);
         return static_cast<std::uint16_t>(word & 0xFFFFu);
+    }
+    // Issue #4792: mint a fresh content version for the Define at `top`.
+    // Called on every content write scoped to the define and at Define
+    // birth (fresh slot, recycled slot, tag change to Define).
+    void mint_define_ver(NodeId top) noexcept {
+        if (top == NULL_NODE)
+            return;
+        const auto v = define_ver_mint_.fetch_add(1, std::memory_order_relaxed) + 1;
+        try {
+            std::unique_lock<std::shared_mutex> vlock(define_ver_mtx_.mutable_get());
+            if (define_ver_.size() <= static_cast<std::size_t>(top))
+                define_ver_.resize(static_cast<std::size_t>(top) + 1, 0);
+            define_ver_[top] = v;
+        } catch (...) {
+            // [SILENCE-PRIM-#615] OOM growing the cell column: the cell
+            // stays absent (= 0 = unknown), which the restore diff treats
+            // as changed — degraded, never unsound.
+        }
+    }
+    void clear_define_ver(NodeId id) noexcept {
+        std::unique_lock<std::shared_mutex> vlock(define_ver_mtx_.mutable_get());
+        if (id != NULL_NODE && id < define_ver_.size() && std::as_const(define_ver_)[id] != 0)
+            define_ver_[id] = 0;
+    }
+    [[nodiscard]] std::uint64_t load_define_ver(NodeId top) const noexcept {
+        std::shared_lock<std::shared_mutex> vlock(define_ver_mtx_.mutable_get());
+        if (top == NULL_NODE || top >= define_ver_.size())
+            return 0;
+        return std::as_const(define_ver_)[top];
     }
     void store_subtree_gen(NodeId top, std::uint16_t gen) noexcept {
         // Caller holds exclusive subtree_gen_mtx_ (or has unique ownership).
