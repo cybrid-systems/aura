@@ -1,0 +1,58 @@
+;; Issue #4816 stress: many explicit (gc-heap) safepoint collections
+;; interleaved with allocation, closures, parallel-intend batches whose
+;; thunks call gc-heap concurrently, and fiber:spawn bodies. Live data must
+;; stay intact and the process must not crash (#4812 class).
+;; expect: gc-heap-safepoint-stress-4816 ok
+
+(require "std/test" all:)
+
+(define (sum-list xs) (let loop ((xs xs) (acc 0)) (if (null? xs) acc (loop (cdr xs) (+ acc (car xs))))))
+(define (build n) (let loop ((i 0) (acc '())) (if (< i n) (loop (+ i 1) (cons i acc)) acc)))
+(define anchor (build 2000))
+(define table (make-hash))
+(define (check-anchor) (= (sum-list anchor) 1999000))
+
+;; Sequential: 200 rounds of garbage + gc-heap + live checks.
+(define (round i)
+  (let ((g (build 200)) (s (string-append "s" (number->string i))))
+    (hash-set! table s (list i (vector i)))
+    (gc-heap)
+    (and (= (sum-list g) 19900) (check-anchor)
+         (equal? (hash-ref table s #f) (list i (vector i))))))
+(define seq-ok
+  (let loop ((i 0) (ok #t)) (if (< i 200) (loop (+ i 1) (and ok (round i))) ok)))
+(assert seq-ok "sequential gc-heap rounds keep live data")
+(assert (= (hash-length table) 200) "table keeps all entries")
+
+;; Parallel: thunks allocate and call gc-heap while siblings run.
+(define (worker k)
+  (lambda ()
+    (let loop ((i 0) (acc 0))
+      (if (< i 30)
+          (let ((xs (build 50)))
+            (gc-heap)
+            (loop (+ i 1) (+ acc (sum-list xs))))
+          (list k acc)))))
+(define (batch-ok?)
+  (let* ((r (parallel-intend (vector (worker 0) (worker 1) (worker 2) (worker 3))
+                             :max-concurrency 4 :timeout-ms 60000 :fail-fast #f :collect-errors #t))
+         (vals (vector-map (lambda (x) (hash-ref x "value" #f)) (hash-ref r "results" (vector)))))
+    (and (= (hash-ref r "ok-count" -1) 4)
+         (equal? vals (vector (list 0 36750) (list 1 36750) (list 2 36750) (list 3 36750))))))
+(define par-ok (let loop ((i 0) (ok #t)) (if (< i 5) (loop (+ i 1) (and ok (batch-ok?))) ok)))
+(assert par-ok "parallel gc-heap batches return intact results")
+
+;; fiber:spawn bodies calling gc-heap.
+(define fib-ok
+  (let loop ((i 0) (ok #t))
+    (if (< i 20)
+        (loop (+ i 1)
+              (and ok (equal? (fiber:join (fiber:spawn (lambda () (gc-heap) (list i (sum-list (build 10))))))
+                              (list i 45))))
+        ok)))
+(assert fib-ok "fiber:spawn + gc-heap results intact")
+
+(gc-heap)
+(assert (check-anchor) "anchor survives the stress")
+(assert (= (hash-ref (stats:get "gc-heap-stats") "resets" -1) 0) "no destructive reset")
+(display "gc-heap-safepoint-stress-4816 ok\n")

@@ -9,9 +9,10 @@
 ;   query:parallel-orch-stats + query:ai-closedloop-readiness-stats
 ;
 ; Issue #4811: runs under --serve-async (the whole file is one exec
-; request). Only there is (gc-heap) a real collection; under --load it is
-; the destructive Soft reset (#4449, design #4816) and inside a batch
-; thunk it is refused (#4812).
+; request), which exercises the scheduler's collector (g_gc_collect).
+; Issue #4816: under --load (gc-heap) is a real safepoint collection too,
+; so this file also passes there (`aura --load` this file); the --load
+; stress companion is tests/suite/gc_heap_safepoint_stress_4816.aura.
 ;
 ; Run:
 ;   ./build.py test suite   # the marker below selects serve-async
