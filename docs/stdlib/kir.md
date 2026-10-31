@@ -179,3 +179,27 @@ and sessions.
   - `cbuild-clear!` empties the cache.
   - `cbuild-disk-stats` and `cbuild-entries` report the cache's size and
     contents.
+
+### Per-function incremental builds (`std/kir-build`)
+
+```scheme
+(require "std/kir-build" all:)
+(define r (kir-build! m))              ; [flags "-O2 -fPIC"] [link 'so | 'exe | #f]
+(cdr (assoc "lib" r))                  ; linked shared library
+(cdr (assoc "rebuilt" r))              ; items compiled in this call
+(cdr (assoc "reused" r))               ; items served from the cache
+(kir-rebuild-set old-m new-m)          ; what an edit will recompile
+```
+
+Each module item is compiled as its own translation unit, made of the
+includes, the prototypes of the item's callees, and `kir->c` of the item. The
+object goes through `std/cbuild`.
+
+- Editing a function body changes only that function's unit, so only that
+  function is recompiled.
+- Changing a function's signature also changes the units of its callers, so
+  `kir-rebuild-set` returns the item plus its `kir-dependents`.
+- Lowering is memoised in-process on the item datum and its callee prototypes,
+  so unchanged items are not re-checked or re-lowered.
+- A new process starts with an empty memo, but its objects still come from the
+  disk cache.

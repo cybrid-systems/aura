@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**80** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**81** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -45,6 +45,7 @@
 | `std/io` | `file-exists?` `file-size` `file-copy` `file-delete` `file-read` `file-write` `file->string` `string->file` … (+2) | Aura standard I/O library |
 | `std/iter` | `;;` `List` `operations` `any?` `every?` `find` `find-index` `count` … (+24) | iter.aura — Iterator and collection utilities |
 | `std/json` | `json-stringify` `json-escape` `json-value` `c2s` `json-arr-items` `json-obj-items` | Aura JSON library -- product names over C++ hot-path prims (#1440). |
+| `std/kir-build` | `kir-build!` `kir-item-unit` `kir-rebuild-set` `kir-build-memo-stats` `kir-build-memo-clear!` | kir-build.aura — per-function incremental native builds for std/kir modules (Issue #4803) |
 | `std/kir-gpu` | `kir-gpu-check` `kir->cuda` `kir->cuda-unit` `kir->ptx` `kir->triton` `kir-float-text` | kir-gpu.aura — GPU 后端：CUDA C / PTX / Triton（Issue #4802 第三阶段） |
 | `std/kir-sched` | `kir-with-body` `kir-find-loop` `kir-split` `kir-reorder` `kir-tile` `kir-unroll` `kir-vectorize` `kir-sched-apply` … (+1) | kir-sched.aura — 调度变换 = kernel IR 上的 AST 重写（Issue #4802） |
 | `std/kir` | `kir-name` `kir-head` `kir-items` `kir-find` `kir-ty` `kir-params` `kir-body` `kir-ret` … (+19) | kir.aura — 类型化 kernel IR（Issue #4802 第二阶段） |
