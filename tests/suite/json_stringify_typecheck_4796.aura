@@ -1,0 +1,48 @@
+; Issue #4796 — json-stringify / json-value are std/json defines, not engine
+; primitives. The type checker used to register them globally, so a
+; post-mutate typecheck accepted (json-stringify x) without
+; (require "std/json") and the call then failed at runtime with
+; "unbound variable". The stale registrations are gone: without the module
+; the name is rejected up front, matching the runtime.
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+(define (rebind name body label)
+  (try (mutate:rebind name body label) (catch (e) (list "raised" e))))
+(define (string-has? s sub)
+  (let loop ((i 0))
+    (cond ((> (+ i (string-length sub)) (string-length s)) #f)
+          ((equal? (substring s i (+ i (string-length sub))) sub) #t)
+          (else (loop (+ i 1))))))
+
+; builtin json-encode is always available
+(assert! (equal? (json-encode (list 1 2)) "[1,2]") "json-encode builtin")
+
+; without std/json: rebind body naming json-stringify is rejected by the
+; typechecker (consistent with the runtime), not accepted then unbound later
+(set-code "(define (enc4796 x) (json-encode x))")
+(eval-current)
+(let ((r (rebind "enc4796" "(lambda (x) (json-stringify x))" "no-require")))
+  (if (eq? r #t) (begin (display "    got: ") (write r) (newline)))
+  (assert! (and (pair? r) (equal? (car r) "mutation-failed")) "json-stringify rejected without std/json")
+  (assert! (and (pair? r) (string? (cadr r)) (string-has? (cadr r) "json-stringify"))
+           "rejection names json-stringify"))
+(assert! (equal? (enc4796 (list 3)) "[3]") "original binding kept after reject")
+
+; The std/json alias itself (after require) is covered by
+; tests/suite/stdlib_surface.aura. This file must NOT require std/json:
+; --load hoists module requires, which would bind the alias up front.
+(assert! (equal? (try (json-stringify 1) (catch (e) "unbound")) "unbound")
+         "json-stringify unbound at runtime without std/json")
+
+(if (= *fails* 0)
+    (begin (display "OK-4796 json-stringify typecheck") (newline))
+    (begin (display "FAIL-4796") (newline) (unbound-4796-force-fail)))
