@@ -31,6 +31,9 @@ namespace aura::compiler::primitives_detail {
 using EvalValue = types::EvalValue;
 using PrimRegistrar = std::function<void(std::string, PrimFn)>;
 
+// Issue #4812: fiber body on this thread (evaluator_primitives_messaging.cpp).
+std::int64_t fiber_body_id_4778() noexcept;
+
 // Issue #918 Phase 1: explicit using-declarations (no `using namespace`).
 using types::as_bool;
 using types::as_cell_id;
@@ -245,6 +248,22 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         if (aura::messaging::g_gc_collect) {
             std::lock_guard<std::mutex> lock(ev.heap_mutex());
             return types::make_bool(aura::messaging::g_gc_collect());
+        }
+        // Issue #4812: inside a fiber (a parallel-intend task on its
+        // scheduler, or a fiber:spawn body on the CLI thread backend) the
+        // caller still holds indices into the heaps the direct clear tears
+        // down (batch result hash, AuraShared values, the joiner's env
+        // frames), and the thread-backend body races the main thread on
+        // them. Resuming after the clear dereferenced them (SIGSEGV).
+        // Refuse with a typed error and no side effects; a top-level form
+        // under --load keeps the Soft reset.
+        if (Evaluator::get_current_fiber() != nullptr || fiber_body_id_4778() != 0) {
+            const auto cidx = ev.push_string_heap(
+                "gc-heap: destructive heap reset refused inside a fiber (no live collector "
+                "under --load; run under --serve-async for a real collection; Issue #4812)");
+            const auto eidx = ev.error_values_.size();
+            ev.error_values_.push_back(types::make_string(cidx));
+            return types::make_error(eidx);
         }
         // Fallback: direct clear (stdin mode)
         // Issue #1993 (D-001): hold heap_mutex_ + module_mtx_ +
