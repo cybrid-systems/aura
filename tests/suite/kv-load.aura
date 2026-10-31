@@ -1,6 +1,6 @@
 ;; ── kv-load.aura — 验证 (load) 路径跨文件闭包绑定 ──
 ;; 验证多个 (load) 调用之间 define 能正确持久化和访问。
-(load "projects/kv/kv.aura")
+(load "tests/fixtures/kv/kv.aura")
 
 (define (run-tests)
   (define passed 0)
