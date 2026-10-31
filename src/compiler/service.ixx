@@ -12599,22 +12599,46 @@ public:
             flat, pool, arena_, cache_ptr, nullptr, &evaluator_.primitives(), cache_bridge_ptr,
             cache_strings_ptr, nullptr, &type_registry_, value_cells_for_lowering());
 
-        aura::compiler::IRContext ctx(evaluator_.primitives(), &type_registry_, &metrics_,
-                                      &evaluator_);
-        aura::compiler::IRInterpreter interp(ir_mod, ctx);
+        // Issue #4815: the value can hold closures this run mints - e.g.
+        // (define t (mk 7)) or a vector of (mk i) results. They live in the
+        // interpreter's runtime_closures_, so a stack-local interpreter left
+        // the bound value pointing at ids nobody owns once this function
+        // returned; the next top-level form (serve-async evaluates an exec
+        // one form at a time, #4702) then failed with "invalid closure"
+        // and parallel-intend reported every such task as apply-failed.
+        // Run on a heap binding that mints from the shared id source
+        // (#4357 / #4764) and keep it alive while it owns closures, so
+        // dispatch_ir_define_closure can route those ids back to it.
+        auto binding = std::make_shared<IRDefineEnvBinding>(
+            std::move(ir_mod), evaluator_.primitives(), &type_registry_, &metrics_, &evaluator_);
+        binding->interpreter =
+            std::make_unique<aura::compiler::IRInterpreter>(binding->module, binding->context);
+        if (!types::is_ir_closure_id(next_ir_define_closure_id_.load(std::memory_order_acquire)))
+            next_ir_define_closure_id_.store(types::make_ir_closure_id(0),
+                                             std::memory_order_release);
+        binding->interpreter->set_next_closure_id(
+            next_ir_define_closure_id_.load(std::memory_order_acquire));
+        binding->interpreter->set_shared_closure_cursor(&next_ir_define_closure_id_);
         // Issue #4747: never run a body under the cache gate (see the note at
         // the gate declaration). A nested dispatch inside this run takes the
         // gate itself, and a sibling body may be inside exec_mtx waiting for
         // it - holding both is the inversion.
         if (ir_gate.owns_lock())
             ir_gate.unlock();
-        auto result = interp.execute();
+        auto result = binding->interpreter->execute();
         relock_ir_gate_(ir_gate); // #4765
+        publish_ir_closure_cursor_(binding->interpreter->next_closure_id());
         if (!result)
             return false;
 
         auto ci = bind_define_value_in_env(name_str, *result);
         ir_value_cell_bindings_[name_str] = ci;
+        // Issue #4815: one live owner per name; a re-define replaces it, so
+        // its old closures deny like any superseded binding (#4349).
+        if (binding->interpreter->closure_count() > 0)
+            ir_value_define_closure_owners_[name_str] = std::move(binding);
+        else
+            ir_value_define_closure_owners_.erase(name_str);
         metrics_.value_define_ir_env_bind_count.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
@@ -13650,6 +13674,23 @@ public:
                     ir_gate.unlock();
                 types::EvalValue out{};
                 const auto ran = run_pinned_ir_closure_(pinned, cid, args, 1, &out);
+                relock_ir_gate_(ir_gate); // #4765
+                if (ran == PinnedRun4717::Ok)
+                    return out;
+                if (ran == PinnedRun4717::Failed)
+                    return std::nullopt;
+            }
+            // Issue #4815: a closure a top-level VALUE define minted while
+            // computing its value (bind_value_define_via_ir keeps that
+            // interpreter alive while it owns closures).
+            for (auto& kv : ir_value_define_closure_owners_) {
+                if (!kv.second || !kv.second->interpreter)
+                    continue;
+                const std::shared_ptr<IRDefineEnvBinding> pinned = kv.second;
+                if (ir_gate.owns_lock())
+                    ir_gate.unlock();
+                types::EvalValue out{};
+                const auto ran = run_value_define_closure_4815_(pinned, cid, args, &out);
                 relock_ir_gate_(ir_gate); // #4765
                 if (ran == PinnedRun4717::Ok)
                     return out;
@@ -17479,6 +17520,35 @@ private:
     }
 
 
+    // Issue #4815: run a closure owned by a retained value-define
+    // interpreter (see bind_value_define_via_ir). Same locking as
+    // run_pinned_ir_closure_ (exec_mtx, IR cache gate released by caller).
+    PinnedRun4717 run_value_define_closure_4815_(const std::shared_ptr<IRDefineEnvBinding>& b,
+                                                 ClosureId cid,
+                                                 std::span<const types::EvalValue> args,
+                                                 types::EvalValue* out) {
+        if (!b || !b->interpreter)
+            return PinnedRun4717::Failed;
+        auto* interp = b->interpreter.get();
+        ExecRunLock4765 exec(b->exec_mtx);
+        ExecMutexWaitPublishScope exec_wait_publish(b->exec_mtx);
+        const auto ucid = static_cast<std::uint64_t>(cid);
+        if (!interp->owns_runtime_closure(ucid))
+            return PinnedRun4717::NotMinted;
+        interp->set_next_closure_id(next_ir_define_closure_id_.load(std::memory_order_acquire));
+        auto r = interp->call_closure(ucid, args);
+        publish_ir_closure_cursor_(interp->next_closure_id());
+        if (!r)
+            return PinnedRun4717::Failed;
+        *out = *r;
+        return PinnedRun4717::Ok;
+    }
+    // Issue #4815: value define name -> the interpreter that minted the
+    // closures its value holds. Guarded by ir_cache_gate_.
+    std::unordered_map<std::string, std::shared_ptr<IRDefineEnvBinding>,
+                       aura::core::TransparentStringHash, std::equal_to<>>
+        ir_value_define_closure_owners_;
+
     // Source code for each cached function, used for re-lowering on dependency changes.
     std::unordered_map<std::string, std::string, aura::core::TransparentStringHash, std::equal_to<>>
         function_sources_;
@@ -19813,6 +19883,15 @@ public:
             binding->interpreter->collect_active_gc_roots(out.compiler_closure_roots,
                                                           current_epoch);
         }
+        // Issue #4815: retained value-define interpreters own live closures.
+        for (auto& [name, binding] : ir_value_define_closure_owners_) {
+            (void)name;
+            if (!binding || !binding->interpreter)
+                continue;
+            ExecUnderGate4765 exec(binding->exec_mtx); // #4765
+            binding->interpreter->collect_active_gc_roots(out.compiler_closure_roots,
+                                                          current_epoch);
+        }
 
         std::vector<std::int64_t> tw_cl;
         std::vector<std::int64_t> tw_env;
@@ -20601,40 +20680,42 @@ public:
         // and returned void. Soft path: restamp bridge/env epochs when the
         // IR func_id is still in-module so helpers keep working. Hard clear
         // only when there is no IR function left (OOB func_id).
-        for (auto& [bname, binding] : ir_define_env_bindings_) {
-            (void)bname;
-            if (!binding || !binding->interpreter)
-                continue;
-            // Issue #4717: serialize the interpreter's mutable execution state
-            // against a body running on a sibling fiber (exec_mtx; taken under
-            // the cache gate, and the gate is never taken while holding it).
-            ExecUnderGate4765 exec(binding->exec_mtx); // #4765
-            binding->interpreter->walk_runtime_closures([&]([[maybe_unused]] std::uint64_t cid,
-                                                            IRClosure& cl) {
-                // Skip unstamped (legacy) and already-current stamps.
-                if (cl.bridge_epoch == 0 || cl.bridge_epoch == cur_epoch)
-                    return;
-                // Soft recover: keep IR dispatch alive when func is still present.
-                if (cl.func_id < binding->module.functions.size()) {
-                    cl.bridge_epoch = cur_epoch;
-                    cl.env_version = evaluator_.defuse_version();
-                    metrics_.live_closure_epoch_restamp_total.fetch_add(1,
-                                                                        std::memory_order_relaxed);
-                    return;
-                }
-                cl.flat.reset();
-                cl.pool.reset();
-                cl.body_id = aura::ast::NULL_NODE;
-                cl.env_version = 0;
-                ++ir_expired;
-                metrics_.jit_hotswap_forced_deopt_total.fetch_add(1, std::memory_order_relaxed);
-                metrics_.ir_closure_invalidate_expired_total.fetch_add(1,
-                                                                       std::memory_order_relaxed);
-                metrics_.jit_hotswap_epoch_mismatch_prevented_total.fetch_add(
-                    1, std::memory_order_relaxed);
-                metrics_.dangling_env_prevented.fetch_add(1, std::memory_order_relaxed);
-            });
-        }
+        // Issue #4815: also the retained value-define interpreters.
+        for (auto* bindings_map : {&ir_define_env_bindings_, &ir_value_define_closure_owners_})
+            for (auto& [bname, binding] : *bindings_map) {
+                (void)bname;
+                if (!binding || !binding->interpreter)
+                    continue;
+                // Issue #4717: serialize the interpreter's mutable execution state
+                // against a body running on a sibling fiber (exec_mtx; taken under
+                // the cache gate, and the gate is never taken while holding it).
+                ExecUnderGate4765 exec(binding->exec_mtx); // #4765
+                binding->interpreter->walk_runtime_closures([&]([[maybe_unused]] std::uint64_t cid,
+                                                                IRClosure& cl) {
+                    // Skip unstamped (legacy) and already-current stamps.
+                    if (cl.bridge_epoch == 0 || cl.bridge_epoch == cur_epoch)
+                        return;
+                    // Soft recover: keep IR dispatch alive when func is still present.
+                    if (cl.func_id < binding->module.functions.size()) {
+                        cl.bridge_epoch = cur_epoch;
+                        cl.env_version = evaluator_.defuse_version();
+                        metrics_.live_closure_epoch_restamp_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        return;
+                    }
+                    cl.flat.reset();
+                    cl.pool.reset();
+                    cl.body_id = aura::ast::NULL_NODE;
+                    cl.env_version = 0;
+                    ++ir_expired;
+                    metrics_.jit_hotswap_forced_deopt_total.fetch_add(1, std::memory_order_relaxed);
+                    metrics_.ir_closure_invalidate_expired_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    metrics_.jit_hotswap_epoch_mismatch_prevented_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    metrics_.dangling_env_prevented.fetch_add(1, std::memory_order_relaxed);
+                });
+            }
         if (ir_expired > 0)
             metrics_.expire_stale_ir_closures_total.fetch_add(ir_expired,
                                                               std::memory_order_relaxed);
@@ -20698,25 +20779,27 @@ public:
         if (!remap || n == 0)
             return;
         constexpr auto kNull = std::numeric_limits<std::uint32_t>::max();
-        for (auto& [name, binding] : ir_define_env_bindings_) {
-            (void)name;
-            if (!binding || !binding->interpreter)
-                continue;
-            // Issue #4717: serialize the interpreter's mutable execution state
-            // against a body running on a sibling fiber (exec_mtx; taken under
-            // the cache gate, and the gate is never taken while holding it).
-            ExecUnderGate4765 exec(binding->exec_mtx); // #4765
-            binding->interpreter->walk_runtime_closures(
-                [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) {
-                    if (cl.env_id == kNull || static_cast<std::size_t>(cl.env_id) >= n)
-                        return;
-                    const auto np = remap[cl.env_id];
-                    if (np >= 0)
-                        cl.env_id = static_cast<std::uint32_t>(np);
-                    else
-                        cl.env_id = kNull;
-                });
-        }
+        // Issue #4815: also the retained value-define interpreters.
+        for (auto* bindings_map : {&ir_define_env_bindings_, &ir_value_define_closure_owners_})
+            for (auto& [name, binding] : *bindings_map) {
+                (void)name;
+                if (!binding || !binding->interpreter)
+                    continue;
+                // Issue #4717: serialize the interpreter's mutable execution state
+                // against a body running on a sibling fiber (exec_mtx; taken under
+                // the cache gate, and the gate is never taken while holding it).
+                ExecUnderGate4765 exec(binding->exec_mtx); // #4765
+                binding->interpreter->walk_runtime_closures(
+                    [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) {
+                        if (cl.env_id == kNull || static_cast<std::size_t>(cl.env_id) >= n)
+                            return;
+                        const auto np = remap[cl.env_id];
+                        if (np >= 0)
+                            cl.env_id = static_cast<std::uint32_t>(np);
+                        else
+                            cl.env_id = kNull;
+                    });
+            }
     }
 
     // Issue #1526: restamp IRClosure::bridge_epoch after dual-epoch bump.
@@ -20724,22 +20807,24 @@ public:
     std::size_t restamp_ir_closure_bridge_epochs_(std::uint64_t new_epoch) {
         IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
         std::size_t n = 0;
-        for (auto& [name, binding] : ir_define_env_bindings_) {
-            (void)name;
-            if (!binding || !binding->interpreter)
-                continue;
-            // Issue #4717: serialize the interpreter's mutable execution state
-            // against a body running on a sibling fiber (exec_mtx; taken under
-            // the cache gate, and the gate is never taken while holding it).
-            ExecUnderGate4765 exec(binding->exec_mtx); // #4765
-            binding->interpreter->walk_runtime_closures(
-                [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) {
-                    if (cl.bridge_epoch != 0) {
-                        cl.bridge_epoch = new_epoch;
-                        ++n;
-                    }
-                });
-        }
+        // Issue #4815: also the retained value-define interpreters.
+        for (auto* bindings_map : {&ir_define_env_bindings_, &ir_value_define_closure_owners_})
+            for (auto& [name, binding] : *bindings_map) {
+                (void)name;
+                if (!binding || !binding->interpreter)
+                    continue;
+                // Issue #4717: serialize the interpreter's mutable execution state
+                // against a body running on a sibling fiber (exec_mtx; taken under
+                // the cache gate, and the gate is never taken while holding it).
+                ExecUnderGate4765 exec(binding->exec_mtx); // #4765
+                binding->interpreter->walk_runtime_closures(
+                    [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) {
+                        if (cl.bridge_epoch != 0) {
+                            cl.bridge_epoch = new_epoch;
+                            ++n;
+                        }
+                    });
+            }
         return n;
     }
 

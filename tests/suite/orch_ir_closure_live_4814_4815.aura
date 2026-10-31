@@ -1,0 +1,31 @@
+;; Issue #4814: parallel-intend's liveness pre-check rejected closures
+;; minted by the IR interpreter (a bound define returning a lambda) as
+;; "closure-freed". Issue #4815: a top-level VALUE define whose value holds
+;; such closures ran on a stack-local IR interpreter, so the next top-level
+;; form called ids nobody owned ("invalid closure", apply-failed). serve-async
+;; evaluates an exec one top-level form at a time (#4702), which is the
+;; shape that exposed both.
+;; suite-mode: serve-async
+;; expect: orch-ir-closure-live ok
+
+(require "std/test" all:)
+
+(define (mk-id i) (lambda () i))
+;; #4814: inline IR closures handed straight to a batch.
+(define a (hash-ref (parallel-intend (vector (mk-id 0) (mk-id 1) (mk-id 2))
+                                     :max-concurrency 8 :timeout-ms 5000 :fail-fast #f)
+                    "ok-count" -1))
+;; #4815: closures held by value defines, used by later forms.
+(define t (mk-id 7))
+(define tv (vector (mk-id 10) (mk-id 11) (mk-id 12)))
+(define direct (list (t) ((vector-ref tv 2))))
+(define b (hash-ref (parallel-intend tv :max-concurrency 8 :timeout-ms 5000 :fail-fast #f)
+                    "ok-count" -1))
+(define c (fiber:join (fiber:spawn t)))
+;; A re-define replaces the owner; the new value works.
+(define t (mk-id 8))
+(define d (t))
+(display (list a direct b c d)) (newline)
+(if (and (= a 3) (equal? direct (list 7 12)) (= b 3) (= c 7) (= d 8))
+    (display "orch-ir-closure-live ok\n")
+    (assert #f "IR closures in value defines must stay callable (#4814/#4815)"))
