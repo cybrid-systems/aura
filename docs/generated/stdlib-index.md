@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**78** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**79** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -44,8 +44,9 @@
 | `std/io` | `file-exists?` `file-size` `file-copy` `file-delete` `file-read` `file-write` `file->string` `string->file` … (+2) | Aura standard I/O library |
 | `std/iter` | `;;` `List` `operations` `any?` `every?` `find` `find-index` `count` … (+24) | iter.aura — Iterator and collection utilities |
 | `std/json` | `json-stringify` `json-escape` `json-value` `c2s` `json-arr-items` `json-obj-items` | Aura JSON library -- product names over C++ hot-path prims (#1440). |
+| `std/kir-gpu` | `kir-gpu-check` `kir->cuda` `kir->cuda-unit` `kir->ptx` `kir->triton` `kir-float-text` | kir-gpu.aura — GPU 后端：CUDA C / PTX / Triton（Issue #4802 第三阶段） |
 | `std/kir-sched` | `kir-with-body` `kir-find-loop` `kir-split` `kir-reorder` `kir-tile` `kir-unroll` `kir-vectorize` `kir-sched-apply` … (+1) | kir-sched.aura — 调度变换 = kernel IR 上的 AST 重写（Issue #4802） |
-| `std/kir` | `kir-name` `kir-head` `kir-items` `kir-find` `kir-ty` `kir-params` `kir-body` `kir-ret` … (+15) | kir.aura — 类型化 kernel IR（Issue #4802 第二阶段） |
+| `std/kir` | `kir-name` `kir-head` `kir-items` `kir-find` `kir-ty` `kir-params` `kir-body` `kir-ret` … (+19) | kir.aura — 类型化 kernel IR（Issue #4802 第二阶段） |
 | `std/list` | `foldr` `foldl` `map` `for-each` `member?` `zip` `zip3` `take` … (+28) | Aura standard list library |
 | `std/llm` | `aura-llm-call` `aura-verify` `llm:rate-limit-set!` `llm:rate-limit-remaining` `llm:call-sandboxed` `llm:register-template` `llm:list-templates` `llm:apply-template` … (+7) | Aura std/llm — LLM 交互模块 (Issue #929 + #1551 production safety) |
 | `std/math` | `;` `Constants` `pi` `e` `phi` `tau` `Basic` `square` … (+53) | Aura standard math library |

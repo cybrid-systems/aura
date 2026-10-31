@@ -62,6 +62,14 @@
                              (let s f32 (f32 0)) (simd-for (i 0 n) (+= s (ref x i))) (set (ref o 0) s))))
         "simd-for += reduction accepted")
 
+(check! (null? (kir-check '(kernel k7 (params (o (ptr f32) :out) (n i64))
+                             (pfor (i 0 n) (set (ref o i) (f32 1))) (set (ref o 0) (f32 2)))))
+        "statements after the pfor are sequential again")
+(check! (string-has? (kir->c '(kernel k8 (params (x (ptr i32) :in) (b (ptr bool) :out) (n i64))
+                                (pfor (i 0 n) (set (ref b i) (and (> (ref x i) 0) (not (== (ref x i) 3)))))))
+                     "b[i] = ((x[i] > 0) && (!(x[i] == 3)));")
+        "and / not lower to && / !")
+
 ; ---- module, funcs, call graph ---------------------------------------------
 (define m
   '(module mm
