@@ -10151,6 +10151,9 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         return hn == "require" || hn == "import";
                     };
                     std::vector<std::pair<std::string, aura::ast::NodeId>> letrec_defs;
+                    // Issue #4818: source position of each letrec_defs entry,
+                    // so a deferred Phase 0 require runs back in source order.
+                    std::vector<std::size_t> letrec_idx;
                     bool has_multiple_defs = false;
                     bool define_after_expr = false;
                     int define_count = 0;
@@ -10181,6 +10184,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             const auto dch = f->children(cid);
                             letrec_defs.push_back({std::string(p->resolve(f->sym_id(cid))),
                                                    dch.empty() ? aura::ast::NULL_NODE : dch[0]});
+                            letrec_idx.push_back(i);
                         } else if (!is_module_prologue(f->get(cid))) {
                             // Real body expr (not export/require/import).
                             saw_non_define = true;
@@ -10201,6 +10205,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         define_count = 0;
                         saw_non_define = false;
                         letrec_defs.clear();
+                        letrec_idx.clear();
                         for (std::size_t ci = 0; ci < count; ++ci) {
                             auto cid = v.child(ci);
                             if (cid == aura::ast::NULL_NODE)
@@ -10217,6 +10222,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 letrec_defs.push_back(
                                     {std::string(p->resolve(f->sym_id(cid))),
                                      dch.empty() ? aura::ast::NULL_NODE : dch[0]});
+                                letrec_idx.push_back(ci);
                             } else if (!is_module_prologue(f->get(cid))) {
                                 saw_non_define = true;
                             }
@@ -10229,6 +10235,40 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         // lambda free-var capture, and (export …) records
                         // the API set. Independent of textual order among
                         // prologue forms and defines.
+                        //
+                        // Issue #4818: hoisting is for bindings that already
+                        // exist. A require whose module path does not resolve
+                        // yet (the file is written by an earlier form of this
+                        // body: write-file in a define RHS or a body expr)
+                        // gains nothing from running first. Such a resolve
+                        // miss is deferred, not reported: the require runs
+                        // again at its source position, after the forms
+                        // before it, and a real miss still fails there. Any
+                        // other failure (deny, parse error) stops here as before.
+                        std::vector<std::pair<std::size_t, aura::ast::NodeId>> deferred_requires;
+                        auto phase0_resolve_miss = [&](aura::ast::NodeId cid,
+                                                       const EvalResult& r) -> bool {
+                            if (r && !(is_error(*r) && !is_string(*r)))
+                                return false;
+                            const auto nv = f->get(cid);
+                            if (nv.tag != aura::ast::NodeTag::Call)
+                                return false;
+                            const std::string& why =
+                                r ? last_module_load_failure_ : r.error().message;
+                            constexpr std::string_view kMiss = "cannot resolve '";
+                            for (std::size_t ci = 1; ci < nv.children.size(); ++ci) {
+                                auto av = f->get(nv.child(ci));
+                                if (av.tag != aura::ast::NodeTag::LiteralString &&
+                                    av.tag != aura::ast::NodeTag::Variable)
+                                    continue;
+                                auto name = std::string(p->resolve(av.sym_id));
+                                if (name == "all:" || name.empty())
+                                    continue;
+                                if (why.find(std::string(kMiss) + name) != std::string::npos)
+                                    return true;
+                            }
+                            return false;
+                        };
                         for (std::size_t i = 0; i < count; ++i) {
                             auto cid = v.child(i);
                             if (cid == aura::ast::NULL_NODE)
@@ -10239,10 +10279,30 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 continue;
                             if (!is_module_prologue(f->get(cid)))
                                 continue;
-                            auto r = finish_child(eval_flat(*f, *p, cid, eval_env), cid);
+                            last_module_load_failure_.clear();
+                            auto raw = eval_flat(*f, *p, cid, eval_env);
+                            if (ctag == aura::ast::NodeTag::Call && phase0_resolve_miss(cid, raw)) {
+                                last_module_load_failure_.clear();
+                                deferred_requires.push_back({i, cid});
+                                continue;
+                            }
+                            auto r = finish_child(std::move(raw), cid);
                             if (!r || (is_error(*r) && !is_string(*r)))
                                 return r;
                         }
+                        // Issue #4818: run deferred requires whose source
+                        // position is before `upto`, in source order.
+                        std::size_t deferred_next = 0;
+                        auto run_deferred_before = [&](std::size_t upto) -> EvalResult {
+                            while (deferred_next < deferred_requires.size() &&
+                                   deferred_requires[deferred_next].first < upto) {
+                                auto dcid = deferred_requires[deferred_next++].second;
+                                auto r = finish_child(eval_flat(*f, *p, dcid, eval_env), dcid);
+                                if (!r || (is_error(*r) && !is_string(*r)))
+                                    return r;
+                            }
+                            return EvalResult(make_void());
+                        };
                         // Phase 1: pre-allocate cells for all defines
                         // This ensures all function names are visible to each other
                         // (and module private free-vars survive export filtering:
@@ -10409,6 +10469,13 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 continue;
                             if (f->tag(d.second) == aura::ast::NodeTag::Lambda)
                                 continue;
+                            // Issue #4818: a deferred require written before
+                            // this define runs before its value.
+                            if (auto dr = run_deferred_before(letrec_idx[i]);
+                                !dr || (is_error(*dr) && !is_string(*dr))) {
+                                rollback_still_void_defs();
+                                return dr;
+                            }
                             // Issue #4354: bare alias written before the
                             // lambda redefinition captures the pre-group value.
                             if (p && f->tag(d.second) == aura::ast::NodeTag::Variable) {
@@ -10446,11 +10513,31 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 continue;
                             if (f->tag(cid) == aura::ast::NodeTag::Define)
                                 continue;
-                            if (is_module_prologue(f->get(cid)))
-                                continue; // #2766 Phase 0 already ran
+                            if (is_module_prologue(f->get(cid))) {
+                                // #2766 Phase 0 already ran it, unless it was
+                                // deferred (#4818): run it here, in order.
+                                if (auto dr = run_deferred_before(i + 1);
+                                    !dr || (is_error(*dr) && !is_string(*dr)))
+                                    return dr;
+                                continue;
+                            }
+                            if (auto dr = run_deferred_before(i);
+                                !dr || (is_error(*dr) && !is_string(*dr)))
+                                return dr;
                             auto r = finish_child(eval_flat(*f, *p, cid, eval_env), cid);
                             if (!r || (is_error(*r) && !is_string(*r)))
                                 return r;
+                        }
+                        // Issue #4818: deferred requires written before the
+                        // last form (e.g. after only lambda defines) run now;
+                        // a deferred last form runs as the tail form below.
+                        {
+                            std::size_t last_idx = count - 1;
+                            while (last_idx > 0 && v.child(last_idx) != last_expr)
+                                --last_idx;
+                            if (auto dr = run_deferred_before(last_idx);
+                                !dr || (is_error(*dr) && !is_string(*dr)))
+                                return dr;
                         }
                         // TCO: last expression (if last is prologue, re-run is
                         // idempotent for export; require cache-hits).
