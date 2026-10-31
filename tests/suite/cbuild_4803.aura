@@ -76,7 +76,12 @@
 (define exe-path (command-output "readlink /proc/$PPID/exe 2>/dev/null"))
 (if (and (> (string-length exe-path) 0) (= 0 (shell (string-append "test -x " exe-path))))
     (begin
-      (shell (string-append "cd " base " && for i in 1 2 3 4; do " exe-path " --load child.aura > out$i 2>&1 & done; wait"))
+      ; The children run with cwd=base under /tmp, where the cwd-relative
+      ; ./lib and ../lib stdlib fallbacks miss; CI sets no AURA_PATH, so
+      ; every child failed its require and the counter was never written.
+      ; Hand them the lib/ next to this binary's build/ directory.
+      (shell (string-append "cd " base " && AURA_PATH=\"$(dirname " exe-path ")/../lib${AURA_PATH:+:$AURA_PATH}\""
+                            " && export AURA_PATH && for i in 1 2 3 4; do " exe-path " --load child.aura > out$i 2>&1 & done; wait"))
       (check! (equal? (command-output (string-append "wc -l < " counter)) "1") "4 concurrent processes: command ran once")
       (check! (equal? (command-output (string-append "cat " base "/out1 " base "/out2 " base "/out3 " base "/out4 | grep -o '[01]' | sort | tr -d '\\n'"))
                       "0001")
