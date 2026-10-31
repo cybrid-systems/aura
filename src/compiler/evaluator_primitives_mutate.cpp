@@ -4134,12 +4134,22 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ok = false;
             return mev("read-only", "workspace is read-only");
         }
-        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !ev.workspace_flat_ ||
-            !ev.workspace_pool_) {
+        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1])) {
             ok = false;
             return mev(
                 "bad-arg",
                 "usage: (mutate:rebind name new-code-string [summary] [validate: type-name])");
+        }
+        // Issue #4797: a missing workspace is not a usage error. Top-level
+        // defines from a file / -e / --load never populate the live
+        // workspace AST, so a well-formed rebind used to report "bad-arg
+        // usage" and the caller hunted for a wrong argument.
+        if (!ev.workspace_flat_ || !ev.workspace_pool_) {
+            ok = false;
+            return mev("no-workspace",
+                       "no live workspace AST: definitions loaded from a file / -e / --load "
+                       "are not tracked; install them with (set-code \"...\") + "
+                       "(eval-current) before mutate:rebind");
         }
         // Issue #288: optional `validate: <type-name>` 4th arg.
         // When present, run the best-effort schema shape check on

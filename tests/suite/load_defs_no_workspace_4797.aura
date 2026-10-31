@@ -1,0 +1,44 @@
+; Issue #4797 — top-level defines from a file / -e / --load are not the live
+; workspace AST. ast:snapshot keeps its -1 contract (#2966) with an
+; observable :no-workspace reason, and mutate:rebind now reports a
+; dedicated "no-workspace" error instead of a misleading "bad-arg usage".
+; After set-code + eval-current, snapshot / rebind / restore all work.
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+(define (kind r) (if (pair? r) (car r) r))
+
+(define (judge-policy) (list 0.6 0.8))
+
+(assert! (= (ast:snapshot "s0-4797") -1) "snapshot without workspace -> -1")
+(assert! (eq? (ast:snapshot-fail-reason) :no-workspace) "fail reason :no-workspace")
+
+(let ((r (mutate:rebind "judge-policy" "(lambda () (list 1 2))" "evo-1")))
+  (if (not (equal? (kind r) "no-workspace")) (begin (display "    got: ") (write r) (newline)))
+  (assert! (equal? (kind r) "no-workspace") "rebind without workspace -> no-workspace (not bad-arg)"))
+(assert! (equal? (judge-policy) (list 0.6 0.8)) "top-level binding unchanged")
+
+; real argument errors still report bad-arg usage
+(assert! (equal? (kind (mutate:rebind 1 2)) "bad-arg") "non-string args -> bad-arg")
+
+; set-code path: snapshot -> rebind -> restore
+(set-code "(define judge-policy (lambda () (list 0.6 0.8)))")
+(eval-current)
+(define sid (ast:snapshot "s1-4797"))
+(assert! (and (integer? sid) (>= sid 0)) "snapshot after set-code succeeds")
+(assert! (eq? (mutate:rebind "judge-policy" "(lambda () (list 1 2))" "evo-1") #t) "rebind after set-code")
+(assert! (equal? (judge-policy) (list 1 2)) "rebind took effect")
+(ast:restore sid)
+(eval-current)
+(assert! (equal? (judge-policy) (list 0.6 0.8)) "restore brings policy back")
+
+(if (= *fails* 0)
+    (begin (display "OK-4797 load defs no-workspace") (newline))
+    (begin (display "FAIL-4797") (newline) (unbound-4797-force-fail)))
