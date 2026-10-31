@@ -475,10 +475,16 @@ __PREFIX__
         CHECK(ign_got == "ignored:2", "4784 AC2: collect-all flags :max-retries as ignored");
 
         std::println("\n--- #4785 AC1: same-name respawn keeps the queued mailbox backlog ---");
+        // #4785 is the supervisor recovery face: the old body has FINISHED
+        // but its mailbox still holds work. Join it first - this block runs
+        // under production defaults, where respawning a name whose body is
+        // still live is the #4393 name-reuse-while-live deny (pinned by its
+        // own rows), so an unjoined respawn raced the 'idle body.
         const auto mb_got = eval_str(
             R"AURA((define (spawn4785 n) (orch:spawn-agent n (lambda () (quote idle)) :attach-mailbox #t))
 (spawn4785 "risk4785")
 (orch:agent-send "risk4785" "queued-before")
+(orch:agent-join "risk4785")
 (define h2 (spawn4785 "risk4785"))
 (orch:agent-send "risk4785" "queued-after")
 (define m1 (orch:agent-recv "risk4785" :wait #f))

@@ -19,7 +19,8 @@ module;
 // module), so we include it directly here in the module
 // preamble (avoids the import-only restriction on .h).
 #include "observability_metrics.h"
-#include "hash_meta.h" // FNV constants (#901)
+#include "compiler/value_tags.h" // is_ir_closure_id (#4502)
+#include "hash_meta.h"           // FNV constants (#901)
 #include "core/gc_hooks.h"
 #include "security_capabilities.h"
 #include "serve/fiber.h"
@@ -132,7 +133,12 @@ namespace {
         // fails closed (nullopt -> "apply-failed") when the bridge does not
         // own the id either, so defer to it instead of refusing a live
         // closure as "closure-freed".
-        return static_cast<bool>(ev.closure_bridge());
+        // Issue #4816 follow-up: only an IR-namespace id (kClosureIdHighBit,
+        // #4502) can live in runtime_closures_. A tree-walker id that is in
+        // neither closures_ nor the JIT table was freed (closure:free!
+        // erased it): deferring it to the bridge too reported a freed
+        // generator as live and skipped the #1719 freed-during-call count.
+        return types::is_ir_closure_id(raw) && static_cast<bool>(ev.closure_bridge());
     }
 
     // Issue #4813: the serialized parallel-intend eval gate. A task holds it
@@ -4667,13 +4673,26 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     ++tally->cancelled;
                     return;
                 }
+                // Issue #4724 / #4756: a body stopped by a cancel request
+                // (orch:scope-cancel-all, fiber:cancel) unwinds with a
+                // fiber-cancelled error. That is the requested outcome, not
+                // a body failure: count it as cancelled so join-all stays
+                // ok (#4783 partial is for bodies that failed on their own).
+                const auto record_failure = [&tally, &body_name](std::string msg) {
+                    auto* self = aura::serve::g_current_fiber;
+                    const bool cancelled = self != nullptr && self->is_cancel_requested();
+                    std::lock_guard<std::mutex> lk(tally->mu);
+                    if (cancelled)
+                        ++tally->cancelled;
+                    else
+                        tally->errors.emplace_back(body_name, std::move(msg));
+                };
                 try {
                     // Same per-Evaluator apply gate as orch:spawn-agent.
                     // Issue #3728 / #4423: skip agent_apply_mu_ for disjoint
                     // region keys only while ScopedParallel is on.
                     if (auto fail = apply_spawn_closure_maybe_locked(ev, *cid, region_key)) {
-                        std::lock_guard<std::mutex> lk(tally->mu);
-                        tally->errors.emplace_back(body_name, std::move(*fail));
+                        record_failure(std::move(*fail));
                     } else {
                         std::lock_guard<std::mutex> lk(tally->mu);
                         ++tally->ok;
@@ -4681,13 +4700,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 } catch (const std::exception& ex) {
                     // [SILENCE-PRIM-#615]: agent body errors surface via
                     // join/status (#4783: now counted, not dropped).
-                    std::lock_guard<std::mutex> lk(tally->mu);
-                    tally->errors.emplace_back(body_name, ex.what());
+                    record_failure(ex.what());
                 } catch (...) {
                     // [SILENCE-PRIM-#615]: non-std throw is counted as a
                     // body error (#4783), surfaced via join err-count.
-                    std::lock_guard<std::mutex> lk(tally->mu);
-                    tally->errors.emplace_back(body_name, "unknown-exception");
+                    record_failure("unknown-exception");
                 }
             };
             aura::orch::AgentSpec spec;
