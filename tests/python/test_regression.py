@@ -5661,6 +5661,27 @@ def test_fiber_cow_overlay_commit_mutation_log_4715():
     )
 
 
+def test_ast_snapshot_no_workspace_warning_pipe_silent_4797():
+    """Issue #4797 follow-up (asan-verify): the no-workspace note is for a REPL.
+
+    tests/python/run-tests.sh compares per-case text with 2>&1, so a stderr
+    note turned four green rows red in asan-verify. A piped run must stay
+    silent while the -1 contract and (ast:snapshot-fail-reason) stay
+    observable — only an interactive stderr (isatty) gets the explanation.
+    """
+    code = '(begin (display (ast:snapshot "s")) (newline) (display (ast:snapshot-fail-reason)) (newline))'
+    env = os.environ.copy()
+    env["AURA_PIPELINE_STRICT"] = "0"
+    env["AURA_SANDBOX"] = "off"
+    r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=30, env=env)
+    assert r.returncode == 0, f"#4797 pipe run rc={r.returncode}: {str(r.stderr)[-400:]!r}"
+    assert "-1" in (r.stdout or ""), f"#4797 snapshot contract: {r.stdout!r}"
+    assert "no-workspace" in (r.stdout or ""), f"#4797 fail reason: {r.stdout!r}"
+    assert "WARNING: ast:snapshot" not in (r.stderr or ""), (
+        f"#4797: a piped run must not print the REPL note on stderr: {str(r.stderr)[-400:]!r}"
+    )
+
+
 for tf in [
     test_jit_soundness_4567,
     test_type_feedback_4568,
@@ -5730,6 +5751,7 @@ for tf in [
     test_fiber_cow_overlay_conflict_condition_4715,
     test_fiber_cow_overlay_write_skew_read_set_4715,
     test_fiber_cow_overlay_commit_mutation_log_4715,
+    test_ast_snapshot_no_workspace_warning_pipe_silent_4797,
 ]:
     try:
         tf()
