@@ -1,0 +1,26 @@
+; Issue #4806 — |...| symbols are never subject to reader macros (&x / &mut-x)
+(define *n* 0)
+(define *fails* 0)
+(define (check! pred msg)
+  (set! *n* (+ *n* 1))
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+
+(define x 5)
+(define |&x| 3)
+(check! (= |&x| 3) "|&x| is the variable named &x")
+(check! (= &x 5) "bare &x still borrows x")
+(define |&mut-x| 4)
+(check! (= |&mut-x| 4) "|&mut-x| is the variable named &mut-x")
+(check! (symbol? (quote |&x|)) "(quote |&x|) is a symbol")
+(check! (equal? (symbol->string (quote |&x|)) "&x") "(quote |&x|) keeps its name")
+(check! (equal? (symbol->string (quote |&mut-x|)) "&mut-x") "(quote |&mut-x|) keeps its name")
+(check! (equal? (symbol->string (string->symbol "&x")) "&x") "string->symbol agrees")
+; R7RS: |else| / |define| are the same identifiers as else / define
+(check! (eq? (quote |else|) (quote else)) "|else| is the symbol else")
+(check! (equal? (cond ((= x 0) "zero") (|else| "other")) "other") "|else| works as cond's else")
+
+(if (= *fails* 0)
+    (begin (display "OK-reader-4806 ") (display *n*) (display " checks") (newline))
+    (begin (display "reader-4806: ") (display (- *n* *fails*)) (display "/") (display *n*) (newline) (exit 1)))
