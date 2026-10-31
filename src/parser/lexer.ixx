@@ -48,6 +48,7 @@ private:
     Token read_string();
     Token read_number();
     Token read_identifier();
+    Token read_pipe_symbol();
     Token read_character();
     void skip_ws();
     Token make_tok(TokenKind k, std::string_view t);
