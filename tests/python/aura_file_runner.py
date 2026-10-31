@@ -47,6 +47,75 @@ def invoke_aura_load(
     return subprocess.run([str(aura_bin), "--load", str(path)], **kwargs)
 
 
+SUITE_MODE_MARKER = ";; suite-mode:"
+
+
+def suite_mode(text: str) -> str | None:
+    """Per-file run mode override (``;; suite-mode: serve-async``).
+
+    Issue #4811: a file that exercises the live collector (``(gc-heap)`` mid
+    parallel batch) has to run where one exists - under ``--load`` the
+    primitive is the destructive Soft reset (#4449 / #4816).
+    """
+    for line in text.splitlines():
+        if line.startswith(SUITE_MODE_MARKER):
+            value = line[len(SUITE_MODE_MARKER) :].strip()
+            return value or None
+    return None
+
+
+def invoke_aura_serve_async(
+    text: str,
+    *,
+    aura_bin: str | Path,
+    env: dict[str, str],
+    timeout_s: float,
+) -> subprocess.CompletedProcess[str]:
+    """Run a whole file as ONE serve-async exec request over a stdin pipe.
+
+    The result is folded back into a CompletedProcess: stdout is the
+    concatenated ``display`` of every response, and a response with
+    ``status: error`` turns into exit code 1 with its ``msg`` on stderr,
+    so ``judge`` applies unchanged. The pipe matters: serve-async epolls
+    stdin, and a regular file redirect never reports EOF.
+    """
+    import json
+
+    request = json.dumps({"cmd": "exec", "code": text}) + "\n"
+    proc = subprocess.run(
+        [str(aura_bin), "--serve-async"],
+        input=request,
+        capture_output=True,
+        text=True,
+        timeout=timeout_s,
+        env=env,
+    )
+    displays: list[str] = []
+    errors: list[str] = []
+    replies = 0
+    for line in (proc.stdout or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            reply = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(reply, dict) or "status" not in reply:
+            continue
+        replies += 1
+        displays.append(str(reply.get("display", "")))
+        if reply.get("status") == "error":
+            errors.append(str(reply.get("msg", "error")))
+    code = proc.returncode
+    stderr = proc.stderr or ""
+    if code == 0 and replies == 0:
+        code, stderr = 1, "serve-async: no reply\n" + stderr
+    elif code == 0 and errors:
+        code, stderr = 1, "serve-async: " + "; ".join(errors) + "\n" + stderr
+    return subprocess.CompletedProcess(proc.args, code, "".join(displays), stderr)
+
+
 @dataclass(frozen=True)
 class AuraFileCase:
     path: Path
@@ -379,7 +448,9 @@ def run_aura_file_suite(
         if not text.strip():
             return case.rel, False, "empty"
         try:
-            if mode == "load":
+            if suite_mode(text) == "serve-async":
+                proc = invoke_aura_serve_async(text, aura_bin=aura_bin, env=env, timeout_s=timeout_s)
+            elif mode == "load":
                 proc = invoke_aura_load(case.path, aura_bin=aura_bin, env=env, timeout_s=timeout_s)
             else:
                 proc = subprocess.run(
