@@ -14365,7 +14365,12 @@ def _run_suite(label: str, fn) -> tuple[str, int, float]:
     return label, rc, elapsed
 
 
+_LAST_FAILED_SUITES: list[str] = []
+
+
 def _summarize_test_results(results: dict[str, int], *, heading: str | None = None) -> int:
+    global _LAST_FAILED_SUITES
+    _LAST_FAILED_SUITES = [label for label, rc in sorted(results.items()) if rc != 0]
     print(f"\n{'═' * 50}")
     if heading:
         print(heading)
@@ -26018,7 +26023,14 @@ def _run_concurrent_early(ctx: _BuildCtx) -> int:
     return test_concurrent()
 
 
-def _report_ci_slice_failures(link_rc: int, early_rc: int, late_rc: int, conc_rc: int = 0) -> int:
+def _report_ci_slice_failures(
+    link_rc: int,
+    early_rc: int,
+    late_rc: int,
+    conc_rc: int = 0,
+    early_failed: list[str] | None = None,
+    late_failed: list[str] | None = None,
+) -> int:
     """OR the cmd_ci slices and print which one failed.
 
     Heavy always runs even when cheap/medium already failed, so the
@@ -26035,8 +26047,12 @@ def _report_ci_slice_failures(link_rc: int, early_rc: int, late_rc: int, conc_rc
         print(f"  {R}✗{N} issue-bin ninja rc={link_rc}")
     if early_rc:
         print(f"  {R}✗{N} cheap/medium wave (search log for 'Waves cheap, medium') rc={early_rc}")
+        for label in early_failed or []:
+            print(f"      {R}✗{N} {label}")
     if late_rc:
         print(f"  {R}✗{N} ci/issues (heavy wave) rc={late_rc}")
+        for label in late_failed or []:
+            print(f"      {R}✗{N} {label}")
     return 1
 
 
@@ -26069,12 +26085,14 @@ def cmd_ci():
     )
     link_rc = 0
     early_rc = 0
+    early_failed: list[str] = []
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
             fut_link = pool.submit(_finish_overlap_issues, ctx)
             fut_early = pool.submit(lambda: cmd_test(["ci"], waves=("cheap", "medium")))
             link_rc = fut_link.result()
             early_rc = fut_early.result()
+            early_failed = list(_LAST_FAILED_SUITES)
     except Exception as exc:  # noqa: BLE001 — surface overlap failures
         fail(f"ci overlap: {exc}")
         return 1
@@ -26086,7 +26104,10 @@ def cmd_ci():
 
     # Concurrent already ran. Heavy = ci/issues only.
     late_rc = cmd_test(["ci"], waves=("heavy",))
-    return _report_ci_slice_failures(link_rc, early_rc, late_rc, conc_rc)
+    late_failed = list(_LAST_FAILED_SUITES)
+    return _report_ci_slice_failures(
+        link_rc, early_rc, late_rc, conc_rc, early_failed=early_failed, late_failed=late_failed
+    )
 
 
 def cmd_list():
