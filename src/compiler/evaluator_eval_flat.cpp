@@ -188,6 +188,19 @@ static std::string closest_match(std::string_view name, std::span<const std::str
     return aura::compiler::pure::closest_match_pure(name, candidates, max_dist);
 }
 
+// Issue #4796: names that exist only as std/json defines (not engine
+// primitives). Without (require "std/json") they are unbound; point the
+// caller at the builtin or the module instead of an unrelated
+// edit-distance neighbour.
+static std::string_view stdlib_only_unbound_hint(std::string_view name) {
+    if (name == "json-stringify" || name == "json-value")
+        return "did you mean the builtin 'json-encode'? (or (require \"std/json\" all:) for "
+               "json-stringify / json-value)";
+    if (name == "json-escape" || name == "json-arr-items" || name == "json-obj-items")
+        return "defined in std/json: add (require \"std/json\" all:)";
+    return {};
+}
+
 #define EVAL_CACHE_RETURN(expr)                                                                    \
     do {                                                                                           \
         auto _er_ = (expr);                                                                        \
@@ -7313,11 +7326,15 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         }
                     }
                     auto best = closest_match(var_name, candidates);
+                    // Issue #4796: stdlib-only name → actionable hint first.
+                    const auto std_hint = stdlib_only_unbound_hint(var_name);
                     // Issue #79: source location from the offending node so the
                     // error report includes line:col instead of just node[id:N].
                     Diagnostic d(ErrorKind::UnboundVariable, std::move(var_name),
                                  aura::diag::SourceLocation{v.line, v.col, 0}, current_id);
-                    if (!best.empty())
+                    if (!std_hint.empty())
+                        d.with_suggestion(std::string(std_hint));
+                    else if (!best.empty())
                         d.with_suggestion("did you mean '" + best + "'?");
                     return std::unexpected(std::move(d));
                 }

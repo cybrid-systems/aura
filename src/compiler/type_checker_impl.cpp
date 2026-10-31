@@ -4752,11 +4752,15 @@ void InferenceEngine::init_primitive_env_part2(TypeId Int, TypeId Bool, TypeId F
     // json-value - same bug family, pending in #1906 follow-ups).
 
     // std/json
+    // Issue #4796 (closes the B9a/B9d follow-up above): only json-parse /
+    // json-encode are engine primitives. json-stringify, json-value,
+    // json-arr-items and json-obj-items are pure-Aura defines in
+    // lib/std/json.aura (typed by lib/std/json.aura-type once required).
+    // Registering them here made the type checker accept
+    // (json-stringify x) without (require "std/json"), which then failed
+    // at runtime with "unbound variable". Same class as #1906 B5 /
+    // #1911 B8: drop the stale registrations.
     register_primitive("json-parse", {String}, Dyn);
-    register_primitive("json-stringify", {Dyn}, String);
-    register_primitive("json-value", {Dyn}, String);
-    register_primitive("json-arr-items", {Dyn, reg_.register_func({Dyn}, Dyn)}, Dyn);
-    register_primitive("json-obj-items", {Dyn, Dyn, reg_.register_func({Dyn}, Dyn)}, Dyn);
 
     // std/socket (#1975 client; #2771 server listen/accept)
     register_primitive("tcp-connect", {String, Int}, Dyn);
