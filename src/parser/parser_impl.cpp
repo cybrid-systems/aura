@@ -279,6 +279,16 @@ NodeId parse_expr(ParserState& s) {
         case TokenKind::Identifier: {
             auto tok = s.lex.consume();
             auto text = std::string(tok.text);
+            // M4 &mut-x reader macro: &mut-x → (mut-borrow x). Issue #4807: must be
+            // tested before the shorter &x prefix, which used to read it as
+            // (borrow mut-x).
+            if (text.size() > 5 && text.substr(0, 5) == "&mut-") {
+                auto var_name = text.substr(5);
+                auto inner = s.flat.add_variable(s.pool.intern(var_name));
+                auto id = s.flat.add_mut_borrow(inner);
+                s.flat.set_loc(id, tok.line, tok.column);
+                return id;
+            }
             // M4 &x reader macro: &x → (borrow x). Issue #4805: a name made
             // only of '&' (`&&`, `&&&`) is an ordinary symbol, not (borrow &).
             if (text.size() > 1 && text[0] == '&' &&
@@ -286,14 +296,6 @@ NodeId parse_expr(ParserState& s) {
                 auto var_name = text.substr(1);
                 auto inner = s.flat.add_variable(s.pool.intern(var_name));
                 auto id = s.flat.add_borrow(inner);
-                s.flat.set_loc(id, tok.line, tok.column);
-                return id;
-            }
-            // M4 &mut-x reader macro: &mut-x → (mut-borrow x)
-            if (text.size() > 5 && text.substr(0, 5) == "&mut-") {
-                auto var_name = text.substr(5);
-                auto inner = s.flat.add_variable(s.pool.intern(var_name));
-                auto id = s.flat.add_mut_borrow(inner);
                 s.flat.set_loc(id, tok.line, tok.column);
                 return id;
             }

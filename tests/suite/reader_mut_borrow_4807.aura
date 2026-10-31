@@ -1,0 +1,22 @@
+; Issue #4807 — `&mut-x` reads as (mut-borrow x), not (borrow mut-x)
+(define *n* 0)
+(define *fails* 0)
+(define (check! pred msg)
+  (set! *n* (+ *n* 1))
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+
+(define x 5)
+(define mut-x 9)
+(check! (= &mut-x 5) "&mut-x borrows x mutably (not the variable mut-x)")
+(check! (= &mut-x (mut-borrow x)) "&mut-x = (mut-borrow x)")
+(check! (= &x 5) "&x still borrows x")
+(check! (= &x (borrow x)) "&x = (borrow x)")
+(define (twice v) (* 2 v))
+(check! (= (twice &mut-x) 10) "&mut-x as a call argument")
+(check! (= mut-x 9) "a plain mut-x is untouched")
+
+(if (= *fails* 0)
+    (begin (display "OK-reader-4807 ") (display *n*) (display " checks") (newline))
+    (begin (display "reader-4807: ") (display (- *n* *fails*)) (display "/") (display *n*) (newline) (exit 1)))
