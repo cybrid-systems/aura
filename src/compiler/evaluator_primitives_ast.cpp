@@ -5,6 +5,8 @@
 
 module;
 
+#include <unistd.h> // ::isatty — keep pipe/CI stderr clean (#4797 warning)
+
 #include "runtime_shared.h"
 #include "security_capabilities.h" // Issue #4400: format_deny_reason on direct restore
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
@@ -443,8 +445,15 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                 // but the first no-workspace failure in a process now says
                 // why: top-level defines from a file / -e / --load are not the
                 // live workspace, so there is nothing to checkpoint.
+                // The note is for the human at a REPL. Piped runs (CI, the
+                // case harness) merge stderr into the compared text, so it
+                // failed the safe-refactor:* / fix:string-vs-keyword-overlap
+                // rows in asan-verify — same class as the #4575 hatch note
+                // (bf8b190f5). Pipes stay clean; scripts still have
+                // (ast:snapshot-fail-reason).
                 static std::atomic<bool> s_no_ws_warned{false};
-                if (!s_no_ws_warned.exchange(true, std::memory_order_relaxed)) {
+                if (::isatty(::fileno(stderr)) &&
+                    !s_no_ws_warned.exchange(true, std::memory_order_relaxed)) {
                     std::println(std::cerr,
                                  "WARNING: ast:snapshot -> -1 (:no-workspace): no live workspace "
                                  "source. Definitions loaded from a file / -e / --load are not "
