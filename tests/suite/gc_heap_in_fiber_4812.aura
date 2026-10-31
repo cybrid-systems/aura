@@ -1,27 +1,37 @@
 ;; Issue #4812: (gc-heap) inside a parallel-intend thunk under --load.
-;; There is no live collector here, so (gc-heap) is the destructive Soft
-;; reset; run inside a fiber (a batch thunk, or a fiber:spawn body on the
-;; CLI thread backend) it tore down heaps the caller still indexed and the
-;; process died with SIGSEGV. It must now refuse with a
-;; typed error (the task fails, the process and its bindings survive).
+;; There used to be no live collector here, so (gc-heap) was the destructive
+;; Soft reset; run inside a fiber it tore down heaps the caller still
+;; indexed and the process died with SIGSEGV (#4812 first made it refuse).
+;; Issue #4816: (gc-heap) is now a real safepoint collection. Inside a fiber
+;; it either collects or — when sibling bodies cannot be certified — stands
+;; down and arms the next safepoint (#f). Never an error, never a crash,
+;; and the batch / caller bindings stay intact. The destructive reset is
+;; (gc-heap-reset!) and still refuses inside a fiber.
 ;; expect: gc-heap-in-fiber-4812 ok
 
 (require "std/test" all:)
 
 (define (helper x) (+ x 100))
+(define keep (list "k" (vector 1 2)))
 (define r
-  (parallel-intend (vector (lambda () (gc-heap) 1) (lambda () 2))
+  (parallel-intend (vector (lambda () (list (gc-heap) 1)) (lambda () (list 2 "two")))
                    :max-concurrency 1 :timeout-ms 10000 :fail-fast #f :collect-errors #t))
 (define ok-n (hash-ref r "ok-count" -1))
 (define err-n (hash-ref r "err-count" -1))
-(define msg (hash-ref (vector-ref (hash-ref r "results" (vector)) 0) "error" ""))
+(define vals (vector-map (lambda (x) (hash-ref x "value" #f)) (hash-ref r "results" (vector))))
 (define spawned
-  (try (fiber:join (fiber:spawn (lambda () (gc-heap)))) (catch (e) (list 'ERR e))))
-(display (list 'ok ok-n 'err err-n 'helper (helper 1))) (newline)
+  (try (fiber:join (fiber:spawn (lambda () (list (gc-heap) 'done)))) (catch (e) (list 'ERR e))))
+(define reset-in-fiber
+  (try (fiber:join (fiber:spawn (lambda () (gc-heap-reset!)))) (catch (e) (list 'ERR e))))
+(display (list 'ok ok-n 'err err-n 'vals vals 'helper (helper 1))) (newline)
 (display spawned) (newline)
-(if (and (= ok-n 1) (= err-n 1) (string=? msg "task-error") (= (helper 1) 101)
-         (pair? spawned) (eq? (car spawned) 'ERR)
-         (string-contains? (format "~a" (car (cdr spawned))) "Issue #4812")
+(if (and (= ok-n 2) (= err-n 0) (= (helper 1) 101)
+         (boolean? (car (vector-ref vals 0))) (= (car (cdr (vector-ref vals 0))) 1)
+         (equal? (vector-ref vals 1) (list 2 "two"))
+         (pair? spawned) (boolean? (car spawned)) (eq? (car (cdr spawned)) 'done)
+         (pair? reset-in-fiber) (eq? (car reset-in-fiber) 'ERR)
+         (string-contains? (format "~a" (car (cdr reset-in-fiber))) "Issue #4812")
+         (equal? keep (list "k" (vector 1 2)))
          (= (helper 2) 102))
     (display "gc-heap-in-fiber-4812 ok\n")
-    (assert #f "gc-heap inside a fiber must refuse, not crash (#4812)"))
+    (assert #f "gc-heap inside a fiber must collect or defer, never error or crash (#4812/#4816)"))

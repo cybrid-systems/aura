@@ -1,0 +1,58 @@
+;; Issue #4816: under --load, (gc-heap) is a real safepoint collection —
+;; live bindings survive, unreachable garbage is freed (measured through
+;; (stats:get "gc-heap-stats")), and the old destructive reset is only
+;; reachable explicitly as (gc-heap-reset!) / (gc-heap :reset).
+;; expect: gc-heap-safepoint-4816 ok
+
+(require "std/test" all:)
+
+(define (st k) (hash-ref (stats:get "gc-heap-stats") k -1))
+(define (sum-list xs) (let loop ((xs xs) (acc 0)) (if (null? xs) acc (loop (cdr xs) (+ acc (car xs))))))
+(define (build n) (let loop ((i 0) (acc '())) (if (< i n) (loop (+ i 1) (cons i acc)) acc)))
+
+;; Live values of every heap kind, plus a closure and a hash.
+(define keep (list 1 2 3 "alpha" (vector 4 5)))
+(define big (build 5000))
+(define h (make-hash))
+(hash-set! h "k" (list "v" 7))
+(define (adder n) (lambda (x) (+ x n)))
+(define add5 (adder 5))
+(define (live-ok?)
+  (and (equal? keep (list 1 2 3 "alpha" (vector 4 5)))
+       (= (sum-list big) 12497500)
+       (equal? (hash-ref h "k" #f) (list "v" 7))
+       (= (add5 1) 6)))
+
+;; 1. A defined value survives gc-heap (and gc-heap reports a collection).
+(define req0 (st "requests"))
+(define col0 (st "collected"))
+(define r1 (gc-heap))
+(assert (eq? r1 #t) "top-level gc-heap collects (#t)")
+(assert (= (st "requests") (+ req0 1)) "requests counted")
+(assert (= (st "collected") (+ col0 1)) "collected counted")
+(assert (live-ok?) "defined values survive gc-heap")
+
+;; 2. Garbage is actually freed: 3000 unreachable pairs come back as free slots.
+(define junk (build 3000))
+(set! junk #f)
+(define free0 (st "pairs-free"))
+(gc-heap)
+(define freed (- (st "pairs-free") free0))
+(display (list 'freed-pairs freed)) (newline)
+(assert (>= freed 3000) "unreachable pairs are freed by gc-heap")
+(assert (live-ok?) "live values survive a second gc-heap")
+
+;; 3. Inside a function body (IR / tree-walker frame values are roots).
+(define (local-roots)
+  (let* ((a (build 100)) (v (vector "x" a)) (r (gc-heap)))
+    (list r (sum-list (vector-ref v 1)) (vector-ref v 0))))
+(define lr (local-roots))
+(assert (equal? lr (list #t 4950 "x")) "frame locals survive gc-heap")
+
+;; 4. No destructive reset happened: resets counter untouched, sizes intact.
+(assert (= (st "resets") 0) "gc-heap never takes the reset path")
+
+;; 5. Explicit compatibility reset (last: it dangles every binding).
+;; The message literals are minted after the reset (an earlier-defined
+;; string would dangle — that is exactly what the reset does).
+(display (if (eq? (gc-heap :reset) #t) "gc-heap-safepoint-4816 ok\n" "gc-heap :reset FAILED\n"))

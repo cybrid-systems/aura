@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**495** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**496** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -11,7 +11,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 56 primitives (11%)
-- **core**: 404 primitives (82%)
+- **core**: 405 primitives (82%)
 - **internal-observable**: 34 primitives (7%)
 - **convenience**: 1 primitives (0%)
 
@@ -152,7 +152,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `c-struct-set!` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (284)
+## Core builtins (285)
 
 - `%base64-decode` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -254,6 +254,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `gc` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-freeze` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-heap` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `gc-heap-reset!` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-module` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-temp` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `gcd` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -705,7 +706,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (404)
+### Core builtins (must remain primitive) (405)
 
 - `%base64-decode` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` — `src/compiler/evaluator_primitives_char.cpp`
@@ -852,6 +853,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `gc` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-freeze` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-heap` — `src/compiler/evaluator_primitives_memory.cpp`
+- `gc-heap-reset!` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-module` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-temp` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gcd` — `src/compiler/evaluator_primitives_math.cpp`

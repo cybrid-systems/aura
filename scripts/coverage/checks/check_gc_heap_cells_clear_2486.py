@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Issue #2486: gc-heap fallback clears ev.cells_.
+"""Issue #2486: the destructive gc-heap reset clears ev.cells_.
+
+Issue #4816: that reset is (gc-heap-reset!) / (gc-heap :reset) now;
+(gc-heap) itself is a non-destructive safepoint collection.
 
 Contract:
   AC1 cells_.clear + shrink_to_fit in gc-heap fallback
@@ -37,8 +40,10 @@ def main() -> int:
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
-    idx = src.find('add("gc-heap"')
-    end = src.find('add("gc-freeze"', idx)
+    # Issue #4816: the destructive clear moved from the gc-heap fallback
+    # into gc_heap_reset_impl, registered as (gc-heap-reset!).
+    idx = src.find("auto gc_heap_reset_impl")
+    end = src.find('add("gc-heap-reset!"', idx)
     if idx >= 0 and end > idx:
         body = src[idx:end]
     elif idx >= 0:
