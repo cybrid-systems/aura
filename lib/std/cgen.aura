@@ -1,0 +1,133 @@
+; cgen.aura — C 代码生成 EDSL（最小原型，Issue #4802 第一步）
+;
+; Kernels written as Aura S-expressions, emitted as C text. The program is a
+; plain datum, so it lives in the workspace and can be queried / mutated
+; (set-code, mutate:rebind, ast:snapshot) like any other Aura code; this
+; module only lowers the datum to C. Compiling / timing the C stays with the
+; caller (it needs a process primitive and a toolchain).
+;
+; Expressions
+;   number | symbol | "raw C text"
+;   (+ a b ...) (- a b ...) (* a b ...) (/ a b) (% a b)
+;   (< a b) (<= a b) (> a b) (>= a b) (== a b) (!= a b) (&& a b ...) (|| a b ...)
+;   (neg a) (not a) (ref arr i) (call f arg ...) (cast "type" e) (? c a b) (f32 1.5)
+; Statements
+;   (decl "type" name [init]) (set lhs rhs) (+= lhs rhs) (-= lhs rhs) (*= lhs rhs) (/= lhs rhs)
+;   (for (i lo hi [step]) stmt ...) (if c then [else]) (when c stmt ...) (begin stmt ...)
+;   (return [e]) (expr e) (pragma "text")
+; Functions / units
+;   (cgen-fn "ret" 'name '(("type" a) ...) '(stmt ...))  -> C text
+;   (cgen-unit '("stdint.h" ...) (list fn-text ...))   -> C text
+; Incremental artifacts (Issue #4803 第一步)
+;   (cgen-digest text)                 -> stable content digest (string)
+;   (cgen-build-cached! text build-fn) -> build-fn's result, rebuilt only when the
+;                                         text's digest is new; (cgen-cache-stats)
+(export
+  cgen-expr cgen-stmt cgen-fn cgen-unit cgen-digest
+  cgen-build-cached! cgen-cache-stats cgen-cache-clear!)
+
+(define (cgen-name x) (format "~a" x))
+(define (cgen-join xs sep)
+  (if (null? xs) ""
+      (let loop ((r (cdr xs)) (acc (car xs)))
+        (if (null? r) acc (loop (cdr r) (string-append acc sep (car r)))))))
+(define (cgen-head e) (if (pair? e) (cgen-name (car e)) ""))
+(define (cgen-member? s lst)
+  (cond ((null? lst) #f) ((equal? s (car lst)) #t) (else (cgen-member? s (cdr lst)))))
+
+(define cgen-infix-ops (list "+" "-" "*" "/" "%" "<" "<=" ">" ">=" "==" "!=" "&&" "||"))
+
+(define (cgen-expr e)
+  (cond ((integer? e) (number->string e))
+        ((float? e) (number->string e))
+        ((string? e) e)
+        ((not (pair? e)) (cgen-name e))
+        (else
+         (let ((h (cgen-head e)) (args (cdr e)))
+           (cond
+             ((and (cgen-member? h cgen-infix-ops) (= (length args) 1) (equal? h "-"))
+              (string-append "(-" (cgen-expr (car args)) ")"))
+             ((cgen-member? h cgen-infix-ops)
+              (string-append "(" (cgen-join (map cgen-expr args) (string-append " " h " ")) ")"))
+             ((equal? h "neg") (string-append "(-" (cgen-expr (car args)) ")"))
+             ((equal? h "not") (string-append "(!" (cgen-expr (car args)) ")"))
+             ((equal? h "ref") (string-append (cgen-expr (car args)) "[" (cgen-expr (cadr args)) "]"))
+             ((equal? h "call")
+              (string-append (cgen-name (car args)) "(" (cgen-join (map cgen-expr (cdr args)) ", ") ")"))
+             ((equal? h "cast")
+              (string-append "((" (car args) ")(" (cgen-expr (cadr args)) "))"))
+             ((equal? h "?")
+              (string-append "(" (cgen-expr (car args)) " ? " (cgen-expr (cadr args)) " : "
+                             (cgen-expr (car (cddr args))) ")"))
+             ((equal? h "f32") (string-append (number->string (car args)) "f"))
+             (else (error (string-append "cgen-expr: unknown form " h))))))))
+
+(define (cgen-indent n) (if (<= n 0) "" (string-append "    " (cgen-indent (- n 1)))))
+
+(define (cgen-block stmts ind)
+  (string-append "{\n" (apply string-append (map (lambda (s) (cgen-stmt-at s (+ ind 1))) stmts))
+                 (cgen-indent ind) "}"))
+
+(define (cgen-stmt-at s ind)
+  (let ((h (cgen-head s)) (a (if (pair? s) (cdr s) '())) (pad (cgen-indent ind)))
+    (cond
+      ((equal? h "decl")
+       (string-append pad (car a) " " (cgen-name (cadr a))
+                      (if (null? (cddr a)) "" (string-append " = " (cgen-expr (car (cddr a))))) ";\n"))
+      ((equal? h "set") (string-append pad (cgen-expr (car a)) " = " (cgen-expr (cadr a)) ";\n"))
+      ((cgen-member? h (list "+=" "-=" "*=" "/="))
+       (string-append pad (cgen-expr (car a)) " " h " " (cgen-expr (cadr a)) ";\n"))
+      ((equal? h "for")
+       (let* ((sp (car a)) (v (cgen-name (car sp))) (lo (cgen-expr (cadr sp)))
+              (hi (cgen-expr (car (cddr sp))))
+              (st (if (null? (cdr (cddr sp))) "1" (cgen-expr (cadr (cddr sp))))))
+         (string-append pad "for (long " v " = " lo "; " v " < " hi "; "
+                        (if (equal? st "1") (string-append v "++") (string-append v " += " st))
+                        ") " (cgen-block (cdr a) ind) "\n")))
+      ((equal? h "if")
+       (string-append pad "if (" (cgen-expr (car a)) ") " (cgen-block (list (cadr a)) ind)
+                      (if (null? (cddr a)) ""
+                          (string-append " else " (cgen-block (list (car (cddr a))) ind)))
+                      "\n"))
+      ((equal? h "when") (string-append pad "if (" (cgen-expr (car a)) ") " (cgen-block (cdr a) ind) "\n"))
+      ((equal? h "begin") (string-append pad (cgen-block a ind) "\n"))
+      ((equal? h "return")
+       (string-append pad "return" (if (null? a) "" (string-append " " (cgen-expr (car a)))) ";\n"))
+      ((equal? h "expr") (string-append pad (cgen-expr (car a)) ";\n"))
+      ((equal? h "pragma") (string-append "#pragma " (car a) "\n"))
+      (else (error (string-append "cgen-stmt: unknown form " h))))))
+
+(define (cgen-stmt s) (cgen-stmt-at s 0))
+
+(define (cgen-fn ret name params body)
+  (string-append ret " " (cgen-name name) "("
+                 (if (null? params) "void"
+                     (cgen-join (map (lambda (p) (string-append (car p) " " (cgen-name (cadr p)))) params) ", "))
+                 ") " (cgen-block body 0) "\n"))
+
+(define (cgen-unit includes fns)
+  (string-append (apply string-append (map (lambda (i) (string-append "#include <" i ">\n")) includes))
+                 (if (null? includes) "" "\n")
+                 (cgen-join fns "\n")))
+
+; Two independent polynomial hashes mod primes (no int64 overflow), plus length.
+(define (cgen-digest text)
+  (let loop ((i 0) (h1 7) (h2 11))
+    (if (>= i (string-length text))
+        (format "~a-~a-~a" (string-length text) h1 h2)
+        (let ((c (char->integer (string-ref text i))))
+          (loop (+ i 1) (modulo (+ (* h1 131) c) 1000000007) (modulo (+ (* h2 257) c) 998244353))))))
+
+(define *cgen-cache* (hash))
+(define *cgen-hits* 0)
+(define *cgen-misses* 0)
+(define (cgen-build-cached! text build-fn)
+  (let* ((k (cgen-digest text)) (hit (hash-ref *cgen-cache* k #f)))
+    (if hit
+        (begin (set! *cgen-hits* (+ *cgen-hits* 1)) (car hit))
+        (let ((v (build-fn text)))
+          (set! *cgen-misses* (+ *cgen-misses* 1))
+          (hash-set! *cgen-cache* k (list v))
+          v))))
+(define (cgen-cache-stats) (list *cgen-hits* *cgen-misses*))
+(define (cgen-cache-clear!) (set! *cgen-cache* (hash)) (set! *cgen-hits* 0) (set! *cgen-misses* 0))
