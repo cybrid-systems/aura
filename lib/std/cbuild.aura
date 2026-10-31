@@ -1,0 +1,236 @@
+; cbuild.aura — 磁盘内容寻址增量构建缓存（Issue #4803）
+;
+; Artifacts (objects, shared libraries, executables, any command output) are
+; stored under a content key so a rebuild of unchanged input costs a file
+; probe, across processes and sessions:
+;
+;   key   = digest("cbuild-v1", kind, key material, input text)
+;           key material = toolchain id (digest of `$CC --version` +
+;           `-dumpmachine`) + flags + target, so a compiler upgrade or a flag
+;           change never reuses a stale object
+;   root  = $AURA_CGEN_CACHE | $XDG_CACHE_HOME/aura/cgen | $HOME/.cache/aura/cgen
+;           (cbuild-set-root! overrides)
+;   entry = <root>/<k2>/<key>/ { input file, outputs, .meta, .atime }
+;
+; Publication is atomic and concurrency-safe: the build runs in a private
+; mktemp staging dir while holding flock(<root>/locks/<key>.lock); the dir is
+; published with one rename (mv -T). A concurrent builder of the same key
+; waits on the lock and then finds the entry (counted as a shared hit), so
+; each key is built once even across processes; readers never see partial
+; output. Failed builds publish nothing and raise "cbuild: ..." with the log.
+;
+;   (cbuild-object! c-text [flags "-O2 -fPIC"])     -> path of the cached .o
+;   (cbuild-link! objs 'so|'exe [flags ""])         -> path of lib.so / a.out
+;   (cbuild-artifact! kind material input-name input-text cmd outputs)
+;                                                   -> entry dir (generic)
+;   (cbuild-lookup kind material input-text)        -> entry dir | #f
+;   (cbuild-invalidate! kind material input-text)   -> #t if an entry was removed
+;   (cbuild-gc! max-kbytes [max-age-s])              -> number of entries evicted (LRU)
+;   (cbuild-clear!)  (cbuild-stats)  (cbuild-disk-stats)  (cbuild-stats-reset!)
+(export cbuild-root cbuild-set-root! cbuild-digest cbuild-toolchain-id cbuild-key cbuild-entry-dir
+        cbuild-artifact! cbuild-object! cbuild-link! cbuild-lookup cbuild-invalidate!
+        cbuild-gc! cbuild-clear! cbuild-stats cbuild-stats-reset! cbuild-disk-stats cbuild-entries)
+(require "std/process" all:)
+
+(define (cb-fail msg) (error (string-append "cbuild: " msg)))
+(define (cb-name x) (format "~a" x))
+(define (cb-has-char? s ch)
+  (let loop ((i 0))
+    (cond ((>= i (string-length s)) #f) ((equal? (string-ref s i) ch) #t) (else (loop (+ i 1))))))
+(define (cb-exists? p) (= 0 (shell (string-append "test -e " (cb-q p)))))
+(define (cb-q s)
+  (if (cb-has-char? s #\') (cb-fail (string-append "path contains a single quote: " s))
+      (string-append "'" s "'")))
+(define (cb-join xs sep)
+  (if (null? xs) "" (let loop ((r (cdr xs)) (acc (car xs)))
+                      (if (null? r) acc (loop (cdr r) (string-append acc sep (car r)))))))
+(define (cb-lines s)
+  (let loop ((i 0) (st 0) (acc '()))
+    (cond ((>= i (string-length s))
+           (reverse (if (> i st) (cons (substring s st i) acc) acc)))
+          ((equal? (string-ref s i) #\newline) (loop (+ i 1) (+ i 1) (if (> i st) (cons (substring s st i) acc) acc)))
+          (else (loop (+ i 1) st acc)))))
+(define (cb-words s) ; split on single spaces
+  (let loop ((i 0) (st 0) (acc '()))
+    (cond ((>= i (string-length s)) (reverse (cons (substring s st i) acc)))
+          ((equal? (string-ref s i) #\space) (loop (+ i 1) (+ i 1) (cons (substring s st i) acc)))
+          (else (loop (+ i 1) st acc)))))
+(define (cb-nonempty? s) (and (string? s) (> (string-length s) 0)))
+
+; ---- digest: four independent polynomial hashes (~120 bits) + length ----------
+(define cb-hex-digits "0123456789abcdef")
+(define (cb-hex n width)
+  (let loop ((n n) (k width) (acc ""))
+    (if (= k 0) acc
+        (loop (quotient n 16) (- k 1)
+              (string-append (substring cb-hex-digits (modulo n 16) (+ (modulo n 16) 1)) acc)))))
+(define (cbuild-digest text)
+  (let loop ((i 0) (a 7) (b 11) (c 13) (d 17))
+    (if (>= i (string-length text))
+        (string-append (cb-hex a 8) (cb-hex b 8) (cb-hex c 8) (cb-hex d 8) "-" (number->string (string-length text)))
+        (let ((x (char->integer (string-ref text i))))
+          (loop (+ i 1)
+                (modulo (+ (* a 131) x) 1000000007)
+                (modulo (+ (* b 257) x) 998244353)
+                (modulo (+ (* c 911) x) 1000000009)
+                (modulo (+ (* d 65599) x) 999999937))))))
+
+; ---- root, toolchain ----------------------------------------------------------
+(define *cb-root* #f)
+(define (cbuild-set-root! dir) (set! *cb-root* dir) dir)
+(define (cbuild-root)
+  (if *cb-root* *cb-root*
+      (let ((e (getenv "AURA_CGEN_CACHE")) (x (getenv "XDG_CACHE_HOME")) (h (getenv "HOME")))
+        (set! *cb-root*
+              (cond ((cb-nonempty? e) e)
+                    ((cb-nonempty? x) (string-append x "/aura/cgen"))
+                    ((cb-nonempty? h) (string-append h "/.cache/aura/cgen"))
+                    (else "/tmp/aura-cgen-cache")))
+        *cb-root*)))
+(define (cb-cc) (let ((e (getenv "AURA_CC"))) (if (cb-nonempty? e) e "cc")))
+(define *cb-tool-ids* '())
+(define (cbuild-toolchain-id . rest)
+  (let* ((cc (if (null? rest) (cb-cc) (car rest)))
+         (hit (assoc cc *cb-tool-ids*)))
+    (if hit (cdr hit)
+        (let* ((out (command-output (string-append cc " --version 2>&1; " cc " -dumpmachine 2>&1")))
+               (id (string-append cc ":" (cbuild-digest out))))
+          (set! *cb-tool-ids* (cons (cons cc id) *cb-tool-ids*))
+          id))))
+
+(define (cbuild-key kind material input-text)
+  (cbuild-digest (string-append "cbuild-v1\n" (cb-name kind) "\n" material "\n" input-text)))
+(define (cb-k2 key) (substring key 6 8))
+(define (cbuild-entry-dir key) (string-append (cbuild-root) "/" (cb-k2 key) "/" key))
+
+; ---- session stats --------------------------------------------------------------
+(define *cb-hits* 0)
+(define *cb-shared* 0)
+(define *cb-built* 0)
+(define *cb-failed* 0)
+(define (cbuild-stats)
+  (list (cons "hits" *cb-hits*) (cons "shared-hits" *cb-shared*) (cons "built" *cb-built*) (cons "failed" *cb-failed*)))
+(define (cbuild-stats-reset!) (set! *cb-hits* 0) (set! *cb-shared* 0) (set! *cb-built* 0) (set! *cb-failed* 0))
+
+(define (cb-touch! dir) (write-file (string-append dir "/.atime") (number->string (current-time-ms))))
+
+; ---- build / publish --------------------------------------------------------------
+(define (cbuild-lookup kind material input-text)
+  (let ((d (cbuild-entry-dir (cbuild-key kind material input-text))))
+    (if (cb-exists? (string-append d "/.meta")) d #f)))
+
+; Run CMD (sh, cwd = staging dir holding INPUT-NAME) once per key; OUTPUTS are
+; files CMD must create. Returns the published entry dir.
+(define (cbuild-artifact! kind material input-name input-text cmd outputs)
+  (let* ((key (cbuild-key kind material input-text)) (final (cbuild-entry-dir key))
+         (root (cbuild-root)))
+    (if (cb-exists? (string-append final "/.meta"))
+        (begin (set! *cb-hits* (+ *cb-hits* 1)) (cb-touch! final) final)
+        (let ((stage (command-output (string-append "mkdir -p " (cb-q (string-append root "/tmp")) " && mktemp -d "
+                                                    (cb-q (string-append root "/tmp/" key ".XXXXXX"))))))
+          (if (not (cb-nonempty? stage)) (cb-fail (string-append "cannot create staging dir under " root)))
+          (write-file (string-append stage "/" input-name) input-text)
+          (write-file (string-append stage ".sh")
+            (string-append
+             "R=" (cb-q root) "; F=" (cb-q final) "; T=" (cb-q stage) "\n"
+             "mkdir -p \"$R/locks\" \"$R/" (cb-k2 key) "\" || { echo FAIL; exit 0; }\n"
+             "exec 9>\"$R/locks/" key ".lock\"\n"
+             "flock 9\n"
+             "if [ -e \"$F/.meta\" ]; then rm -rf \"$T\"; echo HIT; exit 0; fi\n"
+             "( cd \"$T\" && " cmd " ) > \"$T.log\" 2>&1\n"
+             "rc=$?\n"
+             (apply string-append
+                    (map (lambda (o) (string-append "[ $rc -eq 0 ] && [ ! -e \"$T/" o "\" ] && { echo 'missing output " o "' >> \"$T.log\"; rc=1; }\n"))
+                         outputs))
+             "if [ $rc -ne 0 ]; then rm -rf \"$T\"; echo FAIL; exit 0; fi\n"
+             "printf '%s\\n' " (cb-q (string-append "kind=" (cb-name kind) " key=" key)) " > \"$T/.meta\"\n"
+             "if mv -T \"$T\" \"$F\" 2>>\"$T.log\"; then echo BUILT; else rm -rf \"$T\"; echo FAIL; fi\n"))
+          (let ((res (command-output (string-append "sh " (cb-q (string-append stage ".sh")) " 2>&1"))))
+            (let ((log (if (cb-exists? (string-append stage ".log")) (read-file (string-append stage ".log")) "")))
+              (shell (string-append "rm -f " (cb-q (string-append stage ".sh")) " " (cb-q (string-append stage ".log"))))
+              (cond
+                ((equal? res "BUILT") (set! *cb-built* (+ *cb-built* 1)) (cb-touch! final) final)
+                ((equal? res "HIT") (set! *cb-shared* (+ *cb-shared* 1)) (cb-touch! final) final)
+                (else
+                 (set! *cb-failed* (+ *cb-failed* 1))
+                 (cb-fail (string-append (cb-name kind) " build failed: "
+                                         (if (> (string-length log) 2000) (substring log 0 2000) log)
+                                         (if (equal? res "FAIL") "" (string-append " " res))))))))))))
+
+; ---- C objects and links ---------------------------------------------------------
+(define (cbuild-object! c-text . rest)
+  (let* ((flags (if (null? rest) "-O2 -fPIC" (car rest)))
+         (cc (cb-cc))
+         (d (cbuild-artifact! "obj" (string-append (cbuild-toolchain-id cc) "\n" flags) "src.c" c-text
+                              (string-append cc " " flags " -c src.c -o obj.o") (list "obj.o"))))
+    (string-append d "/obj.o")))
+
+(define (cbuild-link! objs . rest)
+  (let* ((kind (if (null? rest) "so" (cb-name (car rest))))
+         (flags (if (or (null? rest) (null? (cdr rest))) "" (cadr rest)))
+         (cc (cb-cc))
+         (out (if (equal? kind "exe") "a.out" "lib.so"))
+         (d (cbuild-artifact! (string-append "link-" kind)
+                              (string-append (cbuild-toolchain-id cc) "\n" flags)
+                              "objects" (cb-join objs "\n")
+                              (string-append cc (if (equal? kind "exe") "" " -shared") " -o " out " "
+                                             (cb-join (map cb-q objs) " ") " " flags)
+                              (list out))))
+    (string-append d "/" out)))
+
+; ---- maintenance -------------------------------------------------------------------
+(define (cb-remove-entry! key)
+  (let ((root (cbuild-root)))
+    (equal? "REMOVED"
+            (command-output
+             (string-append "R=" (cb-q root) "; F=" (cb-q (cbuild-entry-dir key)) "\n"
+                            "[ -d \"$F\" ] || { echo NONE; exit 0; }\n"
+                            "mkdir -p \"$R/locks\" \"$R/tmp\"; exec 9>\"$R/locks/" key ".lock\"; flock 9\n"
+                            "G=$(mktemp -d \"$R/tmp/evict.XXXXXX\") && mv -T \"$F\" \"$G/e\" 2>/dev/null && rm -rf \"$G\" && echo REMOVED || { rm -rf \"$G\"; echo NONE; }")))))
+(define (cbuild-invalidate! kind material input-text)
+  (cb-remove-entry! (cbuild-key kind material input-text)))
+
+; entries: list of (atime-ms kbytes key)
+(define (cbuild-entries)
+  (let ((out (command-output
+              (string-append "R=" (cb-q (cbuild-root)) "; [ -d \"$R\" ] || exit 0\n"
+                             "for d in \"$R\"/[0-9a-f][0-9a-f]/*/; do [ -e \"$d.meta\" ] || continue; "
+                             "a=$(cat \"$d.atime\" 2>/dev/null || echo 0); s=$(du -sk \"$d\" | cut -f1); "
+                             "echo \"$a $s $(basename \"$d\")\"; done"))))
+    (map (lambda (l) (let ((w (cb-words l))) (list (string->number (car w)) (string->number (cadr w)) (car (cddr w)))))
+         (filter (lambda (l) (= (length (cb-words l)) 3)) (cb-lines out)))))
+(define (cbuild-disk-stats)
+  (let ((es (cbuild-entries)))
+    (list (cons "entries" (length es)) (cons "kbytes" (apply + (map cadr es))) (cons "root" (cbuild-root)))))
+
+(define (cb-insert e sorted)
+  (cond ((null? sorted) (list e))
+        ((<= (car e) (car (car sorted))) (cons e sorted))
+        (else (cons (car sorted) (cb-insert e (cdr sorted))))))
+(define (cb-sort-by-atime es) (let loop ((xs es) (acc '())) (if (null? xs) acc (loop (cdr xs) (cb-insert (car xs) acc)))))
+
+; Evict least-recently-used entries until the cache is at most MAX-KBYTES, and
+; every entry unused for longer than MAX-AGE-S seconds; stale staging dirs
+; (> 1 day) are removed too.
+(define (cbuild-gc! max-kbytes . rest)
+  (let* ((max-age-ms (if (null? rest) #f (* 1000 (car rest))))
+         (now (current-time-ms))
+         (es (cb-sort-by-atime (cbuild-entries)))
+         (total (apply + (map cadr es)))
+         (evicted 0))
+    (shell (string-append "R=" (cb-q (cbuild-root)) "; [ -d \"$R/tmp\" ] && find \"$R/tmp\" -mindepth 1 -maxdepth 1 -mmin +1440 -exec rm -rf {} + 2>/dev/null; true"))
+    (for-each (lambda (e)
+                (if (or (> total max-kbytes) (and max-age-ms (< (car e) (- now max-age-ms))))
+                    (if (cb-remove-entry! (car (cddr e)))
+                        (begin (set! total (- total (cadr e))) (set! evicted (+ evicted 1)))
+                        #f)
+                    #f))
+              es)
+    evicted))
+
+(define (cbuild-clear!)
+  (let ((root (cbuild-root)))
+    (if (or (< (string-length root) 5) (equal? root (getenv "HOME")))
+        (cb-fail (string-append "refusing to clear suspicious root " root)))
+    (shell (string-append "R=" (cb-q root) "; rm -rf \"$R\"/[0-9a-f][0-9a-f] \"$R/tmp\" \"$R/locks\""))
+    #t))

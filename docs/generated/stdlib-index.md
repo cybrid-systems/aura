@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**79** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**80** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -18,6 +18,7 @@
 | `std/bench` | `all-tasks` `task-count` `run-rounds` `aggregate` `print-report` `run-one` `run-parallel` `bench:list-sort` … (+1) | — |
 | `std/boids` | `boids:vec-add` `boids:vec-sub` `boids:vec-scale` `boids:vec-len` `boids:distance` `boids:separation` `boids:alignment` `boids:cohesion` … (+4) | lib/std/boids.aura — Issue #2879 Boids-style coordination (not physics sim) |
 | `std/capability` | — | std/capability.aura — Capability discovery surface (Issue #4276) |
+| `std/cbuild` | `cbuild-root` `cbuild-set-root!` `cbuild-digest` `cbuild-toolchain-id` `cbuild-key` `cbuild-entry-dir` `cbuild-artifact!` `cbuild-object!` … (+9) | cbuild.aura — 磁盘内容寻址增量构建缓存（Issue #4803） |
 | `std/cgen` | `cgen-expr` `cgen-stmt` `cgen-fn` `cgen-unit` `cgen-digest` `cgen-build-cached!` `cgen-cache-stats` `cgen-cache-clear!` | cgen.aura — C 代码生成 EDSL（最小原型，Issue #4802 第一步） |
 | `std/combinators` | `compose` `curry` `rcurry` `partial2` `const` `identity` `flip` `complement` … (+1) | combinators.aura — Functional programming utilities |
 | `std/compat` | `query:siblings` `query:find-by-name` `query:nodes-with-marker` `query:subtree` | lib/std/compat.aura — temporary compatibility shims for demoted query:* |

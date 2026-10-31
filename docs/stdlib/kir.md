@@ -1,4 +1,4 @@
-# std/kir — typed kernel IR, schedules and C / CUDA / PTX / Triton backends (#4802)
+# std/kir — typed kernel IR, schedules and C / CUDA / PTX / Triton backends and build cache (#4802, #4803)
 
 A kernel is a plain Aura datum: it can be stored in the workspace, diffed,
 mutated by `set-code` / `mutate`, proposed by an agent, and lowered by a
@@ -133,3 +133,49 @@ Set `AURA_KIR_GPU_OUT=<dir>` to keep `k.cu`, `k.ptx`, `k.py` and
 
 Out of scope: real-GPU timing, autotuning, 2-D/3-D grids, shared memory and
 warp primitives.
+
+## Build cache (`std/cbuild`, #4803)
+
+`std/cbuild` stores build outputs on disk under a content key. Rebuilding an
+unchanged input costs one file probe, and the cache is shared across processes
+and sessions.
+
+```scheme
+(require "std/cbuild" all:)
+(define o   (cbuild-object! "int add3(int a) { return a + 3; }\n"))  ; cached .o
+(define o2  (cbuild-object! c-text "-O3 -march=native -fPIC"))       ; flags are in the key
+(define exe (cbuild-link! (list main-o o) 'exe))                      ; or 'so
+(cbuild-stats)   ; (("hits" . n) ("shared-hits" . n) ("built" . n) ("failed" . n))
+```
+
+- **Key.** The key is a digest of `cbuild-v1`, the kind, the key material and
+  the input text. For objects and links, the key material is the toolchain id
+  plus the flags. The toolchain id is a digest of `$AURA_CC` (or `cc`)
+  `--version` and `-dumpmachine`, so a compiler upgrade or a flag change never
+  reuses a stale object.
+- **Root.** The cache lives in `$AURA_CGEN_CACHE`, falling back to
+  `$XDG_CACHE_HOME/aura/cgen`, then `~/.cache/aura/cgen`. Call
+  `cbuild-set-root!` to override it, for example in tests. Each entry is stored
+  at `<root>/<k2>/<key>/` and contains the input, the outputs, `.meta` and
+  `.atime`.
+- **Concurrency.** Each build runs in a private staging directory while holding
+  `flock(<root>/locks/<key>.lock)`. The finished directory is then published
+  with a single rename. Other builders of the same key, in other fibers or
+  other processes, wait on the lock and then reuse the published entry.
+  Each key is built exactly once, and readers never see a partial entry.
+- **Failures.** A failed build publishes nothing. It raises `cbuild: <kind>
+  build failed: <log>`. A command that exits 0 but does not create a declared
+  output also counts as a failure.
+- **Generic artifacts.** `(cbuild-artifact! kind material input-name input-text
+  cmd outputs)` writes the input to a file, runs `cmd` in `sh` inside the
+  staging directory, and returns the entry directory. It works for any tool,
+  for example `ptxas` or code generators.
+- **Maintenance.**
+  - `cbuild-lookup` returns the entry directory, or `#f` if there is none.
+  - `cbuild-invalidate!` removes a single entry.
+  - `(cbuild-gc! max-kbytes [max-age-s])` evicts least-recently-used entries
+    until the cache fits in `max-kbytes`, and removes entries unused for longer
+    than `max-age-s`. It also deletes staging directories older than one day.
+  - `cbuild-clear!` empties the cache.
+  - `cbuild-disk-stats` and `cbuild-entries` report the cache's size and
+    contents.
