@@ -198,6 +198,21 @@ static std::string_view stdlib_only_unbound_hint(std::string_view name) {
                "json-stringify / json-value)";
     if (name == "json-escape" || name == "json-arr-items" || name == "json-obj-items")
         return "defined in std/json: add (require \"std/json\" all:)";
+    // Issue #4801: channels live under the channel: prefix. Names from other
+    // Schemes / Go / Racket otherwise get an unrelated edit-distance
+    // neighbour (or none), so point at the real primitive.
+    if (name == "make-channel" || name == "channel-create" || name == "channel:make" ||
+        name == "channel:new" || name == "make-chan" || name == "chan" || name == "channel")
+        return "did you mean 'channel:create'? ((channel:create N) makes a channel with buffer N; "
+               "see channel:send / channel:recv / channel:try-recv / channel:close)";
+    if (name == "channel-send" || name == "channel-put" || name == "channel-put!" ||
+        name == "channel:put" || name == "send!")
+        return "did you mean 'channel:send'?";
+    if (name == "channel-recv" || name == "channel-receive" || name == "channel-get" ||
+        name == "channel:receive" || name == "channel:get")
+        return "did you mean 'channel:recv'? (non-blocking: channel:try-recv)";
+    if (name == "channel-close" || name == "close-channel" || name == "channel-close!")
+        return "did you mean 'channel:close'?";
     return {};
 }
 
