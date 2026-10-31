@@ -29,7 +29,10 @@
 (define (find-rule name)
   (let loop ((remaining *rules*))
     (if (null? remaining) #f
-      (if (or (eq? (caar remaining) name) (and (string? (caar remaining)) (string=? (caar remaining) name)))
+      ;; Issue #4798: load-rules names are real symbols now; still accept a
+      ;; string lookup of a symbol name (and vice versa) by comparing text.
+      (if (or (eq? (caar remaining) name)
+              (equal? (format "~a" (caar remaining)) (format "~a" name)))
         (car remaining)
         (loop (cdr remaining))))))
 
