@@ -256,5 +256,17 @@
 ; passes the result straight to name-based lookups.
 (define (symbol->string s)
   (if (symbol? s) (format "~a" s) (string-append s "")))
+; Issue #4798: string->symbol must return an interned symbol, so
+; (eq? (string->symbol "abc") 'abc), assq and case dispatch work. It goes
+; through the datum reader (read-from-string, #4746), which interns exactly
+; like a quoted literal, without a new primitive (#1448). Only text that reads
+; back as that very symbol is converted; anything else (empty, "123",
+; "a b", "(x)") keeps the historical string copy instead of a wrong symbol.
 (define (string->symbol s)
-  (if (symbol? s) s (string-append s "")))
+  (cond ((symbol? s) s)
+        ((not (string? s)) s)
+        (else
+         (let ((d (read-from-string s)))
+           (if (and (symbol? d) (equal? (format "~a" d) s))
+               d
+               (string-append s ""))))))
