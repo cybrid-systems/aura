@@ -1,0 +1,34 @@
+; Issue #4818 — a require inside a head group of defines (letrec path) whose
+; module is written by an earlier form of the same body. #2766 Phase 0 runs
+; every require of the group first, so on a clean /tmp the module was not
+; there yet and the file stopped at "require: cannot resolve". A resolve miss
+; in Phase 0 is now deferred and the require runs again at its source
+; position. Every define comes before the first body expression so this
+; begin stays on the letrec path (a define after a body expr would make it
+; sequential, #2740). The module files are deleted at the end so the next
+; run takes the same path.
+;; expect: OK-4818
+
+(define a4818 1)
+(require "std/io" all:)
+(define w4818 (write-file "/tmp/aura4818_a.aura" "(export ga4818)\n(define (ga4818 x) (+ x 41))\n"))
+(require "/tmp/aura4818_a.aura" all:)
+(define b4818 (ga4818 1))
+(define (uses-b4818) (gb4818 2))
+(define *fails4818* 0)
+(define (check4818 ok msg)
+  (if ok
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails4818* (+ *fails4818* 1)) (display "  FAIL: ") (display msg) (newline))))
+
+(write-file "/tmp/aura4818_b.aura" "(export gb4818)\n(define (gb4818 x) (* x 21))\n")
+(require "/tmp/aura4818_b.aura" all:)
+(check4818 (= b4818 42) "define value after a deferred require sees the module")
+(check4818 (= a4818 1) "define before the require keeps its value")
+(check4818 (= (ga4818 0) 41) "deferred require in the define group binds its export")
+(check4818 (= (uses-b4818) 42) "require after a body write-file runs after it")
+(file-delete "/tmp/aura4818_a.aura")
+(file-delete "/tmp/aura4818_b.aura")
+(if (= *fails4818* 0)
+    (display "OK-4818\n")
+    (begin (display "FAIL-4818 fails=") (display *fails4818*) (newline) (exit 1)))
