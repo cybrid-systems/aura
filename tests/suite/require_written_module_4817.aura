@@ -1,0 +1,33 @@
+; Issue #4817 — a module the file writes and then requires at run time.
+; pre_exec_requires runs a (begin ...) require ahead of the forms before it,
+; so on a clean /tmp the file was not there yet: the resolve miss was stashed
+; and the in-order require replayed it (#4575 replay, armed for --load by
+; #4750). Once it loaded, the module's first define stored into the main
+; file's first top-level cell (Define's SymId fallback walked the parent
+; top_ with the module pool's raw SymId), so the export was unbound and the
+; main file's first define was overwritten.
+;
+; The module file is deleted at the end so the next run takes the run-time
+; path again (a leftover file makes pre_exec_requires load it up front).
+;; expect: OK-4817
+
+(define first4817 0)
+(require "std/io" all:)
+; Write the module before the other defines: a define after a body
+; expression keeps this begin sequential. (A head group of defines is
+; letrec-hoisted and runs its requires first, #2766.)
+(write-file "/tmp/aura4817_mod.aura" "(export foo4817)\n(define (foo4817 a b) (+ a b 40))\n")
+(define *fails* 0)
+(define (check! ok msg)
+  (if ok
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+
+(require "/tmp/aura4817_mod.aura" all:)
+(check! (= (foo4817 1 2) 43) "export of a module written by this file is bound")
+(check! (equal? first4817 0) "main file's first define keeps its value")
+
+(file-delete "/tmp/aura4817_mod.aura")
+(if (= *fails* 0)
+    (display "OK-4817\n")
+    (begin (display "FAIL-4817 fails=") (display *fails*) (newline) (exit 1)))

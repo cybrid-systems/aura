@@ -8073,6 +8073,16 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                                             std::string::npos)) {
                                         why = last_module_load_failure_;
                                     }
+                                    // Issue #4817: a resolve miss is not a
+                                    // deny. pre_exec_requires runs a require ahead of
+                                    // the forms before it, so a module those forms
+                                    // write (write-file, then require) is not there
+                                    // yet. Stashing the miss made the in-order load
+                                    // replay it (#4575 replay, armed for --load by
+                                    // #4750); unstashed, the require runs again in
+                                    // program order and a real miss still fails there.
+                                    const bool resolve_miss =
+                                        last_module_load_failure_.starts_with("cannot resolve '");
                                     last_module_load_failure_.clear();
                                     if (why.empty())
                                         why = "module load failed";
@@ -8082,9 +8092,12 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                         msg = "require \"" + mod_path + "\": " + why;
                                     const auto line = v.line == 0 ? 1u : v.line;
                                     const auto col = v.col == 0 ? 1u : v.col;
-                                    return surface(Diagnostic{
-                                        ErrorKind::InternalError, std::move(msg),
-                                        aura::diag::SourceLocation{line, col, 0}, current_id});
+                                    Diagnostic d{ErrorKind::InternalError, std::move(msg),
+                                                 aura::diag::SourceLocation{line, col, 0},
+                                                 current_id};
+                                    if (resolve_miss)
+                                        return std::unexpected(std::move(d));
+                                    return surface(std::move(d));
                                 }
                             }
                             return last;
@@ -9962,7 +9975,20 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         // already keyed by *this* AST pool (set_pool re-keys on
                         // change). Cross-pool integer match reused another
                         // define's cell without binding the new name.
-                        if (eval_env.pool() == p) {
+                        // Issue #4817: lookup_by_symid walks the
+                        // legacy parent_ chain with this raw SymId, so a
+                        // parent keyed by another pool (top_ under a module
+                        // env from a require that runs after the main file's
+                        // first define) collides too: the module's first
+                        // define stored into the main file's first top-level
+                        // cell and never bound its own name (the #4547 test
+                        // pad). Only trust the SymId hit when every parent
+                        // shares this pool.
+                        bool chain_same_pool = eval_env.pool() == p;
+                        for (const Env* up = eval_env.parent(); chain_same_pool && up != nullptr;
+                             up = up->parent())
+                            chain_same_pool = up->pool() == p;
+                        if (chain_same_pool) {
                             if (auto by_sym = eval_env.lookup_by_symid(v.sym_id);
                                 by_sym && is_cell(*by_sym))
                                 existing = by_sym;
