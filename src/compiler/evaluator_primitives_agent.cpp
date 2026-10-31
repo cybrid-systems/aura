@@ -126,6 +126,39 @@ namespace {
         return aura_closure_exists(id) != 0 && aura_closure_is_freed(id) == 0;
     }
 
+    // Issue #4813: the serialized parallel-intend eval gate. A task holds it
+    // for its whole apply, which may park the task fiber (fiber:join on a
+    // nested fiber, fiber:yield). A std::mutex then blocked the next task
+    // on the OS thread, so the worker could never run the fiber the holder
+    // was waiting for: a batch of two (fiber:join (fiber:spawn ...)) thunks
+    // deadlocked serve-async until the batch timeout and the process never
+    // exited. This gate yields the waiting fiber instead of blocking the
+    // worker, and it carries no thread ownership, so a holder that resumes
+    // on another worker may still release it.
+    class FiberYieldingGate {
+    public:
+        bool try_lock() noexcept {
+            bool expected = false;
+            return held_.compare_exchange_strong(expected, true, std::memory_order_acq_rel,
+                                                 std::memory_order_relaxed);
+        }
+        void lock() {
+            while (!try_lock()) {
+                if (auto* f = aura::serve::g_current_fiber) {
+                    if (f->is_cancel_requested())
+                        throw std::runtime_error("cancelled-waiting-for-eval-gate");
+                    aura::serve::Fiber::yield();
+                } else {
+                    std::this_thread::yield();
+                }
+            }
+        }
+        void unlock() noexcept { held_.store(false, std::memory_order_release); }
+
+    private:
+        std::atomic<bool> held_{false};
+    };
+
     void agent_note_closure_freed_tick(Evaluator& ev) {
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
             m->agent_closure_freed_during_tick.fetch_add(1, std::memory_order_relaxed);
@@ -2886,7 +2919,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         }
 
         struct AuraShared {
-            std::mutex eval_mu;
+            FiberYieldingGate eval_mu; // Issue #4813
             std::vector<EvalValue> values;
             std::vector<std::string> errors;
             // Issue #2163: per-batch pure accounting (task bodies bump atomics).
@@ -2987,7 +3020,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         const bool use_eval_gate =
                             !pure_mode && caller_apply_hold == 0 &&
                             aura::compiler::typed_audit::production_defaults_active();
-                        std::unique_lock<std::mutex> lock(ash->eval_mu, std::defer_lock);
+                        std::unique_lock<FiberYieldingGate> lock(ash->eval_mu, std::defer_lock);
                         if (use_lock) {
                             lock.lock();
                             if (force_lock) {

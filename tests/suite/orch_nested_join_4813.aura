@@ -1,0 +1,20 @@
+;; Issue #4813: parallel-intend tasks that are serialized on the shared
+;; evaluator gate and each fiber:join a fiber they spawned. The gate used
+;; to be a std::mutex that blocked the worker thread, so the second task
+;; parked the only worker and the first task's child never ran (deadlock,
+;; batch timeout). The gate now yields the fiber instead.
+;; suite-mode: serve-async
+;; expect: orch-nested-join-4813 ok
+
+(require "std/test" all:)
+
+(define (st h) (list (hash-ref h "status" "") (hash-ref h "ok-count" -1)))
+(define r
+  (st (parallel-intend
+       (vector (lambda () (fiber:join (fiber:spawn (lambda () 77))))
+               (lambda () (fiber:join (fiber:spawn (lambda () 78)))))
+       :max-concurrency 4 :timeout-ms 6000 :fail-fast #f)))
+(display r) (newline)
+(if (= (car (cdr r)) 2)
+    (display "orch-nested-join-4813 ok\n")
+    (assert #f "nested fiber:join inside serialized tasks must not deadlock (#4813)"))
