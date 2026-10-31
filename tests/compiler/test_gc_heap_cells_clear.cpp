@@ -50,7 +50,7 @@ static void ac1_cells_cleared() {
     CompilerService cs;
     seed_cells(cs, 3);
     CHECK(cs.evaluator().cells().size() == 3, "AC1: cells seeded");
-    auto r = cs.eval("(gc-heap)");
+    auto r = cs.eval("(gc-heap-reset!)");
     CHECK(r.has_value() && is_bool(*r) && as_bool(*r), "AC1: gc-heap returns #t");
     CHECK(cs.evaluator().cells().size() == 0, "AC1: cells().size() == 0 after gc-heap");
     CHECK(cs.evaluator().pairs().empty(), "AC1: pairs empty after gc-heap");
@@ -62,11 +62,11 @@ static void ac2_fresh_after_reset() {
     CompilerService cs;
     seed_cells(cs, 5);
     CHECK(cs.evaluator().cells().size() == 5, "AC2: pre-gc cells");
-    (void)cs.eval("(gc-heap)");
+    (void)cs.eval("(gc-heap-reset!)");
     CHECK(cs.evaluator().cells().size() == 0, "AC2: cells:0 after first gc-heap");
     seed_cells(cs, 2);
     CHECK(cs.evaluator().cells().size() == 2, "AC2: reseed 2 cells (no stale tail)");
-    (void)cs.eval("(gc-heap)");
+    (void)cs.eval("(gc-heap-reset!)");
     CHECK(cs.evaluator().cells().size() == 0, "AC2: cells:0 after second gc-heap");
 }
 
@@ -76,10 +76,12 @@ static void ac3_source() {
     auto src = read_file("src/compiler/evaluator_primitives_memory.cpp");
     CHECK(!src.empty(), "AC3: read memory primitives");
     CHECK(src.find("Issue #2486") != std::string::npos, "AC3: cites #2486");
-    auto pos = src.find("add(\"gc-heap\"");
-    CHECK(pos != std::string::npos, "AC3: gc-heap present");
-    if (pos != std::string::npos) {
-        auto win = src.substr(pos, 5000);
+    // Issue #4816: the clear lives in gc_heap_reset_impl ((gc-heap-reset!)).
+    auto pos = src.find("auto gc_heap_reset_impl");
+    auto end = src.find("add(\"gc-heap-reset!\"", pos);
+    CHECK(pos != std::string::npos && end != std::string::npos, "AC3: gc-heap-reset! present");
+    if (pos != std::string::npos && end != std::string::npos) {
+        auto win = src.substr(pos, end - pos);
         CHECK(win.find("cells_.clear()") != std::string::npos, "AC3: cells_.clear()");
         CHECK(win.find("cells_.shrink_to_fit()") != std::string::npos,
               "AC3: cells_.shrink_to_fit()");

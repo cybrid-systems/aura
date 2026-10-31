@@ -13,6 +13,7 @@ module;
 #include "core/arena_auto_policy_stats.h"
 #include "core/densify_consistency_report.h" // Issue #2935 recovery counters
 #include "compiler/typed_mutation_audit.h"   // Issue #4449: production_defaults_active gate
+#include "compiler/ir_inflight_roots.hh"     // Issue #4816: (gc-heap) sweeps via the IR driver
 #include <limits>
 #include <vector>
 
@@ -95,6 +96,57 @@ template <typename F> void sink_arena_prim(std::string_view name, F&& fn) {
 // sandbox=off keeps the benchmark-reset behavior unchanged. Free
 // function (not a capture) so prim bodies hold no stack lambda
 // reference past register_memory_primitives returns.
+// Issue #4816: explicit-collection counters for (gc-heap-stats).
+static std::atomic<std::uint64_t> g_gc_heap_requests_4816{0};
+static std::atomic<std::uint64_t> g_gc_heap_collected_4816{0};
+static std::atomic<std::uint64_t> g_gc_heap_deferred_4816{0};
+static std::atomic<std::uint64_t> g_gc_heap_resets_4816{0};
+
+// Issue #4816: string-keyed stats hash (same layout as
+// evaluator_primitives_stdlib_review.cpp build_kv_hash).
+static types::EvalValue
+build_kv_hash_4816(Evaluator& ev, std::span<const std::pair<std::string, types::EvalValue>> kv) {
+    std::size_t ncap = 64;
+    while (ncap < kv.size() * 2 + 8)
+        ncap *= 2;
+    auto* ht = FlatHashTable::create(ncap);
+    if (!ht)
+        return types::make_void();
+    auto meta = ht->metadata();
+    auto keys = ht->keys();
+    auto vals = ht->values();
+    const auto hcap = ht->capacity;
+    for (const auto& [k, v] : kv) {
+        std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+        for (char c : k)
+            h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+        auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+        if (fp == 0xFF)
+            fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
+        const auto kidx = static_cast<std::uint64_t>(ev.push_string_heap(k));
+        bool inserted = false;
+        for (std::size_t at = 0; at < hcap; ++at) {
+            const auto idx = ((h >> 1) + at) & (hcap - 1);
+            if (meta[idx] == 0xFF) {
+                meta[idx] = fp;
+                keys[idx] = types::make_string(kidx).val;
+                vals[idx] = v.val;
+                ht->size++;
+                inserted = true;
+                break;
+            }
+        }
+        if (!inserted) {
+            FlatHashTable::destroy(ht);
+            return types::make_void();
+        }
+    }
+    const auto hidx = g_hash_tables.size();
+    g_hash_tables.push_back(ht);
+    aura_hash_stamp_new_table_owner(); // Issue #4110 SSOT owner stamp
+    return types::make_hash(hidx);
+}
+
 static std::optional<types::EvalValue> production_gc_reset_deny(Evaluator& ev,
                                                                 std::string_view prim) {
     const bool sandboxed = ev.sandbox_mode() || ev.effect_sandbox_mode() != 0;
@@ -231,24 +283,18 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         return types::make_bool(!saved_src.empty());
     });
 
-    // (gc-heap) — Trigger GC or clear heap vectors.
-    // When a GC collector is available (serve-async mode with
-    // thread-safe GC), triggers a full GC cycle instead of
-    // blindly clearing. Falls back to direct clear for stdin mode.
-    add("gc-heap", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
-        // Issue #4449: the direct-clear fallback is fail-closed on the
-        // production face (bulk heap clear dangles live bindings). A
-        // live collector (serve-async) is NOT gated — it is a real GC
-        // cycle, not the destructive reset.
-        if (!aura::messaging::g_gc_collect) {
-            if (auto deny = production_gc_reset_deny(ev, "gc-heap"))
-                return *deny;
-        }
-        // If GC collector is available, use it
-        if (aura::messaging::g_gc_collect) {
-            std::lock_guard<std::mutex> lock(ev.heap_mutex());
-            return types::make_bool(aura::messaging::g_gc_collect());
-        }
+    // (gc-heap-reset!) — Issue #4816: the destructive heap reset that
+    // (gc-heap) used to be without a live collector (--load / stdin). It
+    // clears every heap vector plus module / workspace state, so every live
+    // binding dangles afterwards; callers that relied on "gc-heap empties
+    // the heaps" (#2486 cells:0, benchmark resets) call this by name or as
+    // (gc-heap :reset). Production face: fail-closed (#4449). Inside a
+    // fiber: refused (#4812). (gc-heap) itself is a real collection now.
+    auto gc_heap_reset_impl = [&ev, destroy_defuse_index]() -> EvalValue {
+        // Issue #4449: the direct-clear reset is fail-closed on the
+        // production face (bulk heap clear dangles live bindings).
+        if (auto deny = production_gc_reset_deny(ev, "gc-heap-reset!"))
+            return *deny;
         // Issue #4812: inside a fiber (a parallel-intend task on its
         // scheduler, or a fiber:spawn body on the CLI thread backend) the
         // caller still holds indices into the heaps the direct clear tears
@@ -259,13 +305,14 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         // under --load keeps the Soft reset.
         if (Evaluator::get_current_fiber() != nullptr || fiber_body_id_4778() != 0) {
             const auto cidx = ev.push_string_heap(
-                "gc-heap: destructive heap reset refused inside a fiber (no live collector "
-                "under --load; run under --serve-async for a real collection; Issue #4812)");
+                "gc-heap-reset!: destructive heap reset refused inside a fiber (use "
+                "(gc-heap) for a real collection; Issue #4812 / #4816)");
             const auto eidx = ev.error_values_.size();
             ev.error_values_.push_back(types::make_string(cidx));
             return types::make_error(eidx);
         }
-        // Fallback: direct clear (stdin mode)
+        g_gc_heap_resets_4816.fetch_add(1, std::memory_order_relaxed);
+        // Destructive clear (was the --load / stdin fallback of gc-heap).
         // Issue #1993 (D-001): hold heap_mutex_ + module_mtx_ +
         // workspace_mtx_ atomically (std::lock with defer_lock) for
         // the entire direct-clear body. The previous code only held
@@ -359,6 +406,73 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         for (const auto& fp : native_fins)
             FFIRuntime::run_native_finalizer(fp.first, fp.second);
         return types::make_bool(true);
+    };
+    add("gc-heap-reset!",
+        [gc_heap_reset_impl](const auto&) -> EvalValue { return gc_heap_reset_impl(); });
+
+    // (gc-heap) — run a real collection; live objects survive.
+    // serve-async: the scheduler's thread-safe collector (g_gc_collect).
+    // Issue #4816 — --load / stdin (no collector): a safepoint collection on
+    // the calling thread. The call itself is the safepoint: the caller's IR
+    // frame values (call_stack_ locals/args, cells, linear slots), the
+    // tree-walker frames, every registered fiber segment and the top env /
+    // modules / env frames are the roots, exactly as for the periodic
+    // #4459 / #4474 sweep, which this forces regardless of the allocation
+    // trigger. Innermost IR driver first (its sweep also absorbs the TW
+    // in-flight roots, #4481 / #4617); a pure tree-walker caller uses the TW
+    // sweep. If the sweep cannot certify every running body (#4713 / #4747 /
+    // #4768 stand-down) nothing is freed, the next periodic safepoint is
+    // armed, and the result is #f. #t = a mark/sweep ran now. Never an error
+    // inside a fiber (supersedes the #4812 refusal), never destructive.
+    // (gc-heap :reset) keeps the old destructive reset (gc-heap-reset!).
+    add("gc-heap", [&ev, gc_heap_reset_impl](std::span<const EvalValue> a) -> EvalValue {
+        if (!a.empty() && types::is_keyword(a[0])) {
+            const auto k_idx = types::as_keyword_idx(a[0]);
+            const std::string_view kw =
+                k_idx < ev.keyword_table_.size() ? std::string_view(ev.keyword_table_[k_idx]) : "";
+            if (kw == "reset" || kw == ":reset")
+                return gc_heap_reset_impl();
+        }
+        if (aura::messaging::g_gc_collect) {
+            std::lock_guard<std::mutex> lock(ev.heap_mutex());
+            return types::make_bool(aura::messaging::g_gc_collect());
+        }
+        g_gc_heap_requests_4816.fetch_add(1, std::memory_order_relaxed);
+        int swept = aura::compiler::ir_inflight::reclaim_innermost();
+        if (swept < 0)
+            swept = ev.reclaim_tw_unreachable_now() ? 1 : 0;
+        if (swept > 0) {
+            g_gc_heap_collected_4816.fetch_add(1, std::memory_order_relaxed);
+            return types::make_bool(true);
+        }
+        // Stood down: arm the next periodic safepoint (both sweeps poll
+        // this counter) instead of retrying here.
+        g_gc_heap_deferred_4816.fetch_add(1, std::memory_order_relaxed);
+        ev.arm_file_heap_reclaim_trigger();
+        return types::make_bool(false);
+    });
+
+    // (stats:get "gc-heap-stats") — Issue #4816: hash of the explicit-collection
+    // counters and the file-heap free lists (the measurable face of "garbage
+    // freed"). Facade-only like every *-stats dashboard (#1439).
+    ObservabilityPrims::register_stats_impl("gc-heap-stats", [&ev](const auto&) -> EvalValue {
+        const auto u = [](std::uint64_t v) {
+            return types::make_int(static_cast<std::int64_t>(v));
+        };
+        const std::pair<std::string, EvalValue> kv[] = {
+            {"requests", u(g_gc_heap_requests_4816.load(std::memory_order_relaxed))},
+            {"collected", u(g_gc_heap_collected_4816.load(std::memory_order_relaxed))},
+            {"deferred", u(g_gc_heap_deferred_4816.load(std::memory_order_relaxed))},
+            {"resets", u(g_gc_heap_resets_4816.load(std::memory_order_relaxed))},
+            {"file-reclaim-runs", u(ev.file_heap_reclaim_runs_for_test())},
+            {"pairs", u(ev.pairs_size())},
+            {"pairs-free", u(ev.pair_heap_free_slots())},
+            {"vectors", u(ev.vector_heap_size())},
+            {"vectors-free", u(ev.vector_heap_free_slots())},
+            {"strings-live", u(ev.string_heap_live_size())},
+            {"strings-free", u(ev.string_heap_free_slots())},
+        };
+        return build_kv_hash_4816(ev, kv);
     });
 
     // (gc-freeze) — Mark current closure generation as "root".
