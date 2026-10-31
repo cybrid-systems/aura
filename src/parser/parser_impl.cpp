@@ -1428,7 +1428,7 @@ NodeId parse_quote(ParserState& s) {
 NodeId parse_cond(ParserState& s) {
     s.lex.consume(); // 'cond'
     struct Clause {
-        NodeId test;
+        NodeId test; // NULL_NODE = else
         NodeId val;
     };
     std::vector<Clause> clauses;
@@ -1436,10 +1436,18 @@ NodeId parse_cond(ParserState& s) {
         if (s.lex.peek().kind != TokenKind::LParen)
             break;
         s.lex.consume(); // '('
-        auto cn = parse_expr(s);
-        if (cn == NULL_NODE) {
-            skip_rparen(s);
-            break;
+        // Issue #4804: recognise `else` here instead of treating whatever
+        // clause happens to be last as unconditional.
+        NodeId cn = NULL_NODE;
+        auto head = s.lex.peek();
+        if (head.kind == TokenKind::Identifier && head.text == "else") {
+            s.lex.consume();
+        } else {
+            cn = parse_expr(s);
+            if (cn == NULL_NODE) {
+                skip_rparen(s);
+                break;
+            }
         }
         auto v = parse_expr(s);
         if (v == NULL_NODE) {
@@ -1462,9 +1470,13 @@ NodeId parse_cond(ParserState& s) {
     s.lex.consume(); // ')'
     if (clauses.empty())
         return NULL_NODE;
-    auto result = clauses.back().val;
-    for (auto it = clauses.rbegin() + 1; it != clauses.rend(); ++it)
-        result = s.flat.add_if(it->test, it->val, result);
+    // Issue #4804: the last clause used to seed the fold unconditionally, so
+    // `(cond (a x) (b y))` ran `y` even when `b` was false. Seed with void
+    // (as parse_case does) and keep every non-else test as a branch.
+    std::vector<NodeId> none;
+    NodeId result = s.flat.add_begin(none);
+    for (auto it = clauses.rbegin(); it != clauses.rend(); ++it)
+        result = it->test == NULL_NODE ? it->val : s.flat.add_if(it->test, it->val, result);
     return result;
 }
 
