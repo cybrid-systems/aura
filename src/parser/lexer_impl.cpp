@@ -316,7 +316,9 @@ Token Lexer::read_pipe_symbol() {
     if (pos_ >= source_.size())
         return make_tok(TokenKind::Error, source_.substr(start, pos_ - start));
     pos_++; // closing |
-    return make_tok(TokenKind::Identifier, string_buf_);
+    auto tok = make_tok(TokenKind::Identifier, string_buf_);
+    tok.quoted = true; // Issue #4806
+    return tok;
 }
 Token Lexer::read_identifier() {
     std::size_t s = pos_;

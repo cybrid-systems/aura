@@ -32,6 +32,9 @@ export struct Token {
     TokenKind kind;
     std::string_view text;
     std::uint32_t line = 0, column = 0;
+    // Issue #4806: Identifier spelled |...|. Same symbol as the bare spelling,
+    // but never subject to reader-level syntax such as the &x borrow macro.
+    bool quoted = false;
     bool is(TokenKind k) const { return kind == k; }
 };
 

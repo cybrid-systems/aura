@@ -282,7 +282,8 @@ NodeId parse_expr(ParserState& s) {
             // M4 &mut-x reader macro: &mut-x → (mut-borrow x). Issue #4807: must be
             // tested before the shorter &x prefix, which used to read it as
             // (borrow mut-x).
-            if (text.size() > 5 && text.substr(0, 5) == "&mut-") {
+            // Issue #4806: |&x| / |&mut-x| are plain symbols (tok.quoted).
+            if (!tok.quoted && text.size() > 5 && text.substr(0, 5) == "&mut-") {
                 auto var_name = text.substr(5);
                 auto inner = s.flat.add_variable(s.pool.intern(var_name));
                 auto id = s.flat.add_mut_borrow(inner);
@@ -291,7 +292,7 @@ NodeId parse_expr(ParserState& s) {
             }
             // M4 &x reader macro: &x → (borrow x). Issue #4805: a name made
             // only of '&' (`&&`, `&&&`) is an ordinary symbol, not (borrow &).
-            if (text.size() > 1 && text[0] == '&' &&
+            if (!tok.quoted && text.size() > 1 && text[0] == '&' &&
                 text.find_first_not_of('&') != std::string::npos) {
                 auto var_name = text.substr(1);
                 auto inner = s.flat.add_variable(s.pool.intern(var_name));
@@ -1512,7 +1513,8 @@ NodeId parse_defmacro(ParserState& s, bool hygienic, bool preserve_dotted) {
         // a separate token between params.
         if (preserve_dotted && s.lex.peek().kind == TokenKind::Identifier) {
             std::string_view ptext = s.lex.peek().text;
-            if (ptext.size() > 1 && ptext[0] == '&') {
+            // Issue #4806: a |&name| parameter is an ordinary (gensym'd) name.
+            if (!s.lex.peek().quoted && ptext.size() > 1 && ptext[0] == '&') {
                 s.lex.consume(); // consume '&name'
                 preserved_macro = true;
                 // Strip the leading '&' and intern the rest.
