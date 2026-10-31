@@ -35,6 +35,9 @@
 (define (cgen-member? s lst)
   (cond ((null? lst) #f) ((equal? s (car lst)) #t) (else (cgen-member? s (cdr lst)))))
 
+(define (string-has-char? s ch)
+  (let loop ((i 0)) (cond ((>= i (string-length s)) #f) ((equal? (string-ref s i) ch) #t) (else (loop (+ i 1))))))
+
 (define cgen-infix-ops (list "+" "-" "*" "/" "%" "<" "<=" ">" ">=" "==" "!=" "&&" "||"))
 
 (define (cgen-expr e)
@@ -59,7 +62,9 @@
              ((equal? h "?")
               (string-append "(" (cgen-expr (car args)) " ? " (cgen-expr (cadr args)) " : "
                              (cgen-expr (car (cddr args))) ")"))
-             ((equal? h "f32") (string-append (number->string (car args)) "f"))
+             ((equal? h "f32")
+              (let ((t (number->string (car args))))
+                (string-append t (if (or (float? (car args)) (string-has-char? t #\.) (string-has-char? t #\e)) "" ".0") "f")))
              (else (error (string-append "cgen-expr: unknown form " h))))))))
 
 (define (cgen-indent n) (if (<= n 0) "" (string-append "    " (cgen-indent (- n 1)))))
