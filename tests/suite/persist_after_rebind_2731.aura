@@ -2,6 +2,7 @@
 ; (H13; depends on #2730 live AST rebind). Parent tracker: #2729.
 (require "std/mutate" all:)
 (require "std/persist" all:)
+(require "std/process" all:)
 
 (define *fails* 0)
 (define (assert! pred msg)
@@ -13,9 +14,12 @@
         (display msg)
         (newline))))
 
-(define path-a "/tmp/aura-suite-2731-a.aura-soul")
-(define path-b "/tmp/aura-suite-2731-b.aura-soul")
-(define path-m "/tmp/aura-suite-2731-m.aura-soul")
+;; Per-run paths: fixed /tmp names collide across users and concurrent runs
+;; (a stale file owned by another uid makes every persist:save fail).
+(define run-tag (number->string (current-time-ms)))
+(define path-a (string-append "/tmp/aura-suite-2731-a-" run-tag ".aura-soul"))
+(define path-b (string-append "/tmp/aura-suite-2731-b-" run-tag ".aura-soul"))
+(define path-m (string-append "/tmp/aura-suite-2731-m-" run-tag ".aura-soul"))
 
 (display "Scenario A: save baseline, rebind, load → baseline\n")
 (set-code "(define score (lambda (x) (* x 2)))")
@@ -49,6 +53,8 @@
 (assert! (verify-policy 21) "M after-load vfy21")
 (assert! (not (verify-policy 14)) "M after-load vfy14")
 (assert! (= (score 7) 14) "M after-load score")
+
+(shell (string-append "rm -f " path-a " " path-b " " path-m))
 
 (if (= *fails* 0)
     (begin (display "OK-2731 persist after rebind\n"))
