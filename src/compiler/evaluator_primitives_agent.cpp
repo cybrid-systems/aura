@@ -123,7 +123,16 @@ namespace {
         if (ev.find_active_closure(static_cast<ClosureId>(raw)).has_value())
             return true;
         const auto id = static_cast<std::int64_t>(raw);
-        return aura_closure_exists(id) != 0 && aura_closure_is_freed(id) == 0;
+        if (aura_closure_exists(id) != 0 && aura_closure_is_freed(id) == 0)
+            return true;
+        // Issue #4814: a closure minted by the IR interpreter (e.g. a lambda
+        // returned by a define from an earlier serve-async request) lives in
+        // the interpreter's runtime_closures_, not in closures_ or the JIT
+        // table. apply_closure routes a closures_ miss to the IR bridge and
+        // fails closed (nullopt -> "apply-failed") when the bridge does not
+        // own the id either, so defer to it instead of refusing a live
+        // closure as "closure-freed".
+        return static_cast<bool>(ev.closure_bridge());
     }
 
     // Issue #4813: the serialized parallel-intend eval gate. A task holds it
