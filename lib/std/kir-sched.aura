@@ -1,0 +1,191 @@
+; kir-sched.aura — 调度变换 = kernel IR 上的 AST 重写（Issue #4802）
+;
+; Every transform is a pure kernel -> kernel function addressed by loop
+; variable name; legality is checked before rewriting and violations raise
+; "kir-sched: ..." errors, so a search agent's illegal proposal costs no
+; evaluation budget. Results are ordinary IR (re-checked by kir-check /
+; lowered by any backend).
+;
+;   (kir-split k 'j 8)           j -> j_o (step 8) / j (tail-safe min bound)
+;   (kir-reorder k 'i 'j)        swap a perfect nest i{j{..}} -> j{i{..}}
+;   (kir-tile k 'i 'j 32 32)     split i, split j, reorder -> i_o j_o i j
+;   (kir-unroll k 'k 4)          main loop step 4 with 4 scoped body copies + remainder loop
+;   (kir-vectorize k 'k)         innermost for -> simd-for (C: #pragma omp simd [reduction(+:..)])
+;   (kir-sched-apply k '((tile i j 32 32) (unroll k 4)) [module])
+;        -> (ok . kernel) | (error . "message") ; applies steps then kir-check
+(export kir-with-body kir-find-loop kir-split kir-reorder kir-tile kir-unroll kir-vectorize
+        kir-sched-apply kir-loop-vars)
+(require "std/kir" all:)
+
+(define (ks-fail msg) (error (string-append "kir-sched: " msg)))
+(define (ks-member? s lst)
+  (cond ((null? lst) #f) ((equal? s (car lst)) #t) (else (ks-member? s (cdr lst)))))
+(define ks-loops (list "for" "simd-for" "pfor"))
+(define (ks-loop? s) (ks-member? (kir-head s) ks-loops))
+(define (ks-var s) (kir-name (car (cadr s))))
+(define (ks-sym s) (string->symbol s))
+
+(define (kir-with-body it body)
+  (if (equal? (kir-kind it) "func")
+      (append (list (car it) (cadr it) (car (cddr it)) (cadr (cddr it))) body)
+      (append (list (car it) (cadr it) (car (cddr it))) body)))
+
+; find the loop statement binding V (depth-first), #f if absent
+(define (ks-find stmts v)
+  (cond ((null? stmts) #f)
+        (else
+         (let* ((s (car stmts)) (h (kir-head s))
+                (here (cond ((and (ks-loop? s) (equal? (ks-var s) v)) s)
+                            ((ks-loop? s) (ks-find (cddr s) v))
+                            ((equal? h "when") (ks-find (cddr s) v))
+                            ((equal? h "begin") (ks-find (cdr s) v))
+                            ((equal? h "if") (ks-find (cddr s) v))
+                            (else #f))))
+           (if here here (ks-find (cdr stmts) v))))))
+(define (kir-find-loop k v) (ks-find (kir-body k) (kir-name v)))
+(define (kir-loop-vars k)
+  (let ((acc '()))
+    (let walk ((stmts (kir-body k)))
+      (for-each (lambda (s)
+                  (let ((h (kir-head s)))
+                    (cond ((ks-loop? s) (set! acc (cons (ks-var s) acc)) (walk (cddr s)))
+                          ((equal? h "when") (walk (cddr s)))
+                          ((equal? h "begin") (walk (cdr s)))
+                          ((equal? h "if") (walk (cddr s)))
+                          (else #f))))
+                stmts))
+    (reverse acc)))
+
+; replace the loop binding V by the statement list (f loop)
+(define (ks-replace stmts v f)
+  (let loop ((xs stmts) (out '()))
+    (if (null? xs) (reverse out)
+        (let* ((s (car xs)) (h (kir-head s)))
+          (cond
+            ((and (ks-loop? s) (equal? (ks-var s) v))
+             (loop (cdr xs) (append (reverse (f s)) out)))
+            ((ks-loop? s)
+             (loop (cdr xs) (cons (cons (car s) (cons (cadr s) (ks-replace (cddr s) v f))) out)))
+            ((equal? h "when")
+             (loop (cdr xs) (cons (cons (car s) (cons (cadr s) (ks-replace (cddr s) v f))) out)))
+            ((equal? h "begin") (loop (cdr xs) (cons (cons (car s) (ks-replace (cdr s) v f)) out)))
+            ((equal? h "if")
+             (loop (cdr xs)
+                   (cons (cons (car s) (cons (cadr s)
+                                             (map (lambda (b) (let ((r (ks-replace (list b) v f)))
+                                                                (if (= (length r) 1) (car r) (cons 'begin r))))
+                                                  (cddr s))))
+                         out)))
+            (else (loop (cdr xs) (cons s out))))))))
+
+(define (ks-rewrite k v f)
+  (let ((vn (kir-name v)))
+    (if (not (kir-find-loop k vn)) (ks-fail (string-append "no loop over " vn)) #f)
+    (kir-with-body k (ks-replace (kir-body k) vn f))))
+
+(define (ks-step s) (let ((sp (cadr s))) (if (null? (cdr (cddr sp))) 1 (car (cdr (cddr sp))))))
+(define (ks-need-unit-step s what)
+  (if (not (equal? (ks-step s) 1)) (ks-fail (string-append what " needs a unit-step loop over " (ks-var s))) #f))
+(define (ks-need-for s what)
+  (if (equal? (kir-head s) "pfor")
+      (ks-fail (string-append what " of pfor " (ks-var s) " is not supported (pfor stays the parallel axis)"))
+      #f))
+(define (ks-need-factor n what)
+  (if (not (and (integer? n) (> n 1))) (ks-fail (string-append what " factor must be an integer > 1")) #f))
+
+; ---- split ---------------------------------------------------------------------
+(define (kir-split k v factor)
+  (ks-need-factor factor "split")
+  (ks-rewrite k v
+    (lambda (s)
+      (ks-need-for s "split") (ks-need-unit-step s "split")
+      (let* ((sp (cadr s)) (vn (ks-var s)) (vo (ks-sym (string-append vn "_o")))
+             (lo (cadr sp)) (hi (car (cddr sp))))
+        (list (list (car s) (list vo lo hi factor)
+                    (cons (car s) (cons (list (car sp) vo (list 'min (list '+ vo factor) hi)) (cddr s)))))))))
+
+; ---- reorder (interchange) ---------------------------------------------------------
+(define (ks-outer-writes stmts) (kir-outer-writes stmts))
+
+(define (kir-reorder k v1 v2)
+  (let ((n2 (kir-name v2)))
+    (ks-rewrite k v1
+      (lambda (s)
+        (let ((body (cddr s)))
+          (if (not (and (= (length body) 1) (ks-loop? (car body)) (equal? (ks-var (car body)) n2)))
+              (ks-fail (string-append "reorder needs " (ks-var s) " { " n2 " { ... } } as a perfect nest"))
+              #f)
+          (let ((inner (car body)))
+            (if (or (equal? (kir-head s) "pfor") (equal? (kir-head inner) "pfor"))
+                (ks-fail "reorder cannot move a pfor (it must stay the outermost parallel axis)") #f)
+            (if (kir-mentions? (cdr (cadr inner)) (ks-var s))
+                (ks-fail (string-append "inner bounds of " n2 " depend on " (ks-var s) " (not rectangular)")) #f)
+            (if (not (null? (ks-outer-writes (cddr inner))))
+                (ks-fail (string-append "nest body writes outer scalar " (cadr (car (ks-outer-writes (cddr inner))))
+                                        " (carried dependence)")) #f)
+            (list (cons (car inner) (cons (cadr inner) (list (cons (car s) (cons (cadr s) (cddr inner)))))))))))))
+
+; ---- tile ---------------------------------------------------------------------------
+(define (kir-tile k vi vj ti tj)
+  (let ((outer (kir-find-loop k vi)) (ni (kir-name vi)) (nj (kir-name vj)))
+    (if (not outer) (ks-fail (string-append "no loop over " ni)) #f)
+    (if (not (and (= (length (cddr outer)) 1) (ks-loop? (car (cddr outer))) (equal? (ks-var (car (cddr outer))) nj)))
+        (ks-fail (string-append "tile needs " ni " { " nj " { ... } } as a perfect nest")) #f)
+    (kir-reorder (kir-split (kir-split k vi ti) vj tj) vi (ks-sym (string-append nj "_o")))))
+
+; ---- unroll -----------------------------------------------------------------------------
+(define (kir-unroll k v n)
+  (ks-need-factor n "unroll")
+  (ks-rewrite k v
+    (lambda (s)
+      (ks-need-for s "unroll") (ks-need-unit-step s "unroll")
+      (let* ((sp (cadr s)) (vs (car sp)) (lo (cadr sp)) (hi (car (cddr sp)))
+             (split (list '- hi (list '% (list '- hi lo) n)))
+             (copies (let loop ((c 0) (acc '()))
+                       (if (= c n) (reverse acc)
+                           (loop (+ c 1)
+                                 (cons (cons 'begin (if (= c 0) (cddr s) (kir-subst (cddr s) vs (list '+ vs c))))
+                                       acc))))))
+        (list (cons (car s) (cons (list vs lo split n) copies))
+              (cons (car s) (cons (list vs split hi) (cddr s))))))))
+
+; ---- vectorize ------------------------------------------------------------------------------
+(define (kir-vectorize k v)
+  (ks-rewrite k v
+    (lambda (s)
+      (ks-need-for s "vectorize")
+      (let walk ((xs (cddr s)))
+        (for-each (lambda (x)
+                    (let ((h (kir-head x)))
+                      (cond ((ks-loop? x) (ks-fail (string-append "vectorize needs an innermost loop; " (ks-var s)
+                                                                  " contains loop " (ks-var x))))
+                            ((equal? h "when") (walk (cddr x)))
+                            ((equal? h "begin") (walk (cdr x)))
+                            ((equal? h "if") (walk (cddr x)))
+                            (else #f))))
+                  xs))
+      (for-each (lambda (w)
+                  (if (not (equal? (car w) "+="))
+                      (ks-fail (string-append "vectorize: " (ks-var s) " body writes outer scalar " (cadr w)
+                                              " with " (car w) " (only += reductions are allowed)"))
+                      #f))
+                (ks-outer-writes (cddr s)))
+      (list (cons 'simd-for (cdr s))))))
+
+; ---- driver ----------------------------------------------------------------------------------
+(define (ks-step-apply k st)
+  (let ((h (kir-head st)) (a (cdr st)))
+    (cond ((equal? h "split") (kir-split k (car a) (cadr a)))
+          ((equal? h "reorder") (kir-reorder k (car a) (cadr a)))
+          ((equal? h "tile") (kir-tile k (car a) (cadr a) (car (cddr a)) (cadr (cddr a))))
+          ((equal? h "unroll") (kir-unroll k (car a) (cadr a)))
+          ((equal? h "vectorize") (kir-vectorize k (car a)))
+          (else (ks-fail (string-append "unknown schedule step " h))))))
+(define (kir-sched-apply k steps . rest)
+  (try
+   (let loop ((k k) (xs steps))
+     (if (null? xs)
+         (let ((errs (if (null? rest) (kir-check k) (kir-check k (car rest)))))
+           (if (null? errs) (cons 'ok k) (cons 'error (string-append "kir-check: " (car errs)))))
+         (loop (ks-step-apply k (car xs)) (cdr xs))))
+   (catch (e) (cons 'error (format "~a" e)))))

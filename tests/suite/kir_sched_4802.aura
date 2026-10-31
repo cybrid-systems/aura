@@ -1,0 +1,122 @@
+; Issue #4802 — std/kir-sched: schedule transforms as IR rewrites, checked + equivalence-tested
+(require "std/kir" all:)
+(require "std/kir-sched" all:)
+(require "std/process" all:)
+(define *n* 0)
+(define *fails* 0)
+(define (check! pred msg)
+  (set! *n* (+ *n* 1))
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+(define (string-has? s sub)
+  (let loop ((i 0))
+    (cond ((> (+ i (string-length sub)) (string-length s)) #f)
+          ((equal? (substring s i (+ i (string-length sub))) sub) #t)
+          (else (loop (+ i 1))))))
+(define (err-text thunk) (try (begin (thunk) "no-error") (catch (e) (format "~a" e))))
+
+; C[i,j] = sum_k A[i,k] * B[k,j]   (n x n, row-major)
+(define mm
+  '(kernel mm (params (a (ptr f32) :in) (b (ptr f32) :in) (c (ptr f32) :out) (n i64))
+     (pfor (i 0 n)
+       (for (j 0 n) (set (ref c (+ (* i n) j)) (f32 0)))
+       (for (k 0 n)
+         (for (j 0 n)
+           (+= (ref c (+ (* i n) j)) (* (ref a (+ (* i n) k)) (ref b (+ (* k n) j)))))))))
+; row sums with a scalar accumulator (reduction)
+(define rs
+  '(kernel rs (params (x (ptr f32) :in) (o (ptr f32) :out) (rows i64) (cols i64))
+     (pfor (r 0 rows)
+       (let acc f32 (f32 0))
+       (for (q 0 cols) (+= acc (ref x (+ (* r cols) q))))
+       (set (ref o r) acc))))
+; 2-D copy-scale, a perfect nest for tile/reorder
+(define cp
+  '(kernel cp (params (x (ptr f32) :in) (y (ptr f32) :out) (h i64) (w i64))
+     (for (u 0 h) (for (v 0 w) (set (ref y (+ (* u w) v)) (* (f32 2) (ref x (+ (* u w) v))))))))
+
+(check! (equal? (kir-loop-vars mm) '("i" "j" "k" "j")) "loop vars in order")
+(define mm-split (kir-split mm 'k 4))
+(check! (null? (kir-check mm-split)) "split result type-checks")
+(check! (string-has? (kir->c mm-split) "for (long k = k_o; k < (((k_o + 4) < n) ? (k_o + 4) : n); k++)")
+        "split inner loop has tail-safe min bound")
+(define cp-tiled (kir-tile cp 'u 'v 8 16))
+(check! (equal? (kir-loop-vars cp-tiled) '("u_o" "v_o" "u" "v")) "tile = split + split + reorder")
+(define cp-re (kir-reorder cp 'u 'v))
+(check! (equal? (kir-loop-vars cp-re) '("v" "u")) "reorder swaps a perfect nest")
+(define rs-un (kir-unroll rs 'q 4))
+(check! (null? (kir-check rs-un)) "unroll result type-checks")
+(check! (string-has? (kir->c rs-un) "q += 4") "unrolled main loop strides by 4")
+(check! (string-has? (kir->c rs-un) "acc += x[((r * cols) + (q + 3))];") "unroll copies substitute q+c")
+(define rs-vec (kir-vectorize rs 'q))
+(check! (string-has? (kir->c rs-vec) "#pragma omp simd reduction(+:acc)") "vectorize emits simd + reduction clause")
+
+; ---- legality is checked before rewriting -----------------------------------------
+(check! (string-has? (err-text (lambda () (kir-split mm 'i 4))) "split of pfor i is not supported") "pfor is not split")
+(check! (string-has? (err-text (lambda () (kir-reorder rs 'r 'q))) "perfect nest") "reorder needs a perfect nest")
+(check! (string-has? (err-text (lambda () (kir-vectorize mm 'k))) "innermost") "vectorize needs innermost loop")
+(check! (string-has? (err-text (lambda () (kir-unroll mm 'zz 2))) "no loop over zz") "unknown loop")
+(check! (string-has? (err-text (lambda () (kir-unroll mm 'k 1))) "factor must be") "factor > 1")
+(define tri '(kernel tri (params (y (ptr f32) :out) (n i64))
+               (for (u 0 n) (for (v 0 u) (set (ref y (+ (* u n) v)) (f32 1))))))
+(check! (string-has? (err-text (lambda () (kir-reorder tri 'u 'v))) "not rectangular") "non-rectangular nest refused")
+(define car-dep '(kernel cd (params (y (ptr f32) :out) (n i64))
+                   (let s f32 (f32 0))
+                   (for (u 0 n) (for (v 0 n) (set s (* s (f32 2))) (set (ref y v) s)))))
+(check! (string-has? (err-text (lambda () (kir-reorder car-dep 'u 'v))) "carried dependence") "carried scalar refused")
+(check! (string-has? (err-text (lambda () (kir-vectorize car-dep 'v))) "only += reductions") "non-reduction scalar refused")
+(check! (equal? (car (kir-sched-apply mm '((split k 4) (unroll j 2)))) 'ok) "sched-apply ok")
+(define bad-apply (kir-sched-apply mm '((split k 4) (split i 2))))
+(check! (and (equal? (car bad-apply) 'error) (string-has? (cdr bad-apply) "pfor")) "sched-apply reports errors")
+
+; ---- equivalence: every schedule computes the same result as the original ----------
+(define variants
+  (list (cons "mm0" mm)
+        (cons "mm1" (cdr (kir-sched-apply mm '((split k 4) (unroll j 4)))))
+        (cons "mm2" (cdr (kir-sched-apply mm '((split k 8) (vectorize j)))))
+        (cons "mm3" (cdr (kir-sched-apply mm '((unroll k 3) (unroll j 2)))))))
+(define rsv
+  (list (cons "rs0" rs)
+        (cons "rs1" (kir-unroll rs 'q 4))
+        (cons "rs2" (kir-vectorize rs 'q))
+        (cons "rs3" (kir-vectorize (kir-split rs 'q 8) 'q))))
+(define cpv
+  (list (cons "cp0" cp) (cons "cp1" cp-tiled) (cons "cp2" cp-re) (cons "cp3" (kir-tile cp 'u 'v 3 5))))
+(define (rename it nm) (cons (car it) (cons (string->symbol nm) (cddr it))))
+(define (gen-all vs) (apply string-append (map (lambda (p) (kir->c (rename (cdr p) (car p)))) vs)))
+(define harness "
+#include <stdio.h>
+#define N 23
+static float A[N*N], B[N*N], C[N*N], O[N];
+int main(void) {
+  for (int t = 0; t < N*N; t++) { A[t] = (float)((t * 7) % 13) - 6; B[t] = (float)((t * 5) % 11) - 5; }
+  void (*mmf[4])(const float*, const float*, float*, int64_t) = {mm0, mm1, mm2, mm3};
+  void (*rsf[4])(const float*, float*, int64_t, int64_t) = {rs0, rs1, rs2, rs3};
+  void (*cpf[4])(const float*, float*, int64_t, int64_t) = {cp0, cp1, cp2, cp3};
+  for (int f = 0; f < 4; f++) { double s = 0; mmf[f](A, B, C, N); for (int t = 0; t < N*N; t++) s += C[t] * (t % 17 + 1); printf(\"%.1f \", s); }
+  for (int f = 0; f < 4; f++) { double s = 0; rsf[f](A, O, N, N); for (int t = 0; t < N; t++) s += O[t] * (t + 1); printf(\"%.1f \", s); }
+  for (int f = 0; f < 4; f++) { double s = 0; cpf[f](A, C, N, N); for (int t = 0; t < N*N; t++) s += C[t] * (t % 7 + 1); printf(\"%.1f \", s); }
+  printf(\"\\n\");
+  return 0;
+}
+")
+(define dir (string-append "/tmp/kir-sched-4802-" (number->string (current-time-ms))))
+(shell (string-append "mkdir -p " dir))
+(write-file (string-append dir "/s.c")
+            (string-append "#include <stdint.h>\n#include <math.h>\n" (gen-all variants) (gen-all rsv) (gen-all cpv) harness))
+(check! (= 0 (shell (string-append "cc -std=c11 -O2 -fopenmp-simd -Wall -Werror -o " dir "/s " dir "/s.c -lm")))
+        "all schedules compile with -Wall -Werror")
+(define outs (regex-split "\\s+" (command-output (string-append dir "/s"))))
+(define (all-same? xs) (or (null? xs) (null? (cdr xs)) (and (equal? (car xs) (cadr xs)) (all-same? (cdr xs)))))
+(check! (and (>= (length outs) 12) (all-same? (list (list-ref outs 0) (list-ref outs 1) (list-ref outs 2) (list-ref outs 3))))
+        "matmul schedules agree")
+(check! (and (>= (length outs) 12) (all-same? (list (list-ref outs 4) (list-ref outs 5) (list-ref outs 6) (list-ref outs 7))))
+        "row-sum schedules agree")
+(check! (and (>= (length outs) 12) (all-same? (list (list-ref outs 8) (list-ref outs 9) (list-ref outs 10) (list-ref outs 11))))
+        "tiled / reordered copies agree")
+(shell (string-append "rm -rf " dir))
+
+(if (= *fails* 0)
+    (begin (display "OK-kir-sched-4802 ") (display *n*) (display " checks") (newline))
+    (begin (display "kir-sched-4802: ") (display (- *n* *fails*)) (display "/") (display *n*) (newline) (exit 1)))
