@@ -1,0 +1,23 @@
+; Issue #4795 — string-split with a multi-char separator splits on the whole
+; substring (it used to be silently truncated to the separator's first char).
+(require "std/string" all:)
+
+(define ok #t)
+(define (expect label got want)
+  (unless (equal? got want)
+    (display (string-append "FAIL-4795 " label "\n"))
+    (set! ok #f)))
+
+(expect "double-colon" (string-split "a::b::c" "::") (list "a" "b" "c"))
+(expect "no-occurrence" (string-split "k=v;x=y" "=;") (list "k=v;x=y"))
+(expect "edges" (string-split "::a::" "::") (list "" "a" ""))
+(expect "partial-tail" (string-split "a:b:" "::") (list "a:b:"))
+(expect "overlap-prefix" (string-split "abcab" "abc") (list "" "ab"))
+(expect "three-char" (string-split "x-->y-->z" "-->") (list "x" "y" "z"))
+; single-char and char-code separators keep their old behaviour
+(expect "single" (string-split "a,b,,c" ",") (list "a" "b" "" "c"))
+(expect "char-code" (string-split "x y" 32) (list "x" "y"))
+(expect "empty-input" (string-split "" "::") (list ""))
+(if ok
+    (begin (display "OK-4795 string-split multichar") (newline))
+    (begin (display "FAIL-4795") (newline) (unbound-4795-force-fail)))
