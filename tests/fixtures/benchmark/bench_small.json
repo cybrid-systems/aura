@@ -22,7 +22,7 @@
   },
   {
     "name": "tc_coercion",
-    "code": "(+ \"42\" 1)",
+    "code": "(+ (string->number \"42\") 1)",
     "pipeline": "typecheck",
     "expected_type": "Int",
     "typecheck_suite": true

@@ -8,12 +8,16 @@
   {
     "name": "err_type",
     "code": "(+ 1 \"a\")",
-    "pipeline": "typecheck"
+    "pipeline": "typecheck",
+    "expected": "type error",
+    "expected_status": 1
   },
   {
     "name": "err_wrong_arg_type",
     "code": "(/ \"a\" 1)",
-    "pipeline": "typecheck"
+    "pipeline": "typecheck",
+    "expected": "type error",
+    "expected_status": 1
   },
   {
     "name": "gg_expr_annot",
@@ -77,7 +81,7 @@
   },
   {
     "name": "tc_coercion",
-    "code": "(+ \"42\" 1)",
+    "code": "(+ (string->number \"42\") 1)",
     "pipeline": "typecheck",
     "expected": "Int"
   },
