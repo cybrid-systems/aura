@@ -13973,14 +13973,31 @@ def test_p0_regression():
     # tests/python/test_regression.py runs 150+ Aura subprocess cases plus
     # JIT/AOT/fuzz helpers; wall time often exceeds 3 min on loaded runners.
     # Path moved under tests/python/ in #1932 layout migration.
-    r = subprocess.run(
-        [sys.executable, str(ROOT / "tests" / "python" / "test_regression.py")],
-        capture_output=True,
-        text=True,
-        timeout=300,
-        cwd=str(ROOT),
-        env=_aura_test_env(),
-    )
+    #
+    # CI (2026-10-31): this suite runs in the cheap/medium wave WHILE the
+    # issue-farm ninja is still linking on the same 4-vCPU runner. The old
+    # 300s cap was hit there (TimeoutExpired -> _run_suite reports rc=1,
+    # surfacing as "cheap/medium wave ... rc=1" with no test failure). The
+    # suite is ~150s on an idle box; give the overlapped run 3x headroom and
+    # print the tail on timeout so the stalled case is visible in CI logs.
+    try:
+        r = subprocess.run(
+            [sys.executable, str(ROOT / "tests" / "python" / "test_regression.py")],
+            capture_output=True,
+            text=True,
+            timeout=900,
+            cwd=str(ROOT),
+            env=_aura_test_env(),
+        )
+    except subprocess.TimeoutExpired as e:
+        fail("ci/p0 timed out after 900s")
+        out = e.stdout if isinstance(e.stdout, str) else (e.stdout or b"").decode(errors="replace")
+        err = e.stderr if isinstance(e.stderr, str) else (e.stderr or b"").decode(errors="replace")
+        if out:
+            print(out[-8000:])
+        if err:
+            print(err[-4000:], file=sys.stderr)
+        return 1
     print(r.stdout)
     if r.stderr:
         print(r.stderr, file=sys.stderr)
