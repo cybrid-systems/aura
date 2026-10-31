@@ -1095,13 +1095,19 @@ static std::uint32_t lower_flat_expr(
                                                                            : clause_node.child(0);
 
                         bool is_last = (ci == num_clauses);
+                        // Issue #4804: only a trailing `else` is unconditional;
+                        // a trailing ordinary test still branches (void when
+                        // false), it used to fall through unconditionally.
+                        bool is_else = false;
+                        if (pred_node < flat.size()) {
+                            auto pn = flat.get(pred_node);
+                            is_else =
+                                pn.tag == NodeTag::Variable && pool.resolve(pn.sym_id) == "else";
+                        }
 
-                        // Lower predicate (or check if it's else/#t)
-                        // For the last clause with #t predicate (else), skip the branch
-                        auto pred_slot =
-                            lower_flat_expr(state, flat, pool, pred_node, cache, cache_hits);
-
-                        if (!is_last) {
+                        if (!is_last || !is_else) {
+                            auto pred_slot =
+                                lower_flat_expr(state, flat, pool, pred_node, cache, cache_hits);
                             // Branch on predicate: if true → body, else → next clause
                             auto body_blk = state.alloc_block();
                             auto next_blk = state.alloc_block();
@@ -1118,6 +1124,10 @@ static std::uint32_t lower_flat_expr(
 
                             // Next clause
                             state.cur_block = next_blk;
+                            if (is_last) {
+                                state.emit(IROpcode::ConstVoid, result_slot);
+                                state.emit(IROpcode::Jump, done_blk);
+                            }
                         } else {
                             // Last clause: fallthrough body
                             auto body_val =
