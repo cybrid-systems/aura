@@ -1,0 +1,110 @@
+; Issue #4802 — std/kir: typed kernel IR, contracts (kir-check) and C lowering
+(require "std/kir" all:)
+(require "std/process" all:)
+(define *n* 0)
+(define *fails* 0)
+(define (check! pred msg)
+  (set! *n* (+ *n* 1))
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+(define (string-has? s sub)
+  (let loop ((i 0))
+    (cond ((> (+ i (string-length sub)) (string-length s)) #f)
+          ((equal? (substring s i (+ i (string-length sub))) sub) #t)
+          (else (loop (+ i 1))))))
+(define (has-err? errs sub)
+  (cond ((null? errs) #f) ((string-has? (car errs) sub) #t) (else (has-err? (cdr errs) sub))))
+(define (err-text thunk) (try (begin (thunk) "no-error") (catch (e) (format "~a" e))))
+
+(define saxpy
+  '(kernel saxpy (params (a f32) (x (ptr f32) :in) (y (ptr f32) :inout) (n i64))
+     (pfor (i 0 n) (set (ref y i) (+ (* a (ref x i)) (ref y i))))))
+(check! (null? (kir-check saxpy)) "saxpy type-checks")
+(define saxpy-c (kir->c saxpy))
+(check! (string-has? saxpy-c "void saxpy(float a, const float* restrict x, float* restrict y, int64_t n)")
+        ":in pointer lowers to const restrict")
+(check! (string-has? saxpy-c "y[i] = ((a * x[i]) + y[i]);") "pfor body lowered")
+
+; ---- contracts --------------------------------------------------------------
+(define bad
+  '(kernel bad (params (a f32) (x (ptr f32) :in) (y (ptr f32)) (n i64) (s f32))
+     (let t f32 (f32 0))
+     (pfor (i 0 n)
+       (set (ref x i) (f32 1)) (set (ref y 0) a) (set s a) (set i 2)
+       (+= (ref y i) (+ a n)) (let q f32 1.5) (set z 1) (set (ref y (ref x i)) a))))
+(define errs (kir-check bad))
+(check! (has-err? errs "write to read-only (:in) x") ":in pointer is read-only")
+(check! (has-err? errs "not indexed by i (data race)") "pfor store must be indexed by the parallel var")
+(check! (has-err? errs "writes outer scalar s") "pfor may not write outer scalars")
+(check! (has-err? errs "assignment to loop variable i") "loop variable is read-only")
+(check! (has-err? errs "type mismatch in (+): f32 vs i64") "no implicit promotion")
+(check! (has-err? errs "expected f32, got flit") "f64 literal is not f32")
+(check! (has-err? errs "undeclared z") "declare before use")
+(check! (has-err? errs "must be integer, got f32") "integer index")
+(check! (string-has? (err-text (lambda () (kir->c bad))) "kir-check failed") "lowering refuses ill-typed kernels")
+(define errs2 (kir-check '(kernel k2 (params (n i64) (o (ptr f32) :out))
+                            (let v f32 (f32 0)) (let v f32 (f32 1))
+                            (for (j 0 n) (pfor (i 0 n) (set (ref o i) v))) (return v))))
+(check! (has-err? errs2 "redeclared or shadowed v") "no shadowing")
+(check! (has-err? errs2 "pfor must be at kernel top level") "pfor only at top level")
+(check! (has-err? errs2 "kernel returns no value") "kernel is void")
+(check! (has-err? (kir-check '(kernel k3 (params (n i64) (o (ptr f32)))
+                                (pfor (i 0 n) (set (ref o i) (f32 0))) (pfor (j 0 n) (set (ref o j) (f32 1)))))
+                  "only one pfor") "one pfor per kernel")
+(check! (has-err? (kir-check '(kernel k4 (params (x (ptr f32) :in) (b f32)) (expr (call nope b))))
+                  "unknown func nope") "calls must resolve")
+
+(check! (has-err? (kir-check '(kernel k5 (params (x (ptr f32) :in) (n i64))
+                                (let s f32 (f32 0)) (simd-for (i 0 n) (set s (ref x i)))))
+                  "simd-for body writes outer scalar s") "simd-for allows only += reductions")
+(check! (null? (kir-check '(kernel k6 (params (x (ptr f32) :in) (o (ptr f32) :out) (n i64))
+                             (let s f32 (f32 0)) (simd-for (i 0 n) (+= s (ref x i))) (set (ref o 0) s))))
+        "simd-for += reduction accepted")
+
+; ---- module, funcs, call graph ---------------------------------------------
+(define m
+  '(module mm
+     (func sq f32 (params (v f32)) (return (* v v)))
+     (func sq2 f32 (params (v f32)) (return (call sq (call sq v))))
+     (kernel nrm (params (x (ptr f32) :in) (o (ptr f32) :out) (n i64))
+       (pfor (i 0 n) (set (ref o i) (sqrt (call sq (ref x i))))))
+     (kernel rowmax (params (x (ptr f64) :in) (o (ptr f64) :out) (rows i64) (cols i64))
+       (pfor (r 0 rows)
+         (let best f64 (ref x (* r cols)))
+         (for (c 1 cols) (set best (max best (ref x (+ (* r cols) c)))))
+         (set (ref o r) best)))))
+(check! (null? (kir-check m)) "module type-checks")
+(check! (has-err? (kir-check '(module bad (func f f32 (params (v f32)) (return v))
+                                          (kernel k (params (x (ptr f32))) (expr (call f 1.5)))))
+                  "arg v wants f32, got flit") "call argument types")
+(check! (equal? (kir-callees (kir-find m 'sq2)) '("sq")) "callees")
+(check! (equal? (kir-dependents m 'sq) '("sq2" "nrm")) "transitive dependents")
+(define unit (kir->c-unit m))
+(check! (string-has? unit "float sq(float v);") "prototypes first")
+(check! (string-has? unit "o[i] = sqrtf(sq(x[i]));") "f32 intrinsic is sqrtf")
+(check! (string-has? unit "best = ((best > x[((r * cols) + c)]) ? best : x[((r * cols) + c)]);") "max lowers to ternary")
+
+; ---- compile and run the generated C ----------------------------------------
+(define dir (string-append "/tmp/kir-4802-" (number->string (current-time-ms))))
+(shell (string-append "mkdir -p " dir))
+(write-file (string-append dir "/k.c")
+  (string-append unit (kir->c saxpy) "
+#include <stdio.h>
+int main(void) {
+  float x[5] = {1, 2, 3, 4, 5}, y[5] = {1, 1, 1, 1, 1}, o[5];
+  double z[6] = {1, 9, 2, 7, 3, 8}, zo[2];
+  saxpy(2.0f, x, y, 5); nrm(x, o, 5); rowmax(z, zo, 2, 3);
+  printf(\"%g %g %g %g %g\\n\", y[0], y[4], o[2], zo[0], zo[1]);
+  return 0;
+}
+"))
+(define cc-rc (shell (string-append "cc -std=c11 -O2 -Wall -Werror -o " dir "/k " dir "/k.c -lm")))
+(check! (= cc-rc 0) "generated C compiles with -Wall -Werror")
+(define out (command-output (string-append dir "/k")))
+(check! (equal? out "3 11 3 9 8") "generated C computes the right values")
+(shell (string-append "rm -rf " dir))
+
+(if (= *fails* 0)
+    (begin (display "OK-kir-4802 ") (display *n*) (display " checks") (newline))
+    (begin (display "kir-4802: ") (display (- *n* *fails*)) (display "/") (display *n*) (newline) (exit 1)))
