@@ -1,0 +1,69 @@
+; kir-build.aura — per-function incremental native builds for std/kir modules (Issue #4803)
+;
+; Each module item is compiled as its own C translation unit:
+;   includes + prototypes of the item's callees + (kir->c item)
+; and the object goes through the std/cbuild disk cache. An item is rebuilt only
+; when its own text or a callee's prototype changes, so editing one function
+; body recompiles exactly that function (its callers' units do not change), and
+; a signature change recompiles the function plus its kir-dependents. Lowering
+; is memoised in-process on digest(item datum, callee prototypes), so unchanged
+; items are neither re-checked nor re-lowered.
+;
+;   (kir-build! m [flags "-O2 -fPIC"] [link 'so | 'exe | #f])
+;       -> (("lib" . path|#f) ("objects" . paths) ("rebuilt" . names) ("reused" . names))
+;   (kir-item-unit item m)        -> C text of the item's translation unit
+;   (kir-rebuild-set old-m new-m) -> names of items whose unit changed (new or edited)
+;   (kir-build-memo-stats) -> (("hits" . n) ("misses" . n));  (kir-build-memo-clear!)
+(export kir-build! kir-item-unit kir-rebuild-set kir-build-memo-stats kir-build-memo-clear!)
+(require "std/kir" all:)
+(require "std/cbuild" all:)
+(require "std/cgen" all:)
+
+(define *kb-memo* (hash))
+(define *kb-hits* 0)
+(define *kb-misses* 0)
+(define (kir-build-memo-stats) (list (cons "hits" *kb-hits*) (cons "misses" *kb-misses*)))
+(define (kir-build-memo-clear!) (set! *kb-memo* (hash)) (set! *kb-hits* 0) (set! *kb-misses* 0) #t)
+
+(define (kb-item-name it) (kir-name (cadr it)))
+(define (kb-callee-protos it m)
+  (apply string-append
+         (map (lambda (n) (let ((c (kir-find m n))) (if c (kir->c-proto c) "")))
+              (kir-callees it))))
+
+(define (kir-item-unit it m)
+  (let* ((protos (kb-callee-protos it m))
+         (k (cbuild-digest (string-append (format "~s" it) "\n" protos)))
+         (hit (hash-ref *kb-memo* k #f)))
+    (if hit
+        (begin (set! *kb-hits* (+ *kb-hits* 1)) hit)
+        (let ((text (string-append (cgen-unit (list "stdint.h" "math.h") '()) protos "\n" (kir->c it m))))
+          (set! *kb-misses* (+ *kb-misses* 1))
+          (hash-set! *kb-memo* k text)
+          text))))
+
+(define (kir-rebuild-set old-m new-m)
+  (map kb-item-name
+       (filter (lambda (it)
+                 (let ((o (kir-find old-m (kb-item-name it))))
+                   (or (not o) (not (equal? (kir-item-unit o old-m) (kir-item-unit it new-m))))))
+               (kir-items new-m))))
+
+(define (kb-built) (cdr (assoc "built" (cbuild-stats))))
+
+(define (kir-build! m . rest)
+  (let* ((flags (if (null? rest) "-O2 -fPIC" (car rest)))
+         (link (if (or (null? rest) (null? (cdr rest))) 'so (cadr rest)))
+         (rebuilt '())
+         (reused '())
+         (objs (map (lambda (it)
+                      (let* ((b0 (kb-built))
+                             (o (cbuild-object! (kir-item-unit it m) flags)))
+                        (if (> (kb-built) b0)
+                            (set! rebuilt (cons (kb-item-name it) rebuilt))
+                            (set! reused (cons (kb-item-name it) reused)))
+                        o))
+                    (kir-items m)))
+         (lib (if link (cbuild-link! objs link "-lm") #f)))
+    (list (cons "lib" lib) (cons "objects" objs)
+          (cons "rebuilt" (reverse rebuilt)) (cons "reused" (reverse reused)))))

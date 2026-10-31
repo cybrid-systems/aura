@@ -1,0 +1,98 @@
+; Issue #4803 — std/kir-build: per-function incremental builds through std/cbuild
+(require "std/kir" all:)
+(require "std/kir-build" all:)
+(require "std/cbuild" all:)
+(require "std/process" all:)
+(define *n* 0)
+(define *fails* 0)
+(define (check! pred msg)
+  (set! *n* (+ *n* 1))
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+(define (string-has? s sub)
+  (let loop ((i 0))
+    (cond ((> (+ i (string-length sub)) (string-length s)) #f)
+          ((equal? (substring s i (+ i (string-length sub))) sub) #t)
+          (else (loop (+ i 1))))))
+(define (field r k) (cdr (assoc k r)))
+(define (memo k) (cdr (assoc k (kir-build-memo-stats))))
+
+(define base (string-append "/tmp/kir-build-4803-" (number->string (current-time-ms))))
+(cbuild-set-root! (string-append base "/cache"))
+
+(define m1
+  '(module mm
+     (func sq f32 (params (v f32)) (return (* v v)))
+     (func sq2 f32 (params (v f32)) (return (call sq (call sq v))))
+     (kernel nrm (params (x (ptr f32) :in) (o (ptr f32) :out) (n i64))
+       (pfor (i 0 n) (set (ref o i) (sqrt (call sq (ref x i))))))
+     (func axpy f64 (params (a f64) (b f64)) (return (+ (* 2.0 a) b)))))
+(define driver
+  (cbuild-object! (string-append
+   "#include <stdio.h>\n#include <stdint.h>\n"
+   "float sq2(float);\nvoid nrm(const float*, float*, int64_t);\ndouble axpy(double, double);\n"
+   "int main(void) { float x[3] = {-1.5f, 2.0f, 3.0f}, o[3]; nrm(x, o, 3);\n"
+   "  printf(\"%.1f %.1f %.1f %.1f %.1f\\n\", sq2(2.0f), o[0], o[1], o[2], axpy(1.0, 0.5)); return 0; }\n")))
+(define (run-with r) (command-output (cbuild-link! (cons driver (field r "objects")) 'exe "-lm")))
+
+; ---- first build compiles every item -------------------------------------------------
+(define r1 (kir-build! m1))
+(check! (equal? (field r1 "rebuilt") '("sq" "sq2" "nrm" "axpy")) "cold build compiles every item")
+(check! (null? (field r1 "reused")) "nothing reused on a cold cache")
+(check! (= 0 (shell (string-append "test -f " (field r1 "lib")))) "shared library linked")
+(check! (equal? (run-with r1) "16.0 1.5 2.0 3.0 2.5") "objects link and run")
+(check! (equal? (field r1 "rebuilt") '("sq" "sq2" "nrm" "axpy")) "report order follows the module")
+(define u (kir-item-unit (kir-find m1 'sq2) m1))
+(check! (and (string-has? u "float sq(float v);") (not (string-has? u "axpy"))) "unit declares only its callees")
+
+; ---- unchanged module: no compile, no re-lowering ---------------------------------------
+(define h0 (memo "hits"))
+(define r2 (kir-build! m1))
+(check! (null? (field r2 "rebuilt")) "rebuild of an unchanged module compiles nothing")
+(check! (equal? (field r2 "lib") (field r1 "lib")) "same library path")
+(check! (= (memo "hits") (+ h0 4)) "lowering is memoised per item")
+
+; ---- body edit: exactly one function is recompiled -----------------------------------------
+(define m2
+  '(module mm
+     (func sq f32 (params (v f32)) (return (* v (min v v))))
+     (func sq2 f32 (params (v f32)) (return (call sq (call sq v))))
+     (kernel nrm (params (x (ptr f32) :in) (o (ptr f32) :out) (n i64))
+       (pfor (i 0 n) (set (ref o i) (sqrt (call sq (ref x i))))))
+     (func axpy f64 (params (a f64) (b f64)) (return (+ (* 2.0 a) b)))))
+(check! (equal? (kir-rebuild-set m1 m2) '("sq")) "rebuild set of a body edit")
+(define r3 (kir-build! m2))
+(check! (equal? (field r3 "rebuilt") '("sq")) "body edit recompiles only that function")
+(check! (equal? (field r3 "reused") '("sq2" "nrm" "axpy")) "callers are reused")
+(check! (not (equal? (field r3 "lib") (field r1 "lib"))) "relinked library")
+(check! (equal? (run-with r3) "16.0 1.5 2.0 3.0 2.5") "edited build runs")
+
+; ---- signature edit: the function and its kir-dependents -------------------------------------
+(define m3
+  '(module mm
+     (func sq f32 (params (w f32)) (return (* w w)))
+     (func sq2 f32 (params (v f32)) (return (call sq (call sq v))))
+     (kernel nrm (params (x (ptr f32) :in) (o (ptr f32) :out) (n i64))
+       (pfor (i 0 n) (set (ref o i) (sqrt (call sq (ref x i))))))
+     (func axpy f64 (params (a f64) (b f64)) (return (+ (* 2.0 a) b)))
+     (func cube f32 (params (v f32)) (return (* v (call sq v))))))
+(check! (equal? (kir-rebuild-set m1 m3) '("sq" "sq2" "nrm" "cube")) "signature edit invalidates callers, new items are built")
+(check! (equal? (cdr (kir-rebuild-set m1 m3)) (kir-dependents m3 'sq)) "rebuild set = item + kir-dependents")
+(define r4 (kir-build! m3))
+(check! (equal? (field r4 "reused") '("axpy")) "untouched item reused across the edit")
+
+; ---- new session: memo empty, disk cache still warm --------------------------------------------
+(kir-build-memo-clear!)
+(define r5 (kir-build! m1))
+(check! (null? (field r5 "rebuilt")) "fresh session reuses every object from disk")
+(check! (= (memo "misses") 4) "fresh session re-lowers but does not recompile")
+(check! (null? (field (kir-build! m1 "-O2 -fPIC" #f) "rebuilt")) "link can be skipped")
+(check! (not (field (kir-build! m1 "-O2 -fPIC" #f) "lib")) "no lib when link is #f")
+(check! (equal? (field (kir-build! m1 "-O1 -fPIC") "rebuilt") '("sq" "sq2" "nrm" "axpy")) "new flags rebuild everything")
+
+(cbuild-clear!)
+(shell (string-append "rm -rf " base))
+(if (= *fails* 0)
+    (begin (display "OK-kir-build-4803 ") (display *n*) (display " checks") (newline))
+    (begin (display "kir-build-4803: ") (display (- *n* *fails*)) (display "/") (display *n*) (newline) (exit 1)))
