@@ -1,0 +1,27 @@
+; Issue #4800 — (hash ...) rejects an odd argument count
+(define *n* 0)
+(define *fails* 0)
+(define (check! pred msg)
+  (set! *n* (+ *n* 1))
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+(define (string-has? s sub)
+  (let loop ((i 0))
+    (cond ((> (+ i (string-length sub)) (string-length s)) #f)
+          ((equal? (substring s i (+ i (string-length sub))) sub) #t)
+          (else (loop (+ i 1))))))
+(define (err-text thunk)
+  (try (begin (thunk) "no-error") (catch (e) (format "~a" e))))
+
+(check! (equal? (hash-ref (hash "a" 1 "b" 2) "b" #f) 2) "even arity still builds the table")
+(check! (equal? (hash-length (hash)) 0) "(hash) is empty")
+(define e1 (err-text (lambda () (hash "a"))))
+(check! (string-has? e1 "odd number of arguments") "(hash \"a\") errors instead of dropping the key")
+(define e2 (err-text (lambda () (hash "a" 1 "b"))))
+(check! (string-has? e2 "odd number of arguments") "(hash k v k) errors")
+
+(if (= *fails* 0)
+    (begin (display "OK-hash-odd-arity-4800 ") (display *n*) (display " checks") (newline))
+    (begin (display "hash-odd-arity-4800: ") (display (- *n* *fails*))
+           (display "/") (display *n*) (newline) (exit 1)))

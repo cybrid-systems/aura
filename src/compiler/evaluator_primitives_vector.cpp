@@ -1004,6 +1004,14 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             // Issue #2654: grow past fixed capacity 8 so 16+ k/v pairs are not
             // silently dropped (same class as #2481 json-parse). Pre-size so
             // common N≤16 literals need no grow.
+            // Issue #4800: an odd argument count used to drop the trailing
+            // key silently ((hash "a") was an empty table, (hash "a" 1 "b")
+            // lost "b"). Key/value pairs only — raise like other arity errors.
+            if (a.size() % 2 != 0)
+                return make_primitive_error(string_heap, error_values,
+                                            "hash: odd number of arguments (expects key/value "
+                                            "pairs: (hash k1 v1 k2 v2 ...))",
+                                            primitive_error_counter);
             std::lock_guard hlock(ev.hash_tables_mutex());
             std::lock_guard slock(ev.alloc_storage_lock_);
             const std::size_t npairs = a.size() / 2;
