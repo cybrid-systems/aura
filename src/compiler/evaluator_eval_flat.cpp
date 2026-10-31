@@ -1467,6 +1467,13 @@ void Evaluator::maybe_reclaim_tw_unreachable() {
     if (tw_closure_allocs_.load(std::memory_order_relaxed) < tw_closure_allocs_trigger_ &&
         file_heap_allocs_since_reclaim_.load(std::memory_order_relaxed) < file_heap_allocs_trigger_)
         return;
+    (void)reclaim_tw_unreachable_now();
+}
+
+// Issue #4816: the tree-walker sweep without the allocation trigger, shared
+// by the trigger above and an explicit (gc-heap) under --load. True = the
+// mark/sweep ran; false = it stood down (gate held, uncertified body, knob).
+bool Evaluator::reclaim_tw_unreachable_now() {
     // Issue #4713: the #2738 guard survives only for PLAIN (non-fiber)
     // threads inside the walker — they never reach a fiber park hook, so a
     // collector cannot certify them. Fiber segments certify through the
@@ -1491,13 +1498,13 @@ void Evaluator::maybe_reclaim_tw_unreachable() {
         SweepGate4768& operator=(const SweepGate4768&) = delete;
     } sweep_gate_4768;
     if (!sweep_gate_4768.held)
-        return;
+        return false;
     // Issue #4768: snapshot BEFORE the stand-down read; a sibling body that
     // starts walking after this point mints newborn ids the release must keep.
     aura_gc_sweep_publish_closure_hi(closure_id_watermark());
     if (aura_tw_plain_walkers_other() > 0 || aura_ir_active_drains_total() > 0 ||
         aura_fiber_bodies_running_other() > 0)
-        return;
+        return false;
     // Issue #4768: same knob, same point as the IR-side sweep: after the
     // trigger and after the stand-down checks. Both halves now mean what the
     // knob says they mean; the skip counters are the probe that BOTH were
@@ -1506,7 +1513,7 @@ void Evaluator::maybe_reclaim_tw_unreachable() {
         tw_closure_allocs_.store(0, std::memory_order_relaxed);
         reset_file_heap_allocs_since_reclaim();
         aura_gc_reclaim_off_note_tw_skip();
-        return;
+        return false;
     }
     TwStwHandle stw;
     if (!tw_stw_begin(stw, kTwStwWaitBudget)) {
@@ -1516,7 +1523,7 @@ void Evaluator::maybe_reclaim_tw_unreachable() {
         // a full budget each time. Postpone by one trigger interval instead.
         if (stw.requested)
             file_heap_allocs_since_reclaim_.store(0, std::memory_order_relaxed);
-        return;
+        return false;
     }
     std::vector<const Env*> envs;
     std::vector<types::EvalValue> held;
@@ -1558,10 +1565,11 @@ void Evaluator::maybe_reclaim_tw_unreachable() {
         for (const auto raw : ir_roots)
             held.push_back(types::EvalValue(raw));
     }
-    (void)reclaim_tw_unreachable(envs, held);
+    const bool swept = reclaim_tw_unreachable(envs, held);
     g_tw_registry_reclaims.fetch_add(1, std::memory_order_relaxed);
     // Issue #4713: release every parked fiber only after the sweep.
     tw_stw_end(stw);
+    return swept;
 }
 
 void Evaluator::collect_tw_inflight_roots(std::vector<types::EvalValue>& out) {

@@ -573,7 +573,11 @@ EvalResult IRInterpreter::drain_call_stack(std::size_t base) {
             for (const auto& entry : self->const_keyword_cache_)
                 out.push_back(entry.second.val);
         },
-        this);
+        this,
+        // Issue #4816: (gc-heap) under --load sweeps through this driver.
+        [](void* ctx) -> int {
+            return static_cast<IRInterpreter*>(ctx)->reclaim_unreachable_now() ? 1 : 0;
+        });
     // Issue #4600 §3 (phase 3): consecutive same-function tail-call
     // replacements = the named-let back-edge as the interpreter sees it
     // (the loop closure calls itself; #4459 replaces the frame per
@@ -3222,6 +3226,16 @@ void IRInterpreter::maybe_reclaim_unreachable() {
     if (allocs_since_reclaim_ < kFileReclaimAllocs &&
         ev->file_heap_allocs_since_reclaim() < trigger)
         return;
+    (void)reclaim_unreachable_now();
+}
+
+// Issue #4816: the sweep body without the allocation trigger. Called by the
+// trigger above and by an explicit (gc-heap) through the ir_inflight
+// reclaimer. Returns true when the mark/sweep ran, false when it stood down.
+bool IRInterpreter::reclaim_unreachable_now() {
+    if (reclaiming_ || !context_.evaluator)
+        return false;
+    auto* ev = context_.evaluator;
     // Issue #4747: a PLAIN tree-walker thread has its env frames and pins in
     // its thread-local default segment. Neither this sweep's extra_roots
     // (collect_tw_inflight_roots only adds THIS thread's walker roots plus
@@ -3248,7 +3262,7 @@ void IRInterpreter::maybe_reclaim_unreachable() {
         SweepGate4768& operator=(const SweepGate4768&) = delete;
     } sweep_gate_4768;
     if (!sweep_gate_4768.held)
-        return;
+        return false;
     // Issue #4747: subtract this interpreter — the sweeping body is itself a
     // drain. What remains are bodies this sweep cannot mark.
     const int foreign_drains =
@@ -3266,7 +3280,7 @@ void IRInterpreter::maybe_reclaim_unreachable() {
         aura_fiber_bodies_running_other() > 0) {
         allocs_since_reclaim_ = 0;
         ev->reset_file_heap_allocs_since_reclaim();
-        return;
+        return false;
     }
     // Issue #4768: AURA_GC_RECLAIM_OFF disarms BOTH file-heap sweeps. The gate
     // sits HERE - after the trigger and after the stand-down checks - so the
@@ -3279,7 +3293,7 @@ void IRInterpreter::maybe_reclaim_unreachable() {
         allocs_since_reclaim_ = 0;
         ev->reset_file_heap_allocs_since_reclaim();
         aura_gc_reclaim_off_note_ir_skip();
-        return;
+        return false;
     }
     struct Guard {
         bool& flag;
@@ -3357,7 +3371,7 @@ void IRInterpreter::maybe_reclaim_unreachable() {
         // panic window is not a reclaim attempt on every opcode.
         allocs_since_reclaim_ = 0;
         ev->reset_file_heap_allocs_since_reclaim();
-        return;
+        return false;
     }
     std::unordered_set<std::uint64_t> live(live_ir.begin(), live_ir.end());
     for (auto it = runtime_closures_.begin(); it != runtime_closures_.end();) {
@@ -3387,6 +3401,7 @@ void IRInterpreter::maybe_reclaim_unreachable() {
         }
     }
     allocs_since_reclaim_ = 0;
+    return true;
 }
 
 } // namespace aura::compiler

@@ -5809,6 +5809,8 @@ public:
     }
     // Loop-head safepoint. No-op under the allocation threshold.
     void maybe_reclaim_tw_unreachable();
+    // Issue #4816: sweep now, no trigger. True = ran, false = stood down.
+    bool reclaim_tw_unreachable_now();
     // Issue #4599 follow-up: the per-opcode call site checks the same
     // counters the function opens with, so an idle trip is two loads.
     [[nodiscard]] bool tw_reclaim_due() const noexcept {
@@ -5858,6 +5860,13 @@ public:
     }
     void reset_file_heap_allocs_since_reclaim() noexcept {
         file_heap_allocs_since_reclaim_.store(0, std::memory_order_relaxed);
+    }
+    // Issue #4816: an explicit (gc-heap) that stood down arms the next
+    // periodic safepoint (IR stride poll / TW back-edge) instead of waiting
+    // for a full allocation window.
+    void arm_file_heap_reclaim_trigger() noexcept {
+        file_heap_allocs_since_reclaim_.store(
+            file_heap_allocs_trigger_.load(std::memory_order_relaxed), std::memory_order_relaxed);
     }
     // Issue #4525: completed file-mode reclaim run count (test/benchmark face).
     [[nodiscard]] std::uint64_t file_heap_reclaim_runs_for_test() const noexcept {
