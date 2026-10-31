@@ -439,6 +439,18 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             if (!ev.workspace_flat_ || !ev.workspace_pool_) {
                 ok = false;
                 ev.note_ast_snapshot_fail(kSnapFailNoWorkspace);
+                // Issue #4797: the -1 contract stays (#2966 callers test it),
+                // but the first no-workspace failure in a process now says
+                // why: top-level defines from a file / -e / --load are not the
+                // live workspace, so there is nothing to checkpoint.
+                static std::atomic<bool> s_no_ws_warned{false};
+                if (!s_no_ws_warned.exchange(true, std::memory_order_relaxed)) {
+                    std::println(std::cerr,
+                                 "WARNING: ast:snapshot -> -1 (:no-workspace): no live workspace "
+                                 "source. Definitions loaded from a file / -e / --load are not "
+                                 "tracked in the live AST; install them with (set-code \"...\") "
+                                 "+ (eval-current) first. See (ast:snapshot-fail-reason) (#4797).");
+                }
                 return make_int(-1);
             }
 
