@@ -49,6 +49,9 @@ Token Lexer::advance() {
                 c == '/' || c == '=' || c == '<' || c == '>' || c == '!' || c == '?' || c == ':' ||
                 c == '&' || c == '%')
                 return read_identifier();
+            // Issue #4805: R7RS |...| symbol quoting (`||` is the empty symbol).
+            if (c == '|')
+                return read_pipe_symbol();
             if (c == '"')
                 return read_string();
             // Ghuloum Step 9: #f, #t boolean literals and # identifiers (eq?)
@@ -291,6 +294,29 @@ Token Lexer::read_character() {
         return make_tok(TokenKind::Error, source_.substr(start, pos_ - start)); // unknown name
     string_buf_ = std::to_string(cp);
     return make_tok(TokenKind::Character, string_buf_);
+}
+// Issue #4805: `|text|` reads as the symbol whose name is `text` (R7RS 2.1).
+// \| and \\ escape, \n \t \r as in strings, and `||` is the empty symbol.
+// An unterminated `|` is a lexer error instead of silently eating the file.
+Token Lexer::read_pipe_symbol() {
+    std::size_t start = pos_;
+    pos_++; // opening |
+    string_buf_.clear();
+    while (pos_ < source_.size() && source_[pos_] != '|') {
+        char ch = source_[pos_];
+        if (ch == '\\' && pos_ + 1 < source_.size()) {
+            char next = source_[pos_ + 1];
+            string_buf_ += next == 'n' ? '\n' : next == 't' ? '\t' : next == 'r' ? '\r' : next;
+            pos_ += 2;
+        } else {
+            string_buf_ += ch;
+            pos_++;
+        }
+    }
+    if (pos_ >= source_.size())
+        return make_tok(TokenKind::Error, source_.substr(start, pos_ - start));
+    pos_++; // closing |
+    return make_tok(TokenKind::Identifier, string_buf_);
 }
 Token Lexer::read_identifier() {
     std::size_t s = pos_;

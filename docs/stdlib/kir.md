@@ -31,7 +31,9 @@ EXPR  = integer | float (f64) | (f32 x) | symbol | (ref p i) | (cast TYPE e) | (
       | (sqrt e) (exp e) (log e) (fabs e) (fmax a b) (fmin a b) | (call f arg ...)
 ```
 
-Use `and` / `or`: the Aura reader does not read `&&` / `||` as symbols.
+Logical operators are spelled `and` / `or`. They are lowered to `&&` / `||`.
+The IR does not accept the C spellings: `&&` reads as an ordinary symbol, but
+`||` is the R7RS empty symbol `||` (#4805).
 
 ### Contracts (`kir-check`)
 

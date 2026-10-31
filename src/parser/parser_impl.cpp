@@ -279,8 +279,10 @@ NodeId parse_expr(ParserState& s) {
         case TokenKind::Identifier: {
             auto tok = s.lex.consume();
             auto text = std::string(tok.text);
-            // M4 &x reader macro: &x → (borrow x)
-            if (text.size() > 1 && text[0] == '&') {
+            // M4 &x reader macro: &x → (borrow x). Issue #4805: a name made
+            // only of '&' (`&&`, `&&&`) is an ordinary symbol, not (borrow &).
+            if (text.size() > 1 && text[0] == '&' &&
+                text.find_first_not_of('&') != std::string::npos) {
                 auto var_name = text.substr(1);
                 auto inner = s.flat.add_variable(s.pool.intern(var_name));
                 auto id = s.flat.add_borrow(inner);
