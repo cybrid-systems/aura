@@ -152,6 +152,11 @@ FlatParseResult parse(ParserState& s, std::string_view src) {
         // begin, and return success — host oneshot hard-failed (empty CASE)
         // while Soft scored full hits (soft_score_inflate / course-schedule).
         auto hard_fail_extra_close = [&](const Token& tok) {
+            // Issue #4799: a nested bad literal ((list 1/3)) ends its list
+            // early, so the parse stops at the leftover ')'. Report the
+            // specific deferred cause first; "unexpected ')'" stays as a
+            // secondary error.
+            flush_deferred_char_error();
             auto loc = aura::diag::SourceLocation{tok.line, tok.column, 0};
             auto msg = std::string("unexpected ')'");
             auto formatted = loc.valid() ? std::format("{}: {}", loc.format(), msg) : msg;
@@ -369,9 +374,14 @@ NodeId parse_expr(ParserState& s) {
             // Issue #4498: 1/2 — exact rationals are not supported.
             if (tok.text.find('/') != std::string_view::npos && !tok.text.empty() &&
                 (std::isdigit((unsigned char)tok.text[0]) || tok.text[0] == '-') &&
-                s.deferred_error.empty())
+                s.deferred_error.empty()) {
                 s.deferred_error = "rational literal '" + std::string(tok.text) +
                                    "' is not supported; write a float (0.5) or (/ 1.0 2)";
+                // Issue #4799: stamp the literal's own position (the token is
+                // already consumed, so s.defer() would point past it).
+                s.deferred_line = tok.line;
+                s.deferred_column = tok.column;
+            }
             return NULL_NODE;
         default:
             return NULL_NODE;
