@@ -8,12 +8,19 @@
 ;   (gc-heap) mid-flight + post-batch survival
 ;   query:parallel-orch-stats + query:ai-closedloop-readiness-stats
 ;
-; Run:
-;   ./build/aura --load tests/suite/parallel_orchestration_stress.aura
-;   ./build.py test suite   # picks up all suite/*.aura (timeout 120s)
+; Issue #4811: runs under --serve-async (the whole file is one exec
+; request). Only there is (gc-heap) a real collection; under --load it is
+; the destructive Soft reset (#4449, design #4816) and inside a batch
+; thunk it is refused (#4812).
 ;
-; Pass criteria: process exit 0 (no crash) and printed PASS lines for
-; each section. C++ companion: tests/test_parallel_orchestration_stress_1602.cpp
+; Run:
+;   ./build.py test suite   # the marker below selects serve-async
+;
+; Pass criteria: no error reply (the final assert), and every section
+; prints PASS. C++ companion: tests/test_parallel_orchestration_stress_1602.cpp
+
+;; suite-mode: serve-async
+;; expect: parallel_orchestration_stress (#1602): ALL PASS
 
 (require "std/test" all:)
 
