@@ -19,22 +19,39 @@
 ; Note: string.aura intentionally avoids requiring std/list internally.
 ; Module evaluation runs in isolated env; internal imports would pollute top_.
 
-; Split string by a separator — O(n) time, O(1) stack (#2770).
-; sep can be: a string (uses first char), or a char code (integer).
+; Split string by a separator — O(n·m) time, O(1) stack (#2770).
+; sep can be: a string (split on the whole substring, any length), or a
+; char code (integer).
+; Issue #4795: a multi-char string separator used to be silently truncated
+; to its first char ("a::b" / "::" → ("a" "" "b")). It now splits on the
+; full substring ("a::b::c" / "::" → ("a" "b" "c")); an empty string
+; separator is an error instead of a silent (string-ref "" 0) failure.
 ; Uses substring ranges (no per-char reverse of character lists).
 (define (string-split s sep)
-  (define sep-code (if (string? sep) (string-ref sep 0) sep))
   (define n (string-length s))
+  (define m (if (string? sep) (string-length sep) 1))
+  (if (and (string? sep) (= m 0))
+    (error "string-split: empty separator string"))
+  (define sep-code (if (string? sep) (string-ref sep 0) sep))
+  ; #4795: does the full separator occur at position i?
+  (define (sep-at? i)
+    (if (= (string-ref s i) sep-code)
+      (if (= m 1)
+        #t
+        (if (> (+ i m) n)
+          #f
+          (string=? (substring s i (+ i m)) sep)))
+      #f))
   (let ((i 0)
         (start 0)
         (result (list)))
     (while (lambda () (< i n))
       (lambda ()
-        (if (= (string-ref s i) sep-code)
+        (if (sep-at? i)
           (begin
             (set! result (cons (substring s start i) result))
-            (set! start (+ i 1))
-            (set! i (+ i 1)))
+            (set! start (+ i m))
+            (set! i (+ i m)))
           (set! i (+ i 1)))))
     (set! result (cons (substring s start n) result))
     (reverse result)))
