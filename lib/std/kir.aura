@@ -15,7 +15,7 @@
 ;         | (if c STMT [STMT]) | (when c STMT ...) | (begin STMT ...)
 ;         | (return [e]) | (expr e)
 ;   EXPR  = integer | float (f64) | (f32 x) | symbol | (ref p i) | (cast TYPE e) | (? c a b)
-;         | (+ - * / % min max a b ...) | (< <= > >= == != a b) | (&& || a b ...) | (not a) | (neg a)
+;         | (+ - * / % min max a b ...) | (< <= > >= == != a b) | (and or a b ...) | (not a) | (neg a)
 ;         | (sqrt e) (exp e) (log e) (fabs e) (fmax a b) (fmin a b) | (call f arg ...)
 ;
 ; Contracts (kir-check, enforced before any lowering): declare-before-use, no
@@ -27,7 +27,8 @@
 (export
   kir-name kir-head kir-items kir-find kir-ty kir-params kir-body kir-ret kir-kind
   kir-check kir-check! kir-type-of kir-mentions? kir-subst kir-map-stmts kir-outer-writes kir-join
-  kir->c kir->c-proto kir->c-unit kir-ctype kir-callees kir-dependents)
+  kir->c kir->c-proto kir->c-unit kir-ctype kir-callees kir-dependents
+  kir-env-of kir-c-block kir-c-expr kir-c-param)
 (require "std/cgen" all:)
 
 (define (kir-name x) (format "~a" x))
@@ -93,7 +94,7 @@
 ; ---- type inference -------------------------------------------------------
 (define kir-arith (list "+" "-" "*" "/" "%" "min" "max"))
 (define kir-cmp (list "<" "<=" ">" ">=" "==" "!="))
-(define kir-logic (list "&&" "||"))
+(define kir-logic (list "and" "or" "&&" "||"))  ; and/or: the reader cannot read && / ||
 (define kir-math1 (list "sqrt" "exp" "log" "fabs"))
 (define kir-math2 (list "fmax" "fmin"))
 
@@ -228,7 +229,7 @@
                ((equal? (car (cddr b)) "in")
                 (kir-err! (string-append "write to read-only (:in) " (kir-name (cadr lv)))) #f)
                (else
-                (if (and pv (not (kir-mentions? (car (cddr lv)) pv)))
+                (if (and pv (not (equal? pv "pfor-done")) (not (kir-mentions? (car (cddr lv)) pv)))
                     (kir-err! (string-append "pfor store to " (kir-name (cadr lv))
                                              " is not indexed by " pv " (data race)")))
                 (kir-try (lambda () (kir-type-of lv env m)))))))
@@ -238,7 +239,7 @@
          (cond ((not b) (kir-err! (string-append "undeclared " (kir-name lv))) #f)
                ((equal? (car (cddr b)) "loop") (kir-err! (string-append "assignment to loop variable " (kir-name lv))) #f)
                ((kir-ptr? (cadr b)) (kir-err! (string-append "assignment to pointer " (kir-name lv))) #f)
-               ((and pv (kir-member? (kir-name lv) outer))
+               ((and pv (not (equal? pv "pfor-done")) (kir-member? (kir-name lv) outer))
                 (kir-err! (string-append "pfor body writes outer scalar " (kir-name lv) " (data race)")) #f)
                (else (cadr b))))))))
 
@@ -430,6 +431,8 @@
           (let ((t (kir-type-of e env m)))
             (cons (string->symbol "call")
                   (cons (string->symbol (if (equal? t "f32") (string-append h "f") h)) (map sub args)))))
+         ((equal? h "and") (cons (string->symbol "&&") (map sub args)))
+         ((equal? h "or") (cons (string->symbol "||") (map sub args)))
          ((equal? h "cast") (list (string->symbol "cast") (kir-ctype (kir-ty (car args))) (sub (cadr args))))
          ((equal? h "call") (cons (car e) (cons (kir-name (car args)) (map sub (cdr args)))))
          (else (cons (car e) (map sub args))))))))
