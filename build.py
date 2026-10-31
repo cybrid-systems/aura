@@ -14002,9 +14002,11 @@ SUITE_SKIP: dict[str, str] = {
     # "starting-cycles..." (spin / unbounded mutate loop). Skip so
     # suite CI completes; track re-enable after cycle bound fix.
     "incremental_mutation_test.aura": "hangs after starting-cycles (unbounded loop; Soft sandbox still hangs)",
-    # CI / non-TTY: Scheduler requires epollable stdin; --load capture
-    # pipes fail with ENOTTY/EPERM. Skip outside interactive serve.
-    "parallel_orchestration_stress.aura": "scheduler stdin not epollable under CI capture (non-TTY)",
+    # Issue #4811: the scheduler only warns on a non-epollable stdin now.
+    # The real blocker: without serve-async there is no live collector,
+    # so (gc-heap) is the destructive Soft reset and wipes the bindings
+    # this suite reads after its batches.
+    "parallel_orchestration_stress.aura": "(gc-heap) is a destructive reset under --load (no live collector); needs serve-async (#4811)",
     # run-tests counts non-check forms as fails + SIGSEGV mid-suite on
     # extract/move path under --load; track re-enable after harness + crash.
     "mutate-structured.aura": "run-tests counts set-code/eval as fails; SIGSEGV on later suites under --load",
