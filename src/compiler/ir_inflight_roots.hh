@@ -29,9 +29,16 @@ namespace aura::compiler::ir_inflight {
 // neither module sees the other's declarations.
 using Collector = void (*)(void* ctx, std::vector<std::int64_t>& out);
 
+// Issue #4816: an explicit (gc-heap) under --load asks the innermost IR
+// driver on this thread to run its file-heap sweep now, at the primitive
+// call (a safepoint: the caller's frame values are in call_stack_). Returns
+// 1 = swept, 0 = stood down (a foreign body / drain could not be certified).
+using Reclaimer = int (*)(void* ctx);
+
 struct Provider {
     Collector collect = nullptr;
     void* ctx = nullptr;
+    Reclaimer reclaim = nullptr;
 };
 
 // Thread-local, mirroring IRInterpreter::t_active_'s nesting: a deopt
@@ -41,8 +48,8 @@ inline thread_local std::vector<Provider> g_providers;
 // RAII registration. Nested scopes pop in reverse order (LIFO), like
 // TwFrameReg / ActiveInstanceGuard.
 struct ScopedProvider {
-    ScopedProvider(Collector collect, void* ctx) noexcept {
-        g_providers.push_back(Provider{collect, ctx});
+    ScopedProvider(Collector collect, void* ctx, Reclaimer reclaim = nullptr) noexcept {
+        g_providers.push_back(Provider{collect, ctx, reclaim});
     }
     ~ScopedProvider() {
         if (!g_providers.empty())
@@ -61,6 +68,16 @@ inline std::size_t collect(std::vector<std::int64_t>& out) {
             p.collect(p.ctx, out);
     }
     return out.size() - before;
+}
+
+// Issue #4816: run the innermost IR driver's sweep. -1 = no IR driver with a
+// reclaimer on this thread (the caller falls back to the tree-walker sweep).
+inline int reclaim_innermost() {
+    for (auto it = g_providers.rbegin(); it != g_providers.rend(); ++it) {
+        if (it->reclaim != nullptr)
+            return it->reclaim(it->ctx);
+    }
+    return -1;
 }
 
 } // namespace aura::compiler::ir_inflight

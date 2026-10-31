@@ -487,6 +487,8 @@ private:
     static constexpr std::uint32_t kFileReclaimAllocs = 128;
     void note_reclaim_alloc() noexcept { ++allocs_since_reclaim_; }
     void maybe_reclaim_unreachable();
+    // Issue #4816: sweep now (no trigger); true = ran, false = stood down.
+    bool reclaim_unreachable_now();
     static const std::vector<EvalValue>* ir_env_thunk(void* ctx, std::uint64_t id);
     [[nodiscard]] const std::vector<EvalValue>* ir_closure_env_for_reclaim(std::uint64_t id) const;
     [[nodiscard]] std::uint64_t alloc_cell();
