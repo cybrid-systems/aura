@@ -1,0 +1,27 @@
+;; Issue #4812: (gc-heap) inside a parallel-intend thunk under --load.
+;; There is no live collector here, so (gc-heap) is the destructive Soft
+;; reset; run inside a fiber (a batch thunk, or a fiber:spawn body on the
+;; CLI thread backend) it tore down heaps the caller still indexed and the
+;; process died with SIGSEGV. It must now refuse with a
+;; typed error (the task fails, the process and its bindings survive).
+;; expect: gc-heap-in-fiber-4812 ok
+
+(require "std/test" all:)
+
+(define (helper x) (+ x 100))
+(define r
+  (parallel-intend (vector (lambda () (gc-heap) 1) (lambda () 2))
+                   :max-concurrency 1 :timeout-ms 10000 :fail-fast #f :collect-errors #t))
+(define ok-n (hash-ref r "ok-count" -1))
+(define err-n (hash-ref r "err-count" -1))
+(define msg (hash-ref (vector-ref (hash-ref r "results" (vector)) 0) "error" ""))
+(define spawned
+  (try (fiber:join (fiber:spawn (lambda () (gc-heap)))) (catch (e) (list 'ERR e))))
+(display (list 'ok ok-n 'err err-n 'helper (helper 1))) (newline)
+(display spawned) (newline)
+(if (and (= ok-n 1) (= err-n 1) (string=? msg "task-error") (= (helper 1) 101)
+         (pair? spawned) (eq? (car spawned) 'ERR)
+         (string-contains? (format "~a" (car (cdr spawned))) "Issue #4812")
+         (= (helper 2) 102))
+    (display "gc-heap-in-fiber-4812 ok\n")
+    (assert #f "gc-heap inside a fiber must refuse, not crash (#4812)"))
