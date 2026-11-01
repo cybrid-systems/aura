@@ -13,6 +13,9 @@
 //   AC4: the Evaluator-side hooks are injectable: fiber.cpp's fiber-id
 //        provider landed in the fiber_rt default slot, and the scheduler's
 //        long-mutation hook was wired while the scheduler ran.
+//   AC5: a plain thread's fallback Context is freed when the thread exits
+//        (the CLI thread backend runs one std::thread per fiber, so a raw
+//        thread_local pointer leaked ~0.5 KB per fiber:spawn).
 
 #include "core/fiber_context.hh"
 #include "serve/fiber.h"
@@ -124,6 +127,21 @@ void ac4_hooks() {
     io.join();
     check(ok && wired.load(), "AC4: the running scheduler wired its long-mutation hook");
 }
+void ac5_plain_context_freed_at_thread_exit() {
+    std::printf("\n--- AC5: plain fallback Context freed at thread exit ---\n");
+    using namespace aura::core::fiber_ctx;
+    const std::uint64_t live0 = aura_fiber_ctx_plain_live();
+    const std::uint64_t made0 = aura_fiber_ctx_plain_total();
+    constexpr int kThreads = 64;
+    for (int i = 0; i < kThreads; ++i) {
+        std::thread t([] { (void)active().treg_top; });
+        t.join();
+    }
+    check(aura_fiber_ctx_plain_total() - made0 == kThreads,
+          "each plain thread created its own fallback Context");
+    check(aura_fiber_ctx_plain_live() == live0,
+          "every fallback Context was freed when its thread exited");
+}
 } // namespace
 
 int main() {
@@ -135,6 +153,7 @@ int main() {
     ac2_many_fibers();
     ac3_fiber_context();
     ac4_hooks();
+    ac5_plain_context_freed_at_thread_exit();
     std::printf("\n=== Results: %d passed, %d failed ===\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }
