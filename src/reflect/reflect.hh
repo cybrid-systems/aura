@@ -891,11 +891,6 @@ template <typename T> T auto_deserialize_inner(const std::vector<char>& buf, std
 
 // Member-based struct path (POD flat structs)
 template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, std::size_t& pos) {
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Warray-bounds"
-#pragma GCC diagnostic ignored "-Wstringop-overflow"
-#endif
     T obj{};
     constexpr auto members = reflect_members<T>();
     auto* base = reinterpret_cast<char*>(&obj);
@@ -904,35 +899,51 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
         switch (m.kind) {
             case MemberKind::Int8:
             case MemberKind::UInt8:
-                std::memcpy(field, &buf[pos], 1);
+                // Issue #4826: every read in the struct path is
+                // bounds-checked, mirroring the container paths.
+                if (!reflect_ensure(buf, pos, 1))
+                    return T{};
+                std::memcpy(field, buf.data() + pos, 1);
                 pos += 1;
                 break;
             case MemberKind::Int16:
             case MemberKind::UInt16:
-                std::memcpy(field, &buf[pos], 2);
+                if (!reflect_ensure(buf, pos, 2))
+                    return T{};
+                std::memcpy(field, buf.data() + pos, 2);
                 pos += 2;
                 break;
             case MemberKind::Int32:
             case MemberKind::UInt32:
             case MemberKind::Float:
-                std::memcpy(field, &buf[pos], 4);
+                if (!reflect_ensure(buf, pos, 4))
+                    return T{};
+                std::memcpy(field, buf.data() + pos, 4);
                 pos += 4;
                 break;
             case MemberKind::Int64:
             case MemberKind::UInt64:
             case MemberKind::Double:
-                std::memcpy(field, &buf[pos], 8);
+                if (!reflect_ensure(buf, pos, 8))
+                    return T{};
+                std::memcpy(field, buf.data() + pos, 8);
                 pos += 8;
                 break;
             case MemberKind::Bool:
+                if (!reflect_ensure(buf, pos, 1))
+                    return T{};
                 *reinterpret_cast<bool*>(field) = buf[pos++] != 0;
                 break;
             case MemberKind::String: {
-                uint32_t len;
-                std::memcpy(&len, &buf[pos], 4);
+                if (!reflect_ensure(buf, pos, 4))
+                    return T{};
+                uint32_t len = 0;
+                std::memcpy(&len, buf.data() + pos, 4);
                 pos += 4;
+                if (!reflect_ensure(buf, pos, len))
+                    return T{};
                 auto& s = *reinterpret_cast<std::string*>(field);
-                s.assign(&buf[pos], &buf[pos + len]);
+                s.assign(buf.data() + pos, len);
                 pos += len;
                 break;
             }
@@ -942,17 +953,24 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
                 // string_view points into the buffer (no
                 // copy), so the caller must keep the buffer
                 // alive for the lifetime of the view.
-                uint32_t len;
-                std::memcpy(&len, &buf[pos], 4);
+                if (!reflect_ensure(buf, pos, 4))
+                    return T{};
+                uint32_t len = 0;
+                std::memcpy(&len, buf.data() + pos, 4);
                 pos += 4;
+                if (!reflect_ensure(buf, pos, len))
+                    return T{};
                 const std::string_view sv(buf.data() + pos, len);
                 std::memcpy(field, &sv, sizeof(sv));
                 pos += len;
                 break;
             }
             case MemberKind::Array: {
-                std::memcpy(field, &buf[pos], m.elem_size * m.array_len);
-                pos += m.elem_size * m.array_len;
+                const std::size_t bytes = m.elem_size * m.array_len;
+                if (!reflect_ensure(buf, pos, bytes))
+                    return T{};
+                std::memcpy(field, buf.data() + pos, bytes);
+                pos += bytes;
                 break;
             }
             case MemberKind::Span: {
@@ -1035,9 +1053,6 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
                 break;
         }
     }
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
     return obj;
 }
 
