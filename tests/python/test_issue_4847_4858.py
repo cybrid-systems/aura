@@ -153,6 +153,34 @@ class TestIssueBatch4847To4858(unittest.TestCase):
         self.assertIn("unknown :on-join-fail", proc.stderr)
         self.assertIn("cancel / restart-n / throttle / report-only", proc.stderr)
 
+    def test_4851_cancel_acts_on_the_first_body_failure(self) -> None:
+        import time
+
+        started = time.monotonic()
+        proc = _run(
+            """
+(define (spin-ms ms) (let ((t (+ (monotonic-ms) ms))) (let loop ()
+  (when (< (monotonic-ms) t) (fiber:yield) (loop)))))
+(orch:scope-spawn "slow0" (lambda () (spin-ms 4000) 'late))
+(orch:scope-spawn "slow1" (lambda () (spin-ms 4000) 'late))
+(orch:scope-spawn "slow2" (lambda () (spin-ms 4000) 'late))
+(orch:scope-spawn "slow3" (lambda () (spin-ms 4000) 'late))
+(orch:scope-spawn "bad" (lambda () (spin-ms 20) (error "bad sibling")))
+(define r (orch:scope-join-all :timeout-ms 6000 :on-join-fail "cancel"))
+(display (list (hash-ref r "status") (hash-ref r "err-count")
+               (hash-ref r "cancelled-count"))) (newline)
+""",
+            "--load",
+            timeout=30.0,
+            pipeline_strict="0",
+        )
+        elapsed = time.monotonic() - started
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        # Fail-fast: the failure cancels the four slow siblings instead of
+        # waiting for :timeout-ms (the old path returned after 6000 ms).
+        self.assertIn("(partial 1 4)", proc.stdout)
+        self.assertLess(elapsed, 3.0, proc.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

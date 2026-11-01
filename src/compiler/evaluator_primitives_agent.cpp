@@ -4789,7 +4789,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // reported as failed again).
             auto failure_count = std::make_shared<std::atomic<std::uint32_t>>(0);
             auto body = [&ev, cid, region_key, tally, spawn_epoch, nested_body, body_name = name,
-                         failure_count]() {
+                         failure_count, &scope]() {
                 if (!cid)
                     return;
                 // Issue #4783: a non-Ok join already reclaimed this task
@@ -4804,18 +4804,28 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 // fiber-cancelled error. That is the requested outcome, not
                 // a body failure: count it as cancelled so join-all stays
                 // ok (#4783 partial is for bodies that failed on their own).
-                const auto record_failure = [&tally, &body_name, &failure_count](std::string msg) {
+                const auto record_failure = [&tally, &body_name, &failure_count,
+                                             &scope](std::string msg) {
                     auto* self = aura::serve::g_current_fiber;
                     const bool cancelled = self != nullptr && self->is_cancel_requested();
-                    std::lock_guard<std::mutex> lk(tally->mu);
-                    if (cancelled) {
-                        ++tally->cancelled;
-                    } else {
-                        // Issue #4858: a genuine body failure is restart fuel;
-                        // a requested cancel is not.
-                        failure_count->fetch_add(1, std::memory_order_acq_rel);
-                        tally->errors.emplace_back(body_name, std::move(msg));
+                    bool fail_fast = false;
+                    {
+                        std::lock_guard<std::mutex> lk(tally->mu);
+                        if (cancelled) {
+                            ++tally->cancelled;
+                        } else {
+                            // Issue #4858: a genuine body failure is restart fuel;
+                            // a requested cancel is not.
+                            failure_count->fetch_add(1, std::memory_order_acq_rel);
+                            tally->errors.emplace_back(body_name, std::move(msg));
+                            // Issue #4851: fail-fast for :on-join-fail "cancel" —
+                            // cancel the siblings now instead of waiting for the
+                            // whole batch join (and its timeout) to return.
+                            fail_fast = scope.join_fail_fast_armed();
+                        }
                     }
+                    if (fail_fast)
+                        scope.cancel_bodies_for_join_fail();
                 };
                 try {
                     // Same per-Evaluator apply gate as orch:spawn-agent.
@@ -5396,9 +5406,19 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 return make_scope_addr_fail(2588, "invalid-path",
                                             "orch:scope-join-all: unknown :path / :child-index");
             }
+            // Issue #4851: arm fail-fast before the blocking batch join so
+            // the first genuine body failure cancels its siblings while the
+            // joiner is still waiting, instead of after the timeout.
+            const bool join_fail_fast =
+                aura::orch::resolve_on_join_fail(fail_pol ? &*fail_pol : nullptr) ==
+                aura::orch::AgentFailureAction::Cancel;
+            if (join_fail_fast)
+                scope->arm_join_fail_fast();
             // Issue #3643: :tree #t joins the whole subtree (default local,
             // #3496 AC1 — root join leaves descendants live).
             const auto jr = scope->join_all(policy, fail_pol, tree_join);
+            if (join_fail_fast)
+                scope->disarm_join_fail_fast();
             // Issue #4783: drain this scope's body outcome tally. Always
             // bump reclaim_epoch so a body that had not started (or that
             // finishes after drain) cannot pollute the next join — including
