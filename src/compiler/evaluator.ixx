@@ -2109,15 +2109,15 @@ namespace primitives_detail {
     // then glibc double free). All appends now take one process-wide lock
     // and the store is reserved once, so published indices never move.
     inline std::mutex& primitive_error_store_mutex() noexcept {
-        static std::mutex m;
-        return m;
+        static std::mutex store_mutex;
+        return store_mutex;
     }
 
     inline constexpr std::size_t kPrimitiveErrorStoreReserve = 1u << 14;
 
     inline std::uint64_t push_error_cause(std::vector<types::EvalValue>& error_values,
                                           types::EvalValue cause) {
-        std::lock_guard<std::mutex> lk(primitive_error_store_mutex());
+        std::lock_guard<std::mutex> lock(primitive_error_store_mutex());
         if (error_values.capacity() < kPrimitiveErrorStoreReserve)
             error_values.reserve(kPrimitiveErrorStoreReserve);
         // Fixed-capacity store: overflowing returns the shared slot 0
@@ -19568,11 +19568,11 @@ private:
 // produce READABLE code. The display printer wrapped a string in quotes but
 // left embedded quotes/backslashes raw, so (eval '(json-parse "{\"x\":1}"))
 // became (json-parse "{"x":1}") -> unbound variable x.
-inline std::string escape_code_string(std::string_view s) {
+inline std::string escape_code_string(std::string_view text) {
     std::string out;
-    out.reserve(s.size() + 8);
-    for (char c : s) {
-        switch (c) {
+    out.reserve(text.size() + 8);
+    for (char letter : text) {
+        switch (letter) {
             case '"':
                 out += "\\\"";
                 break;
@@ -19589,7 +19589,7 @@ inline std::string escape_code_string(std::string_view s) {
                 out += "\\t";
                 break;
             default:
-                out += c;
+                out += letter;
         }
     }
     return out;
