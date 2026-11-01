@@ -96,6 +96,29 @@ class TestIssueBatch4847To4858(unittest.TestCase):
         self.assertIn("rate-limited", proc.stdout)
         self.assertNotIn("runtime error", proc.stdout)
 
+    def test_4849_overlay_pending_writes_are_gc_roots(self) -> None:
+        proc = _run(
+            """
+(define (range n) (let loop ((i (- n 1)) (acc (list))) (if (< i 0) acc (loop (- i 1) (cons i acc)))))
+(define (churn n) (let loop ((i 0) (acc (list))) (if (< i n) (loop (+ i 1) (if (= 0 (modulo i 100)) (list) (cons (list i i) acc))) 'done)))
+(fiber:overlay-begin) (fiber:overlay-define "a" (range 10)) (churn 200000) (fiber:overlay-commit)
+(display "define pending+churn: ") (write (fiber:overlay-get "a" 'none)) (newline)
+(fiber:overlay-begin) (fiber:overlay-define "b" 0) (fiber:overlay-commit)
+(fiber:overlay-begin) (fiber:overlay-set! "b" (range 10)) (churn 200000)
+(display "set! pending, own view: ") (write (fiber:overlay-get "b" 'none)) (newline)
+(fiber:overlay-commit)
+(display "set! pending+churn committed: ") (write (fiber:overlay-get "b" 'none)) (newline)
+""",
+            "--load",
+            timeout=180.0,
+            pipeline_strict="0",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        want = "(0 1 2 3 4 5 6 7 8 9)"
+        self.assertIn("define pending+churn: " + want, proc.stdout)
+        self.assertIn("set! pending, own view: " + want, proc.stdout)
+        self.assertIn("set! pending+churn committed: " + want, proc.stdout)
+
     def test_4858_restart_policy_replays_failed_scope_child(self) -> None:
         proc = _run(
             """

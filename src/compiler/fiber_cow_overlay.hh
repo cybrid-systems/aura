@@ -720,6 +720,26 @@ private:
             notify(res);
     }
 
+public:
+    // Issue #4849: append every pending (uncommitted) write value. The
+    // evaluator's reclaim calls this through fiber_overlay_roots so a value
+    // that lives only in an open overlay (define / set! before the commit)
+    // is a GC root, exactly like a fiber:join result (#4710).
+    void collect_pending(std::vector<V>& out) const {
+        std::lock_guard<std::mutex> lk(mu_);
+        for (const auto& owner_entry : owners_) {
+            for (const auto& overlay_entry : owner_entry.second.overlays) {
+                const auto& ov = overlay_entry.second;
+                if (!ov.active)
+                    continue;
+                out.reserve(out.size() + ov.writes.size());
+                for (const auto& w : ov.writes)
+                    out.push_back(w.second);
+            }
+        }
+    }
+
+private:
     struct OwnerState {
         std::unordered_map<std::uint64_t, FiberOverlay<V>> overlays;
         // Committed claims by binding name (write-write conflict SSOT).
