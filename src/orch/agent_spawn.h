@@ -1852,6 +1852,23 @@ struct AgentHandle {
     // skipped). Shared so the write survives handle move / name-table
     // put. Success path never stores (no extra atomic on hot ok).
     std::shared_ptr<std::atomic<std::uint8_t>> body_acquire_rejected_slot;
+    // Issue #4822: the Aura body's own failure (error value / C++ throw).
+    // Written by the body fiber, read by orch:agent-join after an Ok join.
+    // Shared so it survives handle move / name-table put (like #3014).
+    struct BodyOutcome {
+        std::mutex mu;
+        bool failed = false;
+        std::string error;
+    };
+    std::shared_ptr<BodyOutcome> body_outcome;
+    [[nodiscard]] bool body_failed(std::string* msg = nullptr) const {
+        if (!body_outcome)
+            return false;
+        std::lock_guard<std::mutex> lk(body_outcome->mu);
+        if (body_outcome->failed && msg)
+            *msg = body_outcome->error;
+        return body_outcome->failed;
+    }
     [[nodiscard]] bool body_acquire_rejected() const noexcept {
         return body_acquire_rejected_slot &&
                body_acquire_rejected_slot->load(std::memory_order_acquire) != 0;
@@ -1941,6 +1958,7 @@ struct AgentHandle {
         , must_wait_reclaimed(o.must_wait_reclaimed)
         , last_join_status(o.last_join_status)
         , body_acquire_rejected_slot(std::move(o.body_acquire_rejected_slot))
+        , body_outcome(std::move(o.body_outcome))
         , deny_class(o.deny_class)
         , bp_scope_id(std::move(o.bp_scope_id))
         , quota_recycled_pending(o.quota_recycled_pending)
@@ -2031,6 +2049,7 @@ struct AgentHandle {
             must_wait_reclaimed = o.must_wait_reclaimed;
             last_join_status = o.last_join_status;
             body_acquire_rejected_slot = std::move(o.body_acquire_rejected_slot);
+            body_outcome = std::move(o.body_outcome);
             deny_class = o.deny_class;
             // Issue #3461: complete field transfer (see move ctor
             // checklist — END-appended fields must appear here).
@@ -2066,6 +2085,7 @@ struct AgentHandle {
             o.must_wait_reclaimed = false;
             o.last_join_status = serve::JoinStatus::Invalid;
             o.body_acquire_rejected_slot.reset();
+            o.body_outcome.reset();
             o.deny_class = AgentDenyClass::None;
             o.bp_scope_id.clear();            // #3461: move is a complete field transfer
             o.quota_recycled_pending = false; // #3841 / #3461 END field
@@ -2148,6 +2168,7 @@ struct AgentHandle {
         s.must_wait_reclaimed = must_wait_reclaimed;
         s.last_join_status = last_join_status;
         s.body_acquire_rejected_slot = body_acquire_rejected_slot;
+        s.body_outcome = body_outcome;
         s.deny_class = deny_class;
         s.bp_scope_id = bp_scope_id;
         s.quota_recycled_pending = quota_recycled_pending;

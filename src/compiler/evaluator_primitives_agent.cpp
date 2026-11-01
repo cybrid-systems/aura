@@ -3968,9 +3968,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 }
             }
             orch_sched.ensure(2);
-            auto body = [&ev, cid, region_key]() {
+            // Issue #4822: body failure slot read back by orch:agent-join.
+            auto body_outcome = std::make_shared<aura::orch::AgentHandle::BodyOutcome>();
+            auto body = [&ev, cid, region_key, body_outcome]() {
                 if (!cid)
                     return;
+                auto note_failure = [&body_outcome](std::string msg) {
+                    std::lock_guard<std::mutex> lk(body_outcome->mu);
+                    body_outcome->failed = true;
+                    body_outcome->error = std::move(msg);
+                };
                 try {
                     // Issue #2158: per-Evaluator apply gate — not process-static.
                     // try_acquire reject path never reaches this body (agent_spawn.h
@@ -3980,10 +3987,20 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     // non-zero region key are the isolation token
                     // (production region concurrency). Issue #4423:
                     // SingleWriter / Soft/Off / key==0 keep the lock.
-                    (void)apply_spawn_closure_maybe_locked(ev, *cid, region_key);
+                    // Only the body's own error value is a body failure. The
+                    // runtime refusals (closure-freed / apply-failed, #4765)
+                    // keep their existing join contract and observe counters.
+                    auto fail = apply_spawn_closure_maybe_locked(ev, *cid, region_key);
+                    if (fail && *fail != "closure-freed" && *fail != "apply-failed")
+                        note_failure(std::move(*fail));
+                } catch (const std::exception& e) {
+                    // [SILENCE-PRIM-#615] no rethrow on the fiber; the
+                    // failure surfaces via orch:agent-join (#4822).
+                    note_failure(e.what());
                 } catch (...) {
-                    // [SILENCE-PRIM-#615] swallow: agent body errors surface
-                    // via join/status only (#1669 class B intentional-state).
+                    // [SILENCE-PRIM-#615] non-std throw: recorded for
+                    // orch:agent-join (#4822), not rethrown on the fiber.
+                    note_failure("exception");
                 }
             };
             aura::orch::AgentSpec spec;
@@ -4010,6 +4027,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // join observe + fiber TLS apply see the same key (0 = Serialized).
             spec.region_key = region_key;
             auto handle = aura::orch::spawn_agent_with_mailbox(*orch_sched.sched, std::move(spec));
+            handle.body_outcome = body_outcome;
             // Issue #2009: move-only handle; snapshot then put on success.
             bool ok = handle.ok;
             const bool quota_exceeded = handle.quota_exceeded;
@@ -4226,9 +4244,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 aura::orch::g_orch_module_stats.agent_join_reclaimed_total.fetch_add(
                     1, std::memory_order_relaxed);
             }
+            // Issue #4822: an Ok join of a body that failed on its own is an
+            // error, not a success (twin of #4783 scope-join partial).
+            std::string body_err;
+            const bool body_failed =
+                jr.status == aura::serve::JoinStatus::Ok && hp->body_failed(&body_err);
+            if (body_failed)
+                st = "error";
             auto sidx = ev.push_string_heap(st);
             std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"ok", make_bool(jr.status == aura::serve::JoinStatus::Ok)},
+                {"ok", make_bool(jr.status == aura::serve::JoinStatus::Ok && !body_failed)},
                 {"status", make_string(sidx)},
                 {"wait-us", make_int(static_cast<std::int64_t>(jr.wait_us))},
                 {"schema", make_int(1588)},
@@ -4238,6 +4263,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"issue-2743", make_int(2743)},
                 {"drain-ms", make_int(static_cast<std::int64_t>(policy.drain_ms))},
             };
+            if (body_failed) {
+                auto eidx = ev.push_string_heap(body_err);
+                kv.emplace_back("error", make_string(eidx));
+            }
             // Issue #2885: per-join still-running SLA on the Reclaimed path.
             // Additive hash keys — Ok / Timeout / Cancelled pay zero extra
             // (no new keys per AC2). #2661 contract unchanged: defer path
