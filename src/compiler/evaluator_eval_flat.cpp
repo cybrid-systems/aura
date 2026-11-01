@@ -7478,6 +7478,34 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         if (macro_it != macros_.end()) {
                             auto& md = macro_it->second;
                             bool is_rest = md.dotted;
+                            // Issue #4834: a macro call is fixed-arity unless
+                            // the macro declares a trailing rest parameter.
+                            // Extra arguments used to be dropped silently and
+                            // a missing one surfaced as "unbound variable:
+                            // <formal>" pointing INSIDE the macro body, which
+                            // hid the caller's mistake. Reject at the call site
+                            // for hygienic and legacy macros alike.
+                            const std::size_t provided_args =
+                                v.children.empty() ? 0 : v.children.size() - 1;
+                            const std::size_t regular_params =
+                                is_rest ? (md.params.empty() ? 0 : md.params.size() - 1)
+                                        : md.params.size();
+                            if (is_rest ? provided_args < regular_params
+                                        : provided_args != regular_params) {
+                                std::string expected = std::to_string(regular_params);
+                                if (is_rest)
+                                    expected += "+";
+                                const auto arity_line = v.line == 0 ? 1u : v.line;
+                                const auto arity_col = v.col == 0 ? 1u : v.col;
+                                const bool singular = regular_params == 1 && !is_rest;
+                                return std::unexpected(aura::diag::Diagnostic{
+                                    aura::diag::ErrorKind::ArityMismatch,
+                                    "macro " + cname + ": expected " + expected + " argument" +
+                                        (singular ? "" : "s") + ", got " +
+                                        std::to_string(provided_args),
+                                    aura::diag::SourceLocation{arity_line, arity_col, 0},
+                                    current_id});
+                            }
 
                             // Issue #334: env-binding path for
                             // `define-hygienic-macro*` (md.preserved).
