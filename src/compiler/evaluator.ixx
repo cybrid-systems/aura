@@ -2640,7 +2640,8 @@ public:
         mutate_target_pool_ = p;
     }
     [[nodiscard]] EvalResult eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
-                                       aura::ast::NodeId id, const Env& env);
+                                       aura::ast::NodeId id, const Env& env,
+                                       bool allow_file_diag_arm = true);
     // Issue #4454: fat tree-walker. eval_flat checks C-stack depth, then
     // calls this. noinline keeps the ~12KB frame out of eval_flat's prologue.
     [[nodiscard]] __attribute__((noinline)) EvalResult eval_flat_body(aura::ast::FlatAST& flat,
