@@ -2,8 +2,13 @@
 ;
 ; (require "std/rule" all:)
 ;
-; 规则 = query:pattern + 相应 mutate 的组合。
-; P2 新增：:scope 支持、rule:save / rule:load、出口过滤
+; 规则 = query:pattern + 相应 mutate 的组合.
+; P2 新增: :scope 支持, rule:save / rule:load, 出口过滤
+;
+; Issue #4835: rule:define validates its keyword arguments, rule:apply /
+; rule:enable / rule:disable / rule:remove raise on an unknown rule, and
+; rules live in a name-keyed hash so define / find are O(1) instead of
+; scanning the whole list (and formatting every entry) per call.
 
 (export rule:define rule:apply rule:apply-all
         rule:list rule:list-violations
@@ -11,7 +16,11 @@
         rule:status rule:save rule:load)
 
 ; ── 规则存储 ──────────────────────────────────────────────
-(define *rules* '())
+; name(string) -> rule record, plus the insertion order for listing.
+(define *rule-index* (make-hash))
+(define *rule-order* '())
+(define *rule-valid-keywords*
+  '("pattern" "replace" "condition" "description" "enabled" "scope"))
 
 ;; Issue #1585: rule:apply-all + rule:list-violations use `for-each` which
 ;; isn't bound by any require in this file (map happens to be in scope
@@ -25,18 +34,66 @@
         (fn (car rest))
         (loop (cdr rest))))))
 
-; ── 内部：查找规则 ─────────────────────────────────────────
-(define (find-rule name)
-  (let loop ((remaining *rules*))
-    (if (null? remaining) #f
-      ;; Issue #4798: load-rules names are real symbols now; still accept a
-      ;; string lookup of a symbol name (and vice versa) by comparing text.
-      (if (or (eq? (caar remaining) name)
-              (equal? (format "~a" (caar remaining)) (format "~a" name)))
-        (car remaining)
-        (loop (cdr remaining))))))
+; ── 内部: 名字规范化 / 查找 ──────────────────────────────
+(define (rule-key name)
+  (if (string? name) name (symbol->string name)))
 
-; ── 内部：规则结构 ─────────────────────────────────────────
+(define (rule-name-display name)
+  (if (string? name) name (format "~a" name)))
+
+(define (find-rule name)
+  (let ((k (rule-key name)))
+    (if (hash-has-key? *rule-index* k)
+      (hash-ref *rule-index* k)
+      #f)))
+
+(define (rules-in-order)
+  (map (lambda (k) (hash-ref *rule-index* k)) *rule-order*))
+
+; ── 内部: 校验辅助 ───────────────────────────────────────
+(define (value-kind v)
+  (cond ((string? v) "string")
+        ((symbol? v) "symbol")
+        ((number? v) "number")
+        ((boolean? v) "boolean")
+        ((pair? v) "list")
+        ((vector? v) "vector")
+        (else "value")))
+
+(define (rule-error name msg)
+  (error (string-append "rule:define " (rule-name-display name) ": " msg)))
+
+(define (rule-keyword-name k)
+  (if (keyword? k) (keyword->string k) (format "~a" k)))
+
+(define (min3 a b c)
+  (let ((m (if (< a b) a b)))
+    (if (< c m) c m)))
+
+; Levenshtein distance — only used for a "did you mean" hint on a
+; mistyped keyword. Short strings, so the simple recursion is fine.
+(define (edit-distance a b)
+  (let ((la (string-length a)) (lb (string-length b)))
+    (cond ((= la 0) lb)
+          ((= lb 0) la)
+          ((equal? (substring a 0 1) (substring b 0 1))
+           (edit-distance (substring a 1 la) (substring b 1 lb)))
+          (else
+           (+ 1 (min3 (edit-distance (substring a 1 la) b)
+                      (edit-distance a (substring b 1 lb))
+                      (edit-distance (substring a 1 la) (substring b 1 lb))))))))
+
+(define (closest-rule-keyword key)
+  (let ((name (rule-keyword-name key)))
+    (let loop ((cands *rule-valid-keywords*) (best #f) (best-d 99))
+      (if (null? cands)
+        (if best (string-append ":" best) #f)
+        (let ((d (edit-distance name (car cands))))
+          (if (and (< d best-d) (<= d 2))
+            (loop (cdr cands) (car cands) d)
+            (loop (cdr cands) best best-d)))))))
+
+; ── 内部: 规则结构 ─────────────────────────────────────────
 ; 规则 = (name pattern replacement condition description enabled scope)
 (define (rule-name r)         (list-ref r 0))
 (define (rule-pattern r)      (list-ref r 1))
@@ -48,6 +105,9 @@
 
 ; ── rule:define — 注册规则 ─────────────────────────────────
 (define (rule:define name . args)
+  (if (not (or (symbol? name) (string? name)))
+    (error (string-append "rule:define: name must be a symbol or string, got "
+                          (value-kind name))))
   (let ((pattern "")
         (replacement "")
         (condition #t)
@@ -56,56 +116,102 @@
         (scope :workspace))
 
     (let parse ((remaining args))
-      (if (pair? remaining)
-        (let ((key (car remaining))
-              (val (cadr remaining)))
-          (cond
-            ((eq? key :pattern) (set! pattern val))
-            ((eq? key :replace) (set! replacement val))
-            ((eq? key :condition) (set! condition val))
-            ((eq? key :description) (set! description val))
-            ((eq? key :enabled) (set! enabled val))
-            ((eq? key :scope) (set! scope val)))
-          (parse (cddr remaining)))
-        #f))
+      (cond
+        ((null? remaining) #t)
+        ((null? (cdr remaining))
+         (rule-error name (string-append "odd number of arguments; missing value for "
+                                         (rule-keyword-name (car remaining)))))
+        (else
+         (let ((key (car remaining))
+               (val (cadr remaining)))
+           (cond
+             ((eq? key :pattern)
+              (if (not (string? val))
+                (rule-error name (string-append ":pattern must be a string, got "
+                                                (value-kind val)))
+                (set! pattern val)))
+             ((eq? key :replace)
+              (if (not (string? val))
+                (rule-error name (string-append ":replace must be a string, got "
+                                                (value-kind val)))
+                (set! replacement val)))
+             ((eq? key :condition)
+              (if (not (or (string? val) (boolean? val)))
+                (rule-error name (string-append ":condition must be a string or boolean, got "
+                                                (value-kind val)))
+                (set! condition val)))
+             ((eq? key :description)
+              (if (not (string? val))
+                (rule-error name (string-append ":description must be a string, got "
+                                                (value-kind val)))
+                (set! description val)))
+             ((eq? key :enabled)
+              (if (not (boolean? val))
+                (rule-error name (string-append ":enabled must be a boolean, got "
+                                                (value-kind val)))
+                (set! enabled val)))
+             ((eq? key :scope)
+              (if (not (or (keyword? val) (symbol? val) (string? val)))
+                (rule-error name (string-append ":scope must be a keyword, symbol or string, got "
+                                                (value-kind val)))
+                (set! scope val)))
+             (else
+              (let ((near (closest-rule-keyword key)))
+                (rule-error name
+                  (string-append "unknown keyword " (rule-keyword-name key)
+                                 " (valid: :pattern :replace :condition :description :enabled :scope"
+                                 (if near (string-append "; did you mean " near "?") "")
+                                 ")")))))
+           (parse (cddr remaining))))))
 
-    (set! *rules* (filter (lambda (r) (not (eq? (car r) name))) *rules*))
-    (set! *rules* (cons (list name pattern replacement condition description enabled scope) *rules*))
-    name))
+    ; Reject a :pattern that cannot even be read as a datum, naming the rule
+    ; and the field instead of failing later with an internal type error.
+    (if (not (equal? pattern ""))
+      (try (read-from-string pattern)
+           (catch (e)
+             (rule-error name (string-append ":pattern cannot be parsed: "
+                                             (if (string? e) e (format "~a" e)))))))
+
+    (let ((k (rule-key name)))
+      (if (not (hash-has-key? *rule-index* k))
+        (set! *rule-order* (cons k *rule-order*)))
+      (hash-set! *rule-index* k
+                 (list name pattern replacement condition description enabled scope))
+      name)))
 
 ; ── rule:remove — 移除规则 ────────────────────────────────
 (define (rule:remove name)
-  (set! *rules* (filter (lambda (r) (not (eq? (car r) name))) *rules*))
-  name)
+  (let ((k (rule-key name)))
+    (if (not (hash-has-key? *rule-index* k))
+      (error (string-append "rule:remove: no such rule: " (rule-name-display name)))
+      (begin
+        (hash-remove! *rule-index* k)
+        (set! *rule-order* (filter (lambda (x) (not (equal? x k))) *rule-order*))
+        name))))
 
 ; ── rule:enable / rule:disable — 开关规则 ─────────────────
-(define (rule:enable name)
+(define (rule:set-enabled name flag)
   (let ((r (find-rule name)))
-    (if r
-      (begin
-        (rule:remove name)
-        (set! *rules* (cons (list (rule-name r) (rule-pattern r)
-                                  (rule-replace r) (rule-condition r)
-                                  (rule-desc r) #t (rule-scope r)) *rules*))
-        #t)
-      #f)))
+    (hash-set! *rule-index* (rule-key name)
+               (list (rule-name r) (rule-pattern r) (rule-replace r)
+                     (rule-condition r) (rule-desc r) flag (rule-scope r)))
+    #t))
+
+(define (rule:enable name)
+  (if (find-rule name)
+    (rule:set-enabled name #t)
+    (error (string-append "rule:enable: no such rule: " (rule-name-display name)))))
 
 (define (rule:disable name)
-  (let ((r (find-rule name)))
-    (if r
-      (begin
-        (rule:remove name)
-        (set! *rules* (cons (list (rule-name r) (rule-pattern r)
-                                  (rule-replace r) (rule-condition r)
-                                  (rule-desc r) #f (rule-scope r)) *rules*))
-        #t)
-      #f)))
+  (if (find-rule name)
+    (rule:set-enabled name #f)
+    (error (string-append "rule:disable: no such rule: " (rule-name-display name)))))
 
 ; ── rule:list — 列出规则 ───────────────────────────────────
 (define (rule:list)
   (map (lambda (r)
     (list :name (car r) :enabled (list-ref r 5) :scope (list-ref r 6)))
-    *rules*))
+    (rules-in-order)))
 
 ; ── rule:status — 规则详情 ────────────────────────────────
 (define (rule:status name)
@@ -120,9 +226,9 @@
             :scope (rule-scope r))
       #f)))
 
-; ── 内部：检查条件是否满足 ────────────────────────────────
+; ── 内部: 检查条件是否满足 ────────────────────────────────
 (define (check-condition cond-fn node-id)
-  (if (= cond-fn #t) #t
+  (if (eq? cond-fn #t) #t
     (try
       (let ((expr (string-append
         "(let ((node " (number->string node-id) ")) "
@@ -131,7 +237,7 @@
         (eval expr))
       (catch (e) #f))))
 
-; ── 内部：检查节点是否在 scope 内 ──────────────────────────
+; ── 内部: 检查节点是否在 scope 内 ──────────────────────────
 (define (in-scope? scope node-id)
   (if (eq? scope :workspace) #t
     (if (symbol? scope)
@@ -143,7 +249,7 @@
           #f))
       #t)))
 
-; ── 内部：应用单条规则到 workspace（带 scope 过滤）─────────
+; ── 内部: 应用单条规则到 workspace（带 scope 过滤）─────────
 (define (apply-rule r)
   (if (not (rule-enabled? r)) 0
     (let ((pattern (rule-pattern r))
@@ -175,7 +281,8 @@
 ; ── rule:apply — 应用单条规则 ──────────────────────────────
 (define (rule:apply name)
   (let ((r (find-rule name)))
-    (if (not r) 0
+    (if (not r)
+      (error (string-append "rule:apply: no such rule: " (rule-name-display name)))
       (apply-rule r))))
 
 ; ── rule:apply-all — 应用所有启用规则 ──────────────────────
@@ -186,7 +293,7 @@
         (if (rule-enabled? r)
           (set! total (+ total (apply-rule r)))
           #f))
-      *rules*)
+      (rules-in-order))
     total))
 
 ; ── rule:list-violations — 审计模式 ─────────────────────────
@@ -214,7 +321,7 @@
                 violations))
               #f))
           #f))
-      *rules*)
+      (rules-in-order))
     violations))
 
 ; ── rule:save — 保存规则到 JSON 文件 ───────────────────────
@@ -232,11 +339,11 @@
         "\\\"scope\\\":\\\"" (if (eq? (list-ref r 6) :workspace) "workspace"
                                (if (string? (list-ref r 6)) (list-ref r 6) (symbol->string (list-ref r 6)))) "\\\""
         "}"))
-      *rules*)) "]"))
+      (rules-in-order))) "]"))
   (write-file filename json-str)
-  (display "Saved ")(display (length *rules*))(display " rules to ")
+  (display "Saved ")(display (length (rules-in-order)))(display " rules to ")
   (display filename)(newline)
-  (length *rules*))
+  (length (rules-in-order)))
 
 ; ── rule:load — 从 JSON 文件加载规则 ───────────────────────
 (define (rule:load filename)
@@ -245,9 +352,10 @@
     (let ((data (json-parse content)))
       (if (list? data)
         (begin
-          (set! *rules* '())
+          (set! *rule-index* (make-hash))
+          (set! *rule-order* '())
           (for-each (lambda (entry)
-            (let* ((name (string->symbol (hash-ref entry "name")))
+            (let* ((name (hash-ref entry "name"))
                    (pattern (hash-ref entry "pattern"))
                    (replace (hash-ref entry "replace"))
                    (cond-str (hash-ref entry "condition"))
@@ -255,13 +363,17 @@
                    (enabled-str (hash-ref entry "enabled"))
                    (scope-str (hash-ref entry "scope"))
                    (condition (if (string? cond-str) cond-str #t))
-                   (enabled (if (string? enabled-str) (string=? enabled-str "true") #t))
-                   (scope (if (= scope-str "workspace") :workspace
-                            (string->symbol scope-str))))
-              (set! *rules* (cons (list name pattern replace condition desc enabled scope) *rules*))))
+                   (enabled (if (string? enabled-str) (equal? enabled-str "true") #t))
+                   (scope (if (and (string? scope-str) (equal? scope-str "workspace"))
+                            :workspace
+                            (if (string? scope-str) (string->symbol scope-str) :workspace)))
+                   (k (rule-key name)))
+              (hash-set! *rule-index* k
+                         (list name pattern replace condition desc enabled scope))
+              (set! *rule-order* (append *rule-order* (list k)))))
             data)
-          (display "Loaded ")(display (length *rules*))(display " rules from ")
+          (display "Loaded ")(display (length *rule-order*))(display " rules from ")
           (display filename)(newline)
-          (length *rules*)))
+          (length *rule-order*)))
       0)
     0))
