@@ -9159,8 +9159,10 @@ int run_test_join_drain_reclaim() {
                 R"((let ((r (orch:agent-join "no-such-ac3216")))
                      (if (string=? (hash-ref r "status") "invalid") 1 0)))");
             CHECK(st && is_int(*st) && as_int(*st) == 1, "ac3216_1: join miss status=invalid");
+            // Issue #4832: schema-* sentinels live in the :debug view of a
+            // join report; the default report keeps stable business fields.
             auto schema = cs.eval(
-                R"((let ((r (orch:agent-join "no-such-ac3216"))) (hash-ref r "schema-3216")))");
+                R"((let ((r (orch:agent-join "no-such-ac3216" :debug #t))) (hash-ref r "schema-3216")))");
             CHECK(schema && is_int(*schema) && as_int(*schema) == 3216,
                   "ac3216_1: join miss schema-3216");
             CHECK(href(cs, "schema-3216") == 3216, "ac3216_1: query:orch-module-stats schema-3216");
