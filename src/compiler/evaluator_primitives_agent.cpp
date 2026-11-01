@@ -4784,8 +4784,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             const auto spawn_epoch = tally->reclaim_epoch.load(std::memory_order_acquire);
             // Issue #4842: scope-spawn from inside an agent body.
             const bool nested_body = Evaluator::agent_apply_hold_depth() > 0;
-            auto body = [&ev, cid, region_key, tally, spawn_epoch, nested_body,
-                         body_name = name]() {
+            // Issue #4858: shared per-attempt failure counter (RestartN
+            // resets it before each re-spawn so a recovered child is not
+            // reported as failed again).
+            auto failure_count = std::make_shared<std::atomic<std::uint32_t>>(0);
+            auto body = [&ev, cid, region_key, tally, spawn_epoch, nested_body, body_name = name,
+                         failure_count]() {
                 if (!cid)
                     return;
                 // Issue #4783: a non-Ok join already reclaimed this task
@@ -4800,14 +4804,18 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 // fiber-cancelled error. That is the requested outcome, not
                 // a body failure: count it as cancelled so join-all stays
                 // ok (#4783 partial is for bodies that failed on their own).
-                const auto record_failure = [&tally, &body_name](std::string msg) {
+                const auto record_failure = [&tally, &body_name, &failure_count](std::string msg) {
                     auto* self = aura::serve::g_current_fiber;
                     const bool cancelled = self != nullptr && self->is_cancel_requested();
                     std::lock_guard<std::mutex> lk(tally->mu);
-                    if (cancelled)
+                    if (cancelled) {
                         ++tally->cancelled;
-                    else
+                    } else {
+                        // Issue #4858: a genuine body failure is restart fuel;
+                        // a requested cancel is not.
+                        failure_count->fetch_add(1, std::memory_order_acq_rel);
                         tally->errors.emplace_back(body_name, std::move(msg));
+                    }
                 };
                 try {
                     // Same per-Evaluator apply gate as orch:spawn-agent.
@@ -4837,6 +4845,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // (the #4713 reclaim can otherwise erase it while it is pending).
             spec.body_evaluator = static_cast<void*>(&ev);
             spec.body_closure_id = cid.value_or(0);
+            spec.body_failure_count = failure_count; // Issue #4858
             spec.attach_mailbox = attach_mailbox;
             spec.mailbox_high_water = high_water;
             spec.keepalive_interval_ms = keepalive_interval_ms;
@@ -5301,6 +5310,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             aura::orch::JoinPolicy policy{};
             policy.drain_ms = aura::orch::kDefaultJoinDrainMs;
             std::optional<aura::orch::AgentFailurePolicy> fail_pol;
+            // Issue #4851 / #4858: parse on-join-fail into a name first so
+            // :max-restarts can appear in any keyword order, an unknown
+            // policy is a hard error (never a silent report-only), and
+            // "restart" without a cap still has one attempt of fuel.
+            std::string join_fail_name;
+            std::optional<std::uint32_t> join_fail_max_restarts;
             std::string addr_path;
             std::optional<std::int64_t> addr_child;
             bool tree_join = false;
@@ -5324,17 +5339,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
                 } else if ((k == "on-join-fail" || k == "on_join_fail") && types::is_string(val)) {
                     // Issue #3208: explicit keyword → honor even ReportOnly.
-                    const auto s = heap_str_from(ev.string_heap_, val);
-                    aura::orch::AgentFailurePolicy p;
-                    if (s == "cancel")
-                        p.on_join_fail = aura::orch::AgentFailureAction::Cancel;
-                    else if (s == "restart" || s == "restart-n")
-                        p.on_join_fail = aura::orch::AgentFailureAction::RestartN;
-                    else if (s == "throttle")
-                        p.on_join_fail = aura::orch::AgentFailureAction::Throttle;
-                    else
-                        p.on_join_fail = aura::orch::AgentFailureAction::ReportOnly;
-                    fail_pol = p;
+                    join_fail_name = heap_str_from(ev.string_heap_, val);
+                } else if ((k == "max-restarts" || k == "max_restarts") && types::is_int(val)) {
+                    // Issue #4858: join-all restart fuel (scope-watch parity).
+                    join_fail_max_restarts =
+                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
                 } else if ((k == "tree") && types::is_bool(val)) {
                     // Issue #3643: optional tree join — default local
                     // (#3496 AC1); true joins the whole subtree (AC2).
@@ -5343,6 +5352,41 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     // Issue #4832: diagnostic view opt-in.
                     debug_report = types::as_bool(val);
                 }
+            }
+            // Issue #4851: an unknown failure-policy name must not degrade
+            // silently to report-only (a typo used to disable fail-fast in
+            // production). Accept the documented spellings only.
+            if (!join_fail_name.empty()) {
+                aura::orch::AgentFailurePolicy p;
+                if (join_fail_name == "cancel") {
+                    p.on_join_fail = aura::orch::AgentFailureAction::Cancel;
+                } else if (join_fail_name == "restart" || join_fail_name == "restart-n" ||
+                           join_fail_name == "restart_n") {
+                    p.on_join_fail = aura::orch::AgentFailureAction::RestartN;
+                    // Issue #4858: "restart" without :max-restarts used to be
+                    // a silent no-op (default 0 fuel). Give it one attempt so
+                    // the documented policy does something observable.
+                    p.max_restarts = 1;
+                } else if (join_fail_name == "throttle") {
+                    p.on_join_fail = aura::orch::AgentFailureAction::Throttle;
+                } else if (join_fail_name == "report-only" || join_fail_name == "report_only") {
+                    p.on_join_fail = aura::orch::AgentFailureAction::ReportOnly;
+                } else {
+                    const std::string msg = "orch:scope-join-all: unknown :on-join-fail \"" +
+                                            join_fail_name +
+                                            "\" (expected cancel / restart-n / throttle / "
+                                            "report-only)";
+                    return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
+                                                ev.primitive_error_counter_ptr());
+                }
+                if (join_fail_max_restarts.has_value())
+                    p.max_restarts = *join_fail_max_restarts;
+                fail_pol = p;
+            } else if (join_fail_max_restarts.has_value()) {
+                const std::string msg =
+                    "orch:scope-join-all: :max-restarts requires :on-join-fail \"restart-n\"";
+                return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
+                                            ev.primitive_error_counter_ptr());
             }
             // Issue #4724: :timeout-ms bounds the WHOLE call. Fold the
             // cancel/drain window into the caller deadline instead of
@@ -5432,6 +5476,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             const auto restart_skipped = scope->last_restart_skipped_no_spec();
             const auto restart_ok = scope->last_restart_ok();
             const auto restart_denied = scope->last_restart_denied();
+            const auto restart_exhausted = scope->last_restart_exhausted();
             const auto restart_deny_cls = scope->last_restart_deny_class();
             // Issue #3803: observe isolation from specs_ region_keys BEFORE
             // drop (join/workflow hash additive; Soft/single unchanged).
@@ -5559,6 +5604,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"restart-attempted", make_int(static_cast<std::int64_t>(restart_attempted))},
                 {"restart-skipped-no-spec", make_int(static_cast<std::int64_t>(restart_skipped))},
                 {"restart-ok", make_int(static_cast<std::int64_t>(restart_ok))},
+                // Issue #4858: restart fuel visibility — never a silent no-op.
+                {"restart-max",
+                 make_int(static_cast<std::int64_t>(fail_pol ? fail_pol->max_restarts : 0))},
+                {"restart-exhausted", make_int(static_cast<std::int64_t>(restart_exhausted))},
                 {"schema-3250", make_int(aura::orch::kRestartNSpecBoundaryIssue)},
                 {"issue-3250", make_int(aura::orch::kRestartNSpecBoundaryIssue)},
                 // Issue #3643: tree join flag + stamp (additive; append).
