@@ -983,12 +983,11 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
     add("error", [&ev](std::span<const EvalValue> a) -> EvalValue {
         // Ensure ev.error_values_[0] always exists for default errors
         if (ev.error_values_.empty())
-            ev.error_values_.push_back(make_void());
+            (void)primitives_detail::push_error_cause(ev.error_values_, make_void());
         types::EvalValue cause = make_string(0); // default
         if (!a.empty())
             cause = a[0];
-        auto eidx = ev.error_values_.size();
-        ev.error_values_.push_back(cause);
+        auto eidx = primitives_detail::push_error_cause(ev.error_values_, cause);
         return make_error(eidx);
     });
 
@@ -999,15 +998,13 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         types::EvalValue cause = make_string(0);
         if (a.size() > 1)
             cause = a[1];
-        auto eidx = ev.error_values_.size();
-        ev.error_values_.push_back(cause);
+        auto eidx = primitives_detail::push_error_cause(ev.error_values_, cause);
         return make_error(eidx);
     });
 
     add("raise", [&ev](std::span<const EvalValue> a) -> EvalValue {
         auto cause = a.empty() ? make_void() : a[0];
-        auto eidx = ev.error_values_.size();
-        ev.error_values_.push_back(cause);
+        auto eidx = primitives_detail::push_error_cause(ev.error_values_, cause);
         return make_error(eidx);
     });
 
@@ -1024,8 +1021,7 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         if (is_truthy(a[0]))
             return make_int(1);
         // Store failing value as error cause
-        auto eidx = ev.error_values_.size();
-        ev.error_values_.push_back(a[0]);
+        auto eidx = primitives_detail::push_error_cause(ev.error_values_, a[0]);
         return make_error(eidx);
     });
 
@@ -1037,15 +1033,13 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         if (types::is_int(a[0]) && types::is_int(a[1])) {
             if (types::as_int(a[0]) == types::as_int(a[1]))
                 return make_int(1);
-            auto eidx = ev.error_values_.size();
-            ev.error_values_.push_back(a[0]);
+            auto eidx = primitives_detail::push_error_cause(ev.error_values_, a[0]);
             return make_error(eidx);
         }
         if (types::is_float(a[0]) && types::is_float(a[1])) {
             if (types::as_float(a[0]) == types::as_float(a[1]))
                 return make_int(1);
-            auto eidx = ev.error_values_.size();
-            ev.error_values_.push_back(a[0]);
+            auto eidx = primitives_detail::push_error_cause(ev.error_values_, a[0]);
             return make_error(eidx);
         }
         if (types::is_string(a[0]) && types::is_string(a[1])) {
@@ -1054,8 +1048,7 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
             if (i0 < ev.string_heap_.size() && i1 < ev.string_heap_.size() &&
                 ev.string_at(i0) == ev.string_at(i1))
                 return make_int(1);
-            auto eidx = ev.error_values_.size();
-            ev.error_values_.push_back(a[0]);
+            auto eidx = primitives_detail::push_error_cause(ev.error_values_, a[0]);
             return make_error(eidx);
         }
         return make_bool(false);

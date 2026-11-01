@@ -621,8 +621,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         // First-class error so (require)/(import) can signal failure
         // (void was indistinguishable from empty success in some paths).
         auto sid = string_heap_.mint(std::string("module-load-failed: ") + resolved + ": " + why);
-        auto eidx = error_values_.size();
-        error_values_.push_back(types::make_string(sid));
+        auto eidx = primitives_detail::push_error_cause(error_values_, types::make_string(sid));
         return types::make_error(eidx);
     };
     if (!result) {

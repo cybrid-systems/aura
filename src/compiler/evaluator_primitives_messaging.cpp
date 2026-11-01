@@ -80,6 +80,13 @@ namespace {
         bool ready = false;
     };
     std::unordered_map<int64_t, FiberResult> s_fiber_results;
+    // Issue #4839: join is idempotent. The registry entry is erased on the
+    // first join (it owns the result and the worker handle), so a second
+    // join used to find nothing and block on the cv forever (thread
+    // backend) or return () (scheduler backend). Keep the published value
+    // per (Evaluator, fid) so every later join returns the same value (or
+    // the same error value for a body that raised).
+    std::unordered_map<const void*, std::unordered_map<int64_t, EvalValue>> s_fiber_joined;
     std::mutex s_fiber_results_mtx;
     std::condition_variable s_fiber_results_cv;
 
@@ -207,6 +214,10 @@ namespace {
                 continue;
             out.push_back(slot->value().val);
         }
+        // Issue #4839: a joined result stays reachable for repeated joins.
+        for (const auto& owner_entry : s_fiber_joined)
+            for (const auto& joined : owner_entry.second)
+                out.push_back(joined.second.val);
         return out.size() - before;
     }
 
@@ -2124,6 +2135,21 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         auto fid = static_cast<int64_t>(as_int(a[0]));
 
+        // Issue #4839: already joined once? Return the cached value (a
+        // raised value is cached as that Error value, so a second join
+        // re-raises it). Checked under the same mutex as registration.
+        {
+            std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
+            if (s_fiber_results.find(fid) == s_fiber_results.end()) {
+                auto oit = s_fiber_joined.find(static_cast<const void*>(&ev));
+                if (oit != s_fiber_joined.end()) {
+                    auto jit = oit->second.find(fid);
+                    if (jit != oit->second.end())
+                        return jit->second;
+                }
+            }
+        }
+
         // Issue #4697: release the pending body root once this join has
         // consumed the fiber (the body has run). The root is the
         // evaluator's pinned-closure watermark, so the release is safe
@@ -2342,6 +2368,8 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             }
             result_ptr = std::move(it->second.value);
             s_fiber_results.erase(it);
+            // Issue #4839: remember the published value for later joins.
+            s_fiber_joined[static_cast<const void*>(&ev)][fid] = **result_ptr;
             // Issue #4708: the fiber is joined -- drop its cancel state.
             fiber_cancel_forget(fid);
         }
@@ -2619,7 +2647,20 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         // Issue #2483: announce waiting receiver so rendezvous send can proceed.
         ++ch.waiting_receivers;
         ch.cv.notify_all();
-        ch.cv.wait(ul, [&]() { return ch.closed || !ch.queue.empty(); });
+        // Issue #4840: this thread-backend wait is a cancellation safepoint.
+        // (fiber:cancel f) only sets the pending flag and wakes the join cv,
+        // so a raw cv.wait here parked the body forever and the following
+        // fiber:join hung. Poll at the same 50ms cadence as fiber:join.
+        while (!(ch.closed || !ch.queue.empty())) {
+            if (fiber_cancel_take(current_fiber_body_id())) {
+                --ch.waiting_receivers;
+                ul.unlock();
+                ch.cv.notify_all();
+                return fiber_cancel_condition_value(ev.string_heap_, ev.error_values_,
+                                                    ev.primitive_error_counter_ptr());
+            }
+            ch.cv.wait_for(ul, std::chrono::milliseconds(50));
+        }
         --ch.waiting_receivers;
         if (ch.queue.empty()) {
             ul.unlock();

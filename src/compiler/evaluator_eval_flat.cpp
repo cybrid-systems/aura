@@ -1919,8 +1919,8 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                     }
                     if (!cover_ok) {
                         auto es = push_string_heap("opaque-heap-pin-required");
-                        auto eidx = error_values_.size();
-                        error_values_.push_back(types::make_string(es));
+                        auto eidx = primitives_detail::push_error_cause(error_values_,
+                                                                        types::make_string(es));
                         return types::make_error(eidx);
                     }
                     return types::make_opaque(oi);
@@ -8423,7 +8423,15 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 int& d;
                                 ~TryBodyScope() { --d; }
                             } try_body_scope{try_body_depth_ctx()};
-                            auto result = eval_flat(*f, *p, body_id, eval_env);
+                            // Issue #4838: the try body must NOT arm the
+                            // file-diag rewrite. Under a closure/fiber body
+                            // no outer eval has armed a root, so the first
+                            // nested eval used to stringify the raised value
+                            // into "L:C: type error: ..." before this catch
+                            // could bind it. Keep the Error value (symbol /
+                            // hash / message cause) for the handler.
+                            auto result = eval_flat(*f, *p, body_id, eval_env,
+                                                    /*allow_file_diag_arm=*/false);
                             if (result && !is_error(*result)) {
                                 // Body succeeded — return result as-is
                                 return result;
@@ -8462,7 +8470,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                         // EXPR in the enclosing env. (catch (var) handler)
                                         // and (catch var handler) stay at size >= 3.
                                         if (cv.children.size() == 2)
-                                            return eval_flat(*f, *p, cv.child(1), eval_env);
+                                            return eval_flat(*f, *p, cv.child(1), eval_env,
+                                                             /*allow_file_diag_arm=*/false);
                                         // (catch (var) handler) — child[0]=catch, child[1]=(var),
                                         // child[2]=handler
                                         // Also accept (catch var handler) bare Variable binding.
@@ -8491,7 +8500,11 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                         // (Diagnostic failures previously skipped bind).
                                         if (!var_name.empty())
                                             catch_env.bind(var_name, err_val);
-                                        return eval_flat(*f, *p, handler_id, catch_env);
+                                        // Issue #4838: a handler that raises
+                                        // again keeps that value for the
+                                        // joiner (fiber.rethrow-in-handler).
+                                        return eval_flat(*f, *p, handler_id, catch_env,
+                                                         /*allow_file_diag_arm=*/false);
                                     }
                                 }
                             }
@@ -9177,8 +9190,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                             err += missing[mi];
                                         }
                                         auto es = push_string_heap(err);
-                                        auto ev = error_values_.size();
-                                        error_values_.push_back(make_string(es));
+                                        auto ev = primitives_detail::push_error_cause(
+                                            error_values_, make_string(es));
                                         return make_error(ev);
                                     }
                                 }
