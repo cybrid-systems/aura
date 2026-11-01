@@ -1923,6 +1923,14 @@ struct AgentHandle {
     // Row mutation goes through AgentScope::handles_mut() / find().
     // Appended at END (#3461).
     bool value_snapshot = false;
+    // Issue #4858: count of body failures for the CURRENT attempt (reset on
+    // RestartN re-spawn). Shared with AgentSpec so the scope's stored row
+    // and the value snapshot observe the same attempt. Appended at END
+    // (#3461) — move ctor / assign / reset must transfer it.
+    std::shared_ptr<std::atomic<std::uint32_t>> body_failure_count;
+    [[nodiscard]] bool attempt_failed() const noexcept {
+        return body_failure_count && body_failure_count->load(std::memory_order_acquire) != 0;
+    }
 
     AgentHandle() = default;
     AgentHandle(const AgentHandle&) = delete;
@@ -1966,7 +1974,8 @@ struct AgentHandle {
         , source_live(std::move(o.source_live))
         , agents_active_held(o.agents_active_held)
         , region_key(o.region_key)
-        , value_snapshot(o.value_snapshot) {
+        , value_snapshot(o.value_snapshot)
+        , body_failure_count(std::move(o.body_failure_count)) {
         // Issue #3245: hold-path signal when a still-pending handle is
         // stored (vector / another component). Soft: pending=false.
         note_reclaimed_pending_hold(o.must_wait_reclaimed);
@@ -2008,6 +2017,7 @@ struct AgentHandle {
         o.agents_active_held = false;     // #4097 / #3461 END field
         o.region_key = 0;                 // #4280 / #3461 END field
         o.value_snapshot = false;         // #4590 / #3461 END field
+        o.body_failure_count.reset();     // #4858 / #3461 END field
     }
 
     AgentHandle& operator=(AgentHandle&& o) noexcept {
@@ -2058,8 +2068,9 @@ struct AgentHandle {
             import_proxy = o.import_proxy;
             source_live = std::move(o.source_live);
             agents_active_held = o.agents_active_held;
-            region_key = o.region_key;         // #4280 / #3461 END field
-            value_snapshot = o.value_snapshot; // #4590 / #3461 END field
+            region_key = o.region_key;                            // #4280 / #3461 END field
+            value_snapshot = o.value_snapshot;                    // #4590 / #3461 END field
+            body_failure_count = std::move(o.body_failure_count); // #4858 END field
             note_reclaimed_pending_hold(o.must_wait_reclaimed);
             o.id = 0;
             o.fiber = nullptr;
@@ -2094,6 +2105,7 @@ struct AgentHandle {
             o.agents_active_held = false;     // #4097 / #3461 END field
             o.region_key = 0;                 // #4280 / #3461 END field
             o.value_snapshot = false;         // #4590 / #3461 END field
+            o.body_failure_count.reset();     // #4858 / #3461 END field
         }
         return *this;
     }
@@ -2177,6 +2189,7 @@ struct AgentHandle {
         s.agents_active_held = agents_active_held;
         s.region_key = region_key;
         s.value_snapshot = true;
+        s.body_failure_count = body_failure_count;
         return s;
     }
 
@@ -2367,6 +2380,11 @@ struct AgentSpec {
     // #4697/#4698 pinned-closure watermark (one SSOT, no second root model).
     void* body_evaluator = nullptr;
     std::uint64_t body_closure_id = 0;
+    // Issue #4858: per-attempt body failure signal shared with the handle so
+    // scope-join-all can distinguish "body raised" (recovery fuel) from a
+    // quiet Ok. AgentScope::spawn copies it onto the handle; a RestartN
+    // re-spawn resets it for the new attempt. Null for plain C++ hosts.
+    std::shared_ptr<std::atomic<std::uint32_t>> body_failure_count;
 };
 
 // Issue #3250: RestartN fuel is a copyable AgentSpec body stored by
@@ -2725,6 +2743,10 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
     // Issue #4280: keep the admitted key on the handle. Name-table put
     // moves `h`; the Scope plane still reads AgentSpec::region_key.
     h.region_key = spec.region_key;
+    // Issue #4858: same shared per-attempt failure counter as the spec so a
+    // scope join can see a body that raised (recovery fuel), not just a
+    // Timeout/Cancelled join result.
+    h.body_failure_count = spec.body_failure_count;
     // Issue #3147: persist effective bp_scope_id on the handle so
     // agent_send / emit_keepalive BP arms route to the correct scope
     // gauge (process bucket when empty / "-", scope gauge otherwise).

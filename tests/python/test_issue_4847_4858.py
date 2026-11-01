@@ -96,6 +96,40 @@ class TestIssueBatch4847To4858(unittest.TestCase):
         self.assertIn("rate-limited", proc.stdout)
         self.assertNotIn("runtime error", proc.stdout)
 
+    def test_4858_restart_policy_replays_failed_scope_child(self) -> None:
+        proc = _run(
+            """
+(define attempts (hash))
+(hash-set! attempts "n" 0)
+(orch:scope-spawn "flaky" (lambda () (hash-set! attempts "n" (+ 1 (hash-ref attempts "n")))
+  (if (< (hash-ref attempts "n") 3) (error "flaky") 'finally)))
+(define r (orch:scope-join-all :timeout-ms 5000 :on-join-fail "restart" :max-restarts 3))
+(display (list (hash-ref attempts "n") (hash-ref r "restart-attempted")
+               (hash-ref r "restart-ok") (hash-ref r "restart-exhausted"))) (newline)
+""",
+            "--load",
+            timeout=60.0,
+            pipeline_strict="0",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        # The child failed twice; RestartN re-spawned it both times and the
+        # third attempt succeeded. No silent no-op: the counter is visible.
+        self.assertIn("(3 2 2 0)", proc.stdout)
+
+    def test_4851_unknown_join_fail_policy_is_an_error(self) -> None:
+        proc = _run(
+            """
+(orch:scope-spawn "t" (lambda () 1))
+(display (orch:scope-join-all :timeout-ms 2000 :on-join-fail "cancle")) (newline)
+""",
+            "--load",
+            timeout=30.0,
+            pipeline_strict="0",
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("unknown :on-join-fail", proc.stderr)
+        self.assertIn("cancel / restart-n / throttle / report-only", proc.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
