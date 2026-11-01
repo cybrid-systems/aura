@@ -699,7 +699,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                     ev.primitive_error_counter_ptr());
             code =
                 aura::compiler::format_value(a[0], ev.string_heap_, ev.pairs_, 0, &ev.primitives_,
-                                             ev.keyword_table(), ev.vector_heap_, ev.symbol_table_);
+                                             ev.keyword_table(), ev.vector_heap_, ev.symbol_table_,
+                                             /*escape_strings=*/true);
         } else {
             const auto sidx = types::as_string_idx(a[0]);
             if (sidx >= ev.string_heap_.size())

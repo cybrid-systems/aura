@@ -2101,13 +2101,40 @@ namespace primitives_detail {
         return types::make_hash(hidx);
     }
 
+    // Issue #4841: error_values_ is appended from every fiber body thread
+    // (raise / cancel condition / primitive failures) while another thread
+    // may be reading an earlier cause (soft_error_message, try binding). A
+    // plain vector grew under that concurrency: reallocation freed the
+    // block a reader was about to dereference (ASan heap-use-after-free,
+    // then glibc double free). All appends now take one process-wide lock
+    // and the store is reserved once, so published indices never move.
+    inline std::mutex& primitive_error_store_mutex() noexcept {
+        static std::mutex m;
+        return m;
+    }
+
+    inline constexpr std::size_t kPrimitiveErrorStoreReserve = 1u << 14;
+
+    inline std::uint64_t push_error_cause(std::vector<types::EvalValue>& error_values,
+                                          types::EvalValue cause) {
+        std::lock_guard<std::mutex> lk(primitive_error_store_mutex());
+        if (error_values.capacity() < kPrimitiveErrorStoreReserve)
+            error_values.reserve(kPrimitiveErrorStoreReserve);
+        // Fixed-capacity store: overflowing returns the shared slot 0
+        // instead of reallocating under a concurrent reader.
+        if (error_values.size() >= error_values.capacity())
+            return 0;
+        const auto idx = error_values.size();
+        error_values.push_back(cause);
+        return idx;
+    }
+
     export inline types::EvalValue
     make_primitive_error(::aura::compiler::LockedStringHeap& string_heap,
                          std::vector<types::EvalValue>& error_values, std::string_view msg,
                          std::atomic<std::uint64_t>* error_counter = nullptr) {
         auto sidx = string_heap.mint(msg);
-        auto eidx = error_values.size();
-        error_values.push_back(types::make_string(sidx));
+        auto eidx = push_error_cause(error_values, types::make_string(sidx));
         if (error_counter) {
             error_counter->fetch_add(1, std::memory_order_relaxed);
             bump_prim_error_unified_total();
@@ -8973,6 +9000,12 @@ public:
     [[nodiscard]] static int agent_apply_hold_depth() noexcept {
         return agent_apply_hold_depth_tls_();
     }
+
+    // Issue #4842: nested orch bodies waive agent_apply_mu_ (the parent body
+    // already holds it) but must still look "inside the gate" so their own
+    // nested spawns inherit the waiver.
+    static void push_agent_apply_hold() noexcept { ++agent_apply_hold_depth_tls_(); }
+    static void pop_agent_apply_hold() noexcept { --agent_apply_hold_depth_tls_(); }
 
     template <class F, class OnLock>
     void gate_spawn_apply_region(std::uint64_t region_key, bool region_fast, F&& body,
@@ -19531,13 +19564,43 @@ private:
 
 
 // Pair-aware value formatting (recursively prints lists)
-export inline std::string format_value(const types::EvalValue& v,
-                                       ::aura::compiler::StringPoolView heap,
-                                       std::span<const Pair> pairs, int depth = 0,
-                                       const Primitives* primitives = nullptr,
-                                       std::span<const std::string> keywords = {},
-                                       std::span<const std::vector<types::EvalValue>> vectors = {},
-                                       std::span<const std::string> symbols = {}) {
+// asan-verify: re-rendering a datum for (eval ...) must
+// produce READABLE code. The display printer wrapped a string in quotes but
+// left embedded quotes/backslashes raw, so (eval '(json-parse "{\"x\":1}"))
+// became (json-parse "{"x":1}") -> unbound variable x.
+inline std::string escape_code_string(std::string_view s) {
+    std::string out;
+    out.reserve(s.size() + 8);
+    for (char c : s) {
+        switch (c) {
+            case '"':
+                out += "\\\"";
+                break;
+            case '\\':
+                out += "\\\\";
+                break;
+            case '\n':
+                out += "\\n";
+                break;
+            case '\r':
+                out += "\\r";
+                break;
+            case '\t':
+                out += "\\t";
+                break;
+            default:
+                out += c;
+        }
+    }
+    return out;
+}
+
+export inline std::string
+format_value(const types::EvalValue& v, ::aura::compiler::StringPoolView heap,
+             std::span<const Pair> pairs, int depth = 0, const Primitives* primitives = nullptr,
+             std::span<const std::string> keywords = {},
+             std::span<const std::vector<types::EvalValue>> vectors = {},
+             std::span<const std::string> symbols = {}, bool escape_strings = false) {
     const int max_depth = 64;
     if (depth > max_depth)
         return "...";
@@ -19562,7 +19625,8 @@ export inline std::string format_value(const types::EvalValue& v,
         if (!heap.empty()) {
             auto idx = types::as_string_idx(v);
             if (idx < heap.size())
-                return std::format("\"{}\"", heap[idx]);
+                return std::format("\"{}\"", escape_strings ? escape_code_string(heap[idx])
+                                                            : std::string(heap[idx]));
         }
         return std::format("<string[{}]>", types::as_string_idx(v));
     }
@@ -19594,7 +19658,7 @@ export inline std::string format_value(const types::EvalValue& v,
                 break;
             }
             elements.push_back(format_value(pairs[cidx].car, heap, pairs, depth + 1, primitives,
-                                            keywords, vectors, symbols));
+                                            keywords, vectors, symbols, escape_strings));
             current = pairs[cidx].cdr;
             if (elements.size() > 256) {
                 elements.push_back("...");
@@ -19623,7 +19687,7 @@ export inline std::string format_value(const types::EvalValue& v,
             if (!elements.empty())
                 result += " . ";
             result += format_value(current, heap, pairs, depth + 1, primitives, keywords, vectors,
-                                   symbols);
+                                   symbols, escape_strings);
         }
         result += ")";
         return result;
@@ -19640,7 +19704,7 @@ export inline std::string format_value(const types::EvalValue& v,
             if (i > 0)
                 out += ' ';
             out += format_value(elems[i], heap, pairs, depth + 1, primitives, keywords, vectors,
-                                symbols);
+                                symbols, escape_strings);
         }
         out += ')';
         return out;
