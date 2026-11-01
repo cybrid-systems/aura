@@ -196,5 +196,23 @@ class TestIssue4848DefaultPipelineForms(unittest.TestCase):
         self.assertIn("tree-walker fallback forbidden", strict.stderr)
 
 
+class TestIssue4855TypeErrorNamesOperation(unittest.TestCase):
+    """#4855: a type error names the operation and the failing argument."""
+
+    def test_4855_arith_error_names_op_and_argument(self) -> None:
+        proc = _run(
+            """
+(define (add-cost total item)
+  (+ total item))
+(add-cost 1 "two")
+""",
+            "--load",
+        )
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("type mismatch", proc.stderr)
+        self.assertIn("in +, argument 2", proc.stderr)
+        self.assertIn("got String 'two'", proc.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

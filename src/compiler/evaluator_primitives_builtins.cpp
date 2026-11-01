@@ -61,15 +61,24 @@ using types::make_void;
 
 namespace {
 
-    std::string mismatch_detail(const EvalValue& v,
-                                const ::aura::compiler::LockedStringHeap* heap) {
+    // Issue #4855: an agent-facing type error must name the operation and the
+    // argument that failed, not just the expected type. The legacy
+    // "type mismatch — expected Int, got ..." tail is preserved so existing
+    // substring and error-shape checks still match.
+    std::string mismatch_detail(const EvalValue& v, const ::aura::compiler::LockedStringHeap* heap,
+                                std::string_view op = {}, std::size_t arg_index = 0) {
         std::string_view text;
         if (is_string(v) && heap != nullptr) {
             const auto idx = as_string_idx(v);
             if (idx < heap->size())
                 text = (*heap)[idx];
         }
-        return aura::compiler::pure::numeric_type_mismatch_detail(v, text);
+        auto detail = aura::compiler::pure::numeric_type_mismatch_detail(v, text);
+        if (op.empty() || arg_index == 0)
+            return detail;
+        // Append (do not prefix) so the legacy "error: type mismatch — ..."
+        // stderr contract that existing checks substring-match stays intact.
+        return detail + " (in " + std::string(op) + ", argument " + std::to_string(arg_index) + ")";
     }
 
 } // namespace
@@ -91,10 +100,12 @@ Primitives::Primitives() {
         }
         return make_error(0);
     };
-    auto reject_non_number =
-        [this, type_error](std::span<const EvalValue> a) -> std::optional<EvalValue> {
-        if (const auto* bad = aura::compiler::pure::first_non_number(a))
-            return type_error(mismatch_detail(*bad, string_heap_));
+    auto reject_non_number = [this, type_error](std::span<const EvalValue> a,
+                                                std::string_view op) -> std::optional<EvalValue> {
+        if (const auto* bad = aura::compiler::pure::first_non_number(a)) {
+            const auto index = static_cast<std::size_t>(bad - a.data()) + 1;
+            return type_error(mismatch_detail(*bad, string_heap_, op, index));
+        }
         return std::nullopt;
     };
     // ── Variadic arithmetic ────────────────────────────────────────
@@ -103,7 +114,7 @@ Primitives::Primitives() {
     // non-number prints the type-mismatch line and returns an error
     // value (tc-strict-runtime-typed-arg-mismatch still matches stderr).
     table_["+"] = [this, reject_non_number](std::span<const EvalValue> a) {
-        if (auto err = reject_non_number(a))
+        if (auto err = reject_non_number(a, "+"))
             return *err;
         ::aura::compiler::StringPoolView heap(*string_heap_);
         auto v = aura::compiler::pure::arithmetic_sum_pure(a, heap, nullptr);
@@ -120,7 +131,7 @@ Primitives::Primitives() {
     };
     // (-) → 0, (- x) → -x, (- x y ...) → x - y - z - ...
     table_["-"] = [this, reject_non_number](std::span<const EvalValue> a) {
-        if (auto err = reject_non_number(a))
+        if (auto err = reject_non_number(a, "-"))
             return *err;
         auto v = aura::compiler::pure::arithmetic_sub_pure(a, *string_heap_, nullptr);
         if (is_error(v)) {
@@ -136,7 +147,7 @@ Primitives::Primitives() {
     };
     // (*) → 1, (* x) → x, (* x y ...) → product; float if any arg is float
     table_["*"] = [this, reject_non_number](std::span<const EvalValue> a) {
-        if (auto err = reject_non_number(a))
+        if (auto err = reject_non_number(a, "*"))
             return *err;
         auto v = aura::compiler::pure::arithmetic_mul_pure(a, *string_heap_, nullptr);
         if (is_error(v)) {
@@ -155,7 +166,7 @@ Primitives::Primitives() {
     // zero stays IEEE. Empty (/) stays 1. Int64 overflow stays 0.
     // Issue #4463: a non-number is a type error, not a coerced divisor.
     table_["/"] = [this, reject_non_number](std::span<const EvalValue> a) {
-        if (auto err = reject_non_number(a))
+        if (auto err = reject_non_number(a, "/"))
             return *err;
         auto r = aura::compiler::pure::arithmetic_div_pure(a, *string_heap_, nullptr);
         if (r)
@@ -178,11 +189,14 @@ Primitives::Primitives() {
         }
         return make_int(0);
     };
-    auto chain_cmp = [this, type_error](const auto& a, auto fn_int, auto fn_float) -> EvalValue {
+    auto chain_cmp = [this, type_error](std::string_view op, const auto& a, auto fn_int,
+                                        auto fn_float) -> EvalValue {
         if (a.size() < 2)
             return make_bool(true);
-        if (const auto* bad = aura::compiler::pure::first_non_number(a))
-            return type_error(mismatch_detail(*bad, string_heap_));
+        if (const auto* bad = aura::compiler::pure::first_non_number(a)) {
+            const auto index = static_cast<std::size_t>(bad - a.data()) + 1;
+            return type_error(mismatch_detail(*bad, string_heap_, op, index));
+        }
         auto to_f = [](const EvalValue& v) -> double {
             return is_float(v) ? as_float(v) : static_cast<double>(as_int(v));
         };
@@ -205,23 +219,23 @@ Primitives::Primitives() {
     };
     table_["="] = [chain_cmp](std::span<const EvalValue> a) {
         return chain_cmp(
-            a, [](auto x, auto y) { return x == y; }, [](auto x, auto y) { return x == y; });
+            "=", a, [](auto x, auto y) { return x == y; }, [](auto x, auto y) { return x == y; });
     };
     table_["<"] = [chain_cmp](std::span<const EvalValue> a) {
         return chain_cmp(
-            a, [](auto x, auto y) { return x < y; }, [](auto x, auto y) { return x < y; });
+            "<", a, [](auto x, auto y) { return x < y; }, [](auto x, auto y) { return x < y; });
     };
     table_[">"] = [chain_cmp](std::span<const EvalValue> a) {
         return chain_cmp(
-            a, [](auto x, auto y) { return x > y; }, [](auto x, auto y) { return x > y; });
+            ">", a, [](auto x, auto y) { return x > y; }, [](auto x, auto y) { return x > y; });
     };
     table_["<="] = [chain_cmp](std::span<const EvalValue> a) {
         return chain_cmp(
-            a, [](auto x, auto y) { return x <= y; }, [](auto x, auto y) { return x <= y; });
+            "<=", a, [](auto x, auto y) { return x <= y; }, [](auto x, auto y) { return x <= y; });
     };
     table_[">="] = [chain_cmp](std::span<const EvalValue> a) {
         return chain_cmp(
-            a, [](auto x, auto y) { return x >= y; }, [](auto x, auto y) { return x >= y; });
+            ">=", a, [](auto x, auto y) { return x >= y; }, [](auto x, auto y) { return x >= y; });
     };
     // Ghuloum Step 9: booleans
     table_["not"] = [](std::span<const EvalValue> a) {
