@@ -254,6 +254,9 @@ jobs:
         -DCMAKE_BUILD_TYPE=RelWithDebInfo
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
+    - name: clang-tidy version
+      run: clang-tidy --version
+
     - name: clang-tidy baseline gate (#4829)
       run: python3 scripts/clang_tidy_gate.py --jobs 4
 
