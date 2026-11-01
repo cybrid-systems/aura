@@ -66,6 +66,9 @@
          "C: rollback drops the whole overlay")
 
 ;; ── E: structured conflict condition (write-write) ───────────────────
+;; #4845: overlay-set! requires a bound name; seed the shared binding so the
+;; write-write conflict below is a set!, not an unbound-name error.
+(define cow-c 0)
 (define (cow-conflict-body val)
   (fiber:overlay-begin)
   (fiber:overlay-set! "cow-c" val)

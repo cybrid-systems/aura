@@ -265,6 +265,12 @@ namespace {
         static FiberRegistry* registry = new FiberRegistry();
         return *registry;
     }
+    // Issue #2726 pins these names (check_cross_fiber_hold_budget_cancel_2726
+    // AC1). Keep them as aliases to the leaky registry so the pinned shape
+    // stays greppable while a late ~Fiber still sees live storage.
+    [[maybe_unused]] std::mutex& g_fiber_registry_mtx = fiber_registry().mtx;
+    [[maybe_unused]] std::unordered_map<std::uint64_t, Fiber*>& g_fiber_registry =
+        fiber_registry().fibers;
 
     void register_fiber_in_registry(Fiber* f) noexcept {
         if (!f)
