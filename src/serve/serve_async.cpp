@@ -590,9 +590,9 @@ void run_serve_async(int num_workers) {
         return sched.metrics().to_json();
     };
     aura::messaging::g_reset_scheduler_metrics = [&sched]() {
-        // Re-initialize metrics (clear counters, keep worker count)
-        auto n = sched.metrics().num_workers();
-        sched.metrics().resize_workers(n);
+        // Issue #4827: zero counters in place; workers hold raw
+        // pointers to these objects, so never clear/replace them.
+        sched.metrics().reset_workers();
     };
 
     // Fiber affinity — pin current fiber to a specific worker (P2)
@@ -1452,10 +1452,7 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
     aura::messaging::g_get_scheduler_metrics = [&sched]() -> std::string {
         return sched.metrics().to_json();
     };
-    aura::messaging::g_reset_scheduler_metrics = [&sched]() {
-        auto n = sched.metrics().num_workers();
-        sched.metrics().resize_workers(n);
-    };
+    aura::messaging::g_reset_scheduler_metrics = [&sched]() { sched.metrics().reset_workers(); };
 
     // Register fiber blocking callback
     aura::messaging::g_fiber_block = []() {

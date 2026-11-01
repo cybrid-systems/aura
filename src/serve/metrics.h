@@ -55,6 +55,26 @@ struct WorkerMetrics {
     std::atomic<uint64_t> qdepth_samples{0};
     std::atomic<uint64_t> qdepth_sum{0};
 
+    // Issue #4827: reset counters in place. Callers (e.g.
+    // (orch:reset-metrics)) must never destroy the object a live
+    // worker thread points at.
+    void reset() {
+        fibers_executed.store(0, std::memory_order_relaxed);
+        fibers_yielded.store(0, std::memory_order_relaxed);
+        fibers_waiting.store(0, std::memory_order_relaxed);
+        steal_attempts.store(0, std::memory_order_relaxed);
+        steal_successes.store(0, std::memory_order_relaxed);
+        steal_failures.store(0, std::memory_order_relaxed);
+        local_pushes.store(0, std::memory_order_relaxed);
+        local_pops.store(0, std::memory_order_relaxed);
+        busy_ns.store(0, std::memory_order_relaxed);
+        idle_ns.store(0, std::memory_order_relaxed);
+        wake_events.store(0, std::memory_order_relaxed);
+        qdepth_max.store(0, std::memory_order_relaxed);
+        qdepth_samples.store(0, std::memory_order_relaxed);
+        qdepth_sum.store(0, std::memory_order_relaxed);
+    }
+
     void record_busy(int64_t ns) { busy_ns.fetch_add(ns, std::memory_order_relaxed); }
 
     void record_idle(int64_t ns) { idle_ns.fetch_add(ns, std::memory_order_relaxed); }
@@ -131,10 +151,26 @@ struct GlobalMetrics {
 
     explicit GlobalMetrics(size_t num_workers = 0) { resize_workers(num_workers); }
 
+    // Issue #4827: preserve existing WorkerMetrics objects. Worker
+    // threads hold raw pointers into these, so resizing must never
+    // destroy an object that is still referenced.
     void resize_workers(size_t n) {
-        workers.clear();
-        for (size_t i = 0; i < n; ++i) {
+        if (n <= workers.size()) {
+            workers.resize(n);
+            return;
+        }
+        workers.reserve(n);
+        while (workers.size() < n) {
             workers.push_back(std::make_unique<WorkerMetrics>());
+        }
+    }
+
+    // Zero every counter without replacing the objects, so worker
+    // threads keep valid pointers. Used by (orch:reset-metrics).
+    void reset_workers() {
+        for (auto& w : workers) {
+            if (w)
+                w->reset();
         }
     }
 
