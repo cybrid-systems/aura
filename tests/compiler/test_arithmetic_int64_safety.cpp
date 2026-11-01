@@ -380,11 +380,12 @@ int main() {
                   "4463: write script");
             // #4497: uncaught error-value displays emit nothing on stdout
             // (11 + 3 blank lines); the run exits 1 (aura_displayed_error_count).
-            const std::string expect = "\n\n\n\n\n\n\n\n\n\n\n"
-                                       "5\n2.0\n#t\n"
-                                       "type mismatch — expected Int, got String 'abc'\n"
-                                       "\n\n\n"
-                                       "end\n";
+            const std::string expect =
+                "\n\n\n\n\n\n\n\n\n\n\n"
+                "5\n2.0\n#t\n"
+                "type mismatch — expected Int, got String 'abc' (in +, argument 2)\n"
+                "\n\n\n"
+                "end\n";
             auto check_face = [&](const char* face, const char* outp, const char* errp,
                                   const char* label) {
                 auto run = run_aura_file(bin, path, face, outp, errp);
