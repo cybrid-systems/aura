@@ -3547,8 +3547,14 @@ public:
         // the production default rejected every program that DEFINES a macro
         // with a generic "tree-walker fallback forbidden" internal error.
         // Take the same macro face here, before the gate runs.
+        // Issue #4078 AC2: only the LEGACY defmacro (int_value bit 2
+        // clear) needs the walker arm. define-hygienic-macro / *-macro* keep
+        // the static macro_expand_all pass, which is what enforces the
+        // process hygiene pass cap (a walker arm silently ignored the cap and
+        // evaluated the refused half tree).
         for (aura::ast::NodeId macro_id = 0; macro_id < flat_ptr->size(); ++macro_id) {
-            if (flat_ptr->get(macro_id).tag == aura::ast::NodeTag::MacroDef)
+            const auto& node = flat_ptr->get(macro_id);
+            if (node.tag == aura::ast::NodeTag::MacroDef && (node.int_value & 2) == 0)
                 return evaluator_.eval_flat(*flat_ptr, *pool_ptr, flat_ptr->root,
                                             evaluator_.top_env());
         }
