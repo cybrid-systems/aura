@@ -3696,6 +3696,16 @@ static aura::ast::NodeId expand_inner_macros_walk(
                     // goes away. call_args is snapshotted above (Issue #483)
                     // so set_child during clone/expand cannot UAF v.children.
                     const auto& md = it->second;
+                    // Issue #4834: fixed-arity call check. This walk has no
+                    // diagnostic channel, so leave a mismatched call
+                    // unexpanded; eval_flat then reports the arity error at
+                    // the call site against the runtime registry.
+                    const std::size_t provided_args = call_args.size() - 1;
+                    const std::size_t regular_params =
+                        md.dotted && !md.params.empty() ? md.params.size() - 1 : md.params.size();
+                    if (md.dotted ? provided_args < regular_params
+                                  : provided_args != regular_params)
+                        return root;
                     auto subst = aura::compiler::pure::compute_macro_subst_pure(
                         md.params, call_args, md.dotted);
                     // Issue #2018: rest params on inner macros — build
@@ -4429,6 +4439,16 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
                         // it requires FlatAST mutation (allocating a
                         // pair-list) — that's stateful, not pure.
                         auto& md = it->second;
+                        // Issue #4834: leave a fixed-arity mismatch
+                        // unexpanded here so eval_flat reports it at the
+                        // call site (this pass has no diagnostic channel).
+                        const std::size_t provided_args = call_args.size() - 1;
+                        const std::size_t regular_params = md.dotted && !md.params.empty()
+                                                               ? md.params.size() - 1
+                                                               : md.params.size();
+                        if (md.dotted ? provided_args < regular_params
+                                      : provided_args != regular_params)
+                            continue;
                         auto subst = aura::compiler::pure::compute_macro_subst_pure(
                             md.params, call_args, md.dotted);
                         // Issue #2018: rest param → (list remaining...) in subst
