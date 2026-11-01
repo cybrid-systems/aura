@@ -196,6 +196,12 @@ static std::string_view stdlib_only_unbound_hint(std::string_view name) {
     if (name == "json-stringify" || name == "json-value")
         return "did you mean the builtin 'json-encode'? (or (require \"std/json\" all:) for "
                "json-stringify / json-value)";
+    // Issue #4836: R7RS define-syntax / syntax-rules are not implemented and
+    // lib/std/INDEX.aura used to advertise syntax-rules. Point at the macro
+    // forms that do exist instead of leaving a bare unbound variable.
+    if (name == "define-syntax" || name == "syntax-rules")
+        return "not supported: use (define-hygienic-macro (name args...) body) for a hygienic "
+               "macro or (defmacro (name args...) body) for a legacy one (see lib/std/INDEX.aura)";
     if (name == "json-escape" || name == "json-arr-items" || name == "json-obj-items")
         return "defined in std/json: add (require \"std/json\" all:)";
     // Issue #4801: channels live under the channel: prefix. Names from other
