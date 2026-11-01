@@ -1,0 +1,36 @@
+; Issue #4824 — a copied/installed aura finds its own stdlib relative to the
+; executable (exe_dir/lib, exe_dir/../lib), not only via AURA_PATH or a
+; cwd-relative ../lib that only matches when cwd is build/.
+(require "std/process" all:)
+(define *fails4824* 0)
+(define (check4824 pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails4824* (+ *fails4824* 1)) (display "  FAIL: ") (display msg) (newline))))
+(define exe4824 (command-output "readlink /proc/$PPID/exe 2>/dev/null"))
+(define lib4824 (command-output (string-append "cd \"$(dirname " exe4824 ")/../lib\" 2>/dev/null && pwd")))
+(define base4824 (string-append "/tmp/aura4824_" (command-output "echo $$")))
+(if (and (> (string-length exe4824) 0) (> (string-length lib4824) 0)
+         (= 0 (shell (string-append "test -x " exe4824 " && test -f " lib4824 "/std/list.aura"))))
+    (begin
+      (shell (string-append "mkdir -p " base4824 "/bin " base4824 "/run " base4824 "/flat"
+                            " && cp " exe4824 " " base4824 "/bin/aura"
+                            " && ln -s " lib4824 " " base4824 "/lib"
+                            " && cp " exe4824 " " base4824 "/flat/aura"
+                            " && ln -s " lib4824 " " base4824 "/flat/lib"))
+      (write-file (string-append base4824 "/run/p.aura") "(display (hash? (make-hash)))\n")
+      ; prefix/bin/aura + prefix/lib, run from an unrelated cwd, no AURA_PATH
+      (check4824 (equal? (command-output (string-append "cd " base4824 "/run && env -u AURA_PATH "
+                                                        base4824 "/bin/aura --load p.aura 2>&1"))
+                         "#t")
+                 "bin/aura + ../lib resolves std/list from any cwd")
+      ; dir/aura + dir/lib
+      (check4824 (equal? (command-output (string-append "cd " base4824 "/run && env -u AURA_PATH "
+                                                        base4824 "/flat/aura --load p.aura 2>&1"))
+                         "#t")
+                 "aura + ./lib next to the binary resolves std/list from any cwd")
+      (shell (string-append "rm -rf " base4824)))
+    (display "  skip: no aura executable / lib to copy\n"))
+(if (= *fails4824* 0)
+    (display "OK-4824\n")
+    (begin (display "FAIL-4824 fails=") (display *fails4824*) (newline) (exit 1)))

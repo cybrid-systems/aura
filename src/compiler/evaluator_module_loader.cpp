@@ -130,7 +130,30 @@ std::string Evaluator::resolve_module_path(const std::string& path) const {
         }
     }
 
-    // Auto-discover: try ../lib/ and ./lib/ (relative to executable / CWD)
+    // Issue #4824: executable-relative stdlib discovery. The cwd-relative
+    // probes below only work when cwd happens to be build/; a copied or
+    // installed binary (bin/aura + bin/lib, prefix/bin + prefix/lib) must
+    // find its own lib/ wherever it is run from. AURA_PATH stays first.
+    {
+        static const std::string exe_dir = [] {
+            char buf[4096];
+            const auto n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+            if (n <= 0)
+                return std::string{};
+            std::string exe(buf, static_cast<std::size_t>(n));
+            const auto slash = exe.rfind('/');
+            return slash == std::string::npos ? std::string{} : exe.substr(0, slash);
+        }();
+        if (!exe_dir.empty()) {
+            for (const char* rel : {"/lib/", "/../lib/"}) {
+                auto hit = try_load(exe_dir + rel + path);
+                if (hit)
+                    return *hit;
+            }
+        }
+    }
+
+    // Auto-discover: try ../lib/ and ./lib/ (relative to CWD)
     {
         // Try ../lib/ (common for build/aura → lib/ layout)
         auto hit = try_load("../lib/" + path);
