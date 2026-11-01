@@ -1,0 +1,23 @@
+; Issue #4831 — an agent-body poll worker (agent-recv :wait #f + fiber:yield) and
+; 300 sequential orch:agent-ask from the main thread used to corrupt the heap
+; (double free / SIGSEGV): both threads minted result hashes into g_hash_tables
+; without the storage lock. The worker exits on "stop" so shutdown is clean.
+(define (range n) (let loop ((i (- n 1)) (acc (list))) (if (< i 0) acc (loop (- i 1) (cons i acc)))))
+(define (hg h k d) (if (hash-has-key? h k) (hash-ref h k) d))
+(orch:spawn-agent "w4831" (lambda ()
+  (let loop ((n 0) (idle 0))
+    (let ((m (orch:agent-recv "w4831" :wait #f)))
+      (cond ((eq? #t (hg m "ok" #f))
+             (let ((p (hg m "payload" "")))
+               (orch:agent-reply (hg m "correlation-id" 0) "x")
+               (if (string-contains? p "stop") n (loop (+ n 1) 0))))
+            ((> idle 20000) n)
+            (else (fiber:yield) (loop n (+ idle 1))))))) :attach-mailbox #t)
+(define ok4831 0)
+(for-each (lambda (i) (if (eq? #t (hg (orch:agent-ask "w4831" (number->string i) :timeout-ms 2000) "ok" #f)) (set! ok4831 (+ ok4831 1)))) (range 300))
+(orch:agent-ask "w4831" "stop" :timeout-ms 2000)
+(define j4831 (orch:agent-join "w4831" :timeout-ms 5000))
+
+(if (and (= ok4831 300) (equal? (hash-ref j4831 "status") "ok"))
+    (display "OK-4831\n")
+    (begin (display "FAIL-4831 asks=") (display ok4831) (newline) (exit 1)))
