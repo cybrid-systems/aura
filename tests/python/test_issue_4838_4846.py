@@ -138,5 +138,63 @@ class TestIssueBatch4838To4846(unittest.TestCase):
         self.assertIn("eval error", bad.stderr)
 
 
+class TestIssue4848DefaultPipelineForms(unittest.TestCase):
+    """#4848: the default policy must run ordinary language forms."""
+
+    def _assert_program(self, source: str, expected: list[str]) -> None:
+        proc = _run(source, "--load")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        for line in expected:
+            self.assertIn(line, proc.stdout)
+
+    def test_4848_let_and_lambda_args(self) -> None:
+        self._assert_program(
+            """
+(display (let ((a 1) (b 2)) (+ a b))) (newline)
+(display (map (lambda (x) (* x 2)) (list 1 2 3))) (newline)
+(display (let loop ((i 0)) (if (< i 3) (loop (+ i 1)) i))) (newline)
+""",
+            ["3", "(2 4 6)"],
+        )
+
+    def test_4848_set_do_try_and_internal_define(self) -> None:
+        self._assert_program(
+            """
+(define x 0) (set! x 5) (display x) (newline)
+(display (do ((i 0 (+ i 1))) ((= i 3) i))) (newline)
+(display (try (raise 'x) (catch (e) e))) (newline)
+(define (f n) (define (g x) (* x 2)) (g n)) (display (f 4)) (newline)
+""",
+            ["5", "3", "x", "8"],
+        )
+
+    def test_4848_fiber_lambda_under_load(self) -> None:
+        self._assert_program(
+            """
+(display (fiber:join (fiber:spawn (lambda () 5)))) (newline)
+(define (body) 5) (display (fiber:join (fiber:spawn body))) (newline)
+""",
+            ["5"],
+        )
+
+    def test_4848_operator_override_still_wins(self) -> None:
+        proc = _run("(display (let ((a 1)) a)) (newline)", "--load")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        env = dict(os.environ)
+        env["AURA_SANDBOX"] = "off"
+        env["AURA_PIPELINE_STRICT"] = "1"
+        with tempfile.NamedTemporaryFile("w", suffix=".aura", delete=False) as f:
+            f.write('(display (set-code "(define (f x) x)")) (newline)')
+            path = f.name
+        try:
+            strict = subprocess.run(
+                [str(AURA_BIN), "--load", path], capture_output=True, text=True, env=env, timeout=30.0
+            )
+        finally:
+            os.unlink(path)
+        self.assertEqual(strict.returncode, 1)
+        self.assertIn("tree-walker fallback forbidden", strict.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

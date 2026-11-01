@@ -2322,6 +2322,17 @@ int main(int argc, char* argv[]) {
         }
         std::string content((std::istreambuf_iterator<char>(f)), {});
         aura::compiler::CompilerService cs;
+        // Issue #4848: --load is the script/denseness face, not the
+        // production serve pipeline. The pack default (Forbidden) vetoed
+        // ordinary forms the IR path cannot express (let-bound closures,
+        // fiber:spawn lambdas, std bindings loaded after the gate) with a
+        // generic internal error; the same scripts run under
+        // AURA_PIPELINE_STRICT=0. Take that permissive walker face here,
+        // exactly as --serve-async-bench does (#4844). Operators can still
+        // pin a face explicitly via AURA_PIPELINE_STRICT.
+        if (const char* strict = std::getenv("AURA_PIPELINE_STRICT"); !(strict && *strict))
+            aura::compiler::set_tree_walker_fallback_policy(
+                aura::compiler::TreeWalkerFallbackPolicy::Allow);
         // Soft oneshot std prelude (#4178–#4219) — same auto-load as -e/file,
         // now demand-loaded: only the std modules this program references are
         // evaluated (see build_lazy_oneshot_std_prelude).
