@@ -1,0 +1,65 @@
+; Issues #4832-#4836 regression suite.
+; #4833 eval of an unbound name is a catchable error, not ().
+; #4834 macro arity mismatch is a call-site error.
+; #4835 std/rule validates keywords/types and indexes rules by name.
+; #4836 define-syntax points at define-hygienic-macro.
+; #4832 join reports keep stable fields by default; :debug restores markers.
+
+(require "std/rule" all:)
+
+(define *fails* 0)
+(define (check pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+(define (caught thunk) (try (thunk) (catch (e) e)))
+
+; ── #4833 ─────────────────────────────────────────────────
+(check (string? (caught (lambda () (eval '(no-such-fn 4833)))))
+       "#4833 eval of an unbound name is catchable")
+(check (equal? 3 (eval '(+ 1 2))) "#4833 eval still evaluates good data")
+
+; ── #4834 ─────────────────────────────────────────────────
+(define-hygienic-macro (or2-4834 a b) (let ((t a)) (if t t b)))
+(defmacro (dm2-4834 a b) (list '+ a b))
+(check (string? (caught (lambda () (or2-4834 1))))
+       "#4834 hygienic macro rejects a missing argument")
+(check (string? (caught (lambda () (or2-4834 #f 2 3))))
+       "#4834 hygienic macro rejects extra arguments")
+(check (string? (caught (lambda () (dm2-4834 1 2 3))))
+       "#4834 legacy macro rejects extra arguments")
+(check (= 1 (or2-4834 1 2)) "#4834 valid arity still expands")
+
+; ── #4835 ─────────────────────────────────────────────────
+(check (string? (caught (lambda () (rule:define 'r4835 :patern "(+ ?a 0)"))))
+       "#4835 unknown keyword rejected")
+(check (string? (caught (lambda () (rule:define 'r4835 :pattern))))
+       "#4835 odd argument count rejected")
+(check (string? (caught (lambda () (rule:define 'r4835 :pattern 42))))
+       "#4835 non-string :pattern rejected")
+(rule:define 'r4835 :pattern "(+ ?a 0)" :replace "?a")
+(check (= 1 (length (rule:list))) "#4835 valid rule registered")
+(check (string? (caught (lambda () (rule:apply 'nope-4835))))
+       "#4835 apply of an unknown rule errors")
+(check (string? (caught (lambda () (rule:remove 'nope-4835))))
+       "#4835 remove of an unknown rule errors")
+(rule:remove 'r4835)
+
+; ── #4836 ─────────────────────────────────────────────────
+(check (string? (caught (lambda () (define-syntax x-4836 (syntax-rules ())))))
+       "#4836 define-syntax has a clear unsupported hint")
+
+; ── #4832 ─────────────────────────────────────────────────
+(orch:spawn-agent "ok-4832" (lambda () 42))
+(define j-4832 (orch:agent-join "ok-4832" :timeout-ms 3000))
+(check (hash-has-key? j-4832 "schema") "#4832 default report keeps schema")
+(check (not (hash-has-key? j-4832 "schema-2011"))
+       "#4832 default report drops schema-NNNN markers")
+(check (not (hash-has-key? j-4832 "issue-2743"))
+       "#4832 default report drops issue-NNNN markers")
+(define jd-4832 (orch:agent-join "ok-4832" :timeout-ms 3000 :debug #t))
+(check (hash-has-key? jd-4832 "schema-2011") "#4832 :debug keeps markers")
+
+(if (= *fails* 0)
+    (display "OK-4832-4836\n")
+    (begin (display "FAIL-4832-4836 fails=") (display *fails*) (newline) (exit 1)))
