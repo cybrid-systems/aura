@@ -61,6 +61,30 @@ import aura.compiler.value;
 
 namespace aura::compiler::primitives_detail {
 
+// Issue #4832: join reports are a public API. Keys named issue-NNNN /
+// schema-NNNN and the *-wired self-test sentinels are implementation
+// residue: they drift with every issue and made up roughly half of a
+// scope-join report. Default join reports keep only stable business
+// fields; :debug #t (or :verbose #t) opts back into the diagnostic view.
+static bool is_internal_join_marker(std::string_view k) {
+    if (k.rfind("issue-", 0) == 0)
+        return true;
+    if (k.rfind("schema-", 0) == 0)
+        return true;
+    if (k.size() > 6 && k.compare(k.size() - 6, 6, "-wired") == 0)
+        return true;
+    return false;
+}
+
+static void strip_internal_join_markers(
+    std::vector<std::pair<std::string, aura::compiler::types::EvalValue>>& kv, bool debug) {
+    if (debug)
+        return;
+    kv.erase(std::remove_if(kv.begin(), kv.end(),
+                            [](const auto& p) { return is_internal_join_marker(p.first); }),
+             kv.end());
+}
+
 using EvalValue = types::EvalValue;
 using PrimRegistrar = std::function<void(std::string, PrimFn)>;
 
@@ -4169,6 +4193,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             }
             aura::orch::JoinPolicy policy{};
             policy.drain_ms = aura::orch::kDefaultJoinDrainMs;
+            bool debug_report = false; // Issue #4832: :debug / :verbose
             for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(a[i + 1]))
@@ -4181,6 +4206,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                          types::is_int(a[i + 1]))
                     policy.wait_reclaimed_ms = static_cast<std::uint64_t>(
                         std::max<std::int64_t>(0, types::as_int(a[i + 1])));
+                else if ((k == "debug" || k == "verbose") && types::is_bool(a[i + 1]))
+                    debug_report = types::as_bool(a[i + 1]);
             }
 
             aura::orch::AgentHandle* hp = nullptr;
@@ -4211,6 +4238,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 };
                 // Issue #3216: name-table miss (production-only intern).
                 add_identity_plane(kv, "name-table");
+                strip_internal_join_markers(kv, debug_report); // Issue #4832
                 return build_orch_hash(kv);
             }
 
@@ -4383,6 +4411,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 join_scope->compact_after_single_join();
             // Issue #3216: name-table plane (production-only intern).
             add_identity_plane(kv, "name-table");
+            strip_internal_join_markers(kv, debug_report); // Issue #4832
             return build_orch_hash(kv);
         });
 
@@ -5217,6 +5246,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             std::optional<std::int64_t> addr_child;
             bool tree_join = false;
             bool caller_drain = false; // Issue #4724: explicit :drain-ms wins
+            bool debug_report = false; // Issue #4832: :debug / :verbose
             for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 auto& val = a[i + 1];
@@ -5250,6 +5280,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     // Issue #3643: optional tree join — default local
                     // (#3496 AC1); true joins the whole subtree (AC2).
                     tree_join = types::as_bool(val);
+                } else if ((k == "debug" || k == "verbose") && types::is_bool(val)) {
+                    // Issue #4832: diagnostic view opt-in.
+                    debug_report = types::as_bool(val);
                 }
             }
             // Issue #4724: :timeout-ms bounds the WHOLE call. Fold the
@@ -5523,6 +5556,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 add_deny_class(kv, aura::orch::AgentDenyClass::Other, "descendants-live",
                                /*retry_ms=*/0,
                                /*emit_retry=*/false);
+            strip_internal_join_markers(kv, debug_report); // Issue #4832
             return build_orch_hash(kv);
         });
 
