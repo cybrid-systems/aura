@@ -102,8 +102,7 @@ namespace {
                                  const char* who) {
         auto idx = static_cast<std::uint64_t>(
             ev.push_string_heap(std::string(who) + ": radix out of range"));
-        auto e = error_values.size();
-        error_values.push_back(make_string(idx));
+        auto e = primitives_detail::push_error_cause(error_values, make_string(idx));
         return make_error(e);
     }
 
@@ -1224,16 +1223,14 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             if (a.size() < 2) {
                 auto __i =
                     static_cast<std::uint64_t>(ev.push_string_heap("string-ref: too few args"));
-                auto __e = error_values.size();
-                error_values.push_back(make_string(__i));
+                auto __e = primitives_detail::push_error_cause(error_values, make_string(__i));
                 return make_error(__e);
             }
             auto pos = static_cast<std::size_t>(as_int(a[1]));
             auto oob = [&]() {
                 auto __i = static_cast<std::uint64_t>(
                     ev.push_string_heap("string-ref: index out of bounds"));
-                auto __e = error_values.size();
-                error_values.push_back(make_string(__i));
+                auto __e = primitives_detail::push_error_cause(error_values, make_string(__i));
                 return make_error(__e);
             };
             // Issue #4320 / #4472: one locked scan, not a copy of the heap
@@ -1245,8 +1242,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                 if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, "string-ref")) {
                     auto __i = static_cast<std::uint64_t>(ev.push_string_heap(
                         "string-ref: cross-tenant string slot read denied (#4505)"));
-                    auto __e = error_values.size();
-                    error_values.push_back(make_string(__i));
+                    auto __e = primitives_detail::push_error_cause(error_values, make_string(__i));
                     return make_error(__e);
                 }
                 int cp = ev.string_heap_code_point_at(idx, pos);

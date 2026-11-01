@@ -153,16 +153,14 @@ void register_module_primitives(PrimRegistrar add, Evaluator& ev) {
         if (!is_module(mod_val)) {
             auto sid = static_cast<std::uint64_t>(
                 ev.push_string_heap(std::string("module-load-failed: ") + path));
-            auto eidx = ev.error_values_.size();
-            ev.error_values_.push_back(make_string(sid));
+            auto eidx = primitives_detail::push_error_cause(ev.error_values_, make_string(sid));
             return make_error(eidx);
         }
         auto mod_idx = as_module_idx(mod_val);
         if (mod_idx >= ev.modules_.size()) {
             auto sid = static_cast<std::uint64_t>(
                 ev.push_string_heap(std::string("module-load-failed: bad index for ") + path));
-            auto eidx = ev.error_values_.size();
-            ev.error_values_.push_back(make_string(sid));
+            auto eidx = primitives_detail::push_error_cause(ev.error_values_, make_string(sid));
             return make_error(eidx);
         }
 

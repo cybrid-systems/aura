@@ -154,6 +154,10 @@ Evaluator::Evaluator() {
     string_heap_.set_lock_observer(&string_heap_lock_total_);
     primitives_.set_string_heap(&string_heap_);
     primitives_.set_error_sink(&error_values_, &primitive_error_count_);
+    // Issue #4841: reserve the append-only error-cause store once so a
+    // concurrent reader never sees a reallocation; slot 0 is the immortal
+    // default cause (make_void), also used as the overflow slot.
+    (void)primitives_detail::push_error_cause(error_values_, make_void());
     // Issue #2652: reserve string slot 0 as the immortal empty string so
     // make_string(0) / default error causes stay a stable empty sentinel
     // (never confused with a corrupted non-empty key that became "").
@@ -429,6 +433,7 @@ Evaluator::~Evaluator() {
     pairs_.clear();
     pair_slot_tenants_.clear(); // Issue #4298: drop owner records with the slots
     error_values_.clear();
+    (void)primitives_detail::push_error_cause(error_values_, make_void());
     opaque_heap_.clear();
     ffi_runtime_.forget_native_slots(); // Issue #4556
     string_heap_.clear();

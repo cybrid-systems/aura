@@ -157,8 +157,8 @@ static std::optional<types::EvalValue> production_gc_reset_deny(Evaluator& ev,
         ": denied on the production face — destructive heap reset is unavailable "
         "(Issue #4449; Soft / sandbox=off keeps it)";
     const auto cidx = ev.push_string_heap(msg);
-    const auto eidx = ev.error_values_.size();
-    ev.error_values_.push_back(types::make_string(cidx));
+    const auto eidx =
+        primitives_detail::push_error_cause(ev.error_values_, types::make_string(cidx));
     return types::make_error(eidx);
 }
 
@@ -307,8 +307,8 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             const auto cidx = ev.push_string_heap(
                 "gc-heap-reset!: destructive heap reset refused inside a fiber (use "
                 "(gc-heap) for a real collection; Issue #4812 / #4816)");
-            const auto eidx = ev.error_values_.size();
-            ev.error_values_.push_back(types::make_string(cidx));
+            const auto eidx =
+                primitives_detail::push_error_cause(ev.error_values_, types::make_string(cidx));
             return types::make_error(eidx);
         }
         g_gc_heap_resets_4816.fetch_add(1, std::memory_order_relaxed);
