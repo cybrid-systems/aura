@@ -87,8 +87,11 @@
       (list "Rule engine helpers"
             "(rule:define)"))
     (list "edsl"
-      (list "EDSL syntax macros"
-            "(syntax-rules)"))
+      ; Issue #4836: there is no define-syntax / syntax-rules binding and
+      ; no std/edsl module. Point at what actually exists (hygienic macros),
+      ; with a usage line the caller can paste.
+      (list "EDSL syntax macros: (define-hygienic-macro (name args...) body); legacy (defmacro (name args...) body)"
+            "(define-hygienic-macro (or2 a b) (let ((t a)) (if t t b)))"))
     ; ── Pipeline + agent ──
     (list "pipeline"
       (list "Synthesize pipeline v2 (test-driven, debug)"
