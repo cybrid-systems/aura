@@ -3541,6 +3541,18 @@ public:
         evaluator_.set_current_flat(flat_ptr);
         evaluator_.set_current_pool(pool_ptr);
 
+        // Issue #4846: macros are tree-walker constructs (MacroDef cannot be
+        // lowered to IR). eval_ir already short-circuits to the walker when
+        // the flat contains one; eval() went through the #2213 gate first, so
+        // the production default rejected every program that DEFINES a macro
+        // with a generic "tree-walker fallback forbidden" internal error.
+        // Take the same macro face here, before the gate runs.
+        for (aura::ast::NodeId macro_id = 0; macro_id < flat_ptr->size(); ++macro_id) {
+            if (flat_ptr->get(macro_id).tag == aura::ast::NodeTag::MacroDef)
+                return evaluator_.eval_flat(*flat_ptr, *pool_ptr, flat_ptr->root,
+                                            evaluator_.top_env());
+        }
+
         // Pre-expand all macros in this expression
         auto expanded_root = aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, flat_ptr->root);
         // Issue #4078: pass/depth/gensym/steal/cap — do not typecheck or
