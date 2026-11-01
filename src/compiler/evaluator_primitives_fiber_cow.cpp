@@ -434,12 +434,12 @@ void register_fiber_cow_primitives(std::function<void(std::string, PrimFn)> add,
                 "fiber:overlay-set!: no open overlay (call fiber:overlay-begin first)",
                 ev.primitive_error_counter_ptr());
         EvalValue probe = make_void();
-        if (!reg.peek(owner, key, name, probe) && !ev.top_env().lookup(name))
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "fiber:overlay-set!: unbound binding "
-                                        " + name + "
-                                        "",
+        if (!reg.peek(owner, key, name, probe) && !ev.top_env().lookup(name)) {
+            std::string msg = "fiber:overlay-set!: unbound binding " + name +
+                              " (use fiber:overlay-define for a new binding)";
+            return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
                                         ev.primitive_error_counter_ptr());
+        }
         reg.write(owner, key, name, a[1], aura::core::current_mutation_epoch());
         overlay_sync_tls(owner);
         return make_bool(true);
