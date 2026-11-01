@@ -2500,7 +2500,8 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                 feedback_enter_call(cid, cl_copy.name, args.data(),
                                     static_cast<std::uint32_t>(nnote));
             }
-            auto r = eval_flat(*cl_copy.flat, *cl_copy.pool, cl_copy.body_id, ne);
+            auto r = eval_flat(*cl_copy.flat, *cl_copy.pool, cl_copy.body_id, ne,
+                               /*allow_file_diag_arm=*/false);
             if (r)
                 return *r;
             // Issue #4690: keep the diagnostic. Callers that turn nullopt
@@ -6715,7 +6716,7 @@ std::optional<EvalResult> Evaluator::try_eval_flat_hot(aura::ast::FlatAST& flat,
 }
 
 EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
-                                aura::ast::NodeId id, const Env& env) {
+                                aura::ast::NodeId id, const Env& env, bool allow_file_diag_arm) {
     static constexpr std::size_t MAX_C_STACK_DEPTH = 512;
     std::size_t& c_stack_depth = aura::serve::aura_eval_c_stack_depth_slot();
     if (c_stack_depth >= MAX_C_STACK_DEPTH) {
@@ -6734,7 +6735,12 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
     // its error value so load_module_file still fail-closes (#2570).
     // Issue #4717: per-body (fiber Context) — two bodies each arm their own
     // outermost file-diag root instead of clobbering one shared slot.
-    const bool arm_file_diag = require_failure_is_diagnostic_ && file_diag_root_flat() == nullptr;
+    // Issue #4823: closure bodies pass allow_file_diag_arm=false so an
+    // uncaught error keeps its Error value (symbol/hash cause) and can be
+    // bound by the caller's try/catch instead of being stringified into a
+    // located TypeError diagnostic.
+    const bool arm_file_diag =
+        allow_file_diag_arm && require_failure_is_diagnostic_ && file_diag_root_flat() == nullptr;
     if (arm_file_diag) {
         set_file_diag_root_flat(&flat);
         set_file_diag_root_id(id);
