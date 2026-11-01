@@ -1335,28 +1335,12 @@ NodeId parse_val(ParserState& s) {
             return parse_float(s, s.lex.consume());
         case TokenKind::String: {
             auto tok2 = s.lex.consume();
-            auto s2 = std::string(tok2.text);
-            std::string unesc2;
-            bool has_e2 = false;
-            for (std::size_t i = 0; i < s2.size(); ++i) {
-                if (s2[i] == '\\' && i + 1 < s2.size()) {
-                    auto n = s2[i + 1];
-                    if (n == '"') {
-                        unesc2 += '"';
-                        i++;
-                        has_e2 = true;
-                    } else if (n == '\\') {
-                        unesc2 += '\\';
-                        i++;
-                        has_e2 = true;
-                    } else {
-                        unesc2 += s2[i];
-                    }
-                } else {
-                    unesc2 += s2[i];
-                }
-            }
-            return s.flat.add_literalstring(s.pool.intern(has_e2 ? unesc2 : s2));
+            // Issue #4830: Lexer::read_string already unescapes the escape
+            // sequences into the token text. A second unescape pass here
+            // double-unescaped the data/quasiquote path, so the same
+            // literal decoded differently from parse_expr (#4348). Use the
+            // lexer value directly — one unescape per nesting level.
+            return s.flat.add_literalstring(s.pool.intern(std::string(tok2.text)));
         }
         case TokenKind::Identifier:
             return s.flat.add_variable(s.pool.intern(std::string(s.lex.consume().text)));
