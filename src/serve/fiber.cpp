@@ -251,31 +251,43 @@ thread_local WorkerContext* g_worker_ctx = nullptr;
 // resolves after unregister simply sees nullptr (no-op), which is
 // the desired behavior (the fiber is gone, no cancel target).
 namespace {
-    std::mutex g_fiber_registry_mtx;
-    std::unordered_map<std::uint64_t, Fiber*> g_fiber_registry;
+    // Issue #4845 follow-up: the process-lifetime orch scheduler can destroy
+    // Fibers while static destruction is already running (~Fiber unregisters
+    // through this registry). A namespace-scope map/mutex is torn down before
+    // those late Fibers, so ~Fiber dereferenced a destroyed bucket array
+    // (SIGSEGV at si_addr 0x8). Leak the registry on purpose so it outlives
+    // every Fiber regardless of static destruction order.
+    struct FiberRegistry {
+        std::mutex mtx;
+        std::unordered_map<std::uint64_t, Fiber*> fibers;
+    };
+    FiberRegistry& fiber_registry() noexcept {
+        static FiberRegistry* registry = new FiberRegistry();
+        return *registry;
+    }
 
     void register_fiber_in_registry(Fiber* f) noexcept {
         if (!f)
             return;
-        std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
-        g_fiber_registry.emplace(f->id(), f);
+        std::lock_guard<std::mutex> lock(fiber_registry().mtx);
+        fiber_registry().fibers.emplace(f->id(), f);
     }
 
     void unregister_fiber_from_registry(Fiber* f) noexcept {
         if (!f)
             return;
-        std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
-        g_fiber_registry.erase(f->id());
+        std::lock_guard<std::mutex> lock(fiber_registry().mtx);
+        fiber_registry().fibers.erase(f->id());
     }
 
     Fiber* find_fiber_by_id_locked_held(std::uint64_t id) noexcept {
-        // Caller already holds g_fiber_registry_mtx (used by the C-linkage
+        // Caller already holds fiber_registry().mtx (used by the C-linkage
         // shim below). Returns the registered Fiber* or nullptr when the
         // id is 0 or no longer registered.
         if (id == 0)
             return nullptr;
-        auto it = g_fiber_registry.find(id);
-        return it != g_fiber_registry.end() ? it->second : nullptr;
+        auto it = fiber_registry().fibers.find(id);
+        return it != fiber_registry().fibers.end() ? it->second : nullptr;
     }
 
     // Issue #4069: true only while `owner` is still in the registry and
@@ -285,8 +297,8 @@ namespace {
     bool registered_fiber_reclaimed_not_done(void* owner) noexcept {
         if (!owner)
             return false;
-        std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
-        for (const auto& kv : g_fiber_registry) {
+        std::lock_guard<std::mutex> lock(fiber_registry().mtx);
+        for (const auto& kv : fiber_registry().fibers) {
             if (kv.second != owner)
                 continue;
             return kv.second->is_reclaimed() && !kv.second->is_done();
@@ -327,7 +339,7 @@ namespace {
 // release workspace_mtx_ / MutationHold without waiting for voluntary
 // Phase-5 exit alone.
 extern "C" int aura_fiber_request_hold_budget_cancel(std::uint64_t fiber_id) noexcept {
-    std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
+    std::lock_guard<std::mutex> lock(fiber_registry().mtx);
     Fiber* f = find_fiber_by_id_locked_held(fiber_id);
     if (!f)
         return 0;
@@ -343,7 +355,7 @@ extern "C" int aura_fiber_request_hold_budget_cancel(std::uint64_t fiber_id) noe
 // owner is the holder). Soft callers never reach here (reject_enabled
 // gate on force_degrade).
 extern "C" int aura_fiber_request_urgent_inbody_poll(std::uint64_t fiber_id) noexcept {
-    std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
+    std::lock_guard<std::mutex> lock(fiber_registry().mtx);
     Fiber* f = find_fiber_by_id_locked_held(fiber_id);
     if (!f)
         return 0;
@@ -491,7 +503,7 @@ extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept {
     if (g_hold_budget_cancel_escalated.exchange(1, std::memory_order_acq_rel) == 0) {
         aura_evaluator_force_degrade_outermost_holder(fid);
     } else {
-        std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
+        std::lock_guard<std::mutex> lock(fiber_registry().mtx);
         if (Fiber* f = find_fiber_by_id_locked_held(fid)) {
             // Issue #3133: inject synthetic yield reason alongside the
             // existing force_safepoint re-arm. The synthetic state
@@ -525,7 +537,7 @@ extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept {
     // dispose_no_edge_holder → Reclaimed (#3764). Soft already returned.
     if (no_edge_latched) {
         {
-            std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
+            std::lock_guard<std::mutex> lock(fiber_registry().mtx);
             if (Fiber* f = find_fiber_by_id_locked_held(fid))
                 f->inject_synthetic_mutation_boundary_yield();
         }
@@ -573,7 +585,7 @@ extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept {
             // already ran above with the dual-restore + unlock arm.
             if (auto* cur = g_current_fiber; !(cur && cur->id() == fid)) {
                 (void)steal_safety_production_residual_zero_v_read();
-                std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
+                std::lock_guard<std::mutex> lock(fiber_registry().mtx);
                 if (Fiber* f = find_fiber_by_id_locked_held(fid))
                     (void)dispose_no_edge_holder(f);
             }
@@ -623,7 +635,7 @@ extern "C" int aura_hold_budget_poll_busy_path(void) noexcept {
     // dispose (Reclaimed/Done). unique_lock stays with the holder until
     // same-fiber Guard exit / consume.
     (void)steal_safety_production_residual_zero_v_read();
-    std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
+    std::lock_guard<std::mutex> lock(fiber_registry().mtx);
     if (Fiber* f = find_fiber_by_id_locked_held(live.fiber_id))
         (void)dispose_no_edge_holder(f);
     return exceeded;
@@ -650,7 +662,7 @@ extern "C" int aura_mutation_hold_no_edge_still_held(void) noexcept {
 // Issue #2726: read-only diagnostic accessor (peek, no consume).
 // Used by tests + observability; weak no-op when fiber not found.
 extern "C" int aura_fiber_peek_hold_budget_cancel(std::uint64_t fiber_id) noexcept {
-    std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
+    std::lock_guard<std::mutex> lock(fiber_registry().mtx);
     Fiber* f = find_fiber_by_id_locked_held(fiber_id);
     if (!f)
         return 0;
@@ -712,7 +724,7 @@ std::uint64_t current_fiber_session_mid() noexcept {
 extern "C" std::uint64_t aura_fiber_session_mid(std::uint64_t fiber_id) noexcept {
     if (fiber_id == 0)
         return 0;
-    std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
+    std::lock_guard<std::mutex> lock(fiber_registry().mtx);
     Fiber* f = find_fiber_by_id_locked_held(fiber_id);
     if (!f)
         return 0;
@@ -723,7 +735,7 @@ extern "C" std::uint64_t aura_fiber_session_mid(std::uint64_t fiber_id) noexcept
 extern "C" void aura_fiber_clear_session_mid(std::uint64_t fiber_id) noexcept {
     if (fiber_id == 0)
         return;
-    std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
+    std::lock_guard<std::mutex> lock(fiber_registry().mtx);
     Fiber* f = find_fiber_by_id_locked_held(fiber_id);
     if (f)
         f->clear_session_mid();
