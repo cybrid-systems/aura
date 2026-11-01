@@ -1,0 +1,51 @@
+; Issues #4838-#4846 regression suite (CLI tree-walker path).
+; #4838 fiber inline lambda try/catch keeps the raised payload.
+; #4839 a second fiber:join is idempotent.
+; #4840 cancel of a fiber parked in channel:recv lets join return.
+; #4845 overlay-set!/overlay-commit without an open overlay are rejected.
+; #4846 defmacro works under the default pipeline policy.
+
+(define *fails* 0)
+(define (check pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+(define (caught thunk) (try (thunk) (catch (e) e)))
+
+; ── #4838 ─────────────────────────────────────────────────
+(check (equal? 'oops (fiber:join (fiber:spawn (lambda () (caught (lambda () (raise 'oops)))))))
+       "#4838 fiber inline lambda keeps the raise payload")
+(check (string? (fiber:join (fiber:spawn (lambda () (caught (lambda () (car 5)))))))
+       "#4838 fiber inline lambda binds a car failure")
+
+; ── #4839 ─────────────────────────────────────────────────
+(define f-4839 (fiber:spawn (lambda () 7)))
+(check (= 7 (fiber:join f-4839)) "#4839 first join returns the body value")
+(check (= 7 (fiber:join f-4839)) "#4839 second join returns the same value")
+
+; ── #4840 ─────────────────────────────────────────────────
+(define ch-4840 (channel:create 4))
+(define f-4840 (fiber:spawn (lambda () (channel:recv ch-4840))))
+(fiber:yield)
+(check (fiber:cancel f-4840) "#4840 cancel accepts a parked receiver")
+(check (string? (caught (lambda () (fiber:join f-4840)))) "#4840 join raises fiber-cancelled")
+
+; ── #4845 ─────────────────────────────────────────────────
+(check (string? (caught (lambda () (fiber:overlay-set! "k" 5))))
+       "#4845 overlay-set! without an overlay is an error")
+(check (not (fiber:overlay-commit)) "#4845 overlay-commit without an overlay returns #f")
+(fiber:overlay-begin)
+(fiber:overlay-define "k" 1)
+(check (equal? 1 (fiber:overlay-get "k" -1)) "#4845 overlay-define still works")
+(check (string? (caught (lambda () (fiber:overlay-set! "nope" 1))))
+       "#4845 overlay-set! of an unknown binding is an error")
+(check (fiber:overlay-set! "k" 5) "#4845 overlay-set! of a known binding still works")
+(check (fiber:overlay-commit) "#4845 commit with an overlay still works")
+
+; ── #4846 ─────────────────────────────────────────────────
+(defmacro (sw-4846 a b) (list (quote list) b a))
+(check (equal? '(2 1) (sw-4846 1 2)) "#4846 defmacro expands under the default policy")
+
+(if (= *fails* 0)
+    (display "OK-4838-4846\n")
+    (begin (display "FAIL-4838-4846 fails=") (display *fails*) (newline) (exit 1)))
