@@ -1229,10 +1229,37 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
             return prim_heap[idx];
         return {};
     };
+    // Issue #4855: name the operation in a numeric type error, mirroring the
+    // tree-walker primitives' "(in OP, argument N)" tail.
+    auto ir_num_op_name = [](IROpcode op) -> const char* {
+        switch (op) {
+            case IROpcode::Add:
+                return "+";
+            case IROpcode::Sub:
+                return "-";
+            case IROpcode::Mul:
+                return "*";
+            case IROpcode::Div:
+                return "/";
+            case IROpcode::Eq:
+                return "=";
+            case IROpcode::Lt:
+                return "<";
+            case IROpcode::Gt:
+                return ">";
+            case IROpcode::Le:
+                return "<=";
+            case IROpcode::Ge:
+                return ">=";
+            default:
+                return "number";
+        }
+    };
     // Stores a primitive error. A fresh non-number also prints the legacy
     // stderr line. False means there is no evaluator; the caller returns
     // a TypeError diagnostic.
-    auto store_num_mismatch = [&](std::uint32_t slot, const types::EvalValue& v) -> bool {
+    auto store_num_mismatch = [&](std::uint32_t slot, const types::EvalValue& v,
+                                  std::string_view op = {}) -> bool {
         // Issue #4552: an Error operand (a callee's (error ...) returned as a
         // value) propagates unchanged, like a tree-walker primitive argument
         // (evaluator_eval_flat.cpp prim-arg propagation). Minting a fresh
@@ -1241,8 +1268,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
             locals[slot] = v;
             return true;
         }
-        const auto detail =
-            aura::compiler::pure::numeric_type_mismatch_detail(v, string_text_of(v));
+        auto detail = aura::compiler::pure::numeric_type_mismatch_detail(v, string_text_of(v));
+        if (!op.empty())
+            detail += std::string(" (in ") + std::string(op) + ")";
         // Issue #4535: an Error operand (fail-soft f64vector-ref OOB feeding
         // arith inside try) must not print. A fresh non-number still prints
         // the legacy line, matching the primitive path (#4463) and the
@@ -1463,8 +1491,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 if (!operand_is_number(a) || !operand_is_number(b)) {
                     const auto& bad = operand_is_number(a) ? b : a;
                     if (!store_num_mismatch(ops[0], bad)) {
-                        return std::unexpected(
-                            Diagnostic{ErrorKind::TypeError, "type mismatch — expected Int"});
+                        return std::unexpected(Diagnostic{
+                            ErrorKind::TypeError, std::string("type mismatch — expected Int (in ") +
+                                                      ir_num_op_name(instr.opcode) + ")"});
                     }
                     continue;
                 }
@@ -1687,9 +1716,11 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     if (ops[3] != 0) {
                         if (!operand_is_number(a) || !operand_is_number(b)) {
                             const auto& bad = operand_is_number(a) ? b : a;
-                            if (!store_num_mismatch(ops[0], bad)) {
-                                return std::unexpected(Diagnostic{ErrorKind::TypeError,
-                                                                  "type mismatch — expected Int"});
+                            if (!store_num_mismatch(ops[0], bad, ir_num_op_name(instr.opcode))) {
+                                return std::unexpected(
+                                    Diagnostic{ErrorKind::TypeError,
+                                               std::string("type mismatch — expected Int (in ") +
+                                                   ir_num_op_name(instr.opcode) + ")"});
                             }
                             break;
                         }
@@ -1727,9 +1758,11 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto& b = locals[ops[2]];
                     if (!operand_is_number(a) || !operand_is_number(b)) {
                         const auto& bad = operand_is_number(a) ? b : a;
-                        if (!store_num_mismatch(ops[0], bad)) {
+                        if (!store_num_mismatch(ops[0], bad, ir_num_op_name(instr.opcode))) {
                             return std::unexpected(
-                                Diagnostic{ErrorKind::TypeError, "type mismatch — expected Int"});
+                                Diagnostic{ErrorKind::TypeError,
+                                           std::string("type mismatch — expected Int (in ") +
+                                               ir_num_op_name(instr.opcode) + ")"});
                         }
                         break;
                     }
