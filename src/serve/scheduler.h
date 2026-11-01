@@ -131,6 +131,15 @@ public:
         return fibers_retired_total_.load(std::memory_order_relaxed);
     }
 
+    // Issue #4854 safety: the long-lived --serve-async scheduler can still
+    // name a Done fiber from its session/handoff machinery and the
+    // process-wide TW root registry; early retirement there produced a
+    // load-dependent SIGSEGV in the #4706 two-fiber-yield program. Serve
+    // turns retirement off for its own scheduler; --load/orch hosts keep it.
+    void set_retire_done_fibers_disabled(bool disabled) noexcept {
+        retire_done_fibers_disabled_.store(disabled, std::memory_order_release);
+    }
+
     // Issue #4854: drain the deferred-retire queue. retire_done_fiber can
     // run while the worker is still finishing on_fiber_done (the joiner is
     // woken before release_done_resources runs). Such a fiber is queued
@@ -396,6 +405,7 @@ private:
     std::unordered_set<const Fiber*> owned_fiber_set_;
     // Issue #4854: early-retired Done fibers (owned_fibers_ slots nulled).
     std::atomic<std::uint64_t> fibers_retired_total_{0};
+    std::atomic<bool> retire_done_fibers_disabled_{false};
     // Issue #4854: Done fibers whose worker has not finished
     // release_done_resources yet. Reaped by
     // maybe_retire_pending_done_fibers on the IO tick. Mutated only under
