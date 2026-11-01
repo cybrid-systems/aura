@@ -377,6 +377,64 @@ namespace {
         return slot;
     }
 
+    // Keep a process-local scheduler for orch:spawn-agent tests (stdin-friendly).
+    // Lazy-init: shared across calls in-process; stopped on process exit.
+    struct OrchSchedHolder {
+        std::unique_ptr<aura::serve::Scheduler> sched;
+        std::thread runner;
+        std::mutex mu;
+        void ensure(int workers = 2) {
+            std::lock_guard lock(mu);
+            if (sched)
+                return;
+            sched = std::make_unique<aura::serve::Scheduler>(workers);
+            // Issue #4726: this holder OWNS the scheduler for the process
+            // lifetime (ensure() never replaces it) and stops it in the
+            // destructor, so it must not let the IO loop self-destruct: an
+            // idle auto-stop stopped the workers while the orch primitives
+            // kept spawning onto them, so every later scope-spawn body never
+            // ran and scope-join-all reported timeout (all waiters unwoken).
+            sched->set_idle_auto_stop(false);
+            // Issue #4756: decide the #3586 / #3476 / #3950 start gates on
+            // THIS thread, before the runner exists. The caller owns the
+            // production face window it started the holder under (obs
+            // facade: apply_production_audit_defaults → spawn → dev
+            // restore); leaving the decision to the new thread raced that
+            // restore and aborted a start that was armed when requested.
+            sched->evaluate_start_gate();
+            runner = std::thread([this] { sched->run(); });
+        }
+        ~OrchSchedHolder() {
+            if (sched)
+                sched->stop();
+            if (runner.joinable())
+                runner.join();
+        }
+    };
+    static OrchSchedHolder orch_sched;
+
+    // Issue #4843: in --serve / --serve-async-bench a scheduler is already
+    // running for this process. Spawning orch agents onto a SECOND
+    // scheduler left Fiber::join registering the joiner on g_scheduler (the
+    // running one) while the target lived on the holder's scheduler, so
+    // agent-join never waited and reported "reclaimed" at 0 ms. Prefer the
+    // process scheduler whenever one exists; the holder stays for plain
+    // --load (no scheduler at all).
+    aura::serve::Scheduler& orch_scheduler() {
+        // Issue #4424 shape: the caller fiber's own scheduler is the one
+        // that can wake a joiner parked in this same fiber.
+        if (auto* cur = aura::serve::g_current_fiber) {
+            if (auto* owner = cur->owner_sched())
+                return *owner;
+        }
+        // Not called from a fiber: use the holder. Do NOT fall through to
+        // the process-global g_scheduler here: outside a fiber it may name a
+        // scheduler this Evaluator does not own, and destroying the agent
+        // fiber from the wrong owner crashes in Fiber::~Fiber at exit.
+        orch_sched.ensure(2);
+        return *orch_sched.sched;
+    }
+
     // Issue #4783: message of an error value (tenant-fenced like display).
     std::string spawn_body_error_message(Evaluator& ev, const EvalValue& v) {
         std::string msg = "runtime error";
@@ -393,8 +451,15 @@ namespace {
     }
 
     // Issue #4783: returns the body failure (nullopt = applied cleanly).
+    // Issue #4842: a scope/agent body spawned from INSIDE another agent
+    // body must not queue on agent_apply_mu_ — the outer body holds it for
+    // its whole lifetime, so the child could only start after the parent
+    // returned (join-all therefore always timed out and ran the children
+    // afterwards). Nested bodies run under the parent's orchestration, the
+    // same way #4717 lets thread-backend fiber bodies share one Evaluator.
     std::optional<std::string> apply_spawn_closure_maybe_locked(Evaluator& ev, std::uint64_t cid,
-                                                                std::uint64_t region_key) {
+                                                                std::uint64_t region_key,
+                                                                bool parent_holds_gate = false) {
         if (cid == 0)
             return std::nullopt;
         std::optional<std::string> failure;
@@ -423,12 +488,23 @@ namespace {
             else if (types::is_error(*opt))
                 failure = spawn_body_error_message(ev, *opt);
         };
-        ev.gate_spawn_apply_region(region_key, region_fast, run, [](std::uint64_t wait_us) {
-            aura::orch::g_orch_module_stats.agent_apply_lock_acquisitions_total.fetch_add(
-                1, std::memory_order_relaxed);
-            aura::orch::g_orch_module_stats.agent_apply_lock_wait_us_total.fetch_add(
-                wait_us, std::memory_order_relaxed);
-        });
+        if (parent_holds_gate) {
+            // Nested body: the parent already serialized this Evaluator's
+            // agent apply window. Mark the depth so this body's own nested
+            // spawns inherit the waiver, and run without taking the mutex.
+            Evaluator::push_agent_apply_hold();
+            struct NestedHoldPop {
+                ~NestedHoldPop() { Evaluator::pop_agent_apply_hold(); }
+            } nested_pop;
+            run();
+        } else {
+            ev.gate_spawn_apply_region(region_key, region_fast, run, [](std::uint64_t wait_us) {
+                aura::orch::g_orch_module_stats.agent_apply_lock_acquisitions_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                aura::orch::g_orch_module_stats.agent_apply_lock_wait_us_total.fetch_add(
+                    wait_us, std::memory_order_relaxed);
+            });
+        }
         if (stamped) {
             if (prev_tls != 0)
                 Evaluator::note_parallel_task_region_key(prev_tls);
@@ -3663,41 +3739,6 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         kv.emplace_back("schema-3251", make_int(aura::orch::kAgentDenyClassIssue));
     };
 
-    // Keep a process-local scheduler for orch:spawn-agent tests (stdin-friendly).
-    // Lazy-init: shared across calls in-process; stopped on process exit.
-    struct OrchSchedHolder {
-        std::unique_ptr<aura::serve::Scheduler> sched;
-        std::thread runner;
-        std::mutex mu;
-        void ensure(int workers = 2) {
-            std::lock_guard lock(mu);
-            if (sched)
-                return;
-            sched = std::make_unique<aura::serve::Scheduler>(workers);
-            // Issue #4726: this holder OWNS the scheduler for the process
-            // lifetime (ensure() never replaces it) and stops it in the
-            // destructor, so it must not let the IO loop self-destruct: an
-            // idle auto-stop stopped the workers while the orch primitives
-            // kept spawning onto them, so every later scope-spawn body never
-            // ran and scope-join-all reported timeout (all waiters unwoken).
-            sched->set_idle_auto_stop(false);
-            // Issue #4756: decide the #3586 / #3476 / #3950 start gates on
-            // THIS thread, before the runner exists. The caller owns the
-            // production face window it started the holder under (obs
-            // facade: apply_production_audit_defaults → spawn → dev
-            // restore); leaving the decision to the new thread raced that
-            // restore and aborted a start that was armed when requested.
-            sched->evaluate_start_gate();
-            runner = std::thread([this] { sched->run(); });
-        }
-        ~OrchSchedHolder() {
-            if (sched)
-                sched->stop();
-            if (runner.joinable())
-                runner.join();
-        }
-    };
-    static OrchSchedHolder orch_sched;
 
     // Issue #1966 / #2078: name→AgentHandle bookkeeping for MVP orch:spawn-agent /
     // orch:agent-join. Formerly aura::orch::AgentRegistry (public deferred
@@ -3997,10 +4038,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     }
                 }
             }
-            orch_sched.ensure(2);
+            (void)orch_scheduler();
             // Issue #4822: body failure slot read back by orch:agent-join.
             auto body_outcome = std::make_shared<aura::orch::AgentHandle::BodyOutcome>();
-            auto body = [&ev, cid, region_key, body_outcome]() {
+            // Issue #4842: spawned from inside another agent body?
+            const bool nested_body = Evaluator::agent_apply_hold_depth() > 0;
+            auto body = [&ev, cid, region_key, body_outcome, nested_body]() {
                 if (!cid)
                     return;
                 auto note_failure = [&body_outcome](std::string msg) {
@@ -4020,7 +4063,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     // Only the body's own error value is a body failure. The
                     // runtime refusals (closure-freed / apply-failed, #4765)
                     // keep their existing join contract and observe counters.
-                    auto fail = apply_spawn_closure_maybe_locked(ev, *cid, region_key);
+                    auto fail = apply_spawn_closure_maybe_locked(ev, *cid, region_key, nested_body);
                     if (fail && *fail != "closure-freed" && *fail != "apply-failed")
                         note_failure(std::move(*fail));
                 } catch (const std::exception& e) {
@@ -4056,7 +4099,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // Issue #3803 / #3728: stamp AgentSpec.region_key so AgentScope
             // join observe + fiber TLS apply see the same key (0 = Serialized).
             spec.region_key = region_key;
-            auto handle = aura::orch::spawn_agent_with_mailbox(*orch_sched.sched, std::move(spec));
+            auto handle = aura::orch::spawn_agent_with_mailbox(orch_scheduler(), std::move(spec));
             handle.body_outcome = body_outcome;
             // Issue #2009: move-only handle; snapshot then put on success.
             bool ok = handle.ok;
@@ -4595,9 +4638,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     "orch:scope-spawn: usage (orch:scope-spawn name [body] [:kw val]…)",
                     ev.primitive_error_counter_ptr());
             }
-            orch_sched.ensure(2);
+            (void)orch_scheduler();
             auto& root =
-                aura::orch::get_or_create_agent_scope(static_cast<void*>(&ev), *orch_sched.sched);
+                aura::orch::get_or_create_agent_scope(static_cast<void*>(&ev), orch_scheduler());
 
             auto name = heap_str_from(ev.string_heap_, a[0]);
             std::optional<std::uint64_t> cid;
@@ -4727,7 +4770,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // Issue #4783: body outcome tally of the target scope.
             auto tally = scope_body_tally(static_cast<const void*>(&scope));
             const auto spawn_epoch = tally->reclaim_epoch.load(std::memory_order_acquire);
-            auto body = [&ev, cid, region_key, tally, spawn_epoch, body_name = name]() {
+            // Issue #4842: scope-spawn from inside an agent body.
+            const bool nested_body = Evaluator::agent_apply_hold_depth() > 0;
+            auto body = [&ev, cid, region_key, tally, spawn_epoch, nested_body,
+                         body_name = name]() {
                 if (!cid)
                     return;
                 // Issue #4783: a non-Ok join already reclaimed this task
@@ -4755,7 +4801,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     // Same per-Evaluator apply gate as orch:spawn-agent.
                     // Issue #3728 / #4423: skip agent_apply_mu_ for disjoint
                     // region keys only while ScopedParallel is on.
-                    if (auto fail = apply_spawn_closure_maybe_locked(ev, *cid, region_key)) {
+                    if (auto fail =
+                            apply_spawn_closure_maybe_locked(ev, *cid, region_key, nested_body)) {
                         record_failure(std::move(*fail));
                     } else {
                         std::lock_guard<std::mutex> lk(tally->mu);
@@ -4953,9 +5000,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     "orch:scope-child: usage (orch:scope-child name [:path p] [:child-index n])",
                     ev.primitive_error_counter_ptr());
             }
-            orch_sched.ensure(2);
+            (void)orch_scheduler();
             auto& root =
-                aura::orch::get_or_create_agent_scope(static_cast<void*>(&ev), *orch_sched.sched);
+                aura::orch::get_or_create_agent_scope(static_cast<void*>(&ev), orch_scheduler());
             auto name = heap_str_from(ev.string_heap_, a[0]);
             std::string addr_path;
             std::optional<std::int64_t> addr_child;
@@ -5040,7 +5087,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     add("orch:scope-watch",
         [&ev, build_orch_hash, orch_keyword_key, parse_scope_addr_kw, resolve_scope_addr,
          make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
-            orch_sched.ensure(2);
+            (void)orch_scheduler();
             auto* root = aura::orch::find_agent_scope(static_cast<void*>(&ev));
             if (!root) {
                 return make_primitive_error(
@@ -5231,7 +5278,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     add("orch:scope-join-all",
         [&ev, build_orch_hash, orch_keyword_key, parse_scope_addr_kw, resolve_scope_addr,
          make_scope_addr_fail, add_deny_class](std::span<const EvalValue> a) -> EvalValue {
-            orch_sched.ensure(2);
+            (void)orch_scheduler();
             auto* root = aura::orch::find_agent_scope(static_cast<void*>(&ev));
             if (!root) {
                 return make_primitive_error(
@@ -5609,7 +5656,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // propagation across the scope's handles. Idempotent (request_cancel
     // is idempotent). Returns hash {ok, cancelled-count, schema=2588}.
     add("orch:scope-cancel-all", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
-        orch_sched.ensure(2);
+        (void)orch_scheduler();
         auto* scope = aura::orch::find_agent_scope(static_cast<void*>(&ev));
         if (!scope) {
             return make_primitive_error(
@@ -6780,9 +6827,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 }
             }
 
-            orch_sched.ensure(2);
+            (void)orch_scheduler();
             auto& root =
-                aura::orch::get_or_create_agent_scope(static_cast<void*>(&ev), *orch_sched.sched);
+                aura::orch::get_or_create_agent_scope(static_cast<void*>(&ev), orch_scheduler());
             // Issue #3726: one population per apply_workflow call. Closures
             // were never AgentScope::spawn'd into the session root that
             // Phase B watch_all / Phase C cancel_all walked, so RestartN /
@@ -6957,8 +7004,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
 
             // Issue #3495: closed loop is apply_workflow (Phase A/B/C).
             // Issue #3726: pass the child, never the session root.
-            auto r = aura::orch::apply_workflow(*orch_sched.sched, child, tasks, w,
-                                                stall_timeout_ms, watch_scope);
+            auto r = aura::orch::apply_workflow(orch_scheduler(), child, tasks, w, stall_timeout_ms,
+                                                watch_scope);
 
             // Issue #3803: workflow hash isolation surface. watch-scope
             // path spawns into child (empty Phase A) — observe child
@@ -7271,9 +7318,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             const char* residual_action = "observe";
             std::vector<EvalValue> stage_out;
             stage_out.reserve(stage_hashes.size());
-            orch_sched.ensure(2);
+            (void)orch_scheduler();
             auto& wf_root =
-                aura::orch::get_or_create_agent_scope(static_cast<void*>(&ev), *orch_sched.sched);
+                aura::orch::get_or_create_agent_scope(static_cast<void*>(&ev), orch_scheduler());
             // Issue #4401: one child per run. watch_all and production
             // residual cancel|join-drain stay on this child. Stage bodies
             // still call parallel-intend below; this prim does not
@@ -8482,9 +8529,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         if (!took)
             return types::make_string(0);
         aura::compiler::g_handoff_token_stash.unroute(hash);
-        orch_sched.ensure(2);
+        (void)orch_scheduler();
         auto h = aura::orch::agent_import_handoff(std::move(tok), static_cast<void*>(&ev),
-                                                  *orch_sched.sched);
+                                                  orch_scheduler());
         const auto new_name = std::string("proxy-") + std::to_string(h.id);
         h.name = new_name;
         if (!ev.agent_names_)
