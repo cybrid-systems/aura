@@ -864,62 +864,21 @@ public:
                 have = true;
             } else {
                 // Issue #4858: a RestartN re-spawn makes this batch join
-                // recoverable. Join once, apply the failure policy, and
-                // re-join while a restart actually replaced a handle and
-                // the caller budget still allows it. Counters accumulate
-                // across rounds so the Aura report sees the whole batch.
-                std::uint32_t total_action = 0;
-                std::uint32_t total_attempted = 0;
-                std::uint32_t total_skipped = 0;
-                std::uint32_t total_ok = 0;
-                std::uint32_t total_denied = 0;
-                std::uint32_t total_exhausted = 0;
+                // recoverable — re-join while a restart replaced a handle
+                // (counters accumulate across rounds).
                 const auto loop_t0 = std::chrono::steady_clock::now();
-                bool joined = false;
                 for (std::uint32_t round = 0; round < 64; ++round) {
-                    JoinPolicy round_policy = policy;
-                    if (policy.total_budget_ms.has_value()) {
-                        const auto used = static_cast<std::uint64_t>(
-                            std::chrono::duration_cast<std::chrono::milliseconds>(
-                                std::chrono::steady_clock::now() - loop_t0)
-                                .count());
-                        if (used >= *policy.total_budget_ms)
-                            break;
-                        round_policy.primary_ms = *policy.total_budget_ms - used;
-                        round_policy.total_budget_ms = round_policy.primary_ms;
-                    }
-                    auto local = join_agents(std::span<AgentHandle>(handles_), round_policy);
-                    apply_on_join_fail_unlocked_(fail ? &*fail : nullptr);
-                    total_action += last_join_fail_action_taken_;
-                    total_attempted += last_restart_attempted_;
-                    total_skipped += last_restart_skipped_no_spec_;
-                    total_ok += last_restart_ok_;
-                    total_denied += last_restart_denied_;
-                    total_exhausted += last_restart_exhausted_;
-                    if (!joined) {
-                        jr = std::move(local);
-                        joined = true;
-                    } else {
-                        wait_us_total += local.wait_us;
-                        if (jr.status != serve::JoinStatus::Ok &&
-                            local.status == serve::JoinStatus::Ok)
-                            jr.status = serve::JoinStatus::Ok; // recovered by RestartN
-                        else if (local.status != serve::JoinStatus::Ok)
-                            jr.status = local.status;
-                    }
-                    // Newly Done-path-cleaned slots retire here (same
-                    // lifecycle vocabulary as name-table erase #3598).
+                    if (policy.total_budget_ms &&
+                        std::chrono::steady_clock::now() - loop_t0 >=
+                            std::chrono::milliseconds(*policy.total_budget_ms))
+                        break;
+                    auto local = join_agents(std::span<AgentHandle>(handles_), policy);
+                    apply_on_join_fail_unlocked_(fail ? &*fail : nullptr, round == 0);
+                    fold(std::move(local));
                     compact_done_husks_unlocked_();
                     if (last_restart_ok_ == 0)
-                        break; // no replacement happened — nothing to re-join
+                        break; // no replacement — nothing to re-join
                 }
-                have = joined || have;
-                last_join_fail_action_taken_ = total_action;
-                last_restart_attempted_ = total_attempted;
-                last_restart_skipped_no_spec_ = total_skipped;
-                last_restart_ok_ = total_ok;
-                last_restart_denied_ = total_denied;
-                last_restart_exhausted_ = total_exhausted;
             }
         }
         if (tree) {
@@ -1828,15 +1787,19 @@ private:
     // join_agents stamped last_join_status. Caller holds ScopeEnterGuard.
     // Reclaimed + deferred / still-running is never restart/cancel fuel (#2661).
     // Issue #3208: nullptr = unset → resolve_on_join_fail (production Cancel).
-    void apply_on_join_fail_unlocked_(const AgentFailurePolicy* explicit_policy) noexcept {
+    void apply_on_join_fail_unlocked_(const AgentFailurePolicy* explicit_policy,
+                                      bool reset_counters = true) noexcept {
         const auto action = resolve_on_join_fail(explicit_policy);
         last_on_join_fail_effective_ = action;
-        last_join_fail_action_taken_ = 0;
-        last_restart_attempted_ = 0;
-        last_restart_skipped_no_spec_ = 0;
-        last_restart_ok_ = 0;
-        last_restart_denied_ = 0;
-        last_restart_exhausted_ = 0; // Issue #4858: visible no-op fuel
+        // Issue #4858: a restart round re-enters this pass; keep the totals.
+        if (reset_counters) {
+            last_join_fail_action_taken_ = 0;
+            last_restart_attempted_ = 0;
+            last_restart_skipped_no_spec_ = 0;
+            last_restart_ok_ = 0;
+            last_restart_denied_ = 0;
+            last_restart_exhausted_ = 0;
+        }
         last_restart_deny_class_ = AgentDenyClass::None;
         AgentFailurePolicy policy{};
         if (explicit_policy)
