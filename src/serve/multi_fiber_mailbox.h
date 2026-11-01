@@ -2080,10 +2080,26 @@ public:
             // which is why an in-body orch:agent-recv never saw its mail.
             const bool soft_orch_no_park =
                 !this_fiber_holds && aura_evaluator_mutation_boundary_depth() > 0;
-            if (!wait || timeout_ms == 0 || soft_orch_no_park) {
-                if (timeout_ms == 0 && !soft_orch_no_park)
+            if (!wait || timeout_ms == 0) {
+                if (timeout_ms == 0)
                     g_mf_mailbox_stats.recv_timeouts.fetch_add(1, std::memory_order_relaxed);
                 return std::nullopt;
+            }
+            if (soft_orch_no_park) {
+                // Issue #4825: the soft agent-body window cannot park a
+                // fiber, but :wait #t / :timeout-ms must still wait.
+                // Poll instead of returning empty immediately, releasing
+                // the denseness body lock so a responder can run.
+                if (timeout_ms > 0 && std::chrono::steady_clock::now() >= deadline) {
+                    g_mf_mailbox_stats.recv_timeouts.fetch_add(1, std::memory_order_relaxed);
+                    return std::nullopt;
+                }
+                g_mf_mailbox_stats.recv_waits.fetch_add(1, std::memory_order_relaxed);
+                {
+                    ::aura::messaging::DensenessBodyLockWaitGuard unblock_body_for_wait;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+                continue;
             }
             if (timeout_ms > 0 && std::chrono::steady_clock::now() >= deadline) {
                 g_mf_mailbox_stats.recv_timeouts.fetch_add(1, std::memory_order_relaxed);
