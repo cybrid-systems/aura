@@ -35,6 +35,8 @@ ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / "build"
 DB = BUILD / "compile_commands.json"
 BASELINE = Path(__file__).resolve().parent / "clang_tidy_baseline.json"
+MODULE_BASELINE = Path(__file__).resolve().parent / "clang_tidy_baseline_modules.json"
+MODULE_SKIP = Path(__file__).resolve().parent / "clang_tidy_module_skip.txt"
 DEFAULT_SCOPES = (
     "src/core",
     "src/parser",
@@ -91,7 +93,10 @@ def clean_args(command: str, directory: str) -> list[str] | None:
     return out
 
 
-def select_entries(scopes: tuple[str, ...], db_path: Path) -> list[dict]:
+def select_entries(
+    scopes: tuple[str, ...], db_path: Path, module_mode: bool = False, skip: set[str] | None = None
+) -> list[dict]:
+    skip = skip or set()
     if not db_path.is_file():
         sys.exit(f"error: {db_path} not found; configure with -DCMAKE_EXPORT_COMPILE_COMMANDS=ON first")
     raw = json.loads(db_path.read_text())
@@ -109,9 +114,13 @@ def select_entries(scopes: tuple[str, ...], db_path: Path) -> list[dict]:
             continue
         if not any(str(rel).startswith(scope.rstrip("/") + "/") for scope in scopes):
             continue
-        if source.suffix not in (".cpp", ".cc", ".cxx"):
+        wanted = (".ixx", ".cppm") if module_mode else (".cpp", ".cc", ".cxx")
+        if source.suffix not in wanted:
             continue
-        if is_module_source(source):
+        if str(rel) in skip:
+            print(f"clang-tidy gate: skipping {rel} (documented Clang exclusion)")
+            continue
+        if not module_mode and is_module_source(source):
             skipped_module += 1
             continue
         args = clean_args(entry.get("command", ""), entry.get("directory", ""))
@@ -125,10 +134,8 @@ def select_entries(scopes: tuple[str, ...], db_path: Path) -> list[dict]:
                 "arguments": args,
             }
         )
-    print(
-        f"clang-tidy gate: {len(selected)} parseable non-module TU(s), "
-        f"{skipped_module} module TU(s) skipped (follow-up: Clang module build)"
-    )
+    kind = "module" if module_mode else "non-module"
+    print(f"clang-tidy gate: {len(selected)} parseable {kind} TU(s), {skipped_module} module TU(s) skipped")
     return selected
 
 
@@ -206,10 +213,10 @@ def parse_diagnostics(rel: str, output: str, rc: int) -> tuple[dict[tuple[str, s
     return counts, samples
 
 
-def load_baseline() -> dict[str, int]:
-    if not BASELINE.is_file():
+def load_baseline(path: Path) -> dict[str, int]:
+    if not path.is_file():
         return {}
-    data = json.loads(BASELINE.read_text())
+    data = json.loads(path.read_text())
     return data.get("counts", {})
 
 
@@ -232,6 +239,11 @@ def main() -> int:
     )
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument(
+        "--module",
+        action="store_true",
+        help="cover module interface TUs from a Clang module build db (#4837)",
+    )
+    parser.add_argument(
         "--scopes",
         default=",".join(DEFAULT_SCOPES),
         help="comma-separated source dir prefixes",
@@ -239,7 +251,13 @@ def main() -> int:
     args = parser.parse_args()
 
     scopes = tuple(s.strip() for s in args.scopes.split(",") if s.strip())
-    entries = select_entries(scopes, Path(args.db))
+    baseline_path = MODULE_BASELINE if args.module else BASELINE
+    skip: set[str] = set()
+    if MODULE_SKIP.is_file():
+        skip = {
+            line.strip() for line in MODULE_SKIP.read_text().splitlines() if line.strip() and not line.startswith("#")
+        }
+    entries = select_entries(scopes, Path(args.db), module_mode=args.module, skip=skip)
     if not entries:
         print("clang-tidy gate: no parseable non-module TUs in scope")
         return 0
@@ -270,11 +288,13 @@ def main() -> int:
             "total": sum(total.values()),
             "counts": dict(sorted(total.items())),
         }
-        BASELINE.write_text(json.dumps(payload, indent=2) + "\n")
-        print(f"baseline updated: {BASELINE.relative_to(ROOT)} ({payload['total']} diagnostics, {len(total)} keys)")
+        baseline_path.write_text(json.dumps(payload, indent=2) + "\n")
+        print(
+            f"baseline updated: {baseline_path.relative_to(ROOT)} ({payload['total']} diagnostics, {len(total)} keys)"
+        )
         return 0
 
-    baseline = load_baseline()
+    baseline = load_baseline(baseline_path)
     new_keys: list[tuple[str, int, int]] = []
     for k, count in total.items():
         base = baseline.get(k, 0)

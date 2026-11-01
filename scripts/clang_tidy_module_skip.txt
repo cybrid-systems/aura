@@ -1,0 +1,3 @@
+# Issue #4837: module interface TUs that the Clang module build cannot
+# compile yet. One repo-relative source path per line. Leave empty while all
+# src/core and src/compiler module TUs build (they do as of this commit).

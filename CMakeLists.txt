@@ -16,6 +16,25 @@ else()
         "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
 endif()
 project(aura LANGUAGES CXX C)
+# Issue #4837: Clang has no -fcontracts / -freflection (GCC 16 features).
+# The GCC build is unchanged. The Clang build exists to produce module BMIs
+# and a compile_commands.json for clang-tidy, so it drops the GCC-only
+# feature flags and maps contract_assert to assert via the shim header.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(AURA_CONTRACT_FLAG "")
+    set(AURA_CONTRACT_INCLUDE_FLAGS "")
+    set(AURA_REFLECTION_FLAG "")
+    add_compile_options(-Wno-unknown-warning-option)
+    # Clang-only warning classes that this codebase trips but GCC does not.
+    add_compile_options(-Wno-mismatched-tags -Wno-unused-private-field)
+    # contract_assert is used across module interfaces, not only in
+    # contract_handler/stub: force-include the shim for every TU.
+    add_compile_options(-include ${CMAKE_SOURCE_DIR}/cmake/clang_contract_shim.h)
+else()
+    set(AURA_CONTRACT_FLAG "-fcontracts")
+    set(AURA_CONTRACT_INCLUDE_FLAGS "-include contracts -fcontracts")
+    set(AURA_REFLECTION_FLAG "-freflection")
+endif()
 # P2: shared test libs (libaura_*.so) live in the build tree; every
 # test executable must find them without LD_LIBRARY_PATH.
 set(CMAKE_BUILD_RPATH "${CMAKE_BINARY_DIR}")
@@ -232,8 +251,8 @@ target_sources(aura PRIVATE
     src/compiler/git_ctx.cpp
     src/main.cpp)
 
-set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
-set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "${AURA_CONTRACT_INCLUDE_FLAGS}")
+set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "${AURA_CONTRACT_INCLUDE_FLAGS}")
 
 # Issue #4774: aura::core — the embeddable runtime core as ONE static target.
 # The header-only pieces an embedder wants (core/persistent_child_vector.hh,
@@ -250,7 +269,7 @@ add_library(aura::core ALIAS aura_core)
 target_include_directories(aura_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>)
 target_compile_features(aura_core PUBLIC cxx_std_26)
-target_compile_options(aura_core PUBLIC -fcontracts)
+target_compile_options(aura_core PUBLIC ${AURA_CONTRACT_FLAG})
 target_link_libraries(aura_core PUBLIC stdc++exp pthread)
 
 # Issue #4774: install(EXPORT) so an out-of-tree host finds aura::core with
@@ -420,7 +439,7 @@ message(STATUS "m4-* domain: AURA_ENABLE_M4=${_AURA_ENABLE_M4_VAL} (#1976)")
 # src/core/contract_handler.cpp). The function-level attribute syntax
 # `[[pre: expr]]` / `[[post: expr]]` is not yet parsed by GCC 16.1 — trailing
 # syntax works on every compiler that supports -fcontracts.
-target_compile_options(aura PRIVATE -fcontracts)
+target_compile_options(aura PRIVATE ${AURA_CONTRACT_FLAG})
 
 # LLVM JIT (optional, skipped if not found)
 find_package(LLVM QUIET CONFIG)
@@ -494,7 +513,7 @@ set_target_properties(aura-reflect PROPERTIES
     BUILD_RPATH "${CMAKE_BINARY_DIR}"
 )
 target_include_directories(aura-reflect PUBLIC ${CMAKE_SOURCE_DIR}/src)
-target_compile_options(aura-reflect PRIVATE -freflection)
+target_compile_options(aura-reflect PRIVATE ${AURA_REFLECTION_FLAG})
 target_compile_features(aura-reflect PUBLIC cxx_std_26)
 target_link_libraries(aura-reflect PRIVATE stdc++)
 
@@ -643,8 +662,8 @@ target_sources(test_ir PRIVATE
     # to aura::serve::http::port_from_env".
     src/serve/http_health.cpp)
 
-set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
-set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "${AURA_CONTRACT_INCLUDE_FLAGS}")
+set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "${AURA_CONTRACT_INCLUDE_FLAGS}")
 # Issue #477: production-quality test file — enforce [[nodiscard]],
 # unused-parameter, and sign-compare warnings on test_ir.cpp itself.
 # The linked-in production sources (aura_test_objects, the per-target
@@ -872,12 +891,12 @@ set_target_properties(aura_test_objects PROPERTIES
 # (sccache) will eliminate. For now, modules in both places are
 # necessary to make aura_test_objects compile.
 aura_target_cxx_modules(aura_test_objects WITH_REFLECT WITH_TYPE_CONCEPTS WITH_TEST_STRATEGY)
-set_source_files_properties(src/reflect/reflect.ixx PROPERTIES COMPILE_FLAGS "-freflection")
+set_source_files_properties(src/reflect/reflect.ixx PROPERTIES COMPILE_FLAGS "${AURA_REFLECTION_FLAG}")
 target_include_directories(aura_test_objects PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_features(aura_test_objects PUBLIC cxx_std_26)
 aura_test_compile_options(aura_test_objects)
 # Issue #273: enforce FlatAST hot-path contracts in issue tests.
-target_compile_options(aura_test_objects PRIVATE -fcontracts)
+target_compile_options(aura_test_objects PRIVATE ${AURA_CONTRACT_FLAG})
 # PUBLIC aura_tl_arena: DT_NEEDED so x86_64 resolves g_tl_arena at load.
 target_link_libraries(aura_test_objects PUBLIC stdc++ stdc++exp aura-reflect aura_tl_arena)
 # Production binary also compiles aura_jit_runtime.cpp (no longer defines g_tl_arena).
@@ -931,11 +950,11 @@ if(LLVM_FOUND)
     target_compile_features(aura_jit_test_objects PUBLIC cxx_std_26)
     aura_test_compile_options(aura_jit_test_objects)
     # Issue #1527: C++26 contracts for aura_jit.cpp pre/post + handlers.
-    target_compile_options(aura_jit_test_objects PRIVATE -fcontracts)
+    target_compile_options(aura_jit_test_objects PRIVATE ${AURA_CONTRACT_FLAG})
     set_source_files_properties(
         src/core/contract_handler.cpp
         src/core/contract_stub.cpp
-        PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
+        PROPERTIES COMPILE_FLAGS "${AURA_CONTRACT_INCLUDE_FLAGS}")
     # -fno-rtti only on LLVM-facing TUs. Do NOT put it on the whole
     # target: aura_jit_bridge.cpp does `import std`, and GCC 16 module
     # BMIs encode the dialect (C++26/contracts vs C++26/no-rtti/contracts).
@@ -943,7 +962,7 @@ if(LLVM_FOUND)
     set_source_files_properties(
         src/compiler/aura_jit.cpp
         src/compiler/aura_jit_runtime.cpp
-        PROPERTIES COMPILE_FLAGS "-fno-rtti -fcontracts")
+        PROPERTIES COMPILE_FLAGS "-fno-rtti ${AURA_CONTRACT_FLAG}")
     # g_tl_arena SSOT (removed from aura_jit_runtime.cpp).
     target_link_libraries(aura_jit_test_objects PUBLIC ${llvm_libs} ${CMAKE_DL_LIBS} aura_tl_arena)
 endif()
@@ -982,18 +1001,18 @@ target_include_directories(aura_jit_light_test_objects PUBLIC
 # Explicitly no AURA_HAVE_LLVM — aura_jit.cpp uses the #else stubs.
 target_compile_features(aura_jit_light_test_objects PUBLIC cxx_std_26)
 aura_test_compile_options(aura_jit_light_test_objects)
-target_compile_options(aura_jit_light_test_objects PRIVATE -fcontracts)
+target_compile_options(aura_jit_light_test_objects PRIVATE ${AURA_CONTRACT_FLAG})
 set_source_files_properties(
     src/core/contract_handler.cpp
     src/core/contract_stub.cpp
-    PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
+    PROPERTIES COMPILE_FLAGS "${AURA_CONTRACT_INCLUDE_FLAGS}")
 # -fno-rtti only on aura_jit TUs that match the full JIT archive dialect
 # when LLVM headers are present; light path has no LLVM headers, but keep
 # the flag for consistent ABI with light bundle objects.
 set_source_files_properties(
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
-    PROPERTIES COMPILE_FLAGS "-fno-rtti -fcontracts")
+    PROPERTIES COMPILE_FLAGS "-fno-rtti ${AURA_CONTRACT_FLAG}")
 # g_tl_arena SSOT (removed from aura_jit_runtime.cpp).
 target_link_libraries(aura_jit_light_test_objects PUBLIC ${CMAKE_DL_LIBS} aura_tl_arena)
 # Do NOT PUBLIC-link light from aura_test_objects. Light's weak
@@ -1090,7 +1109,7 @@ set_property(TARGET test_gc_evaluator_integration PROPERTY CXX_MODULE_STD ON)
 # BMIs into this per-target dir, so the actual compilation
 # succeeds.
 aura_target_cxx_modules(test_gc_evaluator_integration WITH_REFLECT WITH_TYPE_CONCEPTS)
-set_source_files_properties(src/reflect/reflect.ixx PROPERTIES COMPILE_FLAGS "-freflection")
+set_source_files_properties(src/reflect/reflect.ixx PROPERTIES COMPILE_FLAGS "${AURA_REFLECTION_FLAG}")
 target_include_directories(test_gc_evaluator_integration PRIVATE src)
 target_sources(test_gc_evaluator_integration PRIVATE
     src/core/mutation_impl.cpp
@@ -1143,8 +1162,8 @@ aura_test_compile_options(test_gc_evaluator_integration)
 # and was missing from the test_gc_evaluator_integration sources. Same
 # pattern as test_shape / test_spec_jit / test_jit_metrics.
 target_sources(test_gc_evaluator_integration PRIVATE src/core/contract_handler.cpp src/core/contract_stub.cpp)
-set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
-set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "${AURA_CONTRACT_INCLUDE_FLAGS}")
+set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "${AURA_CONTRACT_INCLUDE_FLAGS}")
 target_link_libraries(test_gc_evaluator_integration PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME gc_evaluator_integration COMMAND ./test_gc_evaluator_integration)
 
@@ -1182,7 +1201,7 @@ aura_strict_test_warnings(tests/compiler/test_contracts.cpp)
 # Issue #278 follow-up: pre-existing build fix. contract_handler.cpp
 # provides `handle_contract_violation` for C++26 contract checks.
 target_sources(test_contracts PRIVATE src/core/contract_handler.cpp)
-set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "${AURA_CONTRACT_INCLUDE_FLAGS}")
 add_test(NAME contracts_holds
          COMMAND test_contracts holds)
 add_test(NAME contracts_fires
@@ -1288,7 +1307,7 @@ target_link_libraries(test_shape PRIVATE stdc++)
 # the standalone link broke when #2433 added the call. Surfaced by the
 # #3868 full-tree rebuild.
 target_sources(test_shape PRIVATE src/core/contract_handler.cpp src/compiler/runtime_ssot.cpp src/compiler/test_concurrent_stubs.cpp)
-set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "${AURA_CONTRACT_INCLUDE_FLAGS}")
 add_test(NAME test_shape COMMAND test_shape
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
@@ -1317,7 +1336,7 @@ target_link_libraries(test_spec_jit PRIVATE stdc++ aura_test_objects)
 # Issue #2433 follow-up: same runtime_ssot link fix as test_shape —
 # shape_profiler.cpp references aura_hot_update_set_shape_storm_active.
 target_sources(test_spec_jit PRIVATE src/core/contract_handler.cpp src/compiler/runtime_ssot.cpp)
-set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "${AURA_CONTRACT_INCLUDE_FLAGS}")
 # Issue #278 follow-up: spec_jit_controller.cpp calls
 # AuraJIT::unhandled_opcode_count_for_function, which lives in
 # aura_jit.cpp. Link the JIT sources when LLVM is available
@@ -1356,8 +1375,8 @@ add_executable(test_jit_metrics tests/compiler/test_jit_metrics.cpp
 target_include_directories(test_jit_metrics PRIVATE src)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
-set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "${AURA_CONTRACT_INCLUDE_FLAGS}")
+set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "${AURA_CONTRACT_INCLUDE_FLAGS}")
 target_sources(test_jit_metrics PRIVATE src/core/contract_handler.cpp)
 # Same #3868-surfaced rot as test_spec_jit: full shared-lib link
 # closes the typed_audit / hot_update / fiber symbol web.
@@ -1393,8 +1412,8 @@ target_include_directories(test_jit_concurrent_compile PRIVATE src)
 target_link_libraries(test_jit_concurrent_compile PRIVATE aura_test_objects)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
-set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "${AURA_CONTRACT_INCLUDE_FLAGS}")
+set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "${AURA_CONTRACT_INCLUDE_FLAGS}")
 target_sources(test_jit_concurrent_compile PRIVATE src/core/contract_handler.cpp)
 target_link_libraries(test_jit_concurrent_compile PRIVATE stdc++ stdc++exp pthread aura-reflect)
 if(LLVM_FOUND)
@@ -1425,8 +1444,8 @@ add_executable(test_jit_consistency tests/compiler/test_jit_consistency.cpp
 target_include_directories(test_jit_consistency PRIVATE src)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
-set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "${AURA_CONTRACT_INCLUDE_FLAGS}")
+set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "${AURA_CONTRACT_INCLUDE_FLAGS}")
 target_sources(test_jit_consistency PRIVATE src/core/contract_handler.cpp)
 target_link_libraries(test_jit_consistency PRIVATE stdc++ stdc++exp pthread aura-reflect aura_test_objects)
 if(LLVM_FOUND)
@@ -1463,7 +1482,7 @@ add_executable(issue_212_bench tests/compiler/bench_refactor_surfaces.cpp)
 set_property(TARGET issue_212_bench PROPERTY CXX_MODULE_STD ON)
 # Issue #278 follow-up: contract_handler.cpp link fix.
 target_sources(issue_212_bench PRIVATE src/core/contract_handler.cpp)
-set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "${AURA_CONTRACT_INCLUDE_FLAGS}")
 
 # Issue #508 quantitative benchmark: CastOp reduction ratio
 # on a synthetic gradual workload. Validates the AC ">=40%
@@ -1525,7 +1544,7 @@ add_test(NAME counter_shard_bench COMMAND ./ast_hotpath_bench counter-shard)
 add_executable(cycle14_reflect_bench tests/reflect/bench_reflect.cpp)
 set_property(TARGET cycle14_reflect_bench PROPERTY CXX_MODULE_STD ON)
 target_include_directories(cycle14_reflect_bench PRIVATE src)
-target_compile_options(cycle14_reflect_bench PRIVATE -freflection -Wall
+target_compile_options(cycle14_reflect_bench PRIVATE ${AURA_REFLECTION_FLAG} -Wall
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter)
 target_link_libraries(cycle14_reflect_bench PRIVATE stdc++ aura-reflect)
@@ -1546,7 +1565,7 @@ aura_test_compile_options(cycle221_pcv_bench)
 target_compile_features(cycle221_pcv_bench PUBLIC cxx_std_26)
 # Issue #278 follow-up: contract_handler.cpp link fix.
 target_sources(cycle221_pcv_bench PRIVATE src/core/contract_handler.cpp)
-set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "${AURA_CONTRACT_INCLUDE_FLAGS}")
 target_link_libraries(cycle221_pcv_bench PRIVATE stdc++ pthread)
 add_test(NAME cycle221_pcv_bench COMMAND ./cycle221_pcv_bench)
 target_include_directories(issue_212_bench PRIVATE src)
@@ -1602,7 +1621,7 @@ target_link_libraries(issue_212_bench PRIVATE aura_test_objects pthread stdc++ s
 # Header-only smoke (opcode_reflect + to_json); no module / aura_test_objects.
 add_executable(test_opcode_reflect tests/reflect/test_opcode_reflect.cpp)
 target_include_directories(test_opcode_reflect PRIVATE src)
-target_compile_options(test_opcode_reflect PRIVATE -freflection -Wall
+target_compile_options(test_opcode_reflect PRIVATE ${AURA_REFLECTION_FLAG} -Wall
                        -Wno-sign-compare -Wno-unused-local-typedefs)
 target_compile_features(test_opcode_reflect PUBLIC cxx_std_26)
 target_link_libraries(test_opcode_reflect PRIVATE stdc++)
@@ -1611,7 +1630,7 @@ add_test(NAME test_opcode_reflect_2289_verification COMMAND ./test_opcode_reflec
 # Issue #2290: document + exercise aura-reflect isolation (non-module -freflection).
 add_executable(test_reflect_isolation tests/reflect/test_reflect_isolation.cpp)
 target_include_directories(test_reflect_isolation PRIVATE src)
-target_compile_options(test_reflect_isolation PRIVATE -freflection -Wall
+target_compile_options(test_reflect_isolation PRIVATE ${AURA_REFLECTION_FLAG} -Wall
                        -Wno-sign-compare -Wno-unused-local-typedefs)
 target_compile_features(test_reflect_isolation PUBLIC cxx_std_26)
 target_link_libraries(test_reflect_isolation PRIVATE stdc++)
@@ -1620,7 +1639,7 @@ add_test(NAME test_reflect_isolation_2290_verification COMMAND ./test_reflect_is
 # Issue #2291: Phase 4 pure-POD IR types (auto_serialize / validate).
 add_executable(test_ir_pod_phase4 tests/reflect/test_ir_pod_phase4.cpp)
 target_include_directories(test_ir_pod_phase4 PRIVATE src)
-target_compile_options(test_ir_pod_phase4 PRIVATE -freflection -Wall
+target_compile_options(test_ir_pod_phase4 PRIVATE ${AURA_REFLECTION_FLAG} -Wall
                        -Wno-sign-compare -Wno-unused-local-typedefs)
 target_compile_features(test_ir_pod_phase4 PUBLIC cxx_std_26)
 target_link_libraries(test_ir_pod_phase4 PRIVATE aura-reflect stdc++)
@@ -1636,7 +1655,7 @@ add_test(NAME test_obs_json_to_json_a1_verification COMMAND ./test_obs_json_to_j
 # Wave A2: CacheHeader magic[8] C-array reflection + 72-byte wire.
 add_executable(test_cache_header_magic_a2 tests/reflect/test_cache_header_magic_a2.cpp)
 target_include_directories(test_cache_header_magic_a2 PRIVATE src)
-target_compile_options(test_cache_header_magic_a2 PRIVATE -freflection -Wall
+target_compile_options(test_cache_header_magic_a2 PRIVATE ${AURA_REFLECTION_FLAG} -Wall
                        -Wno-sign-compare -Wno-unused-local-typedefs)
 target_compile_features(test_cache_header_magic_a2 PUBLIC cxx_std_26)
 target_link_libraries(test_cache_header_magic_a2 PRIVATE aura-reflect stdc++)
@@ -1645,7 +1664,7 @@ add_test(NAME test_cache_header_magic_a2_verification COMMAND ./test_cache_heade
 # Wave A3: IROpcode P2996 idents ↔ kIrOpcodeDisplayNames / kOpcodeInfo.
 add_executable(test_opcode_info_align_a3 tests/reflect/test_opcode_info_align_a3.cpp)
 target_include_directories(test_opcode_info_align_a3 PRIVATE src)
-target_compile_options(test_opcode_info_align_a3 PRIVATE -freflection -Wall
+target_compile_options(test_opcode_info_align_a3 PRIVATE ${AURA_REFLECTION_FLAG} -Wall
                        -Wno-sign-compare -Wno-unused-local-typedefs)
 target_compile_features(test_opcode_info_align_a3 PUBLIC cxx_std_26)
 target_link_libraries(test_opcode_info_align_a3 PRIVATE stdc++)
@@ -1654,7 +1673,7 @@ add_test(NAME test_opcode_info_align_a3_verification COMMAND ./test_opcode_info_
 # Wave B1: NodeTag P2996 idents ↔ kNodeTagNames / kNodeMeta.
 add_executable(test_node_tag_align_b1 tests/reflect/test_node_tag_align_b1.cpp)
 target_include_directories(test_node_tag_align_b1 PRIVATE src)
-target_compile_options(test_node_tag_align_b1 PRIVATE -freflection -Wall
+target_compile_options(test_node_tag_align_b1 PRIVATE ${AURA_REFLECTION_FLAG} -Wall
                        -Wno-sign-compare -Wno-unused-local-typedefs)
 target_compile_features(test_node_tag_align_b1 PUBLIC cxx_std_26)
 target_link_libraries(test_node_tag_align_b1 PRIVATE stdc++)
@@ -1663,7 +1682,7 @@ add_test(NAME test_node_tag_align_b1_verification COMMAND ./test_node_tag_align_
 # Wave B2: FlatInstruction auto_serialize + IR overlap mapping.
 add_executable(test_flat_instr_reflect_b2 tests/reflect/test_flat_instr_reflect_b2.cpp)
 target_include_directories(test_flat_instr_reflect_b2 PRIVATE src)
-target_compile_options(test_flat_instr_reflect_b2 PRIVATE -freflection -Wall
+target_compile_options(test_flat_instr_reflect_b2 PRIVATE ${AURA_REFLECTION_FLAG} -Wall
                        -Wno-sign-compare -Wno-unused-local-typedefs)
 target_compile_features(test_flat_instr_reflect_b2 PUBLIC cxx_std_26)
 target_link_libraries(test_flat_instr_reflect_b2 PRIVATE stdc++)
@@ -1672,7 +1691,7 @@ add_test(NAME test_flat_instr_reflect_b2_verification COMMAND ./test_flat_instr_
 # Wave B3: small AST public PODs (SourceLocation, Patch, MatchClauseInfo, …).
 add_executable(test_ast_pod_reflect_b3 tests/reflect/test_ast_pod_reflect_b3.cpp)
 target_include_directories(test_ast_pod_reflect_b3 PRIVATE src)
-target_compile_options(test_ast_pod_reflect_b3 PRIVATE -freflection -Wall
+target_compile_options(test_ast_pod_reflect_b3 PRIVATE ${AURA_REFLECTION_FLAG} -Wall
                        -Wno-sign-compare -Wno-unused-local-typedefs)
 target_compile_features(test_ast_pod_reflect_b3 PUBLIC cxx_std_26)
 target_link_libraries(test_ast_pod_reflect_b3 PRIVATE stdc++)
@@ -1681,7 +1700,7 @@ add_test(NAME test_ast_pod_reflect_b3_verification COMMAND ./test_ast_pod_reflec
 # Wave C1: generic enum_name_table across domain enums.
 add_executable(test_enum_name_table_c1 tests/reflect/test_enum_name_table_c1.cpp)
 target_include_directories(test_enum_name_table_c1 PRIVATE src)
-target_compile_options(test_enum_name_table_c1 PRIVATE -freflection -Wall
+target_compile_options(test_enum_name_table_c1 PRIVATE ${AURA_REFLECTION_FLAG} -Wall
                        -Wno-sign-compare -Wno-unused-local-typedefs)
 target_compile_features(test_enum_name_table_c1 PUBLIC cxx_std_26)
 target_link_libraries(test_enum_name_table_c1 PRIVATE stdc++)
@@ -1690,7 +1709,7 @@ add_test(NAME test_enum_name_table_c1_verification COMMAND ./test_enum_name_tabl
 # C1 business wire: AuraErrorKind / diag ErrorKind name tables vs P2996.
 add_executable(test_error_kind_names_wire tests/reflect/test_error_kind_names_wire.cpp)
 target_include_directories(test_error_kind_names_wire PRIVATE src)
-target_compile_options(test_error_kind_names_wire PRIVATE -freflection -Wall
+target_compile_options(test_error_kind_names_wire PRIVATE ${AURA_REFLECTION_FLAG} -Wall
                        -Wno-sign-compare -Wno-unused-local-typedefs)
 target_compile_features(test_error_kind_names_wire PUBLIC cxx_std_26)
 target_link_libraries(test_error_kind_names_wire PRIVATE stdc++)

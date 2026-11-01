@@ -111,7 +111,7 @@ function(aura_apply_contract_flags TARGET)
         src/core/contract_stub.cpp
     )
     set_source_files_properties(src/core/contract_handler.cpp PROPERTIES
-        COMPILE_FLAGS "-include contracts -fcontracts")
+        COMPILE_FLAGS "${AURA_CONTRACT_INCLUDE_FLAGS}")
     set_source_files_properties(src/core/contract_stub.cpp PROPERTIES
-        COMPILE_FLAGS "-include contracts -fcontracts")
+        COMPILE_FLAGS "${AURA_CONTRACT_INCLUDE_FLAGS}")
 endfunction()

@@ -311,7 +311,7 @@ public:
 
 private:
     const aura::ast::FlatAST& ast_;
-    const aura::ast::StringPool& pool_;
+    [[maybe_unused]] const aura::ast::StringPool& pool_;
     std::unordered_map<aura::ast::NodeId, std::uint32_t> type_of_;
 };
 

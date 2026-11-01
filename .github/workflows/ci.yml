@@ -235,6 +235,25 @@ jobs:
     - name: clang-tidy baseline gate (#4829)
       run: python3 scripts/clang_tidy_gate.py --jobs 4
 
+    # Issue #4837: Clang module build. GCC still owns the real build; this
+    # configure+build exists only to produce module BMIs and a
+    # compile_commands.json that clang-tidy can read for src/core /
+    # src/compiler module interface units.
+    - name: Configure Clang module build (#4837)
+      run: >
+        cmake -S . -B build_clang -G Ninja -Wno-author
+        -DCMAKE_CXX_COMPILER=clang++
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+    - name: Build Clang module BMIs (#4837)
+      run: |
+        targets=$(python3 scripts/clang_module_targets.py build_clang)
+        ninja -C build_clang $targets
+
+    - name: clang-tidy module gate (#4837)
+      run: python3 scripts/clang_tidy_gate.py --module --db build_clang/compile_commands.json --jobs 4
+
     # Aura philosophy guard: no per-issue plan docs in docs/design/
     - name: "Aura philosophy guard: no docs/design/"
       run: |
