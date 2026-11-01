@@ -4462,8 +4462,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // stay append-only (#3776 AC5). Pending (#2661/#3467) and live
             // slots never match the husk predicate. MUST run after the last
             // hp dereference: compact resizes handles_, invalidating hp.
-            if (join_scope)
+            if (join_scope) {
                 join_scope->compact_after_single_join();
+            } else if (types::is_string(a[0])) {
+                // Issue #4854: the join settled this name-table slot (Done
+                // path cleanup ran, no pending flags). Retire the slot now
+                // instead of waiting for the next resolve / put sweep so a
+                // unique-name spawn+join loop stays flat. hp dies here — no
+                // dereference may follow.
+                (void)ev.agent_names_->retire_settled(heap_str_from(ev.string_heap_, a[0]));
+            }
             // Issue #3216: name-table plane (production-only intern).
             add_identity_plane(kv, "name-table");
             strip_internal_join_markers(kv, debug_report); // Issue #4832

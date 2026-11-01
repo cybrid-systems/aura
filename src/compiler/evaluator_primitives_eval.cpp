@@ -761,7 +761,27 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         flat->root = pr.root;
         auto* flat_p = flat.get();
         auto* pool_p = pool.get();
-        ev.retain_eval_program(std::move(flat), std::move(pool));
+        // Issue #4359 kept the parsed program for the Evaluator lifetime
+        // because a Closure built by the eval'd program points at
+        // Closure::flat / Closure::pool (raw pointers). That retention is
+        // only owed when the program can build a Closure at all — a Closure
+        // is constructed from a Lambda node (and the IR closure bridge is
+        // created from the same lambda lowering). A datum / arithmetic /
+        // define-of-value eval has no Lambda, so nothing can name this
+        // flat or pool after the primitive returns. Retaining it anyway was
+        // the #4854 ~8.7 KB-per-(eval datum) linear RSS growth: the
+        // g_retained_eval table only shrank at ~Evaluator.
+        //
+        // Release (drop the unique_ptrs to this call's scope) when the
+        // parsed tree contains no Lambda; retain unchanged otherwise
+        // (closures / #4359 bridge safety preserved).
+        bool retains_closures = false;
+        for (std::size_t ni = 0; ni < flat->size() && !retains_closures; ++ni) {
+            if (flat->get(static_cast<aura::ast::NodeId>(ni)).tag == aura::ast::NodeTag::Lambda)
+                retains_closures = true;
+        }
+        if (retains_closures)
+            ev.retain_eval_program(std::move(flat), std::move(pool));
         // Issue #4373: a define inside the eval'd string calls set_pool
         // and re-keys top_ onto that string's pool. The outer define then
         // bind_symid's its name against the wrong pool, so the name stays

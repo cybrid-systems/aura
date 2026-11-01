@@ -9138,6 +9138,15 @@ private:
         bool closed = false;
     };
     std::vector<std::shared_ptr<Channel>> channels_;
+    // Issue #4854: closed-channel slots are released (null) and their ids
+    // recycled LIFO here. channels_ used to be append-only for the
+    // Evaluator lifetime, so a long-running host that created channels
+    // grew ~0.8 KB per create+send+recv forever even after channel:close.
+    // Ids stay stable slots: recv/send on a closed (now null) slot keep
+    // returning the existing closed-channel values. Reuse means a *new*
+    // channel may occupy a previously closed id — documented on
+    // channel:create (the id is not a generation handle).
+    std::vector<std::size_t> channels_free_;
     std::mutex channels_mtx_;
 
     // ── Heap mutex (P2 thread-safe GC) ────────────────────────

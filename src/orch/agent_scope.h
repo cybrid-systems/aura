@@ -902,6 +902,12 @@ public:
         // batch wait_us so pending age stays bounded by join cadence.
         last_sweep_reclaimed_pending_ = sweep_reclaimed_pending();
         wait_us_total += last_sweep_reclaimed_pending_.wait_us;
+        // Issue #4854: the join settle point. Release the Scheduler Fiber of
+        // every settled Done handle in this tree (guards in
+        // retire_settled_handle_fiber refuse live / reclaimed-pending /
+        // mailbox-attached ones). Done here, not in the Aura caller, so the
+        // #3437 source-cite window around the join-all primitive stays put.
+        retire_settled_fibers_unlocked_();
         if (!have)
             jr.status = serve::JoinStatus::Invalid; // empty scope, no tree walked
         jr.wait_us = wait_us_total;
@@ -1412,6 +1418,20 @@ public:
     void compact_after_single_join() noexcept {
         ScopeEnterGuard g(this, "compact_after_single_join");
         compact_done_husks_unlocked_();
+    }
+
+    // Issue #4854: release the Scheduler Fiber objects of settled
+    // (Done-path-cleaned) handles in this scope tree. #3905 keeps every
+    // spawned Fiber in Scheduler::owned_fibers_ until ~Scheduler, which a
+    // long-running orch host paid per scope-spawn child even after
+    // join-all dropped the scope. Live / Reclaimed-pending / attached-
+    // mailbox handles are refused by retire_settled_handle_fiber (no
+    // early free, #2661); only unreachable Done fibers are retired.
+    // Walk order: local handles then children (children own their own
+    // guards so a concurrent teardown is detected, not raced).
+    void retire_settled_fibers() noexcept {
+        ScopeEnterGuard g(this, "retire_settled_fibers");
+        retire_settled_fibers_unlocked_();
     }
 
     // Supervision root: cancel + best-effort drain + release before
@@ -2159,6 +2179,22 @@ private:
 
     // Production: stable-partition erase Done husks from handles_ and the
     // three RestartN parallel vectors. Soft/Off: no-op (one production load).
+    // Issue #4854: walk this scope (and descendants) retiring the
+    // Scheduler Fiber of every settled handle. Called at the join-all
+    // settle point in both faces and from the #3776 compact sweep.
+    void retire_settled_fibers_unlocked_() noexcept {
+        for (auto& h : handles_)
+            (void)aura::orch::retire_settled_handle_fiber(h);
+        for (auto& c : children_) {
+            if (!c)
+                continue;
+            ScopeEnterGuard cg(c.get(), "retire_settled_fibers");
+            if (cg.denied_hard() || cg.soft_collision)
+                continue;
+            c->retire_settled_fibers_unlocked_();
+        }
+    }
+
     void compact_done_husks_unlocked_() noexcept {
         if (!aura::compiler::typed_audit::production_defaults_active())
             return;
@@ -2167,8 +2203,12 @@ private:
             return;
         std::size_t w = 0;
         for (std::size_t r = 0; r < n; ++r) {
-            if (is_done_path_husk_(handles_[r]))
+            if (is_done_path_husk_(handles_[r])) {
+                // Issue #4854: the husk is unreachable from every plane;
+                // release its Scheduler Fiber object with the slot.
+                (void)aura::orch::retire_settled_handle_fiber(handles_[r]);
                 continue;
+            }
             if (w != r) {
                 handles_[w] = std::move(handles_[r]);
                 if (r < specs_.size())

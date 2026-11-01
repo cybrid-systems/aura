@@ -3576,6 +3576,40 @@ inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) no
 // match (#3467 — wait_reclaimed_body still resolves the name); live slots
 // never match. Cost: two bool loads + fiber-null check + one is_done load
 // — no new atomic, no getenv (AC3).
+// Issue #4854: release a settled handle's Scheduler Fiber object.
+//
+// #3905 keeps every spawned Fiber in Scheduler::owned_fibers_ until
+// ~Scheduler because a Reclaimed-pending AgentHandle may still answer by
+// name. Once the handle is Done-path-cleaned (is_done, no must_wait /
+// deferred flags) and its mailbox is detached, that Fiber* is unreachable
+// from the name table / handles_ / directory / join planes. Holding the
+// object is then pure retention: a long-running orch host paid a Fiber
+// object plus its heap bookkeeping per spawn-agent / scope-spawn forever
+// (the #4854 linear RSS growth).
+//
+// Nulls h.fiber only when the scheduler accepted the retire; a refused
+// retire (live body, attached mailbox, foreign scheduler) leaves the
+// handle untouched so a later settle can retry. Never frees early (#2661).
+[[nodiscard]] inline bool retire_settled_handle_fiber(AgentHandle& h) noexcept {
+    if (h.fiber == nullptr)
+        return false;
+    if (!h.fiber->is_done())
+        return false;
+    if (h.must_wait_reclaimed || h.reclaimed_deferred_cleanup)
+        return false;
+    if (h.fiber->mailbox() != nullptr)
+        return false;
+    serve::Fiber* f = h.fiber;
+    serve::Scheduler* sched = f->owner_sched();
+    if (sched == nullptr)
+        return false;
+    if (!sched->retire_done_fiber(f))
+        return false;
+    h.fiber = nullptr;
+    h.id = 0;
+    return true;
+}
+
 [[nodiscard]] inline bool slot_is_reclaimable_clean(const AgentHandle& h) noexcept {
     // Issue #4756: an import proxy is never a reclaimable clean ghost. It
     // reserves nothing and only *observes* the source-owned fiber, so a

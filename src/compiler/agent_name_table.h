@@ -228,6 +228,43 @@ struct AgentNameTable {
         }
     }
 
+    // Issue #4854: retire a Done-path-cleaned slot after a successful
+    // join so a unique-name spawn/join loop does not grow the table (and
+    // does not pin the Scheduler Fiber object, see
+    // aura::orch::retire_settled_handle_fiber). Refuses pending (#3467) /
+    // live / abandoned-live slots — those are still reachable by name.
+    // Mirrors find()'s #3598 retire, but runs at the join settle point
+    // instead of waiting for a later resolve. The ready slot is moved out
+    // of the table before the Fiber retire (empty-backlog path); a slot
+    // kept for #4785 handover retires its Fiber in place — the table
+    // mutex is not in the OwnedFibers rank chain and nothing under those
+    // locks reaches back into this table.
+    bool retire_settled(const std::string& name) {
+        aura::orch::AgentHandle retired;
+        {
+            std::lock_guard<std::mutex> lock(impl_->mu_);
+            auto it = impl_->agents_.find(name);
+            if (it == impl_->agents_.end())
+                return false;
+            if (!aura::orch::slot_is_reclaimable_clean(it->second))
+                return false;
+            // Issue #4785: a Done-path-cleaned slot may still hold queued
+            // mailbox work that the same-name respawn inherits. Keep the
+            // slot (and its backlog) for that handover — but the body is
+            // done, so its Scheduler Fiber is no longer reachable and can
+            // be released now. The slot itself retires on respawn (fresh
+            // insert) or the next clean find/put sweep.
+            if (it->second.mailbox && it->second.mailbox->size() != 0) {
+                (void)aura::orch::retire_settled_handle_fiber(it->second);
+                return false;
+            }
+            retired = std::move(it->second);
+            impl_->agents_.erase(it);
+        }
+        (void)aura::orch::retire_settled_handle_fiber(retired);
+        return true;
+    }
+
     // Snapshot for cleanup at ~Evaluator. Caller owns the returned vector;
     // AgentHandle destructors release arena reservation. The map is
     // cleared so the destructor doesn't double-release.

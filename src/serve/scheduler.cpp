@@ -239,6 +239,9 @@ Scheduler::~Scheduler() {
         }
         dying_fibers.swap(owned_fibers_);
         owned_fiber_set_.clear();
+        // Issue #4854: pending raw pointers die with the owned vector.
+        pending_retire_fibers_.clear();
+        pending_retire_count_.store(0, std::memory_order_release);
     }
     dying_fibers.clear();
     if (epoll_fd_ >= 0)
@@ -559,6 +562,103 @@ void Scheduler::on_fiber_done(Fiber* fiber) {
     // owned_fibers_ (#3905). No OwnedFibers lock is held, so a mailbox
     // close inside func_ does not invert with that rank (#4442).
     fiber->release_done_resources();
+}
+
+// ── Issue #4854: retire a settled Done fiber ─────────────────────────
+// See scheduler.h. The caller (orch AgentHandle settle path) has already
+// established: body Done, Done-path cleanup ran, no Reclaimed-pending
+// flags, mailbox detached. Nothing owns the Fiber* anymore, so removing it
+// from owned_fibers_ releases the retention a long-running orch host paid
+// per spawn-agent / scope-spawn.
+//
+// Guards kept here anyway (defence in depth):
+//   - !is_done()              → live body, never free (#2661)
+//   - mailbox() != nullptr    → the mailbox still lists this fiber in
+//                              attachers_; ~Fiber would leave it dangling
+//   - not in owned_fiber_set_ → already retired / foreign fiber
+// The unique_ptr is moved out and destroyed AFTER the OwnedFibers lock
+// drops: ~Fiber unregisters the process fiber registry and closes any
+// mailbox (Level::Mailbox), and taking Mailbox under OwnedFibers would
+// invert the declared rank (see ~Scheduler's #4442 note).
+bool Scheduler::retire_done_fiber(Fiber* fiber) noexcept {
+    if (!fiber || !fiber->is_done())
+        return false;
+    if (fiber->mailbox() != nullptr)
+        return false;
+    std::unique_ptr<Fiber> dying;
+    {
+        ::aura::compiler::lock_order::AuditedMutexLock lock(
+            owned_fibers_mutex_, ::aura::compiler::lock_order::Level::OwnedFibers);
+        auto sit = owned_fiber_set_.find(fiber);
+        if (sit == owned_fiber_set_.end())
+            return false;
+        // Issue #4854: the joiner is woken from on_fiber_done BEFORE
+        // release_done_resources drops the stack / context. Destroying the
+        // object here would race the worker's final on_fiber_done steps
+        // (observed as malloc tcache corruption). Defer to the IO tick,
+        // which retires only after done_resources_released().
+        if (!fiber->done_resources_released()) {
+            // Ownership of the Fiber object moves to the deferred queue:
+            // the caller must drop its raw pointer (return true), but the
+            // object is destroyed on the next tick.
+            pending_retire_fibers_.push_back(fiber);
+            pending_retire_count_.store(pending_retire_fibers_.size(), std::memory_order_release);
+            return true;
+        }
+        for (auto& owned : owned_fibers_) {
+            if (owned.get() == fiber) {
+                dying = std::move(owned);
+                break;
+            }
+        }
+        if (!dying)
+            return false;
+        owned_fiber_set_.erase(sit);
+    }
+    fibers_retired_total_.fetch_add(1, std::memory_order_relaxed);
+    return true; // dying destroys the Fiber here, outside the lock
+}
+
+// Issue #4854: drain deferred Done fibers. Same lifetime invariant as
+// retire_done_fiber: only owned, Done, released, unattached fibers are
+// destroyed; everything else stays owned (Reclaimed-pending handle).
+std::size_t Scheduler::maybe_retire_pending_done_fibers() noexcept {
+    if (pending_retire_count_.load(std::memory_order_acquire) == 0)
+        return 0;
+    std::vector<std::unique_ptr<Fiber>> dying;
+    std::vector<Fiber*> keep;
+    {
+        ::aura::compiler::lock_order::AuditedMutexLock lock(
+            owned_fibers_mutex_, ::aura::compiler::lock_order::Level::OwnedFibers);
+        for (Fiber* fiber : pending_retire_fibers_) {
+            if (!fiber || owned_fiber_set_.find(fiber) == owned_fiber_set_.end()) {
+                continue; // already retired / ~Scheduler cleared it
+            }
+            if (!fiber->is_done() || !fiber->done_resources_released() ||
+                fiber->mailbox() != nullptr) {
+                keep.push_back(fiber);
+                continue;
+            }
+            bool moved = false;
+            for (auto& owned : owned_fibers_) {
+                if (owned.get() == fiber) {
+                    dying.push_back(std::move(owned));
+                    moved = true;
+                    break;
+                }
+            }
+            if (!moved) {
+                keep.push_back(fiber);
+                continue;
+            }
+            owned_fiber_set_.erase(fiber);
+        }
+        pending_retire_fibers_.swap(keep);
+        pending_retire_count_.store(pending_retire_fibers_.size(), std::memory_order_release);
+    }
+    const std::size_t n = dying.size();
+    fibers_retired_total_.fetch_add(n, std::memory_order_relaxed);
+    return n; // dying destroyed here, outside the lock
 }
 
 // Issue #119: add a joiner fiber to a target's wait list.
@@ -1404,6 +1504,10 @@ void Scheduler::run() {
         // Zero cost when orphan_count_cached_ == 0; interval-gated when set.
         // Cancel storms converge without test-only reap_orphans_now calls.
         (void)maybe_reap_orphans_on_tick();
+        // Issue #4854: drain Done fibers whose worker has finished
+        // release_done_resources since the orch settle requested retire.
+        // Zero cost when nothing is queued (one relaxed load).
+        (void)maybe_retire_pending_done_fibers();
         // Issue #3071 / #3325: idle-tick poll of the in-body cancel window.
         // Happy path (armed_ns == 0): one acquire inside the C ABI.
         // #3325: production multi-worker re-injects no-edge holders past
