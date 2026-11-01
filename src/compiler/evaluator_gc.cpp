@@ -16,6 +16,7 @@ module;
 #include "coercion_provenance_policy.hh" // Issue #2197: note_provenance_miss force-audit
 #include "lock_order_audit.h"            // Issue #2354: Closures rank
 #include "fiber_result_roots.hh"         // Issue #4710: fiber:join result roots
+#include "fiber_overlay_roots.hh"        // Issue #4849: pending COW overlay roots
 #include "typed_mutation_audit.h"        // Issue #2984: compact vs proof linear_root_count
 
 module aura.compiler.evaluator;
@@ -1645,6 +1646,16 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
             for (const auto raw : fiber_results)
                 roots.push_back(EvalValue(raw));
         }
+        // Issue #4849: uncommitted overlay writes live only in the COW
+        // registry until commit. Without this root a pending list is
+        // reclaimed and reused while the overlay still owns it, and the
+        // commit publishes (()) or another object's data.
+        std::vector<std::int64_t> overlay_pending;
+        if (fiber_overlay_roots::collect(overlay_pending) > 0) {
+            roots.reserve(roots.size() + overlay_pending.size());
+            for (const auto raw : overlay_pending)
+                roots.push_back(EvalValue(raw));
+        }
     }
 
     const std::size_t n_pairs = pairs_.size();
@@ -1990,6 +2001,15 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         if (fiber_result_roots::collect(fiber_results) > 0) {
             work.reserve(work.size() + fiber_results.size());
             for (const auto raw : fiber_results)
+                work.push_back(EvalValue(raw));
+        }
+        // Issue #4849: same root set for the tree-walker reclaim — a
+        // pending overlay define / set! value is reachable by the program
+        // through fiber:overlay-get and the eventual commit.
+        std::vector<std::int64_t> overlay_pending;
+        if (fiber_overlay_roots::collect(overlay_pending) > 0) {
+            work.reserve(work.size() + overlay_pending.size());
+            for (const auto raw : overlay_pending)
                 work.push_back(EvalValue(raw));
         }
     }

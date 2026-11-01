@@ -29,6 +29,7 @@ module;
 // module import, and including <algorithm>/<mutex> after `import std`
 // would re-declare std entities inside this module (GCC error).
 #include "compiler/fiber_cow_overlay.hh"
+#include "compiler/fiber_overlay_roots.hh" // Issue #4849: pending writes as roots
 
 module aura.compiler.evaluator;
 
@@ -362,9 +363,26 @@ namespace {
 
 } // namespace
 
+// Issue #4849: publish every open overlay's pending write values as GC
+// roots. Called by the evaluator's reclaims; a value that is only in the
+// overlay must survive until commit / rollback drops the entry.
+std::size_t collect_pending_overlay_roots(std::vector<std::int64_t>& out) {
+    std::vector<EvalValue> values;
+    cow::registry<EvalValue>().collect_pending(values);
+    const auto before = out.size();
+    out.reserve(out.size() + values.size());
+    for (const auto& v : values)
+        out.push_back(v.val);
+    return out.size() - before;
+}
+
 void register_fiber_cow_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev) {
     auto& reg = cow::registry<EvalValue>();
     const void* const owner = static_cast<const void*>(&ev);
+    // Issue #4849: pending overlay writes are GC roots until commit (or
+    // rollback). One provider serves every evaluator: the registry is
+    // process-global and partitioned by owner pointer.
+    fiber_overlay_roots::install(&collect_pending_overlay_roots);
 
     // #4715: same gate as fiber:spawn — a Strict sandbox without the fiber
     // capability cannot open or touch an overlay.
