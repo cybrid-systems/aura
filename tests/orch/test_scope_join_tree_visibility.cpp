@@ -114,8 +114,10 @@ int run_test_scope_join_tree_visibility() {
         const auto desc1 =
             cs.eval(R"((hash-ref (orch:scope-join-all :timeout-ms 200) "descendants-live"))");
         CHECK(desc1 && is_bool(*desc1) && as_bool(*desc1), "3671 AC1: descendants-live=#t");
+        // Issue #4832: schema-* sentinels live in the :debug view of a join
+        // report; the default report keeps only stable business fields.
         const auto deny1 = cs.eval(
-            R"((let ((r (orch:scope-join-all :timeout-ms 200))) (hash-ref r "schema-3251")))");
+            R"((let ((r (orch:scope-join-all :timeout-ms 200 :debug #t))) (hash-ref r "schema-3251")))");
         CHECK(deny1 && is_int(*deny1) && as_int(*deny1) == 3251,
               "3671 AC1: deny-class interned (#3251 — descendants-live deny fired)");
         // No drop: the child scope still resolves (spawn into :path 0 again).
