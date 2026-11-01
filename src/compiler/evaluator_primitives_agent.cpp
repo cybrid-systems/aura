@@ -441,12 +441,24 @@ namespace {
         if (!types::is_error(v))
             return msg;
         const auto idx = types::as_error_idx(v);
-        if (idx < ev.error_values_.size() && types::is_string(ev.error_values_[idx])) {
-            const auto sidx = types::as_string_idx(ev.error_values_[idx]);
+        if (idx >= ev.error_values_.size())
+            return msg;
+        const auto& payload = ev.error_values_[idx];
+        if (types::is_string(payload)) {
+            const auto sidx = types::as_string_idx(payload);
             if (ev.inrange_string_tenant_allows(sidx, /*required_effects=*/0,
                                                 "orch:scope-join-all"))
                 msg = ev.copy_string_heap_at(sidx);
+            return msg;
         }
+        // Issue #4850: a raised symbol / hash is a structured failure payload,
+        // not an opaque "runtime error". Render it the way display would so
+        // the orch layer can branch on it (e.g. 'rate-limited, hash "code").
+        if (types::is_void(payload) || types::is_unspecified(payload))
+            return msg;
+        msg =
+            aura::compiler::format_value(payload, ev.string_heap(), ev.pairs(), 0, &ev.primitives(),
+                                         ev.keyword_table(), ev.vector_heap(), ev.symbol_table());
         return msg;
     }
 

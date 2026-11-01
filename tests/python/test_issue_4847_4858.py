@@ -82,6 +82,20 @@ class TestIssueBatch4847To4858(unittest.TestCase):
         self.assertIn("fiber:overlay-define", proc.stdout)
         self.assertNotIn(" + name + ", proc.stdout)
 
+    def test_4850_agent_join_keeps_raised_symbol(self) -> None:
+        proc = _run(
+            """
+(orch:spawn-agent "s" (lambda () (raise 'rate-limited)))
+(display (hash-ref (orch:agent-join "s" :timeout-ms 3000) "error")) (newline)
+""",
+            "--load",
+            timeout=60.0,
+            pipeline_strict="0",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("rate-limited", proc.stdout)
+        self.assertNotIn("runtime error", proc.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
