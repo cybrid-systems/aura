@@ -57,7 +57,11 @@ int run_478_primitive_error_stats_smoke() {
     CompilerService cs;
     auto& ev = cs.evaluator();
     CHECK(ev.get_primitive_error_count() == 0, "error count 0 fresh");
-    CHECK(ev.get_primitive_error_values_size() == 0, "error_values empty fresh");
+    // Issue #4841: slot 0 is the immortal default cause (make_void), seeded by
+    // the Evaluator constructor so an append never reallocates under a
+    // concurrent reader. "Fresh" means exactly that one seeded slot and no
+    // primitive error counted yet.
+    CHECK(ev.get_primitive_error_values_size() == 1, "error_values one seeded default cause fresh");
     auto r = cs.eval("(engine:metrics \"query:primitive-error-stats\")");
     CHECK(r && is_pair(*r), "primitive-error-stats pair");
     const auto before = ev.get_primitive_error_count();
