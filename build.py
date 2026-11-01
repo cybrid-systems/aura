@@ -14,6 +14,7 @@ Usage:
   ./build.py gate --jobs N    # coverage parallel workers (default min(16,nproc) / AURA_GATE_JOBS)
   ./build.py legacy-test-inventory  # #1957 inventory freshness (--fix to regen)
   ./build.py ci               # build + CI 测试矩阵
+  ./build.py ci-issues        # issue 测试矩阵的一片 (AURA_ISSUE_SHARD=i/N, CI issue-farm #4819)
   ./build.py clean            # 清理构建产物
   ./build.py list             # 列出测试套件
   ./build.py demo             # 运行 Agent 管线演示
@@ -65,6 +66,7 @@ Test tiers (./build.py test [name]; default ci — see ./build.py list):
 
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -13197,6 +13199,62 @@ def _retry_issue_colder(targets: list[str] | None, first_jobs: int, r: int) -> i
     )
 
 
+# ── Issue #4819: issue-farm sharding ─────────────────────────────
+# One 4-vCPU runner spent ~85 of build-test's 120 minutes compiling the
+# issue matrix (aura_test_objects + ~560 test TUs + 143 links). CI now
+# splits all_test_issue_targets across AURA_ISSUE_SHARD=i/N matrix jobs.
+# Targets are packed by compile weight (objects in CMakeFiles/<t>.dir +
+# 1 link) with LPT so each shard gets about the same wall; the split is
+# a pure function of the configured build.ninja, so every shard agrees.
+_ISSUE_SHARD_LIST_NAME = ".issue-shard-targets"
+
+
+def _issue_shard_spec() -> tuple[int, int] | None:
+    raw = os.environ.get("AURA_ISSUE_SHARD", "").strip()
+    if not raw:
+        return None
+    try:
+        idx_s, total_s = raw.split("/", 1)
+        idx, total = int(idx_s), int(total_s)
+    except ValueError:
+        raise SystemExit(f"AURA_ISSUE_SHARD={raw!r}: expected i/N (e.g. 2/4)") from None
+    if total < 1 or not 1 <= idx <= total:
+        raise SystemExit(f"AURA_ISSUE_SHARD={raw!r}: need 1 <= i <= N")
+    return idx, total
+
+
+def _issue_target_weights(targets: list[str]) -> dict[str, int]:
+    weights = {t: 1 for t in targets}
+    try:
+        text = (BUILD / "build.ninja").read_text(errors="replace")
+    except OSError:
+        return weights
+    for m in re.finditer(r"^build CMakeFiles/([^/\s]+)\.dir/\S+\.o:", text, re.M):
+        t = m.group(1)
+        if t in weights:
+            weights[t] += 1
+    return weights
+
+
+def _shard_issue_targets(targets: list[str], idx: int, total: int) -> list[str]:
+    """Deterministic LPT split of issue targets; returns shard idx (1-based)."""
+    weights = _issue_target_weights(targets)
+    loads = [0] * total
+    bins: list[list[str]] = [[] for _ in range(total)]
+    for t in sorted(set(targets), key=lambda t: (-weights[t], t)):
+        k = min(range(total), key=lambda i: (loads[i], i))
+        loads[k] += weights[t]
+        bins[k].append(t)
+    info(f"issue shard {idx}/{total}: {len(bins[idx - 1])} targets, weight {loads[idx - 1]} (all shards: {loads})")
+    return sorted(bins[idx - 1])
+
+
+def _write_issue_shard_list(targets: list[str]) -> Path:
+    path = BUILD / _ISSUE_SHARD_LIST_NAME
+    path.write_text("".join(f"{t}\n" for t in targets))
+    return path
+
+
 @dataclass
 class _BuildCtx:
     nproc: int
@@ -13324,6 +13382,16 @@ def _finish_overlap_issues(ctx: _BuildCtx) -> int:
         changed = [t for t in issue_ninja if t not in set(load_fast_targets())]
         extra = f", +{len(changed)} git-changed" if changed else ""
         issue_label = f"fast ({len(issue_ninja)} targets{extra})"
+
+    shard = _issue_shard_spec()
+    if shard is not None and issue_mode not in ("none", "skip", "off", "0"):
+        base = issue_ninja if issue_ninja is not None else _ninja_phony_inputs("all_test_issue_targets")
+        if issue_ninja is None and not base:
+            fail("issue shard: cannot list all_test_issue_targets from build.ninja")
+            return 1
+        issue_ninja = _shard_issue_targets(base, *shard)
+        _write_issue_shard_list(issue_ninja)
+        issue_label = f"{issue_label} → shard {shard[0]}/{shard[1]} ({len(issue_ninja)} targets)"
 
     building_issues = issue_ninja is None or bool(issue_ninja)
     # Issue-target fan-out. The historical cap of 4 barely used wide boxes.
@@ -24501,7 +24569,7 @@ def cmd_chaos_release_blocker_2902():
         if not cmake_cache.exists():
             ok(
                 "chaos release blocker runtime skipped (no CMakeCache; static coverage only) "
-                "— run after ./build.py build or via build-test CI"
+                "— run after ./build.py build or via issue-farm CI"
             )
             return 0
         info("building test_chaos_mutate_steal_gc_mailbox…")
@@ -24824,8 +24892,8 @@ def cmd_chaos_pr_hard_fail_gate():
 
     CI note: the GitHub Actions `gate` job is static-only (no cmake tree).
     When the binary is absent and build/ is unconfigured, run static
-    coverage only and skip the runtime profile — `build-test` runs the
-    full hard-fail gate after `./build.py ci` produces the binary.
+    coverage only and skip the runtime profile — `issue-farm` shard 1
+    runs the full hard-fail gate after `./build.py ci-issues` (#4819).
     Local pre-push / configured trees still run the full runtime path.
     """
     print(f"{B}=== chaos PR hard-fail gate (#2554) ==={N}")
@@ -24850,7 +24918,7 @@ def cmd_chaos_pr_hard_fail_gate():
             # Static-only gate (CI gate job / fresh clone without build/).
             ok(
                 "chaos PR hard-fail runtime skipped (no CMakeCache; static coverage only) "
-                "— run after ./build.py build or via build-test CI"
+                "— run after ./build.py build or via issue-farm CI"
             )
             return 0
         info("building test_chaos_mutate_steal_gc_mailbox…")
@@ -26056,6 +26124,42 @@ def _report_ci_slice_failures(
     return 1
 
 
+def cmd_ci_issues():
+    """CI issue-farm shard (#4819): aura + this shard's issue binaries, then run them.
+
+    AURA_ISSUE_SHARD=i/N picks a deterministic slice of all_test_issue_targets
+    (fast tier: of the fast target list). Builds aura (some issue tests spawn
+    it) and the slice (pulls in aura_test_objects), then runs only the
+    slice's binaries. Without AURA_ISSUE_SHARD this is the whole farm.
+    """
+    mode = os.environ.get("AURA_ISSUE_BUILD", "all").strip().lower()
+    if mode in ("none", "skip", "off", "0"):
+        info("issue tests: skipped (AURA_ISSUE_BUILD=none)")
+        return 0
+    os.environ["AURA_ISSUE_BUILD"] = mode or "all"
+    os.environ["AURA_BUILD_TARGETS"] = "aura"
+    shard_file = BUILD / _ISSUE_SHARD_LIST_NAME
+    shard_file.unlink(missing_ok=True)
+    rc, ctx = _begin_build()
+    if ctx is None:
+        return rc
+    link_rc = _finish_overlap_issues(ctx)
+    if link_rc != 0:
+        fail(f"issue shard build failed (rc={link_rc})")
+        return link_rc
+    if _issue_shard_spec() is not None:
+        if not shard_file.is_file():
+            fail("issue shard: target list was not written")
+            return 1
+        if not shard_file.read_text().split():
+            ok("issue shard: no targets in this slice")
+            return 0
+        os.environ["AURA_ISSUE_SHARD_LIST"] = str(shard_file)
+    rc = cmd_test(["issues"])
+    _phase("ci-issues total", ctx.t_all)
+    return rc
+
+
 def cmd_ci():
     """CI build + test (parallel suites when AURA_TEST_JOBS>1).
 
@@ -26075,7 +26179,10 @@ def cmd_ci():
     saved_jobs = os.environ.get("AURA_TEST_JOBS")
     # Cap suite fan-out while ninja is live so 4-vCPU CI does not stack
     # 4 aura workers on top of issue_jobs. Local AURA_TEST_JOBS=1 stays 1.
-    if _test_jobs() > 2:
+    # No issue ninja (AURA_ISSUE_BUILD=none, e.g. CI build-test now that
+    # the farm runs in issue-farm shards, #4819) → nothing to share with.
+    issue_off = os.environ.get("AURA_ISSUE_BUILD", "all").strip().lower() in ("none", "skip", "off", "0")
+    if _test_jobs() > 2 and not issue_off:
         os.environ["AURA_TEST_JOBS"] = "2"
         info("ci overlap: AURA_TEST_JOBS=2 while remaining ninja runs")
 
@@ -26879,6 +26986,7 @@ def main():
         "check": lambda: cmd_gate() or cmd_ci(),
         "gate": cmd_gate,
         "ci": cmd_ci,
+        "ci-issues": cmd_ci_issues,
         "docs": cmd_docs,
         "fixtures": cmd_fixtures,
         "lint": cmd_lint,

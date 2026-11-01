@@ -111,8 +111,26 @@ _ISSUE_DISCOVERY_SKIP = frozenset(
 )
 
 
+def _shard_only() -> set[str] | None:
+    """Issue #4819: CI issue-farm shard restricts the run to its slice."""
+    path = os.environ.get("AURA_ISSUE_SHARD_LIST", "").strip()
+    if not path:
+        return None
+    try:
+        return set(Path(path).read_text().split())
+    except OSError:
+        return set()
+
+
 def discover_test_issue_binaries() -> list[str]:
     """Find issue bundle + standalone test binaries in build/."""
+    only = _shard_only()
+    if only is not None:
+        return [b for b in _discover_test_issue_binaries_all() if b in only]
+    return _discover_test_issue_binaries_all()
+
+
+def _discover_test_issue_binaries_all() -> list[str]:
     bundled = _bundled_standalone_members()
     bins = []
     if not BUILD.is_dir():
@@ -149,6 +167,12 @@ def discover_test_issue_binaries() -> list[str]:
 
 def discover_test_issue_targets() -> list[str]:
     """Discover test_issue_* ninja targets via CMake build.ninja."""
+    only = _shard_only()
+    targets = _discover_test_issue_targets_all()
+    return targets if only is None else [t for t in targets if t in only]
+
+
+def _discover_test_issue_targets_all() -> list[str]:
     if not (BUILD / "build.ninja").is_file():
         return []
     try:

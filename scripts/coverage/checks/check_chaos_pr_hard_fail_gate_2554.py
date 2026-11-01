@@ -63,7 +63,7 @@ def main() -> int:
     if "cmd_chaos_pr_hard_fail_gate()" not in build:
         fails.append("AC4: cmd_gate does not call cmd_chaos_pr_hard_fail_gate()")
     # CI static gate has no cmake tree — skip runtime when CMakeCache missing;
-    # full runtime is in .github/workflows/ci.yml build-test after ./build.py ci.
+    # full runtime is in .github/workflows/ci.yml issue-farm shard 1 (#4819).
     must("CMakeCache", "AC4", build)
     must("static coverage only", "AC4", build)
     ci = _read(".github/workflows/ci.yml")

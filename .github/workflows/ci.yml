@@ -39,6 +39,8 @@
 #   - (2026-09) PR fast includes densify_pin + orch_agent batches
 #   - (2026-09) heavy issue bins live-stream stdout (hangs visible)
 #   - (2026-09) deployment-health reuses build-test aura artifact
+#   - (2026-11, #4819) issue farm → issue-farm matrix (4 shards ‖
+#     build-test); build-test was ~85m of issue ninja on one runner
 #
 # Branch protection: require both `gate` and `build-test` (not only one).
 #
@@ -238,8 +240,10 @@ jobs:
     if: >-
       github.event_name == 'push' ||
       needs.changes.outputs.code == 'true'
-    # Healthy wall is ~15–40m. Default 360m hid hung issue binaries.
-    timeout-minutes: 120
+    # #4819: the issue farm moved to the issue-farm shards below; this job
+    # is aura + test_ir + test_concurrent + cheap/medium suites (~35m).
+    # Default 360m hid hung binaries; 75m is headroom, not the budget.
+    timeout-minutes: 75
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/cybrid-systems/dev:v1.1.1
@@ -286,10 +290,9 @@ jobs:
         AURA_ISSUES_TIER: ${{ github.event_name == 'pull_request' && 'fast' || 'full' }}
         AURA_GIT_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
         AURA_RUNTIME_DIR: ${{ github.workspace }}
-        # main push: always full issue link matrix.
-        # PR: link issue/domain-batch binaries only when src/tests/cmake/… changed;
-        # pure scripts/lib/docs tooling PRs still build aura + core suites.
-        AURA_ISSUE_BUILD: ${{ github.event_name == 'push' && 'all' || (needs.changes.outputs.issue_matrix == 'true' && 'all' || 'none') }}
+        # #4819: issue/domain-batch binaries are built and run by the
+        # issue-farm matrix (one 4-vCPU runner spent ~85m compiling them).
+        AURA_ISSUE_BUILD: none
         # RelWithDebInfo -g → -g1: smaller .o / mold RSS. asan/ubsan keep full -g.
         AURA_DEBUG_LEVEL: "1"
       run: python3 build.py ci
@@ -311,17 +314,6 @@ jobs:
         if-no-files-found: error
         retention-days: 1
 
-    # Issue #2554: PR chaos hard-fail runtime (steal Δ==0, residual==0).
-    # Binary requires cmake tree so the short profile runs after ./build.py ci.
-    # Skip when issue matrix is off on PR (no chaos target in default build).
-    - name: Chaos PR hard-fail gate (#2554)
-      if: >-
-        github.event_name == 'push' ||
-        needs.changes.outputs.issue_matrix == 'true'
-      env:
-        AURA_RUNTIME_DIR: ${{ github.workspace }}
-      run: python3 build.py chaos-pr-hard-fail
-
     # suite-s0 dropped: ./build.py ci already runs full tests/suite/*.aura
     # (which is a superset of SUITE_S0_FILES). Keep a cheap s0 metrics probe.
     # Soft harness env (AURA_SANDBOX=off) — production tree-walker Forbidden
@@ -341,21 +333,86 @@ jobs:
         AURA_CI_STRICT_BENCH: "1"
       run: python3 build.py bench --strict --runs 3
 
+  # Issue #4819: the issue/domain-batch matrix (all_test_issue_targets)
+  # split into AURA_ISSUE_SHARD=i/4 slices, each on its own runner, in
+  # parallel with build-test. Each shard compiles aura + aura_test_objects
+  # + its slice (LPT-balanced by TU count) and runs only that slice.
+  issue-farm:
+    name: issue-farm (${{ matrix.shard }}/4)
+    needs: [changes]
+    # main push: always. PR: only when src/tests/cmake/… changed.
+    if: >-
+      github.event_name == 'push' ||
+      needs.changes.outputs.issue_matrix == 'true'
+    # A shard is ~40m (aura + aura_test_objects + ~1/4 of the farm).
+    timeout-minutes: 90
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/cybrid-systems/dev:v1.1.1
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
+
+    - uses: actions/cache@v6
+      with:
+        path: ~/.cache/pip
+        key: pip-${{ runner.os }}-dev-v1.1.1-${{ hashFiles('requirements-dev.txt') }}
+
+    - name: Install Python CI deps
+      run: pip install --break-system-packages -r requirements-dev.txt
+
+    - name: Ensure mold / lld
+      run: |
+        set -e
+        need_apt=0
+        command -v mold >/dev/null 2>&1 || need_apt=1
+        command -v ld.lld >/dev/null 2>&1 || need_apt=1
+        if [ "$need_apt" = 1 ]; then
+          apt-get update -qq
+          command -v mold >/dev/null 2>&1 || apt-get install -y -qq mold || echo "::warning::mold not installed"
+          command -v ld.lld >/dev/null 2>&1 || apt-get install -y -qq lld || echo "::warning::lld not installed"
+        fi
+
+    - name: Build & run issue shard
+      env:
+        AURA_ISSUES_TIER: ${{ github.event_name == 'pull_request' && 'fast' || 'full' }}
+        AURA_GIT_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
+        AURA_RUNTIME_DIR: ${{ github.workspace }}
+        AURA_ISSUE_BUILD: all
+        AURA_ISSUE_SHARD: ${{ matrix.shard }}/4
+        AURA_DEBUG_LEVEL: "1"
+      run: python3 build.py ci-issues
+
+    # Issue #2554: PR chaos hard-fail runtime (steal Δ==0, residual==0).
+    # Needs aura_test_objects, which only the issue-farm shards compile.
+    - name: Chaos PR hard-fail gate (#2554)
+      if: matrix.shard == 1
+      env:
+        AURA_RUNTIME_DIR: ${{ github.workspace }}
+        AURA_DEBUG_LEVEL: "1"
+      run: python3 build.py chaos-pr-hard-fail
+
   # Single green check for branch protection when gate ‖ build-test.
   # Succeeds only if gate is green and build-test is green or skipped
   # (docs-only PR: build-test skipped, gate still required).
   ci-ok:
     name: ci-ok
     runs-on: ubuntu-latest
-    needs: [gate, build-test]
+    needs: [gate, build-test, issue-farm]
     if: always()
     steps:
-    - name: Aggregate gate + build-test
+    - name: Aggregate gate + build-test + issue-farm
       run: |
         set -e
         gate="${{ needs.gate.result }}"
         bt="${{ needs.build-test.result }}"
-        echo "gate=$gate build-test=$bt"
+        farm="${{ needs.issue-farm.result }}"
+        echo "gate=$gate build-test=$bt issue-farm=$farm"
         if [ "$gate" != "success" ]; then
           echo "❌ gate did not succeed ($gate)"
           exit 1
@@ -364,7 +421,11 @@ jobs:
           echo "❌ build-test did not succeed ($bt)"
           exit 1
         fi
-        echo "✓ ci-ok (gate=$gate, build-test=$bt)"
+        if [ "$farm" != "success" ] && [ "$farm" != "skipped" ]; then
+          echo "❌ issue-farm did not succeed ($farm)"
+          exit 1
+        fi
+        echo "✓ ci-ok (gate=$gate, build-test=$bt, issue-farm=$farm)"
 
   # ASAN track — main only (saves ~8–10m on PRs; PR gate is build-test).
   asan-build:
