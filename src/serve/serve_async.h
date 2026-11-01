@@ -33,7 +33,9 @@ void run_serve_async(int num_workers = 0);
 // enabling fiber parallelism for benchmarks.
 // Returns 0 when every form evaluated, 1 when any form failed (#4844).
 // num_workers: number of worker threads (0 = auto-detect).
-int run_serve_async_bench(const std::string& file_path, int num_workers = 0);
+void run_serve_async_bench(const std::string& file_path, int num_workers = 0);
+// Issue #4844: true when the last bench run hit an eval / open failure.
+bool serve_async_bench_failed() noexcept;
 
 // Issue #677: Prometheus text from active scheduler (empty if none).
 std::string prometheus_scheduler_metrics();
