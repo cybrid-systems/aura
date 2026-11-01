@@ -1070,12 +1070,15 @@ int run_test_agent_failure_policy() {
             pol.on_join_fail = AgentFailureAction::RestartN;
             pol.max_restarts = 2;
             (void)scope.join_all(jp, pol);
+            // Issue #4858: the join now re-enters while a RestartN re-spawn
+            // replaced a handle, so max_restarts=2 produces two attempts in
+            // ONE join_all call (previously the loop stopped after one).
             CHECK(g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed) ==
-                      rst0 + 1,
+                      rst0 + 2,
                   "3250 AC2: scope.spawn RestartN re-spawn");
             const auto mid_id = scope.handles()[0].fiber ? scope.handles()[0].fiber->id() : 0;
             CHECK(mid_id != first_id, "3250 AC2: replacement fiber id");
-            CHECK(scope.last_restart_ok() == 1, "3250 AC2: last_restart_ok");
+            CHECK(scope.last_restart_ok() == 2, "3250 AC2: last_restart_ok");
             CHECK(scope.last_restart_skipped_no_spec() == 0, "3250 AC2: no skip");
             keep.store(false, std::memory_order_relaxed);
             ac3208_stop(scope, keep);
