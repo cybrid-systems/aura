@@ -6,6 +6,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 #include <cerrno>
@@ -29,9 +30,38 @@ namespace {
                "Connection: close\r\n\r\n" + body;
     }
 
+    // Issue #4828: bound every client socket operation so a slow or
+    // silent peer cannot pin the health-server thread (and therefore
+    // stop_health_server's join) forever.
+    constexpr int kClientIoTimeoutMs = 3000;
+
+    bool send_all(int fd, const char* data, std::size_t len) {
+        std::size_t off = 0;
+        while (off < len) {
+            const auto n = ::send(fd, data + off, len - off, MSG_NOSIGNAL);
+            if (n < 0) {
+                if (errno == EINTR)
+                    continue;
+                return false;
+            }
+            if (n == 0)
+                return false;
+            off += static_cast<std::size_t>(n);
+        }
+        return true;
+    }
+
     void handle_client(int fd) {
+        timeval io_tv{};
+        io_tv.tv_sec = kClientIoTimeoutMs / 1000;
+        io_tv.tv_usec = (kClientIoTimeoutMs % 1000) * 1000;
+        ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &io_tv, sizeof(io_tv));
+        ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &io_tv, sizeof(io_tv));
         char buf[2048];
-        const auto n = ::recv(fd, buf, sizeof(buf) - 1, 0);
+        ssize_t n = -1;
+        do {
+            n = ::recv(fd, buf, sizeof(buf) - 1, 0);
+        } while (n < 0 && errno == EINTR);
         if (n <= 0) {
             ::close(fd);
             return;
@@ -66,7 +96,7 @@ namespace {
         } else {
             resp = http_response(404, "Not Found", "not found\n", "text/plain");
         }
-        (void)::send(fd, resp.data(), resp.size(), 0);
+        (void)send_all(fd, resp.data(), resp.size());
         ::close(fd);
     }
 
