@@ -1988,12 +1988,11 @@ bool test_metrics_reset() {
     CHECK(done.load() == 1, "fiber completed before reset test");
     CHECK(sched.metrics().fibers_spawned.load() > 0, "fibers_spawned > 0 before reset");
 
-    // Reset metrics via resize (reinitializes all counters to zero)
-    auto n = sched.metrics().num_workers();
-    sched.metrics().resize_workers(n);
+    // Issue #4827: reset in place. resize_workers must not destroy
+    // WorkerMetrics objects that live worker threads still point at.
+    sched.metrics().reset_workers();
 
-    // resize_workers clears per-worker metrics but global counters
-    // are not automatically reset. Verify worker metrics are cleared.
+    // reset_workers clears the per-worker counters; verify they are zero.
     for (size_t i = 0; i < sched.metrics().num_workers(); ++i) {
         CHECK(sched.metrics().worker(i).fibers_executed.load() == 0,
               "worker " + std::to_string(i) + " fibers_executed = 0 after reset");
