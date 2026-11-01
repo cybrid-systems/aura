@@ -102,7 +102,7 @@ endfunction()
 
 function(aura_test_compile_options_reflect_minimal TARGET)
     target_compile_options(${TARGET} PRIVATE
-        -freflection -Wall
+        ${AURA_REFLECTION_FLAG} -Wall
         -Wno-sign-compare -Wno-unused-local-typedefs -Wno-switch
     )
 endfunction()

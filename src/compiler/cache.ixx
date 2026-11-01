@@ -15,7 +15,7 @@ using namespace aura::ast;
 
 namespace aura::compiler::cache {
 
-export struct MappedCache; // forward decl for friend
+export class MappedCache; // forward decl for friend
 // setup_pointers defined in cache_impl.cpp (helper, internal linkage)
 
 // ── File header (64 bytes) ────────────────────────────────────

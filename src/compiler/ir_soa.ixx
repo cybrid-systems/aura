@@ -1,3 +1,5 @@
+module;
+
 // ──────────────────────────────────────────────────────────────
 // IR SoA scaffold — Issue #167 Phase 1
 // ──────────────────────────────────────────────────────────────
@@ -50,8 +52,6 @@
 // Issue #2045: after dual-emit / re-lower, CompilerService rebuilds
 // IRCacheEntry::source_to_ir_map from AoS irs and cross-checks SoA
 // source_node_ids_ so impact_scope cannot under-invalidate.
-
-module;
 
 #include <algorithm>
 #include <array>
@@ -639,6 +639,31 @@ static_assert(sizeof(IrSoaArenaColumn<std::uint32_t>) == sizeof(std::vector<std:
 static_assert(sizeof(IrSoaArenaColumn<std::uint8_t>) == sizeof(std::vector<std::uint8_t>),
               "Issue #3833: IrSoaArenaColumn must match std::vector object size");
 
+// ── BasicBlockSoA ─────────────────────────────────────────────
+//
+// A block is a range of instruction indices in the function's
+// SoA columns. The range is `[start_idx, end_idx)`. Successors
+// are block indices (in the same function's blocks_ vector).
+//
+// We don't store instruction data here — only the range. The
+// actual opcodes/operands are in the function's SoA columns
+// (shared with the rest of the function's instructions).
+//
+// This range-based design enables:
+//   - Easy block splits (just add a new block with a different
+//     range; the function's SoA columns don't need to be
+//     restructured).
+//   - Easy block merges (delete one block; the range collapses
+//     into the predecessor).
+//   - Cache-friendly iteration: walking a block touches
+//     contiguous SoA column indices.
+export struct BasicBlockSoA {
+    std::uint32_t block_id = 0;
+    std::uint32_t start_idx = 0;           // index into IRFunctionSoA columns
+    std::uint32_t end_idx = 0;             // exclusive
+    std::vector<std::uint32_t> successors; // block indices in same function
+};
+
 // ── IRFunctionSoA ─────────────────────────────────────────────
 //
 // One IRFunction's worth of instructions, stored as separate
@@ -927,30 +952,6 @@ export struct IRFunctionSoA {
     }
 };
 
-// ── BasicBlockSoA ─────────────────────────────────────────────
-//
-// A block is a range of instruction indices in the function's
-// SoA columns. The range is `[start_idx, end_idx)`. Successors
-// are block indices (in the same function's blocks_ vector).
-//
-// We don't store instruction data here — only the range. The
-// actual opcodes/operands are in the function's SoA columns
-// (shared with the rest of the function's instructions).
-//
-// This range-based design enables:
-//   - Easy block splits (just add a new block with a different
-//     range; the function's SoA columns don't need to be
-//     restructured).
-//   - Easy block merges (delete one block; the range collapses
-//     into the predecessor).
-//   - Cache-friendly iteration: walking a block touches
-//     contiguous SoA column indices.
-export struct BasicBlockSoA {
-    std::uint32_t block_id = 0;
-    std::uint32_t start_idx = 0;           // index into IRFunctionSoA columns
-    std::uint32_t end_idx = 0;             // exclusive
-    std::vector<std::uint32_t> successors; // block indices in same function
-};
 
 // Issue #3314: IRFunctionSoA dirty/column tail is append-only at struct
 // END (#2906 / #3292 lineage). Mid-struct column insertion shifts stale
