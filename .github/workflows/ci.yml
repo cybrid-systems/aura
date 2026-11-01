@@ -252,7 +252,10 @@ jobs:
         ninja -C build_clang $targets
 
     - name: clang-tidy module gate (#4837)
-      run: python3 scripts/clang_tidy_gate.py --module --db build_clang/compile_commands.json --jobs 4
+      # service.ixx is a very large module TU; on CI it needs more than the
+      # gate's 300 s default (GCC build + clang-tidy), so give the module
+      # run a longer per-TU bound instead of recording a parse-error.
+      run: python3 scripts/clang_tidy_gate.py --module --db build_clang/compile_commands.json --jobs 4 --timeout 900
 
     # Aura philosophy guard: no per-issue plan docs in docs/design/
     - name: "Aura philosophy guard: no docs/design/"
