@@ -5296,9 +5296,41 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // non-Ok). Per-agent Reclaimed vs Done is authoritative on the
     // AgentHandle (must_wait_reclaimed / reservation-held /
     // reclaimed_deferred_cleanup) and on subsequent orch:scope-resolve.
+    // Issue #4851 / #4858: resolve the on-join-fail keyword once. An unknown
+    // name is a hard error (never a silent report-only), and "restart"
+    // without :max-restarts still gets one attempt of fuel.
+    auto resolve_join_fail_policy =
+        [](std::string_view name, std::optional<std::uint32_t> max_restarts,
+           std::optional<aura::orch::AgentFailurePolicy>& out) -> std::optional<std::string> {
+        if (name.empty()) {
+            if (!max_restarts.has_value())
+                return std::nullopt;
+            return std::string("orch:scope-join-all: :max-restarts requires :on-join-fail "
+                               "\"restart-n\"");
+        }
+        aura::orch::AgentFailurePolicy p;
+        if (name == "cancel") {
+            p.on_join_fail = aura::orch::AgentFailureAction::Cancel;
+        } else if (name == "restart" || name == "restart-n" || name == "restart_n") {
+            p.on_join_fail = aura::orch::AgentFailureAction::RestartN;
+            p.max_restarts = 1;
+        } else if (name == "throttle") {
+            p.on_join_fail = aura::orch::AgentFailureAction::Throttle;
+        } else if (name == "report-only" || name == "report_only") {
+            p.on_join_fail = aura::orch::AgentFailureAction::ReportOnly;
+        } else {
+            return std::string("orch:scope-join-all: unknown :on-join-fail \"") +
+                   std::string(name) + "\" (expected cancel / restart-n / throttle / report-only)";
+        }
+        if (max_restarts.has_value())
+            p.max_restarts = *max_restarts;
+        out = p;
+        return std::nullopt;
+    };
     add("orch:scope-join-all",
         [&ev, build_orch_hash, orch_keyword_key, parse_scope_addr_kw, resolve_scope_addr,
-         make_scope_addr_fail, add_deny_class](std::span<const EvalValue> a) -> EvalValue {
+         make_scope_addr_fail, add_deny_class,
+         resolve_join_fail_policy](std::span<const EvalValue> a) -> EvalValue {
             (void)orch_scheduler();
             auto* root = aura::orch::find_agent_scope(static_cast<void*>(&ev));
             if (!root) {
@@ -5310,10 +5342,6 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             aura::orch::JoinPolicy policy{};
             policy.drain_ms = aura::orch::kDefaultJoinDrainMs;
             std::optional<aura::orch::AgentFailurePolicy> fail_pol;
-            // Issue #4851 / #4858: parse on-join-fail into a name first so
-            // :max-restarts can appear in any keyword order, an unknown
-            // policy is a hard error (never a silent report-only), and
-            // "restart" without a cap still has one attempt of fuel.
             std::string join_fail_name;
             std::optional<std::uint32_t> join_fail_max_restarts;
             std::string addr_path;
@@ -5353,41 +5381,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     debug_report = types::as_bool(val);
                 }
             }
-            // Issue #4851: an unknown failure-policy name must not degrade
-            // silently to report-only (a typo used to disable fail-fast in
-            // production). Accept the documented spellings only.
-            if (!join_fail_name.empty()) {
-                aura::orch::AgentFailurePolicy p;
-                if (join_fail_name == "cancel") {
-                    p.on_join_fail = aura::orch::AgentFailureAction::Cancel;
-                } else if (join_fail_name == "restart" || join_fail_name == "restart-n" ||
-                           join_fail_name == "restart_n") {
-                    p.on_join_fail = aura::orch::AgentFailureAction::RestartN;
-                    // Issue #4858: "restart" without :max-restarts used to be
-                    // a silent no-op (default 0 fuel). Give it one attempt so
-                    // the documented policy does something observable.
-                    p.max_restarts = 1;
-                } else if (join_fail_name == "throttle") {
-                    p.on_join_fail = aura::orch::AgentFailureAction::Throttle;
-                } else if (join_fail_name == "report-only" || join_fail_name == "report_only") {
-                    p.on_join_fail = aura::orch::AgentFailureAction::ReportOnly;
-                } else {
-                    const std::string msg = "orch:scope-join-all: unknown :on-join-fail \"" +
-                                            join_fail_name +
-                                            "\" (expected cancel / restart-n / throttle / "
-                                            "report-only)";
-                    return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
-                                                ev.primitive_error_counter_ptr());
-                }
-                if (join_fail_max_restarts.has_value())
-                    p.max_restarts = *join_fail_max_restarts;
-                fail_pol = p;
-            } else if (join_fail_max_restarts.has_value()) {
-                const std::string msg =
-                    "orch:scope-join-all: :max-restarts requires :on-join-fail \"restart-n\"";
-                return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
+            if (auto msg =
+                    resolve_join_fail_policy(join_fail_name, join_fail_max_restarts, fail_pol))
+                return make_primitive_error(ev.string_heap_, ev.error_values_, *msg,
                                             ev.primitive_error_counter_ptr());
-            }
             // Issue #4724: :timeout-ms bounds the WHOLE call. Fold the
             // cancel/drain window into the caller deadline instead of
             // stacking the 2 s default after it (3000 ms -> 5002 ms). An
