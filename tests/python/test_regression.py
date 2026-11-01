@@ -4744,10 +4744,21 @@ def test_serve_async_two_fiber_yield_reclaim_4706():
                 break
         proc.stdin.write(json.dumps({"cmd": "exec", "code": let_form}) + "\n")
         proc.stdin.flush()
+        # Issue #4706 (4854 follow-up): wait for the join response before
+        # closing stdin. Closing right after the write races the session
+        # read on a loaded runner — the join request could be dropped and
+        # communicate() then hit its timeout with no output.
+        second = ""
+        deadline = time.monotonic() + 90.0
+        while time.monotonic() < deadline:
+            ready, _, _ = select.select([proc.stdout], [], [], 1.0)
+            if ready:
+                second = proc.stdout.readline()
+                break
         proc.stdin.close()
         proc.stdin = None  # communicate() must not flush a closed pipe
         rest, err = proc.communicate(timeout=120)
-        out = first + (rest or "")
+        out = first + (second or "") + (rest or "")
         rc = proc.returncode
     finally:
         if proc.poll() is None:
