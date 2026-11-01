@@ -64,6 +64,13 @@ function(aura_test_compile_options TARGET)
         # incrementally. Attribute remains for IDEs / new code.
         -Wno-deprecated-declarations
     )
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        # Issue #4837: the Clang build only exists to produce module BMIs +
+        # a clang-tidy compile db. Do not fail it on GCC-only warning
+        # classes (-Wreturn-type-c-linkage, -Wmismatched-tags, ...); this
+        # call appends AFTER -Werror, so it wins over the list above.
+        target_compile_options(${TARGET} PRIVATE -Wno-error)
+    endif()
 endfunction()
 
 # Issue #477: stricter compile options for production-quality test files.

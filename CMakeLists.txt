@@ -27,6 +27,9 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_compile_options(-Wno-unknown-warning-option)
     # Clang-only warning classes that this codebase trips but GCC does not.
     add_compile_options(-Wno-mismatched-tags -Wno-unused-private-field)
+    # extern "C" accessors that return C++ types are intentional here (GCC
+    # does not warn); Clang's -Wreturn-type-c-linkage is fatal under -Werror.
+    add_compile_options(-Wno-return-type-c-linkage)
     # contract_assert is used across module interfaces, not only in
     # contract_handler/stub: force-include the shim for every TU.
     add_compile_options(-include ${CMAKE_SOURCE_DIR}/cmake/clang_contract_shim.h)

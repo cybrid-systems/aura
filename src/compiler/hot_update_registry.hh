@@ -65,6 +65,13 @@
 
 #include "compiler/aura_jit_bridge.h" // Issue #2093: AotReloadFail enum
 
+#if defined(__clang__)
+// Issue #4837: the C-linkage hooks below intentionally return C++ types
+// (GCC does not warn). Clang's -Wreturn-type-c-linkage is fatal under
+// -Werror and the warning group is re-enabled after the global -Wno flag.
+#pragma clang diagnostic ignored "-Wreturn-type-c-linkage"
+#endif
+
 extern "C" int aura_production_defaults_active_probe() noexcept;
 
 namespace aura::compiler {
