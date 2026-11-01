@@ -31,8 +31,9 @@ void run_serve_async(int num_workers = 0);
 // Entry point for --serve-async-bench mode.
 // Loads an Aura source file and executes it in serve-async runtime,
 // enabling fiber parallelism for benchmarks.
+// Returns 0 when every form evaluated, 1 when any form failed (#4844).
 // num_workers: number of worker threads (0 = auto-detect).
-void run_serve_async_bench(const std::string& file_path, int num_workers = 0);
+int run_serve_async_bench(const std::string& file_path, int num_workers = 0);
 
 // Issue #677: Prometheus text from active scheduler (empty if none).
 std::string prometheus_scheduler_metrics();

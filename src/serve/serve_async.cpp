@@ -1,6 +1,7 @@
 // serve/serve_async.cpp — Async serve mode implementation
 #include "serve_async.h"
 #include "compiler/messaging_bridge.h"
+#include "compiler/pipeline_policy.hh"
 #include "core/gc_hooks.h"
 #include "scheduler.h"
 #include "gc_coordinator.h"
@@ -1391,7 +1392,7 @@ void run_serve_async(int num_workers) {
 
 // ── run_serve_async_bench ────────────────────────────
 
-void run_serve_async_bench(const std::string& file_path, int num_workers) {
+int run_serve_async_bench(const std::string& file_path, int num_workers) {
     // Issue #4231: same holder-survival contract as run_serve_async — a
     // closed stdout reader must surface as EPIPE, never SIGPIPE process
     // death of the serve-async holder.
@@ -1514,23 +1515,33 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
     std::ifstream f(file_path);
     if (!f) {
         std::println(std::cerr, "error: cannot open '{}'", file_path);
-        return;
+        return 1;
     }
     std::string bench_code((std::istreambuf_iterator<char>(f)), {});
+
+    // Issue #4844: the bench entry point evaluates each form through
+    // CompilerService (the --serve pipeline), so the production default
+    // (Forbidden) vetoed registered-primitive roots such as
+    // (fiber:spawn (lambda () ...)) that --load runs fine. Bench scripts are
+    // denseness drivers, not production packs: take the same permissive
+    // walker face --load uses, and surface failures through the exit code
+    // instead of silently returning 0.
+    aura::compiler::set_tree_walker_fallback_policy(
+        aura::compiler::TreeWalkerFallbackPolicy::Allow);
+    std::atomic<bool> bench_failed{false};
 
     // 5. Spawn a single fiber that runs the bench code
     // The bench code uses fiber:spawn for parallelism; spawned fibers
     // continue running via the scheduler even after this fiber completes.
     // Issue #4048: pin bench fiber to worker 0 so denseness inherits affinity.
     sched.spawn_with_affinity(
-        [&sess, bench_code = std::move(bench_code), &sched]() {
+        [&sess, bench_code = std::move(bench_code), &sched, &bench_failed]() {
             // Set wake eventfd for recv/send
             sess->service.set_wake_eventfd(aura::serve::g_current_fiber->eventfd());
 
             // Evaluate expressions one at a time (same as stdin pipe mode)
             // Split by balanced parentheses to evaluate each expression separately.
             std::string remaining = bench_code;
-            bool any_error = false;
             while (!remaining.empty()) {
                 // Skip whitespace and comments
                 std::size_t start = 0;
@@ -1594,19 +1605,19 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
                         std::print(std::cerr, "eval error on expr (len={}): {}\n  msg: {}\n",
                                    expr.size(), expr.substr(0, 120), result.error().format());
                         std::fflush(stderr);
-                        any_error = true;
+                        bench_failed.store(true, std::memory_order_release);
                         break;
                     }
                 }
             }
         done:
             std::fflush(stdout);
-            (void)any_error;
         },
         0);
 
     // 6. Run the scheduler
     sched.run();
+    return bench_failed.load(std::memory_order_acquire) ? 1 : 0;
 }
 
 } // namespace aura::serve

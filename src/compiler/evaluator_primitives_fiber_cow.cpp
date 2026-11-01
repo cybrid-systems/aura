@@ -423,8 +423,25 @@ void register_fiber_cow_primitives(std::function<void(std::string, PrimFn)> add,
         const std::string name = overlay_arg_name(ev.string_heap_, a[0]);
         if (name.empty())
             return make_bool(false);
-        reg.write(owner, fiber_cow_overlay_key(), name, a[1], aura::core::current_mutation_epoch());
-        overlay_sync_tls(owner); // #4715 AC2: write() auto-begins
+        // Issue #4845: set! is a private rebind of an EXISTING binding. With
+        // no open overlay it used to auto-begin one (hiding the mistake) and
+        // with an unknown name it silently wrote a new private binding. Both
+        // are misuse: fail loudly instead of bypassing COW isolation.
+        const std::uint64_t key = fiber_cow_overlay_key();
+        if (!reg.active(owner, key))
+            return make_primitive_error(
+                ev.string_heap_, ev.error_values_,
+                "fiber:overlay-set!: no open overlay (call fiber:overlay-begin first)",
+                ev.primitive_error_counter_ptr());
+        EvalValue probe = make_void();
+        if (!reg.peek(owner, key, name, probe) && !ev.top_env().lookup(name))
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "fiber:overlay-set!: unbound binding "
+                                        " + name + "
+                                        "",
+                                        ev.primitive_error_counter_ptr());
+        reg.write(owner, key, name, a[1], aura::core::current_mutation_epoch());
+        overlay_sync_tls(owner);
         return make_bool(true);
     });
 
@@ -475,6 +492,11 @@ void register_fiber_cow_primitives(std::function<void(std::string, PrimFn)> add,
     add("fiber:overlay-commit", [&ev, &reg, owner, deny](std::span<const EvalValue>) -> EvalValue {
         if (auto denied = deny(ev, "fiber"))
             return *denied;
+        // Issue #4845: commit with no open overlay is not a successful
+        // no-op; report it the same way overlay-rollback reports nothing to
+        // drop (#f) so callers cannot mistake it for a real commit.
+        if (!reg.active(owner, fiber_cow_overlay_key()))
+            return make_bool(false);
         const std::uint64_t epoch = aura::core::current_mutation_epoch();
         // #4715 AC2: the env read path holds the top-env bindings lock while it
         // consults the registry, so publish in the same order here (bindings ->

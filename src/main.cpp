@@ -932,7 +932,7 @@ int main(int argc, char* argv[]) {
     if (argc > 1 && std::string_view(argv[1]) == "--serve-async-bench") {
 #if AURA_HAVE_EPOLL
         std::string file_path = (argc > 2) ? argv[2] : "tests/bench.aura";
-        aura::serve::run_serve_async_bench(file_path, num_workers);
+        return aura::serve::run_serve_async_bench(file_path, num_workers);
 #else
         std::println(std::cerr,
                      "aura: --serve-async-bench not supported on macOS (requires epoll)");
