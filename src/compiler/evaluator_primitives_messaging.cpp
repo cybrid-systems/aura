@@ -2523,8 +2523,19 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         auto ch = std::make_shared<Evaluator::Channel>();
         ch->buffer_size = buf;
         std::lock_guard lk(ev.channels_mtx_);
-        auto id = ev.channels_.size();
-        ev.channels_.push_back(ch);
+        // Issue #4854: recycle a slot released by channel:close instead of
+        // growing channels_ forever. LIFO keeps the hot create path O(1).
+        std::size_t id = 0;
+        if (!ev.channels_free_.empty()) {
+            id = ev.channels_free_.back();
+            ev.channels_free_.pop_back();
+            if (id >= ev.channels_.size())
+                ev.channels_.resize(id + 1);
+            ev.channels_[id] = ch;
+        } else {
+            id = ev.channels_.size();
+            ev.channels_.push_back(ch);
+        }
         return make_int(static_cast<std::int64_t>(id));
     });
 
@@ -2712,8 +2723,12 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         std::shared_ptr<Evaluator::Channel> ch_ptr;
         {
             std::lock_guard lk(ev.channels_mtx_);
-            if (ch_id >= ev.channels_.size() || !ev.channels_[ch_id])
+            if (ch_id >= ev.channels_.size())
                 return make_bool(false);
+            // Issue #4854: a released slot is a closed id — closing it
+            // again stays idempotent (#t), matching the pre-recycle face.
+            if (!ev.channels_[ch_id])
+                return make_bool(true);
             ch_ptr = ev.channels_[ch_id];
         }
         auto& ch = *ch_ptr;
@@ -2726,6 +2741,19 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         // they observe the closed channel instead of parking forever.
         channel_wake_waiters(&ch, /*sender=*/false);
         channel_wake_waiters(&ch, /*sender=*/true);
+        // Issue #4854: settle the slot. Waiters above hold their own
+        // shared_ptr, so dropping the registry reference does not free the
+        // object under them; the queue goes with the last reference.
+        // channel:send/recv on the released id keep today's closed values
+        // (nullptr slot → #f / empty string). The id returns to the
+        // recycle list for the next channel:create.
+        {
+            std::lock_guard lk(ev.channels_mtx_);
+            if (ch_id < ev.channels_.size() && ev.channels_[ch_id] == ch_ptr) {
+                ev.channels_[ch_id].reset();
+                ev.channels_free_.push_back(ch_id);
+            }
+        }
         return make_bool(true);
     });
 

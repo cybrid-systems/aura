@@ -110,6 +110,34 @@ public:
     // Check if there are any fibers in Waiting state (on epoll).
     bool has_waiting_fibers() const;
 
+    // ── Issue #4854: retire a settled Done fiber ───────────────────
+    // owned_fibers_ is the lifetime registry (#3905): a completed fiber
+    // stays owned until ~Scheduler so a Reclaimed-pending AgentHandle can
+    // still answer by name. Once the handle has settled (Done-path
+    // cleanup ran, no must_wait/deferred flags, mailbox detached), nothing
+    // can reach the Fiber* again — it is unreachable from the name table,
+    // the scope handles_, wait_map_ (erased in on_fiber_done), joiner_map_
+    // (erased there too) and every worker registry. The object (plus its
+    // heap bookkeeping) is then pure retention: a long-running orch host
+    // paid sizeof(Fiber) + helpers per spawn-agent / scope-spawn forever.
+    // This drops it (null vector slot + owned_fiber_set_ erase) outside
+    // the OwnedFibers lock so ~Fiber may close a mailbox under Level::Mailbox.
+    // Returns true when the fiber was owned, Done, unattached and retired.
+    // Live / Reclaimed-pending / attached fibers are refused (no early free).
+    [[nodiscard]] bool retire_done_fiber(Fiber* fiber) noexcept;
+
+    // Issue #4854: number of Done fibers retired early (observability).
+    [[nodiscard]] std::uint64_t fibers_retired_total() const noexcept {
+        return fibers_retired_total_.load(std::memory_order_relaxed);
+    }
+
+    // Issue #4854: drain the deferred-retire queue. retire_done_fiber can
+    // run while the worker is still finishing on_fiber_done (the joiner is
+    // woken before release_done_resources runs). Such a fiber is queued
+    // and destroyed here once done_resources_released() is true. Runs from
+    // the IO-loop tick; zero cost when nothing is queued.
+    std::size_t maybe_retire_pending_done_fibers() noexcept;
+
     // Issue #119: proper-blocking fiber:join API. The
     // joiner fiber is registered against the target fiber's
     // id. When the target completes (on_fiber_done), all
@@ -366,6 +394,16 @@ private:
     // vector under owned_fibers_mutex_. Cleared with the swap in
     // ~Scheduler. Does not own the Fiber.
     std::unordered_set<const Fiber*> owned_fiber_set_;
+    // Issue #4854: early-retired Done fibers (owned_fibers_ slots nulled).
+    std::atomic<std::uint64_t> fibers_retired_total_{0};
+    // Issue #4854: Done fibers whose worker has not finished
+    // release_done_resources yet. Reaped by
+    // maybe_retire_pending_done_fibers on the IO tick. Mutated only under
+    // owned_fibers_mutex_. Raw pointers are validated against
+    // owned_fiber_set_ on drain (a duplicate / already-destroyed entry is
+    // skipped).
+    std::vector<Fiber*> pending_retire_fibers_;
+    std::atomic<std::size_t> pending_retire_count_{0};
     // mutable: owned_fibers_end_contains() runs from the const
     // has_waiting_fibers() / const event-dispatch paths (#63723).
     mutable std::mutex owned_fibers_mutex_;
