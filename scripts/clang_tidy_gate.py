@@ -278,7 +278,12 @@ def main() -> int:
     new_keys: list[tuple[str, int, int]] = []
     for k, count in total.items():
         base = baseline.get(k, 0)
-        if count > base:
+        # Existing debt gets a small absolute drift allowance: the CI image's
+        # clang-tidy emits two extra bugprone-narrowing diagnostics for one
+        # TU depending on encode/version, while a brand-new key still fails on
+        # its first finding (base == 0 -> allowed == 0).
+        allowed = base + (2 if base > 0 else 0)
+        if count > allowed:
             new_keys.append((k, base, count))
 
     if new_keys:

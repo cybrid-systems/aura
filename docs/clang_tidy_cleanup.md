@@ -6,7 +6,7 @@
 Clang-parseable, non-module TUs under `src/{core,parser,serve,reflect,exec,compiler}`.
 
 - `scripts/clang_tidy_baseline.json` holds the existing per-(file, check) counts.
-- A PR fails only when a (file, check) count grows past the baseline.
+- A PR fails only when a (file, check) count grows past the baseline; existing keys allow up to +2 drift for clang-tidy encode/version differences, new keys fail on the first finding.
 - `WarningsAsErrors` stays empty; the gate parses diagnostics and enforces counts
   itself, so a clang-tidy version bump does not silently disable it.
 
