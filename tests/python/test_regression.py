@@ -5,6 +5,7 @@ import json
 import os
 import re
 import resource
+import select
 import subprocess
 import sys
 import tempfile
@@ -4709,7 +4710,6 @@ def test_serve_async_two_fiber_yield_reclaim_4706():
     let_form = "(list (fiber:join (fiber:spawn (lambda () (wf 50)))) (fiber:join (fiber:spawn (lambda () (wf 50)))))"
     # Two requests to ONE session, exactly as the issue reports. Closing
     # stdin after the second line ends the session cleanly (rc 0).
-    requests = json.dumps({"cmd": "exec", "code": define}) + "\n" + json.dumps({"cmd": "exec", "code": let_form}) + "\n"
     env = os.environ.copy()
     env["AURA_TIER_JIT"] = "0"
     env["AURA_PIPELINE_STRICT"] = "0"
@@ -4718,17 +4718,42 @@ def test_serve_async_two_fiber_yield_reclaim_4706():
     # Multi-worker so fibers can genuinely be resumed by another worker
     # (the Soft default auto-pins to one); the issue's crash needs the
     # cross-thread resume or a same-thread pop/skip mismatch.
-    r = subprocess.run(
+    # Issue #4706 CI determinism: two requests written back-to-back can race
+    # the session hand-off on a loaded runner (one worker consumes the join
+    # before the define lands, and the run silently yields no output). Wait
+    # for the define response before sending the join; the two fibers inside
+    # the join still run on both workers, so cross-thread resume stays covered.
+    proc = subprocess.Popen(
         [AURA, "--serve-async", "--worker-threads=2"],
-        input=requests,
-        capture_output=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        timeout=120,
         env=env,
     )
-    err = r.stderr or ""
-    out = r.stdout or ""
-    assert r.returncode == 0, f"serve-async died (rc={r.returncode}); stderr tail={err[-600:]!r}"
+    try:
+        assert proc.stdin and proc.stdout
+        proc.stdin.write(json.dumps({"cmd": "exec", "code": define}) + "\n")
+        proc.stdin.flush()
+        deadline = time.monotonic() + 90.0
+        first = ""
+        while time.monotonic() < deadline:
+            ready, _, _ = select.select([proc.stdout], [], [], 1.0)
+            if ready:
+                first = proc.stdout.readline()
+                break
+        proc.stdin.write(json.dumps({"cmd": "exec", "code": let_form}) + "\n")
+        proc.stdin.flush()
+        proc.stdin.close()
+        proc.stdin = None  # communicate() must not flush a closed pipe
+        rest, err = proc.communicate(timeout=120)
+        out = first + (rest or "")
+        rc = proc.returncode
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+    assert rc == 0, f"serve-async died (rc={rc}); stderr tail={err[-600:]!r}"
     assert '"value":"(50 50)"' in out, f"missing (50 50) result; stdout={out[-400:]!r} stderr={err[-400:]!r}"
     for banner in ("si_addr", "maybe_reclaim_tw_unreachable", "SIGSEGV", "Segmentation fault"):
         assert banner not in err, f"reclaim crash banner {banner!r} in stderr: {err[-600:]!r}"
