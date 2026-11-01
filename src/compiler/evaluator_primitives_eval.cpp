@@ -860,7 +860,16 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         }
         if (result)
             return *result;
-        return make_void();
+        // Issue #4833: a datum/string that fails to evaluate (unbound name,
+        // arity, type, ...) is a real failure, not (). Returning make_void()
+        // here made (eval '(no-such-fn 1)) look like a successful empty
+        // evaluation: try/catch never fired and file mode exited 0. Surface
+        // the diagnostic as a catchable error value carrying the formatted
+        // message (location when the diagnostic has one), so (try ... (catch
+        // (e) ...)) sees it and an uncaught eval exits non-zero like the
+        // direct form does.
+        return make_primitive_error(ev.string_heap_, ev.error_values_, result.error().format(),
+                                    ev.primitive_error_counter_ptr());
     });
 
     // (load filename) — Load and evaluate a file of Aura code
