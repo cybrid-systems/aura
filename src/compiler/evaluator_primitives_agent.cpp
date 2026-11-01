@@ -3510,6 +3510,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 return make_void();
             }
         }
+        // Issue #4831: an agent body (orch:agent-recv / agent-reply on its
+        // fiber thread) and the caller thread (orch:agent-ask) both mint
+        // result hashes. An unlocked push_back raced the reallocation of
+        // g_hash_tables (double free / SEGV). Same storage lock the (hash)
+        // prim holds; recursive, so a caller already holding it is fine.
+        std::lock_guard slock(ev.alloc_storage_lock_);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         // Issue #4093 / #4296: same executing-evaluator stamp as the hash
