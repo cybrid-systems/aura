@@ -478,6 +478,9 @@ void run_serve_async(int num_workers) {
 
     // 2. Create scheduler with worker threads
     Scheduler sched(num_workers);
+    // Issue #4854 safety: do not early-retire Done fibers on the long-lived
+    // serve scheduler (see Scheduler::set_retire_done_fibers_disabled).
+    sched.set_retire_done_fibers_disabled(true);
 
     // Register fiber:spawn callback (captures scheduler for actual fiber creation).
     // Issue #4048: denseness fibers share the session Evaluator (complete_fiber
@@ -1411,6 +1414,8 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
 
     // 2. Create scheduler with worker threads
     Scheduler sched(num_workers);
+    // Issue #4854 safety: bench denseness keeps Done fibers owned too.
+    sched.set_retire_done_fibers_disabled(true);
 
     // Register fiber:spawn callback (Issue #4048: affinity inheritance — see
     // run_serve_async). Bench denseness also shares one Evaluator.

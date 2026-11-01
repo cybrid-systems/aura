@@ -229,5 +229,75 @@ class TestIssue4854OrchRss(unittest.TestCase):
         self.assertIn("new-recv z", proc.stdout)
 
 
+class TestIssue4854ServeFiberRetireGuard(unittest.TestCase):
+    """#4854 safety: serve-scheduler fibers are never early-retired.
+
+    The RSS fix drops settled Done fibers from Scheduler::owned_fibers_.
+    That is safe for --load/orch hosts, but the long-lived --serve-async
+    scheduler can still name a Done fiber from its session/handoff
+    machinery, and the #4706 program (two fibers yielding while
+    allocating) started dying with SIGSEGV si_addr=0x10 under CI load.
+    Serve now turns retirement off for its own scheduler
+    (set_retire_done_fibers_disabled); this keeps the repro green.
+    """
+
+    def test_4854_serve_async_yield_reclaim_no_crash(self) -> None:
+        import json
+        import select
+        import time
+
+        env = os.environ.copy()
+        env["AURA_TIER_JIT"] = "0"
+        env["AURA_PIPELINE_STRICT"] = "0"
+        env["AURA_SANDBOX"] = "off"
+        env.pop("AURA_SOFT", None)
+        define = (
+            "(define (wf k) (let l ((t 0)) (if (< t k) "
+            '(begin (string-split "a b c" " ") (fiber:yield) (l (+ t 1))) t)))'
+        )
+        let_form = (
+            "(list (fiber:join (fiber:spawn (lambda () (wf 50)))) (fiber:join (fiber:spawn (lambda () (wf 50)))))"
+        )
+        proc = subprocess.Popen(
+            [str(AURA_BIN), "--serve-async", "--worker-threads=2"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+        try:
+            assert proc.stdin and proc.stdout
+
+            def read_line(deadline):
+                while time.monotonic() < deadline:
+                    ready, _, _ = select.select([proc.stdout], [], [], 1.0)
+                    if ready:
+                        return proc.stdout.readline()
+                return ""
+
+            proc.stdin.write(json.dumps({"cmd": "exec", "code": define}) + "\n")
+            proc.stdin.flush()
+            first = read_line(time.monotonic() + 90.0)
+            # Wait for the join response before closing stdin: closing right
+            # after the write lets the session exit before the worker runs it.
+            proc.stdin.write(json.dumps({"cmd": "exec", "code": let_form}) + "\n")
+            proc.stdin.flush()
+            second = read_line(time.monotonic() + 90.0)
+            proc.stdin.close()
+            proc.stdin = None
+            rest, err = proc.communicate(timeout=120)
+            out = first + (second or "") + (rest or "")
+            rc = proc.returncode
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=10)
+        self.assertEqual(rc, 0, err[-800:])
+        self.assertIn('"value":"(50 50)"', out, out[-400:])
+        for banner in ("AURA CRASH", "si_addr", "SIGSEGV", "Segmentation fault"):
+            self.assertNotIn(banner, err, err[-800:])
+
+
 if __name__ == "__main__":
     unittest.main()

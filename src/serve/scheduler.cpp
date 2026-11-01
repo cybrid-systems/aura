@@ -581,6 +581,15 @@ void Scheduler::on_fiber_done(Fiber* fiber) {
 // mailbox (Level::Mailbox), and taking Mailbox under OwnedFibers would
 // invert the declared rank (see ~Scheduler's #4442 note).
 bool Scheduler::retire_done_fiber(Fiber* fiber) noexcept {
+    // Issue #4854 safety: never destroy a fiber owned by the long-lived
+    // serve scheduler. Its session/handoff machinery and the process-wide
+    // tree-walker root registry can still name a Done fiber after
+    // release_done_resources, and the #4706 serve-async test (two fibers
+    // yielding while allocating) showed a load-dependent SIGSEGV
+    // (si_addr=0x10) once retirement landed. --load / orch hosts — the
+    // retention this fix targets — keep retirement.
+    if (retire_done_fibers_disabled_.load(std::memory_order_acquire))
+        return false;
     if (!fiber || !fiber->is_done())
         return false;
     if (fiber->mailbox() != nullptr)
