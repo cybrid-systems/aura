@@ -965,6 +965,28 @@ public:
         cancel_all_unlocked_(/*from_hierarchy=*/false);
     }
 
+    // Issue #4851: :on-join-fail "cancel" must act on the first body failure,
+    // not after the whole batch join returns. The join caller arms this, the
+    // body wrapper cancels its siblings when it records a genuine failure.
+    void arm_join_fail_fast() noexcept {
+        join_fail_fast_armed_.store(true, std::memory_order_release);
+    }
+    void disarm_join_fail_fast() noexcept {
+        join_fail_fast_armed_.store(false, std::memory_order_release);
+    }
+    [[nodiscard]] bool join_fail_fast_armed() const noexcept {
+        return join_fail_fast_armed_.load(std::memory_order_acquire);
+    }
+    // Called from a running body fiber (no ScopeEnterGuard: the joiner owns
+    // the scope enter window). Only flips each fiber's cancel flag; no handle
+    // vector mutation, so the joiner's span stays valid.
+    void cancel_bodies_for_join_fail() noexcept {
+        for (auto& h : handles_) {
+            if (h.fiber && !h.fiber->is_done())
+                h.fiber->request_cancel();
+        }
+    }
+
     // Issue #2161: batch liveness watch over scope handles.
     // For each handle: watch_agent_liveness (same Closed rules when
     // keepalive_interval_ms==0). No process-global registry.
@@ -2250,6 +2272,9 @@ private:
     std::string bp_scope_id_{};
     // Issue #3208: last join_all resolve (unset vs explicit).
     AgentFailureAction last_on_join_fail_effective_ = AgentFailureAction::ReportOnly;
+    // Issue #4851: armed by orch:scope-join-all when the effective action is
+    // Cancel, so the first body failure cancels its siblings immediately.
+    std::atomic<bool> join_fail_fast_armed_{false};
     std::uint32_t last_join_fail_action_taken_ = 0;
     // Issue #3250: last join_all RestartN fuel vs skip.
     std::uint32_t last_restart_attempted_ = 0;
