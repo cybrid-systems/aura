@@ -1449,7 +1449,9 @@ static void ac3726_2_restartn_has_batch_specs_not_s() {
     const auto q = read_file("src/compiler/evaluator_primitives_agent.cpp");
     CHECK(q.find("child.spawn(std::move(spec))") != std::string::npos,
           "3726 AC2: watch_scope path spawns AgentSpec into child");
-    CHECK(q.find("apply_workflow(*orch_sched.sched, child, tasks, w") != std::string::npos,
+    // 3437bfa6b moved the watch to the caller's scheduler; keep the cite on
+    // the live call shape so the AC tracks the source instead of a stale name.
+    CHECK(q.find("apply_workflow(orch_scheduler(), child, tasks, w") != std::string::npos,
           "3726 AC2: apply_workflow watches the child, not session root");
     ac3726_disarm(s);
     ac3206_set_prod(false);
