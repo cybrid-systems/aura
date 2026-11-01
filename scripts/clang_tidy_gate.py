@@ -91,10 +91,10 @@ def clean_args(command: str, directory: str) -> list[str] | None:
     return out
 
 
-def select_entries(scopes: tuple[str, ...]) -> list[dict]:
-    if not DB.is_file():
-        sys.exit(f"error: {DB.relative_to(ROOT)} not found; configure with -DCMAKE_EXPORT_COMPILE_COMMANDS=ON first")
-    raw = json.loads(DB.read_text())
+def select_entries(scopes: tuple[str, ...], db_path: Path) -> list[dict]:
+    if not db_path.is_file():
+        sys.exit(f"error: {db_path} not found; configure with -DCMAKE_EXPORT_COMPILE_COMMANDS=ON first")
+    raw = json.loads(db_path.read_text())
     seen: set[Path] = set()
     selected: list[dict] = []
     skipped_module = 0
@@ -157,6 +157,7 @@ def run_one(entry: dict, db_path: Path, timeout: int) -> tuple[str, str, int, st
 def parse_diagnostics(rel: str, output: str, rc: int) -> tuple[dict[tuple[str, str], int], list[tuple[str, str, str]]]:
     counts: dict[tuple[str, str], int] = {}
     samples: list[tuple[str, str, str]] = []
+    seen_diag: set[tuple[str, str, str, str, str]] = set()
     saw_diag = False
     for line in output.splitlines():
         match = DIAG_RE.match(line.strip())
@@ -174,6 +175,20 @@ def parse_diagnostics(rel: str, output: str, rc: int) -> tuple[dict[tuple[str, s
         except OSError:
             pass
         check = match.group("check")
+        # Count unique diagnostics only. clang-tidy can emit the same
+        # (file, line, col, check, message) more than once for a TU (header
+        # context / duplicate emission); counting those as new findings made
+        # the CI run fail against a baseline produced by a single emission.
+        diag_key = (
+            path,
+            match.group("line"),
+            match.group("col"),
+            check,
+            match.group("msg"),
+        )
+        if diag_key in seen_diag:
+            continue
+        seen_diag.add(diag_key)
         counts[(path, check)] = counts.get((path, check), 0) + 1
         if len(samples) < 200:
             samples.append(
@@ -210,6 +225,11 @@ def main() -> int:
         help="rewrite scripts/clang_tidy_baseline.json from this run",
     )
     parser.add_argument("--jobs", type=int, default=4)
+    parser.add_argument(
+        "--db",
+        default=str(DB),
+        help="compile_commands.json to filter (default: build/compile_commands.json)",
+    )
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument(
         "--scopes",
@@ -219,7 +239,7 @@ def main() -> int:
     args = parser.parse_args()
 
     scopes = tuple(s.strip() for s in args.scopes.split(",") if s.strip())
-    entries = select_entries(scopes)
+    entries = select_entries(scopes, Path(args.db))
     if not entries:
         print("clang-tidy gate: no parseable non-module TUs in scope")
         return 0
