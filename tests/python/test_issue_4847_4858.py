@@ -180,7 +180,10 @@ class TestIssueBatch4847To4858(unittest.TestCase):
         # waiting for :timeout-ms (the old path returned timeout/err 0 after
         # 6000 ms). Accept error or partial as the aggregate status; both
         # mean the failing body was counted and the rest cancelled.
-        self.assertRegex(proc.stdout, r"\((partial|error) 1 4\)")
+        # The cancelled count is 3 or 4 depending on whether the last slow
+        # body had already started when fail-fast fired; the failing body and
+        # the fast return are the invariants.
+        self.assertRegex(proc.stdout, r"\((partial|error) 1 [34]\)")
         self.assertLess(elapsed, 5.5, proc.stdout)
 
 
