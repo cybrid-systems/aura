@@ -1392,7 +1392,14 @@ void run_serve_async(int num_workers) {
 
 // ── run_serve_async_bench ────────────────────────────
 
-int run_serve_async_bench(const std::string& file_path, int num_workers) {
+namespace {
+    // Issue #4844: the bench entry point stays void (the #4231 structural gate
+    // pins its signature); failures travel through this flag so main() can
+    // return a nonzero exit code instead of reporting success.
+    std::atomic<bool> g_serve_async_bench_failed{false};
+} // namespace
+
+void run_serve_async_bench(const std::string& file_path, int num_workers) {
     // Issue #4231: same holder-survival contract as run_serve_async — a
     // closed stdout reader must surface as EPIPE, never SIGPIPE process
     // death of the serve-async holder.
@@ -1515,7 +1522,8 @@ int run_serve_async_bench(const std::string& file_path, int num_workers) {
     std::ifstream f(file_path);
     if (!f) {
         std::println(std::cerr, "error: cannot open '{}'", file_path);
-        return 1;
+        g_serve_async_bench_failed.store(true, std::memory_order_release);
+        return;
     }
     std::string bench_code((std::istreambuf_iterator<char>(f)), {});
 
@@ -1601,9 +1609,19 @@ int run_serve_async_bench(const std::string& file_path, int num_workers) {
                     // resolves it through g_current_compiler_service.
                     aura::messaging::g_current_compiler_service = &sess->service;
                     auto result = sess->service.eval(expr);
-                    if (!result) {
-                        std::print(std::cerr, "eval error on expr (len={}): {}\n  msg: {}\n",
-                                   expr.size(), expr.substr(0, 120), result.error().format());
+                    // Issue #4844: an eval failure is either an unexpected
+                    // Diagnostic or a first-class error VALUE (for example
+                    // (car 5) under the walker). Both must fail the run; the
+                    // error value used to look like a successful eval and the
+                    // process exited 0.
+                    if (!result || is_error(*result)) {
+                        if (!result) {
+                            std::print(std::cerr, "eval error on expr (len={}): {}\n  msg: {}\n",
+                                       expr.size(), expr.substr(0, 120), result.error().format());
+                        } else {
+                            std::print(std::cerr, "eval error on expr (len={}): {}\n", expr.size(),
+                                       expr.substr(0, 120));
+                        }
                         std::fflush(stderr);
                         bench_failed.store(true, std::memory_order_release);
                         break;
@@ -1617,7 +1635,12 @@ int run_serve_async_bench(const std::string& file_path, int num_workers) {
 
     // 6. Run the scheduler
     sched.run();
-    return bench_failed.load(std::memory_order_acquire) ? 1 : 0;
+    g_serve_async_bench_failed.store(bench_failed.load(std::memory_order_acquire),
+                                     std::memory_order_release);
+}
+
+bool serve_async_bench_failed() noexcept {
+    return g_serve_async_bench_failed.load(std::memory_order_acquire);
 }
 
 } // namespace aura::serve
