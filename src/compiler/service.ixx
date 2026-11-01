@@ -2760,6 +2760,8 @@ public:
             "mutate:remove-node",
             "mutate:move-node",
             "intend",
+            "fiber:spawn",
+            "fiber:join",
             "define-strategy",
             "register-strategy!",
             "intend-history",
@@ -2781,13 +2783,17 @@ public:
             // Scheduler metrics (Issue #32)
             "orch:metrics",
             "orch:reset-metrics",
-            // Issue #4848: fiber:spawn/fiber:join, and/or/cond/case/when/
-            // unless/set! are lowering-owned forms now (lowering_impl.cpp
-            // emits MakeClosure/CellSet/Branch for them), so they must not
-            // force the walker. Kept: load / equal? / export stay walker-only.
+            // Special forms not in IR
+            "when",
+            "set!",
             "load",
             "equal?",
+            "unless",
             "export",
+            "and",
+            "or",
+            "cond",
+            "case",
             // Capability special forms
             "with-capability",
             "check-capability",
@@ -2837,14 +2843,7 @@ public:
             "evolution-region",
         };
 
-        // Issue #4848: lambda params and let/letrec names in this root are
-        // lexical bindings, not unknown globals.
-        const auto lexical = collect_lexical_bindings_(flat, pool, root);
-        const auto quoted = collect_quoted_nodes_(flat, root);
-
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            if (quoted.count(id))
-                continue; // quoted payload is data, not code
             auto nv = flat.get(id);
 
             // MacroDef cannot be lowered to IR
@@ -2881,8 +2880,6 @@ public:
                         return true;
                 }
                 auto vn = std::string(var_name);
-                if (lexical.count(vn))
-                    continue;
                 if (ir_value_cell_bindings_.count(vn))
                     continue;
                 if (!vn.empty() &&
@@ -2893,8 +2890,10 @@ public:
                 }
             }
 
-            // Issue #4848: Set nodes lower to CellSet/Store (lowering_impl.cpp
-            // case NodeTag::Set), so they no longer force the walker here.
+            // Set nodes (from set!) must go through tree-walker because they
+            // mutate cells in the evaluator's cell heap, not the IR's local heap.
+            if (nv.tag == aura::ast::NodeTag::Set)
+                return true;
 
             if (nv.tag == aura::ast::NodeTag::Call) {
                 auto callee = nv.child(0);
@@ -2908,8 +2907,6 @@ public:
                             return true;
 
                         // Known tree-walker-only names (EDSL, special forms, module)
-                        if (lexical.count(name))
-                            continue;
                         if (tree_walker_only->count(name))
                             return true;
 
@@ -2936,101 +2933,6 @@ public:
         return false;
     }
 
-    // Issue #4848: names bound by the scanned subtree itself (lambda
-    // params, let/letrec names). The fallback scan used to treat them as
-    // unknown globals, so every ordinary (let ((a 1)) a) or
-    // (lambda (x) x) tripped the #2213 gate and the production default
-    // rejected the whole file with a generic internal error even though
-    // the IR lowerer handles both forms natively.
-    [[nodiscard]] static std::unordered_set<std::string>
-    collect_lexical_bindings_(const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
-                              aura::ast::NodeId root) {
-        std::unordered_set<std::string> bound;
-        if (root == aura::ast::NULL_NODE || root >= flat.size())
-            return bound;
-        flat.walk_subtree(root, [&](aura::ast::NodeId id) {
-            const auto v = flat.get(id);
-            if (v.tag == aura::ast::NodeTag::Lambda) {
-                for (auto pid : v.params) {
-                    auto name = pool.resolve(pid);
-                    if (!name.empty())
-                        bound.insert(std::string(name));
-                }
-                return;
-            }
-            if (v.tag == aura::ast::NodeTag::Let || v.tag == aura::ast::NodeTag::LetRec ||
-                v.tag == aura::ast::NodeTag::Define) {
-                if (v.sym_id != aura::ast::INVALID_SYM) {
-                    auto name = pool.resolve(v.sym_id);
-                    if (!name.empty())
-                        bound.insert(std::string(name));
-                }
-                return;
-            }
-            // (catch (e) handler): the binding is a Call whose callee is the
-            // bound variable name (see define_body_needs_tree_walker_fallback).
-            if (v.tag == aura::ast::NodeTag::Call && !v.children.empty()) {
-                const auto cal = flat.get(v.child(0));
-                if (cal.tag == aura::ast::NodeTag::Variable &&
-                    pool.resolve(cal.sym_id) == "catch" && v.children.size() > 1) {
-                    const auto binder = flat.get(v.child(1));
-                    if (binder.tag == aura::ast::NodeTag::Call && !binder.children.empty()) {
-                        const auto bvar = flat.get(binder.child(0));
-                        if (bvar.tag == aura::ast::NodeTag::Variable) {
-                            auto name = pool.resolve(bvar.sym_id);
-                            if (!name.empty())
-                                bound.insert(std::string(name));
-                        }
-                    } else if (binder.tag == aura::ast::NodeTag::Variable) {
-                        auto name = pool.resolve(binder.sym_id);
-                        if (!name.empty())
-                            bound.insert(std::string(name));
-                    }
-                }
-            }
-        });
-        return bound;
-    }
-
-    // Issue #4848: a Quote subtree is literal DATA, never evaluated. The
-    // define-body walker already skips it (#2213 lyapunov-fact); the
-    // subtree/slow scans saw the quoted symbols as free variables, so
-    // (list 'first ...) tripped the gate. Mark every descendant of a Quote.
-    [[nodiscard]] static std::unordered_set<aura::ast::NodeId>
-    collect_quoted_nodes_(const aura::ast::FlatAST& flat, aura::ast::NodeId root) {
-        std::unordered_set<aura::ast::NodeId> quoted;
-        if (root == aura::ast::NULL_NODE || root >= flat.size())
-            return quoted;
-        std::vector<aura::ast::NodeId> stack{root};
-        while (!stack.empty()) {
-            auto id = stack.back();
-            stack.pop_back();
-            if (id == aura::ast::NULL_NODE || id >= flat.size() || quoted.count(id))
-                continue;
-            const auto v = flat.get(id);
-            if (v.tag == aura::ast::NodeTag::Quote) {
-                // Mark the quoted payload; the Quote node itself stays a
-                // normal (lowered) node.
-                for (auto c : v.children) {
-                    std::vector<aura::ast::NodeId> sub{c};
-                    while (!sub.empty()) {
-                        auto sid = sub.back();
-                        sub.pop_back();
-                        if (sid == aura::ast::NULL_NODE || sid >= flat.size() || quoted.count(sid))
-                            continue;
-                        quoted.insert(sid);
-                        for (auto sc : flat.get(sid).children)
-                            sub.push_back(sc);
-                    }
-                }
-                continue;
-            }
-            for (auto c : v.children)
-                stack.push_back(c);
-        }
-        return quoted;
-    }
-
     // Issue #402: subtree-walked fallback check. Used by
     // the fast path in needs_tree_walker_fallback when
     // summary_flags_ == 0 (no MacroDef/DefineType/etc.
@@ -3045,9 +2947,6 @@ public:
         const std::unordered_set<std::string>* extra_known = nullptr) const {
         if (root == aura::ast::NULL_NODE || root >= flat.size())
             return false;
-        // Issue #4848: names bound inside this subtree are not free vars.
-        const auto lexical = collect_lexical_bindings_(flat, pool, root);
-        const auto quoted = collect_quoted_nodes_(flat, root);
 
         // Reuse the same known-names sets as the slow path.
         // They're already lazily-initialized static — no
@@ -3075,6 +2974,8 @@ public:
             "mutate:remove-node",
             "mutate:move-node",
             "intend",
+            "fiber:spawn",
+            "fiber:join",
             "define-strategy",
             "register-strategy!",
             "intend-history",
@@ -3093,9 +2994,16 @@ public:
             "json-parse",
             "orch:metrics",
             "orch:reset-metrics",
+            "when",
+            "set!",
             "load",
             "equal?",
+            "unless",
             "export",
+            "and",
+            "or",
+            "cond",
+            "case",
             "with-capability",
             "check-capability",
             "capability-stack",
@@ -3120,8 +3028,6 @@ public:
         const std::size_t visited = flat.walk_subtree(root, [&](aura::ast::NodeId id) {
             if (needs)
                 return; // short-circuit
-            if (quoted.count(id))
-                return; // quoted payload is data, not code
             const auto v = flat.get(id);
             // Tag-only early-returns (mirrors slow path).
             switch (v.tag) {
@@ -3142,6 +3048,9 @@ public:
                         return;
                     }
                     break;
+                case aura::ast::NodeTag::Set:
+                    needs = true;
+                    return;
                 default:
                     break;
             }
@@ -3154,9 +3063,6 @@ public:
                 // Whole-program Begin eval: names defined by sibling forms
                 // register sequentially — treat them as known (asan-verify 937d53d22).
                 if (extra_known && extra_known->count(std::string(var_name)))
-                    return;
-                // Issue #4848: lambda params / let names are lexical.
-                if (lexical.count(std::string(var_name)))
                     return;
                 if (user_bindings_.count(std::string(var_name))) {
                     // Issue #1284: ir_cache_v2_ define cache avoids fallback.
@@ -3189,9 +3095,6 @@ public:
                         // Whole-program Begin eval: sibling defines register
                         // sequentially — treat them as known (asan-verify 937d53d22).
                         if (extra_known && extra_known->count(name))
-                            return;
-                        // Issue #4848: a let-bound / parameter callee is lexical.
-                        if (lexical.count(name))
                             return;
                         if (tree_walker_only->count(name)) {
                             needs = true;
@@ -12414,8 +12317,6 @@ public:
         if (body_id == aura::ast::NULL_NODE || body_id >= flat.size())
             return false;
         std::unordered_set<std::string> param_names;
-        // Issue #4848: nested defines / lets / lambdas bind names too.
-        const auto lexical = collect_lexical_bindings_(flat, pool, body_id);
         auto body_v = flat.get(body_id);
         if (body_v.tag == aura::ast::NodeTag::Lambda) {
             for (auto pid : body_v.params)
@@ -12427,7 +12328,6 @@ public:
             const aura::ast::StringPool& p;
             const std::string& self_name;
             const std::unordered_set<std::string>& param_names;
-            const std::unordered_set<std::string>& lexical;
             const Evaluator& eval;
             const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
                                      aura::core::TransparentStringHash, std::equal_to<>>& ir_cache;
@@ -12457,16 +12357,14 @@ public:
                         auto callee_v = f.get(callee_id);
                         if (callee_v.tag == aura::ast::NodeTag::Variable) {
                             auto callee_name = std::string(p.resolve(callee_v.sym_id));
-                            // Issue #4848: fiber:spawn/fiber:join lower to a plain
-                            // primitive Call plus MakeClosure for a lambda argument
-                            // (verified against the #4838/#4839/#4840 scripts under
-                            // force-soa), so they no longer force the walker.
+                            if (callee_name == "fiber:spawn" || callee_name == "fiber:join")
+                                needs_fallback = true;
                             // Non-lambda (while cond body) lowers to Branch/Jump (#4320).
                             // Lambda form still goes through the while primitive, and an
                             // IR-cached define that only Call'd it miscomputed (loop never
                             // ran; multi-session leak oracle returned growth=0). Keep the
                             // fallback bit so Allow uses the walker and Forbidden hard-errors.
-                            if (callee_name == "while")
+                            else if (callee_name == "while")
                                 needs_fallback = true;
                         }
                     }
@@ -12474,8 +12372,6 @@ public:
                 if (nv.tag == aura::ast::NodeTag::Variable) {
                     auto var_name = std::string(p.resolve(nv.sym_id));
                     if (param_names.count(var_name) || var_name == self_name)
-                        return;
-                    if (lexical.count(var_name))
                         return;
                     if (extra_known && extra_known->count(var_name))
                         return;
@@ -12489,8 +12385,13 @@ public:
                     walk(c);
             }
         };
-        BodyWalker bw{flat,       pool,       self_name, param_names,
-                      lexical,    evaluator_, ir_cache_, ir_value_cell_bindings_,
+        BodyWalker bw{flat,
+                      pool,
+                      self_name,
+                      param_names,
+                      evaluator_,
+                      ir_cache_,
+                      ir_value_cell_bindings_,
                       extra_known};
         bw.walk(body_id);
         return bw.needs_fallback;
