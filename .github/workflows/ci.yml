@@ -222,6 +222,19 @@ jobs:
     - name: Static checks (docs + lint + format + fixtures)
       run: python3 build.py gate
 
+    # Issue #4829: run inside the existing gate container so this check does
+    # not need a second dev-image pull (and cannot hang on its own container
+    # initialization). Baseline holds the existing debt; only new (file,
+    # check) findings fail.
+    - name: Configure compile_commands.json (clang-tidy)
+      run: >
+        cmake -S . -B build -G Ninja -Wno-author
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+    - name: clang-tidy baseline gate (#4829)
+      run: python3 scripts/clang_tidy_gate.py --jobs 4
+
     # Aura philosophy guard: no per-issue plan docs in docs/design/
     - name: "Aura philosophy guard: no docs/design/"
       run: |
@@ -233,32 +246,6 @@ jobs:
         fi
         echo "aura philosophy guard clean (no docs/design/ files)"
 
-  # Issue #4829: clang-tidy gate over the Clang-parseable, non-module TUs.
-  # The baseline holds the existing debt; only new (file, check) findings fail.
-  # Module TUs need a Clang module build — tracked as a follow-up in
-  # docs/clang_tidy_cleanup.md.
-  clang-tidy:
-    name: clang-tidy
-    needs: [changes]
-    if: needs.changes.outputs.code == 'true'
-    timeout-minutes: 40
-    runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/cybrid-systems/dev:v1.1.1
-    steps:
-    - uses: actions/checkout@v7
-
-    - name: Configure compile_commands.json
-      run: >
-        cmake -S . -B build -G Ninja -Wno-author
-        -DCMAKE_BUILD_TYPE=RelWithDebInfo
-        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-
-    - name: clang-tidy version
-      run: clang-tidy --version
-
-    - name: clang-tidy baseline gate (#4829)
-      run: python3 scripts/clang_tidy_gate.py --jobs 4
 
   build-test:
     # Parallel with gate (needs: changes only). Require both jobs in branch protection.
@@ -430,7 +417,7 @@ jobs:
   ci-ok:
     name: ci-ok
     runs-on: ubuntu-latest
-    needs: [gate, build-test, issue-farm, clang-tidy]
+    needs: [gate, build-test, issue-farm]
     if: always()
     steps:
     - name: Aggregate gate + build-test + issue-farm
@@ -439,8 +426,7 @@ jobs:
         gate="${{ needs.gate.result }}"
         bt="${{ needs.build-test.result }}"
         farm="${{ needs.issue-farm.result }}"
-        tidy="${{ needs.clang-tidy.result }}"
-        echo "gate=$gate build-test=$bt issue-farm=$farm clang-tidy=$tidy"
+        echo "gate=$gate build-test=$bt issue-farm=$farm"
         if [ "$gate" != "success" ]; then
           echo "❌ gate did not succeed ($gate)"
           exit 1
@@ -453,11 +439,7 @@ jobs:
           echo "❌ issue-farm did not succeed ($farm)"
           exit 1
         fi
-        if [ "$tidy" != "success" ] && [ "$tidy" != "skipped" ]; then
-          echo "❌ clang-tidy did not succeed ($tidy)"
-          exit 1
-        fi
-        echo "✓ ci-ok (gate=$gate, build-test=$bt, issue-farm=$farm, clang-tidy=$tidy)"
+        echo "✓ ci-ok (gate=$gate, build-test=$bt, issue-farm=$farm)"
 
   # ASAN track — main only (saves ~8–10m on PRs; PR gate is build-test).
   asan-build:
