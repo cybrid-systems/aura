@@ -16,9 +16,13 @@ thread_local Context* t_ctx_cur = nullptr;
 namespace {
 
     // Plain-thread fallback. Created lazily per thread and never destroyed
-    // early: a thread exit runs the Context destructor (the cascade-root
-    // vector), which is all the cleanup it needs.
+    // early. A raw thread_local pointer is NOT destroyed at thread exit, so
+    // every CLI thread-backend fiber body (one std::thread each) used to
+    // leak one Context (~0.5 KB per fiber:spawn). PlainContextOwner deletes
+    // it when the thread exits and clears the cached pointers that may
+    // still name it.
     thread_local Context* t_ctx_plain = nullptr;
+
 
     // Nested attach stack (a fiber body may drive another fiber).
     thread_local std::vector<Context*> t_ctx_prev;
@@ -26,14 +30,34 @@ namespace {
     std::atomic<std::uint64_t> g_ctx_attach_total{0};
     std::atomic<std::uint64_t> g_ctx_detach_total{0};
     std::atomic<std::uint64_t> g_ctx_plain_total{0};
+    std::atomic<std::uint64_t> g_ctx_plain_freed_total{0};
+
+    struct PlainContextOwner {
+        ~PlainContextOwner() {
+            Context* c = t_ctx_plain;
+            if (!c)
+                return;
+            if (t_ctx_cur == c)
+                t_ctx_cur = nullptr;
+            t_ctx_plain = nullptr;
+            delete c;
+            g_ctx_plain_freed_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    };
+    thread_local PlainContextOwner t_ctx_plain_owner;
 
 } // namespace
 
 Context* plain_context() noexcept {
     if (!t_ctx_plain) {
         t_ctx_plain = new (std::nothrow) Context();
-        if (t_ctx_plain)
+        if (t_ctx_plain) {
+            // odr-use the owner so its destructor is registered for this
+            // thread (a thread_local with a non-trivial destructor is only
+            // constructed on first use).
+            (void)&t_ctx_plain_owner;
             g_ctx_plain_total.fetch_add(1, std::memory_order_relaxed);
+        }
     }
     if (!t_ctx_plain) {
         // Allocation failure: a static per-function fallback keeps the
@@ -134,6 +158,11 @@ extern "C" int aura_fiber_ctx_treg_depth_probe() noexcept {
 
 extern "C" std::uint64_t aura_fiber_ctx_plain_total() noexcept {
     return g_ctx_plain_total.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_fiber_ctx_plain_live() noexcept {
+    return g_ctx_plain_total.load(std::memory_order_relaxed) -
+           g_ctx_plain_freed_total.load(std::memory_order_relaxed);
 }
 
 } // namespace aura::core::fiber_ctx

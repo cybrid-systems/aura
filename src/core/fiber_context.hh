@@ -159,6 +159,9 @@ Context* aura_fiber_ctx_detach() noexcept;
 std::uint64_t aura_fiber_ctx_attach_total() noexcept;
 std::uint64_t aura_fiber_ctx_detach_total() noexcept;
 std::uint64_t aura_fiber_ctx_plain_total() noexcept;
+// Plain fallbacks still alive (created minus freed at thread exit). Before
+// the thread-exit owner a thread-backend fiber leaked one each.
+std::uint64_t aura_fiber_ctx_plain_live() noexcept;
 // Issue #4716 stress/AC probes. These operate on the SAME storage the
 // production paths use (treg_frames/treg_top is exactly what
 // TypeRegistry::TypeRegistryLock::lock/unlock push and pop), without taking
