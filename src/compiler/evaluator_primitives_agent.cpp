@@ -388,7 +388,16 @@ namespace {
     // times at some later point.
     struct ScopeBodyTally {
         std::mutex mu;
+        // Issue #4861: `errors` is the ATTEMPT log (every failed attempt).
+        // `failed` holds the bodies whose LAST attempt failed - a body that
+        // failed, was restarted (RestartN) and then succeeded is NOT a
+        // failure any more (it must not drive err-count / status partial).
+        // `failed_pos` keeps `failed` ordered (the report's errors list is
+        // consumed in spawn-completion order by the #4783 contract).
         std::vector<std::pair<std::string, std::string>> errors;
+        std::vector<std::pair<std::string, std::string>> failed;
+        std::unordered_map<std::string, std::size_t> failed_pos;
+        std::uint64_t attempt_errors = 0;
         std::uint64_t ok = 0;
         std::uint64_t cancelled = 0;
         std::atomic<std::uint64_t> reclaim_epoch{0};
@@ -4892,6 +4901,18 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                             // Issue #4858: a genuine body failure is restart fuel;
                             // a requested cancel is not.
                             failure_count->fetch_add(1, std::memory_order_acq_rel);
+                            tally->attempt_errors += 1;
+                            // Issue #4861: the LAST attempt decides - a later
+                            // successful attempt removes the body again. Copy
+                            // the message here: `msg` is moved into the
+                            // attempt log right below.
+                            auto fit = tally->failed_pos.find(body_name);
+                            if (fit != tally->failed_pos.end()) {
+                                tally->failed[fit->second].second = msg;
+                            } else {
+                                tally->failed_pos.emplace(body_name, tally->failed.size());
+                                tally->failed.emplace_back(body_name, msg);
+                            }
                             tally->errors.emplace_back(body_name, std::move(msg));
                             // Issue #4851: fail-fast for :on-join-fail "cancel" —
                             // cancel the siblings now instead of waiting for the
@@ -4912,6 +4933,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     } else {
                         std::lock_guard<std::mutex> lk(tally->mu);
                         ++tally->ok;
+                        // Issue #4861: the child recovered - drop its failure
+                        // from the final-failure set (the attempt log keeps it).
+                        auto fit = tally->failed_pos.find(body_name);
+                        if (fit != tally->failed_pos.end()) {
+                            tally->failed[fit->second].first.clear(); // tombstone
+                            tally->failed_pos.erase(fit);
+                        }
                     }
                 } catch (const std::exception& ex) {
                     // [SILENCE-PRIM-#615]: agent body errors surface via
@@ -5474,6 +5502,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     // strategy was not armed.
                     if (types::is_string(val) || types::is_symbol(val) || types::is_keyword(val)) {
                         join_fail_name = orch_keyword_key(val);
+                        // A name that does not resolve must not fall through
+                        // to the empty-name path (which is report-only).
+                        if (join_fail_name.empty()) {
+                            return make_primitive_error(
+                                ev.string_heap_, ev.error_values_,
+                                "orch:scope-join-all: :on-join-fail symbol is not resolvable",
+                                ev.primitive_error_counter_ptr());
+                        }
                     } else {
                         return make_primitive_error(
                             ev.string_heap_, ev.error_values_,
@@ -5539,9 +5575,20 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             std::vector<std::pair<std::string, std::string>> body_errors;
             std::uint64_t body_ok_n = 0;
             std::uint64_t body_cancelled_n = 0;
+            std::uint64_t attempt_errors = 0;
             {
                 std::lock_guard<std::mutex> lk(body_tally->mu);
-                body_errors.swap(body_tally->errors);
+                // Issue #4861: err-count / errors / status partial are driven
+                // by the FINAL failures only; the attempt log (recovered
+                // attempts included) is reported separately as attempt-errors.
+                for (auto& fe : body_tally->failed) {
+                    if (!fe.first.empty())
+                        body_errors.emplace_back(fe.first, fe.second);
+                }
+                body_tally->failed.clear();
+                body_tally->failed_pos.clear();
+                attempt_errors = std::exchange(body_tally->attempt_errors, 0);
+                body_tally->errors.clear();
                 body_ok_n = std::exchange(body_tally->ok, 0);
                 body_cancelled_n = std::exchange(body_tally->cancelled, 0);
             }
@@ -5735,6 +5782,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"restart-max",
                  make_int(static_cast<std::int64_t>(fail_pol ? fail_pol->max_restarts : 0))},
                 {"restart-exhausted", make_int(static_cast<std::int64_t>(restart_exhausted))},
+                // Issue #4861: attempt errors (recovered attempts included) are
+                // counted separately from the final failures in err-count.
+                {"attempt-errors", make_int(static_cast<std::int64_t>(attempt_errors))},
                 {"schema-3250", make_int(aura::orch::kRestartNSpecBoundaryIssue)},
                 {"issue-3250", make_int(aura::orch::kRestartNSpecBoundaryIssue)},
                 // Issue #3643: tree join flag + stamp (additive; append).
