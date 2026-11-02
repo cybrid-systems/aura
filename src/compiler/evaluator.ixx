@@ -391,7 +391,7 @@ public:
         if (name.empty())
             return std::nullopt;
         // Issue #1356: prefer compact hot map (hot-tier primitives).
-        if (auto hit = hot_map_.find(name); hit != hot_map_.end()) {
+        if (const auto hit = hot_map_.find(name); hit != hot_map_.end()) {
             hot_dispatch_hits_.fetch_add(1, std::memory_order_relaxed);
             if (aura::core::arena_policy::in_render_hotpath())
                 hot_dispatch_hits_render_.fetch_add(1, std::memory_order_relaxed);
@@ -399,7 +399,7 @@ public:
         }
         if (aura::core::arena_policy::in_render_hotpath())
             cold_dispatch_fallback_.fetch_add(1, std::memory_order_relaxed);
-        auto it = table_.find(name);
+        const auto it = table_.find(name);
         return it != table_.end() ? std::optional(it->second) : std::nullopt;
     }
     void set_string_heap(::aura::compiler::LockedStringHeap* h) { string_heap_ = h; }
@@ -465,7 +465,7 @@ public:
             // never PrimFn-by-value + std::string (that forced std::function heap).
             const std::string& name = ordered_names_[i];
             auto held = std::make_unique<PrimFn>(std::move(fn_slots_[i]));
-            PrimFn* raw = held.get();
+            const PrimFn* raw = held.get();
             const char* name_cstr = name.c_str();
             hot_timing_held_.push_back(std::move(held));
             PrimFn timed = [raw,
