@@ -684,9 +684,17 @@ first_non_number(std::span<const types::EvalValue> args) noexcept {
     return nullptr;
 }
 
-export inline const char* numeric_operand_type_name(const types::EvalValue& v) noexcept {
+// Issue #4863: name the ACTUAL type of a value. The numeric helper
+// used to fall back to "Value" for every type it did not know, so
+// `(- 'a 1)` reported "expected Int, got Value" instead of "got Symbol"
+// — a type error that cannot locate the offending value.
+export inline const char* value_type_name(const types::EvalValue& v) noexcept {
     if (types::is_bool(v))
         return "Bool";
+    if (types::is_int(v))
+        return "Int";
+    if (types::is_float(v))
+        return "Float";
     if (types::is_void(v))
         return "Void";
     if (types::is_pair(v))
@@ -699,7 +707,19 @@ export inline const char* numeric_operand_type_name(const types::EvalValue& v) n
         return "Error";
     if (types::is_string(v))
         return "String";
+    if (types::is_symbol(v))
+        return "Symbol";
+    if (types::is_keyword(v))
+        return "Keyword";
+    if (types::is_hash(v))
+        return "Hash";
+    if (types::is_cell(v))
+        return "Cell";
     return "Value";
+}
+
+export inline const char* numeric_operand_type_name(const types::EvalValue& v) noexcept {
+    return value_type_name(v);
 }
 
 // Legacy stderr text, without the "error: " prefix. Strings keep the
