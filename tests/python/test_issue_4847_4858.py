@@ -161,11 +161,11 @@ class TestIssueBatch4847To4858(unittest.TestCase):
             """
 (define (spin-ms ms) (let ((t (+ (monotonic-ms) ms))) (let loop ()
   (when (< (monotonic-ms) t) (fiber:yield) (loop)))))
+(orch:scope-spawn "bad" (lambda () (spin-ms 20) (error "bad sibling")))
 (orch:scope-spawn "slow0" (lambda () (spin-ms 4000) 'late))
 (orch:scope-spawn "slow1" (lambda () (spin-ms 4000) 'late))
 (orch:scope-spawn "slow2" (lambda () (spin-ms 4000) 'late))
 (orch:scope-spawn "slow3" (lambda () (spin-ms 4000) 'late))
-(orch:scope-spawn "bad" (lambda () (spin-ms 20) (error "bad sibling")))
 (define r (orch:scope-join-all :timeout-ms 6000 :on-join-fail "cancel"))
 (display (list (hash-ref r "status") (hash-ref r "err-count")
                (hash-ref r "cancelled-count"))) (newline)
@@ -176,15 +176,41 @@ class TestIssueBatch4847To4858(unittest.TestCase):
         )
         elapsed = time.monotonic() - started
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        # Fail-fast: the failure cancels the four slow siblings instead of
-        # waiting for :timeout-ms (the old path returned timeout/err 0 after
-        # 6000 ms). Accept error or partial as the aggregate status; both
-        # mean the failing body was counted and the rest cancelled.
+        # Issue #4851: the failing sibling is spawned FIRST, so the scope
+        # body queue has to start it in spawn order (the old LIFO deque ran
+        # it LAST, behind four 4 s siblings, so the join waited the whole
+        # :timeout-ms and reported timeout / err-count 0). With spawn-order
+        # dispatch the failing body runs after ~20 ms and :on-join-fail
+        # "cancel" cancels the four siblings that have not started yet.
+        # Accept error or partial as the aggregate status; both mean the
+        # failing body was counted and the rest cancelled.
         # The cancelled count is 3 or 4 depending on whether the last slow
         # body had already started when fail-fast fired; the failing body and
         # the fast return are the invariants.
         self.assertRegex(proc.stdout, r"\((partial|error) 1 [34]\)")
         self.assertLess(elapsed, 5.5, proc.stdout)
+
+    def test_4851_scope_bodies_start_in_spawn_order(self) -> None:
+        # Issue #4851: scope bodies are dispatched on the worker's FIFO
+        # start-order queue, so they BEGIN in spawn order (the LIFO deque
+        # started the last-spawned body first, which hid a failing first
+        # sibling behind the slow ones).
+        proc = _run(
+            """
+(define order (list))
+(define (note n) (set! order (append order (list n))))
+(orch:scope-spawn "a" (lambda () (note "a")))
+(orch:scope-spawn "b" (lambda () (note "b")))
+(orch:scope-spawn "c" (lambda () (note "c")))
+(orch:scope-join-all :timeout-ms 5000)
+(display order) (newline)
+""",
+            "--load",
+            timeout=30.0,
+            pipeline_strict="0",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("(a b c)", proc.stdout)
 
 
 if __name__ == "__main__":

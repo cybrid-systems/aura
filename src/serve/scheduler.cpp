@@ -276,7 +276,20 @@ void Scheduler::unregister_agent_scope_observer(void* cookie) noexcept {
 // ── spawn — create a new fiber ────────────────────────
 // Creates the fiber and assigns it to a worker (round-robin).
 
-Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size) {
+// Issue #4851: pick (once) the worker that owns the FIFO start lane.
+int Scheduler::fifo_lane_worker() noexcept {
+    const int lane = fifo_lane_worker_id_.load(std::memory_order_acquire);
+    if (lane >= 0)
+        return std::min(lane, static_cast<int>(workers_.size()) - 1);
+    int expected = -1;
+    const int candidate = next_worker_id();
+    if (fifo_lane_worker_id_.compare_exchange_strong(expected, candidate, std::memory_order_acq_rel,
+                                                     std::memory_order_acquire))
+        return candidate;
+    return std::min(expected, static_cast<int>(workers_.size()) - 1);
+}
+
+Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size, bool fifo_start) {
     // Issue #1579 / #1618: process-wide fiber quota via ResourceQuotaManager
     // before spawn (misbehaving agent isolation). Returns nullptr when
     // fibers dimension is exceeded. Paired release in on_fiber_done.
@@ -338,10 +351,19 @@ Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size) {
         wid = std::min(ptr->affinity(), static_cast<int>(workers_.size()) - 1);
         if (wid < 0)
             wid = 0;
+    } else if (fifo_start) {
+        // Issue #4851: FIFO start lane — one worker owns the spawn-order
+        // queue, so a serialized batch of scope bodies begins in spawn
+        // order (the failing first sibling must reach the apply gate
+        // before its slow siblings).
+        wid = fifo_lane_worker();
     } else {
         wid = use_load_aware_distribution_ ? next_worker_id_load_aware() : next_worker_id();
     }
-    workers_[wid]->enqueue(ptr);
+    if (fifo_start)
+        workers_[wid]->enqueue_fifo(ptr);
+    else
+        workers_[wid]->enqueue(ptr);
     // Issue #119: register the fiber in the worker's
     // registry so fiber:join can find the Fiber* by ID.
     workers_[wid]->register_fiber(ptr);

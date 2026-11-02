@@ -4859,6 +4859,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             aura::orch::AgentSpec spec;
             spec.name = name;
             spec.body = std::move(body);
+            // Issue #4851: scope siblings that share the per-Evaluator apply
+            // gate are serialized, so they must START in spawn order (the
+            // LIFO deque ran the last-spawned body first, which hid a
+            // failing first sibling behind the slow ones and made
+            // :on-join-fail "cancel" wait for the whole :timeout-ms).
+            // Region-keyed bodies (production region concurrency, #3728)
+            // run in parallel and keep the round-robin dispatch.
+            spec.start_fifo = (region_key == 0);
             // Issue #4725: pin the closure until the fiber body applies it
             // (the #4713 reclaim can otherwise erase it while it is pending).
             spec.body_evaluator = static_cast<void*>(&ev);

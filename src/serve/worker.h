@@ -215,6 +215,11 @@ public:
     // pending_ never rebalances (permanent dispatch wedge).
     void enqueue(Fiber* fiber);
 
+    // Issue #4851: start-order queue. Scope bodies must start in spawn
+    // order, not LIFO. Owner pushes go straight to ready_fifo_; foreign
+    // pushes stage in fifo_inject_ and the owner absorbs them in order.
+    void enqueue_fifo(Fiber* fiber);
+
     // Accessors
     int id() const { return id_; }
     // Issue #4424: true when the calling OS thread is this worker.
@@ -312,6 +317,8 @@ private:
     // scheduler's liveness check sees staged fibers immediately.
     std::mutex inject_mutex_;
     std::deque<Fiber*> inject_queue_;
+    // Issue #4851: FIFO start-order staging (kept out of the LIFO deque).
+    std::deque<Fiber*> fifo_inject_;
     // Issue #4783: lock-free "inject_queue_ non-empty" hint for the Phase-4
     // park predicate. Remote enqueue (host-thread spawn) stages into
     // inject_queue_, never local_queue_, so the old predicate

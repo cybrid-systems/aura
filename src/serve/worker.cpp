@@ -272,6 +272,36 @@ void WorkerThread::enqueue(Fiber* fiber) {
     }
 }
 
+// Issue #4851: enqueue a fiber for spawn-order dispatch. Same queued /
+// pending accounting as enqueue(), but the fiber is placed on the FIFO
+// ready queue instead of the LIFO deque.
+void WorkerThread::enqueue_fifo(Fiber* fiber) {
+    if (!fiber || fiber->is_done())
+        return;
+    fiber->set_queued();
+    pending_.fetch_add(1, std::memory_order_release);
+    if (g_worker_ctx == &ctx_) {
+        ready_fifo_.push_back(fiber);
+    } else {
+        std::lock_guard<std::mutex> lock(inject_mutex_);
+        fifo_inject_.push_back(fiber);
+        inject_pending_.store(true, std::memory_order_release);
+    }
+    if (auto* m = worker_metrics_.load(std::memory_order_acquire)) {
+        m->local_pushes.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (wake_evfd_ >= 0) {
+        uint64_t val = 1;
+        ::write(wake_evfd_, &val, sizeof(val));
+    }
+    if (g_worker_ctx == &ctx_) {
+        wake_cv_.notify_one();
+    } else {
+        std::lock_guard<std::mutex> lock(wake_mutex_);
+        wake_cv_.notify_one();
+    }
+}
+
 // ── drain_injections — owner-thread absorption of remote enqueues ────
 //
 // Runs ONLY on this worker's OS thread (run() Phase 0 / Phase 1 pop-miss).
@@ -281,11 +311,13 @@ void WorkerThread::enqueue(Fiber* fiber) {
 // re-enters its pop loop).
 bool WorkerThread::drain_injections() {
     std::deque<Fiber*> batch;
+    std::deque<Fiber*> fifo_batch;
     {
         std::lock_guard<std::mutex> lock(inject_mutex_);
-        if (inject_queue_.empty())
+        if (inject_queue_.empty() && fifo_inject_.empty())
             return false;
         batch.swap(inject_queue_);
+        fifo_batch.swap(fifo_inject_);
         inject_pending_.store(false, std::memory_order_release);
     }
     for (Fiber* fiber : batch) {
@@ -299,7 +331,16 @@ bool WorkerThread::drain_injections() {
         }
         local_queue_.push(fiber);
     }
-    return true;
+    // Issue #4851: staged start-order fibers keep their order on the FIFO.
+    for (Fiber* fiber : fifo_batch) {
+        if (fiber->is_done() || fiber->is_reclaimed()) {
+            fiber->clear_queued();
+            pending_.fetch_sub(1, std::memory_order_release);
+            continue;
+        }
+        ready_fifo_.push_back(fiber);
+    }
+    return !batch.empty() || !fifo_batch.empty();
 }
 
 // ── notify_fiber_done — report completed fiber ────────

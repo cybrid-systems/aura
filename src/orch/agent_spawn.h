@@ -2304,6 +2304,9 @@ inline AgentHandle agent_import_handoff(HandoffToken tok, void* dst_ev,
 struct AgentSpec {
     std::string name;
     std::function<void()> body; // required for spawn
+    // Issue #4851: start this body on the worker's FIFO start-order queue
+    // (scope-spawn siblings begin in spawn order instead of LIFO).
+    bool start_fifo = false;
     bool attach_mailbox = true;
     std::size_t mailbox_high_water = 256;
     // Issue #2972: per-mailbox inflight credit (0 = use high_water).
@@ -3102,10 +3105,11 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
     // after this handle is moved into the name table / caller.
     auto body_acq_rej = std::make_shared<std::atomic<std::uint8_t>>(0);
     h.body_acquire_rejected_slot = body_acq_rej;
-    serve::Fiber* f =
-        sched.spawn([body = std::move(body), mb, attach, live, coop,
-                     progress_clock = want_progress_clock, register_soft, body_acq_rej,
-                     pin_ev = pending_body_pin.ev, pin_token = pending_body_pin.token]() mutable {
+    const bool start_fifo = spec.start_fifo;
+    serve::Fiber* f = sched.spawn(
+        [body = std::move(body), mb, attach, live, coop, progress_clock = want_progress_clock,
+         register_soft, body_acq_rej, pin_ev = pending_body_pin.ev,
+         pin_token = pending_body_pin.token]() mutable {
             // Issue #4725: release the pending-body pin once the body has been
             // applied -- also on the try_acquire skip path and when the
             // closure is no longer live. Declared first so it runs LAST: the
@@ -3189,7 +3193,8 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
                 live->body_done.store(true, std::memory_order_release);
             if (attach && mb && serve::g_current_fiber)
                 mb->detach(serve::g_current_fiber);
-        });
+        },
+        2 * 1024 * 1024, start_fifo);
 
     if (!f) {
         // Issue #1600 / #2155: Scheduler::spawn returns nullptr on fiber
