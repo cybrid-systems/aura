@@ -231,12 +231,17 @@ namespace {
     // foreign mismatch reads as inequality. Soft/Off the helpers return
     // true before any stamp load. IsolationDeny rides the helper (op =
     // the probing prim).
+    // Issue #4855: denied_out reports that the comparison was refused by
+    // the cross-tenant isolation gate (#4505). A denied probe is NOT a
+    // "missing key" in the diagnostic sense: the caller must read it as
+    // absent (void), never raise a "key not found" error on it.
     [[nodiscard]] bool eval_hash_keys_eq(const EvalValue& a, const EvalValue& b,
                                          ::aura::compiler::StringPoolView sh,
                                          const std::pmr::vector<Pair>* pairs = nullptr,
                                          const std::vector<std::vector<EvalValue>>* vh = nullptr,
                                          int depth = 0, Evaluator* tenant_ev = nullptr,
-                                         std::string_view tenant_op = {}) noexcept {
+                                         std::string_view tenant_op = {},
+                                         bool* denied_out = nullptr) noexcept {
         if (a.val == b.val)
             return true;
         if (is_int(a) && is_int(b))
@@ -245,8 +250,11 @@ namespace {
             auto ai = as_string_idx(a), bi = as_string_idx(b);
             if (tenant_ev &&
                 (!tenant_ev->inrange_string_tenant_allows(ai, /*required_effects=*/0, tenant_op) ||
-                 !tenant_ev->inrange_string_tenant_allows(bi, /*required_effects=*/0, tenant_op)))
+                 !tenant_ev->inrange_string_tenant_allows(bi, /*required_effects=*/0, tenant_op))) {
+                if (denied_out)
+                    *denied_out = true;
                 return false;
+            }
             return (ai < sh.size() && bi < sh.size()) && sh[ai] == sh[bi];
         }
         if (is_float(a) && is_float(b))
@@ -271,17 +279,21 @@ namespace {
                     (!tenant_ev->inrange_slot_tenant_allows(ai, /*vector_heap=*/false,
                                                             /*required_effects=*/0, tenant_op) ||
                      !tenant_ev->inrange_slot_tenant_allows(bi, /*vector_heap=*/false,
-                                                            /*required_effects=*/0, tenant_op)))
+                                                            /*required_effects=*/0, tenant_op))) {
+                    if (denied_out)
+                        *denied_out = true;
                     return false;
+                }
                 if (++steps > spine_cap) // cyclic spine
                     return false;
                 if (!eval_hash_keys_eq((*pairs)[ai].car, (*pairs)[bi].car, sh, pairs, vh, depth + 1,
-                                       tenant_ev, tenant_op))
+                                       tenant_ev, tenant_op, denied_out))
                     return false;
                 ca = (*pairs)[ai].cdr;
                 cb = (*pairs)[bi].cdr;
             }
-            return eval_hash_keys_eq(ca, cb, sh, pairs, vh, depth + 1, tenant_ev, tenant_op);
+            return eval_hash_keys_eq(ca, cb, sh, pairs, vh, depth + 1, tenant_ev, tenant_op,
+                                     denied_out);
         }
         if (vh && is_vector(a) && is_vector(b)) {
             auto ai = as_vector_idx(a), bi = as_vector_idx(b);
@@ -291,15 +303,18 @@ namespace {
                 (!tenant_ev->inrange_slot_tenant_allows(ai, /*vector_heap=*/true,
                                                         /*required_effects=*/0, tenant_op) ||
                  !tenant_ev->inrange_slot_tenant_allows(bi, /*vector_heap=*/true,
-                                                        /*required_effects=*/0, tenant_op)))
+                                                        /*required_effects=*/0, tenant_op))) {
+                if (denied_out)
+                    *denied_out = true;
                 return false;
+            }
             const auto& va = (*vh)[ai];
             const auto& vb = (*vh)[bi];
             if (va.size() != vb.size())
                 return false;
             for (std::size_t i = 0; i < va.size(); ++i)
-                if (!eval_hash_keys_eq(va[i], vb[i], sh, pairs, vh, depth + 1, tenant_ev,
-                                       tenant_op))
+                if (!eval_hash_keys_eq(va[i], vb[i], sh, pairs, vh, depth + 1, tenant_ev, tenant_op,
+                                       denied_out))
                     return false;
             return true;
         }
@@ -328,7 +343,7 @@ namespace {
     eval_hash_probe(const FlatHashTable* ht, std::uint64_t kh, const EvalValue& key,
                     ::aura::compiler::StringPoolView sh, const std::pmr::vector<Pair>* pairs,
                     const std::vector<std::vector<EvalValue>>* vh, Evaluator* tenant_ev,
-                    std::string_view tenant_op) noexcept {
+                    std::string_view tenant_op, bool* denied_out = nullptr) noexcept {
         const auto* meta = ht->metadata();
         const auto* keys = ht->keys();
         const auto cap = ht->capacity;
@@ -339,8 +354,8 @@ namespace {
                 return kNoHashSlot; // empty slot: the chain ends here
             if (m == ::aura::compiler::hash::kTombstoneSlot)
                 continue; // deleted slot: keep probing
-            if (eval_hash_keys_eq(EvalValue{keys[idx]}, key, sh, pairs, vh, 0, tenant_ev,
-                                  tenant_op))
+            if (eval_hash_keys_eq(EvalValue{keys[idx]}, key, sh, pairs, vh, 0, tenant_ev, tenant_op,
+                                  denied_out))
                 return static_cast<std::size_t>(idx);
         }
         return kNoHashSlot;
@@ -1155,12 +1170,19 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             // Issue #4612: probe by hash (open addressing) instead of
             // scanning every slot -- a miss used to cost O(capacity).
             const auto kh = eval_hash_key_hash(a[1], string_heap);
-            const auto slot =
-                eval_hash_probe(ht, kh, a[1], string_heap, &pairs, &vector_heap, &ev, "hash-ref");
+            // Issue #4505: a probe REFUSED by the cross-tenant isolation gate
+            // reads as MISSING (void) -- it must not become the #4855
+            // "key not found" error, or a denied read would abort the
+            // caller instead of reading as absent.
+            bool denied = false;
+            const auto slot = eval_hash_probe(ht, kh, a[1], string_heap, &pairs, &vector_heap, &ev,
+                                              "hash-ref", &denied);
             if (slot != kNoHashSlot)
                 return EvalValue{ht->values()[slot]};
             if (a.size() >= 3)
                 return a[2];
+            if (denied)
+                return make_void();
             // Issue #4855: no default and the key is absent -> name the key.
             auto key_text = hash_ref_key_text(a[1], string_heap);
             if (key_text.empty())

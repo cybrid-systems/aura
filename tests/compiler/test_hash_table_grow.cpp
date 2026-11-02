@@ -388,8 +388,11 @@ static void ac4614_hash_cow() {
     auto fresh = cs.eval("(begin (define h (hash \"a\" 1)) (define h2 (hash-set h \"b\" 2)) "
                          "(hash-length h2))");
     CHECK(fresh && is_int(*fresh) && as_int(*fresh) == 2, "4614 AC4: the new table has the entry");
+    // Issue #4855: (hash-ref h key) with NO default RAISES on a missing key
+    // (Racket-style). The copy-on-write property is asserted through the
+    // explicit-default form, which still answers an absent key as void.
     auto absent = cs.eval("(begin (define h (hash \"a\" 1)) (define h2 (hash-set h \"b\" 2)) "
-                          "(hash-ref h \"b\"))");
+                          "(hash-ref h \"b\" ()))");
     CHECK(absent && is_void(*absent), "4614 AC4: the source does not see the update");
     // hash-remove returns a NEW hash; the argument keeps the key.
     auto kept =
