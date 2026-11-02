@@ -6744,6 +6744,14 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 aura::ast::NodeId id, const Env& env, bool allow_file_diag_arm) {
     static constexpr std::size_t MAX_C_STACK_DEPTH = 512;
     std::size_t& c_stack_depth = aura::serve::aura_eval_c_stack_depth_slot();
+    // Issue #4745 follow-up: the #4599 per-node memo is keyed by NodeId and
+    // scoped to one flat. A workspace/rebuilt flat can keep the same address
+    // (and even the same pool) while its slots are recycled for different
+    // nodes, so the flat/pool pointer check in bind_float_intern_flat cannot
+    // see the rebuild. Never let the memo cross a top-level eval boundary:
+    // node ids are only meaningful inside the eval that produced them.
+    if (c_stack_depth == 0)
+        clear_name_res_cache();
     if (c_stack_depth >= MAX_C_STACK_DEPTH) {
         const auto fid = aura::serve::g_current_fiber ? aura::serve::g_current_fiber->id()
                                                       : static_cast<std::uint64_t>(0);
