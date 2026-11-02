@@ -1,3 +1,5 @@
+; #4831 teardown: ~CompilerService drains this Evaluator's live agent
+; bodies (request_cancel + join) before releasing the FlatAST.
 ; Issue #4831 — exit-path stress: a single agent-body poll worker keeps
 ; polling while the 300 asks run, and is still alive when the top-level form
 ; returns. main.cpp's atexit(aura_reset_runtime) then frees the process-global

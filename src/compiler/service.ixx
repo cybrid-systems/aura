@@ -18472,6 +18472,10 @@ public:
         // PersistentChildVector OOB abort). ~Evaluator drains again for
         // bare-Evaluator users; this site covers the earlier service-body
         // window.
+        // Issue #4831: drain/cancel this Evaluator's orch agent bodies
+        // BEFORE release_children_for_teardown() frees the FlatAST they
+        // are still reading.
+        evaluator_.cleanup_orch_agents();
         evaluator_.drain_thread_fibers();
         // Issue #2576-lifecycle: unregister the storm listener before the
         // SpecJITController (member spec_jit_) is destroyed. The listener
