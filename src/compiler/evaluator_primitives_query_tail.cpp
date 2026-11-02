@@ -520,11 +520,15 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
             insert_kv("closure-env-safety-total", static_cast<std::int64_t>(total));
             insert_kv("refresh-rate-pct", refresh_pct);
             insert_kv("closure-env-safety-recommendation", recommendation);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
-            // contract).
-            aura_hash_stamp_new_table_owner();
+            std::size_t hidx = 0;
+            {
+                // Issue #4860: unlocked size()+push_back raced a concurrent publish
+                // (double free). Index read, push and stamp are one critical section.
+                std::lock_guard slock(ev->alloc_storage_lock_);
+                hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                aura_hash_stamp_new_table_owner();
+            }
             return make_hash(hidx);
         });
 
@@ -664,11 +668,15 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
             insert_kv("sv-mutate-success-rate-pct", static_cast<std::int64_t>(success_rate_pct));
             insert_kv("eda-verification-total", static_cast<std::int64_t>(total));
             insert_kv("eda-verification-recommendation", recommendation);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
-            // contract).
-            aura_hash_stamp_new_table_owner();
+            std::size_t hidx = 0;
+            {
+                // Issue #4860: unlocked size()+push_back raced a concurrent publish
+                // (double free). Index read, push and stamp are one critical section.
+                std::lock_guard slock(ev->alloc_storage_lock_);
+                hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                aura_hash_stamp_new_table_owner();
+            }
             return make_hash(hidx);
         });
 
@@ -977,11 +985,15 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
             insert_kv("cross-workspace-cow-gen-mismatch-wired", make_int(1));
             insert_kv("schema-2275", make_int(2275));
             insert_kv("issue-2275", make_int(2275));
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
-            // contract).
-            aura_hash_stamp_new_table_owner();
+            std::size_t hidx = 0;
+            {
+                // Issue #4860: unlocked size()+push_back raced a concurrent publish
+                // (double free). Index read, push and stamp are one critical section.
+                std::lock_guard slock(ev->alloc_storage_lock_);
+                hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                aura_hash_stamp_new_table_owner();
+            }
             return make_hash(hidx);
         });
 
@@ -1501,11 +1513,15 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
             insert_kv("shortcircuit-savings", static_cast<std::int64_t>(shortcircuit_savings));
             insert_kv("dirty-blocks-skipped", static_cast<std::int64_t>(dirty_blocks_skipped));
             insert_kv("schema", 625);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
-            // contract).
-            aura_hash_stamp_new_table_owner();
+            std::size_t hidx = 0;
+            {
+                // Issue #4860: unlocked size()+push_back raced a concurrent publish
+                // (double free). Index read, push and stamp are one critical section.
+                std::lock_guard slock(ev.alloc_storage_lock_);
+                hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                aura_hash_stamp_new_table_owner();
+            }
             return make_hash(hidx);
         });
 }

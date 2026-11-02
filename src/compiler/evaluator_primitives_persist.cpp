@@ -570,10 +570,15 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
         put("magic-ok", blob.magic_ok ? 1 : 0);
         put("crc-ok", blob.crc_ok ? 1 : 0);
         put("schema", 1381);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot contract).
-        aura_hash_stamp_new_table_owner();
+        std::size_t hidx = 0;
+        {
+            // Issue #4860: unlocked size()+push_back raced a concurrent publish
+            // (double free). Index read, push and stamp are one critical section.
+            std::lock_guard slock(ev.alloc_storage_lock_);
+            hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            aura_hash_stamp_new_table_owner();
+        }
         return make_hash(hidx);
     });
 

@@ -9950,9 +9950,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 }
                 // Finish's overflow stamp overwrites the first non-schema
                 // slot, which is the sentinel just planted. Keep it.
-                return query_hash_finish(ht, ev.string_heap_, /*overflowed=*/false);
+                return query_hash_finish(ev, ht, ev.string_heap_, /*overflowed=*/false);
             }
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
         });
 
     // ── Issue #1884: query:type-propagation-invariant-stats ──
@@ -10051,7 +10051,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                           static_cast<std::int64_t>(
                               m->predicate_memo_evictions_total.load(std::memory_order_relaxed)));
             }
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
         });
 
     // ── Issue #1887: query:test-strategy-stats ──
@@ -10130,7 +10130,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 m->test_strategy_self_mod_loops.store(loops, std::memory_order_relaxed);
                 insert_kv("metrics-mirror", 1);
             }
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
         });
 
     // ── Issue #1890: query:envframe-resolve-distinction-stats ──
@@ -10184,7 +10184,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("has-invalid-id-predicate", 1);
             insert_kv("free-list-push-before-freed", 1);
             insert_kv("capture-multi-vector-bounds", 1);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
         });
 
     // ── Issue #1889 / #1927 / #1955: query:envframe-truncate-epoch-stats ──
@@ -10363,7 +10363,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("issue-1955", 1955);
             insert_kv("schema-1948", 1948); // Guard violation metrics lineage
             insert_kv("schema-1739", 1739); // bridge bump on truncate lineage
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
         });
 
     // ── Issue #1888 / #1926 / #1929 / #1954: query:closure-view-lifetime-stats ──
@@ -10447,7 +10447,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 insert_kv("live_closure_stale_prevented_total", 0);
                 insert_kv("live-closure-stale-prevented-total", 0);
             }
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
         });
 
     // ── Issue #1964: query:architectural-simplification-stats ──
@@ -10521,7 +10521,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("epoch-migration-strict-pending", 1); // --strict not yet gate
             insert_kv("api-surface-complete", 1);
             insert_kv("callsite-migration-followup", 1);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
         });
 
     // ── Issue #1956: query:hot-update-registry-stats ──
@@ -10834,7 +10834,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("storm-clear-dirty-ring-budget", 8); // kStormClearDirtyRingBudget
             insert_kv("schema-3744", 3744);
             insert_kv("issue-3744", 3744);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
         });
 
     // ── Issue #2367: query:reload-recovery-state ──
@@ -10993,7 +10993,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("reemit-policy-soft-enter", 0);
             insert_kv("reemit-policy-defer", 1);
             insert_kv("reemit-policy-require-real", 2);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
         };
         ObservabilityPrims::register_stats_impl("query:reload-recovery-state",
                                                 reload_recovery_builder);
@@ -11069,7 +11069,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // Lineage preserved (agents can still poll recovery-state).
             insert_kv("schema-2367", 2367);
             insert_kv("schema-2302", 2302);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
         });
 
     // ── Issue #1882: query:aot-hotupdate-audit-stats ──
@@ -11145,7 +11145,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     att == 0 ? 10000 : static_cast<std::int64_t>((aud * 10000ull) / att);
                 insert_kv("audit-coverage-bp", cov); // basis points (10000 = 100%)
             }
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
         });
 }
 

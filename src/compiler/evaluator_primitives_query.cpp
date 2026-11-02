@@ -596,7 +596,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
 
     // Facade-only (#1680): (stats:get "query:module-export-cache-stats")
     ObservabilityPrims::register_stats_impl(
-        "query:module-export-cache-stats", [&string_heap](std::span<const EvalValue>) -> EvalValue {
+        "query:module-export-cache-stats",
+        [&string_heap, &ev](std::span<const EvalValue>) -> EvalValue {
             auto load = [](const std::atomic<std::uint64_t>& a) {
                 return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
             };
@@ -645,7 +646,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const auto m = load(module_export_cache::g_miss);
             const auto denom = h + m;
             insert_kv("hit-rate-bp", denom > 0 ? (h * 10000) / denom : 0);
-            return query_hash_finish(ht, string_heap, overflowed);
+            return query_hash_finish(ev, ht, string_heap, overflowed);
         });
 
     ObservabilityPrims::register_stats_impl(
@@ -794,7 +795,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("ir-module-walked", ir_walked);
             insert_kv("schema", 1891);
             insert_kv("issue", 1891);
-            return query_hash_finish(ht, ev->string_heap_mut(), overflowed);
+            return query_hash_finish(*ev, ht, ev->string_heap_mut(), overflowed);
         });
 
     // Issue #2096: query:macro-mutate-restamp-stats. Surfaces the
@@ -911,7 +912,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // dashboards see the stamping rate.
     ObservabilityPrims::register_stats_impl(
         "query:macro-schema-cache-dirty-stamp-stats",
-        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+        [&string_heap, &ev](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
             auto* ht = FlatHashTable::create(query_hash_capacity_for(16));
             if (!ht)
@@ -968,7 +969,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("active", 1);
             insert_kv("rest-param-qq-wired", 1);
             insert_kv("schema-cache-rest-stamp-wired", 1);
-            return query_hash_finish(ht, string_heap, overflowed);
+            return query_hash_finish(ev, ht, string_heap, overflowed);
         });
 
     // Issue #458: query:hygiene-stats. Returns an integer
@@ -1096,7 +1097,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("active", 1);
             insert_kv("lineage-1893", 1893);
             insert_kv("nested-under-mutation-boundary", 1);
-            return query_hash_finish(ht, string_heap, overflowed);
+            return query_hash_finish(ev, ht, string_heap, overflowed);
         });
 
     // Issue #456 / #1036: query:dirty-subtree root-node-id
@@ -1205,7 +1206,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("schema-fail",
                       static_cast<std::int64_t>(ev->get_schema_validation_fail_count()));
             insert_kv("schema-valid", ev->get_last_schema_validation_ok() ? 1 : 0);
-            return query_hash_finish(ht, string_heap, overflowed);
+            return query_hash_finish(ev, ht, string_heap, overflowed);
         });
 
     // Issue #504: query:mutation-boundary-log. Consolidated Guard impact
@@ -1216,7 +1217,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - boundary-depth, guard-epoch, ring-seq, ring-capacity
     //   - boundary-log-total, boundary-log-recommendation
     ObservabilityPrims::register_stats_impl(
-        "query:mutation-boundary-log", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+        "query:mutation-boundary-log",
+        [&string_heap, &ev](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
             auto* ev = Evaluator::get_query_evaluator();
             if (!ev)
@@ -1281,7 +1283,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("schema-valid", ev->get_last_schema_validation_ok() ? 1 : 0);
             insert_kv("boundary-log-total", static_cast<std::int64_t>(total));
             insert_kv("boundary-log-recommendation", recommendation);
-            return query_hash_finish(ht, string_heap, overflowed);
+            return query_hash_finish(ev, ht, string_heap, overflowed);
         });
 
     // Issue #489: query:stability-stats. Hash view of StableNodeRef
@@ -1334,7 +1336,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("stale-ref-warned",
                       static_cast<std::int64_t>(ev->get_stale_ref_warned_count()));
             insert_kv("stable-ref-invalidations", static_cast<std::int64_t>(invalidations));
-            return query_hash_finish(ht, string_heap, overflowed);
+            return query_hash_finish(ev, ht, string_heap, overflowed);
         });
 
     // Issue #456: query:epoch-stats. Returns the current
@@ -1625,7 +1627,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                           static_cast<std::int64_t>(wflat->pinned_across_boundaries()));
             else
                 insert_kv("pinned-across-boundaries", 0);
-            return query_hash_finish(ht, string_heap, overflowed);
+            return query_hash_finish(ev, ht, string_heap, overflowed);
         });
 
     // Issue #1470 / #1499 / #1593 / #1597 / #1599 / #1613:
@@ -2079,7 +2081,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("macro-hygiene-submodule-wired", 1);
             insert_kv("issue", 1613);
             insert_kv("schema", 1613); // lineage 1599|1597|1593|1499
-            return query_hash_finish(ht, string_heap, overflowed);
+            return query_hash_finish(ev, ht, string_heap, overflowed);
         });
 
     // Issue #738: query:stable-ref-boundary-stats-hash — cross-COW /
@@ -2149,7 +2151,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("schema-2189", 2189);
             insert_kv("issue-2189", 2189);
             insert_kv("agent-pin-lifecycle-wired", 1);
-            return query_hash_finish(ht, string_heap, overflowed);
+            return query_hash_finish(ev, ht, string_heap, overflowed);
         });
 
     // Issue #620: query:stable-ref-provenance — Agent-discoverable
@@ -2305,7 +2307,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("tenant-id", static_cast<std::int64_t>(ref.tenant_id));
             insert_kv("schema", 620);
             insert_kv("schema-2056", 2056);
-            return query_hash_finish(ht, string_heap, overflowed);
+            return query_hash_finish(ev, ht, string_heap, overflowed);
         });
 
     // Issue #497: query:stable-ref-lifecycle-stats — long-session
@@ -2383,7 +2385,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("node-compact-total", static_cast<std::int64_t>(compact_total));
             insert_kv("lifecycle-recommendation", recommendation);
             insert_kv("lifecycle-total", static_cast<std::int64_t>(lifecycle_total));
-            return query_hash_finish(ht, string_heap, overflowed);
+            return query_hash_finish(ev, ht, string_heap, overflowed);
         });
 
     // Issue #631: query:stable-ref-provenance-sv-stats-hash —
@@ -2497,7 +2499,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("safe-resolves", static_cast<std::int64_t>(safe_resolves));
             insert_kv("total-stable-ref-invalidations", static_cast<std::int64_t>(mismatches));
             insert_kv("schema", 631);
-            return query_hash_finish(ht, string_heap, overflowed);
+            return query_hash_finish(ev, ht, string_heap, overflowed);
         });
 
     // Issue #438: query:fiber-migration-stats. Returns
@@ -2760,7 +2762,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("mutation-coord-schema", 591);
             insert_kv("scheduler-mutation-coord-total", static_cast<std::int64_t>(total));
             insert_kv("scheduler-mutation-coord-recommendation", recommendation);
-            return query_hash_finish(ht, string_heap, overflowed);
+            return query_hash_finish(ev, ht, string_heap, overflowed);
         });
 
     // Issue #618: (orchestration:tune-gc-frequency ratio) —
