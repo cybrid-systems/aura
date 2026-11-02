@@ -331,6 +331,14 @@ public:
     // yield with MutationBoundary or Explicit are safe to steal.
     static void yield(YieldReason reason);
 
+    // Issue #4853: the trampoline's hand-back after the body returns. This
+    // must never be gated by the mutation-boundary / soft-orch-window check:
+    // the body is already done, the fiber will not run again, and the swap
+    // cannot deadlock. A gated (rejected) completion yield returned from the
+    // body entry with uc_link == nullptr, so libc called exit() and killed
+    // the process while another fiber was still joining.
+    static void yield_completion();
+
     // Current yield reason (for the scheduler to inspect)
     YieldReason last_yield_reason() const { return last_yield_reason_; }
     void set_yield_reason(YieldReason r) { last_yield_reason_ = r; }
@@ -610,6 +618,23 @@ public:
     }
     void set_orch_agent_boundary_active(bool v) noexcept {
         orch_agent_boundary_active_.store(v, std::memory_order_release);
+    }
+
+    // Issue #4853: set while this fiber waits inside Fiber::join. The
+    // orch agent-body window (#2118) is SOFT: it holds no workspace_mtx_
+    // and no rollback checkpoint. A join wait inside it must hand the turn
+    // to the scope children it waits for — with the yield blocked, the wait
+    // busy-spun its worker thread and the children assigned to that worker
+    // never ran (the inner scope-join-all timed out with short counts).
+    // Only the join's own EXPLICIT yield is allowed (it re-queues the fiber
+    // as Ready, so it always resumes); the BlockingIO park stays blocked,
+    // because a parked fiber inside the window was not re-woken at
+    // shutdown and hung the scheduler stop.
+    [[nodiscard]] bool join_wait_yield_allowed() const noexcept {
+        return join_wait_yield_allowed_.load(std::memory_order_acquire);
+    }
+    void set_join_wait_yield_allowed(bool v) noexcept {
+        join_wait_yield_allowed_.store(v, std::memory_order_release);
     }
 
     // Issue #448 / #2115 / #2549: alias of depth-safe API. Historical #448
@@ -1526,6 +1551,9 @@ private:
     // Issue #2118: orch agent body soft mutation-boundary window active
     // (per-fiber stack depth registered; steal/GC visibility).
     std::atomic<bool> orch_agent_boundary_active_{false};
+    // Issue #4853: this fiber is inside a Fiber::join wait (the explicit
+    // yield there may run inside the soft orch agent-body window).
+    std::atomic<bool> join_wait_yield_allowed_{false};
     // Issue #2184: fiber-local MutationSafetySnapshot mirrors (seqlock).
     // safety_seq_ even = stable, odd = writer updating held/defuse.
     mutable std::atomic<std::uint64_t> safety_seq_{0};

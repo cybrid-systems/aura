@@ -4798,6 +4798,50 @@ def test_serve_async_two_fiber_yield_reclaim_4706():
     )
 
 
+def test_orch_multi_agent_scope_join_4853():
+    """Issue #4853: several agent bodies each fan out and join their own scope.
+
+    Four agents each spawn three scope children (one fails) and join them.
+    Before the fix the first body's completion hand-back was gated like a park
+    inside the soft orch window: the rejected yield returned from the ucontext
+    entry (uc_link == nullptr), libc called exit(), and the remaining agent
+    joins reported reclaimed/timeout while the process hung. Every agent must
+    now report its own counts: status=partial err=1 ok=2 with its failing
+    child named.
+    """
+    program = """(define (sig r) (format "status=~a err=~a ok=~a errors=~a" (hash-ref r "status") (hash-ref r "err-count") (hash-ref r "body-ok-count") (hash-ref r "errors")))
+(for-each (lambda (a)
+  (orch:spawn-agent (format "p~a" a) (lambda ()
+    (for-each (lambda (k) (orch:scope-spawn (format "p~a-k~a" a k) (lambda () (if (= k 0) (error "kid failed") k)))) (list 0 1 2))
+    (error (sig (orch:scope-join-all :timeout-ms 3000))))))
+  (list 0 1 2 3))
+(for-each (lambda (a) (let ((j (orch:agent-join (format "p~a" a) :timeout-ms 6000)))
+  (display (list a (hash-ref j "status") (hash-ref j "error" '-))) (newline))) (list 0 1 2 3))"""
+    fd, path = tempfile.mkstemp(suffix=".aura", prefix="aura-4853-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(program)
+        env = os.environ.copy()
+        env["AURA_PIPELINE_STRICT"] = "0"
+        env["AURA_SANDBOX"] = "off"
+        env.pop("AURA_SOFT", None)
+        r = subprocess.run(
+            [AURA, "--load", path],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+            cwd=str(REPO),
+        )
+        assert r.returncode == 0, f"#4853 multi-agent scope join rc={r.returncode}; stderr={r.stderr[-600:]!r}"
+        for a in range(4):
+            want = f"({a} error status=partial err=1 ok=2 errors=((p{a}-k0 . kid failed)))"
+            assert want in (r.stdout or ""), f"#4853 agent p{a} lost its counts: {r.stdout[-600:]!r}"
+    finally:
+        os.unlink(path)
+    print("  OK test_orch_multi_agent_scope_join_4853 (4 agents x 3 scope children: partial 1/2 each)")
+
+
 def test_fiber_gc_root_registry_4713():
     """Issue #4713: process-level fiber GC root registry + STW safepoints.
 
@@ -5837,6 +5881,7 @@ for tf in [
     test_fiber_sibling_define_dispatch_4712,
     test_fiber_sibling_dispatch_across_rebind_4715_regression,
     test_serve_async_two_fiber_yield_reclaim_4706,
+    test_orch_multi_agent_scope_join_4853,
     test_fiber_gc_root_registry_4713,
     test_fiber_cow_overlay_conflict_condition_4715,
     test_fiber_cow_overlay_write_skew_read_set_4715,
