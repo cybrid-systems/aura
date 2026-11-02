@@ -1,0 +1,25 @@
+; Issue #4831 — exit-path stress: a single agent-body poll worker keeps
+; polling while the 300 asks run, and is still alive when the top-level form
+; returns. main.cpp's atexit(aura_reset_runtime) then frees the process-global
+; hash/pair/string heaps; the orch scheduler holder must stop + join its
+; workers before that teardown, or the registry free races the worker's
+; result-hash mint (SIGSEGV at exit, si_addr outside any loaded module).
+; Bounded idle: the worker retires on its own (~40000 empty polls), so this
+; file cannot hang even when the exit hook is absent; the race window is the
+; process-exit instant.
+(define (range n) (let loop ((i (- n 1)) (acc (list))) (if (< i 0) acc (loop (- i 1) (cons i acc)))))
+(define (hg h k d) (if (hash-has-key? h k) (hash-ref h k) d))
+(orch:spawn-agent "wx4831" (lambda ()
+  (let loop ((n 0) (idle 0))
+    (let ((m (orch:agent-recv "wx4831" :wait #f)))
+      (cond ((eq? #t (hg m "ok" #f))
+             (orch:agent-reply (hg m "correlation-id" 0) "x")
+             (loop (+ n 1) 0))
+            ((> idle 40000) n)
+            (else (fiber:yield) (loop n (+ idle 1))))))) :attach-mailbox #t)
+(define ok4831 0)
+(for-each (lambda (i) (if (eq? #t (hg (orch:agent-ask "wx4831" (number->string i) :timeout-ms 2000) "ok" #f)) (set! ok4831 (+ ok4831 1)))) (range 300))
+; Do NOT stop/join: the worker must be live across process exit.
+(if (= ok4831 300)
+    (display "OK-4831-EXIT\n")
+    (begin (display "FAIL-4831-EXIT asks=") (display ok4831) (newline) (exit 1)))

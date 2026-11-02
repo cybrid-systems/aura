@@ -36,6 +36,7 @@ module;
 #include "compiler/typed_mutation_audit.h" // #2660 typed_audit::production_defaults_active
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <algorithm>
 #include <memory>
 #include <mutex>
@@ -414,6 +415,17 @@ namespace {
 
     // Keep a process-local scheduler for orch:spawn-agent tests (stdin-friendly).
     // Lazy-init: shared across calls in-process; stopped on process exit.
+    //
+    // Issue #4831: "process exit" is not the static destructor below — it is
+    // main.cpp's atexit(aura_reset_runtime), which runs BEFORE static
+    // destructors (atexit handlers are LIFO). That teardown frees the
+    // process-global hash/pair/string heaps. An agent body still polling
+    // orch:agent-recv on a worker thread keeps minting into them, so the
+    // free raced the mint (SIGSEGV at exit, si_addr outside any loaded
+    // module; ~5-13% of the #4831 repro). ensure() therefore registers its
+    // own atexit handler AFTER main's: LIFO makes it run first, quiescing
+    // the workers before the runtime teardown.
+    void orch_sched_stop_at_exit();
     struct OrchSchedHolder {
         std::unique_ptr<aura::serve::Scheduler> sched;
         std::thread runner;
@@ -438,13 +450,27 @@ namespace {
             // restore and aborted a start that was armed when requested.
             sched->evaluate_start_gate();
             runner = std::thread([this] { sched->run(); });
+            // Issue #4831: registered after main's aura_reset_runtime handler,
+            // so it runs before it (atexit is LIFO) and joins the worker
+            // threads while the heaps are still intact.
+            std::atexit(&orch_sched_stop_at_exit);
         }
-        ~OrchSchedHolder() {
+        // Issue #4831: idempotent; called by the atexit hook above and again
+        // by the static destructor (which runs after the atexit handlers).
+        void stop_and_join() {
             if (sched)
                 sched->stop();
-            if (runner.joinable())
+            if (!runner.joinable())
+                return;
+            // exit() may run the atexit handler on the runner thread itself
+            // (a script calling (exit) from inside its own IO loop); joining
+            // self is UB. Detach instead — process teardown follows anyway.
+            if (runner.get_id() == std::this_thread::get_id())
+                runner.detach();
+            else
                 runner.join();
         }
+        ~OrchSchedHolder() { stop_and_join(); }
     };
     // Issue #4847: construct the holder on the FIRST orch call, never at
     // static-init time. ~OrchSchedHolder stops the scheduler and destroys
@@ -462,6 +488,14 @@ namespace {
     OrchSchedHolder& orch_sched_holder() {
         static OrchSchedHolder holder;
         return holder;
+    }
+
+    // Issue #4831: atexit handlers are LIFO. This hook is registered after
+    // main's aura_reset_runtime handler, so it runs before it and quiesces
+    // the orch workers while the process-global heaps are still intact.
+    // stop_and_join is idempotent with ~OrchSchedHolder.
+    void orch_sched_stop_at_exit() {
+        orch_sched_holder().stop_and_join();
     }
 
     // Issue #4843: in --serve / --serve-async-bench a scheduler is already
