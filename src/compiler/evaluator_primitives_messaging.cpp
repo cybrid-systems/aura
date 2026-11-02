@@ -1871,6 +1871,30 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             // Best-effort notify even if registration raced past timeout.
             s_fiber_results_cv.notify_all();
         };
+        // Issue #4842: a fiber:spawn body started from inside an orch agent
+        // body inherits the agent-apply waiver. The parent body holds the
+        // per-Evaluator gate for its whole lifetime, so a nested scope /
+        // agent spawn from this body must not queue on that gate -- it
+        // could only start after the parent's join returned, and the
+        // parent's inner scope-join-all always timed out. The flag lives
+        // in the per-execution Context (below), so it follows a scheduler
+        // fiber across a steal as well as a thread-backend body.
+        const bool inherited_body_ctx =
+            Evaluator::agent_apply_hold_depth() > 0 ||
+            (aura::serve::g_current_fiber != nullptr &&
+             aura::serve::g_current_fiber->orch_agent_boundary_active()) ||
+            ev.eval_ctx().orch_body_inherited;
+        auto run_body = [&ev, inherited_body_ctx, complete_fiber]() {
+            auto& ctx = ev.eval_ctx();
+            const bool prev = ctx.orch_body_inherited;
+            ctx.orch_body_inherited = prev || inherited_body_ctx;
+            struct RestoreInherited {
+                aura::core::fiber_ctx::Context& ctx;
+                bool prev;
+                ~RestoreInherited() { ctx.orch_body_inherited = prev; }
+            } restore{ctx, prev};
+            complete_fiber();
+        };
         int64_t fid = 0;
         // Issue #4699: the pending-body count is taken at SPAWN time, before
         // the body exists: a sibling body of the CLI thread backend may not
@@ -1893,7 +1917,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             // the fallback so the caller sees an honest failure.
             bool spawn_failed = false;
             try {
-                fid = aura::messaging::g_fiber_spawn(complete_fiber);
+                fid = aura::messaging::g_fiber_spawn(run_body);
             } catch (const std::exception&) {
                 fid = 0;
                 spawn_failed = true;
@@ -1939,12 +1963,12 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                 // whole lifetime: a file-heap sweep that starts while it runs
                 // either sees this counter and stands down, or this body sees
                 // the sweep gate and waits (see aura_fiber_body_enter).
-                s_thread_fiber_threads.emplace(fid, std::make_pair(static_cast<const void*>(&ev),
-                                                                   std::thread([complete_fiber]() {
-                                                                       aura_fiber_body_enter();
-                                                                       complete_fiber();
-                                                                       aura_fiber_body_exit();
-                                                                   })));
+                s_thread_fiber_threads.emplace(
+                    fid, std::make_pair(static_cast<const void*>(&ev), std::thread([run_body]() {
+                                            aura_fiber_body_enter();
+                                            run_body();
+                                            aura_fiber_body_exit();
+                                        })));
             }
             return make_int(fid);
         }
