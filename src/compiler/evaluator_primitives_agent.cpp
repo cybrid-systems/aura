@@ -4036,6 +4036,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 prev_mailbox = ev.agent_names_->mailbox_of(name);
             if (!name.empty()) {
                 const auto* pending = ev.agent_names_->find(name);
+                // Issue #4867: a second spawn while the first body is still
+                // running used to register a second agent under the same
+                // name; the first was unreachable after the join and its
+                // body leaked. Reject the duplicate instead.
+                if (pending && pending->fiber && !pending->fiber->is_done()) {
+                    return make_primitive_error(
+                        ev.string_heap_, ev.error_values_,
+                        std::string("orch:spawn-agent: name already running: ") + name,
+                        ev.primitive_error_counter_ptr());
+                }
                 if (pending &&
                     (pending->must_wait_reclaimed || pending->reclaimed_deferred_cleanup)) {
                     aura::orch::g_orch_module_stats.host_forget_reclaimed_risk_total.fetch_add(
@@ -4397,7 +4407,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             aura::orch::JoinPolicy policy{};
             policy.drain_ms = aura::orch::kDefaultJoinDrainMs;
             bool debug_report = false; // Issue #4832: :debug / :verbose
-            for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
+            // Issue #4867: scope-join-all has no leading name argument, so
+            // its keyword pairs start at index 0 (the old i=1 skipped the
+            // first pair and misaligned every later one).
+            for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(a[i + 1]))
                     policy.primary_ms = static_cast<std::uint64_t>(
@@ -4411,6 +4424,45 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         std::max<std::int64_t>(0, types::as_int(a[i + 1])));
                 else if ((k == "debug" || k == "verbose") && types::is_bool(a[i + 1]))
                     debug_report = types::as_bool(a[i + 1]);
+            }
+            // Issue #4867: reject unknown/invalid keyword arguments and
+            // negative timeouts instead of silently using the default.
+            for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
+                auto k = orch_keyword_key(a[i]);
+                auto& val = a[i + 1];
+                if (k == "timeout-ms" || k == "timeout_ms") {
+                    if (!types::is_int(val))
+                        return make_primitive_error(
+                            ev.string_heap_, ev.error_values_,
+                            "orch:agent-join: :timeout-ms expects an integer",
+                            ev.primitive_error_counter_ptr());
+                    if (types::as_int(val) < 0)
+                        return make_primitive_error(
+                            ev.string_heap_, ev.error_values_,
+                            "orch:agent-join: :timeout-ms must not be negative",
+                            ev.primitive_error_counter_ptr());
+                } else if (k == "drain-ms" || k == "drain_ms") {
+                    if (!types::is_int(val))
+                        return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                                    "orch:agent-join: :drain-ms expects an integer",
+                                                    ev.primitive_error_counter_ptr());
+                } else if (k == "wait-reclaimed-ms" || k == "wait_reclaimed_ms") {
+                    if (!types::is_int(val))
+                        return make_primitive_error(
+                            ev.string_heap_, ev.error_values_,
+                            "orch:agent-join: :wait-reclaimed-ms expects an integer",
+                            ev.primitive_error_counter_ptr());
+                } else if (k == "debug" || k == "verbose") {
+                    if (!types::is_bool(val))
+                        return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                                    "orch:agent-join: :debug expects a boolean",
+                                                    ev.primitive_error_counter_ptr());
+                } else {
+                    return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                                std::string("orch:agent-join: unknown keyword :") +
+                                                    std::string(k),
+                                                ev.primitive_error_counter_ptr());
+                }
             }
 
             aura::orch::AgentHandle* hp = nullptr;
@@ -5617,6 +5669,50 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 } else if ((k == "debug" || k == "verbose") && types::is_bool(val)) {
                     // Issue #4832: diagnostic view opt-in.
                     debug_report = types::as_bool(val);
+                }
+            }
+            // Issue #4867: the parse loop above ignores a keyword whose
+            // value has the wrong type and any unknown key. Validate the
+            // pair list once so :timeout-ms "abc" / :timeot-ms are errors,
+            // not silent defaults.
+            for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
+                auto k = orch_keyword_key(a[i]);
+                auto& val = a[i + 1];
+                auto bad_type = [&](const char* name, const char* want) -> EvalValue {
+                    return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                                std::string("orch:scope-join-all: :") + name +
+                                                    " expects " + want,
+                                                ev.primitive_error_counter_ptr());
+                };
+                if (k == "timeout-ms" || k == "timeout_ms") {
+                    if (!types::is_int(val))
+                        return bad_type("timeout-ms", "an integer");
+                } else if (k == "drain-ms" || k == "drain_ms") {
+                    if (!types::is_int(val))
+                        return bad_type("drain-ms", "an integer");
+                } else if (k == "wait-reclaimed-ms" || k == "wait_reclaimed_ms") {
+                    if (!types::is_int(val))
+                        return bad_type("wait-reclaimed-ms", "an integer");
+                } else if (k == "max-restarts" || k == "max_restarts") {
+                    if (!types::is_int(val))
+                        return bad_type("max-restarts", "an integer");
+                } else if (k == "on-join-fail" || k == "on_join_fail") {
+                    if (!(types::is_string(val) || types::is_symbol(val) || types::is_keyword(val)))
+                        return bad_type("on-join-fail", "a policy name");
+                } else if (k == "tree" || k == "debug" || k == "verbose") {
+                    if (!types::is_bool(val))
+                        return bad_type("tree/debug", "a boolean");
+                } else if (k == "path" || k == "scope-path" || k == "scope_path") {
+                    if (!types::is_string(val))
+                        return bad_type("path", "a string");
+                } else if (k == "child-index" || k == "child_index") {
+                    if (!types::is_int(val))
+                        return bad_type("child-index", "an integer");
+                } else {
+                    return make_primitive_error(
+                        ev.string_heap_, ev.error_values_,
+                        std::string("orch:scope-join-all: unknown keyword :") + std::string(k),
+                        ev.primitive_error_counter_ptr());
                 }
             }
             if (auto msg =
