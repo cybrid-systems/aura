@@ -37,7 +37,7 @@
 (check! (= (g 2) (- 6 1)) "g sees value-define k through f")
 ;; arity change: the caller re-analysis still rejects it
 (define r (mutate:rebind "f" "(lambda (x y) (+ x y))" "t"))
-(check! (and (pair? r) (eq? (car r) 'mutation-failed)) "arity change rejected")
+(check! (and (pair? r) (equal? (car r) "mutation-failed")) "arity change rejected")
 (eval-current)
 (check! (= (g 2) 5) "old binding intact after reject")
 ;; arity change with callers updated: rebind callers first is rejected too,
@@ -65,4 +65,4 @@
         (loop (+ i 1)))))
 (if (= *fails* 0)
     (begin (display "OK-4681 ") (display *n*) (display " checks") (newline))
-    (begin (display "FAILED-4681 ") (display *fails*) (newline)))
+    (begin (display "FAILED-4681 ") (display *fails*) (newline) (exit 1)))
