@@ -28,13 +28,16 @@ module;
 #include "compiler/locked_string_heap.hh" // Issue #4543
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <expected>
-#include <memory_resource>
+#include <iostream>
 #include <ostream>
+#include <print>
 #include <span>
 #include <string>
 #include <string_view>
