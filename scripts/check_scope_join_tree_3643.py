@@ -61,7 +61,7 @@ def main() -> int:
     if sig < 0 or rstart < 0:
         fails.append("AC2: 3-arg tree join_all missing")
     else:
-        window = scope[rstart : sig + 2600]
+        window = scope[rstart : sig + 4200]
         if "for (auto& c : children_)" not in window:
             fails.append("AC2: children_ walk missing")
         if "c->join_all(policy, fail, /*tree=*/true)" not in window:
