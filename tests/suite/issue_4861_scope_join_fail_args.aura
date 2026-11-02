@@ -46,6 +46,33 @@
 (check (equal? (hash-ref r2 "on-join-fail-effective") "cancel")
        "#4861 the string :on-join-fail spelling is unchanged")
 
+; -- #4861 the report fields: a recovered child is NOT a failure ----------
+(define n 0)
+(orch:scope-spawn "flaky" (lambda ()
+  (set! n (+ n 1))
+  (if (< n 3) (error "attempt failed") 'finally)))
+(define rr (orch:scope-join-all :timeout-ms 5000 :on-join-fail "restart-n" :max-restarts 3))
+(check (equal? (hash-ref rr "ok") #t)
+       "#4861 a child that recovers via restart-n reports ok #t")
+(check (equal? (hash-ref rr "status") "ok")
+       "#4861 a recovered child does not force status partial")
+(check (equal? (hash-ref rr "err-count") 0)
+       "#4861 err-count counts the FINAL failures only")
+(check (equal? (hash-ref rr "attempt-errors") 2)
+       "#4861 attempt-errors counts the recovered attempts")
+(check (equal? (hash-ref rr "body-ok-count") 1)
+       "#4861 body-ok-count still counts the successful body")
+
+; -- #4861 restart-exhausted counts the children that ran out of fuel -----
+(orch:scope-spawn "bad" (lambda () (error "always")))
+(define r2 (orch:scope-join-all :timeout-ms 3000 :on-join-fail "restart-n" :max-restarts 2))
+(check (equal? (hash-ref r2 "err-count") 1)
+       "#4861 err-count is 1 for the single failing child")
+(check (equal? (hash-ref r2 "restart-attempted") 2)
+       "#4861 restart-attempted is the restart budget actually spent")
+(check (equal? (hash-ref r2 "restart-exhausted") 1)
+       "#4861 restart-exhausted counts the child that ran out of restarts")
+
 (if (= *fails* 0)
     (display "OK-4861\n")
     (begin (display "FAIL-4861 fails=") (display *fails*) (newline) (exit 1)))

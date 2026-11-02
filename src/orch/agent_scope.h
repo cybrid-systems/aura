@@ -873,11 +873,17 @@ public:
                             std::chrono::milliseconds(*policy.total_budget_ms))
                         break;
                     auto local = join_agents(std::span<AgentHandle>(handles_), policy);
-                    apply_on_join_fail_unlocked_(fail ? &*fail : nullptr, round == 0);
+                    // Issue #4861: this pass reports how many restarts produced a
+                    // replacement. The loop continues only while a round produced
+                    // one; a round that produced none (budget exhausted, no spec,
+                    // spawn-admit deny) has nothing to re-join.
+                    std::uint32_t restarts_this_round = 0;
+                    apply_on_join_fail_unlocked_(fail ? &*fail : nullptr, round == 0,
+                                                 &restarts_this_round);
                     fold(std::move(local));
                     compact_done_husks_unlocked_();
-                    if (last_restart_ok_ == 0)
-                        break; // no replacement — nothing to re-join
+                    if (restarts_this_round == 0)
+                        break; // this round produced no replacement - nothing to re-join
                 }
             }
         }
@@ -1829,8 +1835,15 @@ private:
     // join_agents stamped last_join_status. Caller holds ScopeEnterGuard.
     // Reclaimed + deferred / still-running is never restart/cancel fuel (#2661).
     // Issue #3208: nullptr = unset → resolve_on_join_fail (production Cancel).
+    // Issue #4861: restarts_ok_out reports how many restarts produced a
+    // replacement in THIS pass. The join loop continues only while a round
+    // produced one - the cumulative last_restart_ok_ never returns to 0 after
+    // round 0, so the old `last_restart_ok_ == 0` break spun the loop for all
+    // 64 rounds and inflated restart-exhausted (62 for one child with
+    // :max-restarts 2).
     void apply_on_join_fail_unlocked_(const AgentFailurePolicy* explicit_policy,
-                                      bool reset_counters = true) noexcept {
+                                      bool reset_counters = true,
+                                      std::uint32_t* restarts_ok_out = nullptr) noexcept {
         const auto action = resolve_on_join_fail(explicit_policy);
         last_on_join_fail_effective_ = action;
         // Issue #4858: a restart round re-enters this pass; keep the totals.
@@ -1905,6 +1918,8 @@ private:
                 h.body_failure_count->store(0, std::memory_order_release);
             if (try_restart_from_spec_(i, policy)) {
                 ++last_restart_ok_;
+                if (restarts_ok_out)
+                    ++*restarts_ok_out;
                 ++last_join_fail_action_taken_;
             } else {
                 // Issue #4022: spawn-admit deny — do not burn max_restarts.

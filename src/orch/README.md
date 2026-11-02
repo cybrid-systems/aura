@@ -280,6 +280,7 @@ auto wr = scope.watch_all(/*stall_ms=*/100, pol);
 // Metrics (query:orch-module-stats):
 //   agent-restart-total             (re-spawns performed)
 //   agent-restart-exhausted-total    (max_restarts OR circuit-open)
+- attempt-errors: failed ATTEMPTS (a child that was restarted and then succeeded is counted here, not in err-count) - #4861
 //   agent-consecutive-stall-total    (per-stall observation)
 //   schema-2229 / issue-2229 / agent-failure-policy-wired
 ```
