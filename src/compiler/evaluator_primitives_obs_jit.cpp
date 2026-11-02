@@ -383,7 +383,7 @@ void ObservabilityPrims::register_jit_p1(PrimRegistrar add, Evaluator& ev) {
             insert_kv("hotswap-invalidate-total", static_cast<std::int64_t>(hotswap_invalidate));
             insert_kv("epoch-mismatch-hits", static_cast<std::int64_t>(epoch_mismatch));
             insert_kv("mutation-epoch", static_cast<std::int64_t>(mutation_epoch));
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -447,7 +447,7 @@ void ObservabilityPrims::register_jit_p2(PrimRegistrar add, Evaluator& ev) {
             insert_kv("epoch-mismatch-prevented-total",
                       static_cast<std::int64_t>(mismatch_prevented));
             insert_kv("hotswap-invalidate-total", static_cast<std::int64_t>(hotswap_invalidate));
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -533,7 +533,7 @@ void ObservabilityPrims::register_jit_p3(PrimRegistrar add, Evaluator& ev) {
             insert_kv("value-dispatch-hits", static_cast<std::int64_t>(value_dispatch));
             insert_kv("arena-alloc-triggers", static_cast<std::int64_t>(arena_triggers));
             insert_kv("bottleneck-total", static_cast<std::int64_t>(bottleneck_total));
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -616,7 +616,7 @@ void ObservabilityPrims::register_jit_p4(PrimRegistrar add, Evaluator& ev) {
             insert_kv("pure-delegation-shape", static_cast<std::int64_t>(shape_pure));
             insert_kv("pure-delegation-linear", static_cast<std::int64_t>(linear_pure));
             insert_kv("pure-delegation-total", static_cast<std::int64_t>(shape_pure + linear_pure));
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -664,7 +664,7 @@ void ObservabilityPrims::register_jit_p5(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -846,7 +846,7 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             Evaluator::SoaDirtyStats s;
             if (ev.get_soa_dirty_stats_fn_) {
@@ -1423,7 +1423,7 @@ void ObservabilityPrims::register_jit_p7(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             std::uint64_t triggers = 0, skips = 0, compacts = 0, saved = 0;
             std::uint64_t paused = 0, mutations = 0, dirty = 0;
@@ -1592,7 +1592,7 @@ void ObservabilityPrims::register_jit_p8(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             // Issue #1519: prefer baked constants from cpp26_contract_stats
             // so Agents see live consteval/Contract density without
@@ -1674,7 +1674,7 @@ void ObservabilityPrims::register_jit_p9(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             std::uint64_t closure_stale = 0, linear_pass = 0;
             std::uint64_t atomic_commits = 0;
@@ -1822,7 +1822,7 @@ void ObservabilityPrims::register_jit_p10(PrimRegistrar add, Evaluator& ev) {
                     break;
                 }
             }
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         };
 
         std::vector<EvalValue> result;
@@ -2014,10 +2014,15 @@ static EvalValue build_engine_metrics_hash(Evaluator& ev,
         (void)engine_metrics_hash_try_insert(ht, ev, "schema-3244", make_int(3244));
         (void)engine_metrics_hash_try_insert(ht, ev, "issue-3244", make_int(3244));
     }
-    auto hidx = g_hash_tables.size();
-    g_hash_tables.push_back(ht);
-    // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot contract).
-    aura_hash_stamp_new_table_owner();
+    std::size_t hidx = 0;
+    {
+        // Issue #4860: unlocked size()+push_back raced a concurrent publish
+        // (double free). Index read, push and stamp are one critical section.
+        std::lock_guard slock(ev.alloc_storage_lock_);
+        hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        aura_hash_stamp_new_table_owner();
+    }
     return make_hash(hidx);
 }
 
@@ -2489,7 +2494,7 @@ void ObservabilityPrims::register_jit_p11(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -2608,7 +2613,7 @@ void ObservabilityPrims::register_jit_p12(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -2743,7 +2748,7 @@ void ObservabilityPrims::register_jit_p13(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -2893,7 +2898,7 @@ void ObservabilityPrims::register_jit_p14(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -3048,7 +3053,7 @@ void ObservabilityPrims::register_jit_p15(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -3252,7 +3257,7 @@ void ObservabilityPrims::register_jit_p16(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -3430,7 +3435,7 @@ void ObservabilityPrims::register_jit_p17(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -3628,7 +3633,7 @@ void ObservabilityPrims::register_jit_p18(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -3778,7 +3783,7 @@ void ObservabilityPrims::register_jit_p19(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -3927,7 +3932,7 @@ void ObservabilityPrims::register_jit_p20(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -4064,7 +4069,7 @@ void ObservabilityPrims::register_jit_p21(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -4205,7 +4210,7 @@ void ObservabilityPrims::register_jit_p22(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -4355,7 +4360,7 @@ void ObservabilityPrims::register_jit_p23(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -4549,7 +4554,7 @@ void ObservabilityPrims::register_jit_p24(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -4695,7 +4700,7 @@ void ObservabilityPrims::register_jit_p25(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -4898,7 +4903,7 @@ void ObservabilityPrims::register_jit_p26(PrimRegistrar add, Evaluator& ev) {
             insert_kv("mandatory-call-sites-enabled", mandatory_call_sites_enabled);
             insert_kv("recommendation", recommendation);
             insert_kv("schema", 784);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -5042,7 +5047,7 @@ void ObservabilityPrims::register_jit_p27(PrimRegistrar add, Evaluator& ev) {
             insert_kv("steal-defer-active", steal_defer_active);
             insert_kv("recommendation", recommendation);
             insert_kv("schema", 785);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -5211,7 +5216,7 @@ void ObservabilityPrims::register_jit_p28(PrimRegistrar add, Evaluator& ev) {
             insert_kv("composite-slo-status", composite_slo_status);
             insert_kv("recommendation", recommendation);
             insert_kv("schema", 786);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -5403,7 +5408,7 @@ void ObservabilityPrims::register_jit_p29(PrimRegistrar add, Evaluator& ev) {
             insert_kv("epoch-consistent-hits", epoch_consistent_hits);
             insert_kv("composite-fidelity-status", composite_fidelity_status);
             insert_kv("schema", 787);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -5575,7 +5580,7 @@ void ObservabilityPrims::register_jit_p30(PrimRegistrar add, Evaluator& ev) {
             insert_kv("contract-compliance-rate", contract_compliance_rate);
             insert_kv("composite-ai-extension-status", composite_ai_extension_status);
             insert_kv("schema", 788);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -5728,7 +5733,7 @@ void ObservabilityPrims::register_jit_p31(PrimRegistrar add, Evaluator& ev) {
             insert_kv("deep-hygiene-predicate-active", deep_hygiene_predicate_active);
             insert_kv("recommendation", recommendation);
             insert_kv("schema", 789);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 
     // ── Issue #1366: Aura wrappers for AOT hot-reload C API ──
@@ -5847,7 +5852,7 @@ void ObservabilityPrims::register_jit_p31(PrimRegistrar add, Evaluator& ev) {
             put("old-so-staged-wired", 1);
             put("schema-3539", kAotReloadOldSoStagedIssue);
             put("issue-3539", kAotReloadOldSoStagedIssue);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -6046,7 +6051,7 @@ void ObservabilityPrims::register_jit_p32(PrimRegistrar add, Evaluator& ev) {
             insert_kv("cross-fiber-re-stamp-active", cross_fiber_re_stamp_active);
             insert_kv("recommendation", recommendation);
             insert_kv("schema", 790);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -6220,7 +6225,7 @@ void ObservabilityPrims::register_jit_p33(PrimRegistrar add, Evaluator& ev) {
             insert_kv("autoprop-active", autoprop_active);
             insert_kv("recommendation", recommendation);
             insert_kv("schema", 791);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -6394,7 +6399,7 @@ void ObservabilityPrims::register_jit_p34(PrimRegistrar add, Evaluator& ev) {
             insert_kv("steal-resume-version-refresh-active", steal_resume_version_refresh_active);
             insert_kv("recommendation", recommendation);
             insert_kv("schema", 792);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -6561,7 +6566,7 @@ void ObservabilityPrims::register_jit_p35(PrimRegistrar add, Evaluator& ev) {
                       jit_emit_runtime_version_checks_active);
             insert_kv("recommendation", recommendation);
             insert_kv("schema", 793);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -6739,7 +6744,7 @@ void ObservabilityPrims::register_jit_p36(PrimRegistrar add, Evaluator& ev) {
             insert_kv("slo-gate-active", slo_gate_active);
             insert_kv("recommendation", recommendation);
             insert_kv("schema", 794);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -6908,7 +6913,7 @@ void ObservabilityPrims::register_jit_p37(PrimRegistrar add, Evaluator& ev) {
             insert_kv("concepts-active", concepts_active);
             insert_kv("recommendation", recommendation);
             insert_kv("schema", 795);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -7096,7 +7101,7 @@ void ObservabilityPrims::register_jit_p38(PrimRegistrar add, Evaluator& ev) {
             insert_kv("full-soa-migration-active", full_soa_migration_active);
             insert_kv("recommendation", recommendation);
             insert_kv("schema", 796);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -7156,7 +7161,7 @@ void ObservabilityPrims::register_jit_p39(PrimRegistrar add, Evaluator& ev) {
             insert_kv("policy-doc-active", f_policy_doc_active);
             insert_kv("hot-path-uses-result", f_hot_path_uses_result);
             insert_kv("schema", 809);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -7260,7 +7265,7 @@ void ObservabilityPrims::register_jit_p40(PrimRegistrar add, Evaluator& ev) {
             insert_kv("scheduler-init-err", f_scheduler_init_err);
             insert_kv("aura-result-init-active", f_aura_result_init_active);
             insert_kv("schema", 810);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -7316,7 +7321,7 @@ void ObservabilityPrims::register_jit_p41(PrimRegistrar add, Evaluator& ev) {
             insert_kv("internal-aura-result-path", f_internal_aura_result_path);
             insert_kv("guest-only-policy-active", f_guest_only_policy_active);
             insert_kv("schema", 811);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -7378,7 +7383,7 @@ void ObservabilityPrims::register_jit_p42(PrimRegistrar add, Evaluator& ev) {
             insert_kv("linear-probe-on-success", f_linear_probe_on_success);
             insert_kv("steal-safety-active", f_steal_safety_active);
             insert_kv("schema", 812);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -7435,7 +7440,7 @@ void ObservabilityPrims::register_jit_p43(PrimRegistrar add, Evaluator& ev) {
             insert_kv("panic-checkpoint-aura-result", f_panic_checkpoint_aura_result);
             insert_kv("no-unwind-through-guard", f_no_unwind_through_guard);
             insert_kv("schema", 813);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -7533,7 +7538,7 @@ void ObservabilityPrims::register_jit_p44(PrimRegistrar add, Evaluator& ev) {
             insert_kv("self-heal-invocations", f_self_heal_invocations);
             insert_kv("recommended-action", f_recommended_action);
             insert_kv("schema", 814);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -7590,7 +7595,7 @@ void ObservabilityPrims::register_jit_p45(PrimRegistrar add, Evaluator& ev) {
             insert_kv("provenance-queries", f_provenance_queries);
             insert_kv("marker-propagation-active", f_marker_propagation_active);
             insert_kv("schema", 815);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -7661,7 +7666,7 @@ void ObservabilityPrims::register_jit_p46(PrimRegistrar add, Evaluator& ev) {
             insert_kv("validate-fail", f_validate_fail);
             insert_kv("validate-pass-pct", f_validate_pass_pct);
             insert_kv("schema", 816);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -7723,7 +7728,7 @@ void ObservabilityPrims::register_jit_p47(PrimRegistrar add, Evaluator& ev) {
             insert_kv("hygiene-drift-prevented", f_hygiene_drift_prevented);
             insert_kv("marker-aware-dirty-active", f_marker_aware_dirty_active);
             insert_kv("schema", 817);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -7862,7 +7867,7 @@ void ObservabilityPrims::register_jit_p48(PrimRegistrar add, Evaluator& ev) {
             insert_kv("index-enforced-hits", f_index_enforced_hits);
             insert_kv("enforcement-active", f_enforcement_active);
             insert_kv("schema", 819);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -7917,7 +7922,7 @@ void ObservabilityPrims::register_jit_p49(PrimRegistrar add, Evaluator& ev) {
             insert_kv("panic-recoveries", f_panic_recoveries);
             insert_kv("e2e-active", f_e2e_active);
             insert_kv("schema", 820);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -7957,7 +7962,7 @@ void ObservabilityPrims::register_jit_p50(PrimRegistrar add, Evaluator& ev) {
             insert_kv("deopt-to-interpreter", f_deopt_to_interpreter);
             insert_kv("fiber-local-policy-active", f_fiber_local_policy_active);
             insert_kv("schema", 821);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -8002,7 +8007,7 @@ void ObservabilityPrims::register_jit_p51(PrimRegistrar add, Evaluator& ev) {
             insert_kv("linear-probe", f_linear_probe);
             insert_kv("l2-maturity-active", f_l2_maturity_active);
             insert_kv("schema", 822);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -8042,7 +8047,7 @@ void ObservabilityPrims::register_jit_p52(PrimRegistrar add, Evaluator& ev) {
             insert_kv("per-fn-deopt", f_per_fn_deopt);
             insert_kv("zero-fallback-policy", f_zero_fallback_policy);
             insert_kv("schema", 823);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -8092,7 +8097,7 @@ void ObservabilityPrims::register_jit_p53(PrimRegistrar add, Evaluator& ev) {
             insert_kv("present-ns-total", f_present_ns_total);
             insert_kv("module-active", f_module_active);
             insert_kv("schema", 824);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -8137,7 +8142,7 @@ void ObservabilityPrims::register_jit_p54(PrimRegistrar add, Evaluator& ev) {
             insert_kv("allocs-per-frame", f_allocs_per_frame);
             insert_kv("buffer-path-active", f_buffer_path_active);
             insert_kv("schema", 825);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -8182,7 +8187,7 @@ void ObservabilityPrims::register_jit_p55(PrimRegistrar add, Evaluator& ev) {
             insert_kv("mutation-impact", f_mutation_impact);
             insert_kv("hotpath-active", f_hotpath_active);
             insert_kv("schema", 826);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -8282,7 +8287,7 @@ void ObservabilityPrims::register_jit_p56(PrimRegistrar add, Evaluator& ev) {
             insert_kv("stability-transitions", f_stability_transitions);
             insert_kv("contracts-active", f_contracts_active);
             insert_kv("schema", 827);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -8346,7 +8351,7 @@ void ObservabilityPrims::register_jit_p57(PrimRegistrar add, Evaluator& ev) {
             insert_kv("relower-savings", f_relower_savings);
             insert_kv("enforcement-active", f_enforcement_active);
             insert_kv("schema", 828);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -8415,7 +8420,7 @@ void ObservabilityPrims::register_jit_p58(PrimRegistrar add, Evaluator& ev) {
             insert_kv("pointer-fixup-hits", f_pointer_fixup_hits);
             insert_kv("live-defrag-active", f_live_defrag_active);
             insert_kv("schema", 829);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -8475,7 +8480,7 @@ void ObservabilityPrims::register_jit_p59(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 830);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -8534,7 +8539,7 @@ void ObservabilityPrims::register_jit_p60(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 831);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -8594,7 +8599,7 @@ void ObservabilityPrims::register_jit_p61(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 832);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -8653,7 +8658,7 @@ void ObservabilityPrims::register_jit_p62(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 833);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -8712,7 +8717,7 @@ void ObservabilityPrims::register_jit_p63(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 834);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -8812,7 +8817,7 @@ void ObservabilityPrims::register_jit_p64(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 835);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -8870,7 +8875,7 @@ void ObservabilityPrims::register_jit_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 836);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -8929,7 +8934,7 @@ void ObservabilityPrims::register_jit_p66(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 837);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -8987,7 +8992,7 @@ void ObservabilityPrims::register_jit_p67(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 838);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -9214,11 +9219,15 @@ void ObservabilityPrims::register_jit_p68(PrimRegistrar add, Evaluator& ev) {
             // Issue #2288: bump hash table 16 → 32 — query was full at 16
             // (13 existing + 3 new = 16); open-addressing insert_kv silently
             // dropped late keys (issue-2288 in AC7).
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
-            // contract).
-            aura_hash_stamp_new_table_owner();
+            std::size_t hidx = 0;
+            {
+                // Issue #4860: unlocked size()+push_back raced a concurrent publish
+                // (double free). Index read, push and stamp are one critical section.
+                std::lock_guard slock(ev.alloc_storage_lock_);
+                hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                aura_hash_stamp_new_table_owner();
+            }
             return make_hash(hidx);
         });
 }
@@ -9278,7 +9287,7 @@ void ObservabilityPrims::register_jit_p69(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 840);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -9336,7 +9345,7 @@ void ObservabilityPrims::register_jit_p70(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 842);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -9394,7 +9403,7 @@ void ObservabilityPrims::register_jit_p71(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 843);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -9475,7 +9484,7 @@ void ObservabilityPrims::register_jit_p72(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 844);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -9515,7 +9524,7 @@ void ObservabilityPrims::register_jit_p73(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 845);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -9554,7 +9563,7 @@ void ObservabilityPrims::register_jit_p74(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 846);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -9594,7 +9603,7 @@ void ObservabilityPrims::register_jit_p75(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 847);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -9633,7 +9642,7 @@ void ObservabilityPrims::register_jit_p76(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 848);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -9673,7 +9682,7 @@ void ObservabilityPrims::register_jit_p77(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 849);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -9712,7 +9721,7 @@ void ObservabilityPrims::register_jit_p78(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 850);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -9752,7 +9761,7 @@ void ObservabilityPrims::register_jit_p79(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 851);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -9833,7 +9842,7 @@ void ObservabilityPrims::register_jit_p80(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 852);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -9872,7 +9881,7 @@ void ObservabilityPrims::register_jit_p81(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 853);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -9912,7 +9921,7 @@ void ObservabilityPrims::register_jit_p82(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 854);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -9952,7 +9961,7 @@ void ObservabilityPrims::register_jit_p83(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 855);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -9991,7 +10000,7 @@ void ObservabilityPrims::register_jit_p84(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 856);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -10030,7 +10039,7 @@ void ObservabilityPrims::register_jit_p85(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 857);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -10069,7 +10078,7 @@ void ObservabilityPrims::register_jit_p86(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 858);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -10108,7 +10117,7 @@ void ObservabilityPrims::register_jit_p87(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 859);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -10207,7 +10216,7 @@ void ObservabilityPrims::register_jit_p88(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 860);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -10266,7 +10275,7 @@ void ObservabilityPrims::register_jit_p89(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 861);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -10325,7 +10334,7 @@ void ObservabilityPrims::register_jit_p90(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 862);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -10613,7 +10622,7 @@ void ObservabilityPrims::register_jit_p91(PrimRegistrar add, Evaluator& ev) {
             insert_kv("linear-escape-gate-steal-densify-clear-wired", 1);
             insert_kv("schema-2507", 2507);
             insert_kv("issue-2507", 2507);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -10671,7 +10680,7 @@ void ObservabilityPrims::register_jit_p92(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 864);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -10729,7 +10738,7 @@ void ObservabilityPrims::register_jit_p93(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 865);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -10787,7 +10796,7 @@ void ObservabilityPrims::register_jit_p94(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 866);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -10846,7 +10855,7 @@ void ObservabilityPrims::register_jit_p95(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 867);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -10948,7 +10957,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 869);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 
     // Issue #1481 / #1498 / #1554 / #1579 / #1590 / #1600 / #1618:
@@ -11191,7 +11200,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                           pq.quota_last_reject_tenant.load(std::memory_order_relaxed)));
             insert_kv("issue", 1634);  // primary lineage id (1628|1618|1600…)
             insert_kv("schema", 1634); // keep stable; Agents use schema-1880 for #1880 fields
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 
     // Issue #1483 C3: query:per-fiber-mutation-stack-stats — exposes
@@ -11280,7 +11289,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("hist-samples", hist_total);
             insert_kv("issue", 1591);
             insert_kv("schema", 1493); // keep 1493; #1591 alias below
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 
     // Issue #1591 / #1635: query:per-fiber-mutation-depth-stats
@@ -11341,7 +11350,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("safe-yield-mandate-active", 1);
             insert_kv("issue", 1635);
             insert_kv("schema", 1635); // lineage 1591 / 1504
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 
     // Issue #1483 C4: query:gc-safepoint-adaptive-stats — exposes
@@ -11452,7 +11461,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("mutation_stack_depth_histogram", hist_sum);
             insert_kv("issue", 1599);
             insert_kv("schema", 1599); // lineage 1493|1483
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 
     // Issue #2088: query:gc-defer-reason-stats — unified GcDeferReason
@@ -11943,7 +11952,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("schema-2609", 2609);
                 insert_kv("issue-2609", 2609);
             }
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 
     // Issue #2300: query:lifetime-contract-snapshot — single pure Agent
@@ -12242,7 +12251,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("pin-registry-shard-wired", 1);
             insert_kv("schema-2342", 2342);
             insert_kv("issue-2342", 2342);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 
     // Issue #2619: query:arena-moving-densify-health — Agent surface for
@@ -12481,7 +12490,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             // stamps at handler end only — no key renames.
             insert_kv("schema-4140", 4140);
             insert_kv("issue-4140", 4140);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -12539,7 +12548,7 @@ void ObservabilityPrims::register_jit_p98(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 870);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -12597,7 +12606,7 @@ void ObservabilityPrims::register_jit_p99(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 872);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -12656,7 +12665,7 @@ void ObservabilityPrims::register_jit_p100(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 875);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -12715,7 +12724,7 @@ void ObservabilityPrims::register_jit_p101(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 876);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -12774,7 +12783,7 @@ void ObservabilityPrims::register_jit_p102(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 877);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -12833,7 +12842,7 @@ void ObservabilityPrims::register_jit_p103(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 878);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -12932,7 +12941,7 @@ void ObservabilityPrims::register_jit_p104(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 879);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -12991,7 +13000,7 @@ void ObservabilityPrims::register_jit_p105(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 880);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -13050,7 +13059,7 @@ void ObservabilityPrims::register_jit_p106(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 881);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -13109,7 +13118,7 @@ void ObservabilityPrims::register_jit_p107(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 882);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -13167,7 +13176,7 @@ void ObservabilityPrims::register_jit_p108(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 883);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -13226,7 +13235,7 @@ void ObservabilityPrims::register_jit_p109(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 884);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -13284,7 +13293,7 @@ void ObservabilityPrims::register_jit_p110(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 885);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -13342,7 +13351,7 @@ void ObservabilityPrims::register_jit_p111(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 886);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 
@@ -13423,7 +13432,7 @@ void ObservabilityPrims::register_jit_p112(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 395);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 

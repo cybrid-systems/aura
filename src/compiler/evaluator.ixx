@@ -2120,24 +2120,10 @@ namespace primitives_detail {
         }
     }
 
-    template <class StringHeap>
-    inline types::EvalValue query_hash_finish(FlatHashTable* ht, StringHeap& string_heap,
-                                              bool overflowed) {
-        if (overflowed) {
-            g_query_hash_overflow_total.fetch_add(1, std::memory_order_relaxed);
-            query_hash_stamp_overflow(ht, string_heap);
-            (void)insert_kv_checked(ht, string_heap, "hash-overflow", 1);
-            (void)insert_kv_checked(ht, string_heap, "schema-3020", 3020);
-            (void)insert_kv_checked(ht, string_heap, "issue-3020", 3020);
-            (void)insert_kv_checked(ht, string_heap, "schema-3244", 3244);
-            (void)insert_kv_checked(ht, string_heap, "issue-3244", 3244);
-        }
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot contract).
-        aura_hash_stamp_new_table_owner();
-        return types::make_hash(hidx);
-    }
+    // Issue #4860: query_hash_finish now takes the executing Evaluator so
+    // it can publish the minted table under the evaluator's
+    // alloc_storage_lock_. Its definition moved below the Evaluator class
+    // body (the class is incomplete this early in the module interface).
 
     // Issue #4841: error_values_ is appended from every fiber body thread
     // (raise / cancel condition / primitive failures) while another thread
@@ -20213,6 +20199,49 @@ namespace primitives_detail {
     export void propagate_macro_introduced_marker(Evaluator& ev, aura::ast::FlatAST& flat,
                                                   aura::ast::NodeId new_root, bool opt_out = false);
     bool parse_no_auto_restamp_opt_out(Evaluator& ev, std::span<const types::EvalValue> args);
+
+    // Issue #4860: publish a query/stats hash into the process-global
+    // g_hash_tables registry. g_hash_tables is a PROCESS global and the
+    // query panels are read concurrently by monitoring fibers, so an
+    // unlocked size()+push_back raced a concurrent publish (glibc "double
+    // free or corruption" / "malloc(): unaligned tcache chunk detected").
+    // Index read, push and owner stamp are one critical section now, under
+    // the same alloc_storage_lock_ the (hash) prim and the tree-walker
+    // hash-ref take. Defined here (below the Evaluator class body) because
+    // the class is incomplete earlier in the module interface.
+    // The query/stats faces hand the evaluator in as a reference (the
+    // register_*_primitives parameter) or as a pointer (the
+    // Evaluator::get_query_evaluator() face), so take it by template and
+    // normalize to a reference.
+    template <class StringHeap, class EvalLike>
+    inline types::EvalValue query_hash_finish(FlatHashTable* ht, StringHeap& string_heap,
+                                              bool overflowed, EvalLike& ev) {
+        auto& evaluator = [&]() -> Evaluator& {
+            if constexpr (std::is_pointer_v<std::remove_cvref_t<EvalLike>>)
+                return *ev;
+            else
+                return ev;
+        }();
+        if (overflowed) {
+            g_query_hash_overflow_total.fetch_add(1, std::memory_order_relaxed);
+            query_hash_stamp_overflow(ht, string_heap);
+            (void)insert_kv_checked(ht, string_heap, "hash-overflow", 1);
+            (void)insert_kv_checked(ht, string_heap, "schema-3020", 3020);
+            (void)insert_kv_checked(ht, string_heap, "issue-3020", 3020);
+            (void)insert_kv_checked(ht, string_heap, "schema-3244", 3244);
+            (void)insert_kv_checked(ht, string_heap, "issue-3244", 3244);
+        }
+        std::size_t hidx = 0;
+        {
+            std::lock_guard slock(evaluator.alloc_storage_lock_);
+            hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
+        }
+        return types::make_hash(hidx);
+    }
 } // namespace primitives_detail
 
 } // namespace aura::compiler
