@@ -1,0 +1,51 @@
+; Issue #4861 regression suite: the scope-join-all failure-policy arguments
+; are validated instead of being silently ignored.
+;
+; Before this fix:
+;   :on-join-fail accepted only a string, so a quoted symbol ('cancel) was
+;   IGNORED and the policy degraded to report-only - the caller never learned
+;   the cancel strategy was not armed.
+;   :timeout-ms / :max-restarts clamped a negative value to 0, so a typo
+;   silently changed the deadline (or turned the restart fuel into a no-op).
+
+(define *fails* 0)
+(define (check pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+
+(define (caught thunk) (try (thunk) (catch (e) e)))
+
+; ── a negative :timeout-ms names the argument ─────────────────────────────
+(orch:scope-spawn "s-neg-timeout" (lambda () 1))
+(check (equal? (caught (lambda () (orch:scope-join-all :timeout-ms -5)))
+           "orch:scope-join-all: :timeout-ms must not be negative")
+       "#4861 a negative :timeout-ms is a parameter error")
+
+; ── a negative :max-restarts names the argument ────────────────────────────
+(orch:scope-spawn "s-neg-restarts" (lambda () 1))
+(check (equal? (caught (lambda () (orch:scope-join-all :max-restarts -1)))
+           "orch:scope-join-all: :max-restarts must not be negative")
+       "#4861 a negative :max-restarts is a parameter error")
+
+; ── a non-string / non-symbol policy name is a parameter error ─────────────
+(orch:scope-spawn "s-bad-policy" (lambda () 1))
+(check (equal? (caught (lambda () (orch:scope-join-all :on-join-fail 42)))
+           "orch:scope-join-all: :on-join-fail expects a policy name (string or symbol: cancel / restart-n / throttle / report-only)")
+       "#4861 a non-string policy name is a parameter error")
+
+; ── a quoted symbol policy is honored, not degraded to report-only ─────────
+(orch:scope-spawn "s-symbol-policy" (lambda () (error "bad")))
+(define r (orch:scope-join-all :timeout-ms 2000 :on-join-fail 'cancel))
+(check (equal? (hash-ref r "on-join-fail-effective") "cancel")
+       "#4861 a quoted symbol :on-join-fail arms the cancel policy")
+
+; the string spelling still works
+(orch:scope-spawn "s-string-policy" (lambda () (error "bad")))
+(define r2 (orch:scope-join-all :timeout-ms 2000 :on-join-fail "cancel"))
+(check (equal? (hash-ref r2 "on-join-fail-effective") "cancel")
+       "#4861 the string :on-join-fail spelling is unchanged")
+
+(if (= *fails* 0)
+    (display "OK-4861\n")
+    (begin (display "FAIL-4861 fails=") (display *fails*) (newline) (exit 1)))
