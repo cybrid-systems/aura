@@ -453,15 +453,10 @@ void register_workspace_query_primitives(
         }
         insert_kv("matches", matches_out);
         aura::core::note_query_result_created();
-        std::size_t hidx = 0;
-        {
-            // Issue #4860: unlocked size()+push_back raced a concurrent publish
-            // (double free). Index read, push and stamp are one critical section.
-            std::lock_guard slock(ev.alloc_storage_lock_);
-            hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            aura_hash_stamp_new_table_owner();
-        }
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot contract).
+        aura_hash_stamp_new_table_owner();
         return make_hash(hidx);
     };
 
@@ -1353,15 +1348,10 @@ void register_workspace_query_primitives(
             insert_kv("restamp-generation-torn", flat.restamp_generation_torn() ? 1 : 0);
             insert_kv("schema-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
             insert_kv("issue-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
-            std::size_t hidx = 0;
-            {
-                // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
-                hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                aura_hash_stamp_new_table_owner();
-            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            // Issue #4110: SSOT owner stamp.
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         };
 
@@ -1508,15 +1498,11 @@ void register_workspace_query_primitives(
             insert_kv("restamp-generation-torn", flat.restamp_generation_torn() ? 1 : 0);
             insert_kv("schema-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
             insert_kv("issue-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
-            std::size_t hidx = 0;
-            {
-                // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
-                hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                aura_hash_stamp_new_table_owner();
-            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         }
         insert_kv("valid", 1);
@@ -1533,15 +1519,10 @@ void register_workspace_query_primitives(
         insert_kv("restamp-generation-torn", flat.restamp_generation_torn() ? 1 : 0);
         insert_kv("schema-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
         insert_kv("issue-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
-        std::size_t hidx = 0;
-        {
-            // Issue #4860: unlocked size()+push_back raced a concurrent publish
-            // (double free). Index read, push and stamp are one critical section.
-            std::lock_guard slock(ev.alloc_storage_lock_);
-            hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            aura_hash_stamp_new_table_owner();
-        }
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot contract).
+        aura_hash_stamp_new_table_owner();
         return make_hash(hidx);
     });
 
@@ -3202,15 +3183,11 @@ void register_workspace_query_primitives(
             insert_kv("summary-len", static_cast<std::int64_t>(last_summary.size()));
             insert_kv("schema", 1914);
             insert_kv("issue", 1914);
-            std::size_t hidx = 0;
-            {
-                // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
-                hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                aura_hash_stamp_new_table_owner();
-            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -3279,15 +3256,10 @@ void register_workspace_query_primitives(
         insert_kv("reason", is_macro ? 2 : 1);
         insert_kv("schema", 1914);
         insert_kv("issue", 1914);
-        std::size_t hidx = 0;
-        {
-            // Issue #4860: unlocked size()+push_back raced a concurrent publish
-            // (double free). Index read, push and stamp are one critical section.
-            std::lock_guard slock(ev.alloc_storage_lock_);
-            hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            aura_hash_stamp_new_table_owner();
-        }
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot contract).
+        aura_hash_stamp_new_table_owner();
         return make_hash(hidx);
     });
 
@@ -4169,8 +4141,7 @@ void register_workspace_query_primitives(
     // Use case: AI agent debugging "why does x have type T in
     // this branch?" → calls (query:provenance-of "x") to get
     // the predicates that refined x.
-    // Issue #4860: &ev is the publish lock the hash registry needs.
-    add("query:provenance-of", [ws, mev, &ev](const auto& a) -> EvalValue {
+    add("query:provenance-of", [ws, mev](const auto& a) -> EvalValue {
         if (a.size() != 1 || !ws.workspace_flat) {
             mev("bad-arg", "query:provenance-of expects 1 string arg");
             return make_void();
@@ -4249,15 +4220,11 @@ void register_workspace_query_primitives(
                 FlatHashTable::destroy(ht);
                 continue;
             }
-            std::size_t hidx = 0;
-            {
-                // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
-                hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                aura_hash_stamp_new_table_owner();
-            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             auto cons_pair = ws.pairs.size();
             ws.push_stamped_pair({make_hash(hidx), result});
             result = make_pair(cons_pair);
@@ -4313,7 +4280,7 @@ void register_workspace_query_primitives(
     // when mutation M happened?" — gives context for blame
     // queries.
     ObservabilityPrims::register_stats_impl(
-        "query:narrowings-at-mutation", [ws, mev, &ev](const auto& a) -> EvalValue {
+        "query:narrowings-at-mutation", [ws, mev](const auto& a) -> EvalValue {
             if (a.size() != 1 || !ws.workspace_flat) {
                 mev("bad-arg", "query:narrowings-at-mutation expects 1 int arg");
                 return make_void();
@@ -4387,15 +4354,11 @@ void register_workspace_query_primitives(
                     FlatHashTable::destroy(ht);
                     continue;
                 }
-                std::size_t hidx = 0;
-                {
-                    // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                    // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
-                    hidx = g_hash_tables.size();
-                    g_hash_tables.push_back(ht);
-                    aura_hash_stamp_new_table_owner();
-                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 entries.push_back(make_hash(hidx));
             }
             for (auto it = entries.rbegin(); it != entries.rend(); ++it) {
@@ -4679,8 +4642,7 @@ void register_workspace_query_primitives(
     // current-mutation-epoch, wired, schema-2192.
     // Schema 2933 keys: query-result-created-total, query-result-fresh-hits-total,
     // query-result-stale-total, query-result-wired, schema-2933.
-    // Issue #4860: &ev is the publish lock the hash registry needs.
-    auto query_epoch_stats_fn = [ws, &ev](const auto&) -> EvalValue {
+    auto query_epoch_stats_fn = [ws](const auto&) -> EvalValue {
         aura::core::maybe_init_query_epoch_strict_from_env();
         auto* ht = FlatHashTable::create(64);
         if (!ht)
@@ -4780,15 +4742,10 @@ void register_workspace_query_primitives(
         insert_kv("query-epoch-production-strict-wired", 1);
         insert_kv("schema-3075", 3075);
         insert_kv("issue-3075", 3075);
-        std::size_t hidx = 0;
-        {
-            // Issue #4860: unlocked size()+push_back raced a concurrent publish
-            // (double free). Index read, push and stamp are one critical section.
-            std::lock_guard slock(ev.alloc_storage_lock_);
-            hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            aura_hash_stamp_new_table_owner();
-        }
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot contract).
+        aura_hash_stamp_new_table_owner();
         return make_hash(hidx);
     };
     ObservabilityPrims::register_stats_impl("query:query-epoch-stats", query_epoch_stats_fn);

@@ -106,15 +106,10 @@ EvalValue Evaluator::build_policy_hash(const MemoryPolicy& p) {
             return make_void();
         }
     }
-    std::size_t hidx = 0;
-    {
-        // Issue #4860: unlocked size()+push_back raced a concurrent publish
-        // (double free). Index read, push and stamp are one critical section.
-        std::lock_guard slock(alloc_storage_lock_);
-        hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        aura_hash_stamp_new_table_owner();
-    }
+    auto hidx = g_hash_tables.size();
+    g_hash_tables.push_back(ht);
+    // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot contract).
+    aura_hash_stamp_new_table_owner();
     return make_hash(hidx);
 }
 
@@ -153,15 +148,10 @@ Evaluator::build_ast_lifecycle_hash(std::span<const std::pair<std::string, EvalV
             return make_void();
         }
     }
-    std::size_t hidx = 0;
-    {
-        // Issue #4860: unlocked size()+push_back raced a concurrent publish
-        // (double free). Index read, push and stamp are one critical section.
-        std::lock_guard slock(alloc_storage_lock_);
-        hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        aura_hash_stamp_new_table_owner();
-    }
+    auto hidx = g_hash_tables.size();
+    g_hash_tables.push_back(ht);
+    // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot contract).
+    aura_hash_stamp_new_table_owner();
     return make_hash(hidx);
 }
 
