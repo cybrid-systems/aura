@@ -899,11 +899,20 @@ int run_test_cascade_relower_silent_skip() {
         CHECK(f_dirty != nullptr && (f_dirty->dirty || f_dirty->dirty_block_count() > 0),
               "4436: f stays body-dirty before the direct full relower");
         CHECK(g_dirty != nullptr, "4436: g still cached");
+        // Issue #4681: with call slots the caller lowers to a live
+        // TopCellLoad, so there is no embed for #4436 to refuse; the store
+        // is valid while f is dirty. The embed face (AURA_CALL_SLOTS=0)
+        // keeps the refusal.
+        const bool slot_face = call_slots_on_4681() && cs.has_call_slot_for_test("f");
         const bool direct = cs.relower_current_define_full_for_test("g");
-        CHECK(!direct, "4436: direct full relower refuses the dirty callee");
+        if (slot_face) {
+            CHECK(direct, "4681: slot caller stores while the callee row is dirty");
+        } else {
+            CHECK(!direct, "4436: direct full relower refuses the dirty callee");
+        }
         const auto* g_mid = cs.get_define_v2("g");
-        CHECK(g_mid != nullptr, "4436: g still cached after refuse");
-        if (g_mid != nullptr) {
+        CHECK(g_mid != nullptr, "4436: g still cached after the full arm");
+        if (!direct && g_mid != nullptr) {
             const int look_mid = cs.lookup_define_v2("g", g_mid->source_hash);
             CHECK(look_mid != 0, "4436: lookup stays needs-relower after refuse");
             CHECK(g_mid->dirty || !g_mid->content_stored_this_epoch,
@@ -930,6 +939,9 @@ int run_test_cascade_relower_silent_skip() {
             CHECK(bundle_has(*g_after, 2) ||
                       (call_slots_on_4681() && bundle_has_slot_load_4681(*g_after)),
                   "4436: stored g embeds the post-mutate callee");
+            if (slot_face)
+                CHECK(bundle_has_slot_load_4681(*g_after),
+                      "4681: stored g keeps the live slot load (no embed)");
         }
         const auto svc = read_file("src/compiler/service.ixx");
         const auto at = svc.find("Issue #4436");
@@ -1193,11 +1205,29 @@ int run_test_cascade_relower_silent_skip() {
         // #4228 leaves the callee as a value cell; drop the cells to reach
         // the v1 copy face.
         cs.clear_ir_value_cells_for_test();
+        // Issue #4681: when f4528's slot survives the workspace swap, the
+        // caller loads it live (TopCellLoad) and the #4513 scan has no
+        // embed to refuse. Otherwise fall back to the embed face.
+        const bool slot_face4528 = call_slots_on_4681() && cs.has_call_slot_for_test("f4528");
+        std::println("  4528 AC4: slot_face={} (AURA_CALL_SLOTS=0 -> embed face)", slot_face4528);
         const bool direct4528 = cs.relower_current_define_full_for_test("g4528");
-        CHECK(!direct4528, "4528 AC4: full relower refuses the orphan v1 embed");
+        if (slot_face4528) {
+            CHECK(direct4528, "4681: slot caller stores over an orphan v1 row");
+        } else {
+            CHECK(!direct4528, "4528 AC4: full relower refuses the orphan v1 embed");
+        }
         const auto* g4528 = cs.get_define_v2("g4528");
-        CHECK(g4528 != nullptr, "4528 AC4: g row survives the refuse");
-        if (g4528 != nullptr) {
+        CHECK(g4528 != nullptr, "4528 AC4: g row survives the full arm");
+        if (slot_face4528) {
+            if (g4528 != nullptr) {
+                CHECK(cs.lookup_define_v2("g4528", g4528->source_hash) == 0,
+                      "4681: slot caller stores as a clean hit");
+                CHECK(!g4528->dirty && g4528->content_stored_this_epoch,
+                      "4681: slot caller stored without a callee copy");
+                CHECK(bundle_has_slot_load_4681(*g4528),
+                      "4681: stored caller keeps the live slot load");
+            }
+        } else if (g4528 != nullptr) {
             CHECK(cs.lookup_define_v2("g4528", g4528->source_hash) != 0,
                   "4528 AC4: lookup stays needs-relower");
             CHECK(g4528->dirty && !g4528->content_stored_this_epoch,
