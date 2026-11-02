@@ -843,7 +843,13 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                             top.unbind_local_symid(top.bindings_symid().back().first);
                     }
                 }
-                if (saved && saved != top.pool())
+                // Issue #4859: restore the pool EVEN WHEN it was null
+                // before the eval. The old `saved &&` guard skipped the
+                // restore for a pool-less top env, so the eval'd pool stayed
+                // installed on the top env after the program was reclaimed
+                // -- the next lookup interned into the freed pool
+                // (heap-use-after-free, ASAN: StringPool::probe_unlocked).
+                if (top.pool() != saved)
                     top.set_pool(saved);
                 for (auto& kv : kept)
                     top.bind(kv.first, kv.second);
