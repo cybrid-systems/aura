@@ -1744,6 +1744,28 @@ export struct ChannelMessage {
     std::int64_t raw = 0; // kImmediate: the raw EvalValue word
 };
 
+// Issue #4859: the parsed program an (eval ...) primitive built. The
+// program is owned by the holders that name it — the closures built from
+// it and the macros registered from it — so it lives exactly as long as
+// the LAST of them. It used to be retained for the whole Evaluator
+// lifetime (#4359), then only when the tree contained a Lambda (#4854),
+// which still grew ~12 KB per eval in a long-running host.
+//
+// Closure::flat / Closure::pool and MacroDef::flat / MacroDef::pool are
+// RAW pointers into this program, so the program MUST outlive every
+// holder that names it. The shared owner below is what the holders keep.
+//
+// The IR closure bridge (IRModule::closure_bridge) never names this
+// program: an (eval ...) program is run by the tree walker and is never
+// lowered to IR, so there is no non-owning bridge view that could dangle
+// when the program is released. The holders that DO name it tombstone
+// themselves on release (Closure::tombstone_for_views), which is the
+// invalidation the #1888 ClosureView protocol revalidates against.
+export struct EvalProgram {
+    std::unique_ptr<aura::ast::FlatAST> flat;
+    std::unique_ptr<aura::ast::StringPool> pool;
+};
+
 export struct MacroDef {
     std::vector<std::string> params;
     bool dotted = false;
@@ -1769,6 +1791,11 @@ export struct MacroDef {
     ast::FlatAST* flat = nullptr;
     ast::StringPool* pool = nullptr;
     ast::NodeId body_id = ast::NULL_NODE;
+    // Issue #4859: the (eval ...) program that owns flat / pool, when the
+    // macro body came from one. A macro is a GLOBAL registry entry — it
+    // outlives the eval call that registered it — so the program has to
+    // stay alive with the macro, not with the closure that triggered it.
+    std::shared_ptr<EvalProgram> program;
 };
 
 export struct Closure {
@@ -1803,6 +1830,14 @@ export struct Closure {
     EnvId env_id = NULL_ENV_ID;
     bool dotted = false;
     ast::ASTArena* owner_arena = nullptr; // arena where flat/pool/env lives
+    // Issue #4859: owning handle on the program that produced this closure
+    // (the (eval ...) primitive's parsed FlatAST + StringPool). Null for a
+    // closure whose body lives in an Evaluator arena (the common case) —
+    // the arena owns those. When set, the program outlives every Closure
+    // that names it, so the raw Closure::flat / Closure::pool stay valid
+    // and the program is reclaimed as soon as the LAST closure built from
+    // it is gone (not at ~Evaluator — #4359 / #4854 / #4859).
+    std::shared_ptr<EvalProgram> program;
     // Issue #223 / #1365: epoch captured at closure construction.
     // apply_closure compares against service bridge_epoch(); mismatch
     // means flat*/pool* may be stale. Default 0 = unstamped. All
@@ -1829,8 +1864,8 @@ export struct Closure {
     // Aggregate-style ctor (replaces brace-init after user move ctors; eval_flat).
     Closure(std::string name_in, std::vector<aura::ast::SymId> params_in, ast::FlatAST* flat_in,
             ast::StringPool* pool_in, ast::NodeId body_in, EnvId env_in, bool dotted_in,
-            ast::ASTArena* arena_in, std::uint64_t bridge_in = 0,
-            std::uint64_t lifetime_in = 1) noexcept
+            ast::ASTArena* arena_in, std::uint64_t bridge_in = 0, std::uint64_t lifetime_in = 1,
+            std::shared_ptr<EvalProgram> program_in = nullptr) noexcept
         : name(std::move(name_in))
         , params(std::move(params_in))
         , flat(flat_in)
@@ -1839,6 +1874,7 @@ export struct Closure {
         , env_id(env_in)
         , dotted(dotted_in)
         , owner_arena(arena_in)
+        , program(std::move(program_in))
         , bridge_epoch(bridge_in)
         , lifetime_version(lifetime_in) {}
     // Move tombstones the source so any ClosureView stamped from it fails
@@ -1852,6 +1888,7 @@ export struct Closure {
         , env_id(o.env_id)
         , dotted(o.dotted)
         , owner_arena(o.owner_arena)
+        , program(std::move(o.program))
         , bridge_epoch(o.bridge_epoch)
         , lifetime_version(o.lifetime_version)
         , must_deopt_before_next_call(o.must_deopt_before_next_call)
@@ -1870,6 +1907,7 @@ export struct Closure {
             env_id = o.env_id;
             dotted = o.dotted;
             owner_arena = o.owner_arena;
+            program = std::move(o.program);
             bridge_epoch = o.bridge_epoch;
             lifetime_version = o.lifetime_version;
             must_deopt_before_next_call = o.must_deopt_before_next_call;
@@ -19503,11 +19541,21 @@ private:
     std::uint64_t last_completed_audit_mid_ = 0;
     bool last_completed_audit_mid_valid_ = false;
     // Issue #4359: (eval "...") closures point at the parsed flat and
-    // pool. Those objects must outlive the primitive. Storage is a side
-    // table; release runs from ~Evaluator. Append-only at struct end.
-    void retain_eval_program(std::unique_ptr<aura::ast::FlatAST> flat,
-                             std::unique_ptr<aura::ast::StringPool> pool);
-    void release_retained_eval_programs() noexcept;
+    // pool. Those objects must outlive the primitive.
+    //
+    // Issue #4859: the program is no longer retained for the Evaluator
+    // lifetime (#4359) nor "forever when the tree held a Lambda"
+    // (#4854). It is owned by the holders that name it — the Closure and
+    // the MacroDef built from it — so it is reclaimed when the LAST holder
+    // is gone. This table is only the LOOKUP side: it maps the program's
+    // StringPool to a WEAK handle, so a closure created while the program
+    // is being evaluated can find the owner to keep. Append-only at
+    // struct end.
+    void register_eval_program(const std::shared_ptr<EvalProgram>& program);
+    // The program that owns `pool`, or null when the pool is not an
+    // (eval ...) program (workspace pool, module pool, arena-owned ...).
+    [[nodiscard]] std::shared_ptr<EvalProgram>
+    eval_program_for_pool(const aura::ast::StringPool* pool) const;
     // Issue #4361: a failed atomic-batch / ws:try-mutation restores the
     // flat and leaves top_env closures on the mutation-era nodes. Re-eval
     // the restored root into top_ so calls work with no extra eval-current.
@@ -19569,6 +19617,12 @@ private:
         std::vector<SwitchDefineSnapEntry> entries;
     };
     std::vector<SwitchDefineSnap> switch_define_snaps_;
+    // Issue #4859: the (eval ...) programs this Evaluator built, keyed by
+    // the program's StringPool. WEAK handles only — the program itself is
+    // owned by the closures / macros that name it, so an entry whose
+    // program is gone is swept on the next eval. Append-only at struct end.
+    mutable std::shared_mutex eval_program_mu_;
+    std::unordered_map<const aura::ast::StringPool*, std::weak_ptr<EvalProgram>> eval_programs_;
 };
 
 

@@ -294,9 +294,10 @@ void* Evaluator::ensure_type_registry() {
 }
 
 Evaluator::~Evaluator() {
-    // Issue #4359: drop eval programs after callers are done with them.
-    // Closure does not touch flat/pool in its destructor.
-    release_retained_eval_programs();
+    // Issue #4859: the (eval ...) programs are owned by the closures /
+    // macros that name them, so they are reclaimed with their last holder
+    // — nothing to release here (the #4359 Evaluator-lifetime retention
+    // table is gone).
     // Drop live EnvFrameRef slots without drop() scans — those walk
     // closures_/env_frames_ that are about to be destroyed.
     {

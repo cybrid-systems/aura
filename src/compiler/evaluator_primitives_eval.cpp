@@ -44,26 +44,37 @@ namespace {
 } // namespace
 
 namespace aura::compiler {
-namespace {
-    struct RetainedEvalProgram {
-        std::unique_ptr<aura::ast::FlatAST> flat;
-        std::unique_ptr<aura::ast::StringPool> pool;
-    };
-    std::mutex g_retained_eval_mu;
-    std::unordered_map<const Evaluator*, std::vector<RetainedEvalProgram>> g_retained_eval;
-} // namespace
 
-void Evaluator::retain_eval_program(std::unique_ptr<aura::ast::FlatAST> flat,
-                                    std::unique_ptr<aura::ast::StringPool> pool) {
-    if (!flat || !pool)
+// Issue #4859: the (eval ...) program registry. The map holds WEAK handles
+// only: the program is owned by the closures / macros that name it, so an
+// eval'd program is reclaimed as soon as its LAST holder is gone instead
+// of at ~Evaluator (#4359) or "forever when the tree held a Lambda"
+// (#4854 — the ~12 KB-per-eval growth this issue is about).
+void Evaluator::register_eval_program(const std::shared_ptr<EvalProgram>& program) {
+    if (!program || !program->flat || !program->pool)
         return;
-    std::lock_guard<std::mutex> lock(g_retained_eval_mu);
-    g_retained_eval[this].push_back(RetainedEvalProgram{std::move(flat), std::move(pool)});
+    std::unique_lock<std::shared_mutex> lock(eval_program_mu_);
+    // Sweep the programs whose last holder is gone: their weak handle has
+    // expired, so nothing can reach them any more. Keeps the table at
+    // (live programs + 1) entries instead of growing per eval.
+    for (auto it = eval_programs_.begin(); it != eval_programs_.end();) {
+        if (it->second.expired())
+            it = eval_programs_.erase(it);
+        else
+            ++it;
+    }
+    eval_programs_[program->pool.get()] = program;
 }
 
-void Evaluator::release_retained_eval_programs() noexcept {
-    std::lock_guard<std::mutex> lock(g_retained_eval_mu);
-    g_retained_eval.erase(this);
+std::shared_ptr<EvalProgram>
+Evaluator::eval_program_for_pool(const aura::ast::StringPool* pool) const {
+    if (!pool)
+        return nullptr;
+    std::shared_lock<std::shared_mutex> lock(eval_program_mu_);
+    auto it = eval_programs_.find(pool);
+    if (it == eval_programs_.end())
+        return nullptr;
+    return it->second.lock();
 }
 } // namespace aura::compiler
 
@@ -722,10 +733,18 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         }
         // Issue #4359: a stack flat dies when eval returns, and the
         // closure still holds that pointer. Callers then hang or abort.
-        // Keep the program for the Evaluator lifetime.
-        auto pool = std::make_unique<aura::ast::StringPool>();
-        auto flat = std::make_unique<aura::ast::FlatAST>();
-        auto pr = aura::parser::parse_to_flat(code, *flat, *pool);
+        //
+        // Issue #4859: the parsed program is owned by the holders that
+        // NAME it — the closures and the macros built from it — so it
+        // lives exactly as long as the last of them. The strong owner
+        // below keeps it alive for the whole primitive; the registry
+        // entry lets a closure created below find that owner.
+        auto program = std::make_shared<EvalProgram>();
+        program->pool = std::make_unique<aura::ast::StringPool>();
+        program->flat = std::make_unique<aura::ast::FlatAST>();
+        auto* flat_p = program->flat.get();
+        auto* pool_p = program->pool.get();
+        auto pr = aura::parser::parse_to_flat(code, *flat_p, *pool_p);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             // Issue #4736: unbalanced / truncated source is a PARSE ERROR the
             // caller must be able to reject — returning () made a missing or
@@ -758,30 +777,12 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                                         "parse-error: " + parse_err,
                                         ev.primitive_error_counter_ptr());
         }
-        flat->root = pr.root;
-        auto* flat_p = flat.get();
-        auto* pool_p = pool.get();
-        // Issue #4359 kept the parsed program for the Evaluator lifetime
-        // because a Closure built by the eval'd program points at
-        // Closure::flat / Closure::pool (raw pointers). That retention is
-        // only owed when the program can build a Closure at all — a Closure
-        // is constructed from a Lambda node (and the IR closure bridge is
-        // created from the same lambda lowering). A datum / arithmetic /
-        // define-of-value eval has no Lambda, so nothing can name this
-        // flat or pool after the primitive returns. Retaining it anyway was
-        // the #4854 ~8.7 KB-per-(eval datum) linear RSS growth: the
-        // g_retained_eval table only shrank at ~Evaluator.
-        //
-        // Release (drop the unique_ptrs to this call's scope) when the
-        // parsed tree contains no Lambda; retain unchanged otherwise
-        // (closures / #4359 bridge safety preserved).
-        bool retains_closures = false;
-        for (std::size_t ni = 0; ni < flat->size() && !retains_closures; ++ni) {
-            if (flat->get(static_cast<aura::ast::NodeId>(ni)).tag == aura::ast::NodeTag::Lambda)
-                retains_closures = true;
-        }
-        if (retains_closures)
-            ev.retain_eval_program(std::move(flat), std::move(pool));
+        flat_p->root = pr.root;
+        // Register the program so a closure / macro built while it is
+        // evaluated can keep it alive (Closure::program / MacroDef::program).
+        // The registry holds a WEAK handle: the program is reclaimed when
+        // its last holder is gone, not at ~Evaluator (#4359 / #4854).
+        ev.register_eval_program(program);
         // Issue #4373: a define inside the eval'd string calls set_pool
         // and re-keys top_ onto that string's pool. The outer define then
         // bind_symid's its name against the wrong pool, so the name stays
