@@ -3661,8 +3661,26 @@ int main(int argc, char* argv[]) {
                 trimmed = trimmed.substr(0, end + 1);
             if (!trimmed.empty() && depth == 0)
                 exprs.push_back(trimmed);
-            else if (!trimmed.empty())
-                std::println(std::cerr, "warning: unbalanced parentheses in input");
+            else if (!trimmed.empty()) {
+                // Issue #4866: the direct-run path used to warn and then
+                // evaluate the complete prefix, exiting 0. Match --load:
+                // a missing ')' is a located parse error and no part of
+                // the file runs.
+                std::size_t line = 1, col = 1;
+                for (char ch : all_input) {
+                    if (ch == '\n') {
+                        ++line;
+                        col = 1;
+                    } else {
+                        ++col;
+                    }
+                }
+                std::println(
+                    std::cerr,
+                    "error: {}:{}: parse error: unclosed list: missing ')' before end of file",
+                    line, col);
+                return 1;
+            }
         }
     }
 
