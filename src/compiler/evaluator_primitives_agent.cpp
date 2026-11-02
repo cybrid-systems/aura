@@ -45,6 +45,7 @@ module;
 #include <thread>
 #include <unordered_map>
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "core/fiber_context.hh" // Issue #4842: per-execution-context body inheritance
 
 // Default ON when the TU is compiled outside the CMake graph (tools/IDE).
 #ifndef AURA_ENABLE_SYNTHESIZE
@@ -558,6 +559,33 @@ namespace {
     // returned (join-all therefore always timed out and ran the children
     // afterwards). Nested bodies run under the parent's orchestration, the
     // same way #4717 lets thread-backend fiber bodies share one Evaluator.
+    //
+    // Issue #4842 (fiber:spawn boundary): the waiver must also cross a
+    // fiber:spawn body, not only a scheduler-fiber child. Its parent body
+    // holds the gate, so a child that queued on it could only start after
+    // the parent's join returned. Three sources of "already inside a
+    // body": this thread's gate depth (same thread as the holder), the
+    // per-fiber soft-window flag (#4853, survives a worker migration), and
+    // the per-execution-context inherited flag set by fiber:spawn (thread
+    // backend + serve backend, #4842).
+    bool nested_body_context() {
+        if (Evaluator::agent_apply_hold_depth() > 0)
+            return true;
+        if (aura::serve::g_current_fiber != nullptr &&
+            aura::serve::g_current_fiber->orch_agent_boundary_active())
+            return true;
+        return aura::core::fiber_ctx::active().orch_body_inherited;
+    }
+
+    // Issue #4842: the caller's effective hold for the other apply paths
+    // (parallel-intend / supervise-batch) — same three sources, so a body
+    // that migrated or was reached through fiber:spawn still re-enters its
+    // own orchestration window instead of queueing on the gate it holds.
+    int effective_agent_apply_hold() {
+        const int depth = Evaluator::agent_apply_hold_depth();
+        return nested_body_context() ? std::max(depth, 1) : 0;
+    }
+
     std::optional<std::string> apply_spawn_closure_maybe_locked(Evaluator& ev, std::uint64_t cid,
                                                                 std::uint64_t region_key,
                                                                 bool parent_holds_gate = false) {
@@ -3202,7 +3230,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         // Issue #4383: a spawn body already inside gate_spawn_apply_region
         // re-enters parallel-intend on this thread. Workers must not take
         // agent_apply_mu_ again; the outer hold still excludes other agents.
-        const int caller_apply_hold = Evaluator::agent_apply_hold_depth();
+        const int caller_apply_hold = effective_agent_apply_hold();
         for (std::size_t i = 0; i < cids.size(); ++i) {
             const auto cid = cids[i];
             const std::uint64_t rkey = (i < region_keys.size()) ? region_keys[i] : 0;
@@ -4172,9 +4200,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // scope-join-all timed out with err=0 ok=0 (and the 4-agent repro
             // hung). The per-FIBER soft-boundary flag follows the body across
             // the migration, so use it as well.
-            const bool nested_body = Evaluator::agent_apply_hold_depth() > 0 ||
-                                     (aura::serve::g_current_fiber != nullptr &&
-                                      aura::serve::g_current_fiber->orch_agent_boundary_active());
+            // Issue #4842: and the inherited execution-context flag follows
+            // the body across a fiber:spawn thread boundary (same helper).
+            const bool nested_body = nested_body_context();
             auto body = [&ev, cid, region_key, body_outcome, nested_body]() {
                 if (!cid)
                     return;
@@ -4919,9 +4947,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // scope-join-all timed out with err=0 ok=0 (and the 4-agent repro
             // hung). The per-FIBER soft-boundary flag follows the body across
             // the migration, so use it as well.
-            const bool nested_body = Evaluator::agent_apply_hold_depth() > 0 ||
-                                     (aura::serve::g_current_fiber != nullptr &&
-                                      aura::serve::g_current_fiber->orch_agent_boundary_active());
+            // Issue #4842: and the inherited execution-context flag follows
+            // the body across a fiber:spawn thread boundary (same helper).
+            const bool nested_body = nested_body_context();
             // Issue #4858: shared per-attempt failure counter (RestartN
             // resets it before each re-spawn so a recovered child is not
             // reported as failed again).
@@ -7151,7 +7179,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             const bool skip_mu =
                 iso_dec.level == aura::serve::parallel_orch::IsolationLevel::RegionConcurrent &&
                 prod && ev.workspace_region_concurrency_enabled() && ev.scoped_parallel_enabled();
-            const int caller_apply_hold = Evaluator::agent_apply_hold_depth();
+            const int caller_apply_hold = effective_agent_apply_hold();
             // Issue #4394: production, and not already inside the spawn
             // gate. Soft / Off and nested re-entry use the helper's
             // non-gate arm (shared ev.agent_apply_mu_, or the outer hold).

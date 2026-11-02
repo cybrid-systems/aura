@@ -65,6 +65,14 @@ struct Context {
     std::uint64_t quota_tenant = 0;
     // evaluator_primitives_messaging.cpp: scoped CLI body lock (#4054).
     void* cli_body_lock = nullptr;
+    // Issue #4842: this execution context was spawned from inside an orch
+    // agent body (fiber:spawn, either backend). The parent body holds the
+    // per-Evaluator agent apply gate for its whole lifetime, so a nested
+    // scope/agent spawn from here must inherit the same gate waiver the
+    // parent body got -- otherwise the child queues on the gate and the
+    // parent's join waits out its full :timeout-ms. Per-context (not
+    // thread_local) so it follows a scheduler fiber across a steal.
+    bool orch_body_inherited = false;
     // dirty_propagation.ixx: pipeline cascade roots for this drain.
     std::vector<std::uint32_t> cascade_roots;
     // persistent_child_vector.hh: live MutationCheckpoint depth (#3233).
