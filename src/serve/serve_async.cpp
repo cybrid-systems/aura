@@ -1552,88 +1552,52 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
             // Set wake eventfd for recv/send
             sess->service.set_wake_eventfd(aura::serve::g_current_fiber->eventfd());
 
-            // Evaluate expressions one at a time (same as stdin pipe mode)
-            // Split by balanced parentheses to evaluate each expression separately.
-            std::string remaining = bench_code;
-            while (!remaining.empty()) {
-                // Skip whitespace and comments
-                std::size_t start = 0;
-                while (start < remaining.size()) {
-                    auto c = remaining[start];
-                    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
-                        ++start;
-                    } else if (c == ';') {
-                        // Skip comment to end of line
-                        auto nl = remaining.find('\n', start);
-                        if (nl == std::string::npos) {
-                            remaining.clear();
-                            goto done;
-                        }
-                        start = nl + 1;
-                    } else {
-                        break;
-                    }
+            // Issue #4856: the bench evaluates the bench file as ONE program
+            // — the same face --load runs (the #4750 one-pass eval). The old
+            // per-form split gave every form its own program, and the two
+            // faces then disagreed about the SAME script:
+            //   * a diagnostic was anchored to the split expression, so the
+            //     source location (row:col) and the source snippet of the
+            //     file were lost;
+            //   * the type checker could not see the call site of a define
+            //     in the same file, so the message lost the failing operand
+            //     ("in +, argument 2");
+            //   * a form's closures died with that form's module, so a body
+            //     that ran later (on another worker) could find a freed
+            //     closure.
+            // One program keeps the whole file in one lowering, so the bench
+            // and --load agree on the semantics of the same script.
+            //
+            // Issue #4698: the fiber body closure belongs to the bench
+            // session Evaluator; the pending-body pin resolves it through
+            // g_current_compiler_service.
+            aura::messaging::g_current_compiler_service = &sess->service;
+            // Issue #4856: an uncaught error must be a located diagnostic
+            // (the --load face), not a bare error value.
+            sess->service.set_require_failure_is_diagnostic(true);
+            auto result = sess->service.eval(bench_code);
+            // Issue #4844: an eval failure is either an unexpected
+            // Diagnostic or a first-class error VALUE (for example
+            // (car 5) under the walker). Both must fail the run; the
+            // error value used to look like a successful eval and the
+            // process exited 0.
+            if (!result || is_error(*result)) {
+                if (!result) {
+                    // Issue #4856: the diagnostic keeps the source location
+                    // (row:col) and the source snippet — the --load face.
+                    std::print(std::cerr, "eval error: {}\n",
+                               result.error().format_with_source(bench_code));
+                } else {
+                    auto& ev = sess->service.evaluator();
+                    std::print(std::cerr, "eval error: {}\n",
+                               aura::compiler::format_value(*result, ev.primitives().string_heap(),
+                                                            ev.pairs(), 0, &ev.primitives(),
+                                                            ev.keyword_table(), ev.vector_heap(),
+                                                            ev.symbol_table()));
                 }
-                if (start >= remaining.size())
-                    break;
-
-                // Find the end of this balanced expression
-                int depth = 0;
-                bool in_str = false;
-                std::size_t end = start;
-                for (; end < remaining.size(); ++end) {
-                    auto c = remaining[end];
-                    if (in_str) {
-                        if (c == '\\' && end + 1 < remaining.size()) {
-                            ++end; // skip escaped char
-                        } else if (c == '"') {
-                            in_str = false;
-                        }
-                    } else if (c == '"') {
-                        in_str = true;
-                    } else if (c == '(' || c == '[') {
-                        ++depth;
-                    } else if ((c == ')' || c == ']') && depth > 0) {
-                        if (--depth == 0) {
-                            ++end; // include closing paren
-                            break;
-                        }
-                    }
-                }
-                if (depth != 0) {
-                    // Unbalanced — evaluate what we have
-                    end = remaining.size();
-                }
-
-                auto expr = remaining.substr(start, end - start);
-                remaining.erase(0, end);
-
-                if (!expr.empty()) {
-                    // Issue #4698: the fiber body closure belongs to the
-                    // bench session Evaluator; the pending-body pin
-                    // resolves it through g_current_compiler_service.
-                    aura::messaging::g_current_compiler_service = &sess->service;
-                    auto result = sess->service.eval(expr);
-                    // Issue #4844: an eval failure is either an unexpected
-                    // Diagnostic or a first-class error VALUE (for example
-                    // (car 5) under the walker). Both must fail the run; the
-                    // error value used to look like a successful eval and the
-                    // process exited 0.
-                    if (!result || is_error(*result)) {
-                        if (!result) {
-                            std::print(std::cerr, "eval error on expr (len={}): {}\n  msg: {}\n",
-                                       expr.size(), expr.substr(0, 120), result.error().format());
-                        } else {
-                            std::print(std::cerr, "eval error on expr (len={}): {}\n", expr.size(),
-                                       expr.substr(0, 120));
-                        }
-                        std::fflush(stderr);
-                        bench_failed.store(true, std::memory_order_release);
-                        break;
-                    }
-                }
+                std::fflush(stderr);
+                bench_failed.store(true, std::memory_order_release);
             }
-        done:
             std::fflush(stdout);
         },
         0);
