@@ -398,6 +398,15 @@ Fiber* Scheduler::spawn_with_affinity(Fiber::Func func, int worker_id, size_t st
     auto fb = std::make_unique<Fiber>(std::move(func), stack_size);
     auto* ptr = fb.get();
     ptr->set_quota_tenant_id(spawn_tenant);
+    // Issue #4856: the fiber belongs to THIS scheduler — record the owner
+    // exactly like Scheduler::spawn does. Without it every fiber created
+    // through this entry point (the serve session fibers, the bench fiber,
+    // every fiber:spawn body) reported owner_sched() == nullptr, so the
+    // orch spawn path (#4843) fell back to the process holder scheduler and
+    // put the agent body on a SECOND scheduler: the body never ran under
+    // --serve-async-bench and the join reported the agent as reclaimed /
+    // invalid instead of the body failure.
+    ptr->set_owner_sched(this);
     if (worker_id >= 0 && worker_id < static_cast<int>(workers_.size())) {
         ptr->set_affinity(worker_id);
     }
