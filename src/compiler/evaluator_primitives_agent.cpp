@@ -905,13 +905,17 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         return make_void();
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                // Issue #4093 / #4296: stamp the executing evaluator, not the
-                // JIT owner (g_jit_prim_ctx may be unwired or another ev).
-                if (g_hash_tenants.size() < g_hash_tables.size())
-                    g_hash_tenants.resize(g_hash_tables.size(), 0);
-                g_hash_tenants[hidx] = ev.capability_tenant_id();
+                std::size_t hidx = 0;
+                {
+                    // Issue #4860: unlocked size()+push_back raced a concurrent publish
+                    // (double free). Index read, push and stamp are one critical section.
+                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    hidx = g_hash_tables.size();
+                    g_hash_tables.push_back(ht);
+                    if (g_hash_tenants.size() < g_hash_tables.size())
+                        g_hash_tenants.resize(g_hash_tables.size(), 0);
+                    g_hash_tenants[hidx] = ev.capability_tenant_id();
+                }
                 return make_hash(hidx);
             };
             std::uint64_t greedy_h = 0, greedy_s = 0;
@@ -2791,13 +2795,17 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     return make_void();
                 }
             }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            // Issue #4093 / #4296: same executing-evaluator stamp as the
-            // hash prim (#4057 pair-slot shape).
-            if (g_hash_tenants.size() < g_hash_tables.size())
-                g_hash_tenants.resize(g_hash_tables.size(), 0);
-            g_hash_tenants[hidx] = ev.capability_tenant_id();
+            std::size_t hidx = 0;
+            {
+                // Issue #4860: unlocked size()+push_back raced a concurrent publish
+                // (double free). Index read, push and stamp are one critical section.
+                std::lock_guard slock(ev.alloc_storage_lock_);
+                hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                if (g_hash_tenants.size() < g_hash_tables.size())
+                    g_hash_tenants.resize(g_hash_tables.size(), 0);
+                g_hash_tenants[hidx] = ev.capability_tenant_id();
+            }
             return make_hash(hidx);
         };
 
@@ -3663,13 +3671,17 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         // g_hash_tables (double free / SEGV). Same storage lock the (hash)
         // prim holds; recursive, so a caller already holding it is fine.
         std::lock_guard slock(ev.alloc_storage_lock_);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        // Issue #4093 / #4296: same executing-evaluator stamp as the hash
-        // prim (#4057 pair-slot shape).
-        if (g_hash_tenants.size() < g_hash_tables.size())
-            g_hash_tenants.resize(g_hash_tables.size(), 0);
-        g_hash_tenants[hidx] = ev.capability_tenant_id();
+        std::size_t hidx = 0;
+        {
+            // Issue #4860: unlocked size()+push_back raced a concurrent publish
+            // (double free). Index read, push and stamp are one critical section.
+            std::lock_guard slock(ev.alloc_storage_lock_);
+            hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            if (g_hash_tenants.size() < g_hash_tables.size())
+                g_hash_tenants.resize(g_hash_tables.size(), 0);
+            g_hash_tenants[hidx] = ev.capability_tenant_id();
+        }
         return make_hash(hidx);
     };
 
@@ -5436,8 +5448,15 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 if (parse_scope_addr_kw(k, val, addr_path, addr_child)) {
                     continue;
                 } else if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(val)) {
-                    policy.primary_ms =
-                        static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                    // Issue #4861: a negative :timeout-ms used to be clamped
+                    // to 0, so a typo silently changed the deadline instead
+                    // of reporting the bad argument.
+                    if (types::as_int(val) < 0)
+                        return make_primitive_error(
+                            ev.string_heap_, ev.error_values_,
+                            "orch:scope-join-all: :timeout-ms must not be negative",
+                            ev.primitive_error_counter_ptr());
+                    policy.primary_ms = static_cast<std::uint64_t>(types::as_int(val));
                 } else if ((k == "drain-ms" || k == "drain_ms") && types::is_int(val)) {
                     policy.drain_ms =
                         static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
@@ -5446,13 +5465,33 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                            types::is_int(val)) {
                     policy.wait_reclaimed_ms =
                         static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
-                } else if ((k == "on-join-fail" || k == "on_join_fail") && types::is_string(val)) {
+                } else if (k == "on-join-fail" || k == "on_join_fail") {
                     // Issue #3208: explicit keyword → honor even ReportOnly.
-                    join_fail_name = heap_str_from(ev.string_heap_, val);
+                    // Issue #4861: the policy name may be a string OR a
+                    // quoted symbol ('cancel). A value of any other type used
+                    // to be IGNORED, so the policy silently degraded to
+                    // report-only and the caller never learned the cancel
+                    // strategy was not armed.
+                    if (types::is_string(val) || types::is_symbol(val) || types::is_keyword(val)) {
+                        join_fail_name = orch_keyword_key(val);
+                    } else {
+                        return make_primitive_error(
+                            ev.string_heap_, ev.error_values_,
+                            "orch:scope-join-all: :on-join-fail expects a policy name "
+                            "(string or symbol: cancel / restart-n / throttle / report-only)",
+                            ev.primitive_error_counter_ptr());
+                    }
                 } else if ((k == "max-restarts" || k == "max_restarts") && types::is_int(val)) {
                     // Issue #4858: join-all restart fuel (scope-watch parity).
-                    join_fail_max_restarts =
-                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                    // Issue #4861: a negative fuel count used to be clamped
+                    // to 0 (a silent no-op restart) instead of reporting the
+                    // bad argument.
+                    if (types::as_int(val) < 0)
+                        return make_primitive_error(
+                            ev.string_heap_, ev.error_values_,
+                            "orch:scope-join-all: :max-restarts must not be negative",
+                            ev.primitive_error_counter_ptr());
+                    join_fail_max_restarts = static_cast<std::uint32_t>(types::as_int(val));
                 } else if ((k == "tree") && types::is_bool(val)) {
                     // Issue #3643: optional tree join — default local
                     // (#3496 AC1); true joins the whole subtree (AC2).
@@ -8617,7 +8656,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-4139", aura::orch::kJoinTokenSourcePendingIssue);
             insert_kv("issue-4139", aura::orch::kJoinTokenSourcePendingIssue);
             insert_kv("handoff-join-source-pending-wired", 1);
-            return query_hash_finish(ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
         });
 
     // Issue #3089: cross-Evaluator handoff — Aura surface.
