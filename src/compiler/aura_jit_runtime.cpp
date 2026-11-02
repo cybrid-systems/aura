@@ -7092,9 +7092,9 @@ namespace {
     HashMissErrorHook g_hash_miss_error;
 } // namespace
 
-extern "C" void aura_set_jit_hash_miss_error(int64_t (*fn)(void*, int64_t), void* user) {
+extern "C" void aura_set_jit_hash_miss_error(int64_t (*hook)(void*, int64_t), void* user) {
     std::lock_guard<std::mutex> lock(g_hash_miss_error_mtx);
-    g_hash_miss_error = {fn, user};
+    g_hash_miss_error = {hook, user};
 }
 
 extern "C" int64_t aura_hash_ref_miss_error(int64_t key_val) {

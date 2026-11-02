@@ -503,7 +503,7 @@ extern "C" std::int64_t aura_hash_ref(std::int64_t hash_val, std::int64_t key_va
 // sentinel; the hash-ref primitive RAISES an error naming the key. The
 // evaluator wires a hook that mints the same error value so the eval, IR and
 // JIT faces agree. Unwired (AOT / light-link) keeps the void sentinel.
-extern "C" void aura_set_jit_hash_miss_error(std::int64_t (*fn)(void*, std::int64_t), void* user);
+extern "C" void aura_set_jit_hash_miss_error(std::int64_t (*hook)(void*, std::int64_t), void* user);
 extern "C" std::int64_t aura_hash_ref_miss_error(std::int64_t key_val);
 extern "C" std::int64_t aura_hash_set(std::int64_t hash_val, std::int64_t pair_val);
 extern "C" std::int64_t aura_hash_remove(std::int64_t hash_val, std::int64_t key_val);
