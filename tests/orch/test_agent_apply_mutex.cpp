@@ -126,7 +126,7 @@ bool finished_while_region_held(Ev& ev, std::uint64_t key, int hold_ms, F&& body
                 finished_while_held.store(done.load(std::memory_order_acquire),
                                           std::memory_order_release);
             },
-            [](std::uint64_t) {});
+            [](std::uint64_t) {}, [] {});
     });
     const auto arm = std::chrono::steady_clock::now() + std::chrono::seconds(2);
     while (holding.load(std::memory_order_acquire) == 0 && std::chrono::steady_clock::now() < arm) {
@@ -677,8 +677,8 @@ int run_test_agent_apply_mutex() {
             in_apply.fetch_sub(1, std::memory_order_acq_rel);
         };
         auto on_lock = [&](std::uint64_t) { locks.fetch_add(1, std::memory_order_relaxed); };
-        std::thread t1([&] { ev.gate_spawn_apply_region(7, true, body, on_lock); });
-        std::thread t2([&] { ev.gate_spawn_apply_region(7, true, body, on_lock); });
+        std::thread t1([&] { ev.gate_spawn_apply_region(7, true, body, on_lock, [] {}); });
+        std::thread t2([&] { ev.gate_spawn_apply_region(7, true, body, on_lock, [] {}); });
         t1.join();
         t2.join();
         CHECK(max_in.load() == 1, "4062: same key bodies did not overlap");
@@ -698,8 +698,8 @@ int run_test_agent_apply_mutex() {
             in2.fetch_sub(1, std::memory_order_acq_rel);
         };
         auto on_lock2 = [&](std::uint64_t) { locks2.fetch_add(1, std::memory_order_relaxed); };
-        std::thread d1([&] { ev.gate_spawn_apply_region(11, true, body2, on_lock2); });
-        std::thread d2([&] { ev.gate_spawn_apply_region(22, true, body2, on_lock2); });
+        std::thread d1([&] { ev.gate_spawn_apply_region(11, true, body2, on_lock2, [] {}); });
+        std::thread d2([&] { ev.gate_spawn_apply_region(22, true, body2, on_lock2, [] {}); });
         d1.join();
         d2.join();
         CHECK(max2.load() == 2, "4062: distinct keys overlapped");
@@ -707,8 +707,8 @@ int run_test_agent_apply_mutex() {
 
         std::atomic<int> locks0{0};
         auto on_lock0 = [&](std::uint64_t) { locks0.fetch_add(1, std::memory_order_relaxed); };
-        ev.gate_spawn_apply_region(0, false, [] {}, on_lock0);
-        ev.gate_spawn_apply_region(7, false, [] {}, on_lock0);
+        ev.gate_spawn_apply_region(0, false, [] {}, on_lock0, [] {});
+        ev.gate_spawn_apply_region(7, false, [] {}, on_lock0, [] {});
         CHECK(locks0.load() == 2, "4062: key 0 and Soft always take the lock");
         CHECK(ev.spawn_region_inflight_size_for_test() == 0,
               "4062: Soft/Off did not touch the inflight set");

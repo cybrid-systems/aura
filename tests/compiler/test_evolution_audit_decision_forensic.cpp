@@ -147,7 +147,7 @@ static void ac4_capacity_schema() {
     CHECK(src.find("insert_kv(\"issue-3284\", 3284)") != std::string::npos,
           "issue-3284 sentinel present");
     CHECK(src.find("overflowed = false") != std::string::npos, "overflow tracking preserved");
-    CHECK(src.find("query_hash_finish(ht, ev.string_heap_, overflowed)") != std::string::npos,
+    CHECK(src.find("query_hash_finish(ht, ev.string_heap_, overflowed") != std::string::npos,
           "query_hash_finish still called with overflow flag");
 }
 

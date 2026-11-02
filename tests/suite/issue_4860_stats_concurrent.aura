@@ -29,7 +29,8 @@
   (map (lambda (i) (fiber:spawn (lambda () (read-panels 50))))
        (range 0 8)))
 
-(check (equal? 'done (map (lambda (f) (fiber:join f)) workers))
+(check (equal? '(done done done done done done done done)
+               (map (lambda (f) (fiber:join f)) workers))
        "#4860 8 fibers x 50 concurrent stats reads all joined")
 
 (for-each (lambda (p) (check (hash? (stats:get p)) p)) panels)
