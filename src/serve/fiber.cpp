@@ -1830,7 +1830,8 @@ namespace {
     // worker and starved Ready siblings until the holder exited. Same
     // this-fiber split as the #3694 safepoint fail-closed ABI (which
     // ignores process-held and returns 0 at this-fiber depth 0).
-    [[nodiscard]] bool yield_blocked_by_mutation_boundary(std::uint8_t* why_out) noexcept {
+    [[nodiscard]] bool yield_blocked_by_mutation_boundary(std::uint8_t* why_out,
+                                                          bool explicit_reason = false) noexcept {
         const bool hook_held = aura::messaging::g_mutation_boundary_held &&
                                aura::messaging::g_mutation_boundary_held();
         const bool this_fiber_depth = aura_evaluator_mutation_boundary_depth() > 0;
@@ -1847,6 +1848,20 @@ namespace {
         // re-opening the park contract.
         if (g_current_fiber && g_current_fiber->orch_agent_boundary_active()) {
             if (!hook_held && !this_fiber_depth)
+                return false;
+            // Issue #4853: a join WAIT inside the soft orch agent-body
+            // window must hand the turn to the scope children it waits for.
+            // With the yield blocked, the wait busy-spun this worker
+            // thread and the children assigned to that worker never ran, so
+            // the inner scope-join-all timed out with short/random counts.
+            // The window is soft (no workspace_mtx_, no rollback
+            // checkpoint), so this cannot deadlock the way a real
+            // MutationBoundaryGuard park can. Only the join's own EXPLICIT
+            // yield is allowed (it re-queues the fiber as Ready, so it
+            // always resumes); the park path stays blocked — a parked
+            // fiber was not re-woken at shutdown and hung the stop.
+            if (!hook_held && explicit_reason && g_current_fiber->join_wait_yield_allowed() &&
+                g_current_fiber->mutation_safety_snapshot().real_depth == 0)
                 return false;
         }
         // Prefer messaging bridge (set while Evaluator yield-hook is live).
@@ -1924,7 +1939,10 @@ void Fiber::yield() {
     // Debug: assert. Optional AURA_YIELD_HELD_ABORT=1 aborts in release.
     {
         std::uint8_t why = 0;
-        if (yield_blocked_by_mutation_boundary(&why)) {
+        // Issue #4853: the no-reason overload is the (fiber:yield) primitive
+        // path; it stays blocked inside the soft orch window (#4721). Only
+        // Fiber::yield(YieldReason::Explicit) from a join wait may run there.
+        if (yield_blocked_by_mutation_boundary(&why, /*explicit_reason=*/false)) {
             note_yield_rejected_under_mutation_boundary(why);
             // Issue #2554: callers that park (mailbox recv / BlockingIO) set
             // Waiting *before* yielding. A rejected yield never swaps out, so
@@ -1976,7 +1994,12 @@ void Fiber::yield(YieldReason reason) {
     // counted as successful yields.
     {
         std::uint8_t why = 0;
-        if (yield_blocked_by_mutation_boundary(&why)) {
+        // Issue #4853: only the join wait's EXPLICIT yield may run inside the
+        // soft orch agent-body window (it re-queues the fiber as Ready, so
+        // it always resumes). Every other reason (BlockingIO park, ...)
+        // stays blocked there (#4721).
+        if (yield_blocked_by_mutation_boundary(&why, /*explicit_reason=*/reason ==
+                                                         YieldReason::Explicit)) {
             note_yield_rejected_under_mutation_boundary(why);
             // Issue #2554: callers that park (mailbox recv / BlockingIO) set
             // Waiting *before* yielding. A rejected yield never swaps out, so
@@ -2069,6 +2092,27 @@ void Fiber::yield(YieldReason reason) {
     rebind_tls_after_swap(fb, wctx);
 }
 
+// Issue #4853: unconditional completion hand-back (see header). Mirrors the
+// swap half of yield() but skips the mutation-boundary gate: after the body
+// returns the fiber is Done, so a swap here always resumes the worker loop.
+void Fiber::yield_completion() {
+    auto* wctx = g_worker_ctx;
+    auto* fb = g_current_fiber;
+    if (!wctx || !fb)
+        return;
+    fb->set_yield_reason(YieldReason::Explicit);
+    fb->bump_yield_explicit();
+    if (g_fiber_yield_checkpoint_)
+        g_fiber_yield_checkpoint_(static_cast<uint8_t>(YieldReason::Explicit));
+    // Issue #4713: publish the root segment quiescent for a cross-thread
+    // resume; the fiber is done, so the next owner only needs to reclaim it.
+    (void)aura_tw_roots_detach();
+    if (::swapcontext(&fb->ctx_, &wctx->uctx) == -1) {
+        std::fprintf(stderr, "fiber: completion swapcontext failed: %s\n", std::strerror(errno));
+    }
+    rebind_tls_after_swap(fb, wctx);
+}
+
 // ── Trampoline — first entry point when fiber starts ──
 
 void Fiber::trampoline(uint32_t /*high*/, uint32_t /*low*/) {
@@ -2108,8 +2152,10 @@ void Fiber::trampoline(uint32_t /*high*/, uint32_t /*low*/) {
         // executing, pair still-running gauge + bump retired.
         g_current_fiber->note_body_exit_if_reclaimed();
     }
-    // Yield back to worker's loop context
-    Fiber::yield();
+    // Yield back to worker's loop context. Issue #4853: completion is
+    // unconditional — a rejected yield here fell off the ucontext entry
+    // (uc_link == nullptr) and exited the process mid-join.
+    Fiber::yield_completion();
 }
 
 // Issue #4231: process-wide contained body-exception total (tests /
@@ -2458,6 +2504,17 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
                 return finish(JoinStatus::Ok);
             return finish(JoinStatus::Invalid);
         }
+
+        // Issue #4853: mark this fiber as being inside a join wait, so the
+        // explicit yield below may run inside the soft orch agent-body
+        // window (the park path stays blocked).
+        const bool prev_join_wait = self->join_wait_yield_allowed();
+        self->set_join_wait_yield_allowed(true);
+        struct JoinWaitYieldFlag {
+            Fiber* f;
+            bool prev;
+            ~JoinWaitYieldFlag() { f->set_join_wait_yield_allowed(prev); }
+        } join_wait_flag{self, prev_join_wait};
 
         // Wait loop: BlockingIO yield parks until target Done wakes us
         // (or we poll for timeout/cancel via Explicit yields when deadline).

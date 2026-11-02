@@ -2350,8 +2350,16 @@ private:
 // (MVP linter scripts/coverage/checks/check_orch_mvp_scope.py still guards
 // AgentRegistry / global_agent_registry symbols).
 inline std::unordered_map<void*, std::unique_ptr<AgentScope>>& g_evaluator_agent_scopes() noexcept {
-    static std::unordered_map<void*, std::unique_ptr<AgentScope>> m;
-    return m;
+    // Issue #4853: the map is LEAKED on purpose. A function-local static is
+    // destroyed at process exit, but an agent body fiber can still be
+    // running then (the body outlives the main program when the join wait
+    // yields inside the soft orch window). The body then calls
+    // get_or_create_agent_scope on the destroyed map: heap-use-after-free
+    // in _M_insert_unique_node (ASAN). The scopes themselves are still
+    // dropped at the session boundary (drop_agent_scope /
+    // reset_all_agent_scopes_for_test), so only the empty container leaks.
+    static auto* m = new std::unordered_map<void*, std::unique_ptr<AgentScope>>();
+    return *m;
 }
 
 // Issue #2588 / #2782: get or create the scope for the given Evaluator.

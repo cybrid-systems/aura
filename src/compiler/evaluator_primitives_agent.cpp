@@ -198,6 +198,32 @@ namespace {
         std::atomic<bool> held_{false};
     };
 
+    // Issue #4853: the per-Evaluator agent apply gate is held for the WHOLE
+    // agent-body lifetime (including the body's wait for its scope
+    // children), so a body that waits for the gate must hand the worker
+    // thread back instead of blocking on it -- otherwise the body that holds
+    // the gate cannot get a worker for its children and the inner
+    // scope-join-all starves (the counts come back random / empty). Same
+    // shape as the #4813 FiberYieldingGate above.
+    void agent_apply_gate_retry() {
+        if (auto* f = aura::serve::g_current_fiber) {
+            if (f->is_cancel_requested())
+                throw std::runtime_error("cancelled-waiting-for-agent-apply-gate");
+            // Issue #4853: the wait runs INSIDE the soft orch window (the body
+            // entered it before it took the gate), and a yield there is
+            // refused (#4721) -- so the wait busy-spun its worker thread and
+            // starved the very children the gate holder is waiting for. The
+            // wait is a join-shaped wait, so it uses the SAME allowance the
+            // join wait uses: an EXPLICIT yield that re-queues the fiber.
+            const bool prev = f->join_wait_yield_allowed();
+            f->set_join_wait_yield_allowed(true);
+            aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+            f->set_join_wait_yield_allowed(prev);
+        } else {
+            std::this_thread::yield();
+        }
+    }
+
     void agent_note_closure_freed_tick(Evaluator& ev) {
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
             m->agent_closure_freed_during_tick.fetch_add(1, std::memory_order_relaxed);
@@ -510,12 +536,15 @@ namespace {
             } nested_pop;
             run();
         } else {
-            ev.gate_spawn_apply_region(region_key, region_fast, run, [](std::uint64_t wait_us) {
-                aura::orch::g_orch_module_stats.agent_apply_lock_acquisitions_total.fetch_add(
-                    1, std::memory_order_relaxed);
-                aura::orch::g_orch_module_stats.agent_apply_lock_wait_us_total.fetch_add(
-                    wait_us, std::memory_order_relaxed);
-            });
+            ev.gate_spawn_apply_region(
+                region_key, region_fast, run,
+                [](std::uint64_t wait_us) {
+                    aura::orch::g_orch_module_stats.agent_apply_lock_acquisitions_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    aura::orch::g_orch_module_stats.agent_apply_lock_wait_us_total.fetch_add(
+                        wait_us, std::memory_order_relaxed);
+                },
+                agent_apply_gate_retry);
         }
         if (stamped) {
             if (prev_tls != 0)
@@ -548,11 +577,16 @@ namespace {
                         1, std::memory_order_relaxed);
                     aura::orch::g_orch_module_stats.agent_apply_lock_wait_us_total.fetch_add(
                         wait_us, std::memory_order_relaxed);
-                });
+                },
+                agent_apply_gate_retry);
             return;
         }
         if (caller_apply_hold == 0) {
-            std::lock_guard<std::mutex> lock(ev.agent_apply_mu_);
+            // Issue #4853: same fiber-aware wait as the gate path -- do not
+            // pin the worker thread on the apply mutex.
+            std::unique_lock<std::mutex> lock(ev.agent_apply_mu_, std::defer_lock);
+            while (!lock.try_lock())
+                agent_apply_gate_retry();
             std::forward<Body>(body)();
             return;
         }
@@ -3240,7 +3274,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                             1, std::memory_order_relaxed);
                                     aura::orch::g_orch_module_stats.agent_apply_lock_wait_us_total
                                         .fetch_add(wait_us, std::memory_order_relaxed);
-                                });
+                                },
+                                agent_apply_gate_retry);
                         } else {
                             apply_task();
                         }
@@ -4054,7 +4089,17 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // Issue #4822: body failure slot read back by orch:agent-join.
             auto body_outcome = std::make_shared<aura::orch::AgentHandle::BodyOutcome>();
             // Issue #4842: spawned from inside another agent body?
-            const bool nested_body = Evaluator::agent_apply_hold_depth() > 0;
+            // Issue #4853: the hold depth is a THREAD-local, but the body can
+            // migrate to another worker across the join wait (the body yields
+            // inside the soft orch window). On the new thread the depth reads
+            // 0, so the child thought nobody held the apply gate and queued
+            // for it -- while its own parent held it -> the parent's inner
+            // scope-join-all timed out with err=0 ok=0 (and the 4-agent repro
+            // hung). The per-FIBER soft-boundary flag follows the body across
+            // the migration, so use it as well.
+            const bool nested_body = Evaluator::agent_apply_hold_depth() > 0 ||
+                                     (aura::serve::g_current_fiber != nullptr &&
+                                      aura::serve::g_current_fiber->orch_agent_boundary_active());
             auto body = [&ev, cid, region_key, body_outcome, nested_body]() {
                 if (!cid)
                     return;
@@ -4791,7 +4836,17 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             auto tally = scope_body_tally(static_cast<const void*>(&scope));
             const auto spawn_epoch = tally->reclaim_epoch.load(std::memory_order_acquire);
             // Issue #4842: scope-spawn from inside an agent body.
-            const bool nested_body = Evaluator::agent_apply_hold_depth() > 0;
+            // Issue #4853: the hold depth is a THREAD-local, but the body can
+            // migrate to another worker across the join wait (the body yields
+            // inside the soft orch window). On the new thread the depth reads
+            // 0, so the child thought nobody held the apply gate and queued
+            // for it -- while its own parent held it -> the parent's inner
+            // scope-join-all timed out with err=0 ok=0 (and the 4-agent repro
+            // hung). The per-FIBER soft-boundary flag follows the body across
+            // the migration, so use it as well.
+            const bool nested_body = Evaluator::agent_apply_hold_depth() > 0 ||
+                                     (aura::serve::g_current_fiber != nullptr &&
+                                      aura::serve::g_current_fiber->orch_agent_boundary_active());
             // Issue #4858: shared per-attempt failure counter (RestartN
             // resets it before each re-spawn so a recovered child is not
             // reported as failed again).

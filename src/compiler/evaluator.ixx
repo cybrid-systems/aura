@@ -9051,9 +9051,12 @@ public:
     static void push_agent_apply_hold() noexcept { ++agent_apply_hold_depth_tls_(); }
     static void pop_agent_apply_hold() noexcept { --agent_apply_hold_depth_tls_(); }
 
-    template <class F, class OnLock>
+    // Issue #4853: on_retry() runs while the apply gate is held by another
+    // agent body. The caller hands the worker thread back (fiber yield)
+    // instead of pinning it on the gate.
+    template <class F, class OnLock, class OnRetry>
     void gate_spawn_apply_region(std::uint64_t region_key, bool region_fast, F&& body,
-                                 OnLock&& on_lock) {
+                                 OnLock&& on_lock, OnRetry&& on_retry) {
         struct Release {
             Evaluator* self = nullptr;
             std::uint64_t key = 0;
@@ -9086,7 +9089,16 @@ public:
             return;
         }
         const auto t0 = std::chrono::steady_clock::now();
-        std::lock_guard<std::mutex> apply(agent_apply_mu_);
+        // Issue #4853: an agent body holds the apply gate for its WHOLE
+        // lifetime, including while it waits for its scope children. A
+        // blocking std::mutex pins the WORKER THREAD of the waiting body, so
+        // the body that HOLDS the gate cannot get a worker for its children:
+        // the inner join starves and the counts come back random / empty.
+        // Wait without pinning the worker -- try_lock + on_retry() until the
+        // gate is free (the same shape as the #4813 FiberYieldingGate).
+        std::unique_lock<std::mutex> apply(agent_apply_mu_, std::defer_lock);
+        while (!apply.try_lock())
+            on_retry();
         const auto wait_us =
             static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
                                            std::chrono::steady_clock::now() - t0)
