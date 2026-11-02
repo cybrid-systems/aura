@@ -177,9 +177,15 @@ namespace {
         // g_hash_tables on another thread (runtime_shared.h contract), and the
         // owner stamp must land on the exact slot we just pushed.
         aura_lock_workspace_write();
-        const auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        aura_hash_stamp_new_table_owner();
+        std::size_t hidx = 0;
+        {
+            // Issue #4860: unlocked size()+push_back raced a concurrent publish
+            // (double free). Index read, push and stamp are one critical section.
+            std::lock_guard slock(ev.alloc_storage_lock_);
+            hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            aura_hash_stamp_new_table_owner();
+        }
         aura_unlock_workspace_write();
         return make_hash(hidx);
     }
