@@ -368,10 +368,22 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             ev.truncate_cell_nil_marks(0); // Issue #4789
             ev.error_values_.clear();
             ev.error_values_.shrink_to_fit();
-            for (auto* fht : g_hash_tables)
-                FlatHashTable::destroy(fht);
-            g_hash_tables.clear();
-            g_hash_tables.shrink_to_fit();
+            {
+                // Issue #4831: the registry teardown is a publish-path peer.
+                // An agent body on a worker thread mints into g_hash_tables
+                // under alloc_storage_lock_ (build_orch_hash, the query/hash
+                // prims); destroying + clearing the vector unlocked raced
+                // that push (double free / UAF). One critical section under
+                // the same lock, and the #4093 tenant stamps die with the
+                // tables they describe.
+                std::lock_guard<std::recursive_mutex> hash_registry(ev.alloc_storage_lock_);
+                for (auto* fht : g_hash_tables)
+                    FlatHashTable::destroy(fht);
+                g_hash_tables.clear();
+                g_hash_tables.shrink_to_fit();
+                g_hash_tenants.clear();
+                g_hash_tenants.shrink_to_fit();
+            }
             ev.vector_heap_.clear();
             ev.vector_heap_.shrink_to_fit();
             ev.vector_slot_tenants_.clear(); // Issue #4298
@@ -544,10 +556,17 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         // ev.vector_heap_, ev.opaque_heap_ are safe to clear here.
         ev.error_values_.clear();
         ev.error_values_.shrink_to_fit();
-        for (auto* fht : g_hash_tables)
-            FlatHashTable::destroy(fht);
-        g_hash_tables.clear();
-        g_hash_tables.shrink_to_fit();
+        {
+            // Issue #4831: same publish-path peer as (gc-heap) — a live
+            // agent body may mint into the registry while this cleanup runs.
+            std::lock_guard<std::recursive_mutex> hash_registry(ev.alloc_storage_lock_);
+            for (auto* fht : g_hash_tables)
+                FlatHashTable::destroy(fht);
+            g_hash_tables.clear();
+            g_hash_tables.shrink_to_fit();
+            g_hash_tenants.clear();
+            g_hash_tenants.shrink_to_fit();
+        }
         ev.vector_heap_.clear();
         ev.vector_heap_.shrink_to_fit();
         ev.vector_slot_tenants_.clear(); // Issue #4298
