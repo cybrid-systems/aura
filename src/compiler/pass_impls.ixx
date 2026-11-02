@@ -2257,6 +2257,8 @@ public:
                 return 1;
             case aura::ir::IROpcode::GuardShape:
                 return 4;
+            case aura::ir::IROpcode::TopCellStore:
+                return 2;
             default:
                 return 4; // conservative: assume full operand count
         }
@@ -2362,6 +2364,12 @@ public:
                 // Issue #2834: Jump has no slot operands (ops[0] = block id).
                 if (instr.operands[0] < used_size)
                     branch_block_id_overprotect_total_.fetch_add(1, std::memory_order_relaxed);
+                break;
+            }
+            case O::TopCellStore: {
+                // Issue #4865: ops[0] is a cell index, not a local slot;
+                // only the value operand is a read.
+                mark(instr.operands[1], /*expanded=*/false);
                 break;
             }
             default: {

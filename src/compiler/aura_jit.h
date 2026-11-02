@@ -271,7 +271,7 @@ public:
         // Issue #1512: side-by-side compare counters (match + total).
         std::atomic<std::uint64_t> consistency_compare_total{0};
         std::atomic<std::uint64_t> consistency_match_total{0};
-        // Issue #1512: bitmasks for opcode coverage (kIROpcodeCount=54 ≤ 64).
+        // Issue #1512: bitmasks for opcode coverage (kIROpcodeCount=55 ≤ 64).
         // Bit i set ⇔ opcode i successfully lowered in some compile.
         std::atomic<std::uint64_t> opcode_covered_mask{0};
         // Bit i set ⇔ opcode i hit the unhandled default branch.
@@ -346,10 +346,10 @@ public:
     // Issue #1512: popcount of opcode_covered_mask / coverage percentage.
     [[nodiscard]] std::uint64_t opcode_coverage_count() const noexcept;
     [[nodiscard]] std::uint64_t opcode_coverage_pct() const noexcept; // 0..100
-    static constexpr std::uint32_t kTrackedOpcodeCount = 54;          // matches kIROpcodeCount
+    static constexpr std::uint32_t kTrackedOpcodeCount = 55;          // matches kIROpcodeCount
     // Issue #1658: bitmask of opcodes with explicit lower() cases
-    // (GuardShape|Linear*|PrimCall|EH + baseline arithmetic). All 54
-    // IROpcode values are either fully lowered or fail-fast safe-deopt
+    // (GuardShape|Linear*|PrimCall|EH + baseline arithmetic). 54 of the 55
+    // IROpcode values are fully lowered; TopCellStore safe-deopts
     // (compile nullptr → interpreter). Popcount of this mask is 54.
     static constexpr std::uint64_t kFullyLoweredOpcodeMask = (1ull << 54) - 1ull;
     // Issue #1917: AI hot-path critical opcodes (ordinals match ir.ixx IROpcode).

@@ -119,10 +119,12 @@ export enum class IROpcode : std::uint8_t {
     GuardShape, // deopt guard: result, arg_slot, expected_shape, generic_block
     // Issue #272 Cycle 3: load top-level value binding from evaluator cell heap.
     TopCellLoad, // TopCellLoad: result_slot, cell_index
+    // Issue #4865: write a top-level value cell from an inline lambda body.
+    TopCellStore, // TopCellStore: cell_index, value_slot
 };
 
 // Issue #910 Phase 1: opcode count for dispatch-table migration.
-export inline constexpr std::size_t kIROpcodeCount = 54;
+export inline constexpr std::size_t kIROpcodeCount = 55;
 
 // Issue #910 Phase 2: dense opcode class table for table-driven
 // dispatch (hot path can branch on class then dense secondary
@@ -203,6 +205,7 @@ export inline constexpr IROpcodeClass kIROpcodeClass[kIROpcodeCount] = {
     IROpcodeClass::Arena,     // ArenaPop
     IROpcodeClass::Guard,     // GuardShape
     IROpcodeClass::Load,      // TopCellLoad
+    IROpcodeClass::Cell,      // TopCellStore
 };
 
 export inline constexpr IROpcodeClass opcode_class(IROpcode op) noexcept {
@@ -351,6 +354,7 @@ export constexpr OpcodeInfo kOpcodeInfo[] = {
     {kIrOpcodeDisplayNames[51], 1, false}, // ArenaPop
     {kIrOpcodeDisplayNames[52], 4, true},  // GuardShape
     {kIrOpcodeDisplayNames[53], 2, true},  // TopCellLoad
+    {kIrOpcodeDisplayNames[54], 2, false}, // TopCellStore
 };
 
 static_assert(std::size(kOpcodeInfo) == kIrOpcodeDisplayNameCount,
@@ -361,6 +365,7 @@ static_assert(std::size(kOpcodeInfo) == kIROpcodeCount,
 static_assert(kOpcodeInfo[0].name.data() == kIrOpcodeDisplayNames[0].data());
 static_assert(kOpcodeInfo[28].name == "cast");
 static_assert(kOpcodeInfo[53].name == "top-cell-load");
+static_assert(kOpcodeInfo[54].name == "top-cell-store");
 
 // Helper: look up opcode info by IROpcode enum value
 export inline const OpcodeInfo* lookup_opcode(IROpcode op) {
