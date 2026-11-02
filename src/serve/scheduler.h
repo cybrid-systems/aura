@@ -47,7 +47,20 @@ public:
 
     // Create a new fiber. The fiber is assigned to a worker
     // (round-robin across available workers, or load-aware when enabled).
-    Fiber* spawn(Fiber::Func func, size_t stack_size = 2 * 1024 * 1024);
+    // Issue #4851: fifo_start places the new fiber on the worker's FIFO
+    // start-order queue instead of the LIFO deque, so a batch of scope
+    // bodies begins in spawn order (the first-spawned failing body runs
+    // before its siblings and :on-join-fail "cancel" can fire early).
+    Fiber* spawn(Fiber::Func func, size_t stack_size = 2 * 1024 * 1024, bool fifo_start = false);
+
+    // Issue #4851: the worker that owns the FIFO start lane. Scope bodies
+    // that share the per-Evaluator apply gate are serialized, so they must
+    // also START in spawn order: with the round-robin assignment a later
+    // sibling could reach the apply gate first, which hid a failing first
+    // sibling behind the slow ones and made :on-join-fail "cancel" wait for
+    // the whole :timeout-ms. All FIFO-start bodies therefore share ONE
+    // worker's FIFO queue and run in spawn order.
+    [[nodiscard]] int fifo_lane_worker() noexcept;
 
     // Create a new fiber pinned to a specific worker (affinity).
     // worker_id: 0..num_workers-1. The fiber will always run on
@@ -395,6 +408,9 @@ private:
     // Metrics collection
     metrics::GlobalMetrics metrics_;
     std::atomic<bool> metrics_on_{true};
+
+    // Issue #4851: FIFO start lane worker (-1 = not chosen yet).
+    std::atomic<int> fifo_lane_worker_id_{-1};
 
     // Issue #707: per-scheduler fiber ownership so ~Fiber returns
     // per-fiber stack storage to the bounded pool on teardown.
