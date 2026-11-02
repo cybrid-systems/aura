@@ -420,15 +420,11 @@ void CompilePrims::register_compile_p2(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-1925", 1925);
             insert_kv("issue-1925", 1925);
             insert_kv("schema", 799); // lineage 799 + #1925
-            std::size_t hidx = 0;
-            {
-                // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
-                hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                aura_hash_stamp_new_table_owner();
-            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 }
@@ -487,15 +483,11 @@ void CompilePrims::register_compile_p3(PrimRegistrar add, Evaluator& ev) {
                         return make_void();
                     }
                 }
-                std::size_t hidx = 0;
-                {
-                    // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                    // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
-                    hidx = g_hash_tables.size();
-                    g_hash_tables.push_back(ht);
-                    aura_hash_stamp_new_table_owner();
-                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 return make_hash(hidx);
             };
             std::uint64_t instr = 0, funcs = 0;
@@ -588,15 +580,11 @@ void CompilePrims::register_compile_p4(PrimRegistrar add, Evaluator& ev) {
                         return make_void();
                     }
                 }
-                std::size_t hidx = 0;
-                {
-                    // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                    // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
-                    hidx = g_hash_tables.size();
-                    g_hash_tables.push_back(ht);
-                    aura_hash_stamp_new_table_owner();
-                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 return make_hash(hidx);
             };
             std::uint64_t bumps = 0, checks = 0, inits = 0, commits = 0;
@@ -703,15 +691,11 @@ void CompilePrims::register_compile_p5(PrimRegistrar add, Evaluator& ev) {
                         return make_void();
                     }
                 }
-                std::size_t hidx = 0;
-                {
-                    // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                    // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
-                    hidx = g_hash_tables.size();
-                    g_hash_tables.push_back(ht);
-                    aura_hash_stamp_new_table_owner();
-                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 return make_hash(hidx);
             };
             std::uint64_t children_calls = 0, parent_calls = 0, dirty_calls = 0, dirty_nodes = 0;
@@ -828,15 +812,11 @@ void CompilePrims::register_compile_p6(PrimRegistrar add, Evaluator& ev) {
                         return make_void();
                     }
                 }
-                std::size_t hidx = 0;
-                {
-                    // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                    // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
-                    hidx = g_hash_tables.size();
-                    g_hash_tables.push_back(ht);
-                    aura_hash_stamp_new_table_owner();
-                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 return make_hash(hidx);
             };
             // Issue #1797: consistent type-cache triple via snapshot
@@ -920,15 +900,11 @@ void CompilePrims::register_compile_p7(PrimRegistrar add, Evaluator& ev) {
                         return make_void();
                     }
                 }
-                std::size_t hidx = 0;
-                {
-                    // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                    // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
-                    hidx = g_hash_tables.size();
-                    g_hash_tables.push_back(ht);
-                    aura_hash_stamp_new_table_owner();
-                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 return make_hash(hidx);
             };
             std::uint64_t total = 0, with_type = 0;
@@ -1000,15 +976,11 @@ void CompilePrims::register_compile_p8(PrimRegistrar add, Evaluator& ev) {
                         return make_void();
                     }
                 }
-                std::size_t hidx = 0;
-                {
-                    // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                    // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
-                    hidx = g_hash_tables.size();
-                    g_hash_tables.push_back(ht);
-                    aura_hash_stamp_new_table_owner();
-                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 return make_hash(hidx);
             };
             // Issue #1898: pin + revalidate (vs raw compiler_service_ TOCTOU).
@@ -1086,15 +1058,11 @@ void CompilePrims::register_compile_p9(PrimRegistrar add, Evaluator& ev) {
                         return make_void();
                     }
                 }
-                std::size_t hidx = 0;
-                {
-                    // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                    // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
-                    hidx = g_hash_tables.size();
-                    g_hash_tables.push_back(ht);
-                    aura_hash_stamp_new_table_owner();
-                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 return make_hash(hidx);
             };
             if (!ev.compiler_service_)
@@ -1171,15 +1139,11 @@ void CompilePrims::register_compile_p10(PrimRegistrar add, Evaluator& ev) {
                         return make_void();
                     }
                 }
-                std::size_t hidx = 0;
-                {
-                    // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                    // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
-                    hidx = g_hash_tables.size();
-                    g_hash_tables.push_back(ht);
-                    aura_hash_stamp_new_table_owner();
-                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 return make_hash(hidx);
             };
             if (!ev.compiler_service_)
@@ -1259,15 +1223,11 @@ void CompilePrims::register_compile_p11(PrimRegistrar add, Evaluator& ev) {
                         return make_void();
                     }
                 }
-                std::size_t hidx = 0;
-                {
-                    // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                    // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
-                    hidx = g_hash_tables.size();
-                    g_hash_tables.push_back(ht);
-                    aura_hash_stamp_new_table_owner();
-                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 return make_hash(hidx);
             };
             if (!ev.compiler_service_)
@@ -1348,15 +1308,11 @@ void CompilePrims::register_compile_p12(PrimRegistrar add, Evaluator& ev) {
                         return make_void();
                     }
                 }
-                std::size_t hidx = 0;
-                {
-                    // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                    // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
-                    hidx = g_hash_tables.size();
-                    g_hash_tables.push_back(ht);
-                    aura_hash_stamp_new_table_owner();
-                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 return make_hash(hidx);
             };
             if (!ev.compiler_service_)
@@ -1441,15 +1397,11 @@ void CompilePrims::register_compile_p13(PrimRegistrar add, Evaluator& ev) {
                         return make_void();
                     }
                 }
-                std::size_t hidx = 0;
-                {
-                    // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                    // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
-                    hidx = g_hash_tables.size();
-                    g_hash_tables.push_back(ht);
-                    aura_hash_stamp_new_table_owner();
-                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 return make_hash(hidx);
             };
             if (!ev.compiler_service_)
@@ -1553,15 +1505,11 @@ void CompilePrims::register_compile_p14(PrimRegistrar add, Evaluator& ev) {
                         return make_void();
                     }
                 }
-                std::size_t hidx = 0;
-                {
-                    // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                    // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
-                    hidx = g_hash_tables.size();
-                    g_hash_tables.push_back(ht);
-                    aura_hash_stamp_new_table_owner();
-                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 return make_hash(hidx);
             };
             if (!ev.compiler_service_)
@@ -1646,15 +1594,11 @@ void CompilePrims::register_compile_p15(PrimRegistrar add, Evaluator& ev) {
                         return make_void();
                     }
                 }
-                std::size_t hidx = 0;
-                {
-                    // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                    // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
-                    hidx = g_hash_tables.size();
-                    g_hash_tables.push_back(ht);
-                    aura_hash_stamp_new_table_owner();
-                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 return make_hash(hidx);
             };
             if (!ev.compiler_service_)
@@ -1758,15 +1702,11 @@ void CompilePrims::register_compile_p16(PrimRegistrar add, Evaluator& ev) {
                     return make_int(0);
                 }
             }
-            std::size_t hidx = 0;
-            {
-                // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
-                hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                aura_hash_stamp_new_table_owner();
-            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 }
@@ -1831,15 +1771,11 @@ void CompilePrims::register_compile_p17(PrimRegistrar add, Evaluator& ev) {
                         return make_void();
                     }
                 }
-                std::size_t hidx = 0;
-                {
-                    // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                    // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
-                    hidx = g_hash_tables.size();
-                    g_hash_tables.push_back(ht);
-                    aura_hash_stamp_new_table_owner();
-                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 return make_hash(hidx);
             };
             if (!ev.compiler_service_)
@@ -1914,15 +1850,11 @@ void CompilePrims::register_compile_p18(PrimRegistrar add, Evaluator& ev) {
                         return make_void();
                     }
                 }
-                std::size_t hidx = 0;
-                {
-                    // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                    // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
-                    hidx = g_hash_tables.size();
-                    g_hash_tables.push_back(ht);
-                    aura_hash_stamp_new_table_owner();
-                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 return make_hash(hidx);
             };
             if (!ev.compiler_service_)
@@ -2005,15 +1937,11 @@ void CompilePrims::register_compile_p19(PrimRegistrar add, Evaluator& ev) {
                         return make_void();
                     }
                 }
-                std::size_t hidx = 0;
-                {
-                    // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                    // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
-                    hidx = g_hash_tables.size();
-                    g_hash_tables.push_back(ht);
-                    aura_hash_stamp_new_table_owner();
-                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 return make_hash(hidx);
             };
             if (!ev.compiler_service_)
@@ -2143,15 +2071,11 @@ void CompilePrims::register_compile_p20(PrimRegistrar add, Evaluator& ev) {
                     return make_void();
                 }
             }
-            std::size_t hidx = 0;
-            {
-                // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
-                hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                aura_hash_stamp_new_table_owner();
-            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         };
         if (!ev.compiler_service_)
@@ -2800,15 +2724,11 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
             insert_kv("commercial-stub-guarded", 1);
             insert_kv("schema", 1896);
             insert_kv("issue", 1896);
-            std::size_t hidx = 0;
-            {
-                // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
-                hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                aura_hash_stamp_new_table_owner();
-            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -2921,15 +2841,11 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("mutate-guard-enforced", 0);
                 insert_kv("naked-mutate-fail-closed-total", 0);
             }
-            std::size_t hidx = 0;
-            {
-                // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
-                hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                aura_hash_stamp_new_table_owner();
-            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 
@@ -2996,15 +2912,11 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
             insert_kv("type-registry-pin-wired", 1);
             insert_kv("schema", 1898);
             insert_kv("issue", 1898);
-            std::size_t hidx = 0;
-            {
-                // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
-                hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                aura_hash_stamp_new_table_owner();
-            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 }
@@ -3947,15 +3859,11 @@ void CompilePrims::register_compile_p38(PrimRegistrar add, Evaluator& ev) {
                 FlatHashTable::destroy(ht);
                 return make_void();
             }
-            std::size_t hidx = 0;
-            {
-                // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
-                hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                aura_hash_stamp_new_table_owner();
-            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         });
 }
@@ -4074,15 +3982,10 @@ void CompilePrims::register_compile_p39(PrimRegistrar add, Evaluator& ev) {
             return make_void();
         }
     }
-    std::size_t hidx = 0;
-    {
-        // Issue #4860: unlocked size()+push_back raced a concurrent publish
-        // (double free). Index read, push and stamp are one critical section.
-        std::lock_guard slock(ev.alloc_storage_lock_);
-        hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        aura_hash_stamp_new_table_owner();
-    }
+    auto hidx = g_hash_tables.size();
+    g_hash_tables.push_back(ht);
+    // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot contract).
+    aura_hash_stamp_new_table_owner();
     return make_hash(hidx);
 }
 
@@ -4738,15 +4641,11 @@ void CompilePrims::register_compile_p48(PrimRegistrar add, Evaluator& ev) {
                         return make_void();
                     }
                 }
-                std::size_t hidx = 0;
-                {
-                    // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                    // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
-                    hidx = g_hash_tables.size();
-                    g_hash_tables.push_back(ht);
-                    aura_hash_stamp_new_table_owner();
-                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 return make_hash(hidx);
             };
             std::uint64_t per_symbol_used = 0, per_symbol_visited = 0;
@@ -4917,15 +4816,11 @@ void CompilePrims::register_compile_p49(PrimRegistrar add, Evaluator& ev) {
                     return make_void();
                 }
             }
-            std::size_t hidx = 0;
-            {
-                // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
-                hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                aura_hash_stamp_new_table_owner();
-            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+            // contract).
+            aura_hash_stamp_new_table_owner();
             return make_hash(hidx);
         };
         if (a.empty() || !is_string(a[0]))
@@ -5004,15 +4899,11 @@ void CompilePrims::register_compile_p50(PrimRegistrar add, Evaluator& ev) {
                         return make_void();
                     }
                 }
-                std::size_t hidx = 0;
-                {
-                    // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                    // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
-                    hidx = g_hash_tables.size();
-                    g_hash_tables.push_back(ht);
-                    aura_hash_stamp_new_table_owner();
-                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 return make_hash(hidx);
             };
             if (!ev.compiler_service_)
@@ -5083,15 +4974,11 @@ void CompilePrims::register_compile_p51(PrimRegistrar add, Evaluator& ev) {
                         return make_void();
                     }
                 }
-                std::size_t hidx = 0;
-                {
-                    // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                    // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
-                    hidx = g_hash_tables.size();
-                    g_hash_tables.push_back(ht);
-                    aura_hash_stamp_new_table_owner();
-                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot
+                // contract).
+                aura_hash_stamp_new_table_owner();
                 return make_hash(hidx);
             };
             if (!ev.compiler_service_)

@@ -8656,7 +8656,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-4139", aura::orch::kJoinTokenSourcePendingIssue);
             insert_kv("issue-4139", aura::orch::kJoinTokenSourcePendingIssue);
             insert_kv("handoff-join-source-pending-wired", 1);
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
     // Issue #3089: cross-Evaluator handoff — Aura surface.
