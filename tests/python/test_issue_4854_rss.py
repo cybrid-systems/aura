@@ -7,7 +7,7 @@ the process (measured at the bug report on dc49853ab):
   * orch:spawn-agent + orch:agent-join   ~13-16 KB per pair
   * orch:scope-spawn + orch:scope-join-all ~11-16 KB per child
   * (eval <datum>)                         ~8.7 KB per call
-  * channel:create + send + recv (+close)  ~0.8-1 KB per channel
+  * channel:create + send + recv         ~0.8-1 KB per channel
 
 Post-fix the growth is bounded (allocator high-water only):
 
@@ -26,12 +26,13 @@ The retainers were:
   * g_retained_eval only shrank at ~Evaluator (#4359). (eval datum) now
     retains the parsed flat/pool only when the program can build a closure
     (contains a Lambda node); a datum/arithmetic eval drops them on return.
-  * channels_ was append-only; channel:close now releases the slot and
-    channel:create recycles it.
-
-The channel probe includes channel:close: an UNCLOSED channel is still a
-live, addressable id (send/recv may use it later), so it is intentionally
-not reclaimed. Close is the settle point.
+  * channels_ was append-only. channel:close releases the slot and
+    channel:create recycles it. An unclosed but unreachable channel (no
+    live Aura value holds its tagged id) is now settled by (gc-heap): the
+    mark records every tagged channel id it reaches and the channel sweep
+    drops the rest. A channel still bound in a live env frame / pair /
+    vector / closure survives; a channel reachable only through another
+    channel's backlog survives too.
 
 These thresholds are ~2-4x the post-fix high-water and well below the old
 linear rate (agent/scope 1200 iterations alone were ~20 MB before the fix).
@@ -126,10 +127,12 @@ _PROBES = {
         8 * 1024,
     ),
     "channel": (
+        # No channel:close here: this is the issue's original probe. The
+        # unclosed channel becomes unreachable when the let frame dies and
+        # (gc-heap) settles it.
         """(let ((c (channel:create 4)))
           (channel:send c "abcdefghij")
-          (channel:recv c)
-          (channel:close c))""",
+          (channel:recv c))""",
         2500,
         6 * 1024,
     ),
@@ -206,6 +209,28 @@ class TestIssue4854OrchRss(unittest.TestCase):
                     f"#4854 {name}: only {flat}/{BATCHES - 1} post-warmup batches "
                     f"were flat (deltas {deltas}) — growth looks linear",
                 )
+
+    def test_4854_live_channel_survives_gc(self) -> None:
+        """A tagged id held by a live env/vector is not settled."""
+        proc = _run_probe(
+            """
+(define (roundtrip)
+  (let ((c (channel:create 2)))
+    (channel:send c 41)
+    (gc-heap)
+    (channel:send c 1)
+    (list (channel:recv c) (channel:recv c))))
+(display "env ") (display (roundtrip)) (newline)
+(define v (vector (channel:create 2)))
+(gc-heap)
+(channel:send (vector-ref v 0) "ok")
+(display "vec ") (display (channel:recv (vector-ref v 0))) (newline)
+""".strip(),
+            timeout=60.0,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("env (41 1)", proc.stdout)
+        self.assertIn("vec ok", proc.stdout)
 
     def test_4854_channel_close_recycles_slot(self) -> None:
         proc = _run_probe(
