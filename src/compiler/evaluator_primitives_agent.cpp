@@ -446,7 +446,23 @@ namespace {
                 runner.join();
         }
     };
-    static OrchSchedHolder orch_sched;
+    // Issue #4847: construct the holder on the FIRST orch call, never at
+    // static-init time. ~OrchSchedHolder stops the scheduler and destroys
+    // every Fiber it still owns; ~Fiber then unregisters from process-wide
+    // registries (fiber registry, tree-walker root segments, linear roots)
+    // that are themselves statics. A namespace-scope holder is constructed
+    // before those statics (before main) and is therefore destroyed after
+    // them: the late ~Fiber locked/erased torn-down storage (SIGSEGV in
+    // aura::serve::Fiber::~Fiber at exit, after aura_reset_runtime had
+    // already freed the runtime). A function-local static is registered
+    // with __cxa_atexit on first use (during main), so it is destroyed
+    // before every pre-main static and before the exit handlers registered
+    // earlier (aura_reset_runtime at the top of main) — the teardown order
+    // a029752df shipped with and the one #3437 must not regress again.
+    OrchSchedHolder& orch_sched_holder() {
+        static OrchSchedHolder holder;
+        return holder;
+    }
 
     // Issue #4843: in --serve / --serve-async-bench a scheduler is already
     // running for this process. Spawning orch agents onto a SECOND
@@ -466,8 +482,12 @@ namespace {
         // the process-global g_scheduler here: outside a fiber it may name a
         // scheduler this Evaluator does not own, and destroying the agent
         // fiber from the wrong owner crashes in Fiber::~Fiber at exit.
-        orch_sched.ensure(2);
-        return *orch_sched.sched;
+        // Issue #4847: the holder is a function-local static — its teardown
+        // order (see orch_sched_holder) is what keeps the late ~Fiber ahead
+        // of the process registries and the exit-time runtime reset.
+        auto& holder = orch_sched_holder();
+        holder.ensure(2);
+        return *holder.sched;
     }
 
     // Issue #4783: message of an error value (tenant-fenced like display).

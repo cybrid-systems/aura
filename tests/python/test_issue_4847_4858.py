@@ -53,18 +53,27 @@ def _run(
 
 class TestIssueBatch4847To4858(unittest.TestCase):
     def test_4847_agent_join_exits_clean(self) -> None:
-        proc = _run(
-            """
+        # Issue #4847 was 10/10 SIGSEGV at exit with the default pipeline
+        # face and clean under force-soa. Five runs per face pin both sides
+        # of the regression (ten process exits total) and keep a single
+        # stray teardown crash from hiding behind a green first run.
+        source = """
 (orch:spawn-agent "w" (lambda () 1))
 (display (hash-ref (orch:agent-join "w" :timeout-ms 3000) "status")) (newline)
-""",
-            "--load",
-            timeout=60.0,
-            pipeline_strict="0",
-        )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("ok", proc.stdout)
-        self.assertNotIn("SIGSEGV", proc.stderr)
+"""
+        for strict in ("0", "force-soa"):
+            for run in range(5):
+                with self.subTest(pipeline_strict=strict, run=run):
+                    proc = _run(
+                        source,
+                        "--load",
+                        timeout=60.0,
+                        pipeline_strict=strict,
+                    )
+                    self.assertEqual(proc.returncode, 0, f"run {run}/{strict}: {proc.stderr}")
+                    self.assertIn("ok", proc.stdout)
+                    self.assertNotIn("SIGSEGV", proc.stderr)
+                    self.assertNotIn("double free", proc.stderr)
 
     def test_4852_overlay_set_unbound_names_binding(self) -> None:
         proc = _run(
