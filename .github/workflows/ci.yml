@@ -674,8 +674,9 @@ jobs:
       github.event_name == 'push' ||
       needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/cybrid-systems/dev:v1.1.1
+    # The ~10GB dev image pull failed before step 1 on a full runner with
+    # "no space left on device". This job only needs stdlib SBOM generation
+    # and Trivy (build.py security is a no-op), so run on the runner image.
     steps:
     - uses: actions/checkout@v7
 
@@ -695,8 +696,10 @@ jobs:
 
     - name: Install Trivy
       run: |
+        mkdir -p "$RUNNER_TEMP/bin"
         curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-          | sh -s -- -b /usr/local/bin v0.72.0
+          | sh -s -- -b "$RUNNER_TEMP/bin" v0.72.0
+        echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
     - name: Security scan
       run: python3 build.py security
