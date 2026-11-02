@@ -9028,6 +9028,9 @@ public:
                         const std::unordered_map<std::string, std::size_t,
                                                  aura::core::TransparentStringHash,
                                                  std::equal_to<>>& value_cells;
+                        // Issue #4681: call-slot names lower to the same
+                        // live TopCellLoad - no embedded copy to go stale.
+                        const aura::compiler::CallSlotCells4681& call_slots;
                         const std::unordered_map<std::string, IRCacheEntry,
                                                  aura::core::TransparentStringHash,
                                                  std::equal_to<>>& ir_cache_v2;
@@ -9068,6 +9071,11 @@ public:
                                     return;
                                 if (value_cells.count(var_name) > 0)
                                     return; // TopCellLoad face — live read, no embed.
+                                // Issue #4681: a call-slot reference lowers to
+                                // TopCellLoad of the define's env cell, so it
+                                // embeds nothing the #4436 freshness gate owns.
+                                if (call_slots.count(var_name) > 0)
+                                    return;
                                 if (std::find(embed_safe.begin(), embed_safe.end(), var_name) !=
                                     embed_safe.end())
                                     return; // #4436 cone exemption.
@@ -9094,10 +9102,16 @@ public:
                                 walk(c);
                         }
                     };
-                    UntrustedCalleeScan4513 scan4513{
-                        *lower_flat,  *lower_pool, name,
-                        scan_params,  evaluator_,  ir_value_cell_bindings_,
-                        ir_cache_v2_, ir_cache_,   embed_safe_callees_4436_};
+                    UntrustedCalleeScan4513 scan4513{*lower_flat,
+                                                     *lower_pool,
+                                                     name,
+                                                     scan_params,
+                                                     evaluator_,
+                                                     ir_value_cell_bindings_,
+                                                     ir_call_slots_4681_,
+                                                     ir_cache_v2_,
+                                                     ir_cache_,
+                                                     embed_safe_callees_4436_};
                     scan4513.walk(scan_lv.children.empty() ? aura::ast::NULL_NODE
                                                            : scan_lv.child(0));
                     if (scan4513.untrusted) {
@@ -11181,6 +11195,13 @@ public:
     // ir_cache_. The embed hole is the function-cache copy. Tests drop
     // the cells to reach that copy.
     void clear_ir_value_cells_for_test() { ir_value_cell_bindings_.clear(); }
+
+    // Issue #4681: whether `name` is registered as a call slot, i.e. its
+    // top-level lambda references lower through a live TopCellLoad. Tests
+    // use it to pick the slot face vs the embed face deterministically.
+    bool has_call_slot_for_test(const std::string& name) const {
+        return ir_call_slots_4681_.count(name) > 0;
+    }
 
     // Issue #4528: simulate the orphan producer — erase ONLY the name's
     // ir_cache_v2_ row (what pre-#4528 eviction did), leaving the v1 /
