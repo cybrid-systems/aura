@@ -28,6 +28,7 @@
 
 #include <cstdint>
 #include <print>
+#include <regex>
 #include <string>
 #include <string_view>
 
@@ -57,6 +58,15 @@ static std::string read_file(const char* path) {
         return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     }
     return {};
+}
+
+// Issue #3152 AC4: the source-cite check must not depend on clang-format's
+// line breaks or on an explicit /*overflowed=*/ argument comment. Require
+// the call and the overflow flag, but allow whitespace/comments between.
+static bool has_overflow_finish(const std::string& src) {
+    static const std::regex re(
+        R"(query_hash_finish\(\s*ht\s*,\s*ev\.string_heap_\s*,\s*(?:/\*overflowed=\*/\s*)?overflowed\s*[,)])");
+    return std::regex_search(src, re);
 }
 
 // Issue #4647: read one int key out of the evolution-audit-decision hash.
@@ -147,8 +157,7 @@ static void ac4_capacity_schema() {
     CHECK(src.find("insert_kv(\"issue-3284\", 3284)") != std::string::npos,
           "issue-3284 sentinel present");
     CHECK(src.find("overflowed = false") != std::string::npos, "overflow tracking preserved");
-    CHECK(src.find("query_hash_finish(ht, ev.string_heap_, overflowed") != std::string::npos,
-          "query_hash_finish still called with overflow flag");
+    CHECK(has_overflow_finish(src), "query_hash_finish still called with overflow flag");
 }
 
 // AC5: parallel with #3149 — both in evolution-audit-decision handler,
