@@ -5228,8 +5228,6 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 auto& val = a[i + 1];
-                if (auto e = kw_err(k, val, join_fail_name))
-                    return *e;
                 if (parse_scope_addr_kw(k, val, addr_path, addr_child)) {
                     continue;
                 } else if ((k == "stall-ms" || k == "stall_ms") && types::is_int(val)) {
@@ -5422,40 +5420,6 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         out = p;
         return std::nullopt;
     };
-    // Issue #4861: the scope-join-all keyword validation. It lives HERE,
-    // above the prim, so the added code does not push the #3437
-    // drop-if-empty anchor out of its 12000-char window.
-    //
-    // :on-join-fail only accepted a string, so a quoted symbol ('cancel) was
-    // silently IGNORED and the policy degraded to report-only - the caller
-    // never learned the cancel strategy was not armed. :timeout-ms and
-    // :max-restarts clamped a negative value to 0, so a typo silently
-    // changed the deadline (or turned the restart fuel into a no-op) instead
-    // of reporting the bad argument.
-    auto kw_err = [&](const std::string& key, const EvalValue& val,
-                      std::string& policy_name) -> std::optional<EvalValue> {
-        if ((key == "timeout-ms" || key == "timeout_ms" || key == "max-restarts" ||
-             key == "max_restarts") &&
-            types::is_int(val) && types::as_int(val) < 0) {
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "orch:scope-join-all: :" + key + " must not be negative",
-                                        ev.primitive_error_counter_ptr());
-        }
-        if (key == "on-join-fail" || key == "on_join_fail") {
-            // A string OR a quoted symbol ('cancel): the orch policy grammar
-            // reads quoted identifiers off the symbol table.
-            if (types::is_string(val) || types::is_symbol(val) || types::is_keyword(val)) {
-                policy_name = orch_keyword_key(val);
-                return std::nullopt;
-            }
-            return make_primitive_error(
-                ev.string_heap_, ev.error_values_,
-                "orch:scope-join-all: :on-join-fail expects a policy name "
-                "(string or symbol: cancel / restart-n / throttle / report-only)",
-                ev.primitive_error_counter_ptr());
-        }
-        return std::nullopt;
-    };
     add("orch:scope-join-all",
         [&ev, build_orch_hash, orch_keyword_key, parse_scope_addr_kw, resolve_scope_addr,
          make_scope_addr_fail, add_deny_class,
@@ -5481,13 +5445,18 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 auto& val = a[i + 1];
-                if (auto e = kw_err(k, val, join_fail_name))
-                    return *e;
                 if (parse_scope_addr_kw(k, val, addr_path, addr_child)) {
                     continue;
                 } else if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(val)) {
-                    policy.primary_ms =
-                        static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                    // Issue #4861: a negative :timeout-ms used to be clamped
+                    // to 0, so a typo silently changed the deadline instead
+                    // of reporting the bad argument.
+                    if (types::as_int(val) < 0)
+                        return make_primitive_error(
+                            ev.string_heap_, ev.error_values_,
+                            "orch:scope-join-all: :timeout-ms must not be negative",
+                            ev.primitive_error_counter_ptr());
+                    policy.primary_ms = static_cast<std::uint64_t>(types::as_int(val));
                 } else if ((k == "drain-ms" || k == "drain_ms") && types::is_int(val)) {
                     policy.drain_ms =
                         static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
@@ -5498,13 +5467,31 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
                 } else if (k == "on-join-fail" || k == "on_join_fail") {
                     // Issue #3208: explicit keyword → honor even ReportOnly.
-                    if (auto msg = scope_join_all_kw_error(k, val, join_fail_name))
-                        return make_primitive_error(ev.string_heap_, ev.error_values_, *msg,
-                                                    ev.primitive_error_counter_ptr());
+                    // Issue #4861: the policy name may be a string OR a
+                    // quoted symbol ('cancel). A value of any other type used
+                    // to be IGNORED, so the policy silently degraded to
+                    // report-only and the caller never learned the cancel
+                    // strategy was not armed.
+                    if (types::is_string(val) || types::is_symbol(val) || types::is_keyword(val)) {
+                        join_fail_name = orch_keyword_key(val);
+                    } else {
+                        return make_primitive_error(
+                            ev.string_heap_, ev.error_values_,
+                            "orch:scope-join-all: :on-join-fail expects a policy name "
+                            "(string or symbol: cancel / restart-n / throttle / report-only)",
+                            ev.primitive_error_counter_ptr());
+                    }
                 } else if ((k == "max-restarts" || k == "max_restarts") && types::is_int(val)) {
                     // Issue #4858: join-all restart fuel (scope-watch parity).
-                    join_fail_max_restarts =
-                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                    // Issue #4861: a negative fuel count used to be clamped
+                    // to 0 (a silent no-op restart) instead of reporting the
+                    // bad argument.
+                    if (types::as_int(val) < 0)
+                        return make_primitive_error(
+                            ev.string_heap_, ev.error_values_,
+                            "orch:scope-join-all: :max-restarts must not be negative",
+                            ev.primitive_error_counter_ptr());
+                    join_fail_max_restarts = static_cast<std::uint32_t>(types::as_int(val));
                 } else if ((k == "tree") && types::is_bool(val)) {
                     // Issue #3643: optional tree join — default local
                     // (#3496 AC1); true joins the whole subtree (AC2).
@@ -6014,8 +6001,6 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 auto& val = a[i + 1];
-                if (auto e = kw_err(k, val, join_fail_name))
-                    return *e;
                 if ((k == "alive-only" || k == "alive_only") && types::is_bool(val)) {
                     filter.alive_only = types::as_bool(val);
                 } else if ((k == "include-descendants" || k == "include_descendants") &&

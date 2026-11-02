@@ -73,7 +73,7 @@ def main() -> int:
         # was already at its edge (11988 of 12000 chars) before #4861 added
         # the failure-policy argument validation, so it needed widening for
         # the prim to keep growing. The anchor itself is still required.
-        must("drop_agent_scope(static_cast<void*>(&ev))", "AC4 drop-if-empty intact", prim[ja : ja + 13500])
+        must("drop_agent_scope(static_cast<void*>(&ev))", "AC4 drop-if-empty intact", prim[ja : ja + 14500])
 
     # AC5: linter wired in build.py AFTER #3434; no test_issue files;
     # no docs/design.
