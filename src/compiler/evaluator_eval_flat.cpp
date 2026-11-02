@@ -840,6 +840,10 @@ static bool try_apply_closure_tls_lookup(Evaluator& ev, ClosureId cid, Closure& 
             continue;
         if (s.apply_epoch != epoch) { // #3832: unique-write / erase drop (content).
             s.occupied = false;
+            // Issue #4859: drop the cached Closure copy too — it holds the
+            // (eval ...) program owner (Closure::program), and a stale slot
+            // would keep a reclaimed program alive until the slot is reused.
+            s.cl = Closure{};
             continue;
         }
         // Issue #4169 (kApplyClosureTlsSeqSurviveIssue): seq bump re-stamps
@@ -850,6 +854,8 @@ static bool try_apply_closure_tls_lookup(Evaluator& ev, ClosureId cid, Closure& 
         s.densify_window_seq = dseq;
         if (!Evaluator::closure_apply_use_site_ok(s.cl)) {
             s.occupied = false;
+            // Issue #4859: release the cached program owner with the slot.
+            s.cl = Closure{};
             tombstoned_out = true;
             return false;
         }
@@ -875,8 +881,11 @@ void Evaluator::drop_apply_closure_tls() noexcept {
     auto& cache = apply_closure_tls_cache();
     const auto iid = instance_id();
     for (auto& s : cache.slots) {
-        if (s.instance_id == iid)
+        if (s.instance_id == iid) {
             s.occupied = false;
+            // Issue #4859: release the cached (eval ...) program owner.
+            s.cl = Closure{};
+        }
     }
 }
 
@@ -3619,6 +3628,9 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         cl.flat = flat;
                         cl.pool = pool;
                         cl.body_id = body_node;
+                        // Issue #4859: keep the (eval ...) program that owns
+                        // flat / pool alive with this closure.
+                        cl.program = eval_program_for_pool(pool);
                         // P0: legacy cl.env removed. Always register in env_frames_
                         // for SoA (GC-safe, no pointer). env_id is now the only handle.
                         cl.env_id = alloc_env_frame_from_env(*copied_env);
@@ -9631,11 +9643,19 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     if (cap_id == NULL_ENV_ID)
                         cap_id = alloc_env_frame_from_env(*current_env);
                     note_tw_closure_owner(cid); // Issue #4428
+                    // Issue #4859: when f / p belong to an (eval ...) program,
+                    // keep that program alive for as long as this closure
+                    // lives — Closure::flat / Closure::pool are raw pointers
+                    // into it. Null for an arena-owned body. Resolved BEFORE
+                    // the shard lock (the registry lock is never taken under
+                    // a closures-shard lock in the other direction).
+                    auto eval_program_owner = eval_program_for_pool(p);
                     {
                         std::unique_lock<std::shared_mutex> wlock(
                             closures_shards_[closures_shard_index(cid)].mu);
                         bump_closures_apply_epoch(); // Issue #3832
                         Closure cl{"", std::move(params), f, p, body_id, cap_id, dotted, target};
+                        cl.program = eval_program_owner;
                         // Issue #1365: stamp bridge_epoch at construction
                         stamp_closure_bridge_epoch(cl);
                         closures_shards_[closures_shard_index(cid)].map[cid] = std::move(cl);
@@ -11105,13 +11125,17 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     // Issue #230 #2: bit 2 of int_val_ flags the
                     // `define-hygienic-macro*` (preserved-params) variant.
                     bool is_preserved = (v.int_value & 4) != 0;
+                    // Issue #4859: a macro is a GLOBAL registry entry — it
+                    // outlives the eval call that registered it — so it keeps
+                    // the (eval ...) program that owns f / p alive.
                     macros_[std::string(name)] = MacroDef{std::move(param_names),
                                                           is_dotted,
                                                           is_hygienic,
                                                           is_preserved,
                                                           f,
                                                           p,
-                                                          body_id};
+                                                          body_id,
+                                                          eval_program_for_pool(p)};
                     return EvalResult(make_void());
                 }
                 case aura::ast::NodeTag::Linear: {
