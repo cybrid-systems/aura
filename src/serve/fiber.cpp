@@ -1860,7 +1860,18 @@ namespace {
             // yield is allowed (it re-queues the fiber as Ready, so it
             // always resumes); the park path stays blocked — a parked
             // fiber was not re-woken at shutdown and hung the stop.
-            if (!hook_held && explicit_reason && g_current_fiber->join_wait_yield_allowed() &&
+            // Issue #4862: the user-visible (fiber:yield) inside the soft
+            // orch agent-body window must be allowed to hand the turn back.
+            // It used to be rejected, so a polling body hot-spun and pinned
+            // its worker (the parked asker of orch:agent-ask then never
+            // resumed -> permanent hang). Only the caller that sets
+            // soft_window_yield_allowed (the fiber:yield bridge) is affected;
+            // the mailbox park path keeps the #4721 contract. An EXPLICIT
+            // yield re-queues the fiber as Ready (it never parks) and the soft
+            // window holds no workspace_mtx_ / rollback checkpoint.
+            if (!hook_held && explicit_reason &&
+                (g_current_fiber->join_wait_yield_allowed() ||
+                 g_current_fiber->soft_window_yield_allowed()) &&
                 g_current_fiber->mutation_safety_snapshot().real_depth == 0)
                 return false;
         }
