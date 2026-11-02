@@ -24,6 +24,8 @@ module aura.compiler.evaluator;
 
 import std;
 import aura.compiler.value;
+// Issue #4863: value_type_name lives in the pure evaluator module.
+import aura.compiler.evaluator_pure;
 
 namespace aura::compiler::primitives_detail {
 
@@ -1116,23 +1118,33 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             // entire read-intern-push critical section.
             std::lock_guard lock(ev.alloc_storage_lock_);
             std::string result;
-            for (auto& v : a) {
-                if (is_string(v)) {
-                    auto idx = as_string_idx(v);
-                    if (idx < string_heap.size()) {
-                        // Issue #4505: no foreign bytes in the concatenated
-                        // copy; same reader gate as string=?.
-                        if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0,
-                                                             "string-append")) {
-                            return make_primitive_error(
-                                string_heap, error_values,
-                                "string-append: cross-tenant string slot read denied (#4505)",
-                                primitive_error_counter);
-                        }
-                        result += string_heap[idx];
+            for (std::size_t i = 0; i < a.size(); ++i) {
+                const auto& v = a[i];
+                // Issue #4863: string-append concatenates STRINGS. It used to
+                // coerce an int silently and drop a symbol / list argument,
+                // so a bad call produced a truncated prompt or key with no
+                // diagnostic at all. Raise a type error that names the op,
+                // the argument index and the ACTUAL type.
+                if (!is_string(v)) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        std::string("type mismatch — expected String, got ") +
+                            aura::compiler::pure::value_type_name(v) +
+                            " (in string-append, argument " + std::to_string(i + 1) + ")",
+                        primitive_error_counter);
+                }
+                auto idx = as_string_idx(v);
+                if (idx < string_heap.size()) {
+                    // Issue #4505: no foreign bytes in the concatenated
+                    // copy; same reader gate as string=?.
+                    if (!ev.inrange_string_tenant_allows(idx, /*required_effects=*/0,
+                                                         "string-append")) {
+                        return make_primitive_error(
+                            string_heap, error_values,
+                            "string-append: cross-tenant string slot read denied (#4505)",
+                            primitive_error_counter);
                     }
-                } else if (is_int(v)) {
-                    result += std::to_string(as_int(v));
+                    result += string_heap[idx];
                 }
             }
             // Issue #2577: content intern — repeated append of the same pieces

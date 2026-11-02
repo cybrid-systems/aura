@@ -1,0 +1,50 @@
+; Issue #4863 regression suite: type errors must name the ACTUAL type,
+; string-append must type-check its arguments, and `error` must keep its
+; irritants.
+;
+; Before this fix:
+;   (string-append "a" 1)      -> "a1"   (int silently coerced)
+;   (string-append "a" 'b)     -> "a"    (symbol silently dropped)
+;   (error "bad thing" 42 "x") -> "bad thing" (irritants dropped)
+;   (- 'a 1)                   -> "expected Int, got Value" (type unnamed)
+
+(define *fails* 0)
+(define (check pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+
+(define (caught thunk) (try (thunk) (catch (e) e)))
+(define (msg thunk) (format "~a" (caught thunk)))
+
+; ── string-append rejects a non-string argument ────────────────────────────
+(define sa-int (msg (lambda () (string-append "a" 1))))
+(check (equal? sa-int "type mismatch — expected String, got Int (in string-append, argument 2)")
+       "#4863 string-append rejects an Int argument")
+
+(define sa-sym (msg (lambda () (string-append "a" 'b))))
+(check (equal? sa-sym "type mismatch — expected String, got Symbol (in string-append, argument 2)")
+       "#4863 string-append rejects a Symbol argument")
+
+; a well-formed call still concatenates
+(check (equal? (string-append "a" "b") "ab")
+       "#4863 string-append still concatenates strings")
+
+; ── error keeps its irritants ──────────────────────────────────────────────
+(define err-msg (msg (lambda () (error "bad thing" 42 "x"))))
+(check (equal? err-msg "bad thing 42 \"x\"")
+       "#4863 error keeps its irritants")
+
+; a single-argument error is unchanged
+(define err-one (msg (lambda () (error "plain"))))
+(check (equal? err-one "plain")
+       "#4863 a one-argument error is unchanged")
+
+; ── a numeric type error names the ACTUAL type ─────────────────────────────
+(define num-msg (msg (lambda () (- 'a 1))))
+(check (equal? num-msg "type mismatch — expected Int, got Symbol (in -, argument 1)")
+       "#4863 a numeric type error names the actual type")
+
+(if (= *fails* 0)
+    (display "OK-4863\n")
+    (begin (display "FAIL-4863 fails=") (display *fails*) (newline) (exit 1)))

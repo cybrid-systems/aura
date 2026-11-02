@@ -987,6 +987,21 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         types::EvalValue cause = make_string(0); // default
         if (!a.empty())
             cause = a[0];
+        // Issue #4863: (error "msg" irritant ...) dropped everything past
+        // the first argument. The irritants are the most common way to carry
+        // context, and losing them left an agent-join report or a log line
+        // with only the bare message. Keep them: the message first, then the
+        // irritants rendered the way `format` renders them.
+        if (a.size() > 1) {
+            std::string text = fmt_val_to_string(a[0], ev.string_heap_, ev.pairs_, /*quote=*/false,
+                                                 /*depth=*/0, ev.vector_heap_, ev.symbol_table_);
+            for (std::size_t i = 1; i < a.size(); ++i) {
+                text += ' ';
+                text += fmt_val_to_string(a[i], ev.string_heap_, ev.pairs_, /*quote=*/true,
+                                          /*depth=*/0, ev.vector_heap_, ev.symbol_table_);
+            }
+            cause = make_string(static_cast<std::uint64_t>(ev.push_string_heap(std::move(text))));
+        }
         auto eidx = primitives_detail::push_error_cause(ev.error_values_, cause);
         return make_error(eidx);
     });
