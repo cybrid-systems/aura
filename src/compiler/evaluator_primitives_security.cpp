@@ -410,7 +410,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"sandbox-mode", make_bool(ev.sandbox_mode())},
@@ -483,7 +483,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"would-allow-new-mutate", make_int(allow)},
@@ -643,7 +643,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"rate-bp", make_int(static_cast<std::int64_t>(d.rate_bp))},
@@ -1317,7 +1317,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             }
             insert_kv("schema-4575", 4575);
             insert_kv("issue-4575", 4575);
-            return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 
     // Issue #2023: MacroSelfEvo grant/revoke is C++ API
@@ -1526,7 +1526,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         : 0);
             insert_kv("export-ref-mandate", 1);
             insert_kv("resolve-stamped-gate", 1);
-            return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 
     // (query:mutation-audit-log) — Issue #676: exportable security
@@ -1572,7 +1572,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             auto rt_idx = ev.string_heap_.mint(runtime_dir ? runtime_dir : "");
             std::vector<std::pair<std::string, EvalValue>> kv = {
@@ -1624,7 +1624,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"nested-depth-max",
@@ -1676,7 +1676,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -1733,7 +1733,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -1790,7 +1790,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -1848,7 +1848,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -1913,7 +1913,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -1983,7 +1983,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -2048,7 +2048,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -2115,7 +2115,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -2207,7 +2207,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -2290,7 +2290,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const std::uint64_t errors = ev.get_primitive_error_count();
             const std::uint64_t stored = ev.get_primitive_error_values_size();
@@ -2379,7 +2379,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             if (auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics()))
                 m->ai_native_primitive_hits_total.fetch_add(1, std::memory_order_relaxed);
@@ -2468,7 +2468,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"guard-captures",
@@ -2524,7 +2524,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             std::uint64_t property_count = 0;
             std::uint64_t sequence_count = 0;
@@ -2616,7 +2616,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             std::uint64_t property_count = 0;
             std::uint64_t covergroup_count = 0;
@@ -2749,7 +2749,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -2837,7 +2837,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     break;
                 }
             }
-            return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         };
         std::uint64_t interface_count = 0;
         std::uint64_t modport_count = 0;
@@ -2953,7 +2953,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             auto* ws = ev.workspace_flat();
             const auto& group = ev.arena_group();
@@ -3072,7 +3072,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -3158,7 +3158,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -3265,7 +3265,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -3356,7 +3356,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const std::int64_t nested =
                 static_cast<std::int64_t>(ev.get_sv_defuse_nested_modports());
@@ -3446,7 +3446,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("stable-ref-invalidation-sv", inval);
             insert_kv("stability-events-total", events_total);
             insert_kv("schema", 665);
-            return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 
     // Issue #667: query:primitives-apply-stats — list/map/filter
@@ -3519,7 +3519,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("fastpath-wins", fastpath_wins);
             insert_kv("apply-events-total", events_total);
             insert_kv("schema", 667);
-            return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 
     // Issue #706: Scheduler StealBudget adaptive bias + LLM tail stats.
@@ -3561,7 +3561,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"mutation-bias-hits",
@@ -3618,7 +3618,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const std::uint64_t steal_attempts = aura_work_steal_attempts_total();
             const std::uint64_t steal_successes = aura_work_steal_successes_total();
@@ -3696,7 +3696,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"pool-hits",
@@ -3757,7 +3757,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -3828,7 +3828,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -3889,7 +3889,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -3952,7 +3952,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -4016,7 +4016,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -4080,7 +4080,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -4144,7 +4144,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -4374,7 +4374,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -4520,7 +4520,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -4580,7 +4580,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const std::uint64_t jitter =
                 shape::history_jitter_reduction_count.load(std::memory_order_relaxed);
@@ -4646,7 +4646,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
@@ -4701,7 +4701,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
             };
             auto* ws = ev.workspace_flat();
             if (!ws)
@@ -4990,7 +4990,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("schema-4005", ::aura::core::wal_slo::kWalForceWalEnableFailIssue);
                 insert_kv("issue-4005", ::aura::core::wal_slo::kWalForceWalEnableFailIssue);
             }
-            return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 
 
@@ -5624,7 +5624,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-3838", ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
             insert_kv("issue-3838", ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
             insert_kv("unified", 1);
-            return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 
     // Issue #2389: query:security-health — single Agent score (basis points)
@@ -5738,7 +5738,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2054", 2054);
             insert_kv("schema-2225", 2225);
             insert_kv("schema-2075", 2075);
-            return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 
     // Issue #2534 / Issue #3881: query:security-posture — single Agent posture
@@ -6089,7 +6089,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             }
             insert_kv("schema-4575", 4575);
             insert_kv("issue-4575", 4575);
-            return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 
     // Issue #2534: query:security-correlated-trail — join SE + TypedMutation +
@@ -6187,7 +6187,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2534", 2534);
             insert_kv("issue-2534", 2534);
             insert_kv("security-correlated-trail-wired", 1);
-            return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 
     // Issue #668: query:primitives-regex-error-stats — math regex
@@ -6252,7 +6252,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("regex-timeouts", regex_timeouts);
             insert_kv("schema", 668);
             insert_kv("schema-2479", 2479);
-            return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 
     // Issue #3114: query:evolution-audit-decision — observe-only fold of
@@ -6934,7 +6934,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("wal-segments-scanned", wal_segments_scanned);
             insert_kv("schema-3970", ::aura::core::wal_slo::kWalFullScanMidIssue);
             insert_kv("issue-3970", ::aura::core::wal_slo::kWalFullScanMidIssue);
-            return query_hash_finish(ev, ht, ev.string_heap_, overflowed);
+            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 }
 

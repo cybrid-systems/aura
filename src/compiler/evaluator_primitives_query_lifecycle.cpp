@@ -2236,7 +2236,7 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             insert_kv("dirty-columnar-wired", 1);
             insert_kv("schema-2904", 2904);
             insert_kv("issue-2904", 2904);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #414: query:generation-epoch-stats. Returns the sum of
