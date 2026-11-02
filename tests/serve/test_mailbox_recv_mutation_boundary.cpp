@@ -1638,7 +1638,13 @@ static void ac4514_2_yield_gate_this_fiber_source() {
     std::println("\n--- #4514 AC2: yield gate is this-fiber only (source) ---");
     const auto fiber = read_file("src/serve/fiber.cpp");
     CHECK(fiber.find("Issue #4514") != std::string::npos, "4514 AC2: fiber.cpp cites #4514");
-    const auto gate = fiber.find("bool yield_blocked_by_mutation_boundary(std::uint8_t* why_out)");
+    // Issue #4853 gave this helper a second parameter (explicit_reason)
+    // and a [[nodiscard]] attribute, so the old exact-signature cite no
+    // longer matched the live source. The gate body is unchanged: it still
+    // keys on this-fiber depth + the this-thread yield-hook trampoline and
+    // still ignores the process-wide held count. Anchor on the function
+    // name so a future parameter change does not stale this cite again.
+    const auto gate = fiber.find("bool yield_blocked_by_mutation_boundary(");
     CHECK(gate != std::string::npos, "4514 AC2: gate helper present");
     const auto win = gate == std::string::npos ? std::string{} : fiber.substr(gate, 2600);
     CHECK(win.find("aura_evaluator_mutation_boundary_held()") == std::string::npos,
