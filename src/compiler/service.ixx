@@ -3552,11 +3552,27 @@ public:
         // the static macro_expand_all pass, which is what enforces the
         // process hygiene pass cap (a walker arm silently ignored the cap and
         // evaluated the refused half tree).
+        //
+        // Issue #4857: a legacy MacroDef must not drag the hygienic calls in
+        // the same flat onto the runtime walker. Run the static pass first so
+        // those calls are expanded once; the walker only sees (and lazily
+        // expands) the procedural defmacro sites it needs.
+        bool has_legacy_macro = false;
+        bool has_static_macro = false;
         for (aura::ast::NodeId macro_id = 0; macro_id < flat_ptr->size(); ++macro_id) {
             const auto& node = flat_ptr->get(macro_id);
-            if (node.tag == aura::ast::NodeTag::MacroDef && (node.int_value & 2) == 0)
-                return evaluator_.eval_flat(*flat_ptr, *pool_ptr, flat_ptr->root,
-                                            evaluator_.top_env());
+            if (node.tag != aura::ast::NodeTag::MacroDef)
+                continue;
+            if ((node.int_value & 2) == 0)
+                has_legacy_macro = true;
+            else
+                has_static_macro = true;
+        }
+        if (has_legacy_macro) {
+            aura::ast::NodeId macro_root = flat_ptr->root;
+            if (has_static_macro)
+                macro_root = aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, macro_root);
+            return evaluator_.eval_flat(*flat_ptr, *pool_ptr, macro_root, evaluator_.top_env());
         }
 
         // Pre-expand all macros in this expression
@@ -4209,11 +4225,37 @@ public:
         // IR pipeline doesn't support macros — fall back to tree-walker evaluator.
         // Issue #4390: preserved / defmacro / eval_data_as_code on that walk
         // consult MacroSelfEvo before expanding. This fallback stays.
+        //
+        // Issue #4857: do not hand the WHOLE flat to the walker just because it
+        // contains a MacroDef. The walker expands a macro call every time the
+        // call is evaluated, and every hygienic expansion appends nodes and
+        // restamps the flat, so one textual macro call in a hot loop grows
+        // super-linearly. Run the static pass first: it expands hygienic /
+        // preserved macros once and leaves legacy defmacro call sites to the
+        // walker (procedural expansion must stay at runtime).
+        bool has_macro_def = false;
+        bool has_legacy_macro = false;
+        bool has_static_macro = false;
         for (aura::ast::NodeId id = 0; id < flat_ptr->size(); ++id) {
-            if (flat_ptr->get(id).tag == aura::ast::NodeTag::MacroDef) {
-                return evaluator_.eval_flat(*flat_ptr, *pool_ptr, flat_ptr->root,
-                                            evaluator_.top_env());
+            const auto& node = flat_ptr->get(id);
+            if (node.tag != aura::ast::NodeTag::MacroDef)
+                continue;
+            has_macro_def = true;
+            if ((node.int_value & 2) == 0)
+                has_legacy_macro = true;
+            else
+                has_static_macro = true;
+        }
+        if (has_macro_def) {
+            aura::ast::NodeId macro_root = flat_ptr->root;
+            if (!has_legacy_macro || has_static_macro) {
+                macro_root = aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, macro_root);
+                // Issue #4078: a refused static expansion must not be evaluated.
+                // The mixed legacy arm keeps its historical walker consult.
+                if (!has_legacy_macro && aura_hygiene_expand_deny_blocks_eval())
+                    return std::unexpected(hygiene_expand_deny_diag_4078());
             }
+            return evaluator_.eval_flat(*flat_ptr, *pool_ptr, macro_root, evaluator_.top_env());
         }
 
         // Pre-expand all macros in this expression
