@@ -526,8 +526,16 @@ void run_serve_async(int num_workers) {
 
     // Register fiber:yield callback (non-blocking yield, fiber stays Ready)
     aura::messaging::g_fiber_yield = []() {
-        if (aura::serve::g_current_fiber) {
-            aura::serve::Fiber::yield();
+        if (auto* f = aura::serve::g_current_fiber) {
+            // Issue #4862: inside the soft orch agent-body window the yield
+            // was rejected, so a polling body hot-spun and pinned its worker
+            // (the parked asker of orch:agent-ask then never resumed ->
+            // permanent hang). The flag lets this one yield hand the turn
+            // back; it is restored right after.
+            const bool prev = f->soft_window_yield_allowed();
+            f->set_soft_window_yield_allowed(true);
+            aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+            f->set_soft_window_yield_allowed(prev);
         }
     };
 
@@ -1451,14 +1459,32 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
 
     // Register fiber:yield callback
     aura::messaging::g_fiber_yield = []() {
-        if (aura::serve::g_current_fiber) {
-            aura::serve::Fiber::yield();
+        if (auto* f = aura::serve::g_current_fiber) {
+            // Issue #4862: inside the soft orch agent-body window the yield
+            // was rejected, so a polling body hot-spun and pinned its worker
+            // (the parked asker of orch:agent-ask then never resumed ->
+            // permanent hang). The flag lets this one yield hand the turn
+            // back; it is restored right after.
+            const bool prev = f->soft_window_yield_allowed();
+            f->set_soft_window_yield_allowed(true);
+            aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+            f->set_soft_window_yield_allowed(prev);
         }
     };
 
     aura::messaging::g_fiber_yield_mutation_boundary = []() {
-        if (aura::serve::g_current_fiber) {
-            aura::serve::Fiber::yield(aura::serve::YieldReason::MutationBoundary);
+        if (auto* f = aura::serve::g_current_fiber) {
+            // Issue #4862: the fiber:yield primitive prefers this bridge, so
+            // the soft-window allowance must live here too. Outside the soft
+            // window keep the MutationBoundary reason (#4721 park contract).
+            const bool in_soft = f->orch_agent_boundary_active();
+            const bool prev = f->soft_window_yield_allowed();
+            if (in_soft)
+                f->set_soft_window_yield_allowed(true);
+            aura::serve::Fiber::yield(in_soft ? aura::serve::YieldReason::Explicit
+                                              : aura::serve::YieldReason::MutationBoundary);
+            if (in_soft)
+                f->set_soft_window_yield_allowed(prev);
         }
     };
 
@@ -1599,6 +1625,14 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
                 bench_failed.store(true, std::memory_order_release);
             }
             std::fflush(stdout);
+            // Issue #4862: this is a one-shot script face. A background orch
+            // body (a polling agent loop) outlives the top-level eval, and
+            // waiting for the scheduler to go idle hangs the bench forever.
+            // Stop the pool once the script has completed and its output is
+            // flushed. stop() only latches the run/worker flags (no join), so
+            // it is safe from this fiber; the body yields via the soft-window
+            // fix, letting its worker observe the stop flag.
+            sched.stop();
         },
         0);
 

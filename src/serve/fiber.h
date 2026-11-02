@@ -637,6 +637,22 @@ public:
         join_wait_yield_allowed_.store(v, std::memory_order_release);
     }
 
+    // Issue #4862: the user-visible (fiber:yield) inside the soft orch
+    // agent-body window must hand the turn back. Without it a polling body
+    // hot-spins and pins its worker thread: under --serve-async-bench (Soft
+    // auto workers=1) the parked orch:agent-ask fiber could never be
+    // resumed, so the ask hung forever (no reply AND no :timeout-ms). The
+    // soft window holds no workspace_mtx_ / rollback checkpoint and this
+    // yield re-queues the fiber as Ready (it never parks), so it is safe
+    // there. The mailbox park path never sets this flag, so the #4721
+    // "no park inside the soft window" contract is unchanged.
+    [[nodiscard]] bool soft_window_yield_allowed() const noexcept {
+        return soft_window_yield_allowed_.load(std::memory_order_acquire);
+    }
+    void set_soft_window_yield_allowed(bool v) noexcept {
+        soft_window_yield_allowed_.store(v, std::memory_order_release);
+    }
+
     // Issue #448 / #2115 / #2549: alias of depth-safe API. Historical #448
     // implementation always returned false for MutationBoundary yields
     // (no depth probe), so steal callers that used this name were
@@ -1712,6 +1728,9 @@ private:
     static std::atomic<std::uint64_t> force_safepoint_on_orphan_total_;
     // Issue #1597 join latency histogram (process-wide).
     static std::atomic<std::uint64_t> join_latency_hist_[kJoinLatencyHistBuckets];
+    // Issue #4862: this fiber may run a yield inside the soft orch
+    // agent-body window (the user-visible fiber:yield).
+    std::atomic<bool> soft_window_yield_allowed_{false};
 };
 
 // Issue #3071: scheduler idle poll of the in-body cancel window.
