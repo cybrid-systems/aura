@@ -233,14 +233,28 @@ void test_ac10_recovery_hint_in_restamp_lag() {
         expect_true(std::string{kKeywords[i]} + ": keyword found", pos != std::string::npos);
         if (pos == std::string::npos)
             continue;
-        const auto window = text.substr(pos, 4000);
-        expect_true(std::string{kKeywords[i]} + ": restamp-lag in window",
-                    window.find("restamp-lag") != std::string::npos);
-        // Issue #3309: the hint is split across adjacent string-literal
-        // lines in some sites (clang-format wrapping); match stable pieces.
-        expect_true(std::string{kKeywords[i]} + ": recovery hint in window",
-                    window.find("recovery: re-query after budget") != std::string::npos &&
-                        window.find("restamp before reusing refs") != std::string::npos);
+        // A registration site may sit more than 4000 chars before its
+        // reject path (query:ensure-ref is ~6KB). Accept any occurrence of
+        // the keyword whose window carries both the structured error and
+        // the recovery hint -- the contract is the reject path, not the
+        // distance from the registration line.
+        bool saw_restamp = false;
+        bool saw_hint = false;
+        for (auto p = pos; p != std::string::npos; p = text.find(kw, p + 1)) {
+            const auto window = text.substr(p, 4000);
+            if (window.find("restamp-lag") == std::string::npos)
+                continue;
+            saw_restamp = true;
+            // Issue #3309: the hint is split across adjacent string-literal
+            // lines in some sites (clang-format wrapping); match stable pieces.
+            if (window.find("recovery: re-query after budget") != std::string::npos &&
+                window.find("restamp before reusing refs") != std::string::npos) {
+                saw_hint = true;
+                break;
+            }
+        }
+        expect_true(std::string{kKeywords[i]} + ": restamp-lag in window", saw_restamp);
+        expect_true(std::string{kKeywords[i]} + ": recovery hint in window", saw_hint);
     }
 }
 
