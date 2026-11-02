@@ -603,7 +603,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("issue-3171",
                       aura::compiler::typed_audit::kLinearFastPathStealDensifyClearCompleteIssue);
 
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #2897: query:type-linear-evolution-snapshot — single atomic/
@@ -745,7 +745,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("issue-3546", aura::compiler::typed_audit::kCompositeTxnStickyMidIssue);
             insert_kv("composite-txn-sticky-mid-wired", 1);
 
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #2350: query:type-system-health — single Agent score (basis points)

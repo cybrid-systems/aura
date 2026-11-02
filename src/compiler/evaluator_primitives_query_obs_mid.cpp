@@ -256,7 +256,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("pattern-epoch-mismatch-total", static_cast<std::int64_t>(epoch_mismatch));
             insert_kv("pattern-dangling-prevented-total",
                       static_cast<std::int64_t>(dangling_prevented));
-            return query_hash_finish(*ev, ht, ev->string_heap_mut(), overflowed);
+            return query_hash_finish(ht, ev->string_heap_mut(), overflowed, *ev);
         });
 
     // Issue #490 / #1503: query:pattern-index-rebuild-stats. Hash view of
@@ -348,7 +348,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             }
             insert_kv("schema-2763", 2763);
             insert_kv("issue-2763", 2763);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #621 / #2403: query:pattern-index-stats-hash — Agent-discoverable
@@ -459,7 +459,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("query-index-composite-wired", 1);
             insert_kv("schema-2403", 2403);
             insert_kv("issue-2403", 2403);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #547 / #1501 / #1609 / #1636 / #1892 / #2123 / #2525:
@@ -652,7 +652,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                 insert_kv("schema-2989", 2989);
                 insert_kv("issue-2989", 2989);
             }
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #2989: dedicated Agent counters (int). Same values as
@@ -727,7 +727,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("schema", 2242);
             insert_kv("issue", 2242);
             insert_kv("active", 1);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #2242: query:node-provenance — per-node provenance query hit
@@ -794,7 +794,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("schema", 2242);
             insert_kv("issue", 2242);
             insert_kv("active", 1);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #2242: query:last-mutation-provenance — last hygiene stamp
@@ -860,7 +860,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("schema", 2242);
             insert_kv("issue", 2242);
             insert_kv("active", 1);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #1914: query:hygiene-provenance-stats — unified hygiene +
@@ -961,7 +961,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("schema", 1914);
             insert_kv("issue", 1914);
             insert_kv("active", 1);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #486 / #1501 / #1609 / #1613: query:macro-hygiene-stats —
@@ -1250,7 +1250,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("audit-trail-wired", 1);
             insert_kv("issue", 1613); // lineage 1609 / 1501 / 486; depth keys #2021 / #2101
             insert_kv("schema", 1613);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #548: query:panic-checkpoint-lifecycle-stats.
@@ -1410,7 +1410,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                       static_cast<std::int64_t>(ev->ast_snapshot_image_count()));
             insert_kv("schema-2966", 2966);
             insert_kv("issue-2966", 2966);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #512: query:runtime-orchestration-stats. Hash view of runtime
@@ -1496,7 +1496,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("fiber-migration-attempts", static_cast<std::int64_t>(migration));
             insert_kv("runtime-orchestration-total", static_cast<std::int64_t>(total));
             insert_kv("runtime-orchestration-recommendation", recommendation);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #513: query:aot-hot-reload-stats. Consolidated hash view of AOT
@@ -1584,7 +1584,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("defuse-version", static_cast<std::int64_t>(defuse_ver));
             insert_kv("aot-hot-reload-total", static_cast<std::int64_t>(total));
             insert_kv("aot-hot-reload-recommendation", recommendation);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #522: query:aot-production-reload-stats. Commercial P0 hash view
@@ -1682,7 +1682,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("swap-success-rate-pct", static_cast<std::int64_t>(success_rate_pct));
             insert_kv("aot-production-reload-total", static_cast<std::int64_t>(total));
             insert_kv("aot-production-reload-recommendation", recommendation);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #523: query:envframe-production-safety-stats. Commercial P0 hash view
@@ -1767,7 +1767,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("dual-path-sync-rate-pct", sync_rate_pct);
             insert_kv("envframe-production-safety-total", static_cast<std::int64_t>(total));
             insert_kv("envframe-production-safety-recommendation", recommendation);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #524: query:macro-production-hygiene-stats. Commercial P0 hash view
@@ -1855,7 +1855,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("hygiene-filter-rate-pct", filter_rate_pct);
             insert_kv("macro-production-hygiene-total", static_cast<std::int64_t>(total));
             insert_kv("macro-production-hygiene-recommendation", recommendation);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #525: query:guard-production-impact-stats. Commercial P0 hash view
@@ -1950,7 +1950,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("validation-pass-rate-pct", pass_rate_pct);
             insert_kv("guard-production-impact-total", static_cast<std::int64_t>(total));
             insert_kv("guard-production-impact-recommendation", recommendation);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #528: query:pattern-production-index-stats. Commercial P0 hash view
@@ -2058,7 +2058,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("delta-hit-rate-pct", delta_hit_rate_pct);
             insert_kv("pattern-production-index-total", static_cast<std::int64_t>(total));
             insert_kv("pattern-production-index-recommendation", recommendation);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #530: query:incremental-production-relower-stats. Commercial P0 hash
@@ -2168,7 +2168,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("min-scope-hit-rate-pct", min_scope_hit_pct);
             insert_kv("incremental-production-relower-total", static_cast<std::int64_t>(total));
             insert_kv("incremental-production-relower-recommendation", recommendation);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #532 / #1512 / #1658 / #1917: query:jit-consistency-stats. Commercial P0
@@ -2353,7 +2353,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("issue-1917", 1917);
             insert_kv("issue", 1658);
             insert_kv("schema", 1658); // lineage 532 / 1512 / 1289 / 427 → 1658 + #1917
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #533: query:soa-production-columnar-stats. Commercial P0 hash view
@@ -2494,7 +2494,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("columnar-locality-pct", columnar_locality_pct);
             insert_kv("soa-production-columnar-total", static_cast<std::int64_t>(total));
             insert_kv("soa-production-columnar-recommendation", recommendation);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #568: query:soa-children-columnar-migration-stats. Task4-review
@@ -2626,7 +2626,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("children-default-safe-pcv-wired", 1);
             insert_kv("schema-2036", 2036);
             insert_kv("issue-2036", 2036);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #2862: query:children-stable-stats. Hash view of the
@@ -2733,7 +2733,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                       static_cast<std::int64_t>(
                           aura::core::g_restamp_budget_query_epoch_stale_total().load(
                               std::memory_order_relaxed)));
-            return query_hash_finish(*ev, ht, ev->string_heap_mut(), overflowed);
+            return query_hash_finish(ht, ev->string_heap_mut(), overflowed, *ev);
         });
 
     // Issue #2863: query:replace-subtree-stats. Hash view of the
@@ -2802,7 +2802,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                       static_cast<std::int64_t>(hygiene_rejects));
             insert_kv("mutate-replace-subtree-restamp-nodes-total",
                       static_cast<std::int64_t>(restamp_nodes));
-            return query_hash_finish(*ev, ht, ev->string_heap_mut(), overflowed);
+            return query_hash_finish(ht, ev->string_heap_mut(), overflowed, *ev);
         });
 
     // Issue #2864: query:remove-node-stats. Hash view of the
@@ -2867,7 +2867,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                       static_cast<std::int64_t>(rollback_fidelity));
             insert_kv("mutate-remove-node-densify-triggered-total",
                       static_cast<std::int64_t>(densify_triggered));
-            return query_hash_finish(*ev, ht, ev->string_heap_mut(), overflowed);
+            return query_hash_finish(ht, ev->string_heap_mut(), overflowed, *ev);
         });
 
     // Issue #2179: query:impact-scope-stats — cross-function instruction-
@@ -3038,7 +3038,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("get-set-child-contracts", 1);
             insert_kv("issue", 1624);
             insert_kv("schema", 1624); // lineage 1520|568|370
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #1521: query:shape-arena-compact-stats — ShapeProfiler versioning
@@ -3109,7 +3109,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("boundary-post-compact-checks", boundary_checks);
             insert_kv("fiber-steal-sync", fiber_sync);
             insert_kv("schema", 1521);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #534: query:arena-production-compaction-stats. Commercial P0 hash
@@ -3219,7 +3219,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("compaction-efficiency-pct", efficiency_pct);
             insert_kv("arena-production-compaction-total", static_cast<std::int64_t>(total));
             insert_kv("arena-production-compaction-recommendation", recommendation);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #535: query:contracts-production-hotpath-stats. Commercial P1 hash
@@ -3328,7 +3328,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("contracts-coverage-pct", coverage_pct);
             insert_kv("contracts-production-hotpath-total", static_cast<std::int64_t>(total));
             insert_kv("contracts-production-hotpath-recommendation", recommendation);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #539: query:sv-production-verification-stats. Commercial P0 hash
@@ -3434,7 +3434,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("feedback-success-rate-pct", feedback_success_pct);
             insert_kv("sv-production-verification-total", static_cast<std::int64_t>(total));
             insert_kv("sv-production-verification-recommendation", recommendation);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #540: query:eda-stability-stats. Commercial P0 hash view of
@@ -3524,7 +3524,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("stale-ref-blocked-count", static_cast<std::int64_t>(stale_blocked));
             insert_kv("eda-stability-total", static_cast<std::int64_t>(total));
             insert_kv("eda-stability-recommendation", recommendation);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #541: query:pattern-sv-verification-stats. Commercial P0 hash
@@ -3652,7 +3652,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("incremental-hit-rate-pct", incremental_hit_rate_pct);
             insert_kv("pattern-sv-verification-total", static_cast<std::int64_t>(total));
             insert_kv("pattern-sv-verification-recommendation", recommendation);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #557: query:top5-commercial-coverage-stats. Commercial P0 hash
@@ -3797,7 +3797,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("steal-violations-during-batch", static_cast<std::int64_t>(steal_violations));
             insert_kv("top5-commercial-coverage-total", static_cast<std::int64_t>(total));
             insert_kv("top5-commercial-coverage-recommendation", recommendation);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #515: query:consolidated-p0-production-stats. Hash view of the
@@ -3896,7 +3896,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("orchestration-boundary-depth", static_cast<std::int64_t>(boundary_depth));
             insert_kv("consolidated-p0-production-total", static_cast<std::int64_t>(total));
             insert_kv("consolidated-p0-production-recommendation", recommendation);
-            return query_hash_finish(ev, ht, string_heap, overflowed);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #549: query:self-evolution-stability-stats.

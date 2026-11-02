@@ -20214,8 +20214,8 @@ namespace primitives_detail {
     // Evaluator::get_query_evaluator() face), so take it by template and
     // normalize to a reference.
     template <class StringHeap, class EvalLike>
-    inline types::EvalValue query_hash_finish(EvalLike& ev, FlatHashTable* ht,
-                                              StringHeap& string_heap, bool overflowed) {
+    inline types::EvalValue query_hash_finish(FlatHashTable* ht, StringHeap& string_heap,
+                                              bool overflowed, EvalLike& ev) {
         auto& evaluator = [&]() -> Evaluator& {
             if constexpr (std::is_pointer_v<std::remove_cvref_t<EvalLike>>)
                 return *ev;
