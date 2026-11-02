@@ -2373,18 +2373,51 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             // release it for the wait so the child can acquire the
             // mutex and complete. Relock after wakeup (RAII).
             CliBodyLockJoinGuard body_join_guard;
-            std::unique_lock<std::mutex> lock(s_fiber_results_mtx);
-            // Issue #4708: the wait is cancellation-aware -- a cancelled
-            // joiner returns the catchable condition instead of sitting on
-            // the cv until the target publishes (or the 200s ceiling).
             const auto join_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(200);
-            while (!is_ready()) {
-                if (fiber_cancel_take(current_fiber_body_id()))
-                    return fiber_cancel_condition_value(ev.string_heap_, ev.error_values_,
-                                                        ev.primitive_error_counter_ptr());
-                if (std::chrono::steady_clock::now() >= join_deadline)
-                    break;
-                s_fiber_results_cv.wait_for(lock, std::chrono::milliseconds(50));
+            if (aura::serve::g_current_fiber != nullptr) {
+                // Issue #4842: this join runs on a SCHEDULER fiber (an orch
+                // agent body under --load). A cv wait here blocks the worker
+                // thread that has to run the child: a scope body enqueued on
+                // that worker (the FIFO start lane, #4851) can then never
+                // run, and the body's inner scope-join-all waits out its
+                // whole :timeout-ms. Hand the worker back instead - the same
+                // Explicit-yield poll Fiber::join uses for a deadline wait.
+                // #4853: allow that yield inside the soft orch body window
+                // (it re-queues the fiber as Ready, so it always resumes).
+                auto* self = aura::serve::g_current_fiber;
+                const bool prev_join_allow = self->join_wait_yield_allowed();
+                self->set_join_wait_yield_allowed(true);
+                struct JoinYieldAllowReset {
+                    aura::serve::Fiber* f;
+                    bool prev;
+                    ~JoinYieldAllowReset() { f->set_join_wait_yield_allowed(prev); }
+                } allow_reset{self, prev_join_allow};
+                while (true) {
+                    {
+                        std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
+                        if (is_ready())
+                            break;
+                    }
+                    if (fiber_cancel_take(current_fiber_body_id()))
+                        return fiber_cancel_condition_value(ev.string_heap_, ev.error_values_,
+                                                            ev.primitive_error_counter_ptr());
+                    if (std::chrono::steady_clock::now() >= join_deadline)
+                        break;
+                    aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+                }
+            } else {
+                std::unique_lock<std::mutex> lock(s_fiber_results_mtx);
+                // Issue #4708: the wait is cancellation-aware -- a cancelled
+                // joiner returns the catchable condition instead of sitting on
+                // the cv until the target publishes (or the 200s ceiling).
+                while (!is_ready()) {
+                    if (fiber_cancel_take(current_fiber_body_id()))
+                        return fiber_cancel_condition_value(ev.string_heap_, ev.error_values_,
+                                                            ev.primitive_error_counter_ptr());
+                    if (std::chrono::steady_clock::now() >= join_deadline)
+                        break;
+                    s_fiber_results_cv.wait_for(lock, std::chrono::milliseconds(50));
+                }
             }
         }
 
