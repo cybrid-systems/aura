@@ -120,11 +120,13 @@ class TestIssue4856DualModeConsistency(unittest.TestCase):
             """
 (orch:spawn-agent "outer" (lambda () (orch:scope-spawn "inner" (lambda () (error "inner boom")))))
 (define j (orch:agent-join "outer" :timeout-ms 3000))
-(display (list (hash-ref j "ok") (hash-ref j "status") (hash-ref j "error"))) (newline)
+;; Issue #4855: hash-ref without a default RAISES on a missing key, so the
+;; optional "error" field needs an explicit default here.
+(display (list (hash-ref j "ok") (hash-ref j "status") (hash-ref j "error" '-'))) (newline)
 (define r (orch:scope-join-all :timeout-ms 3000))
 (display (list (hash-ref r "ok") (hash-ref r "status") (hash-ref r "err-count"))) (newline)
 """,
-            expect_stdout=["(#t ok ())", "(#f partial 1)"],
+            expect_stdout=["(#t ok -)", "(#f partial 1)"],
         )
 
     def test_4856_successful_agent_matches(self) -> None:
@@ -155,11 +157,13 @@ class TestIssue4856DualModeConsistency(unittest.TestCase):
         bench_diag = _located_diagnostic(bench.stderr)
         self.assertTrue(load_diag, f"no located diagnostic in --load: {load.stderr!r}")
         self.assertEqual(load_diag, bench_diag, f"diagnostic differs: {load_diag!r} / {bench_diag!r}")
-        # The location points at the failing form in the file.
-        fail_line = next(i for i, line in enumerate(source.splitlines(), 1) if "add-cost 1" in line)
-        self.assertIn(f"{fail_line}:2: type error:", load_diag)
+        # Issue #4855: the diagnostic points at the INNER failing form
+        # (the "+" application), not at the outer call site.
+        inner_line = next(i for i, line in enumerate(source.splitlines(), 1) if "+ total item" in line)
+        inner_col = source.splitlines()[inner_line - 1].index("+") + 1
+        self.assertIn(f"{inner_line}:{inner_col}: type error:", load_diag)
         # The source snippet and the caret line travel with the diagnostic.
-        self.assertIn('(add-cost 1 "two")', load_diag)
+        self.assertIn("(+ total item)", load_diag)
         self.assertIn("^", load_diag)
         # The failing operand is named (#4855) in both faces.
         self.assertIn("in +, argument 2", load_diag)

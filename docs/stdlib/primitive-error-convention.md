@@ -44,6 +44,30 @@ stay boolean. Documented empty / not-found stay silent only as below.
 | `inexact->exact` | out-of-range float saturates (documented #1153) | too few args, non-number |
 | `json-parse` | JSON `null` → void | non-string arg, unexpected EOF, invalid token |
 | `json-get-string` | missing field → void | non-string args |
+| `hash-ref` | — (a missing key with an explicit default returns that default) | missing key with NO default → error naming the key (`hash-ref: key "k" not found`, #4855), too few args |
+
+## hash-ref and the missing key (#4855)
+
+`(hash-ref h key)` with a key that is not in `h` used to answer `()`
+silently, which hid a typo'd or renamed key behind an "it worked but the
+value is empty" result. It now raises a catchable error that names the
+key:
+
+```
+(hash-ref cfg "modle")
+;=> error: hash-ref: key "modle" not found
+```
+
+The 3-argument form keeps the old, explicit behaviour:
+
+```
+(hash-ref cfg "modle" ())      ;=> ()   (the default)
+(hash-ref cfg "modle" "glm")  ;=> "glm" (the default)
+```
+
+Call sites that genuinely want "absent means empty" must pass the
+default explicitly. This matches Racket / R7RS-large, where a missing key
+is an error unless a default is supplied.
 
 ## Discovery
 

@@ -499,6 +499,12 @@ extern "C" std::int64_t aura_new_cell_tenant(std::int64_t owner_tenant);
 extern "C" std::int64_t aura_cell_get(std::int64_t cell_id);
 extern "C" void aura_cell_set(std::int64_t cell_id, std::int64_t val);
 extern "C" std::int64_t aura_hash_ref(std::int64_t hash_val, std::int64_t key_val);
+// Issue #4855: the JIT's inline hash-ref answers a missing key with the void
+// sentinel; the hash-ref primitive RAISES an error naming the key. The
+// evaluator wires a hook that mints the same error value so the eval, IR and
+// JIT faces agree. Unwired (AOT / light-link) keeps the void sentinel.
+extern "C" void aura_set_jit_hash_miss_error(std::int64_t (*fn)(void*, std::int64_t), void* user);
+extern "C" std::int64_t aura_hash_ref_miss_error(std::int64_t key_val);
 extern "C" std::int64_t aura_hash_set(std::int64_t hash_val, std::int64_t pair_val);
 extern "C" std::int64_t aura_hash_remove(std::int64_t hash_val, std::int64_t key_val);
 // Issue #4093: owner production-face + isolation hooks (same wiring class

@@ -998,9 +998,11 @@
 (define (swarm:kind) *swarm-kind*)
 (define (swarm:gen) *swarm-gen*)
 
-; hash-ref missing → () which is truthy; use null? for defaults.
+; Issue #4855: hash-ref without a default RAISES on a missing key, so the
+; optional lookup passes an explicit () default (which is truthy -- use
+; null? for the default test).
 (define (swarm-opt opts key default)
-  (let ((v (hash-ref opts key)))
+  (let ((v (hash-ref opts key ())))
     (if (null? v) default v)))
 
 (define (swarm:parallel! flag)

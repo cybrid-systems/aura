@@ -7301,7 +7301,13 @@ public:
     // Empty means no compact has happened yet (identity mapping).
     std::vector<std::int64_t> env_id_remap_;
     std::vector<types::EvalValue> error_values_; // error cause values (indexed by ErrorRef)
-    std::vector<void*> opaque_heap_;             // opaque pointers (indexed by OpaqueRef)
+    // Issue #4855: the source location of the form that PRODUCED an error
+    // value, parallel to error_values_ by the same error index. The
+    // innermost form wins: the entry is written once (the first producer)
+    // and never overwritten, so an error that escapes to the top level is
+    // located at the failing form instead of the outermost call.
+    std::vector<aura::diag::SourceLocation> error_locations_;
+    std::vector<void*> opaque_heap_; // opaque pointers (indexed by OpaqueRef)
     // Issue #4386: stable copies of opaque_heap_ / modules_ / closure body
     // pointers. Their element addresses are what live_compact rewrites.
     // Destroyed after ffi_runtime_ (declared first) so the FFI gate's
@@ -17345,6 +17351,41 @@ public:
     [[nodiscard]] std::uint64_t get_primitive_error_values_size() const noexcept {
         return error_values_.size();
     }
+    // Issue #4855: remember WHERE an error value was produced. The location
+    // is written by the first (innermost) producer and never overwritten,
+    // so an error that escapes several frames is still located at the form
+    // that failed. The table is indexed by the error index (the same index
+    // error_values_ uses) and is reserved once, like the cause store, so a
+    // concurrent reader never sees a moved block.
+    void note_error_location(types::EvalValue err, aura::diag::SourceLocation loc) {
+        if (!types::is_error(err) || types::is_string(err))
+            return;
+        const auto idx = types::as_error_idx(err);
+        std::lock_guard<std::mutex> lock(
+            ::aura::compiler::primitives_detail::primitive_error_store_mutex());
+        if (error_locations_.capacity() <
+            ::aura::compiler::primitives_detail::kPrimitiveErrorStoreReserve)
+            error_locations_.reserve(
+                ::aura::compiler::primitives_detail::kPrimitiveErrorStoreReserve);
+        if (error_locations_.size() <= idx)
+            error_locations_.resize(idx + 1);
+        if (!error_locations_[idx].valid())
+            error_locations_[idx] = loc;
+    }
+    [[nodiscard]] std::optional<aura::diag::SourceLocation>
+    error_location(types::EvalValue err) const {
+        if (!types::is_error(err) || types::is_string(err))
+            return std::nullopt;
+        const auto idx = types::as_error_idx(err);
+        std::lock_guard<std::mutex> lock(
+            ::aura::compiler::primitives_detail::primitive_error_store_mutex());
+        if (idx >= error_locations_.size())
+            return std::nullopt;
+        const auto loc = error_locations_[idx];
+        if (!loc.valid())
+            return std::nullopt;
+        return loc;
+    }
     // Issue #4273: Soft serve must not report status=ok with value <error>
     // (pick-best soft_bad_value / set-code truncated CASE). Surface the
     // stored cause string when present.
@@ -17391,6 +17432,25 @@ public:
     // the "error: " prefix.
     [[nodiscard]] types::EvalValue make_arith_type_error(std::string_view cause) {
         return primitives_detail::make_primitive_error(string_heap_, error_values_, cause,
+                                                       &primitive_error_count_);
+    }
+    // Issue #4855: the error a 2-arg hash-ref raises when the key is absent
+    // (the 3-arg form returns the default instead). The JIT's inline
+    // hash-ref mints the SAME value through a runtime hook, so the eval,
+    // IR and JIT faces agree on what a missing key does.
+    [[nodiscard]] types::EvalValue make_hash_ref_missing_error(types::EvalValue key) {
+        std::string key_text;
+        if (types::is_string(key)) {
+            const auto sidx = types::as_string_idx(key);
+            if (sidx < string_heap_.size())
+                key_text = "\"" + string_heap_[sidx] + "\"";
+        } else if (types::is_int(key)) {
+            key_text = std::to_string(types::as_int(key));
+        }
+        if (key_text.empty())
+            key_text = "<key>";
+        return primitives_detail::make_primitive_error(string_heap_, error_values_,
+                                                       "hash-ref: key " + key_text + " not found",
                                                        &primitive_error_count_);
     }
     void bump_primitive_error_count() noexcept {

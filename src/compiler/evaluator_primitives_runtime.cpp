@@ -1155,6 +1155,19 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
             }
         },
         static_cast<void*>(&ev));
+
+    // Issue #4855: the JIT's inline hash-ref answers a missing key with the
+    // void sentinel; the hash-ref primitive RAISES an error naming the key.
+    // This hook mints the SAME error value for the JIT, so the eval, IR and
+    // JIT faces agree on what a missing key does.
+    aura_set_jit_hash_miss_error(
+        [](void* user, std::int64_t key) -> std::int64_t {
+            auto* evp = static_cast<Evaluator*>(user);
+            if (!evp)
+                return 11; // void sentinel (no evaluator)
+            return evp->make_hash_ref_missing_error(EvalValue{key}).val;
+        },
+        static_cast<void*>(&ev));
 }
 
 } // namespace aura::compiler::primitives_detail

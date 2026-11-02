@@ -51,7 +51,9 @@
 
 ; ── Small list/number helpers ────────────────────────────────────
 (define (pso-opt opts key default)
-  (let ((v (hash-ref opts key)))
+  ; Issue #4855: an optional lookup passes an explicit () default --
+  ; hash-ref without a default raises on a missing key.
+  (let ((v (hash-ref opts key ())))
     (if (null? v) default v)))
 
 (define (pso-len lst)
@@ -351,20 +353,22 @@
         (cons (car fs) (pso-numeric-fits (cdr fs)))
         (pso-numeric-fits (cdr fs)))))
 
+;; Issue #4855: the instance fields read below are OPTIONAL -- a missing key
+;; with no default raises, so each lookup passes an explicit () default.
 (define (pso:report . rest)
   (let* ((s (if (null? rest) (pso:default-instance) (car rest)))
-         (fs (pso-numeric-fits (hash-ref s "fits")))
+         (fs (pso-numeric-fits (hash-ref s "fits" ())))
          (n (pso-len fs)))
     (hash "kind" "pso"
-          "gen" (hash-ref s "gen")
-          "best-fit" (hash-ref s "best-fit")
+          "gen" (hash-ref s "gen" ())
+          "best-fit" (hash-ref s "best-fit" ())
           "mean-fit" (if (= n 0) 0.0 (/ (pso-sum fs) n))
-          "best" (hash-ref s "best-ind")
-          "pop" (hash-ref s "pop")
-          "dim" (hash-ref s "dim")
+          "best" (hash-ref s "best-ind" ())
+          "pop" (hash-ref s "pop" ())
+          "dim" (hash-ref s "dim" ())
           "diversity" (pso-mean-l1 s)
-          "parallel" (hash-ref s "parallel")
-          "rejected" (hash-ref s "rejected"))))
+          "parallel" (hash-ref s "parallel" ())
+          "rejected" (hash-ref s "rejected" ()))))
 
 (define (pso-export-string s)
   (let ((r (pso:report s)))

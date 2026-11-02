@@ -1259,7 +1259,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
     // stderr line. False means there is no evaluator; the caller returns
     // a TypeError diagnostic.
     auto store_num_mismatch = [&](std::uint32_t slot, const types::EvalValue& v,
-                                  std::string_view op = {}) -> bool {
+                                  std::string_view op = {}, std::size_t arg_index = 0) -> bool {
         // Issue #4552: an Error operand (a callee's (error ...) returned as a
         // value) propagates unchanged, like a tree-walker primitive argument
         // (evaluator_eval_flat.cpp prim-arg propagation). Minting a fresh
@@ -1269,8 +1269,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
             return true;
         }
         auto detail = aura::compiler::pure::numeric_type_mismatch_detail(v, string_text_of(v));
-        if (!op.empty())
-            detail += std::string(" (in ") + std::string(op) + ")";
+        // Issue #4855: name the operation AND the failing operand, the same
+        // suffix the tree-walker primitives use.
+        detail += aura::compiler::pure::numeric_type_mismatch_op_suffix(op, arg_index);
         // Issue #4535: an Error operand (fail-soft f64vector-ref OOB feeding
         // arith inside try) must not print. A fresh non-number still prints
         // the legacy line, matching the primitive path (#4463) and the
@@ -1283,6 +1284,11 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
         return true;
     };
     auto operand_is_number = [](const types::EvalValue& v) { return is_int(v) || is_float(v); };
+    // Issue #4855: the 1-based operand position of the operand that is not a
+    // number (1 = left, 2 = right).
+    auto ir_bad_operand_index = [&](const types::EvalValue& a, const types::EvalValue& b) {
+        return operand_is_number(a) ? std::size_t{2} : std::size_t{1};
+    };
 
     // Issue #2292: after a nested PendingCall returns, resume at the
     // call site's block + instruction — not always entry_block with a
@@ -1490,10 +1496,15 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 // Issue #4463: a bool, string, pair, or vector is not an operand.
                 if (!operand_is_number(a) || !operand_is_number(b)) {
                     const auto& bad = operand_is_number(a) ? b : a;
-                    if (!store_num_mismatch(ops[0], bad)) {
-                        return std::unexpected(Diagnostic{
-                            ErrorKind::TypeError, std::string("type mismatch — expected Int (in ") +
-                                                      ir_num_op_name(instr.opcode) + ")"});
+                    // Issue #4855: name the operation and the failing operand.
+                    const auto bad_index = ir_bad_operand_index(a, b);
+                    if (!store_num_mismatch(ops[0], bad, ir_num_op_name(instr.opcode), bad_index)) {
+                        return std::unexpected(
+                            Diagnostic{ErrorKind::TypeError,
+                                       aura::compiler::pure::numeric_type_mismatch_detail(
+                                           bad, string_text_of(bad)) +
+                                           aura::compiler::pure::numeric_type_mismatch_op_suffix(
+                                               ir_num_op_name(instr.opcode), bad_index)});
                     }
                     continue;
                 }
@@ -1716,11 +1727,16 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     if (ops[3] != 0) {
                         if (!operand_is_number(a) || !operand_is_number(b)) {
                             const auto& bad = operand_is_number(a) ? b : a;
-                            if (!store_num_mismatch(ops[0], bad, ir_num_op_name(instr.opcode))) {
-                                return std::unexpected(
-                                    Diagnostic{ErrorKind::TypeError,
-                                               std::string("type mismatch — expected Int (in ") +
-                                                   ir_num_op_name(instr.opcode) + ")"});
+                            // Issue #4855: name the operation and the operand.
+                            const auto bad_index = ir_bad_operand_index(a, b);
+                            if (!store_num_mismatch(ops[0], bad, ir_num_op_name(instr.opcode),
+                                                    bad_index)) {
+                                return std::unexpected(Diagnostic{
+                                    ErrorKind::TypeError,
+                                    aura::compiler::pure::numeric_type_mismatch_detail(
+                                        bad, string_text_of(bad)) +
+                                        aura::compiler::pure::numeric_type_mismatch_op_suffix(
+                                            ir_num_op_name(instr.opcode), bad_index)});
                             }
                             break;
                         }
@@ -1758,11 +1774,16 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto& b = locals[ops[2]];
                     if (!operand_is_number(a) || !operand_is_number(b)) {
                         const auto& bad = operand_is_number(a) ? b : a;
-                        if (!store_num_mismatch(ops[0], bad, ir_num_op_name(instr.opcode))) {
-                            return std::unexpected(
-                                Diagnostic{ErrorKind::TypeError,
-                                           std::string("type mismatch — expected Int (in ") +
-                                               ir_num_op_name(instr.opcode) + ")"});
+                        // Issue #4855: name the operation and the operand.
+                        const auto bad_index = ir_bad_operand_index(a, b);
+                        if (!store_num_mismatch(ops[0], bad, ir_num_op_name(instr.opcode),
+                                                bad_index)) {
+                            return std::unexpected(Diagnostic{
+                                ErrorKind::TypeError,
+                                aura::compiler::pure::numeric_type_mismatch_detail(
+                                    bad, string_text_of(bad)) +
+                                    aura::compiler::pure::numeric_type_mismatch_op_suffix(
+                                        ir_num_op_name(instr.opcode), bad_index)});
                         }
                         break;
                     }

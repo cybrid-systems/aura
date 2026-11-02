@@ -5,6 +5,8 @@
 ;;   (hash)             ✅ — 创建 hash 表
 ;;   (hash-set!)        ✅ — 设置键值对
 ;;   (hash-ref)         ✅ — 获取值，不存在返回 void
+;;                        (Issue #4855: a missing key with NO default raises;
+;;                         the optional lookups below pass an explicit () default)
 ;;   (hash-has-key?)    ✅ — 检查键是否存在
 ;;   (hash-remove!)     ✅ — 删除键值对
 ;;   (hash-keys)        ✅ — 返回所有键
@@ -23,7 +25,7 @@
 
 (define (kv-expired? key)
   "检查键是否已过期（内部使用）。"
-  (let ((expire (hash-ref *ttl* key)))
+  (let ((expire (hash-ref *ttl* key ())))
     (if (void? expire)
         #f
         (>= (current-time) expire))))
@@ -53,7 +55,7 @@
   "获取键对应的值。自动检查 TTL 过期。不存在或已过期返回 void。"
   (if (kv-expired? key)
       (begin (kv-del-internal key) (void))
-      (hash-ref *store* key)))
+      (hash-ref *store* key ())))
 
 (define (kv-del key)
   "删除键值对（包括 TTL）。返回 'OK'。"
@@ -65,7 +67,7 @@
   "原子自增。如果键不存在则初始化为 1。值必须为整数，否则返回错误。"
   (if (kv-expired? key)
       (kv-del-internal key))
-  (let ((cur (hash-ref *store* key)))
+  (let ((cur (hash-ref *store* key ())))
     (cond
      ((void? cur)
       (hash-set! *store* key 1)
@@ -85,7 +87,7 @@
   "返回键的剩余 TTL（秒）。无 TTL 返回 -1，不存在或已过期返回 -2。"
   (if (not (hash-has-key? *store* key))
       -2
-      (let ((expire (hash-ref *ttl* key)))
+      (let ((expire (hash-ref *ttl* key ())))
         (if (void? expire)
             -1
             (let ((remaining (- expire (current-time))))
@@ -270,14 +272,14 @@
   "获取 hash 中指定字段的值。不存在则返回 void。"
   (let ((cur (kv-get key)))
     (if (hash? cur)
-        (hash-ref cur field)
+        (hash-ref cur field ())
         (void))))
 
 (define (kv-hgetall key)
   "获取 hash 中所有字段和值。返回 ((field val) ...) 列表。"
   (let ((cur (kv-get key)))
     (if (hash? cur)
-        (map (lambda (f) (list f (hash-ref cur f))) (hash-keys cur))
+        (map (lambda (f) (list f (hash-ref cur f ()))) (hash-keys cur))
         '())))
 
 (define (kv-hdel key . fields)
@@ -329,8 +331,8 @@
   (if (null? keys)
       lines
       (let* ((k (car keys))
-             (v (hash-ref *store* k))
-             (expire (hash-ref *ttl* k))
+             (v (hash-ref *store* k ()))
+             (expire (hash-ref *ttl* k ()))
              ;; 生成 store 行
              (lines2 (cond
                       ((string? v)
@@ -364,7 +366,7 @@
   (if (and (hash-has-key? *store* key) (not (hash-has-key? *sets* key)))
       "ERR wrong type"  ;; key 在 store 中但不是 set
       (let ((s (if (hash-has-key? *sets* key)
-                   (hash-ref *sets* key)
+                   (hash-ref *sets* key ())
                    (hash))))
         (if (hash-has-key? s member)
             0
@@ -375,7 +377,7 @@
 (define (kv-srem key member)
   "从集合移除成员。返回 1（已移除）或 0（不存在）。"
   (if (hash-has-key? *sets* key)
-      (let ((s (hash-ref *sets* key)))
+      (let ((s (hash-ref *sets* key ())))
         (if (hash-has-key? s member)
             (begin (hash-remove! s member)
                    (if (= (hash-length s) 0)
@@ -387,19 +389,19 @@
 (define (kv-smembers key)
   "返回集合的所有成员。"
   (if (hash-has-key? *sets* key)
-      (hash-keys (hash-ref *sets* key))
+      (hash-keys (hash-ref *sets* key ()))
       '()))
 
 (define (kv-sismember key member)
   "检查成员是否在集合中。"
   (if (hash-has-key? *sets* key)
-      (hash-has-key? (hash-ref *sets* key) member)
+      (hash-has-key? (hash-ref *sets* key ()) member)
       #f))
 
 (define (kv-scard key)
   "返回集合的成员数。"
   (if (hash-has-key? *sets* key)
-      (hash-length (hash-ref *sets* key))
+      (hash-length (hash-ref *sets* key ()))
       0))
 
 ;; ── 重绑定修复段 ──
@@ -407,23 +409,23 @@
 (define (kv-sadd key member)
   (if (and (hash-has-key? *store* key) (not (hash-has-key? *sets* key)))
       "ERR wrong type"
-      (let ((s (if (hash-has-key? *sets* key) (hash-ref *sets* key) (hash))))
+      (let ((s (if (hash-has-key? *sets* key) (hash-ref *sets* key ()) (hash))))
         (if (not (hash-has-key? s member))
             (begin (hash-set! s member #t)
                    (when (not (hash-has-key? *sets* key)) (hash-set! *sets* key s))
                    1) 0))))
 (define (kv-srem key member)
   (if (hash-has-key? *sets* key)
-      (let ((s (hash-ref *sets* key)))
+      (let ((s (hash-ref *sets* key ())))
         (if (hash-has-key? s member)
             (begin (hash-remove! s member)
                    (when (= (hash-length s) 0) (hash-remove! *sets* key)) 1) 0)) 0))
 (define (kv-scard key)
-  (if (hash-has-key? *sets* key) (hash-length (hash-ref *sets* key)) 0))
+  (if (hash-has-key? *sets* key) (hash-length (hash-ref *sets* key ())) 0))
 (define (kv-sismember key member)
-  (if (hash-has-key? *sets* key) (hash-has-key? (hash-ref *sets* key) member) #f))
+  (if (hash-has-key? *sets* key) (hash-has-key? (hash-ref *sets* key ()) member) #f))
 (define (kv-smembers key)
-  (if (hash-has-key? *sets* key) (hash-keys (hash-ref *sets* key)) '()))
+  (if (hash-has-key? *sets* key) (hash-keys (hash-ref *sets* key ())) '()))
 (define (kv-multi)
   (if *tx-active* "ERR MULTI without EXEC"
       (begin (set! *tx-active* #t) (set! *tx-queue* '()) "OK")))
