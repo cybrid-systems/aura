@@ -33,7 +33,7 @@
 namespace aura::ir_pod {
 
 // Mirror of aura::ir::IROpcode / Region — sequential enums only.
-// Keep ordinals in sync with ir.ixx (kIROpcodeCount == 54).
+// Keep ordinals in sync with ir.ixx (kIROpcodeCount == 55).
 enum class IROpcode : std::uint8_t {
     Nop,
     ConstI64,
@@ -89,6 +89,7 @@ enum class IROpcode : std::uint8_t {
     ArenaPop,
     GuardShape,
     TopCellLoad,
+    TopCellStore,
 };
 
 enum class Region : std::uint8_t {
@@ -206,7 +207,7 @@ inline bool validate_opcode_arity(const OpcodeArity& a, std::string* error = nul
 }
 
 // Compile-time layout anchors (fail if mirrors drift).
-static_assert(aura::reflect::enum_count<IROpcode>() == 54);
+static_assert(aura::reflect::enum_count<IROpcode>() == 55);
 static_assert(aura::reflect::member_count<IRInstruction>() == 10);
 static_assert(aura::reflect::member_count<IRFunctionHeader>() == 9);
 static_assert(aura::reflect::member_count<OpcodeArity>() == 2);

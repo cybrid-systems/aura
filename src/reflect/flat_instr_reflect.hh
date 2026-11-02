@@ -45,8 +45,8 @@ inline std::string json(const FlatInstruction& inst) {
 inline bool validate(const FlatInstruction& inst, std::string* error = nullptr) {
     if (!auto_validate(inst, error))
         return false;
-    // IROpcode count is 54 (Nop..TopCellLoad)
-    if (inst.opcode >= 54) {
+    // IROpcode count is 55 (Nop..TopCellStore)
+    if (inst.opcode >= 55) {
         if (error)
             *error = "FlatInstruction.opcode out of range";
         return false;

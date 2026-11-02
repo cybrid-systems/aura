@@ -541,6 +541,62 @@ static std::size_t character_literal_length(std::string_view src, std::size_t i)
     return p - i;
 }
 
+// Issue #4865: split top-level forms so force-soa can evaluate them one at a
+// time. The define must run/register its evaluator value cell before a later
+// form's inline lambda is lowered; a single whole-file eval lowers every form
+// first and the lambda captured a different cell.
+static std::vector<std::string> split_top_level_forms_4865(std::string_view src) {
+    std::vector<std::string> out;
+    std::size_t start = std::string_view::npos;
+    int depth = 0;
+    bool in_str = false, esc = false, in_comment = false;
+    for (std::size_t i = 0; i < src.size(); ++i) {
+        char c = src[i];
+        if (in_comment) {
+            if (c == 10)
+                in_comment = false;
+            continue;
+        }
+        if (in_str) {
+            if (esc) {
+                esc = false;
+                continue;
+            }
+            if (c == 92) {
+                esc = true;
+                continue;
+            }
+            if (c == '"')
+                in_str = false;
+            continue;
+        }
+        if (c == ';') {
+            in_comment = true;
+            continue;
+        }
+        if (c == '"') {
+            in_str = true;
+            continue;
+        }
+        if (c == '(' || c == '[') {
+            if (depth == 0)
+                start = i;
+            ++depth;
+            continue;
+        }
+        if (c == ')' || c == ']') {
+            if (depth > 0)
+                --depth;
+            if (depth == 0 && start != std::string_view::npos) {
+                out.emplace_back(src.substr(start, i - start + 1));
+                start = std::string_view::npos;
+            }
+            continue;
+        }
+    }
+    return out;
+}
+
 int main(int argc, char* argv[]) {
     // Issue #137: register an atexit handler that frees the
     // runtime's hash tables. The `hash` primitive in the
@@ -2356,6 +2412,31 @@ int main(int argc, char* argv[]) {
         // 0, so every harness that spawns Aura read a failed run as success.
         // #4465's file-mode gate is armed for the same root eval.
         cs.set_require_failure_is_diagnostic(true);
+        const char* strict_env = std::getenv("AURA_PIPELINE_STRICT");
+        const std::string_view strict_v =
+            strict_env ? std::string_view(strict_env) : std::string_view{};
+        if (strict_v == "force-soa" || strict_v == "force_soa" || strict_v == "soa") {
+            // Issue #4865: per-form eval so each define registers its value
+            // cell before later forms lower. ForceSoa's value-define gate
+            // would reject fiber:spawn/agent defines on the per-form path;
+            // allow the walker for those forms (correct semantics, SoA only
+            // for what the IR path can express).
+            aura::compiler::set_tree_walker_fallback_policy(
+                aura::compiler::TreeWalkerFallbackPolicy::Allow);
+            std::string last_out;
+            for (auto& form : split_top_level_forms_4865(content)) {
+                auto r = cs.eval(form);
+                if (!r) {
+                    std::println(std::cerr, "error: {}", r.error().format_with_source(form));
+                    return 1;
+                }
+                if (!is_void(*r))
+                    last_out = fmt_val(*r, cs);
+            }
+            if (!last_out.empty())
+                std::println("{}", last_out);
+            return aura_displayed_error_count() > 0 ? 1 : 0;
+        }
         auto result = cs.eval(content);
         if (!result) {
             std::println(std::cerr, "error: {}", result.error().format_with_source(content));

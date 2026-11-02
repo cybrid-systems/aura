@@ -2754,6 +2754,18 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     break;
                 }
 
+                case IROpcode::TopCellStore: {
+                    // Issue #4865: write a top-level value cell. ops[0] is
+                    // the evaluator cell index (not a local slot), ops[1]
+                    // is the value local.
+                    if (context_.evaluator) {
+                        auto& cells = context_.evaluator->cells();
+                        if (ops[0] < cells.size())
+                            cells[ops[0]] = locals[ops[1]];
+                    }
+                    break;
+                }
+
                 case IROpcode::ConstBool: {
                     locals[ops[0]] = make_bool(ops[1] != 0);
                     break;

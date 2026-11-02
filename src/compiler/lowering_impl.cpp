@@ -1512,6 +1512,11 @@ static std::uint32_t lower_flat_expr(
             for (auto& fv : free_set) {
                 if (!state.self_name.empty() && fv == state.self_name)
                     continue;
+                // Issue #4865: a top-level value define must stay a live
+                // cell reference (TopCellLoad / TopCellStore); capturing
+                // it by value made set! write the lambda's copy.
+                if (state.value_cells && state.value_cells->find(fv) != state.value_cells->end())
+                    continue;
                 bool in_scope = false;
                 for (auto it = state.scopes.rbegin(); it != state.scopes.rend(); ++it) {
                     if (it->find(fv) != it->end()) {
@@ -1860,6 +1865,26 @@ static std::uint32_t lower_flat_expr(
             auto name = pool.resolve(v.sym_id);
             auto val_id = v.children.empty() ? NULL_NODE : v.child(0);
             auto val_slot = lower_flat_expr(state, flat, pool, val_id, cache, cache_hits);
+
+            // Issue #4865: a top-level value define is a live evaluator
+            // cell; write it before any captured/local scope binding can
+            // shadow it, otherwise force-soa silently drops the side effect.
+            if (state.value_cells) {
+                auto vc_it = state.value_cells->find(std::string(name));
+                if (vc_it != state.value_cells->end()) {
+                    state.emit(IROpcode::TopCellStore, static_cast<std::uint32_t>(vc_it->second),
+                               val_slot);
+                    return val_slot;
+                }
+            }
+            if (const auto* slots = call_slot_cells_4681()) {
+                auto sit = slots->find(std::string(name));
+                if (sit != slots->end()) {
+                    state.emit(IROpcode::TopCellStore, static_cast<std::uint32_t>(sit->second),
+                               val_slot);
+                    return val_slot;
+                }
+            }
 
             for (auto it = state.scopes.rbegin(); it != state.scopes.rend(); ++it) {
                 auto found = it->find(std::string(name));

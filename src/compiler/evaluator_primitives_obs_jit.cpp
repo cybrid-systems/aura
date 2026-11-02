@@ -333,7 +333,7 @@ void ObservabilityPrims::register_jit_p1(PrimRegistrar add, Evaluator& ev) {
                 // WorkspaceEpoch Mutation. The hook still gates "no service".
                 mutation_epoch = aura::core::current_mutation_epoch();
             }
-            constexpr std::int64_t k_opcode_total = 53; // IROpcode::Nop..TopCellLoad
+            constexpr std::int64_t k_opcode_total = 54; // IROpcode::Nop..TopCellStore
             const std::int64_t coverage_pct =
                 unhandled == 0 && fallback == 0
                     ? 100

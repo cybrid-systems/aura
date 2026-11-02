@@ -298,6 +298,8 @@ enum Op : uint32_t {
     // Issue #272 Cycle 5: load top-level value-define cell from
     // evaluator_.cells() via aura_top_cell_get runtime bridge.
     OpTopCellLoad = 53,
+    // Issue #4865: store a top-level value cell (unhandled -> safe deopt).
+    OpTopCellStore = 54,
 };
 
 // Issue #4570: L1 lowering kill switch for A/B and triage —
