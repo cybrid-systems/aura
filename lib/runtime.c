@@ -1622,6 +1622,17 @@ __attribute__((weak)) void* aura_hash_ref(void* tbl, uint64_t key) {
     (void)key;
     return (void*)0;
 }
+
+// Issue #4855: the emitted IR calls this when a hash-ref key is absent.
+// The standalone AOT runtime has no evaluator hook wired, so the missing
+// key keeps the void sentinel (11) -- the same shape the light-link stub
+// (src/compiler/runtime_bridge_stub.cpp) returns. Without the symbol here
+// the AOT link fails with "undefined reference to
+// aura_hash_ref_miss_error" and --emit-binary produces no binary.
+__attribute__((weak)) int64_t aura_hash_ref_miss_error(int64_t key_val) {
+    (void)key_val;
+    return 11; // void sentinel (no evaluator wired)
+}
 __attribute__((weak)) int aura_hash_set(void* tbl, uint64_t key, void* val) {
     (void)tbl;
     (void)key;
