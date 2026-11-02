@@ -14,6 +14,7 @@ module;
 #include "serve/parallel_orch.h"
 #include "observability_metrics.h"
 #include "hash_meta.h"
+#include "channel_id.hh"         // Issue #4854: tagged channel ids for GC reclaim
 #include "fiber_result_roots.hh" // Issue #4710: fiber:join result roots
 
 #include <pthread.h>
@@ -2544,7 +2545,9 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             id = ev.channels_.size();
             ev.channels_.push_back(ch);
         }
-        return make_int(static_cast<std::int64_t>(id));
+        // Issue #4854: tag the slot so a GC mark can distinguish a live
+        // channel handle from an ordinary fixnum (see channel_id.hh).
+        return make_int(channel_id::encode(id));
     });
 
     // (channel:send channel-id msg) — Send a message to a channel
@@ -2583,7 +2586,9 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             msg.kind = kChannelDatumKind4763;
             msg.text = std::move(bytes);
         }
-        auto ch_id = static_cast<std::size_t>(as_int(a[0]));
+        std::size_t ch_id = 0;
+        if (!channel_id::decode(as_int(a[0]), ch_id))
+            return make_bool(false);
         // Issue #2483: release channels_mtx_ before blocking — holding it
         // across cv.wait deadlocks concurrent channel:recv on the same
         // Evaluator (recv needs the global map lock to look up the channel).
@@ -2635,7 +2640,9 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
     add("channel:recv", [&ev, channel_recv_value_4763](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_string(0);
-        auto ch_id = static_cast<std::size_t>(as_int(a[0]));
+        std::size_t ch_id = 0;
+        if (!channel_id::decode(as_int(a[0]), ch_id))
+            return make_string(0);
         std::shared_ptr<Evaluator::Channel> ch_ptr;
         {
             std::lock_guard lk(ev.channels_mtx_);
@@ -2700,7 +2707,9 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         [&ev, channel_recv_value_4763](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !is_int(a[0]))
                 return make_string(0);
-            auto ch_id = static_cast<std::size_t>(as_int(a[0]));
+            std::size_t ch_id = 0;
+            if (!channel_id::decode(as_int(a[0]), ch_id))
+                return make_string(0);
             std::shared_ptr<Evaluator::Channel> ch_ptr;
             {
                 std::lock_guard lk(ev.channels_mtx_);
@@ -2727,7 +2736,9 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
     add("channel:close", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
-        auto ch_id = static_cast<std::size_t>(as_int(a[0]));
+        std::size_t ch_id = 0;
+        if (!channel_id::decode(as_int(a[0]), ch_id))
+            return make_bool(false);
         std::shared_ptr<Evaluator::Channel> ch_ptr;
         {
             std::lock_guard lk(ev.channels_mtx_);

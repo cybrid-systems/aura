@@ -5,6 +5,8 @@ module;
 
 #include "runtime_shared.h"
 #include "hash_meta.h"        // Issue #4612: kTombstoneSlot (deleted hash slot)
+#include "channel_id.hh"      // Issue #4854: tagged channel ids
+#include <cstring>            // Issue #4854: queue datum id scan
 #include "prim_heap_quota.hh" // Issue #4459: mint_pair / mint_vector grow-path quota
 #include <array>
 #include "observability_metrics.h"
@@ -1414,6 +1416,100 @@ static int run_envframe_lifetime_guard_compact_sweep_helper(Evaluator& ev) {
     return 0;
 }
 
+// Issue #4854: channel ids are tagged (channel_id.hh). A fixnum equal to a
+// live id is a real reference; collect those during the mark so the sweep
+// retains the channel. Ints reachable only through pairs/vectors/hashes are
+// seen too because the mark pushes every child value onto `work`.
+static void note_channel_id_4854(EvalValue v, std::unordered_set<std::int64_t>& live) {
+    if (!is_int(v))
+        return;
+    const auto id = as_int(v);
+    std::size_t slot = 0;
+    if (channel_id::decode(id, slot))
+        live.insert(id);
+}
+
+// Issue #4854: a channel id delivered through a channel is still a
+// reference. `kImmediate` carries the raw EvalValue word; a deep-copied
+// list/vector/hash datum encodes each immediate as 'I' + u64 raw. A false
+// positive here can only over-retain for one collection.
+static bool note_message_channel_ids_4854(const ChannelMessage& msg,
+                                          std::unordered_set<std::int64_t>& live) {
+    bool changed = false;
+    auto note_raw = [&](std::int64_t raw) {
+        const EvalValue v{raw};
+        if (!is_int(v))
+            return;
+        const auto id = as_int(v);
+        std::size_t slot = 0;
+        if (channel_id::decode(id, slot) && live.insert(id).second)
+            changed = true;
+    };
+    if (msg.kind == ChannelMessage::Kind::kImmediate) {
+        note_raw(msg.raw);
+    } else if (msg.kind != ChannelMessage::Kind::kString) {
+        const auto& s = msg.text;
+        for (std::size_t p = 0; p + 8 < s.size(); ++p) {
+            if (s[p] != 'I')
+                continue;
+            std::int64_t raw = 0;
+            std::memcpy(&raw, s.data() + p + 1, sizeof(raw));
+            note_raw(raw);
+        }
+    }
+    return changed;
+}
+
+// Issue #4854: release channel slots whose tagged id was not reached by the
+// mark and which no C++ operation currently holds. The `snapshot` (slot ->
+// Channel*) is taken before the mark: a slot closed and recycled during the
+// mark names a different object and is kept. Queue contents are closed over
+// first so a channel reachable only from another channel's backlog survives.
+// Returns the number of slots released; the objects are destroyed after the
+// channel registry lock drops.
+template <class ChannelVec, class FreeVec, class Mutex>
+static std::size_t sweep_unreachable_channels_4854(ChannelVec& channels, FreeVec& free_slots,
+                                                   Mutex& mu,
+                                                   const std::vector<const void*>& snapshot,
+                                                   std::unordered_set<std::int64_t> live) {
+    std::vector<typename ChannelVec::value_type> dying;
+    {
+        std::lock_guard<std::mutex> lk(mu);
+        const std::size_t n = std::min(snapshot.size(), channels.size());
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (std::size_t i = 0; i < n; ++i) {
+                if (!channels[i] || channels[i].get() != snapshot[i])
+                    continue;
+                if (!live.contains(channel_id::encode(i)))
+                    continue;
+                auto& ch = *channels[i];
+                std::lock_guard<std::mutex> qlk(ch.mtx);
+                for (const auto& msg : ch.queue)
+                    changed |= note_message_channel_ids_4854(msg, live);
+            }
+        }
+        for (std::size_t i = 0; i < n; ++i) {
+            auto& slot = channels[i];
+            if (!slot || slot.get() != snapshot[i])
+                continue; // closed or recycled after the snapshot
+            if (live.contains(channel_id::encode(i)))
+                continue;
+            {
+                std::lock_guard<std::mutex> qlk(slot->mtx);
+                if (!slot->queue.empty() || slot->waiting_receivers != 0)
+                    continue; // still in use, not settled
+            }
+            if (slot.use_count() > 1)
+                continue; // an in-flight primitive still holds the channel
+            free_slots.push_back(i);
+            dying.push_back(std::move(slot));
+        }
+    }
+    return dying.size(); // Channel dtors run here, outside the registry lock
+}
+
 // Issue #4459: file-mode mark of one EvalValue. Pushes children. Cycles
 // stop at the per-heap seen sets. IR cell ids and evaluator cell ids share
 // the make_cell tag; a seen id follows both heaps. False IR retention is
@@ -1427,7 +1523,9 @@ static void file_reclaim_mark_value(
     const std::vector<std::vector<EvalValue>>& vector_heap,
     const std::pmr::vector<EvalValue>& cells, const std::vector<EvalValue>& error_values,
     std::vector<std::uint8_t>& seen_opaque, std::span<const std::uint32_t> opaque_gen,
-    std::vector<std::uint8_t>& seen_string) {
+    std::vector<std::uint8_t>& seen_string, std::unordered_set<std::int64_t>& live_channel_ids) {
+    // Issue #4854: a tagged channel id is an owner of that channel slot.
+    note_channel_id_4854(v, live_channel_ids);
     // Issue #4608: a string value is a slot index into string_heap_.
     // Mark it so the reclaim can release the slots nothing references
     // any more (the pair freelist's obligation, extended to strings).
@@ -1540,6 +1638,18 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         }
         ~Active() { flag = false; }
     } active(file_reclaim_active_);
+
+    // Issue #4854: snapshot the channel slots the mark may settle. A slot
+    // closed and recycled after this point has a different Channel* and is
+    // kept; a channel created in a new slot is outside the snapshot bound.
+    std::unordered_set<std::int64_t> live_channel_ids;
+    std::vector<const void*> channels_at_mark;
+    {
+        std::lock_guard lk(channels_mtx_);
+        channels_at_mark.reserve(channels_.size());
+        for (const auto& c : channels_)
+            channels_at_mark.push_back(c.get());
+    }
 
     // Issue #4768: keep every closure minted after the caller's stand-down
     // check (newborn). See aura_gc_sweep_publish_closure_hi.
@@ -1706,7 +1816,8 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         for (std::size_t wi = 0; wi < work.size(); ++wi) {
             file_reclaim_mark_value(work[wi], work, seen_pair, seen_vec, seen_hash, seen_ev_cell,
                                     seen_err, seen_ir, live_tw, view, pairs_, vector_heap_, cells_,
-                                    error_values_, seen_opaque, opaque_gen, seen_string);
+                                    error_values_, seen_opaque, opaque_gen, seen_string,
+                                    live_channel_ids);
         }
     }
 
@@ -1811,6 +1922,9 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
     }
     for (const auto& fp : native_fins)
         FFIRuntime::run_native_finalizer(fp.first, fp.second);
+    // Issue #4854: settle channels whose tagged id no live value names.
+    (void)sweep_unreachable_channels_4854(channels_, channels_free_, channels_mtx_,
+                                          channels_at_mark, std::move(live_channel_ids));
     return true;
 }
 
@@ -1890,6 +2004,18 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         }
         ~Active() { flag = false; }
     } active(file_reclaim_active_);
+
+    // Issue #4854: snapshot the channel slots the mark may settle (see the
+    // file-mode reclaim for the snapshot-bound argument; this function runs
+    // inside the caller's stop-the-world epoch).
+    std::unordered_set<std::int64_t> live_channel_ids;
+    std::vector<const void*> channels_at_mark;
+    {
+        std::lock_guard lk(channels_mtx_);
+        channels_at_mark.reserve(channels_.size());
+        for (const auto& c : channels_)
+            channels_at_mark.push_back(c.get());
+    }
 
     std::size_t n_pairs = 0;
     std::size_t n_vecs = 0;
@@ -2123,7 +2249,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
                 file_reclaim_mark_value(work[traced++], work, seen_pair, seen_vec, seen_hash,
                                         seen_ev_cell, seen_err, seen_ir, live_tw, view, pairs_,
                                         vector_heap_, cells_, error_values_, seen_opaque,
-                                        opaque_gen, seen_string);
+                                        opaque_gen, seen_string, live_channel_ids);
             }
         }
         std::vector<EnvId> more;
@@ -2309,6 +2435,9 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     }
     for (const auto& fp : native_fins)
         FFIRuntime::run_native_finalizer(fp.first, fp.second);
+    // Issue #4854: settle channels whose tagged id no live value names.
+    (void)sweep_unreachable_channels_4854(channels_, channels_free_, channels_mtx_,
+                                          channels_at_mark, std::move(live_channel_ids));
     return true;
 }
 
