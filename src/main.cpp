@@ -3411,6 +3411,17 @@ int main(int argc, char* argv[]) {
     }
 
     aura::compiler::CompilerService cs;
+    // Issue #4864: the oneshot file / expression face is the SAME script face
+    // as --load (#4848), not the production serve pipeline. The pack default
+    // (Forbidden) vetoed ordinary forms the IR path cannot express
+    // (let-bound closures, named let, set!, do, try, internal defines,
+    // hygienic macros), so `aura file.aura` rejected a program that
+    // `aura --load file.aura` ran. Take the same permissive walker face
+    // --load takes, exactly as --serve-async-bench does (#4844). Operators
+    // can still pin a face explicitly via AURA_PIPELINE_STRICT.
+    if (const char* strict = std::getenv("AURA_PIPELINE_STRICT"); !(strict && *strict))
+        aura::compiler::set_tree_walker_fallback_policy(
+            aura::compiler::TreeWalkerFallbackPolicy::Allow);
     // Issue #4575: AURA_SANDBOX=off stays the dev hatch and says so once.
     // --serve / --ir / --jit returned above. `aura soft` prints its own
     // refuse line instead of this one.
