@@ -17,7 +17,13 @@
 (define N 8)
 (define res (make-vector N -1))
 (define refused (make-vector N #f))
+;; Bodies must not switch the evaluator-global worldline while the host is
+;; still defining the spawn list; gate them on the host reaching the join.
+;; (CI flake: a body's switch made the host's top-level define land in the
+;; child worldline, so the join list was unbound.)
+(define start #f)
 (define (body i)
+  (let wait () (if start #t (begin (fiber:yield) (wait))))
   (let ((w (workspace :create (string-append "fw" (number->string i)))))
     (try
      (begin
@@ -33,8 +39,12 @@
 (define (spawn-all n)
   (let loop ((i 0) (acc (list)))
     (if (= i n) acc (loop (+ i 1) (cons (let ((k i)) (fiber:spawn (lambda () (body k)))) acc)))))
-(define fs (spawn-all N))
-(for-each (lambda (x) (try (fiber:join x) (catch (e) #f))) fs)
+;; Keep the fiber list lexical: a body may switch the evaluator-global
+;; workspace while spawn-all runs, and a top-level define would then land in
+;; that child worldline instead of root (CI flake: unbound variable fs).
+(let ((fs (spawn-all N)))
+  (set! start #t)
+  (for-each (lambda (x) (try (fiber:join x) (catch (e) #f))) fs))
 ;; the host takes the worldline back
 (workspace :switch 0)
 (eval-current)
