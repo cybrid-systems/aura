@@ -7078,6 +7078,38 @@ int64_t aura_hash_ref(int64_t hash_val, int64_t key_val) {
                                  aura_jit_owner_sandbox_mode());
 }
 
+// Issue #4855: the JIT's inline hash-ref (aura_jit.cpp OpHashRef) answers a
+// missing key with the void sentinel; the hash-ref primitive RAISES an
+// error that names the key. The evaluator wires a hook that mints the same
+// error value, so the eval, IR and JIT faces agree. Unwired (AOT /
+// light-link) keeps the void sentinel.
+namespace {
+    struct HashMissErrorHook {
+        int64_t (*fn)(void*, int64_t) = nullptr;
+        void* user = nullptr;
+    };
+    std::mutex g_hash_miss_error_mtx;
+    HashMissErrorHook g_hash_miss_error;
+} // namespace
+
+extern "C" void aura_set_jit_hash_miss_error(int64_t (*fn)(void*, int64_t), void* user) {
+    std::lock_guard<std::mutex> lock(g_hash_miss_error_mtx);
+    g_hash_miss_error = {fn, user};
+}
+
+extern "C" int64_t aura_hash_ref_miss_error(int64_t key_val) {
+    int64_t (*fn)(void*, int64_t) = nullptr;
+    void* user = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_hash_miss_error_mtx);
+        fn = g_hash_miss_error.fn;
+        user = g_hash_miss_error.user;
+    }
+    if (!fn)
+        return 11; // void sentinel (unwired owner)
+    return fn(user, key_val);
+}
+
 static int64_t (*g_hash_str_convert_fn)(int64_t) = nullptr;
 extern "C" void aura_set_hash_str_convert_callback(int64_t (*fn)(int64_t)) {
     // Issue #1312 (P0): synchronize callback pointer with hash path readers.

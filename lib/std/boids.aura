@@ -154,7 +154,9 @@
 
 ; ── Combined step ───────────────────────────────────────────────
 (define (boids-opt opts key default)
-  (let ((v (hash-ref opts key)))
+  ; Issue #4855: an optional lookup passes an explicit () default --
+  ; hash-ref without a default raises on a missing key.
+  (let ((v (hash-ref opts key ())))
     (if (null? v) default v)))
 
 (define (boids:defaults)

@@ -71,6 +71,21 @@ namespace {
     // Issue #4612: "no slot" sentinel for the probe result.
     constexpr std::size_t kNoHashSlot = static_cast<std::size_t>(-1);
 
+    // Issue #4855: name the key a hash lookup missed. A string key is
+    // quoted so the message reads like the source that asked for it; an
+    // integer key is printed as the number.
+    [[nodiscard]] std::string hash_ref_key_text(const EvalValue& key,
+                                                const ::aura::compiler::LockedStringHeap& heap) {
+        if (is_string(key)) {
+            const auto idx = as_string_idx(key);
+            if (idx < heap.size())
+                return "\"" + heap[idx] + "\"";
+        }
+        if (is_int(key))
+            return std::to_string(as_int(key));
+        return {};
+    }
+
     [[nodiscard]] std::uint64_t eval_hash_key_hash(const EvalValue& k,
                                                    ::aura::compiler::StringPoolView sh) noexcept {
         if (is_int(k))
@@ -1110,9 +1125,14 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         pure_general(1, "(hash) -> hash", "Copy a hash into a new, independent table."));
     register_prim(
         add, ev, "hash-ref",
-        [&ev, &string_heap, &pairs, &vector_heap](std::span<const EvalValue> a) {
+        [&ev, &string_heap, &pairs, &vector_heap, &error_values,
+         primitive_error_counter](std::span<const EvalValue> a) {
             // Issue #2569: honor optional 3rd-arg default when key is missing
-            // (Racket-compatible). 2-arg miss still returns void.
+            // (Racket-compatible).
+            // Issue #4855: a 2-arg miss (no default) RAISES an error that
+            // names the key, like Racket / R7RS-large. The old silent ()
+            // hid a typo'd key behind a "works but empty" result; the
+            // explicit-default form keeps the old behaviour available.
             if (a.size() < 2 || !is_hash(a[0]))
                 return a.size() >= 3 ? a[2] : make_void();
             // Issue #2652: serialize hash probe + string key compare under multi-fiber
@@ -1139,7 +1159,15 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 eval_hash_probe(ht, kh, a[1], string_heap, &pairs, &vector_heap, &ev, "hash-ref");
             if (slot != kNoHashSlot)
                 return EvalValue{ht->values()[slot]};
-            return a.size() >= 3 ? a[2] : make_void();
+            if (a.size() >= 3)
+                return a[2];
+            // Issue #4855: no default and the key is absent -> name the key.
+            auto key_text = hash_ref_key_text(a[1], string_heap);
+            if (key_text.empty())
+                key_text = "<key>";
+            return make_primitive_error(string_heap, error_values,
+                                        "hash-ref: key " + key_text + " not found",
+                                        primitive_error_counter);
         },
         pure_general(2, "(hash any) -> any", "Lookup a key in a hash."));
     register_prim(

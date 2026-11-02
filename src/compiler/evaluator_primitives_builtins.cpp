@@ -74,11 +74,20 @@ namespace {
                 text = (*heap)[idx];
         }
         auto detail = aura::compiler::pure::numeric_type_mismatch_detail(v, text);
-        if (op.empty() || arg_index == 0)
-            return detail;
         // Append (do not prefix) so the legacy "error: type mismatch — ..."
         // stderr contract that existing checks substring-match stays intact.
-        return detail + " (in " + std::string(op) + ", argument " + std::to_string(arg_index) + ")";
+        return detail + aura::compiler::pure::numeric_type_mismatch_op_suffix(op, arg_index);
+    }
+
+    // Issue #4855: the file-mode runner reports an uncaught error as ONE
+    // located diagnostic ("error: L:C: type error: ..." plus the source
+    // excerpt). The legacy plain line carries the same text without the
+    // position, so printing it here would report the same error twice. The
+    // file-diag root is armed only for the file-mode face (the REPL and the
+    // one-shot -e face keep the legacy line), so the plain line still owns
+    // every face that has no located diagnostic to print.
+    bool located_diagnostic_armed() {
+        return aura::core::fiber_ctx::active().file_diag_root_flat != nullptr;
     }
 
 } // namespace
@@ -92,7 +101,9 @@ Primitives::Primitives() {
         // the catch without a diagnostic on stderr — the tree-walker path
         // already marks the body (#4456); the primitive side reads the same
         // per-body depth.
-        if (aura::core::fiber_ctx::active().try_body_depth == 0)
+        // Issue #4855: the file-mode face prints ONE located diagnostic for
+        // an uncaught error, so the plain line is suppressed there.
+        if (aura::core::fiber_ctx::active().try_body_depth == 0 && !located_diagnostic_armed())
             std::println(std::cerr, "error: {}", detail);
         if (error_values_ != nullptr && string_heap_ != nullptr) {
             return primitives_detail::make_primitive_error(

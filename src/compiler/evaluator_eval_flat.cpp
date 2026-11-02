@@ -6198,11 +6198,18 @@ EvalResult Evaluator::eval_flat_apply_mutate_inline_call(std::span<const types::
 static EvalResult file_mode_escaped_primitive(Evaluator& ev, const EvalValue& err,
                                               const aura::ast::FlatAST& f, aura::ast::NodeId form) {
     std::string msg = ev.soft_error_message(err);
-    const auto nv = f.get(form);
-    const auto line = nv.line == 0 ? 1u : nv.line;
-    const auto col = nv.col == 0 ? 1u : nv.col;
-    return std::unexpected(Diagnostic{ErrorKind::TypeError, std::move(msg),
-                                      aura::diag::SourceLocation{line, col, 0}, form});
+    // Issue #4855: point at the form that FAILED, not at the outermost call
+    // that happened to be the last frame the error escaped through. The
+    // evaluator records the innermost producer of an error value; the
+    // top-level form is only the fallback when nothing recorded one.
+    auto loc = ev.error_location(err);
+    if (!loc) {
+        const auto nv = f.get(form);
+        const auto line = nv.line == 0 ? 1u : nv.line;
+        const auto col = nv.col == 0 ? 1u : nv.col;
+        loc = aura::diag::SourceLocation{line, col, 0};
+    }
+    return std::unexpected(Diagnostic{ErrorKind::TypeError, std::move(msg), *loc, form});
 }
 
 // ── Phase 4: FlatAST tree-walker evaluator (EvalValue) ───────
@@ -8805,13 +8812,27 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 }
                             }
                             // Issue #4690: closure-form while parks the thunk diagnostic.
-                            if (slot_here)
-                                return finish_prim_call(
-                                    cname, prim_owner->invoke_prim_with_telemetry_at(
-                                               cname, slot, [&]() { return (*prim)(args); }));
-                            return finish_prim_call(cname,
-                                                    prim_owner->invoke_prim_with_telemetry(
-                                                        cname, [&]() { return (*prim)(args); }));
+                            auto prim_result = [&]() {
+                                if (slot_here)
+                                    return prim_owner->invoke_prim_with_telemetry_at(
+                                        cname, slot, [&]() { return (*prim)(args); });
+                                return prim_owner->invoke_prim_with_telemetry(
+                                    cname, [&]() { return (*prim)(args); });
+                            }();
+                            // Issue #4855: remember the form that produced an
+                            // error value so the located diagnostic points at
+                            // the failing form, not the outermost call. The
+                            // FIRST producer wins (the innermost form).
+                            if (is_error(prim_result) && !is_string(prim_result)) {
+                                const auto line = v.line == 0 ? 1u : v.line;
+                                const auto col = v.col == 0 ? 1u : v.col;
+                                // The cause store is THIS evaluator's
+                                // (primitives_ writes into error_values_), so
+                                // the location table is this one too.
+                                note_error_location(prim_result,
+                                                    aura::diag::SourceLocation{line, col, 0});
+                            }
+                            return finish_prim_call(cname, prim_result);
                         }
                     }
                     // Closure call (eval func + arg evals are recursive; body is tail)

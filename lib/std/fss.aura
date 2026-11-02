@@ -42,13 +42,13 @@
 (define (fss:init-hash opts)
   (swarm:init
     (hash "kind" "fss"
-          "dim" (let ((v (hash-ref opts "dim"))) (if (null? v) 1 v))
-          "pop" (let ((v (hash-ref opts "pop"))) (if (null? v) 16 v))
-          "bounds" (let ((v (hash-ref opts "bounds")))
+          "dim" (let ((v (hash-ref opts "dim" ()))) (if (null? v) 1 v))
+          "pop" (let ((v (hash-ref opts "pop" ()))) (if (null? v) 16 v))
+          "bounds" (let ((v (hash-ref opts "bounds" ())))
                      (if (null? v) (list (list -1.0 1.0)) v))
-          "step" (let ((v (hash-ref opts "step"))) (if (null? v) 0.1 v))
-          "seed" (let ((v (hash-ref opts "seed"))) (if (null? v) 424242 v))
-          "parallel" (let ((v (hash-ref opts "parallel")))
+          "step" (let ((v (hash-ref opts "step" ()))) (if (null? v) 0.1 v))
+          "seed" (let ((v (hash-ref opts "seed" ()))) (if (null? v) 424242 v))
+          "parallel" (let ((v (hash-ref opts "parallel" ())))
                        (if (null? v) #f v)))))
 
 (define (fss:step! fitness-fn) (swarm:step! fitness-fn))

@@ -713,6 +713,19 @@ export inline std::string numeric_type_mismatch_detail(const types::EvalValue& v
     return std::string("type mismatch — expected Int, got ") + numeric_operand_type_name(v);
 }
 
+// Issue #4855: name the operation and the failing argument in a numeric
+// type error. Appended (NOT prefixed) so the legacy
+// "error: type mismatch — expected Int, got ..." stderr contract that
+// existing checks substring-match stays intact. The tree-walker primitives
+// and the IR executor share this suffix so both faces read the same.
+// arg_index is 1-based; 0 means "no argument to name".
+export inline std::string numeric_type_mismatch_op_suffix(std::string_view op,
+                                                          std::size_t arg_index) {
+    if (op.empty() || arg_index == 0)
+        return {};
+    return " (in " + std::string(op) + ", argument " + std::to_string(arg_index) + ")";
+}
+
 inline std::string_view arith_string_text(const types::EvalValue& v,
                                           ::aura::compiler::StringPoolView heap) noexcept {
     if (!types::is_string(v) || heap.empty())
