@@ -546,54 +546,133 @@ static std::size_t character_literal_length(std::string_view src, std::size_t i)
 // form's inline lambda is lowered; a single whole-file eval lowers every form
 // first and the lambda captured a different cell.
 static std::vector<std::string> split_top_level_forms_4865(std::string_view src) {
+    // Issue #4869: reader-aware top-level form split. The caller has already
+    // parsed the whole source successfully, so this only has to find form
+    // boundaries under the reader's lexical rules: strings with escapes,
+    // #\ character literals (including #\ ( and #\"), |...| symbols,
+    // ; comments, quote prefixes, and #( vectors. The old hand counter
+    // treated #\ ( as a list open and '()' in a block comment as code.
     std::vector<std::string> out;
-    std::size_t start = std::string_view::npos;
+    const std::size_t n = src.size();
+    std::size_t form_start = std::string_view::npos;
     int depth = 0;
-    bool in_str = false, esc = false, in_comment = false;
-    for (std::size_t i = 0; i < src.size(); ++i) {
-        char c = src[i];
-        if (in_comment) {
-            if (c == 10)
-                in_comment = false;
-            continue;
+    auto flush_atom = [&](std::size_t end) {
+        if (depth == 0 && form_start != std::string_view::npos) {
+            out.emplace_back(src.substr(form_start, end - form_start));
+            form_start = std::string_view::npos;
         }
-        if (in_str) {
-            if (esc) {
-                esc = false;
-                continue;
-            }
-            if (c == 92) {
-                esc = true;
-                continue;
-            }
-            if (c == '"')
-                in_str = false;
+    };
+    for (std::size_t i = 0; i < n;) {
+        char c = src[i];
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+            ++i;
             continue;
         }
         if (c == ';') {
-            in_comment = true;
+            while (i < n && src[i] != '\n')
+                ++i;
             continue;
         }
         if (c == '"') {
-            in_str = true;
+            if (form_start == std::string_view::npos)
+                form_start = i;
+            ++i;
+            while (i < n) {
+                if (src[i] == '\\') {
+                    i += (i + 1 < n) ? 2 : 1;
+                    continue;
+                }
+                if (src[i] == '"') {
+                    ++i;
+                    break;
+                }
+                ++i;
+            }
+            flush_atom(i);
+            continue;
+        }
+        if (c == '#' && i + 1 < n && src[i + 1] == '\\') {
+            if (form_start == std::string_view::npos)
+                form_start = i;
+            i += 2;
+            if (i < n) {
+                if (std::isalpha(static_cast<unsigned char>(src[i]))) {
+                    while (i < n &&
+                           (std::isalnum(static_cast<unsigned char>(src[i])) || src[i] == '-'))
+                        ++i;
+                } else {
+                    ++i; // the literal character itself, even ( ) " ; space
+                }
+            }
+            flush_atom(i);
+            continue;
+        }
+        if (c == '|') {
+            if (form_start == std::string_view::npos)
+                form_start = i;
+            ++i;
+            while (i < n) {
+                if (src[i] == '\\') {
+                    i += (i + 1 < n) ? 2 : 1;
+                    continue;
+                }
+                if (src[i] == '|') {
+                    ++i;
+                    break;
+                }
+                ++i;
+            }
+            flush_atom(i);
+            continue;
+        }
+        if (c == '\'' || c == '`' || c == ',') {
+            if (form_start == std::string_view::npos)
+                form_start = i;
+            ++i;
+            if (c == ',' && i < n && src[i] == '@')
+                ++i;
             continue;
         }
         if (c == '(' || c == '[') {
-            if (depth == 0)
-                start = i;
+            if (form_start == std::string_view::npos)
+                form_start = i;
             ++depth;
+            ++i;
+            continue;
+        }
+        if (c == '#' && i + 1 < n && src[i + 1] == '(') {
+            if (form_start == std::string_view::npos)
+                form_start = i;
+            ++depth;
+            i += 2;
             continue;
         }
         if (c == ')' || c == ']') {
             if (depth > 0)
                 --depth;
-            if (depth == 0 && start != std::string_view::npos) {
-                out.emplace_back(src.substr(start, i - start + 1));
-                start = std::string_view::npos;
-            }
+            ++i;
+            if (depth == 0)
+                flush_atom(i);
             continue;
         }
+        // Atom (identifier, number, #t/#f, dotted tail, ...).
+        if (form_start == std::string_view::npos)
+            form_start = i;
+        ++i;
+        while (i < n) {
+            char d = src[i];
+            if (d == ' ' || d == '\t' || d == '\r' || d == '\n' || d == '(' || d == ')' ||
+                d == '[' || d == ']' || d == ';' || d == '"' || d == '\'' || d == '`' || d == ',' ||
+                d == '|')
+                break;
+            if (d == '#' && i + 1 < n && (src[i + 1] == '\\' || src[i + 1] == '('))
+                break;
+            ++i;
+        }
+        flush_atom(i);
     }
+    if (form_start != std::string_view::npos)
+        out.emplace_back(src.substr(form_start));
     return out;
 }
 
@@ -2416,6 +2495,22 @@ int main(int argc, char* argv[]) {
         const std::string_view strict_v =
             strict_env ? std::string_view(strict_env) : std::string_view{};
         if (strict_v == "force-soa" || strict_v == "force_soa" || strict_v == "soa") {
+            // Issue #4869: never split invalid source. Parse the whole file
+            // first so unclosed lists, block comments, and malformed literals
+            // fail with the same located diagnostic (and non-zero exit) as
+            // the non-force-soa path instead of silently running a prefix.
+            {
+                aura::ast::ASTArena parse_arena;
+                auto parse_alloc = parse_arena.allocator();
+                aura::ast::StringPool parse_pool(parse_alloc);
+                aura::ast::FlatAST parse_flat(parse_alloc);
+                auto pr = aura::parser::parse_to_flat(content, parse_flat, parse_pool);
+                if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+                    std::println(std::cerr, "error: {}",
+                                 pr.error.empty() ? "parse error" : pr.error);
+                    return 1;
+                }
+            }
             // Issue #4865: per-form eval so each define registers its value
             // cell before later forms lower. ForceSoa's value-define gate
             // would reject fiber:spawn/agent defines on the per-form path;
@@ -2423,18 +2518,15 @@ int main(int argc, char* argv[]) {
             // for what the IR path can express).
             aura::compiler::set_tree_walker_fallback_policy(
                 aura::compiler::TreeWalkerFallbackPolicy::Allow);
-            std::string last_out;
             for (auto& form : split_top_level_forms_4865(content)) {
                 auto r = cs.eval(form);
                 if (!r) {
                     std::println(std::cerr, "error: {}", r.error().format_with_source(form));
                     return 1;
                 }
-                if (!is_void(*r))
-                    last_out = fmt_val(*r, cs);
             }
-            if (!last_out.empty())
-                std::println("{}", last_out);
+            // Issue #4869: force-soa --load does not print the last form's
+            // value; the other --load faces do not either.
             return aura_displayed_error_count() > 0 ? 1 : 0;
         }
         auto result = cs.eval(content);
