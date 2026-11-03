@@ -1,5 +1,6 @@
 module;
-#include "rebind_phase_stats.h" // per-phase rebind timing (opt-in)
+#include "rebind_phase_stats.h"             // per-phase rebind timing (opt-in)
+#include "compiler/security_capabilities.h" // Issue #4876: macro deny text
 #include <algorithm>
 #include "core/atomic_fence_port.h"
 #include <atomic>
@@ -133,14 +134,12 @@ extern "C" void aura_jit_tier_self_cell_swap_4682(std::int64_t* idx, std::int64_
 extern "C" void aura_jit_suppress_runtime_reset_this_thread(int on) noexcept;
 
 [[nodiscard]] static aura::diag::Diagnostic hygiene_expand_deny_diag_4078() {
-    const char* why = aura_macro_hygiene_last_limit_reason_string();
-    std::string reason =
-        (why != nullptr && why[0] != '\0') ? std::string(why) : std::string("hygiene-pass-limit");
     // Issue #4876: the sentinel code is not a user-facing explanation.
-    if (reason == "capability-deny")
-        reason = "effect-denied: macro-self-evo not granted; user macros need MacroSelfEvo "
-                 "(aura soft does not grant it; run with AURA_SANDBOX=off)";
-    return aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError, std::move(reason)};
+    std::string reason = aura::compiler::security::macro_limit_user_reason(
+        aura_macro_hygiene_last_limit_reason_string(), "hygiene-pass-limit");
+    const auto kind = reason.starts_with("effect-denied:") ? aura::diag::ErrorKind::TypeError
+                                                           : aura::diag::ErrorKind::InternalError;
+    return aura::diag::Diagnostic{kind, std::move(reason)};
 }
 
 // ── Issue #4711: eval-mutex (M1) release across a blocking wait ───────

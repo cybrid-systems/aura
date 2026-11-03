@@ -361,6 +361,18 @@ namespace {
 } // namespace
 
 // ── Load module file, return module object ────────────────
+namespace {
+    // Issue #4876: same mapping as evaluator_eval_flat.cpp — the capability
+    // deny is a policy refusal with actionable text, not an internal error.
+    [[nodiscard]] aura::diag::Diagnostic macro_limit_diag_4876(const char* why,
+                                                               std::string_view fallback) {
+        std::string r = aura::compiler::security::macro_limit_user_reason(why, fallback);
+        const auto k = r.starts_with("effect-denied:") ? aura::diag::ErrorKind::TypeError
+                                                       : aura::diag::ErrorKind::InternalError;
+        return aura::diag::Diagnostic{k, std::move(r)};
+    }
+} // namespace
+
 types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // Issue #4460: this load's reason replaces any previous one.
     last_module_load_failure_.clear();
@@ -594,8 +606,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     if (aura_hygiene_expand_deny_blocks_eval()) {
         const char* why = aura_macro_hygiene_last_limit_reason_string();
         if (why != nullptr && why[0] != '\0')
-            result =
-                std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError, why});
+            result = std::unexpected(macro_limit_diag_4876(why, "hygiene-pass-limit"));
     } else {
         result = eval_flat(*flat_ptr, *pool_ptr, expanded, *mod_env);
     }

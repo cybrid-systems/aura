@@ -129,6 +129,20 @@ inline std::string format_deny_reason(std::uint16_t effect_bits, std::uint64_t t
     return std::format("effect-denied: {} not granted tenant={} op={}", name(), tenant_id, op);
 }
 
+// Issue #4876: user-facing text for a macro expansion refusal. The hygiene
+// limit reason "capability-deny" (sentinel 7, #3304) is an internal code
+// agents key on; the Diagnostic a user (or a `try`/`catch`) sees carries
+// the actionable explanation instead. Every other reason is unchanged.
+inline constexpr std::string_view kMacroSelfEvoDenyMessage =
+    "effect-denied: macro-self-evo not granted; user macros need MacroSelfEvo "
+    "(aura soft does not grant it; run with AURA_SANDBOX=off)";
+inline std::string macro_limit_user_reason(const char* why, std::string_view fallback) {
+    std::string_view r = (why != nullptr && why[0] != '\0') ? std::string_view(why) : fallback;
+    if (r == "capability-deny")
+        return std::string(kMacroSelfEvoDenyMessage);
+    return std::string(r);
+}
+
 // Issue #2076 / #2053: production defaults — declarations only.
 // Definitions are header-inline in security_defaults.hh (include that
 // header at call sites: main, tests, evaluator_security). Keeping

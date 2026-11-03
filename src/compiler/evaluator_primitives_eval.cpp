@@ -39,7 +39,14 @@ namespace {
     if (!aura_hygiene_expand_deny_blocks_eval())
         return nullptr;
     const char* why = aura_macro_hygiene_last_limit_reason_string();
-    return (why != nullptr && why[0] != '\0') ? why : "hygiene-pass-limit";
+    if (why == nullptr || why[0] == '\0')
+        return "hygiene-pass-limit";
+    // Issue #4876: (eval ...) / (load ...) surface this as the error
+    // value a try/catch sees: give the actionable text, not the sentinel.
+    // kMacroSelfEvoDenyMessage views a string literal (NUL-terminated).
+    if (std::string_view(why) == "capability-deny")
+        return aura::compiler::security::kMacroSelfEvoDenyMessage.data();
+    return why;
 }
 } // namespace
 

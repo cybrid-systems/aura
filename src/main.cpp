@@ -4197,6 +4197,12 @@ int main(int argc, char* argv[]) {
                     ctx += form;
                     std::println(std::cerr, "error: {}", fr.error().format_with_source(ctx));
                     any_error = true;
+                    // Issue #4876: a refused user macro is fatal, as on the
+                    // whole-program face. Running on printed a cascade of
+                    // `unbound variable: <macro>` / `cannot call` for every
+                    // later use of the macro the deny never registered.
+                    if (fr.error().message.find("macro-self-evo not granted") != std::string::npos)
+                        break;
                     continue;
                 }
                 // Mirror the whole-program face: only the LAST top-level
