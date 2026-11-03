@@ -18,7 +18,7 @@ SOURCE = """
 """
 
 
-def _run(sandbox, soft=False, timeout=60.0):
+def _run(sandbox, soft=False, timeout=60.0, load=True):
     with tempfile.NamedTemporaryFile("w", suffix=".aura", delete=False) as f:
         f.write(SOURCE)
         path = f.name
@@ -29,7 +29,9 @@ def _run(sandbox, soft=False, timeout=60.0):
     args = [str(AURA_BIN)]
     if soft:
         args.append("soft")
-    args += ["--load", path]
+    if load:
+        args.append("--load")
+    args.append(path)
     try:
         return subprocess.run(args, capture_output=True, text=True, env=env, timeout=timeout)
     finally:
@@ -42,6 +44,13 @@ class TestMacroDenyMessage4876(unittest.TestCase):
         self.assertNotEqual(p.returncode, 0)
         self.assertIn("effect-denied: macro-self-evo not granted", p.stderr)
         self.assertIn("AURA_SANDBOX=off", p.stderr)
+        self.assertNotIn("unbound variable", p.stderr)
+
+    def test_direct_run_does_not_cascade(self):
+        p = _run(None, load=False)
+        self.assertEqual(p.returncode, 1, p.stderr)
+        self.assertIn("effect-denied: macro-self-evo not granted", p.stderr)
+        self.assertNotIn("unbound variable", p.stderr)
 
     def test_off_expands(self):
         p = _run("off")
