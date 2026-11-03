@@ -45,6 +45,9 @@ keys are additive and no default key changes meaning.
 | `on-join-fail-effective` | string | effective failure policy |
 | `join-fail-action-taken` | int | failure action actually taken |
 | `restart-attempted` / `restart-skipped-no-spec` / `restart-ok` | int | RestartN counters |
+| `restart-max` | int | restart fuel configured for this join (`:max-restarts`); 0 when no restart policy is active |
+| `restart-exhausted` | int | children that ran out of restart fuel (reached `restart-max` or the consecutive-stall circuit opened) |
+| `attempt-errors` | int | failed body attempts, including attempts that a restart later recovered; `err-count` / `errors` report final failures only |
 | `restart-denied` / `restart-deny-class` | int / string | spawn-admit deny |
 | `tree` | bool | tree join requested (default local) |
 | `tree-settled` / `descendants-live` | bool | tree-settlement blame fields |
