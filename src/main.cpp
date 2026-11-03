@@ -1081,18 +1081,20 @@ int main(int argc, char* argv[]) {
 
     int wt_idx = parse_worker_threads();
     if (wt_idx >= 0) {
-        // Shift remaining args to remove --worker-threads
-        int remove_count = (std::string_view(argv[wt_idx]) == "--worker-threads") ? 2 : 1;
-        int new_argc = 1;
-        for (int i = 1; i < argc; ++i) {
-            if (i == wt_idx) {
-                i += remove_count - 1;
-                continue;
-            }
-            argv[new_argc + 1] = argv[i];
-            ++new_argc;
-        }
-        argc = new_argc + 1;
+        // Shift remaining args to remove --worker-threads. Compact from the
+        // flag's own slot (not from argv[1]): the old loop left argv[1]
+        // untouched, so `aura --serve-async-bench file --worker-threads=2`
+        // kept the flag as argv[1] and the following mode argument was
+        // rewritten over --serve-async-bench ("cannot open
+        // '--serve-async-bench'"). Both placements now dispatch normally,
+        // which also makes the bench banner's --worker-threads=N opt-in
+        // (#4877 / #4048) real.
+        const int remove_count = (std::string_view(argv[wt_idx]) == "--worker-threads") ? 2 : 1;
+        int dst = wt_idx;
+        for (int i = wt_idx + remove_count; i < argc; ++i)
+            argv[dst++] = argv[i];
+        argv[dst] = nullptr;
+        argc = dst;
     }
 
     // ── --serve-async: fiber-based async JSON-line protocol ─
@@ -1163,6 +1165,14 @@ int main(int argc, char* argv[]) {
     // Usage: ./build/aura --serve-async-bench tests/bench.aura
     if (argc > 1 && std::string_view(argv[1]) == "--serve-async-bench") {
 #if AURA_HAVE_EPOLL
+        // Issue #4877: bench must honor the same Soft auto rule as
+        // --serve-async (#4048): one worker for the shared Evaluator. It
+        // passed num_workers=0 straight to Scheduler, which auto-sized to
+        // hardware_concurrency(), while the Soft Ready banner announced
+        // "Auto workers=1" and the shared-Evaluator safety rationale.
+        // Explicit --worker-threads=N still opts into multi-worker.
+        if (num_workers == 0 && !aura::serve::production_abi_selfcheck_required())
+            num_workers = 1;
         std::string file_path = (argc > 2) ? argv[2] : "tests/bench.aura";
         aura::serve::run_serve_async_bench(file_path, num_workers);
         return aura::serve::serve_async_bench_failed() ? 1 : 0;

@@ -1643,6 +1643,17 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
                 bench_failed.store(true, std::memory_order_release);
             }
             std::fflush(stdout);
+            // Issue #4877: cancel + drain this session's orch agent bodies
+            // BEFORE the pool stops. ~CompilerService does the same drain,
+            // but by then sched.stop() has already latched: no worker will
+            // resume the cancelled polling body again, so the production
+            // reclaimed must-wait (#3012/#3595) burns its full
+            // drain_ms x 8 retry budget (16 s for the 2 s default) waiting
+            // for a fiber that can never run. That fixed cost alone pushed
+            // the #4831 bench regression against its 30 s KILL. Cancelling
+            // while the workers are live lets the body observe the cancel
+            // at its next soft-window yield and join Ok.
+            sess->service.evaluator().cleanup_orch_agents();
             // Issue #4862: this is a one-shot script face. A background orch
             // body (a polling agent loop) outlives the top-level eval, and
             // waiting for the scheduler to go idle hangs the bench forever.

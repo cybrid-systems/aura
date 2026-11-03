@@ -672,6 +672,18 @@ void WorkerThread::run() {
         // ── Phase 1: drain local queue (LIFO) ───────
         size_t iter = 0;
         while (iter < MAX_ITER_PER_ROUND) {
+            // Issue #4877: absorb foreign enqueues on EVERY turn, not only
+            // at the top of the scheduling round. A woken fiber (IO eventfd
+            // dispatch / remote spawn / steal re-queue) was staged in
+            // inject_queue_ while a soft-window agent body kept yielding on
+            // this worker; because ready_fifo_ never drained, the pop-miss
+            // branch below could not run either, so the wake waited for the
+            // whole MAX_ITER_PER_ROUND window. Measured as ~60 ms per
+            // orch:agent-ask under --serve-async-bench and ~300 ms in the
+            // production sandbox (~1000 body recv+yield iterations).
+            // drain_injections() is owner-thread only; this is the owner.
+            if (inject_pending_.load(std::memory_order_acquire))
+                (void)drain_injections();
             Fiber* fiber = local_queue_.pop();
             if (!fiber) {
                 // Issue #4699: a fiber that yielded waits in the FIFO
