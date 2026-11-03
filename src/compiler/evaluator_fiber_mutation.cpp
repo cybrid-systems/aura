@@ -3547,6 +3547,15 @@ namespace {
     }
 } // namespace
 
+// Issue #4870: a soft orch boundary is not a real mutation boundary. The
+// typed-entry readiness face treats it as real quiet (the same face a fiber
+// body enters at depth 0) so a production-default agent body can run; the
+// soft frame still keeps steal/GC visibility.
+extern "C" std::size_t aura_evaluator_soft_boundary_depth() {
+    return g_orch_soft_boundary_depth > 0 ? static_cast<std::size_t>(g_orch_soft_boundary_depth)
+                                          : 0;
+}
+
 // Issue #2884: agent_send_safe auto handoff_ref path. Lives here (not in
 // agent_spawn.h) so orch headers never import aura.compiler.evaluator —
 // that import broke evaluator_ctor.cpp ddi scan ("module already imported").

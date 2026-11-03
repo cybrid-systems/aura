@@ -45,6 +45,12 @@ __attribute__((weak)) std::size_t aura_evaluator_mutation_boundary_depth() {
     return 0;
 }
 
+// Issue #4870: soft orch boundary depth (weak stub; strong def in
+// evaluator_fiber_mutation.cpp). Light-link hosts have no soft frame.
+__attribute__((weak)) std::size_t aura_evaluator_soft_boundary_depth() {
+    return 0;
+}
+
 // Issue #2114: outermost MutationBoundaryGuard held flag (weak stub).
 __attribute__((weak)) int aura_evaluator_mutation_boundary_held() {
     return 0;
