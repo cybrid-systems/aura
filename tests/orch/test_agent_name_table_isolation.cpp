@@ -191,6 +191,26 @@ static void ac2b_compiler_service_isolation() {
     CHECK(ev2.agent_names_->find("beta") != nullptr, "ev2 still finds beta after ev1 drain");
 }
 
+// ── CI red: the per-Evaluator scope registry is shared with worker threads ──
+// Agent body prims call find/get_or_create from scheduler workers while the
+// session thread drops/resets a scope. The registry used to be an unsynchronized
+// unordered_map: an insert racing clear() corrupted the bucket state and the
+// next insert threw std::bad_array_new_length in _M_insert_unique_node
+// (test_orch_agent_batch: FAIL member ... isolated rc=134).
+static void acci_scope_registry_serialized() {
+    std::println("\n--- scope registry: container access serialized ---");
+    const auto h = read_file("src/orch/agent_scope.h");
+    const auto spawn_h = read_file("src/orch/agent_spawn.h");
+    CHECK(spawn_h.find("inline std::mutex g_evaluator_agent_scopes_mtx") != std::string::npos,
+          "scope registry access is serialized by a mutex");
+    CHECK(h.find("std::lock_guard lock(g_evaluator_agent_scopes_mtx)") != std::string::npos,
+          "agent_scope.h takes the registry lock (CTAD keeps std::mutex out of the guard surface)");
+    CHECK(h.find("drained.swap(g_evaluator_agent_scopes())") != std::string::npos,
+          "reset swaps the map under the lock (body insert targets the fresh map)");
+    CHECK(h.find("dropped = std::move(it->second)") != std::string::npos,
+          "drop moves the scope out so ~AgentScope runs outside the lock");
+}
+
 // ── AC3: drain_for_cleanup returns handles and clears table ───────────
 static void ac3_drain_clears_table() {
     std::println("\n--- AC3: drain_for_cleanup behavior ---");
@@ -1331,6 +1351,7 @@ int run_test_agent_name_table_isolation() {
     ac1_source_and_no_static();
     ac2_two_tables_isolation();
     ac2b_compiler_service_isolation();
+    acci_scope_registry_serialized();
     ac3_drain_clears_table();
     ac3b_same_name_overrides();
     ac3125_cross_scope_isolation();

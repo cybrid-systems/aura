@@ -550,6 +550,14 @@ struct ScopeBpGauge {
 inline std::mutex g_scope_bp_map_mtx{};
 inline std::unordered_map<std::string, std::shared_ptr<ScopeBpGauge>> g_scope_bp_map{};
 
+// CI red (test_orch_agent_batch / test_agent_name_table_isolation): the
+// per-Evaluator AgentScope registry in agent_scope.h is process-global and
+// body prims reach it from scheduler workers while the session thread drops
+// or resets a scope. The container mutex lives here because agent_scope.h is
+// the ScopeEnterGuard surface and must not grow a second lock scheme
+// (#2777 / #2946 forbid std::mutex there).
+inline std::mutex g_evaluator_agent_scopes_mtx{};
+
 // Issue #3127 / #3804: overflow-only BP gauge for named scopes that
 // hit kMailboxBpScopeMapCap under production. Note path still bumps
 // this gauge + spawn_bp_scope_overflow_* for dashboards. Issue #3804:
