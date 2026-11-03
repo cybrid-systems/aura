@@ -473,7 +473,12 @@ void Evaluator::cleanup_orch_agents() noexcept {
     }
     auto handles = agent_names_->drain_for_cleanup();
     for (auto& h : handles) {
-        if (h.ok && h.fiber) {
+        // Issue #3930 / #4756: an import proxy only observes the source-owned
+        // fiber; the source Evaluator / AgentScope owns its lifetime. Calling
+        // request_cancel here dereferences a fiber the source may already have
+        // reclaimed, which corrupts the heap at ~Evaluator (free(): invalid
+        // next size, CI x86 test_agent_name_table_isolation rc=134).
+        if (h.ok && h.fiber && !h.import_proxy) {
             h.fiber->request_cancel(); // Issue #4831 teardown cancel
             // 100ms short timeout — agent bodies should complete quickly.
             // If they don't, the AgentHandle destructor still releases
