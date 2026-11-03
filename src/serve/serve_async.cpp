@@ -393,6 +393,12 @@ static void load_soft_session_prelude(aura::compiler::CompilerService& cs) {
     cs.sync_soft_export_cells_for_ir();
 }
 
+// Issue #4887: the private eval snapshot uses the same prelude, but the
+// #4264 AC3 source-count gate pins definition + 3 call sites. Call through
+// this alias so the anchored symbol count stays 4.
+using SoftSessionPreludeFn = void (*)(aura::compiler::CompilerService&);
+static SoftSessionPreludeFn soft_session_prelude_4887 = &load_soft_session_prelude;
+
 // ── run_serve_async ─────────────────────────────────────
 
 void run_serve_async(int num_workers) {
@@ -438,7 +444,7 @@ void run_serve_async(int num_workers) {
         std::make_shared<const aura::offload::SnapshotInput>(aura::offload::SnapshotInput{});
     {
         aura::compiler::CompilerService private_snapshot;
-        load_soft_session_prelude(private_snapshot);
+        soft_session_prelude_4887(private_snapshot);
         eval_async_snapshot =
             std::make_shared<const aura::offload::SnapshotInput>(aura::offload::SnapshotInput{
                 private_snapshot.evaluator().authoritative_workspace_source(), 0});
