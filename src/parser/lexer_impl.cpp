@@ -57,8 +57,23 @@ Token Lexer::advance() {
                 c == '&' || c == '%')
                 return read_identifier();
             // Issue #4805: R7RS |...| symbol quoting (`||` is the empty symbol).
-            if (c == '|')
+            if (c == '|') {
+                // Issue #4875: a `|#` with no open block comment. Read as a
+                // |symbol| it swallowed everything up to the next `|` (or the
+                // whole rest of the file) without a word. A |#name| symbol on
+                // one line still reads as a symbol.
+                if (pos_ + 1 < source_.size() && source_[pos_ + 1] == '#') {
+                    std::size_t k = pos_ + 2;
+                    while (k < source_.size() && source_[k] != '|' && source_[k] != '\n')
+                        ++k;
+                    if (k >= source_.size() || source_[k] != '|') {
+                        auto tok = make_tok(TokenKind::Error, "|#");
+                        pos_ += 2;
+                        return tok;
+                    }
+                }
                 return read_pipe_symbol();
+            }
             if (c == '"')
                 return read_string();
             // Ghuloum Step 9: #f, #t boolean literals and # identifiers (eq?)
@@ -361,13 +376,24 @@ void Lexer::skip_ws() {
             const std::uint32_t comment_col = col_;
             pos_ += 2;
             col_ += 2;
+            // R7RS 2.2: block comments nest; #| x #| y |# z |# is one comment.
+            int nest = 1;
             bool closed = false;
             while (pos_ < source_.size()) {
+                if (source_[pos_] == '#' && pos_ + 1 < source_.size() && source_[pos_ + 1] == '|') {
+                    pos_ += 2;
+                    col_ += 2;
+                    ++nest;
+                    continue;
+                }
                 if (source_[pos_] == '|' && pos_ + 1 < source_.size() && source_[pos_ + 1] == '#') {
                     pos_ += 2;
                     col_ += 2;
-                    closed = true;
-                    break;
+                    if (--nest == 0) {
+                        closed = true;
+                        break;
+                    }
+                    continue;
                 }
                 if (source_[pos_] == '\n') {
                     pos_++;

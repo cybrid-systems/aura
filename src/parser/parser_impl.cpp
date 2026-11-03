@@ -391,6 +391,17 @@ NodeId parse_expr(ParserState& s) {
                 s.deferred_line = tok.line;
                 s.deferred_column = tok.column;
             }
+            // Issue #4875: a stray |# (no open #|) and an unterminated
+            // |symbol| used to drop the rest of the file silently.
+            if (tok.text == "|#" && s.deferred_error.empty()) {
+                s.deferred_error = "unexpected '|#' outside a block comment";
+                s.deferred_line = tok.line;
+                s.deferred_column = tok.column;
+            } else if (tok.text.starts_with("|") && s.deferred_error.empty()) {
+                s.deferred_error = "unterminated |symbol|: missing closing '|'";
+                s.deferred_line = tok.line;
+                s.deferred_column = tok.column;
+            }
             if (tok.text.starts_with("#\\") && s.deferred_error.empty())
                 s.deferred_error = "malformed character literal '" + std::string(tok.text) + "'";
             // Issue #4498: 1/2 — exact rationals are not supported.
