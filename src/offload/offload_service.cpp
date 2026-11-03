@@ -55,8 +55,8 @@ void OffloadService::stop() {
     sched_ = nullptr;
 }
 
-OffloadService::Submission OffloadService::submit(Job job,
-                                                  std::shared_ptr<const SnapshotInput> input) {
+OffloadService::Submission
+OffloadService::submit(Job job, std::shared_ptr<const SnapshotInput> input, OffloadClass klass) {
     Submission out;
     out.ticket = std::make_shared<Ticket>();
     if (!job || !input) {
@@ -83,7 +83,8 @@ OffloadService::Submission OffloadService::submit(Job job,
 
     out.ticket->fiber_id = fiber->id();
     out.ticket->wait_gen = fiber->bump_wait_generation();
-    out.status = pool_->try_submit(std::move(job), std::move(input), out.ticket, sink_.get());
+    out.status =
+        pool_->try_submit(std::move(job), std::move(input), out.ticket, sink_.get(), klass);
     return out;
 }
 
@@ -97,6 +98,23 @@ void OffloadService::await(const std::shared_ptr<Ticket>& ticket) {
         fiber->set_state(aura::serve::FiberState::Waiting);
         aura::serve::Fiber::yield();
     }
+}
+
+bool OffloadService::await_for(const std::shared_ptr<Ticket>& ticket,
+                               std::chrono::milliseconds timeout) {
+    if (!ticket)
+        return false;
+    auto* fiber = aura::serve::g_current_fiber;
+    if (!fiber || timeout.count() <= 0)
+        return terminal(ticket->status.load(std::memory_order_acquire));
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (!terminal(ticket->status.load(std::memory_order_acquire))) {
+        if (std::chrono::steady_clock::now() >= deadline)
+            return false;
+        fiber->set_state(aura::serve::FiberState::Waiting);
+        aura::serve::Fiber::yield();
+    }
+    return true;
 }
 
 Stats OffloadService::stats() const {

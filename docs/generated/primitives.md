@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**496** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**501** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -11,7 +11,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 56 primitives (11%)
-- **core**: 405 primitives (82%)
+- **core**: 410 primitives (82%)
 - **internal-observable**: 34 primitives (7%)
 - **convenience**: 1 primitives (0%)
 
@@ -530,6 +530,14 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `mutation-log:diff` *[core]* — `src/compiler/evaluator_primitives_mutation.cpp`
 - `mutation-log:summary` *[core]* — `src/compiler/evaluator_primitives_mutation.cpp`
 
+## Offload: (5)
+
+- `offload:await` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
+- `offload:cancel` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
+- `offload:poll` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
+- `offload:snapshot` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
+- `offload:submit` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
+
 ## Orch: (24)
 
 - `orch:agent-ask` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
@@ -706,7 +714,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (405)
+### Core builtins (must remain primitive) (410)
 
 - `%base64-decode` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` — `src/compiler/evaluator_primitives_char.cpp`
@@ -943,6 +951,11 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `null?` — `src/compiler/evaluator_primitives_list.cpp`
 - `number->string` — `src/compiler/evaluator_primitives_pair.cpp`
 - `number?` — `src/compiler/evaluator_primitives_core.cpp`
+- `offload:await` — `src/compiler/evaluator_primitives_eval.cpp`
+- `offload:cancel` — `src/compiler/evaluator_primitives_eval.cpp`
+- `offload:poll` — `src/compiler/evaluator_primitives_eval.cpp`
+- `offload:snapshot` — `src/compiler/evaluator_primitives_eval.cpp`
+- `offload:submit` — `src/compiler/evaluator_primitives_eval.cpp`
 - `orch:agent-ask` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-directory` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-export-via-token` — `src/compiler/evaluator_primitives_agent.cpp`

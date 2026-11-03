@@ -34,7 +34,22 @@ aura::messaging::CliBodyFiberIdFn aura::messaging::g_cli_body_fiber_id = nullptr
 aura::messaging::EvalMutexWaitReleaseFn aura::messaging::g_eval_mutex_wait_release = nullptr;
 aura::messaging::EvalMutexWaitReacquireFn aura::messaging::g_eval_mutex_wait_reacquire = nullptr;
 aura::messaging::ThreadPoolEnqueueFn aura::messaging::g_thread_pool_enqueue = nullptr;
-aura::messaging::EvalAsyncFn aura::messaging::g_eval_async = nullptr;
+aura::messaging::EvalAsyncFn aura::messaging::g_eval_async;
+// Issue #4888: offload:* bridge, registered by src/offload/offload_primitives.cpp
+// (aura binary). Null in evaluator-only test targets.
+aura::messaging::OffloadSubmitFn aura::messaging::g_offload_submit;
+aura::messaging::OffloadAwaitFn aura::messaging::g_offload_await;
+aura::messaging::OffloadPollFn aura::messaging::g_offload_poll;
+aura::messaging::OffloadCancelFn aura::messaging::g_offload_cancel;
+namespace {
+thread_local bool t_offload_private_eval = false;
+} // namespace
+bool aura::messaging::offload_private_eval_active() noexcept {
+    return t_offload_private_eval;
+}
+void aura::messaging::set_offload_private_eval(bool on) noexcept {
+    t_offload_private_eval = on;
+}
 aura::messaging::GetMetricsFn aura::messaging::g_get_scheduler_metrics;
 aura::messaging::ResetMetricsFn aura::messaging::g_reset_scheduler_metrics;
 aura::messaging::FiberSetAffinityFn aura::messaging::g_fiber_set_affinity = nullptr;

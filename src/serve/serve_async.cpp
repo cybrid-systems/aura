@@ -1,5 +1,6 @@
 // serve/serve_async.cpp — Async serve mode implementation
 #include "serve_async.h"
+#include "offload/offload_job.h"
 #include "offload/offload_service.h"
 #include "compiler/messaging_bridge.h"
 #include "compiler/pipeline_policy.hh"
@@ -17,7 +18,9 @@
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
+#include <memory>
 #include <poll.h>
+#include <stop_token>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
@@ -426,13 +429,39 @@ void run_serve_async(int num_workers) {
     // 2. Create thread pool for blocking operations
     // Issue #4880/#4881: the old per-fiber pool wiring is gone; the isolated
     // offload pool is rebuilt in #4881/#4882 and wired in #4883.
-    // Issue #4880: do NOT register g_eval_async here. A pool thread cannot
-    // enter this session's service while the submitting fiber is parked (the
-    // fiber holds the eval/body mutexes), and a thread-private service
-    // deadlocks on session-global init locks. The primitive's synchronous
-    // fallback (the eval primitive) returns the correct value; the old pool
-    // path returned "" and wrote a closed eventfd. Real offload arrives with
-    // #4881/#4883 and the offload:* primitives in #4888.
+    // Issue #4887: eval:async runs on that isolated pool. The snapshot is a
+    // private CompilerService created BEFORE the session: the pool job never
+    // enters the session service, so the parked fiber's eval/body mutexes do
+    // not matter. Consequence (documented): eval:async cannot see session
+    // defines; it evaluates in a fresh private context.
+    auto eval_async_snapshot =
+        std::make_shared<const aura::offload::SnapshotInput>(aura::offload::SnapshotInput{});
+    {
+        aura::compiler::CompilerService private_snapshot;
+        load_soft_session_prelude(private_snapshot);
+        eval_async_snapshot =
+            std::make_shared<const aura::offload::SnapshotInput>(aura::offload::SnapshotInput{
+                private_snapshot.evaluator().authoritative_workspace_source(), 0});
+    }
+    aura::messaging::g_eval_async = [eval_async_snapshot](const std::string& code) -> std::string {
+        auto job = [code](const aura::offload::SnapshotInput& in, std::stop_token st) {
+            aura::offload::Result out;
+            if (st.stop_requested())
+                return out;
+            out.artifact = aura::offload::eval_code(in, code);
+            return out;
+        };
+        auto sub = aura::offload::OffloadService::instance().submit(
+            std::move(job), eval_async_snapshot, aura::offload::OffloadClass::Interactive);
+        if (sub.status != aura::offload::SubmitStatus::Accepted)
+            return std::string{};
+        aura::offload::OffloadService::instance().await(sub.ticket);
+        if (auto* result = std::get_if<aura::offload::Result>(&sub.ticket->out))
+            return result->artifact;
+        if (auto* error = std::get_if<aura::offload::Error>(&sub.ticket->out))
+            return error->message;
+        return std::string{};
+    };
 
     // 2. Create scheduler with worker threads
     Scheduler sched(num_workers);

@@ -904,6 +904,10 @@ namespace {
     // already unlock. A thread that already holds the lock (the fiber
     // body, or an outer guard) gets nullptr and must not lock again.
     void* cli_main_body_lock_acquire_impl() {
+        // Issue #4887/#4888: an offload worker evaluates a private service;
+        // the parked submitting fiber holds s_cli_commit_mtx for its whole eval.
+        if (aura::messaging::offload_private_eval_active())
+            return nullptr;
         if (s_tls_cli_body_lock() && s_tls_cli_body_lock()->owns_lock())
             return nullptr;
         auto* lk = new std::unique_lock<std::mutex>(s_cli_commit_mtx, std::defer_lock);

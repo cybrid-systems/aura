@@ -32,11 +32,15 @@ public:
 
     // Non-fiber context: runs the job inline and returns a terminal ticket.
     // Fiber context: submits to the pool and records fiber_id/wait_gen.
-    [[nodiscard]] Submission submit(Job job, std::shared_ptr<const SnapshotInput> input);
+    [[nodiscard]] Submission submit(Job job, std::shared_ptr<const SnapshotInput> input,
+                                    OffloadClass klass = OffloadClass::Compile);
 
     // Park the current fiber until the ticket is terminal. No-op outside a
     // fiber (the synchronous submit is already terminal).
     void await(const std::shared_ptr<Ticket>& ticket);
+    // Issue #4888: bounded wait. Returns false when the deadline expires while
+    // the ticket is still non-terminal.
+    bool await_for(const std::shared_ptr<Ticket>& ticket, std::chrono::milliseconds timeout);
 
     [[nodiscard]] Stats stats() const;
     [[nodiscard]] std::uint64_t stale_completions() const;

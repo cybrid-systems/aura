@@ -247,6 +247,8 @@ target_sources(aura PRIVATE
     src/offload/offload_pool.cpp # Issue #4881/#4882: ownership-safe offload pool
     src/offload/offload_service.cpp # Issue #4883: scheduler completion bridge
     src/offload/offload_quota.cpp # Issue #4885: offload ResourceQuota adapter
+    # Issue #4887/#4888: private-compiler job bodies + offload:* bridge.
+    src/offload/offload_job.cpp
     src/serve/thread_pool.cpp
     src/serve/scheduler.cpp
     src/serve/gc_coordinator.cpp
