@@ -1058,7 +1058,13 @@ void run_serve_async(int num_workers) {
                         aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
                         sl = take_session_line(nsid);
                         if (sl.empty()) {
+                            // Same stdin hand-off race as the default session
+                            // loop below: bound the park so a wake that lands
+                            // between the second look and the park cannot
+                            // strand the queued request.
+                            aura::serve::g_current_fiber->set_park_deadline_ms(100);
                             aura::serve::Fiber::yield();
+                            aura::serve::g_current_fiber->clear_park_deadline();
                             continue;
                         }
                         aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Running);
@@ -1209,7 +1215,19 @@ void run_serve_async(int num_workers) {
                         g_current_fiber->set_state(FiberState::Waiting);
                         line = take_session_line(sid);
                         if (line.empty()) {
+                            // stdin hand-off race: a line pushed between the
+                            // second look above and the park is lost — the
+                            // reader's wake skips a fiber that is still in
+                            // resume (is_queued), so the parked session never
+                            // sees the queued request (ci/p0: the two-fiber
+                            // join request was never answered; any later
+                            // stdin byte woke it and the pending line ran).
+                            // Arm a bounded park deadline: the scheduler
+                            // re-queues an expired timed park, so the loop
+                            // re-checks instead of sleeping forever.
+                            g_current_fiber->set_park_deadline_ms(100);
                             Fiber::yield();
+                            g_current_fiber->clear_park_deadline();
                             continue;
                         }
                         g_current_fiber->set_state(FiberState::Running);
