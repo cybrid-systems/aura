@@ -468,7 +468,8 @@ void run_issue_4575() {
         CHECK(st.active && st.effects == base_bits, "4575: back to the default mask");
         if (req && !is_error(*req)) {
             auto sh = cs.eval("(shell \"true\")");
-            CHECK(sh && is_error(*sh), "4575: shell denies after Exec is dropped");
+            // Issue #4896: the deny can arrive as a raised diagnostic.
+            CHECK(!sh.has_value() || is_error(*sh), "4575: shell denies after Exec is dropped");
             if (sh && is_error(*sh)) {
                 const auto msg = ev.soft_error_message(*sh);
                 CHECK(msg.find("effect-denied: exec") != std::string::npos, "4575: exec deny");

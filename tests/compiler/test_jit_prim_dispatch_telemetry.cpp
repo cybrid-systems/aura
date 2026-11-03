@@ -173,8 +173,10 @@ int run_test_jit_prim_dispatch_telemetry() {
         std::println("\n--- AC2: interpreter path denies the same prim ---");
         const auto er = cs.eval("(vector-set! 1 2 3)");
         CHECK(g_set_runs.load() == 0, "AC2: interpreter deny — stub still never ran");
-        CHECK(er.has_value() && aura::compiler::types::is_error(*er),
-              "AC2: interpreter path denies (error value)");
+        // Issue #4896: the IR raises an effect-denied diagnostic (no value)
+        // instead of storing the error value in a discarded local.
+        CHECK(!er.has_value() || aura::compiler::types::is_error(*er),
+              "AC2: interpreter path denies (raised diagnostic or error value)");
     }
 
     // ── AC3: body-enforced stub — telemetry skips, body gates exactly once ──
