@@ -69,6 +69,11 @@ DEFAULT_CATASTROPHIC_RATIO = 3.0  # always fail if ≥3× regardless of delta
 DEFAULT_IMPROVEMENT_RATIO = 0.7
 DEFAULT_RUNS = 1
 DEFAULT_STATISTICAL_RUNS = 3  # when --statistical without --runs
+# Micro cases (baseline under this) are dominated by process startup: one
+# scheduling spike on a loaded CI runner reads 3x high. Give them best-of-N
+# samples even when the suite runs a single pass (#1936 follow-up).
+MICRO_CASE_S = 0.050
+MICRO_CASE_RUNS = 3
 
 
 def env_flag_true(name: str) -> bool:
@@ -311,10 +316,20 @@ def run_all(*, runs: int = 1) -> BenchSuiteResult:
     with contextlib.suppress(Exception):
         run_aura("1", None)
 
+    # #1936 follow-up: micro cases get several samples even in a single-pass
+    # run, so their best sample is not just the one noisy startup.
+    try:
+        _baseline_by_name: dict[str, dict] = {c["name"]: c for c in load_baseline().cases}
+    except Exception:
+        _baseline_by_name = {}
+
     for i, bench in enumerate(load_benchmark_cases(), 1):
         samples: list[float] = []
         result: dict = {}
-        for _ in range(runs):
+        base_entry = _baseline_by_name.get(bench.name) or {}
+        base_s = float(base_entry.get("time_s") or 0.0)
+        case_runs = max(runs, MICRO_CASE_RUNS) if 0.0 < base_s < MICRO_CASE_S else runs
+        for _ in range(case_runs):
             result = measure_pipeline(bench.name, bench.code, bench.pipeline, env=bench.env)
             samples.append(float(result["time_s"]))
         result["time_samples"] = [round(s, 6) for s in samples]
@@ -505,8 +520,11 @@ def collect_regressions(
         if name not in bmap:
             continue
         base = bmap[name]
-        base_time = float(base["time_s"])
-        cur_time = float(cur["time_s"])
+        # Compare best-of-N on both sides: a micro case's single sample is
+        # startup noise, not the body under test, so one spike must not fail
+        # the SLO gate. Real regressions still move the best sample.
+        base_time = float(base.get("time_min_s") or base["time_s"])
+        cur_time = float(cur.get("time_min_s") or cur["time_s"])
         if base_time <= 0:
             continue
         thr, md, cat = case_thresholds(
