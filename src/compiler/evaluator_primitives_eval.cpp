@@ -553,6 +553,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                         // Issue #230 #2: bit 2 of int_val_ flags the
                         // `define-hygienic-macro*` (preserved-params) variant.
                         bool is_preserved = (v.int_value & 4) != 0;
+                        ev.macros_epoch_4894_.fetch_add(1,
+                                                        std::memory_order_acq_rel); // Issue #4894
                         ev.macros_[macro_name] = MacroDef{std::move(param_names),
                                                           is_dotted,
                                                           is_hygienic,
@@ -560,6 +562,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                                                           flat_ptr,
                                                           pool_ptr,
                                                           body_id};
+                        ev.macros_epoch_4894_.fetch_add(1, std::memory_order_acq_rel);
                     }
                 }
             } // ~MutationBoundaryGuard (may abort-restore empty enter snapshot
