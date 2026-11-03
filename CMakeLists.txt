@@ -249,8 +249,8 @@ target_sources(aura PRIVATE
     src/offload/offload_quota.cpp # Issue #4885: offload ResourceQuota adapter
     # Issue #4887/#4888: private-compiler job bodies + offload:* bridge.
     src/offload/offload_job.cpp
+    src/offload/offload_eval_bridge.cpp # Issue #4887: eval:async adapter (aura only)
     src/offload/offload_primitives.cpp
-    src/serve/thread_pool.cpp
     src/serve/scheduler.cpp
     src/serve/gc_coordinator.cpp
     src/serve/serve_async.cpp
@@ -622,7 +622,6 @@ target_sources(test_ir PRIVATE
     src/core/contract_handler.cpp
     src/core/contract_stub.cpp
     src/core/mutation_impl.cpp
-    src/serve/thread_pool.cpp
     $<TARGET_OBJECTS:aura_serve_fiber_objects>
     # Issue #4717: src/core/fiber_context.cpp is provided by
     # aura_serve_fiber_objects above. Listing it here as well compiled a
@@ -1139,7 +1138,6 @@ target_sources(test_gc_evaluator_integration PRIVATE
     src/serve/worker.cpp
     src/serve/steal_safety.cpp
     src/serve/runtime_production_abi.cpp # Issue #2955
-    src/serve/thread_pool.cpp
     src/serve/scheduler.cpp
     src/serve/gc_coordinator.cpp
     src/exec/execution_adapter.cpp

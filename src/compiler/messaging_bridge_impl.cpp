@@ -34,8 +34,7 @@ aura::messaging::CliBodyFiberIdFn aura::messaging::g_cli_body_fiber_id = nullptr
 // body mutex -> eval mutex). Wired by CompilerService::eval.
 aura::messaging::EvalMutexWaitReleaseFn aura::messaging::g_eval_mutex_wait_release = nullptr;
 aura::messaging::EvalMutexWaitReacquireFn aura::messaging::g_eval_mutex_wait_reacquire = nullptr;
-aura::messaging::ThreadPoolEnqueueFn aura::messaging::g_thread_pool_enqueue = nullptr;
-aura::messaging::EvalAsyncFn aura::messaging::g_eval_async;
+aura::offload::OffloadEval* aura::messaging::g_offload_eval = nullptr;
 // Issue #4888: offload:* bridge, registered by src/offload/offload_primitives.cpp
 // (aura binary). Null in evaluator-only test targets.
 aura::messaging::OffloadSubmitFn aura::messaging::g_offload_submit;

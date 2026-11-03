@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**501** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**500** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -11,7 +11,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 56 primitives (11%)
-- **core**: 410 primitives (82%)
+- **core**: 409 primitives (82%)
 - **internal-observable**: 34 primitives (7%)
 - **convenience**: 1 primitives (0%)
 
@@ -630,10 +630,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `syntax:set-marker` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `syntax:set-provenance` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 
-## Thread_Pool: (1)
-
-- `thread_pool:enqueue` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
-
 ## Type: (2)
 
 - `type:set-gradual-permissiveness` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
@@ -714,7 +710,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (410)
+### Core builtins (must remain primitive) (409)
 
 - `%base64-decode` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` — `src/compiler/evaluator_primitives_char.cpp`
@@ -1088,7 +1084,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `synthesize:register-template` — `src/compiler/evaluator_primitives_agent.cpp`
 - `take` — `src/compiler/evaluator_primitives_list.cpp`
 - `tan` — `src/compiler/evaluator_primitives_math.cpp`
-- `thread_pool:enqueue` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `trunc` — `src/compiler/evaluator_primitives_math.cpp`
 - `truncate` — `src/compiler/evaluator_primitives_math.cpp`
 - `type-of` — `src/compiler/evaluator_primitives_reflect.cpp`

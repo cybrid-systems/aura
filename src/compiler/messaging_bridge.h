@@ -9,6 +9,8 @@
 #include <functional>
 #include <mutex>
 
+#include "offload/offload_eval.h"
+
 // ── Messaging Bridge ───────────────────────────────────────────
 //
 // Cross-module function pointers for inter-agent messaging.
@@ -235,19 +237,11 @@ struct CliMainEvalBodyLock {
     CliMainEvalBodyLock& operator=(const CliMainEvalBodyLock&) = delete;
 };
 
-// Thread pool enqueue — set by serve_async.cpp, used by thread_pool:enqueue primitive.
-// Enqueues a blocking task to the background thread pool.
-// fn runs on a pool thread; wake_evfd receives 1 on completion.
-// The wake_evfd must already be registered with the scheduler's epoll.
-using ThreadPoolEnqueueFn = void (*)(std::function<void()> fn, int wake_evfd);
-extern ThreadPoolEnqueueFn g_thread_pool_enqueue;
-
-// Async eval — set by serve_async.cpp. Evaluates code in a private
-// CompilerService snapshot on the isolated offload pool and returns the
-// result as a string. If unavailable, callers fall back to synchronous eval.
-// Issue #4887: std::function so the snapshot can be captured.
-using EvalAsyncFn = std::function<std::string(const std::string& code)>;
-extern EvalAsyncFn g_eval_async;
+// Issue #4887: single bridge to the isolated offload pool. The runtime
+// publishes the OffloadService here at startup (all modes with a pool);
+// null means "no pool" and eval:async falls back to synchronous eval.
+// Header-only interface: evaluator-only test targets link no pool code.
+extern aura::offload::OffloadEval* g_offload_eval;
 
 // ── Issue #4888: offload:* language primitives bridge ───────────────
 // The primitives live in the evaluator module and cannot construct a

@@ -1562,14 +1562,15 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
     // Returns the result as a string, or error message.
     // In serve-async mode, the eval runs on a background thread and the
     // calling fiber yields until the result is ready.
-    // In stdin mode, falls back to synchronous eval (same as (eval code)).
+    // Without a pool (e.g. evaluator-only test targets) it falls back to
+    // synchronous eval (same as (eval code)).
     add("eval:async", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_void();
         auto& code = ev.mutable_string_at(as_string_idx(a[0]));
-        if (aura::messaging::g_eval_async) {
-            // Thread pool path: offload to background
-            auto result_str = aura::messaging::g_eval_async(code);
+        if (auto* offload = aura::messaging::g_offload_eval) {
+            // Issue #4887: OffloadService interface; parks a fiber caller.
+            auto result_str = offload->eval_async(code);
             const auto idx = static_cast<std::uint64_t>(ev.push_string_heap(result_str));
             return make_string(idx);
         }

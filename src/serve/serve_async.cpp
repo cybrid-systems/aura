@@ -436,16 +436,6 @@ void run_serve_async(int num_workers) {
         aura::serve::Fiber::yield();
     };
 
-    // Register thread pool enqueue callback:
-    // Issue #4880: wait for actual completion. The fiber eventfd is a shared
-    // wake channel (stdin broadcast, joiner, timed park), so a single wake is
-    // not completion; the task publishes OffloadWaitState::done instead.
-    // A closure belongs to the session Evaluator, so it cannot run on a pool
-    // thread without racing the session heap. Run it on the calling fiber
-    // (the primitive's contract already allows blocking); #4887 deletes this
-    // legacy entry point once offload:* supersedes it.
-    aura::messaging::g_thread_pool_enqueue = [](std::function<void()> fn, int) { fn(); };
-
     // 2. Create thread pool for blocking operations
     // Issue #4880/#4881: the old per-fiber pool wiring is gone; the isolated
     // offload pool is rebuilt in #4881/#4882 and wired in #4883.
@@ -467,25 +457,11 @@ void run_serve_async(int num_workers) {
                 private_snapshot.evaluator().authoritative_workspace_source(), 0});
         aura::compiler::set_stats_registration_suppressed(prev_suppress);
     }
-    aura::messaging::g_eval_async = [eval_async_snapshot](const std::string& code) -> std::string {
-        auto job = [code](const aura::offload::SnapshotInput& in, std::stop_token st) {
-            aura::offload::Result out;
-            if (st.stop_requested())
-                return out;
-            out.artifact = aura::offload::eval_code(in, code);
-            return out;
-        };
-        auto sub = aura::offload::OffloadService::instance().submit(
-            std::move(job), eval_async_snapshot, aura::offload::OffloadClass::Interactive);
-        if (sub.status != aura::offload::SubmitStatus::Accepted)
-            return std::string{};
-        aura::offload::OffloadService::instance().await(sub.ticket);
-        if (auto* result = std::get_if<aura::offload::Result>(&sub.ticket->out))
-            return result->artifact;
-        if (auto* error = std::get_if<aura::offload::Error>(&sub.ticket->out))
-            return error->message;
-        return std::string{};
-    };
+    // Issue #4887: publish the OffloadEval adapter and install the private
+    // session source. The evaluator module only sees the header-only
+    // interface; the adapter owns the pool/CompilerService dependency.
+    aura::offload::set_offload_eval_source(eval_async_snapshot->source);
+    aura::messaging::g_offload_eval = &aura::offload::offload_eval_instance();
 
     // 2. Create scheduler with worker threads
     Scheduler sched(num_workers);

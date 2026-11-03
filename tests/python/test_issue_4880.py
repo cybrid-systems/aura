@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Issue #4880: --serve-async eval:async / thread_pool:enqueue results.
+"""Issue #4880: --serve-async eval:async results.
+
+Issue #4887 removed the legacy enqueue primitive; eval:async is the
+supported path.
+
 
 The old pool wiring treated the first eventfd wake (a stdin broadcast) as
 completion, so both primitives returned an empty value, and the pool then
@@ -24,11 +28,6 @@ from _aura_harness import AURA_BIN  # noqa: E402
 
 REQUESTS = [
     {"session": "default", "cmd": "exec", "code": '(eval:async "(+ 1 2)")'},
-    {
-        "session": "default",
-        "cmd": "exec",
-        "code": "(thread_pool:enqueue (lambda () (* 6 7)))",
-    },
     {
         "session": "default",
         "cmd": "exec",
@@ -65,15 +64,13 @@ class TestIssue4880(unittest.TestCase):
                 rows.append(json.loads(line))
         self.assertEqual(
             len(rows),
-            3,
+            len(REQUESTS),
             f"rows={rows!r} stdout={proc.stdout[-600:]!r} stderr={proc.stderr[-600:]!r}",
         )
         self.assertEqual(rows[0].get("status"), "ok")
         self.assertEqual(rows[0].get("value"), '"3"')
         self.assertEqual(rows[1].get("status"), "ok")
-        self.assertEqual(rows[1].get("value"), "42")
-        self.assertEqual(rows[2].get("status"), "ok")
-        self.assertEqual(rows[2].get("value"), '"3000000"')
+        self.assertEqual(rows[1].get("value"), '"3000000"')
         self.assertNotIn("Bad file descriptor", proc.stderr)
 
 

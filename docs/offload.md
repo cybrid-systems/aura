@@ -54,8 +54,8 @@ path once verification passes. This keeps **verify** and **commit** separate.
 `eval:async` now submits to the same pool (`--serve-async`) and evaluates the
 code string in a private `CompilerService` snapshot taken before the session.
 It therefore **cannot see session defines**; the non-fiber modes keep the
-synchronous `eval` fallback. `thread_pool:enqueue` is unchanged for now and is
-removed by the follow-up after `offload:*` lands.
+synchronous `eval` fallback. Issue #4887 removed the legacy enqueue
+primitive; use `eval:async` or `offload:*`.
 
 ## Metrics (#4884)
 
