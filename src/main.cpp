@@ -541,6 +541,50 @@ static std::size_t character_literal_length(std::string_view src, std::size_t i)
     return p - i;
 }
 
+// Issue #4892 (string_ref_walk_4320 bench regression): the #4865 form-by-form face used the
+// permissive (Allow) policy for EVERY top-level form, so a top-level `while`
+// / named-let loop that the IR used to keep (ForceSoa → ContinueIr) silently
+// dropped to the tree-walker (string_ref_walk_4320: 11ms → 40ms on CI).
+// Only a top-level VALUE define needs the walker escape hatch (#4865: a
+// fiber:spawn / agent value define that is not IR-lowerable); a procedure
+// define `(define (f ...) ...)` / `(define f (lambda ...))` and every plain
+// expression stay on ForceSoa exactly as before #4865.
+static bool is_value_define_form_4892(std::string_view f) {
+    auto ws = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
+    constexpr std::string_view kDef = "(define";
+    if (f.size() <= kDef.size() || f.substr(0, kDef.size()) != kDef || !ws(f[kDef.size()]))
+        return false;
+    std::size_t i = kDef.size();
+    while (i < f.size() && ws(f[i]))
+        ++i;
+    if (i >= f.size() || f[i] == '(')
+        return false; // (define (f args) ...) — procedure define
+    while (i < f.size() && !ws(f[i]) && f[i] != '(' && f[i] != ')')
+        ++i; // the bound symbol
+    while (i < f.size() && ws(f[i]))
+        ++i;
+    const std::string_view rest = f.substr(i);
+    auto starts = [&](std::string_view k) {
+        return rest.size() > k.size() && rest.substr(0, k.size()) == k &&
+               (ws(rest[k.size()]) || rest[k.size()] == '(');
+    };
+    if (starts("(lambda") || starts("(λ"))
+        return false; // (define f (lambda ...)) — procedure define
+    return true;
+}
+
+// Issue #4892 (string_ref_walk_4320 bench regression): textual guard for the Begin-wrap below. A
+// top-level form that creates a closure or a fiber / agent / scope task is
+// left on the unwrapped #4865 path.
+static bool form_builds_closure_or_task_4892(std::string_view f) {
+    for (std::string_view k : {"lambda", "\xCE\xBB" /* λ */, "fiber:", "orch:", "agent", "spawn",
+                               "thread", "future", "delay", "call/cc", "call-with"}) {
+        if (f.find(k) != std::string_view::npos)
+            return true;
+    }
+    return false;
+}
+
 // Issue #4865: split top-level forms so force-soa can evaluate them one at a
 // time. The define must run/register its evaluator value cell before a later
 // form's inline lambda is lowered; a single whole-file eval lowers every form
@@ -3912,8 +3956,9 @@ int main(int argc, char* argv[]) {
             // IR path cannot lower (fiber:spawn / agent forms) must still run
             // with correct semantics; block-forcing it would silently drop
             // the body instead of executing it.
-            aura::compiler::set_tree_walker_fallback_policy(
-                aura::compiler::TreeWalkerFallbackPolicy::Allow);
+            // Issue #4892 (string_ref_walk_4320 bench regression): Allow only for value defines
+            // (set per form below); everything else keeps ForceSoa so loops
+            // stay on the IR instead of the tree-walker.
             aura::ast::ASTArena parse_arena;
             auto parse_alloc = parse_arena.allocator();
             aura::ast::StringPool parse_pool(parse_alloc);
@@ -3926,7 +3971,33 @@ int main(int argc, char* argv[]) {
             std::string last_out;
             bool any_error = false;
             for (auto& form : split_top_level_forms_4865(all_input)) {
-                auto fr = cs.eval(form);
+                const bool value_define = is_value_define_form_4892(form);
+                aura::compiler::set_tree_walker_fallback_policy(
+                    value_define ? aura::compiler::TreeWalkerFallbackPolicy::Allow
+                                 : aura::compiler::TreeWalkerFallbackPolicy::ForceSoa);
+                // Issue #4892 (string_ref_walk_4320 bench regression): a lone top-level form whose
+                // root is a primitive call — `(display ...)`, `(while ...)` —
+                // takes the #2213 registered-prim-root walker shortcut on
+                // every face, so `(while (< i n) ...)` ran in the tree-walker
+                // (the old whole-program eval had a Begin root and never hit
+                // it). Evaluate non-define list forms as a one-child Begin so
+                // they get the same sequential IR routing as before #4865.
+                // Forms that build closures or touch fibers / agents keep the
+                // exact #4865 face (their bodies must see live top-level
+                // cells; the walker shortcut is what gives them that).
+                const bool wrap_begin =
+                    !value_define && !form.empty() && form[0] == '(' &&
+                    !form.starts_with("(define ") && !form.starts_with("(define\n") &&
+                    !form.starts_with("(define\t") && !form_builds_closure_or_task_4892(form);
+                constexpr std::string_view kBeginPrefix4892 = "(begin ";
+                auto fr = wrap_begin ? cs.eval(std::string(kBeginPrefix4892) + form + ")")
+                                     : cs.eval(form);
+                if (!fr && wrap_begin) {
+                    // Map the location back onto the unwrapped form text.
+                    auto& loc = fr.error().location;
+                    if (loc.line == 1 && loc.column > kBeginPrefix4892.size())
+                        loc.column -= static_cast<std::uint32_t>(kBeginPrefix4892.size());
+                }
                 if (!fr) {
                     // Issue #4460/#4467: a failing top-level form is a located
                     // diagnostic, not the end of the file — the whole-program
@@ -3942,6 +4013,8 @@ int main(int argc, char* argv[]) {
                 // form's value is printed, and a void last form prints
                 // nothing (an earlier non-void form must not leak out).
                 last_out = is_void(*fr) ? std::string{} : fmt_val(*fr, cs);
+                if (value_define)
+                    cs.sync_soft_export_cells_for_ir();
             }
             if (!last_out.empty())
                 std::println("{}", last_out);
