@@ -8,6 +8,7 @@
 #ifndef AURA_OFFLOAD_OFFLOAD_POOL_H
 #define AURA_OFFLOAD_OFFLOAD_POOL_H
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -69,15 +70,43 @@ struct Ticket {
 
 using Job = std::move_only_function<Result(const SnapshotInput&, std::stop_token)>;
 
+// Fixed-bucket latency histogram (microseconds). buckets[i] counts the
+// samples <= kLatencyBucketBoundsUs[i]; the final bucket is +Inf.
+inline constexpr std::size_t kLatencyBucketCount = 11;
+inline constexpr std::array<std::uint64_t, kLatencyBucketCount - 1> kLatencyBucketBoundsUs{
+    50, 100, 250, 500, 1000, 2500, 5000, 10000, 50000, 250000};
+
+struct LatencyHistogram {
+    std::array<std::uint64_t, kLatencyBucketCount> buckets{};
+    std::uint64_t count = 0;
+    std::uint64_t sum_us = 0;
+    std::uint64_t max_us = 0;
+};
+
+// Issue #4884: lock-free observability snapshot. All counters are relaxed
+// atomics in the pool; histograms use fixed buckets so recording never
+// allocates. Parent layers (orch:metrics / Prometheus) convert this struct.
 struct Stats {
     std::uint64_t submitted = 0;
     std::uint64_t rejected = 0;
+    std::uint64_t rejected_queue_full = 0;
+    std::uint64_t rejected_quota = 0;
+    std::uint64_t rejected_shutdown = 0;
     std::uint64_t completed_done = 0;
     std::uint64_t completed_failed = 0;
     std::uint64_t completed_cancelled = 0;
+    // #4883: completion dropped because generation/fiber no longer matches.
+    std::uint64_t stale_completion_dropped = 0;
+    // #4883: non-fiber caller executed the job synchronously.
+    std::uint64_t sync_fallback = 0;
     std::uint64_t queue_depth = 0;
     std::uint64_t running = 0;
+    std::uint64_t threads = 0;
     std::uint64_t queue_depth_peak = 0;
+    // Enqueue -> start, execution duration, and completion -> wake dispatch.
+    LatencyHistogram queue_wait_us;
+    LatencyHistogram exec_us;
+    LatencyHistogram wake_latency_us;
 };
 
 enum class SubmitStatus : std::uint8_t { Accepted, QueueFull, ShuttingDown };
@@ -119,12 +148,27 @@ public:
 
     [[nodiscard]] Stats stats() const;
 
+    // Issue #4884: integration hooks for #4883 callers. Both are cheap
+    // relaxed increments and safe to call from any thread.
+    void note_stale_completion_dropped() noexcept;
+    void note_sync_fallback() noexcept;
+
 private:
     struct Task {
         Job job;
         std::shared_ptr<const SnapshotInput> input;
         std::shared_ptr<Ticket> ticket;
         CompletionSink* sink = nullptr;
+    };
+
+    struct HistogramState {
+        std::array<std::atomic<std::uint64_t>, kLatencyBucketCount> buckets{};
+        std::atomic<std::uint64_t> count{0};
+        std::atomic<std::uint64_t> sum_us{0};
+        std::atomic<std::uint64_t> max_us{0};
+
+        void record(std::uint64_t us) noexcept;
+        [[nodiscard]] LatencyHistogram snapshot() const noexcept;
     };
 
     void worker_loop(std::stop_token st);
@@ -144,12 +188,20 @@ private:
 
     std::atomic<std::uint64_t> submitted_{0};
     std::atomic<std::uint64_t> rejected_{0};
+    std::atomic<std::uint64_t> rejected_queue_full_{0};
+    std::atomic<std::uint64_t> rejected_quota_{0};
+    std::atomic<std::uint64_t> rejected_shutdown_{0};
     std::atomic<std::uint64_t> completed_done_{0};
     std::atomic<std::uint64_t> completed_failed_{0};
     std::atomic<std::uint64_t> completed_cancelled_{0};
+    std::atomic<std::uint64_t> stale_completion_dropped_{0};
+    std::atomic<std::uint64_t> sync_fallback_{0};
     std::atomic<std::uint64_t> queue_depth_{0};
     std::atomic<std::uint64_t> running_stat_{0};
     std::atomic<std::uint64_t> queue_depth_peak_{0};
+    HistogramState queue_wait_hist_;
+    HistogramState exec_hist_;
+    HistogramState wake_hist_;
 };
 
 } // namespace aura::offload
