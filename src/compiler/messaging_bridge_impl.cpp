@@ -1,4 +1,5 @@
 #include "messaging_bridge.h"
+#include "stats_registry_suppress.h"
 
 // ── Messaging bridge globals (non-module .cpp for linker visibility) ──
 // These are set by CompilerService during construction and read by
@@ -43,12 +44,23 @@ aura::messaging::OffloadPollFn aura::messaging::g_offload_poll;
 aura::messaging::OffloadCancelFn aura::messaging::g_offload_cancel;
 namespace {
 thread_local bool t_offload_private_eval = false;
+// Issue #4887: private CompilerService construction (offload/snapshot) must
+// not republish the process-global stats impl table.
+thread_local bool t_stats_registration_suppressed = false;
 } // namespace
 bool aura::messaging::offload_private_eval_active() noexcept {
     return t_offload_private_eval;
 }
 void aura::messaging::set_offload_private_eval(bool on) noexcept {
     t_offload_private_eval = on;
+}
+bool aura::compiler::set_stats_registration_suppressed(bool suppress) {
+    const bool previous = t_stats_registration_suppressed;
+    t_stats_registration_suppressed = suppress;
+    return previous;
+}
+bool aura::compiler::stats_registration_suppressed() {
+    return t_stats_registration_suppressed;
 }
 aura::messaging::GetMetricsFn aura::messaging::g_get_scheduler_metrics;
 aura::messaging::ResetMetricsFn aura::messaging::g_reset_scheduler_metrics;

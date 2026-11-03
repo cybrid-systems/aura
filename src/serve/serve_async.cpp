@@ -4,6 +4,7 @@
 #include "offload/offload_service.h"
 #include "compiler/messaging_bridge.h"
 #include "compiler/pipeline_policy.hh"
+#include "compiler/stats_registry_suppress.h"
 #include "core/gc_hooks.h"
 #include "scheduler.h"
 #include "gc_coordinator.h"
@@ -42,9 +43,22 @@ namespace aura::serve {
 static Scheduler* g_metrics_scheduler = nullptr;
 
 std::string prometheus_scheduler_metrics() {
-    if (!g_metrics_scheduler)
-        return {};
-    return g_metrics_scheduler->metrics().to_prometheus();
+    std::string out;
+    if (g_metrics_scheduler)
+        out = g_metrics_scheduler->metrics().to_prometheus();
+    // Issue #4884: the offload pool is not part of the scheduler's metrics.
+    if (aura::offload::OffloadService::instance().active())
+        out += aura::offload::offload_metrics_prometheus();
+    return out;
+}
+
+static std::string with_offload_section(std::string json) {
+    const std::string section = aura::offload::offload_metrics_json();
+    const auto close = json.rfind('}');
+    if (close == std::string::npos)
+        return "{\"offload\":" + section + "}";
+    json.insert(close, ",\"offload\":" + section);
+    return json;
 }
 
 // ── Helpers ─────────────────────────────────────────────
@@ -443,11 +457,15 @@ void run_serve_async(int num_workers) {
     auto eval_async_snapshot =
         std::make_shared<const aura::offload::SnapshotInput>(aura::offload::SnapshotInput{});
     {
+        // Issue #4887: the snapshot service has its own evaluator; do not let
+        // its construction republish the global stats impl table.
+        const bool prev_suppress = aura::compiler::set_stats_registration_suppressed(true);
         aura::compiler::CompilerService private_snapshot;
         soft_session_prelude_4887(private_snapshot);
         eval_async_snapshot =
             std::make_shared<const aura::offload::SnapshotInput>(aura::offload::SnapshotInput{
                 private_snapshot.evaluator().authoritative_workspace_source(), 0});
+        aura::compiler::set_stats_registration_suppressed(prev_suppress);
     }
     aura::messaging::g_eval_async = [eval_async_snapshot](const std::string& code) -> std::string {
         auto job = [code](const aura::offload::SnapshotInput& in, std::stop_token st) {
@@ -594,7 +612,7 @@ void run_serve_async(int num_workers) {
     // Register scheduler metrics callback (Issue #32):
     // Agents can call (orch:metrics) to get real-time scheduler stats.
     aura::messaging::g_get_scheduler_metrics = [&sched]() -> std::string {
-        return sched.metrics().to_json();
+        return with_offload_section(sched.metrics().to_json());
     };
     aura::messaging::g_reset_scheduler_metrics = [&sched]() {
         // Issue #4827: zero counters in place; workers hold raw
@@ -1503,7 +1521,7 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
     };
 
     aura::messaging::g_get_scheduler_metrics = [&sched]() -> std::string {
-        return sched.metrics().to_json();
+        return with_offload_section(sched.metrics().to_json());
     };
     aura::messaging::g_reset_scheduler_metrics = [&sched]() { sched.metrics().reset_workers(); };
 
