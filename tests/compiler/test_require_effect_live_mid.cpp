@@ -454,7 +454,8 @@ static void ac3725_2_session_exit_denies_c_load() {
         CHECK(!is_error(inst), "3725 AC2: std/ffi installs under live session");
     }
     auto r = cs.eval("(c-load \"libc.so.6\")");
-    CHECK(r.has_value() && is_error(*r), "3725 AC2: c-load denies after session exit");
+    // Issue #4896: a Restricted deny can be a raised diagnostic (no value).
+    CHECK(!r.has_value() || is_error(*r), "3725 AC2: c-load denies after session exit");
     aura::core::provenance::set_multi_tenant_env_active(false);
 }
 
@@ -473,9 +474,9 @@ static void ac3725_3_revoke_denies_while_mask_stays() {
     CHECK(!is_error(inst), "3725 AC3: std/ffi installs");
     g_capability_registry().revoke(3725, "ffi-3725-dur");
     auto r = cs.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
-    CHECK(r.has_value() && is_error(*r), "3725 AC3: c-func denies after revoke");
+    CHECK(!r.has_value() || is_error(*r), "3725 AC3: c-func denies after revoke");
     auto pred = cs.eval("(c-opaque? 1)");
-    CHECK(pred.has_value() && is_error(*pred), "3725 AC3: c-* still registered, still gated");
+    CHECK(!pred.has_value() || is_error(*pred), "3725 AC3: c-* still registered, still gated");
     aura::core::provenance::set_multi_tenant_env_active(false);
 }
 
