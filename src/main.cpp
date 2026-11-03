@@ -720,12 +720,21 @@ static std::vector<TopLevelForm4865> split_top_level_forms_4865(std::string_view
             // so the parser reports it and no later-looking form runs.
             const std::size_t comment_start = i;
             i += 2;
+            int nest = 1; // R7RS: block comments nest
             bool closed = false;
             while (i < n) {
+                if (src[i] == '#' && i + 1 < n && src[i + 1] == '|') {
+                    i += 2;
+                    ++nest;
+                    continue;
+                }
                 if (src[i] == '|' && i + 1 < n && src[i + 1] == '#') {
                     i += 2;
-                    closed = true;
-                    break;
+                    if (--nest == 0) {
+                        closed = true;
+                        break;
+                    }
+                    continue;
                 }
                 if (src[i] == '\n') {
                     ++line;
@@ -3918,6 +3927,57 @@ int main(int argc, char* argv[]) {
                 i += lit - 1;
                 continue;
             }
+        }
+
+        // Issue #4875: a (nested) #| block comment |# is not code: a ( or "
+        // inside it must not move the paren depth. Keep it verbatim inside
+        // a form (the reader skips it there); between forms it is just a
+        // separator. An unterminated one stays in the chunk so the reader
+        // reports it at its own position and nothing after it runs.
+        if (c == '#' && i + 1 < all_input.size() && all_input[i + 1] == '|') {
+            std::size_t j = i + 2;
+            int nest = 1;
+            while (j < all_input.size() && nest > 0) {
+                if (all_input[j] == '#' && j + 1 < all_input.size() && all_input[j + 1] == '|') {
+                    j += 2;
+                    ++nest;
+                } else if (all_input[j] == '|' && j + 1 < all_input.size() &&
+                           all_input[j + 1] == '#') {
+                    j += 2;
+                    --nest;
+                } else {
+                    ++j;
+                }
+            }
+            if (nest > 0 && depth == 0) {
+                // Between forms: the reader reports it at its own position
+                // after the complete prefix ran (#4875 direct contract).
+                current.append(all_input, i, std::string::npos);
+                break;
+            }
+            if (nest > 0) {
+                // Inside a form: same contract as an unclosed list (#4866),
+                // but name the real cause instead of a missing ')'.
+                std::size_t line = 1, col = 1;
+                for (std::size_t k = 0; k < i; ++k) {
+                    if (all_input[k] == '\n') {
+                        ++line;
+                        col = 1;
+                    } else {
+                        ++col;
+                    }
+                }
+                std::println(std::cerr,
+                             "error: {}:{}: parse error: unterminated block comment '#|'", line,
+                             col);
+                return 1;
+            }
+            if (depth > 0)
+                current.append(all_input, i, j - i);
+            else
+                current += ' ';
+            i = j - 1;
+            continue;
         }
 
         if (c == ';') {
