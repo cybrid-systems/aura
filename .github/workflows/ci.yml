@@ -424,6 +424,12 @@ jobs:
         AURA_RUNTIME_DIR: ${{ github.workspace }}
         AURA_ISSUE_BUILD: all
         AURA_ISSUE_SHARD: ${{ matrix.shard }}/4
+        # Issue #4870 follow-up: the issue batch runs unit tests that toggle
+        # production defaults and start an orch scheduler. Without this the
+        # Scheduler start gate aborts ("multi-worker needs production
+        # bootstrap") before the member can run - seen as an isolated rc=134
+        # in test_failure_policy_bridge. All other CI test jobs already set it.
+        AURA_SANDBOX: "off"
         AURA_DEBUG_LEVEL: "1"
       run: python3 build.py ci-issues
 
