@@ -314,6 +314,59 @@ thread_local std::vector<aura::compiler::Evaluator::YieldBoundaryCheckpoint>
 thread_local void* aura::compiler::Evaluator::g_current_fiber_void;
 // Issue #4714 Row 2: the test pin for the production mint door (one entity).
 thread_local std::uint64_t aura::compiler::Evaluator::tls_fiber_mint_override_ = 0;
+
+// Issue #4854: per-fiber string slab release at body exit. A scheduler
+// body that minted a string claimed a slab batch (512+ shared slots the
+// reclaim skips while claimed) keyed by its fiber id; only fiber:spawn's
+// completion ever closed one, so each orch agent / scope / serve body
+// leaked its batch and its table entry. The current Fiber runs this hook
+// on its own stack right after the body returns.
+namespace {
+    std::mutex& fiber_slab_owner_mu() noexcept {
+        static auto* m = new std::mutex(); // leaked: fibers may exit during static teardown
+        return *m;
+    }
+    std::unordered_set<const void*>& fiber_slab_owner_live() noexcept {
+        static auto* s = new std::unordered_set<const void*>();
+        return *s;
+    }
+    void fiber_slab_body_exit_hook(void* ctx, std::uint64_t fiber_id) noexcept {
+        // Held across the drop so ~Evaluator cannot run concurrently with it.
+        // Lock order: owner mutex -> slab table -> string heap; the owner mutex
+        // is otherwise only taken by the ctor/dtor (outside both).
+        std::lock_guard<std::mutex> g(fiber_slab_owner_mu());
+        if (fiber_slab_owner_live().count(ctx) == 0)
+            return;
+        try {
+            static_cast<aura::compiler::Evaluator*>(ctx)->drop_fiber_slab(fiber_id);
+        } catch (...) {
+            // [SILENCE-PRIM-#4854] Allocation failure in the tail release: the slots stay claimed
+            // (the pre-#4854 behaviour), never an escape from the trampoline.
+        }
+    }
+} // namespace
+
+void aura::compiler::Evaluator::arm_fiber_slab_body_exit(std::uint64_t fiber_id) noexcept {
+    auto* f = aura::serve::g_current_fiber;
+    if (f == nullptr || f->id() != fiber_id)
+        return;
+    f->add_body_exit_hook(&fiber_slab_body_exit_hook, static_cast<void*>(this));
+}
+
+void aura::compiler::Evaluator::fiber_slab_owner_register() noexcept {
+    try {
+        std::lock_guard<std::mutex> g(fiber_slab_owner_mu());
+        fiber_slab_owner_live().insert(static_cast<const void*>(this));
+    } catch (...) {
+        // [SILENCE-PRIM-#4854] OOM: unregistered owners are never touched by
+        // the body-exit hook, so the slab stays claimed (pre-#4854 shape).
+    }
+}
+
+void aura::compiler::Evaluator::fiber_slab_owner_unregister() noexcept {
+    std::lock_guard<std::mutex> g(fiber_slab_owner_mu());
+    fiber_slab_owner_live().erase(static_cast<const void*>(this));
+}
 // Issue #1403: thread-local stack of Evaluator* hooks (replaces the
 // previous thread_local Evaluator* pointer). When fiber:spawn
 // reuses a worker thread for multiple fibers, each fiber's RAII

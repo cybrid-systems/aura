@@ -11656,8 +11656,17 @@ public:
             tls.owner = this;
             tls.fiber_id = fiber_id;
             tls.epoch = epoch;
-            tls.arena = &fiber_slab_arenas_.get_or_create(
-                fiber_id, string_heap_, &fiber_slab_stamp_thunk, &fiber_slab_unstamp_thunk, this);
+            bool created = false;
+            tls.arena =
+                &fiber_slab_arenas_.get_or_create(fiber_id, string_heap_, &fiber_slab_stamp_thunk,
+                                                  &fiber_slab_unstamp_thunk, this, &created);
+            // Issue #4854: only fiber:spawn's completion published a slab, so
+            // every other scheduler body (orch agent / scope / workflow,
+            // serve-async request) left its claimed batch -- slots the
+            // reclaim skips forever -- and its arena in the table. Release
+            // it when the body exits, whatever ran it.
+            if (created)
+                arm_fiber_slab_body_exit(fiber_id);
         }
         // A tenant switch mid-batch keeps #4428 exact: the batch's slots are
         // stamped with the claiming tenant, so another tenant does not
@@ -11689,6 +11698,15 @@ public:
         if (owned)
             owned->drop();
     }
+    // Issue #4854: register drop_fiber_slab(fiber_id) as a body-exit hook
+    // of the current scheduler fiber (no-op off a scheduler fiber or when
+    // fiber_id is not the current fiber -- a test override id). The hook
+    // only touches an Evaluator that is still alive (ctor/dtor keep a
+    // process-wide live set), so a nested Evaluator destroyed inside a
+    // body is never dereferenced at that body's exit.
+    void arm_fiber_slab_body_exit(std::uint64_t fiber_id) noexcept;
+    void fiber_slab_owner_register() noexcept;
+    void fiber_slab_owner_unregister() noexcept;
     [[nodiscard]] std::size_t fiber_slab_count() const { return fiber_slab_arenas_.size(); }
     [[nodiscard]] std::uint64_t fiber_slab_claims() const noexcept {
         return fiber_arena_stats::slab_claims().load(std::memory_order_relaxed);

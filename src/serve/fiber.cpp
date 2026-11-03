@@ -2158,6 +2158,9 @@ void Fiber::trampoline(uint32_t /*high*/, uint32_t /*low*/) {
         // dropped TLS during the body (ubsan-smoke member-call-on-null).
         if (!g_current_fiber)
             g_current_fiber = self;
+        // Issue #4854: release body-scoped state (per-fiber string slabs)
+        // while still on this fiber, before it is observable as Done.
+        self->run_body_exit_hooks();
         g_current_fiber->set_state(FiberState::Done);
         // Issue #2397: if hard-reclaimed while body was still
         // executing, pair still-running gauge + bump retired.
@@ -2167,6 +2170,33 @@ void Fiber::trampoline(uint32_t /*high*/, uint32_t /*low*/) {
     // unconditional — a rejected yield here fell off the ucontext entry
     // (uc_link == nullptr) and exited the process mid-join.
     Fiber::yield_completion();
+}
+
+// Issue #4854: body-exit hooks (see fiber.h). Only this fiber's own stack
+// touches the vector, so no lock.
+void Fiber::add_body_exit_hook(BodyExitHook fn, void* ctx) noexcept {
+    if (!fn)
+        return;
+    for (const auto& h : body_exit_hooks_) {
+        if (h.first == fn && h.second == ctx)
+            return;
+    }
+    try {
+        body_exit_hooks_.emplace_back(fn, ctx);
+    } catch (...) {
+        // OOM: the hook's owner still reclaims its state on teardown.
+    }
+}
+
+void Fiber::run_body_exit_hooks() noexcept {
+    // A hook may (re)register while running; swap and loop until stable.
+    for (int round = 0; round < 4 && !body_exit_hooks_.empty(); ++round) {
+        std::vector<std::pair<BodyExitHook, void*>> hooks;
+        hooks.swap(body_exit_hooks_);
+        for (const auto& h : hooks)
+            h.first(h.second, id_);
+    }
+    body_exit_hooks_.clear();
 }
 
 // Issue #4231: process-wide contained body-exception total (tests /

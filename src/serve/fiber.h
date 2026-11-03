@@ -14,6 +14,7 @@
 #include <optional>
 #include <span>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 // Issue #438: C-linkage forward declaration of the
@@ -936,6 +937,20 @@ public:
     // is a no-op on subsequent calls. Thread-safe: registrations from
     // the body's worker thread; release from the joiner thread.
     void register_orphan_root_release(std::function<void()> drop) noexcept;
+    // Issue #4854: body-exit hooks. Runtime state that is keyed by this
+    // fiber's id and only meaningful while its body runs (the per-fiber
+    // string slab of every Evaluator the body minted into) registers a
+    // release here; Fiber::trampoline runs the hooks once, on this fiber,
+    // right after the body returns (or its exception is contained), and
+    // clears them. A fiber whose body never returns keeps them unrun (the
+    // owner reclaims its own state on teardown). Registration and the run
+    // happen only on this fiber's own stack, so no lock is needed. A
+    // (fn, ctx) pair registered twice runs once.
+    using BodyExitHook = void (*)(void* ctx, std::uint64_t fiber_id) noexcept;
+    void add_body_exit_hook(BodyExitHook fn, void* ctx) noexcept;
+    [[nodiscard]] std::size_t body_exit_hook_count() const noexcept {
+        return body_exit_hooks_.size();
+    }
     // Issue #3438 / #4031: outermost-Guard linear-keep management (see
     // private members below). Set at production Guard outermost enter;
     // consumed (take = move + disarm) by the scoped drain faces; cleared
@@ -1679,6 +1694,9 @@ private:
     // production (scheduler teardown ensures fibers stop first).
     mutable std::mutex orphan_roots_mtx_;
     std::vector<std::function<void()>> orphan_root_releases_;
+    // Issue #4854: see add_body_exit_hook. Owned by the body's own stack.
+    std::vector<std::pair<BodyExitHook, void*>> body_exit_hooks_;
+    void run_body_exit_hooks() noexcept;
 
     // Issue #3438: outermost-Guard linear-keep snapshot (siblings' live
     // linear_roots at production Guard enter). Set by MutationBoundaryGuard
