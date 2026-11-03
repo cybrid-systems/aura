@@ -4156,6 +4156,20 @@ int main(int argc, char* argv[]) {
                 constexpr std::string_view kBeginPrefix4892 = "(begin ";
                 auto fr = wrap_begin ? cs.eval(std::string(kBeginPrefix4892) + form + ")")
                                      : cs.eval(form);
+                // Issue #4896: a Restricted dispatch deny that came back as
+                // the form's error VALUE (top-level `(set-car! q 5)`) was
+                // dropped here as an ordinary result: no diagnostic, rc=0.
+                // The whole-program face raises it; do the same.
+                if (fr && aura::compiler::types::is_error(*fr) &&
+                    !aura::compiler::types::is_string(*fr)) {
+                    auto msg = cs.evaluator().soft_error_message(*fr);
+                    if (msg.starts_with("effect-denied:")) {
+                        aura::diag::Diagnostic d{aura::diag::ErrorKind::TypeError, std::move(msg)};
+                        if (auto el = cs.evaluator().error_location(*fr))
+                            d.location = *el;
+                        fr = std::unexpected(std::move(d));
+                    }
+                }
                 if (!fr && wrap_begin) {
                     // Map the location back onto the unwrapped form text.
                     auto& loc = fr.error().location;
