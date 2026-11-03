@@ -3713,6 +3713,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                  make_int(static_cast<std::int64_t>(aura_per_fiber_stack_pool_growth_warnings()))},
                 {"restamps",
                  make_int(static_cast<std::int64_t>(aura_per_fiber_stack_pool_restamps()))},
+                // Issue #4890: stacks held by fibers right now (gauge).
+                {"live-stacks", make_int(aura_per_fiber_stack_pool_live_stacks())},
                 {"schema", make_int(652)},
             };
             return build_hash(kv);

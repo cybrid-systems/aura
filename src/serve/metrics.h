@@ -453,6 +453,9 @@ struct PerFiberStackPoolStats {
     std::atomic<std::uint64_t> size_mismatches_caught{0};
     std::atomic<std::uint64_t> growth_warnings{0};
     std::atomic<std::uint64_t> restamps{0};
+    // Issue #4890: stacks currently handed out to fibers (acquire - release).
+    // Gauge, not a counter: a Done fiber must not keep one.
+    std::atomic<std::int64_t> live_stacks{0};
 };
 
 inline PerFiberStackPoolStats& per_fiber_stack_pool_stats() {
@@ -479,6 +482,7 @@ std::uint64_t aura_per_fiber_stack_pool_churn_reductions();
 std::uint64_t aura_per_fiber_stack_pool_size_mismatches();
 std::uint64_t aura_per_fiber_stack_pool_growth_warnings();
 std::uint64_t aura_per_fiber_stack_pool_restamps();
+std::int64_t aura_per_fiber_stack_pool_live_stacks();
 }
 
 #endif // AURA_SERVE_METRICS_H

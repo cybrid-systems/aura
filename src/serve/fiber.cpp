@@ -1504,6 +1504,12 @@ void Fiber::release_done_resources() noexcept {
     fiber_ctx_ = nullptr;
     unmap_stack();
     func_ = nullptr;
+    // Issue #4890: the body has returned and resume() is back on the
+    // worker, so nothing pushes a mutation / yield checkpoint for this fiber
+    // again. Return both stacks to their pools now instead of at ~Fiber: a
+    // Done agent that is never joined kept ~20 KB of checkpoint stack (the
+    // lazily reserved MutationCheckpoint vector) until its handle was reaped.
+    release_checkpoint_storage();
     done_release_state_.store(2, std::memory_order_release);
 }
 
@@ -1583,23 +1589,25 @@ Fiber::~Fiber() {
     // casts it back. The destructor just frees the void*
     // — the Evaluator accessor is the one that knows the
     // actual vector type.
-    if (void* p = mutation_stack_storage_.load(std::memory_order_acquire)) {
-        // The Evaluator accessor lazy-allocates; it owns the
-        // pointer. But for cleanup, we cast to the right type
-        // and delete. This requires the Evaluator's type to
-        // be visible. Use a function pointer that the
-        // Evaluator registers at startup to do the cleanup
-        // (avoids a circular include).
-        if (g_fiber_storage_deleter_) {
+    // The Evaluator accessor lazy-allocates; it owns the pointer. Cleanup
+    // goes through the function pointer the Evaluator registers at startup
+    // (avoids a circular include). Issue #4890: idempotent with
+    // release_done_resources, which already returned it for a Done body.
+    release_checkpoint_storage();
+}
+
+// Issue #4890: hand the per-fiber mutation / yield checkpoint stacks back to
+// their pools. The pointer is swapped out first, so a late reader sees
+// nullptr (depth 0) instead of a pooled vector, and a second caller is a
+// no-op.
+void Fiber::release_checkpoint_storage() noexcept {
+    if (void* p = mutation_stack_storage_.exchange(nullptr, std::memory_order_acq_rel)) {
+        if (g_fiber_storage_deleter_)
             g_fiber_storage_deleter_(p);
-        }
-        mutation_stack_storage_.store(nullptr, std::memory_order_release);
     }
-    if (void* p = yield_checkpoint_storage_.load(std::memory_order_acquire)) {
-        if (g_fiber_yield_checkpoint_deleter_) {
+    if (void* p = yield_checkpoint_storage_.exchange(nullptr, std::memory_order_acq_rel)) {
+        if (g_fiber_yield_checkpoint_deleter_)
             g_fiber_yield_checkpoint_deleter_(p);
-        }
-        yield_checkpoint_storage_.store(nullptr, std::memory_order_release);
     }
 }
 
