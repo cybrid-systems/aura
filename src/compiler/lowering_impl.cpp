@@ -1512,11 +1512,6 @@ static std::uint32_t lower_flat_expr(
             for (auto& fv : free_set) {
                 if (!state.self_name.empty() && fv == state.self_name)
                     continue;
-                // Issue #4865: a top-level value define must stay a live
-                // cell reference (TopCellLoad / TopCellStore); capturing
-                // it by value made set! write the lambda's copy.
-                if (state.value_cells && state.value_cells->find(fv) != state.value_cells->end())
-                    continue;
                 bool in_scope = false;
                 for (auto it = state.scopes.rbegin(); it != state.scopes.rend(); ++it) {
                     if (it->find(fv) != it->end()) {
@@ -1524,8 +1519,22 @@ static std::uint32_t lower_flat_expr(
                         break;
                     }
                 }
-                if (in_scope)
+                // Issue #4764: a nested define (an internal define inside a
+                // lambda) is pre-bound as a Cell in the enclosing scope. It
+                // must be captured from that cell even when the workspace
+                // value-cell sync also knows its name from a leaked top_env
+                // binding: otherwise the self-call lowered to a TopCellLoad
+                // of the stale tree-walker closure and failed with
+                // "eval_flat: invalid closure".
+                if (in_scope) {
                     free_vars.push_back(fv);
+                    continue;
+                }
+                // Issue #4865: a top-level value define must stay a live
+                // cell reference (TopCellLoad / TopCellStore); capturing
+                // it by value made set! write the lambda's copy.
+                if (state.value_cells && state.value_cells->find(fv) != state.value_cells->end())
+                    continue;
             }
 
             // Create new IR function.
