@@ -74,7 +74,8 @@ OffloadPool::OffloadPool()
     : OffloadPool(Config{}) {}
 
 OffloadPool::OffloadPool(Config cfg)
-    : cfg_(cfg) {
+    : cfg_(cfg)
+    , quota_(cfg_.quota) {
     if (cfg_.threads == 0)
         cfg_.threads = default_threads();
     cfg_.threads = read_env_size("AURA_OFFLOAD_THREADS", cfg_.threads);
@@ -101,11 +102,15 @@ SubmitStatus OffloadPool::try_submit(Job job, std::shared_ptr<const SnapshotInpu
     if (static_cast<std::size_t>(klass) >= kOffloadClassCount)
         klass = OffloadClass::Compile;
     const auto ci = class_index(klass);
+    const auto tenant = core::resource_quota::current_quota_tenant();
     std::lock_guard<std::mutex> lock(mutex_);
+    ticket->klass = klass;
+    ticket->tenant = tenant;
     if (!accepting_) {
         rejected_.fetch_add(1, std::memory_order_relaxed);
         rejected_shutdown_.fetch_add(1, std::memory_order_relaxed);
         class_rejected_[ci].fetch_add(1, std::memory_order_relaxed);
+        note_tenant_reject_locked(tenant);
         ticket->status.store(Status::Rejected, std::memory_order_release);
         return SubmitStatus::ShuttingDown;
     }
@@ -113,15 +118,25 @@ SubmitStatus OffloadPool::try_submit(Job job, std::shared_ptr<const SnapshotInpu
         rejected_.fetch_add(1, std::memory_order_relaxed);
         rejected_queue_full_.fetch_add(1, std::memory_order_relaxed);
         class_rejected_[ci].fetch_add(1, std::memory_order_relaxed);
+        note_tenant_reject_locked(tenant);
         ticket->status.store(Status::Rejected, std::memory_order_release);
         return SubmitStatus::QueueFull;
     }
-    ticket->klass = klass;
+    if (auto quota_err = quota_.try_acquire(tenant)) {
+        rejected_.fetch_add(1, std::memory_order_relaxed);
+        rejected_quota_.fetch_add(1, std::memory_order_relaxed);
+        class_rejected_[ci].fetch_add(1, std::memory_order_relaxed);
+        note_tenant_reject_locked(tenant);
+        ticket->out = Error{quota_err->message};
+        ticket->status.store(Status::Rejected, std::memory_order_release);
+        return SubmitStatus::QuotaExceeded;
+    }
     ticket->queued_at = std::chrono::steady_clock::now();
     queues_[ci].push_back(Task{std::move(job), std::move(input), std::move(ticket), sink, klass});
     ++queued_total_;
     submitted_.fetch_add(1, std::memory_order_relaxed);
     class_submitted_[ci].fetch_add(1, std::memory_order_relaxed);
+    note_tenant_submit_locked(tenant);
     const auto depth = static_cast<std::uint64_t>(queued_total_);
     queue_depth_.store(depth, std::memory_order_relaxed);
     auto peak = queue_depth_peak_.load(std::memory_order_relaxed);
@@ -140,8 +155,10 @@ SubmitStatus OffloadPool::try_submit(Job job, std::shared_ptr<const SnapshotInpu
 
 void OffloadPool::finish(const Task& task, Status status, std::string error) {
     const bool ran = task.ticket->status.load(std::memory_order_relaxed) == Status::Running;
+    std::uint64_t exec_us = 0;
     if (ran) {
-        exec_hist_.record(us_between(task.ticket->started_at, std::chrono::steady_clock::now()));
+        exec_us = us_between(task.ticket->started_at, std::chrono::steady_clock::now());
+        exec_hist_.record(exec_us);
     }
     std::chrono::steady_clock::time_point completed_at;
     {
@@ -157,7 +174,11 @@ void OffloadPool::finish(const Task& task, Status status, std::string error) {
                 --running_;
             running_stat_.store(running_, std::memory_order_relaxed);
         }
+        note_tenant_finish_locked(task.ticket->tenant, status);
     }
+    // Issue #4885: exactly one release per accepted task, on every terminal
+    // status (Done / Failed / Cancelled, including shutdown drain).
+    quota_.release(task.ticket->tenant, ran ? exec_us : 0);
     const auto ci = class_index(task.klass);
     switch (status) {
         case Status::Done:
@@ -183,6 +204,59 @@ void OffloadPool::finish(const Task& task, Status status, std::string error) {
         task.sink->on_complete(task.ticket);
     }
     cv_.notify_all();
+}
+
+OffloadPool::TenantCounter* OffloadPool::tenant_counter_locked(std::uint64_t tenant,
+                                                               bool create) noexcept {
+    if (tenant == 0)
+        return nullptr;
+    for (std::size_t i = 0; i < tenant_counter_count_; ++i) {
+        if (tenant_counters_[i].tenant == tenant)
+            return &tenant_counters_[i];
+    }
+    if (!create || tenant_counter_count_ >= kMaxTenantStats)
+        return nullptr;
+    auto& slot = tenant_counters_[tenant_counter_count_++];
+    slot.tenant = tenant;
+    return &slot;
+}
+
+void OffloadPool::note_tenant_submit_locked(std::uint64_t tenant) noexcept {
+    if (auto* counter = tenant_counter_locked(tenant, /*create=*/true)) {
+        counter->submitted.fetch_add(1, std::memory_order_relaxed);
+        ++counter->inflight;
+        auto peak = counter->inflight_peak.load(std::memory_order_relaxed);
+        while (counter->inflight > peak &&
+               !counter->inflight_peak.compare_exchange_weak(peak, counter->inflight,
+                                                             std::memory_order_relaxed)) {
+        }
+    }
+}
+
+void OffloadPool::note_tenant_reject_locked(std::uint64_t tenant) noexcept {
+    if (auto* counter = tenant_counter_locked(tenant, /*create=*/true))
+        counter->rejected.fetch_add(1, std::memory_order_relaxed);
+}
+
+void OffloadPool::note_tenant_finish_locked(std::uint64_t tenant, Status status) noexcept {
+    auto* counter = tenant_counter_locked(tenant, /*create=*/false);
+    if (!counter)
+        return;
+    if (counter->inflight > 0)
+        --counter->inflight;
+    switch (status) {
+        case Status::Done:
+            counter->completed_done.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case Status::Failed:
+            counter->completed_failed.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case Status::Cancelled:
+            counter->completed_cancelled.fetch_add(1, std::memory_order_relaxed);
+            break;
+        default:
+            break;
+    }
 }
 
 bool OffloadPool::pick_task_locked(Task& out) {
@@ -283,6 +357,7 @@ void OffloadPool::shutdown() {
 
 Stats OffloadPool::stats() const {
     Stats out;
+    std::lock_guard<std::mutex> lock(mutex_);
     out.submitted = submitted_.load(std::memory_order_relaxed);
     out.rejected = rejected_.load(std::memory_order_relaxed);
     out.rejected_queue_full = rejected_queue_full_.load(std::memory_order_relaxed);
@@ -309,6 +384,18 @@ Stats OffloadPool::stats() const {
         cs.completed_cancelled = class_completed_cancelled_[i].load(std::memory_order_relaxed);
         cs.queue_depth = class_queue_depth_[i].load(std::memory_order_relaxed);
         cs.queue_depth_peak = class_queue_depth_peak_[i].load(std::memory_order_relaxed);
+    }
+    out.by_tenant_count = tenant_counter_count_;
+    for (std::size_t i = 0; i < tenant_counter_count_; ++i) {
+        const auto& counter = tenant_counters_[i];
+        auto& ts = out.by_tenant[i];
+        ts.tenant = counter.tenant;
+        ts.submitted = counter.submitted.load(std::memory_order_relaxed);
+        ts.rejected = counter.rejected.load(std::memory_order_relaxed);
+        ts.completed_done = counter.completed_done.load(std::memory_order_relaxed);
+        ts.completed_failed = counter.completed_failed.load(std::memory_order_relaxed);
+        ts.completed_cancelled = counter.completed_cancelled.load(std::memory_order_relaxed);
+        ts.inflight_peak = counter.inflight_peak.load(std::memory_order_relaxed);
     }
     return out;
 }

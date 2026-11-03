@@ -107,7 +107,9 @@ enum class Dimension : std::uint8_t {
     Fibers = 1,
     TimeUs = 2,
     Mutations = 3,
-    Count = 4
+    // Issue #4885: queued + running offload tasks per tenant.
+    OffloadInflight = 4,
+    Count = 5
 };
 
 // Lightweight error (header-safe; convert to AuraError at module boundary).
@@ -127,12 +129,14 @@ struct ResourceQuota {
     std::atomic<std::uint64_t> fibers_limit{0};
     std::atomic<std::uint64_t> time_us_limit{0};
     std::atomic<std::uint64_t> mutation_limit{0};
+    std::atomic<std::uint64_t> offload_inflight_limit{0};
 
     // Usage (consumed amounts).
     std::atomic<std::uint64_t> memory_used{0};
     std::atomic<std::uint64_t> fibers_used{0};
     std::atomic<std::uint64_t> time_us_used{0};
     std::atomic<std::uint64_t> mutation_used{0};
+    std::atomic<std::uint64_t> offload_inflight_used{0};
 
     // Stats
     std::atomic<std::uint64_t> checks_total{0};
@@ -168,6 +172,9 @@ struct ResourceQuota {
             case Dimension::Mutations:
                 mutation_limit.store(limit, std::memory_order_relaxed);
                 break;
+            case Dimension::OffloadInflight:
+                offload_inflight_limit.store(limit, std::memory_order_relaxed);
+                break;
             default:
                 break;
         }
@@ -183,6 +190,8 @@ struct ResourceQuota {
                 return time_us_limit.load(std::memory_order_relaxed);
             case Dimension::Mutations:
                 return mutation_limit.load(std::memory_order_relaxed);
+            case Dimension::OffloadInflight:
+                return offload_inflight_limit.load(std::memory_order_relaxed);
             default:
                 return 0;
         }
@@ -198,6 +207,8 @@ struct ResourceQuota {
                 return time_us_used.load(std::memory_order_relaxed);
             case Dimension::Mutations:
                 return mutation_used.load(std::memory_order_relaxed);
+            case Dimension::OffloadInflight:
+                return offload_inflight_used.load(std::memory_order_relaxed);
             default:
                 return 0;
         }
@@ -394,6 +405,7 @@ struct ResourceQuota {
         fibers_used.store(0, std::memory_order_relaxed);
         time_us_used.store(0, std::memory_order_relaxed);
         mutation_used.store(0, std::memory_order_relaxed);
+        offload_inflight_used.store(0, std::memory_order_relaxed);
         std::lock_guard<std::mutex> lock(tenant_mtx_);
         for (auto& [id, slot] : tenant_slots_) {
             (void)id;
@@ -461,6 +473,8 @@ struct ResourceQuota {
                 return "time_us";
             case Dimension::Mutations:
                 return "mutations";
+            case Dimension::OffloadInflight:
+                return "offload_inflight";
             default:
                 return "unknown";
         }
@@ -510,7 +524,7 @@ struct ResourceQuota {
     }
 
 private:
-    static constexpr std::size_t kDimCount = 4;
+    static constexpr std::size_t kDimCount = 5;
 
     struct TenantSlot {
         std::array<std::atomic<std::uint64_t>, kDimCount> used{};
@@ -659,6 +673,8 @@ private:
                 return time_us_used;
             case Dimension::Mutations:
                 return mutation_used;
+            case Dimension::OffloadInflight:
+                return offload_inflight_used;
             default:
                 return memory_used;
         }
@@ -766,6 +782,7 @@ inline void reset_process_resource_quota_for_test() noexcept {
     q.set_limit(Dimension::Fibers, 0);
     q.set_limit(Dimension::TimeUs, 0);
     q.set_limit(Dimension::Mutations, 0);
+    q.set_limit(Dimension::OffloadInflight, 0);
     q.reset_usage();
     q.reset_stats();
     q.clear_tenant_quotas();
