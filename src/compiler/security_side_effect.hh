@@ -93,7 +93,13 @@ infer_required_effects_from_name(std::string_view name) noexcept {
     // / (hash-remove!) / (vector-set!) and their IR/JIT lowerings write
     // process-global tables with zero Mutate grant under Restricted+MT.
     // Hash-ref (read) stays kEffectNone.
-    if (name == "hash-set!" || name == "hash-remove!" || name == "vector-set!")
+    // Issue #4874: vector-fill! is the same in-place vector write as
+    // vector-set! (evaluator_primitives_vector.cpp). It was not in this list,
+    // so dispatch inferred kEffectNone and the body's inrange tenant consult
+    // (which only checks ownership) let a Restricted principal rewrite every
+    // slot with no Mutate grant. Sibling of #3720 / #4036.
+    if (name == "hash-set!" || name == "hash-remove!" || name == "vector-set!" ||
+        name == "vector-fill!")
         return kEffectMutate;
     // Issue #4036: sibling mutators resolved to kEffectNone and skipped the
     // dispatch choke entirely — zero-cap write. set-car!/set-cdr! reach the
