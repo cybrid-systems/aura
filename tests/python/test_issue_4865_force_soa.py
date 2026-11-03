@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "tests" / "python"))
 from _aura_harness import AURA_BIN  # noqa: E402
 
 
-def _run(source: str, strict: str = "force-soa", timeout: float = 60.0):
+def _run(source: str, strict: str = "force-soa", timeout: float = 60.0, direct: bool = False):
     with tempfile.NamedTemporaryFile("w", suffix=".aura", delete=False) as f:
         f.write(source)
         path = f.name
@@ -28,8 +28,12 @@ def _run(source: str, strict: str = "force-soa", timeout: float = 60.0):
     env["AURA_SANDBOX"] = "off"
     env["AURA_PIPELINE_STRICT"] = strict
     try:
+        argv = [str(AURA_BIN)]
+        if not direct:
+            argv.append("--load")
+        argv.append(path)
         return subprocess.run(
-            [str(AURA_BIN), "--load", path],
+            argv,
             capture_output=True,
             text=True,
             env=env,
@@ -85,3 +89,35 @@ class TestForceSoaCells4865(unittest.TestCase):
         self.assertIn("status ok", p.stdout)
         self.assertIn("k1-ran", p.stdout)
         self.assertIn("(outer-status ok)", p.stdout)
+
+    def test_direct_run_force_soa_side_effects(self) -> None:
+        src = """
+(define c 0)
+(define f (fiber:spawn (lambda () (set! c 11) 1)))
+(define jr (fiber:join f))
+(display (list 'fiber-sep jr c)) (newline)
+(define out (channel:create 4))
+(define f2 (fiber:spawn (lambda () (channel:send out 'x) 2)))
+(define jr2 (fiber:join f2))
+(display (list 'chan-sep jr2 (channel:try-recv out))) (newline)
+"""
+        p = _run(src, direct=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stdout.strip().splitlines(), ["(fiber-sep 1 11)", "(chan-sep 2 x)"])
+
+    def test_direct_run_4842_scope_in_agent(self) -> None:
+        src = """
+(define out (channel:create 8))
+(orch:spawn-agent "par" (lambda ()
+  (orch:scope-spawn "k1" (lambda () (channel:send out 'k1-ran) 10))
+  (let* ((t0 (monotonic-ms)) (r (orch:scope-join-all :timeout-ms 1000)))
+    (channel:send out (list 'inner-ms (- (monotonic-ms) t0) 'status (hash-ref r "status"))))))
+(define jp (orch:agent-join "par" :timeout-ms 4000))
+(display (list (channel:try-recv out) (channel:try-recv out))) (newline)
+(display (list 'outer-status (hash-ref jp "status"))) (newline)
+"""
+        p = _run(src, direct=True, timeout=90)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("k1-ran", p.stdout)
+        self.assertIn("(outer-status ok)", p.stdout)
+        self.assertNotIn("status timeout", p.stdout)
