@@ -7,7 +7,6 @@
 #include "gc_coordinator.h"
 #include "fiber.h"
 #include "mailbox.h"
-#include "thread_pool.h"
 #include "aura_platform.h"
 #include "runtime_production_abi.h"
 
@@ -68,6 +67,7 @@ static std::string fmt_val(const EvalValue& v, aura::compiler::CompilerService& 
         &cs.evaluator().primitives(), cs.evaluator().keyword_table(), cs.evaluator().vector_heap(),
         cs.evaluator().symbol_table());
 }
+
 
 namespace {
 
@@ -412,69 +412,26 @@ void run_serve_async(int num_workers) {
         aura::serve::Fiber::yield();
     };
 
-    // 2. Create thread pool for blocking operations
-    // Background threads handle compilation, type-checking, file I/O,
-    // and any other blocking tasks without blocking the event loop.
-    // Pool size = num CPUs is a reasonable default.
-    unsigned pool_size = std::thread::hardware_concurrency();
-    if (pool_size < 2)
-        pool_size = 2;
-    if (pool_size > 8)
-        pool_size = 8;
-    static aura::serve::ThreadPool s_thread_pool(pool_size);
-
     // Register thread pool enqueue callback:
-    // Injects the current fiber's eventfd as the wakeup mechanism.
-    aura::messaging::g_thread_pool_enqueue = [](std::function<void()> fn, int) {
-        auto* fiber = aura::serve::g_current_fiber;
-        if (!fiber)
-            return;
-        int evfd = fiber->eventfd();
-        if (evfd < 0)
-            return;
-        s_thread_pool.enqueue(std::move(fn), evfd);
-    };
+    // Issue #4880: wait for actual completion. The fiber eventfd is a shared
+    // wake channel (stdin broadcast, joiner, timed park), so a single wake is
+    // not completion; the task publishes OffloadWaitState::done instead.
+    // A closure belongs to the session Evaluator, so it cannot run on a pool
+    // thread without racing the session heap. Run it on the calling fiber
+    // (the primitive's contract already allows blocking); #4887 deletes this
+    // legacy entry point once offload:* supersedes it.
+    aura::messaging::g_thread_pool_enqueue = [](std::function<void()> fn, int) { fn(); };
 
-    // Register async eval callback: evaluates code on the thread pool.
-    // Returns the result as a JSON-escaped string. Uses the current
-    // session's CompilerService (only safe because the service's evaluator
-    // state is captured in the closure and executed FIFO on the pool).
-    aura::messaging::g_eval_async = [](const std::string& code) -> std::string {
-        auto* fiber = aura::serve::g_current_fiber;
-        if (!fiber)
-            return "";
-        auto evfd = fiber->eventfd();
-        if (evfd < 0)
-            return "";
-        // Capture current compiler service for eval
-        auto* svc = static_cast<aura::compiler::CompilerService*>(
-            aura::messaging::g_current_compiler_service);
-        if (!svc)
-            return "";
-        // Issue #1097: heap-allocate result — do NOT capture fiber-stack
-        // locals by reference (UAF if scheduler reaps the fiber).
-        auto result = std::make_shared<std::string>();
-        s_thread_pool.enqueue(
-            [svc, code, result]() {
-                auto r = svc->exec_with_cache(code);
-                if (r) {
-                    *result = aura::compiler::format_value(
-                        *r, svc->evaluator().primitives().string_heap(), svc->evaluator().pairs(),
-                        0, &svc->evaluator().primitives(), svc->evaluator().keyword_table(),
-                        svc->evaluator().vector_heap(), svc->evaluator().symbol_table());
-                } else {
-                    *result = "[error] " + r.error().format();
-                }
-            },
-            evfd);
-        // Yield and wait for completion
-        aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
-        aura::serve::Fiber::yield();
-        // Drain eventfd
-        uint64_t val;
-        ::read(evfd, &val, sizeof(val));
-        return *result;
-    };
+    // 2. Create thread pool for blocking operations
+    // Issue #4880/#4881: the old per-fiber pool wiring is gone; the isolated
+    // offload pool is rebuilt in #4881/#4882 and wired in #4883.
+    // Issue #4880: do NOT register g_eval_async here. A pool thread cannot
+    // enter this session's service while the submitting fiber is parked (the
+    // fiber holds the eval/body mutexes), and a thread-private service
+    // deadlocks on session-global init locks. The primitive's synchronous
+    // fallback (the eval primitive) returns the correct value; the old pool
+    // path returned "" and wrote a closed eventfd. Real offload arrives with
+    // #4881/#4883 and the offload:* primitives in #4888.
 
     // 2. Create scheduler with worker threads
     Scheduler sched(num_workers);

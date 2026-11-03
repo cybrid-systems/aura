@@ -2598,11 +2598,10 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         // Serve/fiber mode: use g_thread_pool_enqueue callback
         if (aura::messaging::g_thread_pool_enqueue) {
             auto result_ptr = std::make_shared<std::optional<EvalValue>>();
+            // Issue #4880: the serve callback parks the fiber until the task
+            // publishes its result; do not yield a second time here.
             aura::messaging::g_thread_pool_enqueue(
                 [&ev, cid, result_ptr]() { *result_ptr = ev.apply_closure(cid, {}); }, -1);
-            if (aura::messaging::g_fiber_block) {
-                aura::messaging::g_fiber_block();
-            }
             if (result_ptr && result_ptr->has_value())
                 return std::move(**result_ptr);
             return make_void();
