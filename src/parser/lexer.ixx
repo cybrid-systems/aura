@@ -60,6 +60,12 @@ private:
     std::uint32_t line_ = 1, col_ = 1;
     bool peeked_ = false;
     Token peek_token_ = {};
+    // Issue #4875: an unclosed #| block comment is a parse error, not EOF.
+    bool unterminated_block_comment_ = false;
+    // Start of that comment, so the diagnostic points at the '#|' rather
+    // than at end of file (skip_ws advances line_/col_ to EOF first).
+    std::uint32_t unterminated_block_comment_line_ = 0;
+    std::uint32_t unterminated_block_comment_column_ = 0;
     std::string string_buf_; // temp storage for escape-resolved string tokens
 };
 

@@ -7,6 +7,13 @@ namespace aura::parser {
 
 Token Lexer::advance() {
     skip_ws();
+    if (unterminated_block_comment_) {
+        unterminated_block_comment_ = false; // emit the error once, then EOF
+        // Issue #4875: report the comment's own start, not EOF. make_tok
+        // would stamp the post-skip line/column here.
+        return Token{TokenKind::Error, "#|", unterminated_block_comment_line_,
+                     unterminated_block_comment_column_};
+    }
     if (pos_ >= source_.size())
         return make_tok(TokenKind::EndOfFile, "");
     char c = source_[pos_];
@@ -346,6 +353,36 @@ void Lexer::skip_ws() {
         } else if (c == ';') {
             while (pos_ < source_.size() && source_[pos_] != '\n')
                 pos_++;
+        } else if (c == '#' && pos_ + 1 < source_.size() && source_[pos_ + 1] == '|') {
+            // Issue #4875: R7RS block comment. Skip to the closing |#; a file
+            // that ends first becomes a parse error instead of swallowing
+            // the rest of the program silently.
+            const std::uint32_t comment_line = line_;
+            const std::uint32_t comment_col = col_;
+            pos_ += 2;
+            col_ += 2;
+            bool closed = false;
+            while (pos_ < source_.size()) {
+                if (source_[pos_] == '|' && pos_ + 1 < source_.size() && source_[pos_ + 1] == '#') {
+                    pos_ += 2;
+                    col_ += 2;
+                    closed = true;
+                    break;
+                }
+                if (source_[pos_] == '\n') {
+                    pos_++;
+                    line_++;
+                    col_ = 1;
+                } else {
+                    pos_++;
+                    col_++;
+                }
+            }
+            if (!closed) {
+                unterminated_block_comment_ = true;
+                unterminated_block_comment_line_ = comment_line;
+                unterminated_block_comment_column_ = comment_col;
+            }
         } else
             break;
     }

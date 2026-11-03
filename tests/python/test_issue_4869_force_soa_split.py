@@ -81,15 +81,18 @@ class TestForceSoaSplit4869(unittest.TestCase):
         self.assertIn("unclosed list", p.stderr)
         self.assertNotIn("a\n", p.stdout)
 
-    def test_block_comment_fails_loudly(self) -> None:
+    def test_block_comment_is_skipped(self) -> None:
+        # Issue #4875: a complete #| ... |# is a comment on every face;
+        # the parens inside it no longer count as code.
         src = r"""
 #| block comment with ( paren |#
 (display "after-block") (newline)
 """
-        p = _run(src, "force-soa")
-        self.assertNotEqual(p.returncode, 0, p.stdout)
-        self.assertIn("invalid character", p.stderr)
-        self.assertNotIn("after-block", p.stdout)
+        for strict in ("force-soa", "0"):
+            p = _run(src, strict)
+            self.assertEqual(p.returncode, 0, f"{strict}: {p.stderr}")
+            self.assertEqual(p.stdout.strip(), "after-block")
+            self.assertNotIn("invalid character", p.stderr)
 
     def test_no_extra_last_value(self) -> None:
         src = r"""
