@@ -3924,11 +3924,19 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             std::string last_out;
+            bool any_error = false;
             for (auto& form : split_top_level_forms_4865(all_input)) {
                 auto fr = cs.eval(form);
                 if (!fr) {
+                    // Issue #4460/#4467: a failing top-level form is a located
+                    // diagnostic, not the end of the file — the whole-program
+                    // face prints it once, keeps running the forms after it,
+                    // and exits 1. Keep that contract on the form-by-form
+                    // force-soa face too (otherwise "after" is never printed
+                    // and later forms' arity diagnostics are lost).
                     std::println(std::cerr, "error: {}", fr.error().format_with_source(form));
-                    return 1;
+                    any_error = true;
+                    continue;
                 }
                 // Mirror the whole-program face: only the LAST top-level
                 // form's value is printed, and a void last form prints
@@ -3937,7 +3945,7 @@ int main(int argc, char* argv[]) {
             }
             if (!last_out.empty())
                 std::println("{}", last_out);
-            return aura_displayed_error_count() > 0 ? 1 : 0;
+            return (any_error || aura_displayed_error_count() > 0) ? 1 : 0;
         }
     }
     if (auto r = cs.eval(all_input)) {
