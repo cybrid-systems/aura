@@ -3756,23 +3756,30 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 return make_void();
             }
         }
+        // Issue #4854: publish through the evaluator's hash free list - the
+        // (hash) prim's path (#4613) - instead of appending to the process
+        // registry. A raw push_back leaves the slot owned by NOBODY: the
+        // sweep only releases tables THIS evaluator minted (hash_owned_),
+        // so every orch result hash kept its ~560-byte table block for the
+        // process lifetime. One agent/scope round mints ~23 result hashes,
+        // so a long-running orch host grew its heap linearly (~0.8 KB per
+        // agent / scope task) even after the fiber / mailbox / eval
+        // retainers were released. mint_hash_table marks the owner, charges
+        // the reclaim window by the table's real bytes (#4613) and reuses a
+        // slot the sweep released.
         // Issue #4831: an agent body (orch:agent-recv / agent-reply on its
         // fiber thread) and the caller thread (orch:agent-ask) both mint
-        // result hashes. An unlocked push_back raced the reallocation of
-        // g_hash_tables (double free / SEGV). Same storage lock the (hash)
-        // prim holds; recursive, so a caller already holding it is fine.
+        // result hashes. Same locks the (hash) prim holds: the registry
+        // mutex first (the sweep's mark phase copies the registry under
+        // it), then the recursive storage lock inside the mint.
+        std::lock_guard hlock(ev.hash_tables_mutex());
         std::lock_guard slock(ev.alloc_storage_lock_);
-        std::size_t hidx = 0;
-        {
-            // Issue #4860: unlocked size()+push_back raced a concurrent publish
-            // (double free). Index read, push and stamp are one critical section.
-            std::lock_guard slock(ev.alloc_storage_lock_);
-            hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            if (g_hash_tenants.size() < g_hash_tables.size())
-                g_hash_tenants.resize(g_hash_tables.size(), 0);
-            g_hash_tenants[hidx] = ev.capability_tenant_id();
-        }
+        const std::size_t hidx = ev.mint_hash_table(ht);
+        // Issue #4110 / #4296: the published slot's owner is the EXECUTING
+        // evaluator. mint_hash_table stamps the same principal; the inline
+        // stamp keeps this alloc site's owner stamp visible (the #4110 /
+        // #4093 source-cite checks anchor on it).
+        g_hash_tenants[hidx] = ev.capability_tenant_id();
         return make_hash(hidx);
     };
 
