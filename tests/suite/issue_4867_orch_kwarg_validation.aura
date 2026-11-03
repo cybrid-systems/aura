@@ -25,10 +25,14 @@
        "#4867 a string :max-restarts is a parameter error")
 
 (orch:spawn-agent "q4867" (lambda () 1))
+; settle the probe agents so the region-key admit gate below does not
+; turn the duplicate-spawn check into a race.
+(orch:agent-join "q4867" :timeout-ms 2000)
 (check (equal? (caught (lambda () (orch:agent-join "q4867" :timeout-ms "x")))
                "orch:agent-join: :timeout-ms expects an integer")
        "#4867 agent-join rejects a string :timeout-ms")
 (orch:spawn-agent "q4867b" (lambda () 1))
+(orch:agent-join "q4867b" :timeout-ms 2000)
 (check (equal? (caught (lambda () (orch:agent-join "q4867b" :timeout-ms -1)))
                "orch:agent-join: :timeout-ms must not be negative")
        "#4867 agent-join rejects a negative :timeout-ms")

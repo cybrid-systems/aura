@@ -4076,9 +4076,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 // already retired #3805 abandon husks. Deny before
                 // spawn_agent_with_mailbox: no second fiber, no
                 // agents_active bump, old reservation untouched.
-                // Soft/Off keeps the historical replace.
-                if (pending && aura::compiler::typed_audit::production_defaults_active() &&
-                    aura::orch::slot_is_live_running(*pending)) {
+                // Issue #4867: the deny is face-independent. Soft used to
+                // replace a live namesake on the eval path (the C++
+                // AgentScope::spawn Soft append is unchanged), which left
+                // the first body unreachable after the join.
+                if (pending && aura::orch::slot_is_live_running(*pending)) {
                     aura::orch::g_orch_module_stats.host_forget_reclaimed_risk_total.fetch_add(
                         1, std::memory_order_relaxed);
                     auto ridx = ev.push_string_heap(name);
@@ -4094,6 +4096,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     add_reclaimed_pending_lifecycle(rkv, /*pending=*/false);
                     add_deny_class(rkv, aura::orch::AgentDenyClass::Other, "name-reuse-while-live",
                                    0, /*emit_retry=*/false);
+                    // Issue #4867: keep the same typed-deny surface on the
+                    // Soft face (add_deny_class interns only under
+                    // production). The duplicate rejection itself is
+                    // face-independent; callers branch on deny-detail.
+                    if (!aura::compiler::typed_audit::production_defaults_active()) {
+                        auto cidx = ev.push_string_heap("other");
+                        rkv.emplace_back("deny-class", make_string(cidx));
+                        auto didx = ev.push_string_heap("name-reuse-while-live");
+                        rkv.emplace_back("deny-detail", make_string(didx));
+                    }
                     return build_orch_hash(rkv);
                 }
             }
