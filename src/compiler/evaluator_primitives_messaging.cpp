@@ -2590,35 +2590,6 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         return types::make_bool(false);
     });
 
-    // (thread_pool:enqueue fn) — Offload a blocking function to the thread pool.
-    // fn is a closure taking no arguments.
-    // Returns the result on success (may block caller until done).
-    // In serve/fiber mode: yields fiber, pool thread wakes it.
-    // In stdin mode: uses std::async, blocks synchronously.
-    add("thread_pool:enqueue", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_closure(a[0]))
-            return make_bool(false);
-        auto cid = as_closure_id(a[0]);
-        // Serve/fiber mode: use g_thread_pool_enqueue callback
-        if (aura::messaging::g_thread_pool_enqueue) {
-            auto result_ptr = std::make_shared<std::optional<EvalValue>>();
-            // Issue #4880: the serve callback parks the fiber until the task
-            // publishes its result; do not yield a second time here.
-            aura::messaging::g_thread_pool_enqueue(
-                [&ev, cid, result_ptr]() { *result_ptr = ev.apply_closure(cid, {}); }, -1);
-            if (result_ptr && result_ptr->has_value())
-                return std::move(**result_ptr);
-            return make_void();
-        }
-        // Stdin mode: use std::async
-        auto future =
-            std::async(std::launch::async, [&ev, cid]() { return ev.apply_closure(cid, {}); });
-        auto result = future.get();
-        if (result)
-            return *result;
-        return make_void();
-    });
-
     // (channel:create [buffer-size]) — Create a new channel
     // Returns channel-id (fixnum) or error.
     // buffer-size defaults to 0 (rendezvous/synchronous).
