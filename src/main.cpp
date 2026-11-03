@@ -586,6 +586,76 @@ static bool form_builds_closure_or_task_4892(std::string_view f) {
     return false;
 }
 
+// Issue #4893: the Begin-wrap below must never wrap a definitional top-level
+// form. Wrapping `(define-hygienic-macro ...)` / `(defmacro ...)` in a Begin
+// made the macro registration a nested form, so later top-level forms saw
+// `cannot call` / `unbound variable`. Decide on the form's head symbol (not a
+// "(define " prefix): any def* head, plus the module/import/macro forms.
+static bool form_head_is_definitional_4893(std::string_view f) {
+    auto ws = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
+    if (f.empty() || f[0] != '(')
+        return false;
+    std::size_t i = 1;
+    while (i < f.size() && ws(f[i]))
+        ++i;
+    std::size_t j = i;
+    while (j < f.size() && !ws(f[j]) && f[j] != '(' && f[j] != ')')
+        ++j;
+    const std::string_view head = f.substr(i, j - i);
+    if (head.starts_with("def"))
+        return true; // define, define-*, defmacro, defun, defrecord, ...
+    for (std::string_view k : {"begin", "let-syntax", "letrec-syntax", "import", "require",
+                               "module", "library", "include", "load", "export", "provide"}) {
+        if (head == k)
+            return true;
+    }
+    return false;
+}
+
+// Issue #4893: name bound by a top-level user macro definition
+// (`(defmacro (m x) ...)`, `(define-hygienic-macro[*] (m a b) ...)`, or the
+// `(defmacro m ...)` symbol spelling); empty for any other form.
+static std::string user_macro_def_name_4893(std::string_view f) {
+    auto ws = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
+    std::string_view rest;
+    for (std::string_view k : {"(defmacro", "(define-hygienic-macro*", "(define-hygienic-macro"}) {
+        if (f.size() > k.size() && f.starts_with(k) && (ws(f[k.size()]) || f[k.size()] == '(')) {
+            rest = f.substr(k.size());
+            break;
+        }
+    }
+    if (rest.empty())
+        return {};
+    std::size_t i = 0;
+    while (i < rest.size() && (ws(rest[i]) || rest[i] == '('))
+        ++i;
+    std::size_t j = i;
+    while (j < rest.size() && !ws(rest[j]) && rest[j] != '(' && rest[j] != ')')
+        ++j;
+    return std::string(rest.substr(i, j - i));
+}
+
+// Issue #4893: does `f` mention symbol `name` as a whole token? A top-level
+// form that calls a user macro must keep the #4865 per-form face (Allow, no
+// Begin-wrap): the ForceSoa IR route lowers the call as an ordinary
+// application (`cannot call: m`) instead of expanding it.
+static bool form_mentions_symbol_4893(std::string_view f, std::string_view name) {
+    if (name.empty())
+        return false;
+    auto delim = [](char c) {
+        return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '(' || c == ')' ||
+               c == '\'' || c == '`' || c == ',' || c == '@';
+    };
+    for (std::size_t p = f.find(name); p != std::string_view::npos; p = f.find(name, p + 1)) {
+        const bool left_ok = p == 0 || delim(f[p - 1]);
+        const std::size_t e = p + name.size();
+        const bool right_ok = e >= f.size() || delim(f[e]);
+        if (left_ok && right_ok)
+            return true;
+    }
+    return false;
+}
+
 // Issue #4865: split top-level forms so force-soa can evaluate them one at a
 // time. The define must run/register its evaluator value cell before a later
 // form's inline lambda is lowered; a single whole-file eval lowers every form
@@ -4043,12 +4113,33 @@ int main(int argc, char* argv[]) {
             }
             std::string last_out;
             bool any_error = false;
+            std::vector<std::string> user_macros_4893;
             for (auto& tf : split_top_level_forms_4865(all_input)) {
                 const std::string& form = tf.text;
-                const bool value_define = is_value_define_form_4892(form);
+                bool uses_user_macro = false;
+                for (const auto& m : user_macros_4893) {
+                    if (form_mentions_symbol_4893(form, m)) {
+                        uses_user_macro = true;
+                        break;
+                    }
+                }
+                if (auto mname = user_macro_def_name_4893(form); !mname.empty())
+                    user_macros_4893.push_back(std::move(mname));
+                const bool value_define = is_value_define_form_4892(form) || uses_user_macro;
+                // Issue #4893: a macro / record / syntax definition registers in
+                // the evaluator's expander tables, which the IR does not lower.
+                // Under ForceSoa the walker escape is blocked and the
+                // registration was silently dropped (later forms: `cannot
+                // call` / `unbound variable`). Give every definitional form
+                // other than a plain procedure define the #4865 Allow face.
+                const bool special_define =
+                    form_head_is_definitional_4893(form) && !form.starts_with("(define ") &&
+                    !form.starts_with("(define\n") && !form.starts_with("(define\t") &&
+                    !form.starts_with("(begin");
                 aura::compiler::set_tree_walker_fallback_policy(
-                    value_define ? aura::compiler::TreeWalkerFallbackPolicy::Allow
-                                 : aura::compiler::TreeWalkerFallbackPolicy::ForceSoa);
+                    value_define || special_define
+                        ? aura::compiler::TreeWalkerFallbackPolicy::Allow
+                        : aura::compiler::TreeWalkerFallbackPolicy::ForceSoa);
                 // Issue #4892 (string_ref_walk_4320 bench regression): a lone top-level form whose
                 // root is a primitive call — `(display ...)`, `(while ...)` —
                 // takes the #2213 registered-prim-root walker shortcut on
@@ -4059,10 +4150,9 @@ int main(int argc, char* argv[]) {
                 // Forms that build closures or touch fibers / agents keep the
                 // exact #4865 face (their bodies must see live top-level
                 // cells; the walker shortcut is what gives them that).
-                const bool wrap_begin =
-                    !value_define && !form.empty() && form[0] == '(' &&
-                    !form.starts_with("(define ") && !form.starts_with("(define\n") &&
-                    !form.starts_with("(define\t") && !form_builds_closure_or_task_4892(form);
+                const bool wrap_begin = !value_define && !form.empty() && form[0] == '(' &&
+                                        !form_head_is_definitional_4893(form) &&
+                                        !form_builds_closure_or_task_4892(form);
                 constexpr std::string_view kBeginPrefix4892 = "(begin ";
                 auto fr = wrap_begin ? cs.eval(std::string(kBeginPrefix4892) + form + ")")
                                      : cs.eval(form);
@@ -4099,7 +4189,7 @@ int main(int argc, char* argv[]) {
                 // form's value is printed, and a void last form prints
                 // nothing (an earlier non-void form must not leak out).
                 last_out = is_void(*fr) ? std::string{} : fmt_val(*fr, cs);
-                if (value_define)
+                if (value_define || special_define)
                     cs.sync_soft_export_cells_for_ir();
             }
             if (!last_out.empty())
