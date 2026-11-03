@@ -149,6 +149,29 @@ jobs:
         AURA_SANDBOX: "off"
       run: ./build_tsan/test_offload_pool
 
+  # Issue #4889: 10-minute-shape soak. The round count is the knob; the
+  # test measures VmRSS inside the process and asserts <10% growth plus a
+  # drained queue.
+  offload-soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      image: ghcr.io/cybrid-systems/dev:v1.1.1
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Install Python CI deps
+      run: pip install --break-system-packages -r requirements-dev.txt
+
+    - name: Build aura
+      run: python3 build.py build
+
+    - name: Offload submit/await soak
+      env:
+        AURA_SANDBOX: "off"
+        AURA_OFFLOAD_SOAK_ROUNDS: "20000"
+      run: python3 tests/python/test_issue_4889_offload_soak.py -v
+
   coverage:
     runs-on: ubuntu-latest
     container:

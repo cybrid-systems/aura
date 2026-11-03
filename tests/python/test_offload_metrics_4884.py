@@ -57,13 +57,17 @@ class TestOffloadMetrics(unittest.TestCase):
 
             body = ""
             deadline = time.time() + 30
+            # The health server can answer before the serve loop starts the
+            # offload pool; keep polling until the offload series appears.
             while time.time() < deadline:
                 try:
                     with urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=2) as r:
                         body = r.read().decode()
-                    break
+                    if "aura_offload_submitted_total" in body:
+                        break
                 except OSError:
-                    time.sleep(0.2)
+                    pass
+                time.sleep(0.2)
             self.assertIn("aura_offload_submitted_total", body, body[-500:])
             self.assertIn('aura_offload_completed_total{status="done"}', body, body[-500:])
             self.assertIn("aura_offload_queue_depth 0", body, body[-500:])
