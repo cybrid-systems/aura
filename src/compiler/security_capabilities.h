@@ -137,10 +137,12 @@ inline constexpr std::string_view kMacroSelfEvoDenyMessage =
     "effect-denied: macro-self-evo not granted; user macros need MacroSelfEvo "
     "(aura soft does not grant it; run with AURA_SANDBOX=off)";
 inline std::string macro_limit_user_reason(const char* why, std::string_view fallback) {
-    std::string_view r = (why != nullptr && why[0] != '\0') ? std::string_view(why) : fallback;
-    if (r == "capability-deny")
+    std::string_view reason_text = fallback;
+    if (why != nullptr && *why != '\0')
+        reason_text = why;
+    if (reason_text == "capability-deny")
         return std::string(kMacroSelfEvoDenyMessage);
-    return std::string(r);
+    return std::string(reason_text);
 }
 
 // Issue #2076 / #2053: production defaults — declarations only.

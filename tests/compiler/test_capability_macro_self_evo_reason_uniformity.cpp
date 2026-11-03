@@ -49,6 +49,7 @@
 
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/grant_test_support.hh"
+#include "compiler/security_capabilities.h"
 #include "core/capability_model.hh"
 #include "core/sandbox.hh"
 #include "core/transparent_string_hash.hh"
@@ -346,6 +347,23 @@ int run_test_capability_macro_self_evo_reason_uniformity() {
           "3683: capability deny does not stamp clone last_reject_reason=1");
     CHECK(me.find("kHygieneLimitReasonCapabilityDeny") != std::string::npos,
           "3683: capability deny still stamps last_limit_reason 7");
+
+    // ── Issue #4876: the user-facing macro deny text maps only the
+    // capability-deny sentinel; every other reason passes through.
+    {
+        std::println("\n--- #4876: macro_limit_user_reason mapping ---");
+        using aura::compiler::security::kMacroSelfEvoDenyMessage;
+        using aura::compiler::security::macro_limit_user_reason;
+        CHECK(macro_limit_user_reason("capability-deny", "fallback") ==
+                  std::string(kMacroSelfEvoDenyMessage),
+              "4876: capability-deny maps to the actionable MacroSelfEvo text");
+        CHECK(macro_limit_user_reason("depth-limit", "fallback") == "depth-limit",
+              "4876: other reasons pass through");
+        CHECK(macro_limit_user_reason(nullptr, "fallback") == "fallback",
+              "4876: null why uses the fallback");
+        CHECK(macro_limit_user_reason("", "fallback") == "fallback",
+              "4876: empty why uses the fallback");
+    }
 
     std::println("\n=== Issue #3304 done ===");
     return g_failed == 0 ? 0 : 1;
