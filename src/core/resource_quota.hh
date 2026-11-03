@@ -129,14 +129,12 @@ struct ResourceQuota {
     std::atomic<std::uint64_t> fibers_limit{0};
     std::atomic<std::uint64_t> time_us_limit{0};
     std::atomic<std::uint64_t> mutation_limit{0};
-    std::atomic<std::uint64_t> offload_inflight_limit{0};
 
     // Usage (consumed amounts).
     std::atomic<std::uint64_t> memory_used{0};
     std::atomic<std::uint64_t> fibers_used{0};
     std::atomic<std::uint64_t> time_us_used{0};
     std::atomic<std::uint64_t> mutation_used{0};
-    std::atomic<std::uint64_t> offload_inflight_used{0};
 
     // Stats
     std::atomic<std::uint64_t> checks_total{0};
@@ -524,6 +522,10 @@ struct ResourceQuota {
     }
 
 private:
+    // Issue #4885: kept private so the clang-tidy non-private-member gate
+    // does not add one finding per TU for the new dimension.
+    std::atomic<std::uint64_t> offload_inflight_limit{0};
+    std::atomic<std::uint64_t> offload_inflight_used{0};
     static constexpr std::size_t kDimCount = 5;
 
     struct TenantSlot {
