@@ -377,6 +377,26 @@ int run_test_agent_apply_mutex() {
             Ev3728::ConcurrentMutationPolicy::ScopedParallel);
         const auto acq_sp0 =
             g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        // Self-calibrated concurrency proof. A fixed wall gate cannot tell a
+        // parallel pair from a serialized one when interpreter speed varies
+        // across runners: one 4M-iteration body is already >1.8 s on an idle
+        // box, so the old 1800 ms / 2000 ms join constants failed on any
+        // slower or loaded runner even though the pair really overlapped.
+        // Measure one body here, then require the pair to finish in well
+        // under two serialized bodies.
+        const auto solo_t0 = std::chrono::steady_clock::now();
+        auto solo = cs.eval(R"(
+            (begin
+              (orch:spawn-agent "solo-3728-sp"
+                (lambda () (let loop ((i 0)) (if (< i 4000000) (loop (+ i 1)) i)))
+                :region-key 30)
+              (let ((js (orch:agent-join "solo-3728-sp" :timeout-ms 60000)))
+                (if (hash-ref js "ok") 1 0)))
+        )");
+        const auto solo_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - solo_t0)
+                                 .count();
+        CHECK(solo && is_int(*solo) && as_int(*solo) == 1, "3728 AC1: solo agent baseline");
         const auto t0 = std::chrono::steady_clock::now();
         auto sp = cs.eval(R"(
             (begin
@@ -386,8 +406,8 @@ int run_test_agent_apply_mutex() {
               (orch:spawn-agent "b-3728-sp"
                 (lambda () (let loop ((i 0)) (if (< i 4000000) (loop (+ i 1)) i)))
                 :region-key 32)
-              (let ((ja (orch:agent-join "a-3728-sp" :timeout-ms 2000))
-                    (jb (orch:agent-join "b-3728-sp" :timeout-ms 2000)))
+              (let ((ja (orch:agent-join "a-3728-sp" :timeout-ms 30000))
+                    (jb (orch:agent-join "b-3728-sp" :timeout-ms 30000)))
                 (if (and (hash-ref ja "ok") (hash-ref jb "ok")) 1 0)))
         )");
         const auto wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -398,8 +418,10 @@ int run_test_agent_apply_mutex() {
             g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
         CHECK(acq_sp1 == acq_sp0,
               "3728 AC1: ScopedParallel distinct keys did not take agent_apply_mu_");
-        CHECK(wall_ms < 1800, "3728 AC1: ScopedParallel wall is not a serialized join timeout");
-        std::println("  3728 AC1 scoped wall={}ms acq {}→{}", wall_ms, acq_sp0, acq_sp1);
+        CHECK(wall_ms < solo_ms * 3 / 2,
+              "3728 AC1: ScopedParallel wall is not a serialized join timeout");
+        std::println("  3728 AC1 scoped wall={}ms solo={}ms acq {}→{}", wall_ms, solo_ms, acq_sp0,
+                     acq_sp1);
         cs.evaluator().set_concurrent_mutation_policy(
             Ev3728::ConcurrentMutationPolicy::SingleWriter);
         set_prod_3728(false);
