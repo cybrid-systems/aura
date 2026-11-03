@@ -2364,6 +2364,16 @@ private:
 // Aura prims to find / own the lifetime. NOT a global agent registry
 // (MVP linter scripts/coverage/checks/check_orch_mvp_scope.py still guards
 // AgentRegistry / global_agent_registry symbols).
+// CI red (test_orch_agent_batch / test_agent_name_table_isolation): the map is
+// process-global and reachable from scheduler worker threads (agent body
+// prims call find/get_or_create), while the session thread can drop or reset
+// a scope. unordered_map has no internal synchronization: a concurrent insert
+// during clear() corrupts the bucket state, and the next insert throws
+// std::bad_array_new_length in _M_insert_unique_node. Container access is
+// serialized by g_evaluator_agent_scopes_mtx (declared in agent_spawn.h; this
+// header stays on the ScopeEnterGuard design). Scope destruction stays
+// outside the lock because ~AgentScope joins fibers that may call back in.
+
 inline std::unordered_map<void*, std::unique_ptr<AgentScope>>& g_evaluator_agent_scopes() noexcept {
     // Issue #4853: the map is LEAKED on purpose. A function-local static is
     // destroyed at process exit, but an agent body fiber can still be
@@ -2383,20 +2393,31 @@ inline std::unordered_map<void*, std::unique_ptr<AgentScope>>& g_evaluator_agent
 // destroyed first, AgentScope ops fail-closed (no UAF). Prefer
 // destroying AgentScope before Scheduler at session boundaries.
 inline AgentScope& get_or_create_agent_scope(void* ev_key, serve::Scheduler& sched) {
+    {
+        std::lock_guard lock(g_evaluator_agent_scopes_mtx);
+        auto& m = g_evaluator_agent_scopes();
+        auto it = m.find(ev_key);
+        if (it != m.end())
+            return *it->second;
+    }
+    // Construct outside the lock: the ctor registers with the Scheduler, and
+    // holding the registry lock across that is a lock-order hazard against
+    // scheduler callbacks.
+    auto scope = std::make_unique<AgentScope>(sched);
+    std::lock_guard lock(g_evaluator_agent_scopes_mtx);
     auto& m = g_evaluator_agent_scopes();
     auto it = m.find(ev_key);
-    if (it == m.end()) {
-        auto scope = std::make_unique<AgentScope>(sched);
-        auto* raw = scope.get();
-        m.emplace(ev_key, std::move(scope));
-        return *raw;
-    }
-    return *it->second;
+    if (it != m.end())
+        return *it->second; // lost the create race; the new scope is released here
+    auto* raw = scope.get();
+    m.emplace(ev_key, std::move(scope));
+    return *raw;
 }
 
 // Issue #2588: find an existing scope for the given Evaluator (key).
 // Returns nullptr if no scope has been created yet.
 inline AgentScope* find_agent_scope(void* ev_key) noexcept {
+    std::lock_guard lock(g_evaluator_agent_scopes_mtx);
     auto& m = g_evaluator_agent_scopes();
     auto it = m.find(ev_key);
     return it == m.end() ? nullptr : it->second.get();
@@ -2406,8 +2427,19 @@ inline AgentScope* find_agent_scope(void* ev_key) noexcept {
 // if a scope was dropped. ~AgentScope is invoked (cancel + drain + reservation
 // release), so per-handle no-leak (#2155 / #2009) holds.
 inline bool drop_agent_scope(void* ev_key) noexcept {
-    auto& m = g_evaluator_agent_scopes();
-    return m.erase(ev_key) > 0;
+    // Move the scope out under the lock, then let ~AgentScope run after it is
+    // released: the destructor joins fibers that can re-enter the registry.
+    std::unique_ptr<AgentScope> dropped;
+    {
+        std::lock_guard lock(g_evaluator_agent_scopes_mtx);
+        auto& m = g_evaluator_agent_scopes();
+        auto it = m.find(ev_key);
+        if (it == m.end())
+            return false;
+        dropped = std::move(it->second);
+        m.erase(it);
+    }
+    return true;
 }
 
 // Issue #2588 / #2778: process-wide reset for tests / session boundary
@@ -2418,9 +2450,16 @@ inline bool drop_agent_scope(void* ev_key) noexcept {
 // dropped (BP map clear is side-effect; size available via
 // scope_bp_map_size_for_test).
 inline std::size_t reset_all_agent_scopes_for_test() noexcept {
-    auto& m = g_evaluator_agent_scopes();
-    const auto n = m.size();
-    m.clear();
+    // Swap the container under the lock so a body fiber inserting during the
+    // reset targets the fresh map; destroy the old scopes afterwards, outside
+    // the lock (~AgentScope joins fibers that re-enter the registry).
+    std::unordered_map<void*, std::unique_ptr<AgentScope>> drained;
+    {
+        std::lock_guard lock(g_evaluator_agent_scopes_mtx);
+        drained.swap(g_evaluator_agent_scopes());
+    }
+    const auto n = drained.size();
+    drained.clear();
     // Issue #2778: free scope-local BP gauges so reset is a true
     // session boundary (not just AgentScope tree).
     (void)reset_scope_bp_map_for_test();
