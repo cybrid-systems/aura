@@ -254,6 +254,97 @@ class TestIssue4854OrchRss(unittest.TestCase):
         self.assertIn("new-recv z", proc.stdout)
 
 
+class TestIssue4854OrchResultHashSlots(unittest.TestCase):
+    """#4854: the orch result hashes must not leak their hash tables.
+
+    Every orch primitive that returns a hash (orch:agent-join,
+    orch:scope-join-all, ...) published its FlatHashTable straight into the
+    process-global registry, so no sweep could ever release it: the slot had
+    no owner, and the (gc-heap) collection only frees the tables this
+    evaluator minted. One agent/scope round mints ~23 result hashes, so a
+    long-running orch host grew ~0.8 KB of heap per agent / scope task for
+    the life of the process - the residual the reporter measured after the
+    fiber / mailbox / eval retainers were released.
+
+    The proof is structural: the registry slot count must stay flat across
+    thousands of joins (pre-fix it grew by ~23 per round), and the RSS must
+    not follow it up.
+    """
+
+    ROUNDS = 2000
+
+    def _probe(self) -> tuple[int, int, int]:
+        source = """
+(define (rss-kb)
+  (let* ((s (read-file "/proc/self/status")) (i (string-index s "VmRSS:")))
+    (let loop ((j (+ i 6)) (acc 0) (seen #f))
+      (let ((c (string-ref s j)))
+        (cond ((char-numeric? c) (loop (+ j 1) (+ (* acc 10) (- (char->integer c) 48)) #t))
+              (seen acc)
+              (else (loop (+ j 1) acc seen)))))))
+(define anames (list "a0" "a1" "a2" "a3"))
+(define snames (list "s0" "s1" "s2"))
+(define (round)
+  (for-each (lambda (n) (orch:spawn-agent n (lambda () 1))) anames)
+  (for-each (lambda (n) (orch:agent-join n :timeout-ms 5000)) anames)
+  (for-each (lambda (n) (orch:scope-spawn n (lambda () 1))) snames)
+  (orch:scope-join-all :timeout-ms 5000))
+(define (hash-slots)
+  (let ((s (stats:get "gc-stats")))
+    (let loop ((i 0))
+      (if (>= i (- (string-length s) 5))
+          -1
+          (if (equal? (substring s i (+ i 5)) "hash:")
+              (let loop2 ((j (+ i 5)) (v 0))
+                (if (>= j (string-length s))
+                    v
+                    (let ((c (string-ref s j)))
+                      (if (and (>= c 48) (<= c 57))
+                          (loop2 (+ j 1) (+ (* v 10) (- c 48)))
+                          v))))
+              (loop (+ i 1)))))))
+(round) (gc-heap)
+(display (format "START rss=~a slots=~a" (rss-kb) (hash-slots))) (newline)
+(let loop ((i 0))
+  (when (< i __ROUNDS__)
+    (round)
+    (when (= 0 (modulo i 5)) (gc-heap))
+    (loop (+ i 1))))
+(display (format "END rss=~a slots=~a" (rss-kb) (hash-slots))) (newline)
+""".replace("__ROUNDS__", str(self.ROUNDS))
+        proc = _run_probe(source, timeout=900.0)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
+        start = end = None
+        for line in proc.stdout.splitlines():
+            m = re.match(r"START rss=(\d+) slots=(\d+)$", line)
+            if m:
+                start = (int(m.group(1)), int(m.group(2)))
+                continue
+            m = re.match(r"END rss=(\d+) slots=(\d+)$", line)
+            if m:
+                end = (int(m.group(1)), int(m.group(2)))
+        self.assertIsNotNone(start, f"no START line:\n{proc.stdout[-2000:]}")
+        self.assertIsNotNone(end, f"no END line:\n{proc.stdout[-2000:]}")
+        assert start is not None and end is not None
+        return start[0], end[0], end[1] - start[1]
+
+    def test_4854_orch_result_hash_slots_stay_flat(self) -> None:
+        rss0, rss1, slot_growth = self._probe()
+        self.assertLess(
+            slot_growth,
+            512,
+            f"#4854: the hash-table registry grew {slot_growth} slots across "
+            f"{self.ROUNDS} agent/scope rounds - the orch result hashes are "
+            "published without an owner again, so no sweep can free them.",
+        )
+        self.assertLess(
+            rss1 - rss0,
+            6 * 1024,
+            f"#4854: RSS grew {rss1 - rss0} KB across {self.ROUNDS} rounds "
+            "(pre-fix the leaked result hash tables grew it by ~25 MB).",
+        )
+
+
 class TestIssue4854ServeFiberRetireGuard(unittest.TestCase):
     """#4854 safety: serve-scheduler fibers are never early-retired.
 
