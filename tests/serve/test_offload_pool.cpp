@@ -175,6 +175,108 @@ void test_one_terminal_notification_per_task() {
     CHECK(pool.stats().completed_done == kTasks);
 }
 
+// Issue #4884: counters must match submitted / rejected / failed exactly,
+// and gauges must drain back to zero.
+void test_metrics_counts_exact() {
+    RecordingSink sink;
+    OffloadPool::Config cfg;
+    cfg.threads = 2;
+    cfg.queue_cap = 64;
+    OffloadPool pool(cfg);
+
+    constexpr int kOk = 7;
+    constexpr int kFailed = 3;
+    std::vector<std::shared_ptr<Ticket>> tickets;
+    for (int i = 0; i < kOk + kFailed; ++i) {
+        auto ticket = std::make_shared<Ticket>();
+        tickets.push_back(ticket);
+        const bool fail = i >= kOk;
+        CHECK(pool.try_submit(
+                  [fail](const SnapshotInput&, std::stop_token) -> Result {
+                      if (fail)
+                          throw std::runtime_error("boom");
+                      return Result{};
+                  },
+                  input_for("metric"), ticket, &sink) == SubmitStatus::Accepted);
+    }
+    CHECK(sink.wait_for(kOk + kFailed));
+
+    const Stats s = pool.stats();
+    CHECK(s.submitted == kOk + kFailed);
+    CHECK(s.rejected == 0);
+    CHECK(s.rejected_queue_full == 0);
+    CHECK(s.rejected_quota == 0);
+    CHECK(s.rejected_shutdown == 0);
+    CHECK(s.completed_done == kOk);
+    CHECK(s.completed_failed == kFailed);
+    CHECK(s.completed_cancelled == 0);
+    CHECK(s.queue_depth == 0);
+    CHECK(s.running == 0);
+    CHECK(s.threads == 2);
+    CHECK(s.queue_depth_peak >= 1);
+    CHECK(s.queue_wait_us.count == kOk + kFailed);
+    CHECK(s.exec_us.count == kOk + kFailed);
+    CHECK(s.wake_latency_us.count == kOk + kFailed);
+    for (const LatencyHistogram* h : {&s.queue_wait_us, &s.exec_us, &s.wake_latency_us}) {
+        std::uint64_t bucketed = 0;
+        for (auto n : h->buckets)
+            bucketed += n;
+        CHECK(bucketed == h->count);
+        CHECK(h->max_us <= h->sum_us);
+    }
+}
+
+void test_metrics_rejected_and_integration_hooks() {
+    RecordingSink sink;
+    OffloadPool::Config cfg;
+    cfg.threads = 1;
+    cfg.queue_cap = 1;
+    OffloadPool pool(cfg);
+
+    auto gate = std::make_shared<std::atomic<bool>>(false);
+    auto started = std::make_shared<std::atomic<bool>>(false);
+    auto blocker = [gate, started](const SnapshotInput&, std::stop_token) -> Result {
+        started->store(true, std::memory_order_release);
+        while (!gate->load(std::memory_order_acquire))
+            std::this_thread::sleep_for(1ms);
+        return {};
+    };
+    auto t1 = std::make_shared<Ticket>();
+    auto t2 = std::make_shared<Ticket>();
+    CHECK(pool.try_submit(blocker, input_for("a"), t1, &sink) == SubmitStatus::Accepted);
+    while (!started->load(std::memory_order_acquire))
+        std::this_thread::sleep_for(1ms);
+    CHECK(pool.try_submit([](const SnapshotInput&, std::stop_token) { return Result{}; },
+                          input_for("b"), t2, &sink) == SubmitStatus::Accepted);
+    auto t3 = std::make_shared<Ticket>();
+    CHECK(pool.try_submit([](const SnapshotInput&, std::stop_token) { return Result{}; },
+                          input_for("c"), t3, &sink) == SubmitStatus::QueueFull);
+    CHECK(t3->status.load(std::memory_order_acquire) == Status::Rejected);
+
+    const Stats s = pool.stats();
+    CHECK(s.submitted == 2);
+    CHECK(s.rejected == 1);
+    CHECK(s.rejected_queue_full == 1);
+    CHECK(s.rejected_quota == 0);
+    CHECK(s.rejected_shutdown == 0);
+    // Rejected submissions do not notify the sink and never run.
+    CHECK(s.completed_done == 0);
+    CHECK(s.queue_wait_us.count == 1);
+    CHECK(s.queue_depth == 1);
+
+    gate->store(true, std::memory_order_release);
+    CHECK(sink.wait_for(2));
+    CHECK(pool.stats().queue_depth == 0);
+    CHECK(pool.stats().running == 0);
+
+    pool.note_stale_completion_dropped();
+    pool.note_stale_completion_dropped();
+    pool.note_sync_fallback();
+    const Stats after = pool.stats();
+    CHECK(after.stale_completion_dropped == 2);
+    CHECK(after.sync_fallback == 1);
+}
+
 } // namespace
 
 int main() {
@@ -182,6 +284,8 @@ int main() {
     test_queue_full_is_rejected_without_notification();
     test_shutdown_cancels_queued_and_running();
     test_one_terminal_notification_per_task();
+    test_metrics_counts_exact();
+    test_metrics_rejected_and_integration_hooks();
 
     if (g_failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);
