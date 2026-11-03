@@ -23,6 +23,8 @@
 #include <variant>
 #include <vector>
 
+#include "offload_quota.h"
+
 namespace aura::offload {
 
 enum class Status : std::uint8_t { Queued, Running, Done, Failed, Cancelled, Rejected };
@@ -72,6 +74,8 @@ struct Ticket {
     std::uint64_t fiber_id = 0;
     std::uint64_t wait_gen = 0;
     OffloadClass klass = OffloadClass::Compile;
+    // Issue #4885: tenant captured at submit from the fiber/agent context.
+    std::uint64_t tenant = 0;
     std::chrono::steady_clock::time_point queued_at{};
     std::chrono::steady_clock::time_point started_at{};
 };
@@ -102,6 +106,19 @@ struct ClassStats {
     std::uint64_t queue_depth_peak = 0;
 };
 
+// Issue #4885: bounded per-tenant counters (fixed 8 slots; unkeyed tenant 0
+// is only visible in the global totals). Keeps label cardinality fixed.
+inline constexpr std::size_t kMaxTenantStats = 8;
+struct TenantStats {
+    std::uint64_t tenant = 0;
+    std::uint64_t submitted = 0;
+    std::uint64_t rejected = 0;
+    std::uint64_t completed_done = 0;
+    std::uint64_t completed_failed = 0;
+    std::uint64_t completed_cancelled = 0;
+    std::uint64_t inflight_peak = 0;
+};
+
 // Issue #4884: lock-free observability snapshot. All counters are relaxed
 // atomics in the pool; histograms use fixed buckets so recording never
 // allocates. Parent layers (orch:metrics / Prometheus) convert this struct.
@@ -127,9 +144,11 @@ struct Stats {
     LatencyHistogram exec_us;
     LatencyHistogram wake_latency_us;
     std::array<ClassStats, kOffloadClassCount> by_class{};
+    std::array<TenantStats, kMaxTenantStats> by_tenant{};
+    std::size_t by_tenant_count = 0;
 };
 
-enum class SubmitStatus : std::uint8_t { Accepted, QueueFull, ShuttingDown };
+enum class SubmitStatus : std::uint8_t { Accepted, QueueFull, QuotaExceeded, ShuttingDown };
 
 class CompletionSink {
 public:
@@ -151,6 +170,8 @@ public:
         std::size_t queue_cap = 256;
         // Per-class subqueue bound. 0 => queue_cap.
         std::size_t class_queue_cap = 0;
+        // Issue #4885: optional per-tenant ResourceQuota. nullptr => no quota.
+        core::resource_quota::ResourceQuota* quota = nullptr;
         std::chrono::milliseconds shutdown_grace{2000};
     };
 
@@ -195,6 +216,22 @@ private:
         [[nodiscard]] LatencyHistogram snapshot() const noexcept;
     };
 
+    struct TenantCounter {
+        std::uint64_t tenant = 0;
+        std::uint64_t inflight = 0; // guarded by mutex_
+        std::atomic<std::uint64_t> submitted{0};
+        std::atomic<std::uint64_t> rejected{0};
+        std::atomic<std::uint64_t> completed_done{0};
+        std::atomic<std::uint64_t> completed_failed{0};
+        std::atomic<std::uint64_t> completed_cancelled{0};
+        std::atomic<std::uint64_t> inflight_peak{0};
+    };
+
+    TenantCounter* tenant_counter_locked(std::uint64_t tenant, bool create) noexcept;
+    void note_tenant_submit_locked(std::uint64_t tenant) noexcept;
+    void note_tenant_reject_locked(std::uint64_t tenant) noexcept;
+    void note_tenant_finish_locked(std::uint64_t tenant, Status status) noexcept;
+
     void worker_loop(std::stop_token st);
     bool pick_task_locked(Task& out);
     void finish(const Task& task, Status status, std::string error);
@@ -236,6 +273,9 @@ private:
     HistogramState queue_wait_hist_;
     HistogramState exec_hist_;
     HistogramState wake_hist_;
+    OffloadQuota quota_;
+    std::array<TenantCounter, kMaxTenantStats> tenant_counters_{};
+    std::size_t tenant_counter_count_ = 0;
 };
 
 } // namespace aura::offload

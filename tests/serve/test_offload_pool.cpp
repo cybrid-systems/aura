@@ -1,6 +1,8 @@
 // tests/serve/test_offload_pool.cpp — #4882 pool core acceptance
 #include "offload/offload_pool.h"
 
+#include "core/resource_quota.hh"
+
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -443,6 +445,129 @@ void test_no_class_starvation_under_batch_flood() {
     CHECK(s.queue_depth == 0);
 }
 
+// Issue #4885: per-tenant OffloadInflight quota, release on every terminal.
+void test_offload_quota_per_tenant() {
+    using namespace aura::core::resource_quota;
+    reset_process_resource_quota_for_test();
+    set_quota_per_tenant_enabled_for_test(true);
+    auto& quota = process_resource_quota();
+    constexpr TenantId kTenantA = 101;
+    constexpr TenantId kTenantB = 202;
+    quota.set_tenant_limit(kTenantA, Dimension::OffloadInflight, 2);
+
+    {
+        RecordingSink sink;
+        OffloadPool::Config cfg;
+        cfg.threads = 2;
+        cfg.queue_cap = 16;
+        cfg.quota = &quota;
+        OffloadPool pool(cfg);
+
+        auto gate = std::make_shared<std::atomic<bool>>(false);
+        auto started = std::make_shared<std::atomic<int>>(0);
+        auto blocker = [gate, started](const SnapshotInput&, std::stop_token) -> Result {
+            started->fetch_add(1, std::memory_order_release);
+            while (!gate->load(std::memory_order_acquire))
+                std::this_thread::sleep_for(1ms);
+            std::this_thread::sleep_for(2ms);
+            return {};
+        };
+
+        set_current_quota_tenant(kTenantA);
+        auto t1 = std::make_shared<Ticket>();
+        auto t2 = std::make_shared<Ticket>();
+        CHECK(pool.try_submit(blocker, input_for("a1"), t1, &sink) == SubmitStatus::Accepted);
+        CHECK(pool.try_submit(blocker, input_for("a2"), t2, &sink) == SubmitStatus::Accepted);
+        while (started->load(std::memory_order_acquire) < 2)
+            std::this_thread::sleep_for(1ms);
+        CHECK(t1->tenant == kTenantA);
+        CHECK(t2->tenant == kTenantA);
+        CHECK(quota.tenant_used(kTenantA, Dimension::OffloadInflight) == 2);
+
+        // Tenant A is at its limit: the third concurrent submit is typed
+        // Rejected without touching the queue.
+        auto t3 = std::make_shared<Ticket>();
+        CHECK(pool.try_submit([](const SnapshotInput&, std::stop_token) { return Result{}; },
+                              input_for("a3"), t3, &sink) == SubmitStatus::QuotaExceeded);
+        CHECK(t3->status.load(std::memory_order_acquire) == Status::Rejected);
+        CHECK(t3->tenant == kTenantA);
+        auto* qerr = std::get_if<Error>(&t3->out);
+        CHECK(qerr != nullptr);
+        CHECK(qerr != nullptr && !qerr->message.empty());
+
+        // Tenant B has no per-tenant limit and is unaffected by A's cap.
+        set_current_quota_tenant(kTenantB);
+        auto tb = std::make_shared<Ticket>();
+        CHECK(pool.try_submit([](const SnapshotInput&, std::stop_token) { return Result{}; },
+                              input_for("b1"), tb, &sink) == SubmitStatus::Accepted);
+        CHECK(tb->tenant == kTenantB);
+
+        set_current_quota_tenant(kTenantA);
+        auto t4 = std::make_shared<Ticket>();
+        CHECK(pool.try_submit([](const SnapshotInput&, std::stop_token) { return Result{}; },
+                              input_for("a4"), t4, &sink) == SubmitStatus::QuotaExceeded);
+
+        const Stats rejected_stats = pool.stats();
+        CHECK(rejected_stats.rejected_quota == 2);
+        CHECK(rejected_stats.rejected_queue_full == 0);
+        CHECK(rejected_stats.rejected == 2);
+        CHECK(rejected_stats.by_tenant_count == 2);
+
+        gate->store(true, std::memory_order_release);
+        CHECK(sink.wait_for(3));
+
+        // Releasing A's slots lets A submit again; B was never blocked.
+        auto t5 = std::make_shared<Ticket>();
+        CHECK(pool.try_submit([](const SnapshotInput&, std::stop_token) { return Result{}; },
+                              input_for("a5"), t5, &sink) == SubmitStatus::Accepted);
+        CHECK(sink.wait_for(4));
+        CHECK(t5->status.load(std::memory_order_acquire) == Status::Done);
+        CHECK(quota.tenant_used(kTenantA, Dimension::OffloadInflight) == 0);
+        CHECK(quota.tenant_used(kTenantB, Dimension::OffloadInflight) == 0);
+        CHECK(quota.used(Dimension::OffloadInflight) == 0);
+        CHECK(quota.tenant_used(kTenantA, Dimension::TimeUs) > 0);
+
+        const Stats s = pool.stats();
+        CHECK(s.by_tenant_count == 2);
+        bool saw_a = false;
+        bool saw_b = false;
+        for (std::size_t i = 0; i < s.by_tenant_count; ++i) {
+            const auto& ts = s.by_tenant[i];
+            if (ts.tenant == kTenantA) {
+                saw_a = true;
+                CHECK(ts.submitted == 3);
+                CHECK(ts.rejected == 2);
+                CHECK(ts.completed_done == 3);
+                CHECK(ts.inflight_peak == 2);
+            } else if (ts.tenant == kTenantB) {
+                saw_b = true;
+                CHECK(ts.submitted == 1);
+                CHECK(ts.rejected == 0);
+                CHECK(ts.completed_done == 1);
+                CHECK(ts.inflight_peak == 1);
+            }
+        }
+        CHECK(saw_a);
+        CHECK(saw_b);
+
+        // Cancelled terminal path also releases the slot exactly once.
+        auto t6 = std::make_shared<Ticket>();
+        auto spin = [](const SnapshotInput&, std::stop_token st) -> Result {
+            while (!st.stop_requested())
+                std::this_thread::sleep_for(1ms);
+            return {};
+        };
+        CHECK(pool.try_submit(spin, input_for("a6"), t6, &sink) == SubmitStatus::Accepted);
+        CHECK(quota.tenant_used(kTenantA, Dimension::OffloadInflight) == 1);
+        pool.shutdown();
+        CHECK(t6->status.load(std::memory_order_acquire) == Status::Cancelled);
+        CHECK(sink.count() == 5);
+        CHECK(quota.tenant_used(kTenantA, Dimension::OffloadInflight) == 0);
+        CHECK(quota.used(Dimension::OffloadInflight) == 0);
+    }
+    reset_process_resource_quota_for_test();
+}
+
 } // namespace
 
 int main() {
@@ -455,6 +580,7 @@ int main() {
     test_class_default_and_bounds();
     test_weighted_dispatch_order();
     test_no_class_starvation_under_batch_flood();
+    test_offload_quota_per_tenant();
 
     if (g_failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);
