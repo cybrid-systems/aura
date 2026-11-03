@@ -244,6 +244,7 @@ target_sources(aura PRIVATE
     src/serve/worker.cpp
     src/serve/steal_safety.cpp
     src/serve/runtime_production_abi.cpp # Issue #2955 production ABI self-check
+    src/offload/offload_pool.cpp # Issue #4881/#4882: ownership-safe offload pool
     src/serve/thread_pool.cpp
     src/serve/scheduler.cpp
     src/serve/gc_coordinator.cpp
@@ -727,6 +728,13 @@ endif()
 aura_test_compile_options(test_concurrent)
 target_link_libraries(test_concurrent PRIVATE pthread)
 add_test(NAME concurrent_basic COMMAND ./test_concurrent)
+
+# ── Offload pool core (#4881/#4882) ──────────────────────────
+add_executable(test_offload_pool tests/serve/test_offload_pool.cpp src/offload/offload_pool.cpp)
+target_include_directories(test_offload_pool PRIVATE src)
+aura_test_compile_options(test_offload_pool)
+target_link_libraries(test_offload_pool PRIVATE pthread)
+add_test(NAME offload_pool COMMAND ./test_offload_pool)
 
 # ─────────────────────────────────────────────────────────────────
 # Test build architecture (Anqi 2026-07-20 "ship in order" + 07:04 directives)
