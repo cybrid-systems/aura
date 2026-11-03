@@ -753,13 +753,13 @@ run_emit_test "emit:null-unspec"  "(display (null? (if #f #f)))" "#f"
 echo "=== Diagnostic Tests ==="
 
 # Parse error: source line + caret display (via batch eval)
-run_test "diag:parse-error-caret" "$(printf '#|test|')" "error: 1:1: parse error: expected expression, got invalid character   |  1 | #|test|   | ^^^^^^^"
+run_test "diag:parse-error-caret" "$(printf '#|test')" "error: 1:1: parse error: unterminated block comment '#|'   |  1 | #|test   | ^^^^^^"
 
 # Parse error: multi-line source
-run_test "diag:parse-error-multiline" "$(printf '#|whoops|')" "error: 1:1: parse error: expected expression, got invalid character   |  1 | #|whoops|   | ^^^^^^^^^"
+run_test "diag:parse-error-multiline" "$(printf '#|whoops')" "error: 1:1: parse error: unterminated block comment '#|'   |  1 | #|whoops   | ^^^^^^^^"
 
 # Parse error: bad syntax
-run_test "diag:parse-error-badsyntax" "$(printf '#bad')" "error: 1:1: parse error: expected expression, got invalid character   |  1 | #bad   | ^^^^"
+run_test "diag:parse-error-badsyntax" "$(printf '#bad')" "error: 1:1: parse error: invalid character '#'   |  1 | #bad   | ^^^^"
 
 # Type checker: unbound variable with suggestion
 run_typecheck_test "diag:typecheck-suggest" "(undef 5)" "type: Any1:2: unbound variable: undef  did you mean 'and'?"

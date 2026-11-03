@@ -590,26 +590,52 @@ static bool form_builds_closure_or_task_4892(std::string_view f) {
 // time. The define must run/register its evaluator value cell before a later
 // form's inline lambda is lowered; a single whole-file eval lowers every form
 // first and the lambda captured a different cell.
-static std::vector<std::string> split_top_level_forms_4865(std::string_view src) {
+struct TopLevelForm4865 {
+    std::string text;
+    // Issue #4875: 1-based position of text[0] in the whole source, so a
+    // form-relative diagnostic can be mapped back when the splitter skipped
+    // comments/whitespace before it.
+    std::uint32_t line = 1;
+    std::uint32_t column = 1;
+};
+static std::vector<TopLevelForm4865> split_top_level_forms_4865(std::string_view src) {
     // Issue #4869: reader-aware top-level form split. The caller has already
     // parsed the whole source successfully, so this only has to find form
     // boundaries under the reader's lexical rules: strings with escapes,
     // #\ character literals (including #\ ( and #\"), |...| symbols,
     // ; comments, quote prefixes, and #( vectors. The old hand counter
     // treated #\ ( as a list open and '()' in a block comment as code.
-    std::vector<std::string> out;
+    std::vector<TopLevelForm4865> out;
     const std::size_t n = src.size();
     std::size_t form_start = std::string_view::npos;
+    std::uint32_t line = 1;
+    std::size_t line_start = 0;
+    std::uint32_t form_line = 1;
+    std::uint32_t form_col = 1;
     int depth = 0;
+    auto start_form = [&](std::size_t at) {
+        if (form_start == std::string_view::npos) {
+            form_start = at;
+            form_line = line;
+            form_col = static_cast<std::uint32_t>(at - line_start) + 1;
+        }
+    };
     auto flush_atom = [&](std::size_t end) {
         if (depth == 0 && form_start != std::string_view::npos) {
-            out.emplace_back(src.substr(form_start, end - form_start));
+            out.push_back(
+                {std::string(src.substr(form_start, end - form_start)), form_line, form_col});
             form_start = std::string_view::npos;
         }
     };
     for (std::size_t i = 0; i < n;) {
         char c = src[i];
-        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+        if (c == '\n') {
+            ++i;
+            ++line;
+            line_start = i;
+            continue;
+        }
+        if (c == ' ' || c == '\t' || c == '\r') {
             ++i;
             continue;
         }
@@ -618,9 +644,33 @@ static std::vector<std::string> split_top_level_forms_4865(std::string_view src)
                 ++i;
             continue;
         }
+        if (c == '#' && i + 1 < n && src[i + 1] == '|') {
+            // Issue #4875: R7RS block comment. A complete one is whitespace
+            // between forms; an unterminated one stays in the current chunk
+            // so the parser reports it and no later-looking form runs.
+            const std::size_t comment_start = i;
+            i += 2;
+            bool closed = false;
+            while (i < n) {
+                if (src[i] == '|' && i + 1 < n && src[i + 1] == '#') {
+                    i += 2;
+                    closed = true;
+                    break;
+                }
+                if (src[i] == '\n') {
+                    ++line;
+                    line_start = i + 1;
+                }
+                ++i;
+            }
+            if (closed)
+                continue;
+            // Unterminated: keep the remainder as the current chunk.
+            start_form(comment_start);
+            continue;
+        }
         if (c == '"') {
-            if (form_start == std::string_view::npos)
-                form_start = i;
+            start_form(i);
             ++i;
             while (i < n) {
                 if (src[i] == '\\') {
@@ -631,14 +681,17 @@ static std::vector<std::string> split_top_level_forms_4865(std::string_view src)
                     ++i;
                     break;
                 }
+                if (src[i] == '\n') {
+                    ++line;
+                    line_start = i + 1;
+                }
                 ++i;
             }
             flush_atom(i);
             continue;
         }
         if (c == '#' && i + 1 < n && src[i + 1] == '\\') {
-            if (form_start == std::string_view::npos)
-                form_start = i;
+            start_form(i);
             i += 2;
             if (i < n) {
                 if (std::isalpha(static_cast<unsigned char>(src[i]))) {
@@ -653,8 +706,7 @@ static std::vector<std::string> split_top_level_forms_4865(std::string_view src)
             continue;
         }
         if (c == '|') {
-            if (form_start == std::string_view::npos)
-                form_start = i;
+            start_form(i);
             ++i;
             while (i < n) {
                 if (src[i] == '\\') {
@@ -665,29 +717,30 @@ static std::vector<std::string> split_top_level_forms_4865(std::string_view src)
                     ++i;
                     break;
                 }
+                if (src[i] == '\n') {
+                    ++line;
+                    line_start = i + 1;
+                }
                 ++i;
             }
             flush_atom(i);
             continue;
         }
         if (c == '\'' || c == '`' || c == ',') {
-            if (form_start == std::string_view::npos)
-                form_start = i;
+            start_form(i);
             ++i;
             if (c == ',' && i < n && src[i] == '@')
                 ++i;
             continue;
         }
         if (c == '(' || c == '[') {
-            if (form_start == std::string_view::npos)
-                form_start = i;
+            start_form(i);
             ++depth;
             ++i;
             continue;
         }
         if (c == '#' && i + 1 < n && src[i + 1] == '(') {
-            if (form_start == std::string_view::npos)
-                form_start = i;
+            start_form(i);
             ++depth;
             i += 2;
             continue;
@@ -701,8 +754,7 @@ static std::vector<std::string> split_top_level_forms_4865(std::string_view src)
             continue;
         }
         // Atom (identifier, number, #t/#f, dotted tail, ...).
-        if (form_start == std::string_view::npos)
-            form_start = i;
+        start_form(i);
         ++i;
         while (i < n) {
             char d = src[i];
@@ -717,7 +769,7 @@ static std::vector<std::string> split_top_level_forms_4865(std::string_view src)
         flush_atom(i);
     }
     if (form_start != std::string_view::npos)
-        out.emplace_back(src.substr(form_start));
+        out.push_back({std::string(src.substr(form_start)), form_line, form_col});
     return out;
 }
 
@@ -2563,10 +2615,20 @@ int main(int argc, char* argv[]) {
             // for what the IR path can express).
             aura::compiler::set_tree_walker_fallback_policy(
                 aura::compiler::TreeWalkerFallbackPolicy::Allow);
-            for (auto& form : split_top_level_forms_4865(content)) {
-                auto r = cs.eval(form);
+            for (auto& tf : split_top_level_forms_4865(content)) {
+                auto r = cs.eval(tf.text);
                 if (!r) {
-                    std::println(std::cerr, "error: {}", r.error().format_with_source(form));
+                    // Issue #4875: form-relative -> file coordinates.
+                    auto d = r.error();
+                    if (d.location.valid()) {
+                        if (d.location.line == 1 && d.location.column > 0 && tf.column > 1)
+                            d.location.column += tf.column - 1;
+                        d.location.line += tf.line - 1;
+                    }
+                    std::string ctx(static_cast<std::size_t>(tf.line - 1), '\n');
+                    ctx.append(static_cast<std::size_t>(tf.column - 1), ' ');
+                    ctx += tf.text;
+                    std::println(std::cerr, "error: {}", d.format_with_source(ctx));
                     return 1;
                 }
             }
@@ -3971,7 +4033,8 @@ int main(int argc, char* argv[]) {
             }
             std::string last_out;
             bool any_error = false;
-            for (auto& form : split_top_level_forms_4865(all_input)) {
+            for (auto& tf : split_top_level_forms_4865(all_input)) {
+                const std::string& form = tf.text;
                 const bool value_define = is_value_define_form_4892(form);
                 aura::compiler::set_tree_walker_fallback_policy(
                     value_define ? aura::compiler::TreeWalkerFallbackPolicy::Allow
@@ -4006,7 +4069,19 @@ int main(int argc, char* argv[]) {
                     // and exits 1. Keep that contract on the form-by-form
                     // force-soa face too (otherwise "after" is never printed
                     // and later forms' arity diagnostics are lost).
-                    std::println(std::cerr, "error: {}", fr.error().format_with_source(form));
+                    // Issue #4875: map the form-relative position back onto
+                    // the real file coordinates so the diagnostic points at
+                    // the actual line/column (e.g. after a block comment).
+                    auto& loc = fr.error().location;
+                    if (loc.valid()) {
+                        if (loc.line == 1 && loc.column > 0 && tf.column > 1)
+                            loc.column += tf.column - 1;
+                        loc.line += tf.line - 1;
+                    }
+                    std::string ctx(static_cast<std::size_t>(tf.line - 1), '\n');
+                    ctx.append(static_cast<std::size_t>(tf.column - 1), ' ');
+                    ctx += form;
+                    std::println(std::cerr, "error: {}", fr.error().format_with_source(ctx));
                     any_error = true;
                     continue;
                 }
@@ -4122,8 +4197,10 @@ int main(int argc, char* argv[]) {
             e = e.substr(s);
             auto r2 = cs.eval(e);
             if (!r2) {
-                if (file_resume && anchors[i].offset != std::string::npos &&
-                    r2.error().location.valid()) {
+                // Issue #4875: shift a form-relative location onto all_input
+                // for parse errors too (the recovery walk runs after a parse
+                // failure), not only for file_resume runtime errors.
+                if (anchors[i].offset != std::string::npos && r2.error().location.valid()) {
                     auto d = r2.error();
                     // Line 1 of a trimmed form is shifted by the form's
                     // start column. Later lines keep their own columns.
@@ -4135,6 +4212,15 @@ int main(int argc, char* argv[]) {
                     std::println(std::cerr, "error: {}", r2.error().format_with_source(e));
                 }
                 err = true;
+                // Issue #4875: a reader/parse error means the source at this
+                // point could not be read, so later-looking forms are not a
+                // trustworthy suffix (a bare '#' must stop the file). Runtime
+                // errors keep the #4460/#4467 resume contract.
+                const auto kind = r2.error().kind;
+                if (kind == aura::diag::ErrorKind::ParseError ||
+                    kind == aura::diag::ErrorKind::UnexpectedToken ||
+                    kind == aura::diag::ErrorKind::UnterminatedSExpr)
+                    break;
             } else if (i + 1 == exprs.size() && !is_void(*r2))
                 std::println("{}", fmt_val(*r2, cs));
         }

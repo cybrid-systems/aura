@@ -184,6 +184,11 @@ FlatParseResult parse(ParserState& s, std::string_view src) {
                     return r;
                 }
                 if (tok.kind != TokenKind::EndOfFile) {
+                    // Issue #4875: surface a specific deferred reader error
+                    // (unterminated #|, bare #, bad literal) before the
+                    // generic "expected expression" text. record_error only
+                    // fills r.error when it is still empty.
+                    flush_deferred_char_error();
                     record_error("expected expression, got " + token_desc(tok), tok);
                     e = parse_expr(s); // try again after skip
                     if (e == NULL_NODE && s.lex.peek().kind == TokenKind::RParen) {
@@ -374,6 +379,18 @@ NodeId parse_expr(ParserState& s) {
             // Issue #4736 (reopened): this site keeps its #4129 spelling —
             // scripts/check_character_literal_4129.py pins the exact guard and
             // the malformed-literal face does not need a position.
+            // Issue #4875: a bare # or an unclosed block comment must not be
+            // skipped silently by the tree-walker reader.
+            if (tok.text == "#|" && s.deferred_error.empty()) {
+                s.deferred_error = "unterminated block comment '#|'";
+                s.deferred_line = tok.line;
+                s.deferred_column = tok.column;
+            }
+            if (tok.text == "#" && s.deferred_error.empty()) {
+                s.deferred_error = "invalid character '#'";
+                s.deferred_line = tok.line;
+                s.deferred_column = tok.column;
+            }
             if (tok.text.starts_with("#\\") && s.deferred_error.empty())
                 s.deferred_error = "malformed character literal '" + std::string(tok.text) + "'";
             // Issue #4498: 1/2 — exact rationals are not supported.

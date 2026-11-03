@@ -163,9 +163,11 @@ class TestForceSoaCells4865(unittest.TestCase):
 
     def test_direct_run_wrapped_form_diag_column_4892(self) -> None:
         # Issue #4892: the Begin wrap must not shift the reported column.
+        # Issue #4875: the line is the real line in the file (3), not the
+        # line inside the split form (1).
         src = '(display "a")\n(newline)\n(foo 1)\n(display "after")\n(newline)\n'
         p = _run(src, direct=True)
         self.assertEqual(p.returncode, 1)
-        self.assertIn("1:2:", p.stderr)
+        self.assertIn("3:2:", p.stderr)
         self.assertIn("foo", p.stderr)
         self.assertEqual(p.stdout.strip().splitlines(), ["a", "after"])
