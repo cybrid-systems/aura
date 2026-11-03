@@ -2095,14 +2095,33 @@ public:
             if (soft_orch_no_park) {
                 // Issue #4825: the soft agent-body window cannot park a
                 // fiber, but :wait #t / :timeout-ms must still wait.
-                // Poll instead of returning empty immediately, releasing
-                // the denseness body lock so a responder can run.
                 if (timeout_ms > 0 && std::chrono::steady_clock::now() >= deadline) {
                     g_mf_mailbox_stats.recv_timeouts.fetch_add(1, std::memory_order_relaxed);
                     return std::nullopt;
                 }
                 g_mf_mailbox_stats.recv_waits.fetch_add(1, std::memory_order_relaxed);
-                {
+                if (g_current_fiber != nullptr) {
+                    // Issue #4873: this is a scheduler fiber, so sleeping on
+                    // the worker thread starved every sibling fiber queued
+                    // behind it (a second agent body did not start until the
+                    // first body's recv timeout; an agent-ask to it timed
+                    // out). Hand the worker back with an EXPLICIT yield: the
+                    // worker re-queues this fiber at the tail of its ready
+                    // FIFO (#4699), so sibling agents run first and this
+                    // recv re-checks the mailbox/cancel/deadline right after.
+                    // A plain explicit yield never parks (no deadline to
+                    // lose at teardown, no Waiting state for the shutdown
+                    // path to abandon), which is why this stays inside the
+                    // #4721 soft-window contract.
+                    auto* self = g_current_fiber;
+                    const bool prev_mailbox_wait = self->mailbox_wait_yield_allowed();
+                    self->set_mailbox_wait_yield_allowed(true);
+                    Fiber::yield(YieldReason::Explicit);
+                    self->set_mailbox_wait_yield_allowed(prev_mailbox_wait);
+                } else {
+                    // No scheduler fiber on this thread (CLI denseness body /
+                    // host thread): release the body lock so a responder can
+                    // run, then poll.
                     ::aura::messaging::DensenessBodyLockWaitGuard unblock_body_for_wait;
                     std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 }

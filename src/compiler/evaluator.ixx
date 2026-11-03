@@ -9012,6 +9012,18 @@ public:
     // same gate. Soft / Off and :pure keep the batch-local eval_mu.
     // Public for tests/orch/test_agent_apply_mutex concurrent ACs.
     mutable std::mutex agent_apply_mu_;
+    // Issue #4873: the body that holds agent_apply_mu_ is identified by its
+    // fiber (0 = host thread). A blocking orch:agent-recv inside that body
+    // releases the gate for the wait so a sibling agent's body can start;
+    // the same body reacquires it before touching evaluator state again.
+    // Only one body can hold the mutex, so a single slot is enough.
+    std::atomic<std::uint64_t> agent_apply_owner_identity_{0};
+    void* agent_apply_wait_lock_ = nullptr; // std::unique_lock<std::mutex>*
+    // Fibers that released the gate for a recv wait and still owe a
+    // reacquire. Keyed by fiber id because the body may resume on another
+    // worker; the unique_lock object lives on that fiber's stack.
+    std::mutex agent_apply_pause_mu_;
+    std::unordered_map<std::uint64_t, void*> agent_apply_paused_;
 
     // Issue #4062: session-local set of region keys currently inside
     // spawn apply_closure. Not an AgentRegistry. Soft/Off never calls
@@ -9040,9 +9052,50 @@ public:
     // Issue #4853: on_retry() runs while the apply gate is held by another
     // agent body. The caller hands the worker thread back (fiber yield)
     // instead of pinning it on the gate.
+    // Issue #4873: release / reacquire the agent apply gate around a
+    // blocking wait in the body that owns it. identity is the fiber id of
+    // the calling body (0 = host thread, never paused). Releasing lets a
+    // sibling agent enter its body instead of queueing on the gate until
+    // the recv timeout. try_resume returns false when another body grabbed
+    // the gate in the meantime; the caller retries with its yield hook.
+    [[nodiscard]] bool pause_agent_apply_for_wait(std::uint64_t identity) noexcept {
+        if (identity == 0)
+            return false;
+        std::lock_guard<std::mutex> guard(agent_apply_pause_mu_);
+        if (agent_apply_owner_identity_.load(std::memory_order_relaxed) != identity)
+            return false;
+        auto* lock = static_cast<std::unique_lock<std::mutex>*>(agent_apply_wait_lock_);
+        if (lock == nullptr || !lock->owns_lock())
+            return false;
+        lock->unlock();
+        agent_apply_paused_[identity] = lock;
+        return true;
+    }
+
+    [[nodiscard]] bool try_resume_agent_apply_after_wait(std::uint64_t identity) noexcept {
+        if (identity == 0)
+            return true;
+        std::lock_guard<std::mutex> guard(agent_apply_pause_mu_);
+        auto it = agent_apply_paused_.find(identity);
+        if (it == agent_apply_paused_.end())
+            return true;
+        auto* lock = static_cast<std::unique_lock<std::mutex>*>(it->second);
+        if (lock == nullptr)
+            return true;
+        // Someone else may hold the gate now: keep the debt and let the
+        // caller retry with its yielding hook, then own the gate again.
+        if (!lock->try_lock())
+            return false;
+        agent_apply_paused_.erase(it);
+        agent_apply_wait_lock_ = lock;
+        agent_apply_owner_identity_.store(identity, std::memory_order_relaxed);
+        return true;
+    }
+
     template <class F, class OnLock, class OnRetry>
     void gate_spawn_apply_region(std::uint64_t region_key, bool region_fast, F&& body,
-                                 OnLock&& on_lock, OnRetry&& on_retry) {
+                                 OnLock&& on_lock, OnRetry&& on_retry,
+                                 std::uint64_t owner_identity = 0) {
         struct Release {
             Evaluator* self = nullptr;
             std::uint64_t key = 0;
@@ -9085,6 +9138,34 @@ public:
         std::unique_lock<std::mutex> apply(agent_apply_mu_, std::defer_lock);
         while (!apply.try_lock())
             on_retry();
+        // Issue #4873: publish the holder so a blocking recv in this body can
+        // release the gate across its wait.
+        struct HoldClear {
+            Evaluator* self;
+            void* lock;
+            ~HoldClear() {
+                std::lock_guard<std::mutex> guard(self->agent_apply_pause_mu_);
+                if (self->agent_apply_wait_lock_ == lock) {
+                    self->agent_apply_wait_lock_ = nullptr;
+                    self->agent_apply_owner_identity_.store(0, std::memory_order_release);
+                }
+                // A body that exits with the gate still released (an
+                // exception from the wait path, not a normal recv return)
+                // must not leave a dangling pointer keyed by its fiber id.
+                for (auto it = self->agent_apply_paused_.begin();
+                     it != self->agent_apply_paused_.end();) {
+                    if (it->second == lock)
+                        it = self->agent_apply_paused_.erase(it);
+                    else
+                        ++it;
+                }
+            }
+        } hold_clear{this, &apply};
+        if (owner_identity != 0) {
+            std::lock_guard<std::mutex> guard(agent_apply_pause_mu_);
+            agent_apply_wait_lock_ = &apply;
+            agent_apply_owner_identity_.store(owner_identity, std::memory_order_release);
+        }
         const auto wait_us =
             static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
                                            std::chrono::steady_clock::now() - t0)
