@@ -35,6 +35,9 @@
 #   - (2026-09) asan-verify timeout-minutes=40 (tests-only; default 360
 #     hid hangs). concurrent skips stdbuf under asan (libstdbuf.so
 #     before libasan aborts at startup).
+#   - (2026-11) ASAN verify folded into asan-build: the separate job's
+#     second ~10GB dev-image pull failed at container init and skipped all
+#     tests. Per-step timeout-minutes keeps the 40-min hang budget.
 #   - (2026-09) test_ir + test_concurrent share aura_serve_fiber_objects
 #   - (2026-09) PR fast includes densify_pin + orch_agent batches
 #   - (2026-09) heavy issue bins live-stream stdout (hangs visible)
@@ -464,6 +467,8 @@ jobs:
         echo "✓ ci-ok (gate=$gate, build-test=$bt, issue-farm=$farm)"
 
   # ASAN track — main only (saves ~8–10m on PRs; PR gate is build-test).
+  # Build + verify share one job/container: the old asan-verify job
+  # re-pulled the ~10GB image and failed at container init.
   asan-build:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -517,41 +522,24 @@ jobs:
         if-no-files-found: error
         retention-days: 1
 
-  asan-verify:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [asan-build]
-    runs-on: ubuntu-latest
-    timeout-minutes: 40  # tests-only (binaries from asan-build). Default
-                         # 360 hid hangs. concurrent python budget is 600s;
-                         # emit-binary is minutes. stdbuf is skipped under
-                         # asan in build.py (libstdbuf.so vs libasan order).
-    container:
-      image: ghcr.io/cybrid-systems/dev:v1.1.1
-    steps:
-    - uses: actions/checkout@v7
-
-    - name: Download ASAN binaries
-      uses: actions/download-artifact@v8
-      with:
-        name: asan-binaries
-        path: build_asan
-
-    - name: Restore executable bit + shared-lib path
+    # Verification runs in the build container. The old separate
+    # asan-verify job re-pulled the ~10GB dev image and that pull failed at
+    # "Initialize containers" (Docker pull failed after 3 retries), which
+    # skipped every test step. Reusing this container removes that second
+    # pull; per-step timeout-minutes keeps the old 40-min hang budget
+    # (the default 360-min job budget hid hangs).
+    - name: Check ASAN binaries + shared libs
       run: |
-        chmod +x build_asan/aura build_asan/test_ir build_asan/test_concurrent
+        test -x build_asan/aura
+        test -x build_asan/test_ir
+        test -x build_asan/test_concurrent
         test -f build_asan/libaura-reflect.so
         test -f build_asan/libaura_tl_arena.so
-        # Belt-and-suspenders if RUNPATH/$ORIGIN is not honored after
-        # artifact download (aura NEEDED libaura-reflect.so + libaura_tl_arena.so).
         echo "LD_LIBRARY_PATH=$(pwd)/build_asan${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
         export LD_LIBRARY_PATH="$(pwd)/build_asan${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
         ldd build_asan/aura
-        if ldd build_asan/aura | grep -q 'libaura-reflect.so => not found'; then
-          echo "::error::libaura-reflect.so still not resolved after artifact download"
-          exit 1
-        fi
-        if ldd build_asan/aura | grep -q 'libaura_tl_arena.so => not found'; then
-          echo "::error::libaura_tl_arena.so still not resolved after artifact download"
+        if ldd build_asan/aura | grep -q 'not found'; then
+          echo "::error::ASAN binary has unresolved shared libraries"
           exit 1
         fi
 
@@ -559,6 +547,7 @@ jobs:
     # Use --load so multi-line forms work (stdin Repl is line-oriented and
     # breaks define/if across lines → false FAIL + missing ✅ PASS).
     - name: Multi-session leak test
+      timeout-minutes: 12
       env:
         AURA_SANDBOX: "off"
         # Diagnostics face: the leak oracle's digit-parse fn is deliberately
@@ -589,6 +578,7 @@ jobs:
         echo "✓ No ASAN leaks detected"
 
     - name: Run unit tests (test_ir) under ASAN
+      timeout-minutes: 15
       env:
         ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:print_stacktrace=1:halt_on_error=1"
         AURA_SANDBOX: "off"
@@ -597,6 +587,7 @@ jobs:
         echo "✓ unit tests clean under ASAN"
 
     - name: Run concurrent tests under ASAN
+      timeout-minutes: 35
       env:
         ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:print_stacktrace=1:halt_on_error=1"
         AURA_SANDBOX: "off"
@@ -605,6 +596,7 @@ jobs:
         echo "✓ concurrent tests clean under ASAN"
 
     - name: Run emit-binary suite (bash) under ASAN
+      timeout-minutes: 30
       env:
         ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:print_stacktrace=1:halt_on_error=1"
         AURA_SANDBOX: "off"
