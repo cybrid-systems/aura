@@ -417,3 +417,53 @@ class TestIssue4854ServeFiberRetireGuard(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestIssue4854FiberJoinedCache(unittest.TestCase):
+    """Issue #4854 residual: the #4839 repeated-join cache was unbounded.
+
+    Every joined fiber's value stayed in s_fiber_joined for the process
+    lifetime and (gc-heap) walked the whole map as roots: ~88 B/fiber and a
+    linearly slowing sweep. The cache is now a 1024-entry FIFO.
+    """
+
+    _SRC = r"""
+(define (rss-kb)
+  (let* ((s (read-file "/proc/self/status")) (i (string-index s "VmRSS:")))
+    (let loop ((j (+ i 6)) (acc 0) (seen #f))
+      (let ((c (string-ref s j)))
+        (cond ((char-numeric? c) (loop (+ j 1) (+ (* acc 10) (- (char->integer c) 48)) #t))
+              (seen acc)
+              (else (loop (+ j 1) acc seen)))))))
+(define (rnd)
+  (let loop ((i 0) (fs (list)))
+    (if (< i 100)
+        (loop (+ i 1) (cons (fiber:spawn (lambda () i)) fs))
+        (for-each (lambda (f) (try (fiber:join f) (catch (e) 0))) fs))))
+(let loop ((r 1) (tp (monotonic-ms)))
+  (when (<= r 1200)
+    (rnd)
+    (when (= 0 (modulo r 5)) (gc-heap))
+    (if (= 0 (modulo r 200))
+        (let ((t (monotonic-ms)))
+          (display (format "rounds=~a rss_kb=~a ms=~a\n" r (rss-kb) (/ (- t tp) 200.0)))
+          (loop (+ r 1) t))
+        (loop (+ r 1) tp))))
+"""
+
+    def test_joined_cache_is_bounded(self) -> None:
+        p = _run_probe(self._SRC, timeout=180)
+        self.assertEqual(p.returncode, 0, p.stderr[-2000:])
+        rss: list[int] = []
+        ms: list[float] = []
+        for line in p.stdout.splitlines():
+            m = re.match(r"rounds=\d+ rss_kb=(\d+) ms=([\d.]+)$", line)
+            if m:
+                rss.append(int(m.group(1)))
+                ms.append(float(m.group(2)))
+        self.assertEqual(len(rss), 6, p.stdout[-2000:])
+        growth_kb = rss[-1] - rss[0]
+        # 120k fibers. Pre-fix this was ~10 MB; the 8-byte scheduler slot
+        # floor is ~1 MB.
+        self.assertLess(growth_kb, 5 * 1024, f"RSS grew {growth_kb} kB: {rss}")
+        self.assertLess(ms[-1], ms[0] * 1.5, f"per-round time grew: {ms}")

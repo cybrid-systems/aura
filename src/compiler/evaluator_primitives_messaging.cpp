@@ -87,7 +87,14 @@ namespace {
     // backend) or return () (scheduler backend). Keep the published value
     // per (Evaluator, fid) so every later join returns the same value (or
     // the same error value for a body that raised).
+    // Issue #4854: the #4839 repeated-join cache must be bounded. It held
+    // every joined fiber's value for the process lifetime, and (gc-heap)
+    // walked the whole map as roots: ~88 B/fiber leaked and every sweep got
+    // slower. Keep the most recent joins only; older repeat joins return
+    // void like a missing result.
+    inline constexpr std::size_t kFiberJoinedCacheCap = 1024;
     std::unordered_map<const void*, std::unordered_map<int64_t, EvalValue>> s_fiber_joined;
+    std::unordered_map<const void*, std::deque<int64_t>> s_fiber_joined_order;
     std::mutex s_fiber_results_mtx;
     std::condition_variable s_fiber_results_cv;
 
@@ -2435,7 +2442,20 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             result_ptr = std::move(it->second.value);
             s_fiber_results.erase(it);
             // Issue #4839: remember the published value for later joins.
-            s_fiber_joined[static_cast<const void*>(&ev)][fid] = **result_ptr;
+            // Issue #4854: bounded FIFO — the cache is a convenience, not an
+            // ownership record; retaining every fiber was a linear leak and
+            // made each (gc-heap) walk the whole history.
+            {
+                auto* owner = static_cast<const void*>(&ev);
+                auto& joined = s_fiber_joined[owner];
+                auto& order = s_fiber_joined_order[owner];
+                joined[fid] = **result_ptr;
+                order.push_back(fid);
+                while (order.size() > kFiberJoinedCacheCap) {
+                    joined.erase(order.front());
+                    order.pop_front();
+                }
+            }
             // Issue #4708: the fiber is joined -- drop its cancel state.
             fiber_cancel_forget(fid);
         }
