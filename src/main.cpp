@@ -52,6 +52,7 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
                                       const void* functions, unsigned int num_functions);
 
 extern "C" void aura_reset_runtime(); // Issue #137: cleanup at exit
+extern "C" int aura_hygiene_expand_deny_blocks_eval(void) noexcept;
 extern "C" void aura_set_prim_registration(const char* c_code);
 extern "C" std::uint64_t aura_jit_float_pool_size(); // Issue #4570 --jit-session
 extern "C" void aura_set_string_pool(const char** strings, unsigned int count);
@@ -4081,6 +4082,15 @@ int main(int argc, char* argv[]) {
             return off;
         };
         const auto& diag = r.error();
+        // Issue #4876: a capability deny during macro expansion is fatal for
+        // the program. Print it once and do not resume form-by-form: the
+        // unexpanded call would otherwise report a misleading unbound name.
+        const bool macro_deny = aura_hygiene_expand_deny_blocks_eval() != 0 ||
+                                diag.message.find("macro-self-evo") != std::string::npos;
+        if (macro_deny) {
+            std::println(std::cerr, "error: {}", diag.format_with_source(all_input));
+            err = true;
+        }
         const bool parse_fail = diag.kind == aura::diag::ErrorKind::ParseError ||
                                 diag.kind == aura::diag::ErrorKind::UnexpectedToken ||
                                 diag.kind == aura::diag::ErrorKind::UnterminatedSExpr;
@@ -4104,7 +4114,7 @@ int main(int argc, char* argv[]) {
             err = true;
             file_resume = true;
         }
-        for (std::size_t i = resume_at; i < exprs.size(); ++i) {
+        for (std::size_t i = resume_at; !macro_deny && i < exprs.size(); ++i) {
             auto& e = exprs[i];
             auto s = e.find_first_not_of(" \t\r\n");
             if (s == std::string::npos)
