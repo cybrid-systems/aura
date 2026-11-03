@@ -2,7 +2,9 @@
 #define AURA_MESSAGING_BRIDGE_H
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
+#include <vector>
 #include <optional>
 #include <functional>
 #include <mutex>
@@ -240,11 +242,49 @@ struct CliMainEvalBodyLock {
 using ThreadPoolEnqueueFn = void (*)(std::function<void()> fn, int wake_evfd);
 extern ThreadPoolEnqueueFn g_thread_pool_enqueue;
 
-// Async eval — set by serve_async.cpp. Evaluates code in the thread pool
-// and returns the result as a string. If unavailable, callers fall back
-// to synchronous eval.
-using EvalAsyncFn = std::string (*)(const std::string& code);
+// Async eval — set by serve_async.cpp. Evaluates code in a private
+// CompilerService snapshot on the isolated offload pool and returns the
+// result as a string. If unavailable, callers fall back to synchronous eval.
+// Issue #4887: std::function so the snapshot can be captured.
+using EvalAsyncFn = std::function<std::string(const std::string& code)>;
 extern EvalAsyncFn g_eval_async;
+
+// ── Issue #4888: offload:* language primitives bridge ───────────────
+// The primitives live in the evaluator module and cannot construct a
+// CompilerService (module cycle). This non-module TU implements the bridge,
+// is compiled into the aura binary, and registers itself at static init.
+struct OffloadTicketResult {
+    std::string status; // done | failed | cancelled | rejected
+    std::string mode;   // async | sync
+    std::vector<std::string> diagnostics;
+    std::uint64_t tests_passed = 0;
+    std::uint64_t tests_failed = 0;
+    std::vector<std::string> test_failures;
+    std::uint64_t queue_us = 0;
+    std::uint64_t exec_us = 0;
+    std::string error;
+};
+
+// Returns a non-negative ticket id, or a negative SubmitStatus code
+// (-1 queue-full, -2 quota-exceeded, -3 shutting-down).
+using OffloadSubmitFn =
+    std::function<int(std::string source, std::vector<std::string> stages, std::string klass)>;
+// timeout_ms == 0 means "park until terminal".
+using OffloadAwaitFn =
+    std::function<bool(int ticket, std::uint64_t timeout_ms, OffloadTicketResult& out)>;
+using OffloadPollFn = std::function<std::string(int ticket)>;
+using OffloadCancelFn = std::function<bool(int ticket)>;
+extern OffloadSubmitFn g_offload_submit;
+extern OffloadAwaitFn g_offload_await;
+extern OffloadPollFn g_offload_poll;
+extern OffloadCancelFn g_offload_cancel;
+// Issue #4887/#4888: a private CompilerService eval on an offload worker must
+// NOT take the process-global CLI body mutex (the parked session fiber holds
+// it for its whole eval), and it must not inherit production's Forbidden
+// tree-walker gate: the private context is isolated verification, not the
+// session pipeline. Both are thread-local to the worker.
+[[nodiscard]] bool offload_private_eval_active() noexcept;
+void set_offload_private_eval(bool on) noexcept;
 
 // Scheduler metrics — set by serve_async.cpp (Issue #32).
 // Returns scheduler performance counters as a JSON string.
