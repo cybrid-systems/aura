@@ -489,6 +489,8 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             {"vectors-free", u(ev.vector_heap_free_slots())},
             {"strings-live", u(ev.string_heap_live_size())},
             {"strings-free", u(ev.string_heap_free_slots())},
+            // Issue #4891: closure owner stamps (0 off the prod face).
+            {"closure-tenant-stamps", u(ev.closure_tenant_stamp_count())},
         };
         return build_kv_hash_4816(ev, kv);
     });

@@ -1214,6 +1214,9 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
     // shared readers (gc_root_count / flush) for the erase window.
     // Lock order vs env: closures first (#1664); we do not take
     // env_frames_mtx_ here. Bumps gc_sweep_closures_locked_total.
+    // Issue #4891: owner stamps of the closures swept below are dropped when
+    // this goes out of scope — after the shard locks (never nested).
+    SweptClosureStamps swept_stamps(*this);
     {
         aura::compiler::lock_order::AuditScope lo_closures(
             aura::compiler::lock_order::Level::Closures);
@@ -1234,6 +1237,7 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
                         // Issue #1888: tombstone before erase so ClosureView
                         // lifetime revalidation fails on moved-from / freed sources.
                         invalidate_closure_lifetime(it->second);
+                        swept_stamps.note(it->first);
                         it = cl_sh.map.erase(it);
                     } else {
                         ++it;
@@ -1821,6 +1825,9 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         }
     }
 
+    // Issue #4891: owner stamps of the closures swept below are dropped when
+    // this goes out of scope — after the shard locks (never nested).
+    SweptClosureStamps swept_stamps(*this);
     {
         aura::compiler::lock_order::AuditScope lo_closures(
             aura::compiler::lock_order::Level::Closures);
@@ -1837,6 +1844,7 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
                     continue;
                 }
                 invalidate_closure_lifetime(it->second);
+                swept_stamps.note(it->first);
                 it = cl_sh.map.erase(it);
             }
         }
@@ -2277,6 +2285,9 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
             break;
     }
 
+    // Issue #4891: owner stamps of the closures swept below are dropped when
+    // this goes out of scope — after the shard locks (never nested).
+    SweptClosureStamps swept_stamps(*this);
     {
         aura::compiler::lock_order::AuditScope lo_closures(
             aura::compiler::lock_order::Level::Closures);
@@ -2294,6 +2305,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
                     continue;
                 }
                 invalidate_closure_lifetime(it->second);
+                swept_stamps.note(it->first);
                 it = cl_sh.map.erase(it);
             }
         }

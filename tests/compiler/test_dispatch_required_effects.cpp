@@ -1923,6 +1923,57 @@ static void ac4298_inrange_pair_vector_tenant() {
     set_mode(SandboxMode::Off);
 }
 
+
+// Issue #4891: the tree-walker closure owner stamp is written only on the
+// face that reads it, and leaves with the closure (explicit free here; the GC
+// sweep path is covered by tests/python/test_issue_4890_4891.py). Before the
+// fix every closure ever minted kept an 8-byte slot in a dense vector.
+static void ac4891_closure_stamp_reclaim() {
+    std::println("\n--- #4891: closure owner stamps gated + reclaimed ---");
+    using aura::compiler::types::make_closure;
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto free_fn = ev.primitives().lookup("closure:free!");
+    CHECK(free_fn.has_value(), "4891: closure:free! present");
+    if (!free_fn)
+        return;
+    // Off face: no stamp is written (the reader returns before reading it).
+    ev.set_effect_sandbox_mode(0);
+    const auto base = ev.closure_tenant_stamp_count();
+    for (int i = 0; i < 64; ++i) {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        aura::compiler::Closure cl;
+        (void)ev.register_active_closure(std::move(cl));
+    }
+    CHECK(ev.closure_tenant_stamp_count() == base, "4891: Off face mints no closure stamps");
+
+    // Production face: stamped, still enforced, and dropped on owner free.
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    ev.set_effect_sandbox_mode(1);
+    aura::compiler::ClosureId cid = 0;
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        aura::compiler::Closure cl;
+        cid = ev.register_active_closure(std::move(cl));
+    }
+    CHECK(ev.closure_tenant_stamp_count() == base + 1, "4891: prod face stamps the closure");
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        auto freed = (*free_fn)({make_closure(cid)});
+        CHECK(is_bool(freed) && !as_bool(freed), "4891: foreign free still denied");
+        CHECK(ev.closure_tenant_stamp_count() == base + 1, "4891: denied free keeps the stamp");
+    }
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        auto freed = (*free_fn)({make_closure(cid)});
+        CHECK(is_bool(freed) && as_bool(freed), "4891: owner free lands");
+    }
+    CHECK(ev.closure_tenant_stamp_count() == base, "4891: owner free drops the stamp");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    ev.set_effect_sandbox_mode(0);
+}
+
 // Issue #4428: string_heap_ and the tree-walker closure map are one
 // Evaluator. TenantScope only rebinds the principal. string-fill! and
 // closure:free! on a closure value must refuse a foreign mint on the
@@ -5578,6 +5629,7 @@ int run_test_dispatch_required_effects() {
 
     // ── Issue #4428: string-fill! and closure:free! value owner ──
     ac4428_string_fill_and_closure_value();
+    ac4891_closure_stamp_reclaim();
 
     // ── Issue #4429: hash enumerator tenant gate ──
     ac4429_hash_enumerator_gate();

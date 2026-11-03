@@ -2687,18 +2687,23 @@ ClosureId Evaluator::register_active_closure(Closure cl) {
 // tombstone lifetime before erase so any view stamped from this Closure fails
 // is_closure_view_valid(view, cl) if cl was snapshotted.
 bool Evaluator::erase_active_closure(ClosureId id) noexcept {
-    std::unique_lock<std::shared_mutex> wlock(closures_shards_[closures_shard_index(id)].mu);
-    bump_closures_apply_epoch(); // Issue #3832
-    auto it = closures_shards_[closures_shard_index(id)].map.find(id);
-    if (it == closures_shards_[closures_shard_index(id)].map.end())
-        return false;
-    invalidate_closure_lifetime(it->second);
-    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
-        m->closure_view_dangling_prevented_total.store(
-            g_closure_view_dangling_prevented_total.load(std::memory_order_relaxed),
-            std::memory_order_relaxed);
+    {
+        std::unique_lock<std::shared_mutex> wlock(closures_shards_[closures_shard_index(id)].mu);
+        bump_closures_apply_epoch(); // Issue #3832
+        auto it = closures_shards_[closures_shard_index(id)].map.find(id);
+        if (it == closures_shards_[closures_shard_index(id)].map.end())
+            return false;
+        invalidate_closure_lifetime(it->second);
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+            m->closure_view_dangling_prevented_total.store(
+                g_closure_view_dangling_prevented_total.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+        }
+        closures_shards_[closures_shard_index(id)].map.erase(it);
     }
-    closures_shards_[closures_shard_index(id)].map.erase(it);
+    // Issue #4891: the closure is gone; its owner stamp goes with it (after
+    // the shard lock — the stamp mutex is never nested under it).
+    forget_tw_closure_owner(id);
     return true;
 }
 
