@@ -3898,6 +3898,48 @@ int main(int argc, char* argv[]) {
     // Issue #4460: failed require is a located diagnostic. This loop then
     // prints it once, runs forms after that location, and exits 1.
     cs.set_require_failure_is_diagnostic(true);
+    // Issue #4865: force-soa lowers every top-level form before any of them
+    // runs, so a fiber/agent body captures a stale copy of a top-level value
+    // cell (set! / hash-set! / channel:send lost). Evaluate form by form under
+    // force-soa, exactly as --load does, so each define publishes its live
+    // cell before a later form's closure is lowered.
+    {
+        const char* strict_env2 = std::getenv("AURA_PIPELINE_STRICT");
+        const std::string_view strict_v2 =
+            strict_env2 ? std::string_view(strict_env2) : std::string_view{};
+        if (strict_v2 == "force-soa" || strict_v2 == "force_soa" || strict_v2 == "soa") {
+            // Issue #4865: same face as --load force-soa. A value define the
+            // IR path cannot lower (fiber:spawn / agent forms) must still run
+            // with correct semantics; block-forcing it would silently drop
+            // the body instead of executing it.
+            aura::compiler::set_tree_walker_fallback_policy(
+                aura::compiler::TreeWalkerFallbackPolicy::Allow);
+            aura::ast::ASTArena parse_arena;
+            auto parse_alloc = parse_arena.allocator();
+            aura::ast::StringPool parse_pool(parse_alloc);
+            aura::ast::FlatAST parse_flat(parse_alloc);
+            auto pr = aura::parser::parse_to_flat(all_input, parse_flat, parse_pool);
+            if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+                std::println(std::cerr, "error: {}", pr.error.empty() ? "parse error" : pr.error);
+                return 1;
+            }
+            std::string last_out;
+            for (auto& form : split_top_level_forms_4865(all_input)) {
+                auto fr = cs.eval(form);
+                if (!fr) {
+                    std::println(std::cerr, "error: {}", fr.error().format_with_source(form));
+                    return 1;
+                }
+                // Mirror the whole-program face: only the LAST top-level
+                // form's value is printed, and a void last form prints
+                // nothing (an earlier non-void form must not leak out).
+                last_out = is_void(*fr) ? std::string{} : fmt_val(*fr, cs);
+            }
+            if (!last_out.empty())
+                std::println("{}", last_out);
+            return aura_displayed_error_count() > 0 ? 1 : 0;
+        }
+    }
     if (auto r = cs.eval(all_input)) {
         if (!is_void(*r))
             std::println("{}", fmt_val(*r, cs));
