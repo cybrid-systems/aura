@@ -15,6 +15,7 @@ module;
 #include "ci_build_info.h"
 #include "primitives_meta.h"
 #include "primitives_detail.h"
+#include "stats_registry_suppress.h"
 #include "serve/metrics.h"
 #include "hash_meta.h"                     // FNV constants (#901)
 #include "basis_points.h"                  // #905
@@ -1519,6 +1520,11 @@ bool ObservabilityPrims::is_legacy_stats_name(std::string_view name) {
 }
 
 void ObservabilityPrims::register_stats_impl(std::string name, PrimFn fn) {
+    // Issue #4887: a private offload CompilerService has its own evaluator and
+    // is destroyed after the job; publishing its lambdas here would leave the
+    // shared table pointing at a dead evaluator.
+    if (aura::compiler::stats_registration_suppressed())
+        return;
     legacy_stats_impls()[std::move(name)] = std::move(fn);
 }
 

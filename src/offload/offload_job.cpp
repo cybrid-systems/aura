@@ -6,6 +6,7 @@
 #include "offload_job.h"
 
 #include "compiler/messaging_bridge.h"
+#include "compiler/stats_registry_suppress.h"
 
 #include <chrono>
 #include <cstdio>
@@ -27,13 +28,21 @@ namespace {
     // not block on the session CLI body mutex the parked fiber holds.
     struct PrivateEvalScope {
         bool enabled = false;
+        bool prev_suppress = false;
         PrivateEvalScope() {
             aura::messaging::set_offload_private_eval(true);
+            // Issue #4887: the private service re-registers the global
+            // stats table on construction; its lambdas capture this
+            // evaluator, which dies with the job. Keep the session's
+            // registrations instead.
+            prev_suppress = aura::compiler::set_stats_registration_suppressed(true);
             enabled = true;
         }
         ~PrivateEvalScope() {
-            if (enabled)
+            if (enabled) {
+                aura::compiler::set_stats_registration_suppressed(prev_suppress);
                 aura::messaging::set_offload_private_eval(false);
+            }
         }
         PrivateEvalScope(const PrivateEvalScope&) = delete;
         PrivateEvalScope& operator=(const PrivateEvalScope&) = delete;
