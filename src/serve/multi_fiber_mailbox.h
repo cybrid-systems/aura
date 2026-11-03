@@ -2072,8 +2072,8 @@ public:
             }
             // Issue #4871: teardown request_cancel must break a blocking
             // agent-recv. The soft-window poll below wakes every 1 ms; this
-            // check sits after the Policy-A/mu_ door so the #3791 source-cite
-            // order stays this_fiber_holds -> AuditScope. Return empty so the
+            // check sits after the Policy-A/mu_ door so the pinned
+            // source-cite order stays this_fiber_holds -> AuditScope. Return empty so the
             // body can finish before ~Evaluator destroys the slab.
             if (g_current_fiber != nullptr && g_current_fiber->is_cancel_requested())
                 return std::nullopt;
