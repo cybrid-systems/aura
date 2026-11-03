@@ -245,6 +245,7 @@ target_sources(aura PRIVATE
     src/serve/steal_safety.cpp
     src/serve/runtime_production_abi.cpp # Issue #2955 production ABI self-check
     src/offload/offload_pool.cpp # Issue #4881/#4882: ownership-safe offload pool
+    src/offload/offload_service.cpp # Issue #4883: scheduler completion bridge
     src/serve/thread_pool.cpp
     src/serve/scheduler.cpp
     src/serve/gc_coordinator.cpp
@@ -708,6 +709,9 @@ target_sources(test_concurrent PRIVATE
     # returns 0 (no primitive found). See
     # src/compiler/aura_jit_prim_dispatch_stub.cpp for details.
     src/compiler/aura_jit_prim_dispatch_stub.cpp
+    # Issue #4883: scheduler completion channel integration test.
+    src/offload/offload_pool.cpp
+    src/offload/offload_service.cpp
 )
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")

@@ -191,6 +191,15 @@ public:
     // already done before registering as a joiner.
     Fiber* fiber_by_id(std::uint64_t fiber_id) const;
 
+    // Issue #4883: offload completion channel. Pool threads publish a
+    // completion after Ticket::status; the IO thread validates fiber_id and
+    // wait_gen and re-queues only the matching park. A stale completion
+    // (reaped fiber or an older wait) is dropped and counted.
+    void post_offload_completion(std::uint64_t fiber_id, std::uint64_t wait_gen);
+    [[nodiscard]] std::uint64_t offload_stale_completions() const noexcept {
+        return offload_stale_completions_.load(std::memory_order_relaxed);
+    }
+
     // ── Issue #2227 / #2396: hard-reclaim orphan tracking ─────────
     // The orch join path (cancel_and_drain_* / join_agent / parallel
     // Timeout residual) calls note_orphan_fiber after observing
@@ -307,6 +316,19 @@ private:
     // IO thread resources
     int epoll_fd_ = -1;
     int stdin_fd_ = -1;
+
+    // Issue #4883: one completion eventfd for the whole scheduler, plus an
+    // MPSC queue of {fiber_id, wait_gen}. The pool never touches a Fiber*.
+    struct OffloadCompletion {
+        std::uint64_t fiber_id = 0;
+        std::uint64_t wait_gen = 0;
+    };
+    int offload_completion_fd_ = -1;
+    int offload_completion_token_ = 0; // epoll data.ptr sentinel
+    mutable std::mutex offload_completion_mutex_;
+    std::vector<OffloadCompletion> offload_completions_;
+    std::atomic<std::uint64_t> offload_stale_completions_{0};
+    void drain_offload_completions() noexcept;
 
     // eventfd → Fiber mapping (protected by mutex)
     std::unordered_map<int, Fiber*> wait_map_;

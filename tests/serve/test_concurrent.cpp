@@ -19,6 +19,7 @@
 #include "serve/worker.h"
 #include "serve/scheduler.h"
 #include "serve/metrics.h"
+#include "offload/offload_service.h"
 #include "exec/execution_adapter.h"
 #include "exec/combinators.h"
 
@@ -2392,6 +2393,7 @@ bool test_gc_sweep_callback_pairs();
 bool test_gc_sweep_no_callback();
 bool test_gc_collect_hook();
 bool test_gc_heap_mutex_hook();
+bool test_offload_completion();
 bool test_gc_safepoint_spawn_during_gc();
 bool test_gc_mark_basic();
 bool test_gc_sweep_dead_count();
@@ -3218,6 +3220,43 @@ static bool test_issue_4264_session_prelude_parity() {
     return true;
 }
 
+bool test_offload_completion() {
+    std::println("\n--- Test: offload completion channel ---");
+    aura::serve::Scheduler sched(1);
+    aura::offload::OffloadService::instance().start(&sched);
+
+    std::atomic<bool> resumed{false};
+    std::atomic<bool> result_ok{false};
+    sched.spawn([&] {
+        auto input = std::make_shared<aura::offload::SnapshotInput>();
+        input->source = "(+ 1 2)";
+        auto sub = aura::offload::OffloadService::instance().submit(
+            [](const aura::offload::SnapshotInput& in, std::stop_token) {
+                aura::offload::Result r;
+                r.artifact = in.source;
+                return r;
+            },
+            input);
+        aura::offload::OffloadService::instance().await(sub.ticket);
+        if (sub.ticket->status.load(std::memory_order_acquire) == aura::offload::Status::Done) {
+            auto* r = std::get_if<aura::offload::Result>(&sub.ticket->out);
+            result_ok.store(r != nullptr && r->artifact == "(+ 1 2)");
+        }
+        resumed.store(true);
+    });
+
+    std::thread runner([&] { sched.run(); });
+    for (int i = 0; i < 500 && !resumed.load(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    sched.stop();
+    runner.join();
+    aura::offload::OffloadService::instance().stop();
+
+    CHECK(resumed.load(), "offload completion resumed the waiting fiber");
+    CHECK(result_ok.load(), "offload result visible after resume");
+    return resumed.load() && result_ok.load();
+}
+
 int main() {
     ew_install_fatal_handlers();
     // Issue #3567: CI redirects stdout; default fully-buffered FILE*
@@ -3391,6 +3430,7 @@ int main() {
     run_test("test_gc_sweep_no_callback", test_gc_sweep_no_callback);
     run_test("test_gc_collect_hook", test_gc_collect_hook);
     run_test("test_gc_heap_mutex_hook", test_gc_heap_mutex_hook);
+    run_test("test_offload_completion", test_offload_completion);
     run_test("test_issue_4176_join_wake_protocol", test_issue_4176_join_wake_protocol);
     run_test("test_issue_4176_fd_budget_oneshots", test_issue_4176_fd_budget_oneshots);
     run_test("test_issue_4176_source_cite", test_issue_4176_source_cite);
