@@ -3294,7 +3294,19 @@ namespace {
     if (chk.allowed)
         return std::nullopt;
     g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
-    return Diagnostic{ErrorKind::InternalError, "capability-deny"};
+    // Issue #4876: actionable text on the error object itself (a try/catch
+    // around eval sees it too), not the bare sentinel code.
+    return Diagnostic{ErrorKind::TypeError,
+                      std::string(aura::compiler::security::kMacroSelfEvoDenyMessage)};
+}
+
+// Issue #4876: a hygiene limit Diagnostic. The capability deny is a policy
+// refusal (TypeError, like every effect-denied), not an internal error.
+[[nodiscard]] Diagnostic macro_limit_diag_4876(const char* why, std::string_view fallback) {
+    std::string r = aura::compiler::security::macro_limit_user_reason(why, fallback);
+    const ErrorKind k =
+        r.starts_with("effect-denied:") ? ErrorKind::TypeError : ErrorKind::InternalError;
+    return Diagnostic{k, std::move(r)};
 }
 
 // ── eval_data_as_code: evaluate macro-expanded data as code ──
@@ -7713,11 +7725,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                             // returns empty (#4101).
                                             const char* why =
                                                 macro_exp::hygiene_last_limit_reason_string();
-                                            return std::unexpected(aura::diag::Diagnostic{
-                                                aura::diag::ErrorKind::InternalError,
-                                                (why != nullptr && why[0] != '\0')
-                                                    ? why
-                                                    : "hygiene-depth-limit"});
+                                            return std::unexpected(
+                                                macro_limit_diag_4876(why, "hygiene-depth-limit"));
                                         }
                                     }
                                     return make_void();
@@ -7771,10 +7780,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                     // under light-link (#4101).
                                     const char* why = macro_exp::hygiene_last_limit_reason_string();
                                     return std::unexpected(
-                                        aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
-                                                               (why != nullptr && why[0] != '\0')
-                                                                   ? why
-                                                                   : "hygiene-depth-limit"});
+                                        macro_limit_diag_4876(why, "hygiene-depth-limit"));
                                 }
                                 // Issue #2019: full restamp for all live nodes after
                                 // structural splice + MacroIntroduced-only parent/dirty fix.
@@ -8086,10 +8092,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 // Issue #4078: do not eval a refused half-expand.
                                 if (aura_hygiene_expand_deny_blocks_eval()) {
                                     const char* why = aura_macro_hygiene_last_limit_reason_string();
-                                    return surface(Diagnostic{ErrorKind::InternalError,
-                                                              (why != nullptr && why[0] != '\0')
-                                                                  ? why
-                                                                  : "hygiene-pass-limit"});
+                                    return surface(
+                                        macro_limit_diag_4876(why, "hygiene-pass-limit"));
                                 }
                                 // Issue #3457: this import is a fresh pool. SymId
                                 // intern is pool-local; clear around the eval so
