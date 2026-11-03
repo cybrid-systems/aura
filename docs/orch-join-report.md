@@ -56,3 +56,34 @@ keys are additive and no default key changes meaning.
 
 `:debug #t` additionally exposes the `schema-*` / `issue-*` / `*-wired`
 self-test sentinels.
+
+## Example: a `restart-n` join whose body failed once and recovered
+
+```lisp
+(define *n* 0)
+(orch:scope-spawn "flaky" (lambda () (set! *n* (+ *n* 1)) (if (< *n* 2) (error "boom") 42)))
+(define r (orch:scope-join-all :timeout-ms 2000 :on-join-fail "restart-n" :max-restarts 1))
+```
+
+The body failed its first attempt and succeeded on the restart, so the
+report is:
+
+| key | value |
+| --- | --- |
+| `ok` | `#t` |
+| `status` | `ok` |
+| `err-count` | `0` (no final failure) |
+| `errors` | `()` |
+| `attempt-errors` | `1` (the failed attempt, recovered by the restart) |
+| `restart-attempted` | `1` |
+| `restart-ok` | `1` |
+| `restart-max` | `1` (the `:max-restarts` fuel for this join) |
+| `restart-exhausted` | `0` (the child never ran out of fuel) |
+| `body-ok-count` | `1` |
+
+`restart-max` and `restart-exhausted` are counted PER CHILD (the fuel
+one child may spend), while `attempt-errors` counts failed ATTEMPTS
+across all children. Neither feeds `err-count` / `errors`, which stay
+on final failures only: a child that exhausted its fuel shows up in
+`restart-exhausted` and in `errors` / `err-count`, not in
+`attempt-errors` alone.
