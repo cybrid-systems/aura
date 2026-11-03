@@ -2606,7 +2606,16 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
                 g_scheduler->remove_joiner(target->id(), self);
                 return finish(JoinStatus::Timeout);
             }
-            if (has_deadline) {
+            // Issue #4897: inside the soft orch agent-body window the
+            // BlockingIO park below is rejected (#4721), so an untimed join
+            // (orch:run-workflow -> parallel-intend in an agent body)
+            // returned from every "park" at once and busy-spun the worker.
+            // With a single worker (--serve-async-bench Soft auto, #4877)
+            // the joined task sat on that same worker and never ran: the
+            // whole process hung. Take the always-resumes Explicit yield
+            // there (allowed by the join-wait flag above, #4853), exactly
+            // like the deadline path.
+            if (has_deadline || self->orch_agent_boundary_active()) {
                 // Timeout path: short Explicit yields so steal/GC can progress
                 // and we can re-check the deadline without busy-spinning the
                 // worker forever. Joiner stays registered for eventfd wake.
