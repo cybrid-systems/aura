@@ -56,3 +56,28 @@ code string in a private `CompilerService` snapshot taken before the session.
 It therefore **cannot see session defines**; the non-fiber modes keep the
 synchronous `eval` fallback. `thread_pool:enqueue` is unchanged for now and is
 removed by the follow-up after `offload:*` lands.
+
+## Metrics (#4884)
+
+The pool keeps relaxed atomic counters and fixed-bucket histograms; neither the
+record nor the snapshot allocates per sample. In `--serve-async` they appear in
+both metric faces:
+
+* `(stats:get "orch:metrics")` (the `orch:metrics` stats entry) returns the
+  scheduler JSON with an added `"offload"` section
+  (`submitted_total`, `rejected_*`, `completed_*`, `queue_depth`, `running`,
+  `threads`, `queue_depth_peak`, `queue_wait_us` / `exec_us` /
+  `wake_latency_us` histograms, `by_class` and the bounded `by_tenant` array).
+* `GET /metrics` (with `--health-port`) appends the Prometheus series
+  `aura_offload_submitted_total`, `aura_offload_rejected_total{reason=…}`,
+  `aura_offload_completed_total{status=…}`,
+  `aura_offload_stale_completion_dropped_total`,
+  `aura_offload_sync_fallback_total`, the gauges `aura_offload_queue_depth`,
+  `aura_offload_running`, `aura_offload_threads`,
+  `aura_offload_queue_depth_peak`, the histograms
+  `aura_offload_{queue_wait,exec,wake_latency}_us`, and the per-class /
+  per-tenant series.
+
+Label cardinality is fixed: three classes and at most eight tenant slots.
+`queue_depth` returns to zero once every accepted job reaches a terminal
+state. Outside `--serve-async` the section is present with zeros.

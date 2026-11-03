@@ -549,6 +549,20 @@ jobs:
           exit 1
         fi
 
+    # Issue #4889: the offload pool runs compiler jobs on non-fiber worker
+    # threads — the only such path in the tree — so exercise it here while
+    # the ASAN build is already paid for. test_offload_pool is standalone
+    # (links pthread only), so the incremental build is cheap.
+    - name: Build offload pool test under ASAN
+      run: cmake --build build_asan --target test_offload_pool -j2
+
+    - name: Offload pool under ASAN
+      timeout-minutes: 10
+      env:
+        AURA_SANDBOX: "off"
+        ASAN_OPTIONS: "halt_on_error=1:detect_leaks=1"
+      run: ./build_asan/test_offload_pool
+
     # Path: tests/orch/ after R9 layout (was tests/multi_session_leak_test.aura).
     # Use --load so multi-line forms work (stdin Repl is line-oriented and
     # breaks define/if across lines → false FAIL + missing ✅ PASS).
