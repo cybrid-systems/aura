@@ -7779,6 +7779,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 bool watch_scope = false;
                 bool stop_on_fail = true;
                 EvalValue tasks_ev{};
+                // Issue #4878: optional stage-level region-keys, forwarded
+                // verbatim to parallel-intend (#3353/#4000). A multi-task
+                // stage under the production default was rejected as
+                // invalid with no way to supply the keys.
+                EvalValue region_keys_ev{};
                 if (types::is_hash(sh)) {
                     auto try_fp = hash_lookup(sh, "failure-policy");
                     if (!types::is_string(try_fp) && !types::is_keyword(try_fp) &&
@@ -7821,6 +7826,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     if (types::is_bool(bv))
                         stop_on_fail = types::as_bool(bv);
                     tasks_ev = hash_lookup(sh, "tasks");
+                    region_keys_ev = hash_lookup(sh, "region-keys");
+                    if (!types::is_vector(region_keys_ev))
+                        region_keys_ev = hash_lookup(sh, "region_keys");
+                    if (!types::is_vector(region_keys_ev))
+                        region_keys_ev = EvalValue{};
                 }
 
                 // AC2: project via compose_workflow_policy (#2539/#2756).
@@ -7833,6 +7843,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 const auto pp = aura::orch::to_parallel_policy(w);
 
                 std::string status = "ok";
+                // Issue #4878: carry parallel-intend's reason instead of
+                // surfacing a bare "invalid" with no cause.
+                std::string serialized_reason;
                 bool stage_fail = false;
                 bool stage_residual = false;
                 if ((types::is_vector(tasks_ev) || types::is_pair(tasks_ev)) && intend) {
@@ -7848,12 +7861,22 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     // int as RetryN and overwrites an earlier
                     // :failure-policy. Stage policy is last so
                     // fail-fast is not rewritten to RetryN.
+                    // Issue #4878: forward the stage's region-keys so a
+                    // multi-task stage can run under the production default.
+                    // Keep failure-policy last (#4401).
+                    if (types::is_vector(region_keys_ev)) {
+                        pargs.push_back(push_str("region-keys"));
+                        pargs.push_back(region_keys_ev);
+                    }
                     pargs.push_back(push_str("failure-policy"));
                     pargs.push_back(push_str(aura::orch::failure_policy_name(w.batch_policy)));
                     auto par = (*intend)(std::span<const EvalValue>(pargs));
                     auto stv = hash_lookup(par, "status");
                     if (types::is_string(stv))
                         status = heap_str_from(ev.string_heap_, stv);
+                    auto reason_ev = hash_lookup(par, "serialized-reason");
+                    if (types::is_string(reason_ev))
+                        serialized_reason = heap_str_from(ev.string_heap_, reason_ev);
                 }
                 if (status != "ok")
                     stage_fail = true;
@@ -7882,6 +7905,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     {"index", make_int(static_cast<std::int64_t>(i))},
                     {"ok", make_bool(!stage_fail)},
                     {"status", push_str(status.c_str())},
+                    {"serialized-reason", push_str(serialized_reason.c_str())},
+                    {"region-keys-supplied", make_bool(types::is_vector(region_keys_ev))},
                     {"failure-policy", push_str(aura::orch::failure_policy_name(w.batch_policy))},
                     {"watch-scope", make_bool(watch_scope)},
                     {"stop-on-fail", make_bool(stop_on_fail)},
