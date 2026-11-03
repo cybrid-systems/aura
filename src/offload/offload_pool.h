@@ -27,6 +27,13 @@ namespace aura::offload {
 
 enum class Status : std::uint8_t { Queued, Running, Done, Failed, Cancelled, Rejected };
 
+// Issue #4886: fixed job classes. Workers pick with a 4:2:1 weighted
+// round-robin over non-empty class queues, so Batch floods cannot starve
+// Interactive work. The default class is Compile.
+enum class OffloadClass : std::uint8_t { Interactive = 0, Compile = 1, Batch = 2 };
+inline constexpr std::size_t kOffloadClassCount = 3;
+inline constexpr std::array<std::uint32_t, kOffloadClassCount> kOffloadClassWeights{4, 2, 1};
+
 struct Diagnostic {
     std::string message;
 };
@@ -64,6 +71,7 @@ struct Ticket {
     std::variant<std::monostate, Result, Error> out;
     std::uint64_t fiber_id = 0;
     std::uint64_t wait_gen = 0;
+    OffloadClass klass = OffloadClass::Compile;
     std::chrono::steady_clock::time_point queued_at{};
     std::chrono::steady_clock::time_point started_at{};
 };
@@ -81,6 +89,17 @@ struct LatencyHistogram {
     std::uint64_t count = 0;
     std::uint64_t sum_us = 0;
     std::uint64_t max_us = 0;
+};
+
+// Issue #4886: per-class counters. Fixed cardinality (3 classes).
+struct ClassStats {
+    std::uint64_t submitted = 0;
+    std::uint64_t rejected = 0;
+    std::uint64_t completed_done = 0;
+    std::uint64_t completed_failed = 0;
+    std::uint64_t completed_cancelled = 0;
+    std::uint64_t queue_depth = 0;
+    std::uint64_t queue_depth_peak = 0;
 };
 
 // Issue #4884: lock-free observability snapshot. All counters are relaxed
@@ -107,6 +126,7 @@ struct Stats {
     LatencyHistogram queue_wait_us;
     LatencyHistogram exec_us;
     LatencyHistogram wake_latency_us;
+    std::array<ClassStats, kOffloadClassCount> by_class{};
 };
 
 enum class SubmitStatus : std::uint8_t { Accepted, QueueFull, ShuttingDown };
@@ -126,9 +146,11 @@ public:
         // 0 => clamp(hardware_concurrency, 2, 8). Overridden by
         // AURA_OFFLOAD_THREADS.
         std::size_t threads = 0;
-        // Bounded queue; try_submit never blocks. Overridden by
+        // Bounded total queue; try_submit never blocks. Overridden by
         // AURA_OFFLOAD_QUEUE_CAP.
         std::size_t queue_cap = 256;
+        // Per-class subqueue bound. 0 => queue_cap.
+        std::size_t class_queue_cap = 0;
         std::chrono::milliseconds shutdown_grace{2000};
     };
 
@@ -142,7 +164,8 @@ public:
     OffloadPool& operator=(OffloadPool&&) = delete;
 
     [[nodiscard]] SubmitStatus try_submit(Job job, std::shared_ptr<const SnapshotInput> input,
-                                          std::shared_ptr<Ticket> ticket, CompletionSink* sink);
+                                          std::shared_ptr<Ticket> ticket, CompletionSink* sink,
+                                          OffloadClass klass = OffloadClass::Compile);
 
     void shutdown();
 
@@ -159,6 +182,7 @@ private:
         std::shared_ptr<const SnapshotInput> input;
         std::shared_ptr<Ticket> ticket;
         CompletionSink* sink = nullptr;
+        OffloadClass klass = OffloadClass::Compile;
     };
 
     struct HistogramState {
@@ -172,13 +196,16 @@ private:
     };
 
     void worker_loop(std::stop_token st);
+    bool pick_task_locked(Task& out);
     void finish(const Task& task, Status status, std::string error);
     static std::size_t default_threads();
     static std::size_t read_env_size(const char* name, std::size_t fallback);
 
     Config cfg_;
     std::vector<std::jthread> workers_;
-    std::deque<Task> queue_;
+    std::array<std::deque<Task>, kOffloadClassCount> queues_;
+    std::size_t queued_total_ = 0;
+    std::size_t rr_pos_ = 0;
     std::vector<std::shared_ptr<Ticket>> running_tickets_;
     mutable std::mutex mutex_;
     std::condition_variable_any cv_;
@@ -199,6 +226,13 @@ private:
     std::atomic<std::uint64_t> queue_depth_{0};
     std::atomic<std::uint64_t> running_stat_{0};
     std::atomic<std::uint64_t> queue_depth_peak_{0};
+    std::array<std::atomic<std::uint64_t>, kOffloadClassCount> class_submitted_{};
+    std::array<std::atomic<std::uint64_t>, kOffloadClassCount> class_rejected_{};
+    std::array<std::atomic<std::uint64_t>, kOffloadClassCount> class_completed_done_{};
+    std::array<std::atomic<std::uint64_t>, kOffloadClassCount> class_completed_failed_{};
+    std::array<std::atomic<std::uint64_t>, kOffloadClassCount> class_completed_cancelled_{};
+    std::array<std::atomic<std::uint64_t>, kOffloadClassCount> class_queue_depth_{};
+    std::array<std::atomic<std::uint64_t>, kOffloadClassCount> class_queue_depth_peak_{};
     HistogramState queue_wait_hist_;
     HistogramState exec_hist_;
     HistogramState wake_hist_;

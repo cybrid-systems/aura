@@ -15,6 +15,17 @@ namespace {
             std::chrono::duration_cast<std::chrono::microseconds>(b - a).count());
     }
 
+    // Issue #4886: 4 Interactive : 2 Compile : 1 Batch dispatch schedule.
+    constexpr std::array<OffloadClass, 7> kClassSchedule{
+        OffloadClass::Interactive, OffloadClass::Interactive, OffloadClass::Interactive,
+        OffloadClass::Interactive, OffloadClass::Compile,     OffloadClass::Compile,
+        OffloadClass::Batch};
+
+    std::size_t class_index(OffloadClass klass) noexcept {
+        const auto i = static_cast<std::size_t>(klass);
+        return i < kOffloadClassCount ? i : static_cast<std::size_t>(OffloadClass::Compile);
+    }
+
 } // namespace
 
 void OffloadPool::HistogramState::record(std::uint64_t us) noexcept {
@@ -70,6 +81,8 @@ OffloadPool::OffloadPool(Config cfg)
     cfg_.queue_cap = read_env_size("AURA_OFFLOAD_QUEUE_CAP", cfg_.queue_cap);
     if (cfg_.queue_cap == 0)
         cfg_.queue_cap = 1;
+    if (cfg_.class_queue_cap == 0)
+        cfg_.class_queue_cap = cfg_.queue_cap;
     workers_.reserve(cfg_.threads);
     for (std::size_t i = 0; i < cfg_.threads; ++i) {
         workers_.emplace_back([this](std::stop_token st) { worker_loop(std::move(st)); });
@@ -81,30 +94,45 @@ OffloadPool::~OffloadPool() {
 }
 
 SubmitStatus OffloadPool::try_submit(Job job, std::shared_ptr<const SnapshotInput> input,
-                                     std::shared_ptr<Ticket> ticket, CompletionSink* sink) {
+                                     std::shared_ptr<Ticket> ticket, CompletionSink* sink,
+                                     OffloadClass klass) {
     if (!job || !input || !ticket || !sink)
         return SubmitStatus::ShuttingDown;
+    if (static_cast<std::size_t>(klass) >= kOffloadClassCount)
+        klass = OffloadClass::Compile;
+    const auto ci = class_index(klass);
     std::lock_guard<std::mutex> lock(mutex_);
     if (!accepting_) {
         rejected_.fetch_add(1, std::memory_order_relaxed);
         rejected_shutdown_.fetch_add(1, std::memory_order_relaxed);
+        class_rejected_[ci].fetch_add(1, std::memory_order_relaxed);
         ticket->status.store(Status::Rejected, std::memory_order_release);
         return SubmitStatus::ShuttingDown;
     }
-    if (queue_.size() >= cfg_.queue_cap) {
+    if (queued_total_ >= cfg_.queue_cap || queues_[ci].size() >= cfg_.class_queue_cap) {
         rejected_.fetch_add(1, std::memory_order_relaxed);
         rejected_queue_full_.fetch_add(1, std::memory_order_relaxed);
+        class_rejected_[ci].fetch_add(1, std::memory_order_relaxed);
         ticket->status.store(Status::Rejected, std::memory_order_release);
         return SubmitStatus::QueueFull;
     }
+    ticket->klass = klass;
     ticket->queued_at = std::chrono::steady_clock::now();
-    queue_.push_back(Task{std::move(job), std::move(input), std::move(ticket), sink});
+    queues_[ci].push_back(Task{std::move(job), std::move(input), std::move(ticket), sink, klass});
+    ++queued_total_;
     submitted_.fetch_add(1, std::memory_order_relaxed);
-    const auto depth = static_cast<std::uint64_t>(queue_.size());
+    class_submitted_[ci].fetch_add(1, std::memory_order_relaxed);
+    const auto depth = static_cast<std::uint64_t>(queued_total_);
     queue_depth_.store(depth, std::memory_order_relaxed);
     auto peak = queue_depth_peak_.load(std::memory_order_relaxed);
     while (depth > peak &&
            !queue_depth_peak_.compare_exchange_weak(peak, depth, std::memory_order_relaxed)) {
+    }
+    const auto class_depth = static_cast<std::uint64_t>(queues_[ci].size());
+    class_queue_depth_[ci].store(class_depth, std::memory_order_relaxed);
+    auto class_peak = class_queue_depth_peak_[ci].load(std::memory_order_relaxed);
+    while (class_depth > class_peak && !class_queue_depth_peak_[ci].compare_exchange_weak(
+                                           class_peak, class_depth, std::memory_order_relaxed)) {
     }
     cv_.notify_one();
     return SubmitStatus::Accepted;
@@ -130,15 +158,19 @@ void OffloadPool::finish(const Task& task, Status status, std::string error) {
             running_stat_.store(running_, std::memory_order_relaxed);
         }
     }
+    const auto ci = class_index(task.klass);
     switch (status) {
         case Status::Done:
             completed_done_.fetch_add(1, std::memory_order_relaxed);
+            class_completed_done_[ci].fetch_add(1, std::memory_order_relaxed);
             break;
         case Status::Failed:
             completed_failed_.fetch_add(1, std::memory_order_relaxed);
+            class_completed_failed_[ci].fetch_add(1, std::memory_order_relaxed);
             break;
         case Status::Cancelled:
             completed_cancelled_.fetch_add(1, std::memory_order_relaxed);
+            class_completed_cancelled_[ci].fetch_add(1, std::memory_order_relaxed);
             break;
         default:
             break;
@@ -153,21 +185,39 @@ void OffloadPool::finish(const Task& task, Status status, std::string error) {
     cv_.notify_all();
 }
 
+bool OffloadPool::pick_task_locked(Task& out) {
+    for (std::size_t probe = 0; probe < kClassSchedule.size(); ++probe) {
+        const std::size_t slot = (rr_pos_ + probe) % kClassSchedule.size();
+        const auto cls = kClassSchedule[slot];
+        const auto ci = class_index(cls);
+        auto& queue = queues_[ci];
+        if (queue.empty())
+            continue;
+        out = std::move(queue.front());
+        queue.pop_front();
+        --queued_total_;
+        rr_pos_ = (slot + 1) % kClassSchedule.size();
+        queue_depth_.store(static_cast<std::uint64_t>(queued_total_), std::memory_order_relaxed);
+        class_queue_depth_[ci].store(static_cast<std::uint64_t>(queue.size()),
+                                     std::memory_order_relaxed);
+        return true;
+    }
+    return false;
+}
+
 void OffloadPool::worker_loop(std::stop_token st) {
     for (;;) {
         Task task;
         {
             std::unique_lock<std::mutex> lock(mutex_);
-            cv_.wait(lock, st, [this] { return stopping_ || !queue_.empty(); });
-            if (queue_.empty()) {
+            cv_.wait(lock, st, [this] { return stopping_ || queued_total_ > 0; });
+            if (queued_total_ == 0) {
                 if (stopping_)
                     return;
                 continue;
             }
-            task = std::move(queue_.front());
-            queue_.pop_front();
-            queue_depth_.store(static_cast<std::uint64_t>(queue_.size()),
-                               std::memory_order_relaxed);
+            if (!pick_task_locked(task))
+                continue;
             task.ticket->status.store(Status::Running, std::memory_order_release);
             task.ticket->started_at = std::chrono::steady_clock::now();
             queue_wait_hist_.record(us_between(task.ticket->queued_at, task.ticket->started_at));
@@ -196,14 +246,18 @@ void OffloadPool::worker_loop(std::stop_token st) {
 }
 
 void OffloadPool::shutdown() {
-    std::deque<Task> pending;
+    std::array<std::deque<Task>, kOffloadClassCount> pending;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (stopping_)
             return;
         stopping_ = true;
         accepting_ = false;
-        pending.swap(queue_);
+        for (std::size_t i = 0; i < kOffloadClassCount; ++i) {
+            pending[i].swap(queues_[i]);
+            class_queue_depth_[i].store(0, std::memory_order_relaxed);
+        }
+        queued_total_ = 0;
         queue_depth_.store(0, std::memory_order_relaxed);
         for (auto& ticket : running_tickets_)
             ticket->stop.request_stop();
@@ -211,8 +265,10 @@ void OffloadPool::shutdown() {
             worker.request_stop();
     }
 
-    for (auto& task : pending)
-        finish(task, Status::Cancelled, "pool shutdown");
+    for (auto& queue : pending) {
+        for (auto& task : queue)
+            finish(task, Status::Cancelled, "pool shutdown");
+    }
     cv_.notify_all();
 
     {
@@ -244,6 +300,16 @@ Stats OffloadPool::stats() const {
     out.queue_wait_us = queue_wait_hist_.snapshot();
     out.exec_us = exec_hist_.snapshot();
     out.wake_latency_us = wake_hist_.snapshot();
+    for (std::size_t i = 0; i < kOffloadClassCount; ++i) {
+        auto& cs = out.by_class[i];
+        cs.submitted = class_submitted_[i].load(std::memory_order_relaxed);
+        cs.rejected = class_rejected_[i].load(std::memory_order_relaxed);
+        cs.completed_done = class_completed_done_[i].load(std::memory_order_relaxed);
+        cs.completed_failed = class_completed_failed_[i].load(std::memory_order_relaxed);
+        cs.completed_cancelled = class_completed_cancelled_[i].load(std::memory_order_relaxed);
+        cs.queue_depth = class_queue_depth_[i].load(std::memory_order_relaxed);
+        cs.queue_depth_peak = class_queue_depth_peak_[i].load(std::memory_order_relaxed);
+    }
     return out;
 }
 
