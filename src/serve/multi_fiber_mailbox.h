@@ -2008,6 +2008,14 @@ public:
                                              : std::chrono::steady_clock::time_point::max();
 
         for (;;) {
+            // Issue #4871: teardown request_cancel must break a blocking
+            // agent-recv. The soft-window poll below wakes every 1 ms, and a
+            // parked fiber re-enters here on its eventfd/deadline; without
+            // this check the worker slept through the whole recv timeout,
+            // then resumed inside ~Evaluator teardown and crashed in
+            // fiber_slab_mint. Return empty so the body can finish first.
+            if (g_current_fiber != nullptr && g_current_fiber->is_cancel_requested())
+                return std::nullopt;
             // Issue #3763: Policy A empty BEFORE mu_ (Workspace→Mailbox).
             //   boundary_live = aura_evaluator_mutation_boundary_depth() > 0
             //                   || aura_evaluator_mutation_boundary_held() != 0
