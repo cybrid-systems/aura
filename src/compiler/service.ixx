@@ -134,9 +134,13 @@ extern "C" void aura_jit_suppress_runtime_reset_this_thread(int on) noexcept;
 
 [[nodiscard]] static aura::diag::Diagnostic hygiene_expand_deny_diag_4078() {
     const char* why = aura_macro_hygiene_last_limit_reason_string();
-    return aura::diag::Diagnostic{
-        aura::diag::ErrorKind::InternalError,
-        (why != nullptr && why[0] != '\0') ? std::string(why) : std::string("hygiene-pass-limit")};
+    std::string reason =
+        (why != nullptr && why[0] != '\0') ? std::string(why) : std::string("hygiene-pass-limit");
+    // Issue #4876: the sentinel code is not a user-facing explanation.
+    if (reason == "capability-deny")
+        reason = "effect-denied: macro-self-evo not granted; user macros need MacroSelfEvo "
+                 "(aura soft does not grant it; run with AURA_SANDBOX=off)";
+    return aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError, std::move(reason)};
 }
 
 // ── Issue #4711: eval-mutex (M1) release across a blocking wait ───────
