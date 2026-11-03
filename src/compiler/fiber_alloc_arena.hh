@@ -488,7 +488,8 @@ class FiberSlabTable {
 public:
     FiberSlabArena& get_or_create(std::uint64_t fiber_id, LockedStringHeap& shared,
                                   FiberSlabArena::SlotStamper stamp,
-                                  FiberSlabArena::SlotStamperVoid unstamp, void* ctx) {
+                                  FiberSlabArena::SlotStamperVoid unstamp, void* ctx,
+                                  bool* created = nullptr) {
         std::lock_guard<std::mutex> g(mu_);
         auto it = arenas_.find(fiber_id);
         if (it != arenas_.end())
@@ -496,6 +497,9 @@ public:
         auto owned = std::make_unique<FiberSlabArena>(shared, fiber_id, stamp, unstamp, ctx);
         auto* raw = owned.get();
         arenas_.emplace(fiber_id, std::move(owned));
+        // Issue #4854: the caller arms the release at the fiber's body exit.
+        if (created)
+            *created = true;
         return *raw;
     }
 

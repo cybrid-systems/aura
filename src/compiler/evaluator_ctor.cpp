@@ -84,6 +84,8 @@ void Evaluator::build_primitive_slots() {
 }
 
 Evaluator::Evaluator() {
+    // Issue #4854: live for the per-fiber slab body-exit release.
+    fiber_slab_owner_register();
     // Issue #3554: self-upgrade lock_order mode + hold-budget reject
     // when host environment signals production_defaults_expected() but
     // embedder / third-party container skipped apply_production_security_defaults()
@@ -294,6 +296,8 @@ void* Evaluator::ensure_type_registry() {
 }
 
 Evaluator::~Evaluator() {
+    // Issue #4854: no body-exit hook may touch this Evaluator from here on.
+    fiber_slab_owner_unregister();
     // Issue #4859: the (eval ...) programs are owned by the closures /
     // macros that name them, so they are reclaimed with their last holder
     // — nothing to release here (the #4359 Evaluator-lifetime retention
