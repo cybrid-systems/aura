@@ -7027,6 +7027,28 @@ private:
     ModuleLoadedFn module_loaded_cb_;
     std::unordered_map<std::string, MacroDef, aura::core::TransparentStringHash, std::equal_to<>>
         macros_;
+    // Issue #4894: bumped on every macros_ registration; a memoized
+    // hygienic call-site expansion is reused only under the same epoch.
+    std::atomic<std::uint64_t> macros_epoch_4894_{0};
+    // Issue #4894: per call-site hygienic expansion memo. The walker used
+    // to clone + inner-expand + restamp the whole flat on EVERY call of a
+    // macro registered by an earlier form, so the flat grew per call and
+    // N calls cost O(N^2). Keyed by (flat, call node); valid while the
+    // macro epoch, the macro body identity and the call's children are
+    // unchanged and the expansion root is still a live MacroIntroduced
+    // node. Only used with the sandbox inactive (a production face keeps
+    // the per-call MacroSelfEvo consult inside clone_macro_body).
+    struct HygienicCallMemo4894 {
+        std::uint64_t epoch = 0;
+        const void* md_flat = nullptr;
+        aura::ast::NodeId body_id = aura::ast::NULL_NODE;
+        aura::ast::NodeId expanded = aura::ast::NULL_NODE;
+        std::size_t flat_size = 0;
+        std::vector<aura::ast::NodeId> children;
+    };
+    std::mutex hyg_call_memo_mtx_4894_;
+    std::unordered_map<const void*, std::unordered_map<aura::ast::NodeId, HygienicCallMemo4894>>
+        hyg_call_memo_4894_;
     std::vector<Env*> modules_; // module objects (arena-allocated, indexed by ModuleRef.index)
     std::unordered_map<std::string, std::uint64_t, aura::core::TransparentStringHash,
                        std::equal_to<>>

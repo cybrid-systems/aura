@@ -7638,6 +7638,46 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             // dotted lambdas inside the body get `__rest_`
                             // gensym via clone_macro_body pre-scan.
                             if (md.hygienic) {
+                                // Issue #4894: reuse this call site's earlier
+                                // expansion. A macro registered by an earlier
+                                // form is not in this flat's static expand
+                                // pass, so every call cloned the body, inner-
+                                // expanded it and restamped the WHOLE flat —
+                                // which grew per call: O(N^2) for N calls.
+                                const bool memo_ok_4894 = !aura::core::sandbox::is_sandbox_active();
+                                const auto memo_epoch_4894 =
+                                    macros_epoch_4894_.load(std::memory_order_acquire);
+                                if (memo_ok_4894) {
+                                    aura::ast::NodeId memo_hit = aura::ast::NULL_NODE;
+                                    {
+                                        std::lock_guard memo_lk(hyg_call_memo_mtx_4894_);
+                                        auto fit = hyg_call_memo_4894_.find(f);
+                                        if (fit != hyg_call_memo_4894_.end()) {
+                                            auto cit = fit->second.find(current_id);
+                                            if (cit != fit->second.end()) {
+                                                const auto& m = cit->second;
+                                                if (m.epoch == memo_epoch_4894 &&
+                                                    m.md_flat == md.flat &&
+                                                    m.body_id == md.body_id &&
+                                                    f->size() >= m.flat_size &&
+                                                    f->is_live_node(m.expanded) &&
+                                                    f->is_macro_introduced(m.expanded) &&
+                                                    std::equal(m.children.begin(), m.children.end(),
+                                                               v.children.begin(),
+                                                               v.children.end()))
+                                                    memo_hit = m.expanded;
+                                                else
+                                                    fit->second.erase(cit);
+                                            }
+                                        }
+                                    }
+                                    if (memo_hit != aura::ast::NULL_NODE) {
+                                        auto memo_result = eval_flat(*f, *p, memo_hit, eval_env);
+                                        if (!memo_result)
+                                            return memo_result;
+                                        return eval_data_as_code(*memo_result, eval_env, f, p);
+                                    }
+                                }
                                 // Issue #146 follow-up: build the subst
                                 // map via the pure helper. Local
                                 // materialization of v.children into a
@@ -7792,6 +7832,24 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 // (no AST-wide scan, pairs with the zero-arg sweep).
                                 if (expanded != aura::ast::NULL_NODE)
                                     (void)f->restamp_macro_introduced_subtree(expanded);
+                                // Issue #4894: remember this call site's
+                                // expansion (bounded; cleared when full).
+                                if (memo_ok_4894 && expanded != aura::ast::NULL_NODE &&
+                                    f->is_macro_introduced(expanded)) {
+                                    std::lock_guard memo_lk(hyg_call_memo_mtx_4894_);
+                                    if (hyg_call_memo_4894_.size() >= 64 &&
+                                        !hyg_call_memo_4894_.contains(f))
+                                        hyg_call_memo_4894_.clear();
+                                    auto& sites = hyg_call_memo_4894_[f];
+                                    if (sites.size() >= 4096)
+                                        sites.clear();
+                                    sites.insert_or_assign(
+                                        current_id, HygienicCallMemo4894{
+                                                        memo_epoch_4894, md.flat, md.body_id,
+                                                        expanded, f->size(),
+                                                        std::vector<aura::ast::NodeId>(
+                                                            v.children.begin(), v.children.end())});
+                                }
                                 // Evaluate the cloned + inner-expanded
                                 // body. eval_flat returns a runtime
                                 // value (a list for cons-chain qq
@@ -11161,6 +11219,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     // Issue #4859: a macro is a GLOBAL registry entry — it
                     // outlives the eval call that registered it — so it keeps
                     // the (eval ...) program that owns f / p alive.
+                    macros_epoch_4894_.fetch_add(1, std::memory_order_acq_rel); // Issue #4894
                     macros_[std::string(name)] = MacroDef{std::move(param_names),
                                                           is_dotted,
                                                           is_hygienic,
@@ -11169,6 +11228,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                                           p,
                                                           body_id,
                                                           eval_program_for_pool(p)};
+                    macros_epoch_4894_.fetch_add(1, std::memory_order_acq_rel);
                     return EvalResult(make_void());
                 }
                 case aura::ast::NodeTag::Linear: {
