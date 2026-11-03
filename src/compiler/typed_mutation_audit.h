@@ -68,6 +68,8 @@ extern "C" void aura_evaluator_enforce_linear_on_densify(void* ev) noexcept;
 // nested inside a function / namespace block). Defined in
 // evaluator_fiber_mutation.cpp / typed_mutation_audit_hooks.cpp.
 extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
+// Issue #4870: soft orch frames are not real mutation boundaries.
+extern "C" std::size_t aura_evaluator_soft_boundary_depth();
 extern "C" int aura_escape_move_gate_active() noexcept;
 extern "C" void aura_escape_move_gate_clear() noexcept;
 extern "C" std::uint32_t aura_process_mutation_boundary_held_count() noexcept;
@@ -3017,11 +3019,19 @@ inline constexpr int kQuietPendingGreenRideIssue = 3983;
     // consult live_policy / abort-authority (reopens #3439). Reuses
     // g_linear_fast_path_elide_blocked_production_total — no new counter.
     std::size_t depth = 0;
-    if (g_linear_ir_fastpath_boundary_depth_override >= 0)
+    std::size_t soft_depth = 0;
+    if (g_linear_ir_fastpath_boundary_depth_override >= 0) {
         depth = static_cast<std::size_t>(g_linear_ir_fastpath_boundary_depth_override);
-    else
+    } else {
         depth = aura_evaluator_mutation_boundary_depth();
-    if (depth == 0) {
+        // Issue #4870: an orch agent body enters a soft frame (a steal/GC
+        // marker, not a real mutation boundary). Treating that soft-only
+        // window as depth > 0 made every production-default agent/scope body
+        // refuse IR entry (commit_readiness) while a fiber body at depth 0
+        // ran, so agent-join reported ok with no body execution.
+        soft_depth = aura_evaluator_soft_boundary_depth();
+    }
+    if (depth == 0 || depth <= soft_depth) {
         // Real Quiet (override unset): engine:metrics / hash-ref / orch
         // prims compile to IRInterpreter::execute. Leftover Reject /
         // stamp+would_allow==0 / leftover pending without a still-green
