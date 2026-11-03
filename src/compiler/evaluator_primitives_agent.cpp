@@ -4037,15 +4037,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             if (!name.empty()) {
                 const auto* pending = ev.agent_names_->find(name);
                 // Issue #4867: a second spawn while the first body is still
-                // running used to register a second agent under the same
-                // name; the first was unreachable after the join and its
-                // body leaked. Reject the duplicate instead.
-                if (pending && pending->fiber && !pending->fiber->is_done()) {
-                    return make_primitive_error(
-                        ev.string_heap_, ev.error_values_,
-                        std::string("orch:spawn-agent: name already running: ") + name,
-                        ev.primitive_error_counter_ptr());
-                }
+                // running must not register a second agent under the same
+                // name (the first would be unreachable after the join and
+                // its body would leak). The #4393 live-name deny below is
+                // the single rejection point: it returns the typed deny
+                // hash (ok=#f / id=0 / deny-detail=name-reuse-while-live)
+                // that callers already branch on.
                 if (pending &&
                     (pending->must_wait_reclaimed || pending->reclaimed_deferred_cleanup)) {
                     aura::orch::g_orch_module_stats.host_forget_reclaimed_risk_total.fetch_add(
@@ -4407,10 +4404,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             aura::orch::JoinPolicy policy{};
             policy.drain_ms = aura::orch::kDefaultJoinDrainMs;
             bool debug_report = false; // Issue #4832: :debug / :verbose
-            // Issue #4867: scope-join-all has no leading name argument, so
-            // its keyword pairs start at index 0 (the old i=1 skipped the
-            // first pair and misaligned every later one).
-            for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
+            // agent-join has a leading name argument: keyword pairs start
+            // at index 1 (scope-join-all has no name and starts at 0).
+            for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(a[i + 1]))
                     policy.primary_ms = static_cast<std::uint64_t>(
