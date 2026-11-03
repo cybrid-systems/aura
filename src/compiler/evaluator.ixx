@@ -6970,8 +6970,12 @@ private:
     // from that hole. Not a Closure field — the move ctor lists every
     // member. Shard locks do not cover this vector; this mutex is the
     // only one, and it is never taken while a closures shard is held.
+    // Issue #4891: keyed by id (ClosureIds are monotonic and never reused,
+    // so a dense vector grew 8 B per closure ever minted) and only written
+    // on the face that reads it; GC sweep / erase drop the stamp with the
+    // closure. A missing key reads as 0 (allow), same as before.
     std::mutex closure_slot_tenants_mu_;
-    std::vector<std::uint64_t> closure_slot_tenants_;
+    std::unordered_map<ClosureId, std::uint64_t> closure_slot_tenants_;
     // Issue #3832: epoch-local TLS cache of last-N Closure copies for
     // apply_closure happy path. Bumped on erase/unique-write so cached
     // copies cannot outlive map mutations; a densify publish re-stamps the
@@ -10014,14 +10018,68 @@ public:
         std::lock_guard lock(hash_tables_mtx_);
         return g_hash_tables.size();
     }
+    // Issue #4891: live tree-walker closure owner stamps (gc-heap-stats).
+    // Must stay flat across a mint-and-drop closure loop.
+    [[nodiscard]] std::size_t closure_tenant_stamp_count() noexcept {
+        std::lock_guard<std::mutex> lk(closure_slot_tenants_mu_);
+        return closure_slot_tenants_.size();
+    }
     // Issue #4428: stamp a tree-walker ClosureId before the map insert.
     // Do not call while holding a closures shard lock.
+    // Issue #4891: write-only off the prod face (tw_closure_tenant_allows
+    // returns before the read there), so skip it like note_inrange_pair_mint.
     void note_tw_closure_owner(ClosureId id) noexcept {
+        if (!tenant_stamps_observable())
+            return;
         std::lock_guard<std::mutex> lk(closure_slot_tenants_mu_);
-        if (closure_slot_tenants_.size() <= id)
-            closure_slot_tenants_.resize(static_cast<std::size_t>(id) + 1, 0);
-        closure_slot_tenants_[id] = capability_tenant_id_ + 1;
+        try {
+            closure_slot_tenants_[id] = capability_tenant_id_ + 1;
+        } catch (...) {
+            // [SILENCE-PRIM-#4891] class B: OOM leaves the closure unstamped
+            // (reads as allow, the pre-#4428 behaviour); noexcept mint path.
+        }
     }
+    // Issue #4891: drop the stamps of closures that left closures_shards_.
+    // Do not call while holding a closures shard lock.
+    void forget_tw_closure_owners(const std::vector<ClosureId>& ids) noexcept {
+        if (ids.empty())
+            return;
+        std::lock_guard<std::mutex> lk(closure_slot_tenants_mu_);
+        if (closure_slot_tenants_.empty())
+            return;
+        for (const auto id : ids)
+            closure_slot_tenants_.erase(id);
+    }
+    void forget_tw_closure_owner(ClosureId id) noexcept {
+        std::lock_guard<std::mutex> lk(closure_slot_tenants_mu_);
+        closure_slot_tenants_.erase(id);
+    }
+    // Issue #4891: collects the ids a GC sweep erases and drops their owner
+    // stamps on scope exit, i.e. after the sweep's shard locks are released.
+    // Collects nothing when no stamp exists (the non-prod face).
+    struct SweptClosureStamps {
+        explicit SweptClosureStamps(Evaluator& ev) noexcept
+            : ev_(ev)
+            , on_(ev.closure_tenant_stamp_count() != 0) {}
+        SweptClosureStamps(const SweptClosureStamps&) = delete;
+        SweptClosureStamps& operator=(const SweptClosureStamps&) = delete;
+        ~SweptClosureStamps() { ev_.forget_tw_closure_owners(ids_); }
+        void note(ClosureId id) noexcept {
+            if (!on_)
+                return;
+            try {
+                ids_.push_back(id);
+            } catch (...) {
+                // [SILENCE-PRIM-#4891] class B: OOM keeps the stamp (bounded;
+                // ids are never reused); noexcept sweep path.
+            }
+        }
+
+    private:
+        Evaluator& ev_;
+        bool on_;
+        std::vector<ClosureId> ids_;
+    };
     // Prod face only. true = caller may read or write the slot. false = mismatch
     // already audited; caller must leave the slot unchanged and not return it.
     // Soft/Off returns before either stamp array is touched.

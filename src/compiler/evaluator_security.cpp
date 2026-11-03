@@ -2631,8 +2631,8 @@ bool Evaluator::tw_closure_tenant_allows(ClosureId id, std::uint16_t required_ef
     std::uint64_t rec = 0;
     {
         std::lock_guard<std::mutex> lk(closure_slot_tenants_mu_);
-        if (id < closure_slot_tenants_.size())
-            rec = closure_slot_tenants_[id];
+        if (auto it = closure_slot_tenants_.find(id); it != closure_slot_tenants_.end())
+            rec = it->second;
     }
     if (rec == 0)
         return true;
