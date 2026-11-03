@@ -12,7 +12,12 @@
 namespace aura::offload {
 
 struct OffloadEval {
+    OffloadEval() = default;
     virtual ~OffloadEval() = default;
+    OffloadEval(const OffloadEval&) = delete;
+    OffloadEval& operator=(const OffloadEval&) = delete;
+    OffloadEval(OffloadEval&&) = delete;
+    OffloadEval& operator=(OffloadEval&&) = delete;
     // Evaluate a code string in the private snapshot on the pool. Fiber
     // context parks until the ticket is terminal; non-fiber context runs
     // inline. Returns the formatted result or the error message.

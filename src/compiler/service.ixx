@@ -110,13 +110,13 @@ extern "C" void aura_drop_jit_fn_native_for_define(const char* name);
 // Issue #4388: cache-hit republish samples epoch + define-drop generation.
 // Strong defs in aura_jit_runtime.cpp.
 extern "C" void aura_jit_cache_hit_republish_arm(std::uint64_t epoch, std::uint64_t drop_gen);
-extern "C" void aura_jit_set_defuse_word(const std::atomic<std::uint64_t>* w); // #4600
+extern "C" void aura_jit_set_defuse_word(const std::atomic<std::uint64_t>* word); // #4600
 extern "C" void aura_jit_cache_hit_republish_disarm(void);
 extern "C" int aura_jit_cache_hit_republish_refused(void);
 extern "C" std::uint64_t aura_jit_define_drop_gen(void);
 extern "C" std::int64_t aura_jit_fn_ptr_for_test(std::int64_t func_id);
 extern "C" void aura_register_fn_named(const char* name, std::int64_t func_id,
-                                       std::int64_t (*fn)(std::int64_t*, std::uint32_t),
+                                       std::int64_t (*fn_ptr)(std::int64_t*, std::uint32_t),
                                        std::int32_t local_count, std::int32_t arg_count,
                                        std::int32_t env_count);
 
@@ -128,10 +128,10 @@ extern "C" int aura_jit_take_prologue_deopt_sentinel(void) noexcept;
 // aura_jit_bridge.cpp / aura_jit_runtime.cpp; weak "armed" / -1 in the
 // light stub (no tier there).
 extern "C" int aura_jit_deopt_frame_host_armed(void) noexcept;
-extern "C" std::int64_t aura_jit_exchange_native_self_id(std::int64_t id) noexcept;
+extern "C" std::int64_t aura_jit_exchange_native_self_id(std::int64_t self_id) noexcept;
 extern "C" void aura_jit_set_linear_env_none(void);
 extern "C" void aura_jit_tier_self_cell_swap_4682(std::int64_t* idx, std::int64_t* word) noexcept;
-extern "C" void aura_jit_suppress_runtime_reset_this_thread(int on) noexcept;
+extern "C" void aura_jit_suppress_runtime_reset_this_thread(int enable) noexcept;
 
 [[nodiscard]] static aura::diag::Diagnostic hygiene_expand_deny_diag_4078() {
     // Issue #4876: the sentinel code is not a user-facing explanation.
@@ -354,8 +354,8 @@ struct ExecUnderGate4765 {
     std::recursive_mutex& m;
     bool owned = false;
     bool borrowed = false;
-    explicit ExecUnderGate4765(std::recursive_mutex& em)
-        : m(em) {
+    explicit ExecUnderGate4765(std::recursive_mutex& gate_mutex)
+        : m(gate_mutex) {
         for (;;) {
             if (m.try_lock()) {
                 owned = true;
@@ -396,9 +396,9 @@ struct ExecUnderGate4765 {
 // lock_guard-shaped exec_mtx acquisition for a body run (parks while blocked).
 struct ExecRunLock4765 {
     std::recursive_mutex& m;
-    explicit ExecRunLock4765(std::recursive_mutex& em)
-        : m(em) {
-        lock_park_aware_4765(em);
+    explicit ExecRunLock4765(std::recursive_mutex& run_mutex)
+        : m(run_mutex) {
+        lock_park_aware_4765(run_mutex);
     }
     ExecRunLock4765(const ExecRunLock4765&) = delete;
     ExecRunLock4765& operator=(const ExecRunLock4765&) = delete;

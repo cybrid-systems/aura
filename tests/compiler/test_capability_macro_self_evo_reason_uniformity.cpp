@@ -50,10 +50,12 @@
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/grant_test_support.hh"
 #include "compiler/security_capabilities.h"
+#include "offload/offload_eval.h"
 #include "core/capability_model.hh"
 #include "core/sandbox.hh"
 #include "core/transparent_string_hash.hh"
 
+#include <type_traits>
 #include <unordered_map>
 
 import std;
@@ -364,6 +366,11 @@ int run_test_capability_macro_self_evo_reason_uniformity() {
         CHECK(macro_limit_user_reason("", "fallback") == "fallback",
               "4876: empty why uses the fallback");
     }
+
+    // #4887: the evaluator-facing offload interface is abstract and not
+    // copyable/movable, so the runtime pointer can only name the adapter.
+    static_assert(!std::is_copy_constructible_v<aura::offload::OffloadEval>);
+    static_assert(!std::is_move_constructible_v<aura::offload::OffloadEval>);
 
     std::println("\n=== Issue #3304 done ===");
     return g_failed == 0 ? 0 : 1;
