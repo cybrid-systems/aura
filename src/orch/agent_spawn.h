@@ -2291,7 +2291,12 @@ inline AgentHandle agent_import_handoff(HandoffToken tok, void* dst_ev,
     (void)dst_ev; // reserved for future Evaluator-keyed name registration
     (void)sched;  // reserved for future Scheduler-owned keepalive
     AgentHandle h;
-    h.id = tok.fiber ? tok.fiber->id() : 0;
+    // Issue #4756: the source body may already be Done and its fiber retired
+    // by scope join-all before the token is imported. Reading tok.fiber->id()
+    // here dereferenced that freed fiber (ASan heap-use-after-free). The id
+    // captured at export is stable; the raw fiber pointer is borrowed and must
+    // not be dereferenced by the importer.
+    h.id = tok.source_fiber_id;
     h.fiber = tok.fiber;
     h.mailbox = tok.mailbox;
     h.liveness = tok.liveness;

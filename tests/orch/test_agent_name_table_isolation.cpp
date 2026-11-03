@@ -825,6 +825,14 @@ static void ac4756_done_source_proxy_deny() {
     auto recv = cs2.eval(recv_prog);
     CHECK(recv && is_int(*recv) && as_int(*recv) == 1,
           "4756: done-source import proxy recv stays the #4026 typed deny");
+    // The proxy borrows the source-owned fiber. ~Evaluator cleanup must not
+    // cancel/join it: the source scope may already be gone (#3930/#4756).
+    const auto ctor = read_file("src/compiler/evaluator_ctor.cpp");
+    CHECK(ctor.find("h.ok && h.fiber && !h.import_proxy") != std::string::npos,
+          "4756: Evaluator teardown skips import-proxy fibers");
+    const auto spawn_h = read_file("src/orch/agent_spawn.h");
+    CHECK(spawn_h.find("h.id = tok.source_fiber_id;") != std::string::npos,
+          "4756: import uses the export-captured fiber id (no deref of a retired fiber)");
     reset_all_agent_scopes_for_test();
 }
 
