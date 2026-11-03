@@ -868,6 +868,16 @@ public:
     // Accessors
     uint64_t id() const { return id_; }
     FiberState state() const { return state_.load(std::memory_order_acquire); }
+
+    // Issue #4883: offload wait generation. A completion carries the
+    // generation observed at submit time; a late completion for an older
+    // wait (or a reaped fiber) is dropped instead of resuming the wrong park.
+    std::uint64_t wait_generation() const noexcept {
+        return wait_gen_.load(std::memory_order_acquire);
+    }
+    std::uint64_t bump_wait_generation() noexcept {
+        return wait_gen_.fetch_add(1, std::memory_order_acq_rel) + 1;
+    }
     void set_state(FiberState s) { state_.store(s, std::memory_order_release); }
     // Issue #2554 / #4506: a timed park records the wall-clock deadline at
     // which the scheduler must re-queue this fiber. A fiber parked as
@@ -1442,6 +1452,8 @@ private:
     // Issue #2554 / #4506: 0 = no timed park armed.
     std::atomic<std::uint64_t> park_deadline_ns_{0};
     std::atomic<YieldReason> last_yield_reason_{YieldReason::Explicit};
+    // Issue #4883: see wait_generation()/bump_wait_generation().
+    std::atomic<std::uint64_t> wait_gen_{0};
 
     // Issue #451: orchestration observability counters
     // (lifetime atomics, per-Fiber — the follow-up can

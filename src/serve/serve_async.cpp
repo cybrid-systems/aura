@@ -1,5 +1,6 @@
 // serve/serve_async.cpp — Async serve mode implementation
 #include "serve_async.h"
+#include "offload/offload_service.h"
 #include "compiler/messaging_bridge.h"
 #include "compiler/pipeline_policy.hh"
 #include "core/gc_hooks.h"
@@ -435,6 +436,8 @@ void run_serve_async(int num_workers) {
 
     // 2. Create scheduler with worker threads
     Scheduler sched(num_workers);
+    // Issue #4883: start the completion channel before any fiber can submit.
+    aura::offload::OffloadService::instance().start(&sched);
     // Issue #4854 safety: do not early-retire Done fibers on the long-lived
     // serve scheduler (see Scheduler::set_retire_done_fibers_disabled).
     sched.set_retire_done_fibers_disabled(true);
@@ -1372,6 +1375,7 @@ void run_serve_async(int num_workers) {
 
     // 7. Run the scheduler
     sched.run();
+    aura::offload::OffloadService::instance().stop();
 
     std::fflush(stdout);
 }
@@ -1624,6 +1628,7 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
 
     // 6. Run the scheduler
     sched.run();
+    aura::offload::OffloadService::instance().stop();
     g_serve_async_bench_failed.store(bench_failed.load(std::memory_order_acquire),
                                      std::memory_order_release);
 }

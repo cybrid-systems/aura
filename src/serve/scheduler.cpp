@@ -150,6 +150,27 @@ Scheduler::Scheduler(int num_workers) {
     stdin_fd_ = -1;
 #endif
 
+#if AURA_HAVE_EPOLL
+    // Issue #4883: one completion eventfd for all offload jobs. The pool
+    // writes only this fd (never a Fiber's fd); the IO thread drains the
+    // MPSC queue and validates each {fiber_id, wait_gen} before resuming.
+    offload_completion_fd_ = ::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    if (offload_completion_fd_ >= 0) {
+        struct epoll_event ce;
+        ce.events = EPOLLIN;
+        ce.data.ptr = &offload_completion_token_;
+        if (::epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, offload_completion_fd_, &ce) == -1) {
+            std::fprintf(stderr, "scheduler: offload completion eventfd registration failed: %s\n",
+                         std::strerror(errno));
+            ::close(offload_completion_fd_);
+            offload_completion_fd_ = -1;
+        }
+    } else {
+        std::fprintf(stderr, "scheduler: offload completion eventfd failed: %s\n",
+                     std::strerror(errno));
+    }
+#endif
+
     // Also register the scheduler's own wakeup eventfd for fast shutdown
     // (self-wake from stop())
 
@@ -244,6 +265,10 @@ Scheduler::~Scheduler() {
         pending_retire_count_.store(0, std::memory_order_release);
     }
     dying_fibers.clear();
+    if (offload_completion_fd_ >= 0) {
+        ::close(offload_completion_fd_);
+        offload_completion_fd_ = -1;
+    }
     if (epoll_fd_ >= 0)
         ::close(epoll_fd_);
 }
@@ -501,6 +526,51 @@ void Scheduler::register_event_fiber(int eventfd, Fiber* fiber) {
     ::aura::compiler::lock_order::AuditedMutexLock lock(
         wait_map_mutex_, ::aura::compiler::lock_order::Level::WaitMap);
     wait_map_[eventfd] = fiber;
+}
+
+// ── Issue #4883: offload completion channel ──────────
+
+void Scheduler::post_offload_completion(std::uint64_t fiber_id, std::uint64_t wait_gen) {
+    if (offload_completion_fd_ < 0)
+        return;
+    {
+        std::lock_guard<std::mutex> lock(offload_completion_mutex_);
+        offload_completions_.push_back(OffloadCompletion{fiber_id, wait_gen});
+    }
+    const std::uint64_t one = 1;
+    (void)::write(offload_completion_fd_, &one, sizeof(one));
+}
+
+void Scheduler::drain_offload_completions() noexcept {
+    if (offload_completion_fd_ < 0)
+        return;
+    std::uint64_t drained = 0;
+    while (::read(offload_completion_fd_, &drained, sizeof(drained)) > 0) {
+    }
+    std::vector<OffloadCompletion> items;
+    {
+        std::lock_guard<std::mutex> lock(offload_completion_mutex_);
+        items.swap(offload_completions_);
+    }
+    for (const auto& item : items) {
+        Fiber* fiber = fiber_by_id(item.fiber_id);
+        if (!fiber || fiber->is_done() || fiber->wait_generation() != item.wait_gen) {
+            offload_stale_completions_.fetch_add(1, std::memory_order_relaxed);
+            continue;
+        }
+        if (fiber->state() != FiberState::Waiting || fiber->is_queued())
+            continue;
+        int wid;
+        if (fiber->affinity() >= 0) {
+            wid = std::min(fiber->affinity(), static_cast<int>(workers_.size()) - 1);
+            if (wid < 0)
+                wid = 0;
+        } else {
+            wid = next_worker_id();
+        }
+        if (wid >= 0 && wid < static_cast<int>(workers_.size()))
+            workers_[wid]->enqueue(fiber);
+    }
 }
 
 // ── unregister_fiber ─────────────────────────────────
@@ -1323,6 +1393,10 @@ void Scheduler::run() {
 
         // Process events
         for (int i = 0; i < n; ++i) {
+            if (events[i].data.ptr == &offload_completion_token_) {
+                drain_offload_completions();
+                continue;
+            }
             if (events[i].data.ptr == nullptr) {
                 // stdin event — wake the stdin fiber AND all waiting fibers
                 if (metrics_on_) {
