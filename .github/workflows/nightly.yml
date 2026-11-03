@@ -138,6 +138,17 @@ jobs:
         python3 build.py --sanitizer=tsan test concurrent
         echo "✓ concurrent tests clean under TSAN"
 
+    # Issue #4889: TSAN is the only race detector that covers the offload
+    # worker threads and the thread-private CompilerService (#4881).
+    - name: Build offload pool test under TSAN
+      run: cmake --build build_tsan --target test_offload_pool -j2
+
+    - name: Offload pool under TSAN
+      env:
+        TSAN_OPTIONS: "halt_on_error=1:second_deadlock_stack=1"
+        AURA_SANDBOX: "off"
+      run: ./build_tsan/test_offload_pool
+
   coverage:
     runs-on: ubuntu-latest
     container:

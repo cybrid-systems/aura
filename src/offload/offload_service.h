@@ -5,6 +5,7 @@
 #include "offload_pool.h"
 
 #include <memory>
+#include <string>
 
 namespace aura::serve {
 class Scheduler;
@@ -52,6 +53,13 @@ private:
     std::unique_ptr<OffloadPool> pool_;
     aura::serve::Scheduler* sched_ = nullptr;
 };
+
+// Issue #4884: render the pool snapshot for the two metric faces.
+// JSON is merged into (orch:metrics); the Prometheus text is appended to
+// /metrics. Both are cheap: one snapshot read, no allocation per sample
+// beyond the returned string.
+[[nodiscard]] std::string offload_metrics_json();
+[[nodiscard]] std::string offload_metrics_prometheus();
 
 } // namespace aura::offload
 
