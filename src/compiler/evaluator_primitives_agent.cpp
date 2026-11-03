@@ -635,7 +635,7 @@ namespace {
                     aura::orch::g_orch_module_stats.agent_apply_lock_wait_us_total.fetch_add(
                         wait_us, std::memory_order_relaxed);
                 },
-                agent_apply_gate_retry);
+                agent_apply_gate_retry, aura::orch::orch_current_fiber_id());
         }
         if (stamped) {
             if (prev_tls != 0)
@@ -669,7 +669,7 @@ namespace {
                     aura::orch::g_orch_module_stats.agent_apply_lock_wait_us_total.fetch_add(
                         wait_us, std::memory_order_relaxed);
                 },
-                agent_apply_gate_retry);
+                agent_apply_gate_retry, aura::orch::orch_current_fiber_id());
             return;
         }
         if (caller_apply_hold == 0) {
@@ -3374,7 +3374,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                     aura::orch::g_orch_module_stats.agent_apply_lock_wait_us_total
                                         .fetch_add(wait_us, std::memory_order_relaxed);
                                 },
-                                agent_apply_gate_retry);
+                                agent_apply_gate_retry, aura::orch::orch_current_fiber_id());
                         } else {
                             apply_task();
                         }
@@ -6744,7 +6744,20 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             }
             if (!wait && timeout_ms < 0)
                 timeout_ms = 0;
+            // Issue #4873: the agent body holds the per-Evaluator apply gate
+            // for its whole lifetime, so a blocking recv inside it used to
+            // keep a sibling agent's body from starting until this wait
+            // expired (agent-ask to that sibling then timed out). Release
+            // the gate across the wait; reacquire (yielding) before the body
+            // touches evaluator state again.
+            const auto gate_identity = aura::orch::orch_current_fiber_id();
+            const bool gate_paused =
+                (wait && timeout_ms != 0) && ev.pause_agent_apply_for_wait(gate_identity);
             auto rec = aura::orch::agent_recv_result(*hp, wait, timeout_ms);
+            if (gate_paused) {
+                while (!ev.try_resume_agent_apply_after_wait(gate_identity))
+                    agent_apply_gate_retry();
+            }
             auto msg = rec.message;
             // Issue #4026: import_proxy recv is typed deny Soft+prod (ownership
             // dual-consumer). empty=#f so hosts do not busy-loop; distinct

@@ -1869,9 +1869,16 @@ namespace {
             // the mailbox park path keeps the #4721 contract. An EXPLICIT
             // yield re-queues the fiber as Ready (it never parks) and the soft
             // window holds no workspace_mtx_ / rollback checkpoint.
+            // Issue #4873: a blocking orch:agent-recv inside the soft
+            // window must hand the worker to sibling agents. It takes the
+            // same always-resumes EXPLICIT yield as the join wait above
+            // (re-queued Ready at the FIFO tail, never parked), which is why
+            // the mailbox path may run it without re-opening the #4721
+            // untimed-park contract.
             if (!hook_held && explicit_reason &&
                 (g_current_fiber->join_wait_yield_allowed() ||
-                 g_current_fiber->soft_window_yield_allowed()) &&
+                 g_current_fiber->soft_window_yield_allowed() ||
+                 g_current_fiber->mailbox_wait_yield_allowed()) &&
                 g_current_fiber->mutation_safety_snapshot().real_depth == 0)
                 return false;
         }

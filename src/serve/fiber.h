@@ -654,6 +654,15 @@ public:
         soft_window_yield_allowed_.store(v, std::memory_order_release);
     }
 
+    // Issue #4873: set around the hand-back yield in
+    // MultiFiberMailbox::recv inside the soft orch agent-body window.
+    [[nodiscard]] bool mailbox_wait_yield_allowed() const noexcept {
+        return mailbox_wait_yield_allowed_.load(std::memory_order_acquire);
+    }
+    void set_mailbox_wait_yield_allowed(bool v) noexcept {
+        mailbox_wait_yield_allowed_.store(v, std::memory_order_release);
+    }
+
     // Issue #448 / #2115 / #2549: alias of depth-safe API. Historical #448
     // implementation always returned false for MutationBoundary yields
     // (no depth probe), so steal callers that used this name were
@@ -1749,6 +1758,12 @@ private:
     // Issue #4862: this fiber may run a yield inside the soft orch
     // agent-body window (the user-visible fiber:yield).
     std::atomic<bool> soft_window_yield_allowed_{false};
+    // Issue #4873: an in-body orch:agent-recv :wait #t inside the soft
+    // orch agent-body window may take an EXPLICIT yield so the worker runs
+    // sibling agents instead of sleeping on the thread. Only the mailbox
+    // recv path sets this; the yield re-queues the fiber as Ready, so it
+    // never parks and the #4721 untimed-park contract is untouched.
+    std::atomic<bool> mailbox_wait_yield_allowed_{false};
 };
 
 // Issue #3071: scheduler idle poll of the in-body cancel window.
