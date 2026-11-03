@@ -764,6 +764,20 @@ EvalResult IRInterpreter::execute() {
     return drain_call_stack(base);
 }
 
+// Issue #4896: see ir_executor.ixx. The tree-walker raises a dispatch deny
+// at the call; the IR only stored it in a local, so a statement-position
+// `(set-car! q 5)` under Restricted force-soa was dropped with rc=0.
+std::optional<Diagnostic> IRInterpreter::effect_deny_diagnostic_4896_(const EvalValue& v) const {
+    if (!is_error(v) || types::is_string(v) || !context_.evaluator || !ex_stack_.empty())
+        return std::nullopt;
+    if (context_.evaluator->effect_sandbox_mode() == 0)
+        return std::nullopt;
+    auto msg = context_.evaluator->soft_error_message(v);
+    if (!msg.starts_with("effect-denied:"))
+        return std::nullopt;
+    return Diagnostic{ErrorKind::TypeError, std::move(msg)};
+}
+
 // Issue #1513 / #1616: dual-check IRClosure (bridge_epoch + EnvFrame version_/id
 // + MacroIntroduced hygiene marker). Returns true when the closure must take
 // safe fallback (no dangling flat*/pool* or EnvFrame walk after mutate/invalidate).
@@ -2273,6 +2287,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             }
                         }
                     }
+                    if (auto deny = effect_deny_diagnostic_4896_(out)) // #4896
+                        return std::unexpected(std::move(*deny));
                     locals[ops[0]] = out;
                     break;
                 }
@@ -2353,8 +2369,17 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             }
                         }
                     }
-                    if (presult)
+                    if (presult) {
+                        // Issue #4896: a Restricted dispatch deny comes back as
+                        // an error value. In statement position (top-level
+                        // `(set-car! q 5)` on the force-soa face) the local was
+                        // discarded: the write was dropped, no diagnostic, rc=0.
+                        // The tree-walker raises it; do the same when no IR
+                        // handler is open in this frame.
+                        if (auto deny = effect_deny_diagnostic_4896_(*presult))
+                            return std::unexpected(std::move(*deny));
                         locals[result_slot] = *presult;
+                    }
                     break;
                 }
 
@@ -2485,6 +2510,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             if (context_.evaluator) {
                                 locals[ops[3]] = context_.evaluator->invoke_prim_with_telemetry(
                                     prim_name, [&]() { return (*pfn)(call_args); });
+                                // Issue #4896: same deny raise as the PrimCall arm.
+                                if (auto deny = effect_deny_diagnostic_4896_(locals[ops[3]]))
+                                    return std::unexpected(std::move(*deny));
                             } else if (aura::compiler::typed_audit::production_defaults_active()) {
                                 // #3834 / #3798: production + null owner — void,
                                 // zero side effects (mirror PrimCall arm).

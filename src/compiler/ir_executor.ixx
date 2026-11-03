@@ -476,6 +476,13 @@ private:
     // marker handles frame-local scoping on return).
     std::vector<ExHandler> ex_stack_;
 
+    // Issue #4896: a Restricted dispatch deny ("effect-denied: ...") that a
+    // primitive returned as an error value, as a diagnostic to raise. Empty
+    // for any other value, under Soft/Off, or while an IR try handler is
+    // open (the handler keeps receiving the value, as before).
+    [[nodiscard]] std::optional<aura::diag::Diagnostic>
+    effect_deny_diagnostic_4896_(const EvalValue& v) const;
+
     // Per-function escape maps from IR escape analysis.
     // escape_maps_[func_id][slot] = 1 (ESCAPED) or 0 (NON_ESCAPING).
     // Empty if no escape info available.
