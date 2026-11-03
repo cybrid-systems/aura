@@ -342,7 +342,7 @@ public:
 
     // Current yield reason (for the scheduler to inspect)
     YieldReason last_yield_reason() const { return last_yield_reason_; }
-    void set_yield_reason(YieldReason r) { last_yield_reason_ = r; }
+    void set_yield_reason(YieldReason reason) { last_yield_reason_ = reason; }
 
     // Check if a GC safepoint has been requested (P2).
     // If so, block until the GC phase returns to None.
@@ -357,18 +357,18 @@ public:
     // is only a candidate filter. Prefer is_stealable() / is_stealable(snap)
     // for enqueue decisions.
     [[nodiscard]] bool is_steal_candidate() const noexcept {
-        auto r = last_yield_reason_.load(std::memory_order_acquire);
-        return r == YieldReason::Explicit || r == YieldReason::MutationBoundary ||
-               r == YieldReason::OperationBoundary || r == YieldReason::PassPipeline;
+        auto reason = last_yield_reason_.load(std::memory_order_acquire);
+        return reason == YieldReason::Explicit || reason == YieldReason::MutationBoundary ||
+               reason == YieldReason::OperationBoundary || reason == YieldReason::PassPipeline;
     }
 
     // Issue #2549: candidate filter from a pre-sampled snapshot (zero extra
     // yield-reason load when snap already held on the steal path).
-    [[nodiscard]] bool is_steal_candidate(const MutationSafetySnapshot& s) const noexcept {
-        return s.last_yield == YieldReason::Explicit ||
-               s.last_yield == YieldReason::MutationBoundary ||
-               s.last_yield == YieldReason::OperationBoundary ||
-               s.last_yield == YieldReason::PassPipeline;
+    [[nodiscard]] bool is_steal_candidate(const MutationSafetySnapshot& snap) const noexcept {
+        return snap.last_yield == YieldReason::Explicit ||
+               snap.last_yield == YieldReason::MutationBoundary ||
+               snap.last_yield == YieldReason::OperationBoundary ||
+               snap.last_yield == YieldReason::PassPipeline;
     }
 
     // Issue #2549: authoritative steal-safe predicate.
