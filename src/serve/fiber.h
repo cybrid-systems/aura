@@ -902,6 +902,9 @@ public:
     // (#3905). A live body, including Reclaimed-pending, is kept.
     // Idempotent.
     void release_done_resources() noexcept;
+    // Issue #4890: return the per-fiber mutation / yield checkpoint stacks
+    // to their pools (idempotent; called at the Done edge and by ~Fiber).
+    void release_checkpoint_storage() noexcept;
     [[nodiscard]] bool done_resources_released() const noexcept;
     // Issue #2467: is_done() now strictly requires state_==Done.
     // Previously returned true for force-reclaimed fibers too

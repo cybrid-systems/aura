@@ -111,6 +111,7 @@ namespace fiber_stack_pool_detail {
         static constexpr std::size_t kMaxPooled = 128;
 
         T* acquire() {
+            pool_stats().live_stacks.fetch_add(1, std::memory_order_relaxed);
             {
                 std::lock_guard lock(mutex_);
                 if (!pool_.empty()) {
@@ -132,6 +133,7 @@ namespace fiber_stack_pool_detail {
         void release(T* v) {
             if (!v)
                 return;
+            pool_stats().live_stacks.fetch_sub(1, std::memory_order_relaxed);
             v->clear();
             maybe_shrink(*v);
             std::lock_guard lock(mutex_);
@@ -5314,6 +5316,11 @@ std::uint64_t aura_per_fiber_stack_pool_growth_warnings() {
 }
 std::uint64_t aura_per_fiber_stack_pool_restamps() {
     return aura::serve::metrics::per_fiber_stack_pool_stats().restamps.load(
+        std::memory_order_relaxed);
+}
+// Issue #4890: mutation + yield stacks currently held by fibers.
+std::int64_t aura_per_fiber_stack_pool_live_stacks() {
+    return aura::serve::metrics::per_fiber_stack_pool_stats().live_stacks.load(
         std::memory_order_relaxed);
 }
 }
