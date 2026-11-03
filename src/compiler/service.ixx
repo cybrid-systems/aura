@@ -3444,6 +3444,21 @@ public:
                             if (tok_start < close) {
                                 arg_strs.push_back(trimmed.substr(tok_start, close - tok_start));
                             }
+                            // Issue #4895: an argument that builds a closure
+                            // (`(f (lambda () 1))`) is evaluated below by a
+                            // nested eval() whose expression IRInterpreter
+                            // owns the new closure and dies on return. The
+                            // id then dangles when f's body calls it
+                            // (`arity mismatch` on an id collision, else
+                            // `eval_flat: invalid closure`). Leave such a
+                            // call to the normal pipeline, which lowers the
+                            // whole form in one interpreter.
+                            for (const auto& as : arg_strs) {
+                                if (arg_text_builds_closure_4895_(as)) {
+                                    def_body = aura::ast::NULL_NODE;
+                                    break;
+                                }
+                            }
                             // Evaluate args in top_env (recursively via eval()).
                             // We pass them through eval() for non-trivial
                             // expressions (so they see macros / IR cache),
@@ -3455,7 +3470,9 @@ public:
                             // return the first's result.
                             std::vector<aura::compiler::types::EvalValue> arg_vals;
                             arg_vals.reserve(arg_strs.size());
-                            for (auto& as : arg_strs) {
+                            for (auto& as : def_body == aura::ast::NULL_NODE
+                                                ? std::span<std::string>{}
+                                                : std::span<std::string>{arg_strs}) {
                                 aura::compiler::types::EvalValue val = eval_arg_fast(as);
                                 if (val.val == 0 && as != "0") {
                                     // Fallback: try full eval for non-numeric args
@@ -4062,6 +4079,7 @@ public:
         aura::compiler::IRContext ctx(evaluator_.primitives(), &type_registry_, &metrics_,
                                       &evaluator_);
         aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, ctx);
+        seed_eval_interp_closure_cursor_4895_(ir_interp);
         ir_interp.set_strategy(strategy_);
         if (!last_escape_maps_.empty())
             ir_interp.set_escape_maps(last_escape_maps_);
@@ -4430,6 +4448,7 @@ public:
         aura::compiler::IRContext ctx(evaluator_.primitives(), &type_registry_, &metrics_,
                                       &evaluator_);
         aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, ctx);
+        seed_eval_interp_closure_cursor_4895_(ir_interp);
         ir_interp.set_strategy(strategy_);
         if (!last_escape_maps_.empty())
             ir_interp.set_escape_maps(last_escape_maps_);
@@ -17544,6 +17563,58 @@ private:
     // bodies that each mint from the same floor is the per-fiber-minting
     // follow-up, step 3 of #4717 — not a lost update here).
     std::atomic<std::uint64_t> next_ir_define_closure_id_{types::make_ir_closure_id(0)};
+
+    // Issue #4895: true when an argument's source text contains a
+    // closure-building form head token (lambda / define / delay ...).
+    [[nodiscard]] static bool arg_text_builds_closure_4895_(std::string_view s) noexcept {
+        static constexpr std::string_view kHeads[] = {
+            "lambda", "\xCE\xBB",    "case-lambda",  "named-lambda",  "define",
+            "delay",  "delay-force", "make-promise", "make-parameter"};
+        auto is_delim = [](char c) {
+            return std::isspace(static_cast<unsigned char>(c)) || c == '(' || c == ')' ||
+                   c == '[' || c == ']' || c == '\'' || c == '`' || c == ',';
+        };
+        std::size_t i = 0;
+        while (i < s.size()) {
+            if (is_delim(s[i])) {
+                ++i;
+                continue;
+            }
+            if (s[i] == '"') { // skip string literal
+                ++i;
+                while (i < s.size() && s[i] != '"') {
+                    if (s[i] == '\\')
+                        ++i;
+                    ++i;
+                }
+                ++i;
+                continue;
+            }
+            std::size_t j = i;
+            while (j < s.size() && !is_delim(s[j]) && s[j] != '"')
+                ++j;
+            const auto tok = s.substr(i, j - i);
+            for (auto h : kHeads)
+                if (tok == h)
+                    return true;
+            i = j;
+        }
+        return false;
+    }
+
+    // Issue #4895: a top-level expression's IR interpreter mints its
+    // closures from the same service-wide cursor as the persistent define
+    // bindings. It started at kClosureIdHighBit, so under the form-by-form
+    // force-soa face `(f (lambda () 1))` minted the SAME id as the first
+    // define's own closure: f's interpreter resolved (g) to itself
+    // ("arity mismatch: f expects 1 argument, got 0") or to a foreign slot
+    // ("eval_flat: invalid closure"). Seeding turns any remaining escape of
+    // an expression-interpreter closure into a located invalid-closure
+    // error instead of a silent call to the wrong procedure.
+    void seed_eval_interp_closure_cursor_4895_(aura::compiler::IRInterpreter& interp) noexcept {
+        interp.set_next_closure_id(next_ir_define_closure_id_.load(std::memory_order_acquire));
+        interp.set_shared_closure_cursor(&next_ir_define_closure_id_);
+    }
 
     // Issue #4717: drain an interpreter's advanced id cursor back into the
     // shared monotonic source (release; max-only so a concurrent publish
