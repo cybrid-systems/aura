@@ -511,6 +511,19 @@ void Scheduler::stop() {
     for (auto& w : workers_) {
         w->stop();
     }
+    // Issue #4898: run() parks in epoll_wait for up to 1000 ms and only
+    // re-reads running_ when it returns. Nothing woke it here, so a caller
+    // that stops and then joins the IO thread (parallel-intend's per-call
+    // local scheduler under orch:run-workflow) waited out the full idle
+    // timeout whenever the loop was already parked: ~1000 ms per call.
+    // Kick the loop through the offload completion eventfd it already
+    // polls; drain_offload_completions() on an empty queue is a no-op.
+#if AURA_HAVE_EPOLL
+    if (offload_completion_fd_ >= 0) {
+        const std::uint64_t one = 1;
+        (void)::write(offload_completion_fd_, &one, sizeof(one));
+    }
+#endif
 }
 
 // ── register_event_fiber ─────────────────────────────
