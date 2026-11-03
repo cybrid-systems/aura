@@ -12,6 +12,14 @@
 #include <cstdlib>
 #include <string_view>
 
+namespace aura::messaging {
+// Issue #4887/#4888: thread-local private-context override
+// (messaging_bridge_impl.cpp). An offload worker evaluates an isolated
+// CompilerService; production's Forbidden gate belongs to the session
+// pipeline, not to that private verification context.
+[[nodiscard]] bool offload_private_eval_active() noexcept;
+} // namespace aura::messaging
+
 namespace aura::compiler {
 
 // Issue #2213: policy when needs_tree_walker_fallback would fire.
@@ -31,6 +39,8 @@ inline std::atomic<std::uint32_t>& g_tree_walker_fallback_policy_atomic() noexce
 }
 
 [[nodiscard]] inline TreeWalkerFallbackPolicy tree_walker_fallback_policy() noexcept {
+    if (aura::messaging::offload_private_eval_active())
+        return TreeWalkerFallbackPolicy::Allow;
     return static_cast<TreeWalkerFallbackPolicy>(
         g_tree_walker_fallback_policy_atomic().load(std::memory_order_relaxed));
 }

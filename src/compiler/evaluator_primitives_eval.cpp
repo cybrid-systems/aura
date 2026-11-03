@@ -1577,6 +1577,191 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         return make_string(ris);
     });
 
+    // ── Issue #4888: offload:* — background verification of a freeze snapshot.
+    // (offload:snapshot)                → snapshot handle (current workspace source)
+    // (offload:submit snap '(stages) :class 'compile) → ticket handle
+    // (offload:await ticket [:timeout-ms n]) → result hash
+    // (offload:poll ticket)             → :queued | :running | :done | :failed |
+    //                                     :cancelled | :rejected
+    // (offload:cancel ticket)           → #t | #f
+    //
+    // The snapshot registry and the private CompilerService job live outside
+    // the evaluator module (messaging_bridge g_offload_*); the primitive table
+    // only marshals values. Non-fiber contexts degrade to mode: sync.
+    struct OffloadHandles {
+        std::mutex mutex;
+        std::unordered_map<std::int64_t, std::string> snapshots;
+        std::int64_t next_snapshot = 1;
+    };
+    auto offload_handles = std::make_shared<OffloadHandles>();
+
+    auto offload_kw = [&ev](std::string_view name) -> EvalValue {
+        std::string key = ":";
+        key += name;
+        return ev.intern_keyword(key);
+    };
+    auto offload_hash = [&ev](std::span<const std::pair<std::string, EvalValue>> kvs) -> EvalValue {
+        auto hash_fn = ev.primitives_.lookup("hash");
+        if (!hash_fn)
+            return make_void();
+        std::vector<EvalValue> args;
+        args.reserve(kvs.size() * 2);
+        for (const auto& [key, value] : kvs) {
+            const auto idx = static_cast<std::uint64_t>(ev.push_string_heap(key));
+            args.push_back(make_string(idx));
+            args.push_back(value);
+        }
+        return (*hash_fn)(args);
+    };
+    auto offload_string_list = [&ev](const std::vector<std::string>& items) -> EvalValue {
+        auto list_fn = ev.primitives_.lookup("list");
+        if (!list_fn)
+            return make_void();
+        std::vector<EvalValue> args;
+        args.reserve(items.size());
+        for (const auto& item : items) {
+            const auto idx = static_cast<std::uint64_t>(ev.push_string_heap(item));
+            args.push_back(make_string(idx));
+        }
+        return (*list_fn)(args);
+    };
+    auto offload_stage_name = [&ev](const EvalValue& v) -> std::optional<std::string> {
+        if (is_string(v) && as_string_idx(v) < ev.string_heap_.size())
+            return ev.string_at(as_string_idx(v));
+        if (types::is_symbol(v) && types::as_symbol_idx(v) < ev.symbol_table_.size())
+            return ev.symbol_table_[types::as_symbol_idx(v)];
+        if (types::is_keyword(v) && types::as_keyword_idx(v) < ev.keyword_table_.size()) {
+            const auto& name = ev.keyword_table_[types::as_keyword_idx(v)];
+            return name.size() > 1 && name.front() == ':' ? name.substr(1) : name;
+        }
+        return std::nullopt;
+    };
+    auto offload_result_hash = [offload_hash, offload_string_list,
+                                offload_kw](const aura::messaging::OffloadTicketResult& r) {
+        std::vector<std::pair<std::string, EvalValue>> test_kvs;
+        test_kvs.emplace_back("passed", make_int(static_cast<std::int64_t>(r.tests_passed)));
+        test_kvs.emplace_back("failed", make_int(static_cast<std::int64_t>(r.tests_failed)));
+        test_kvs.emplace_back("failures", offload_string_list(r.test_failures));
+        auto tests = offload_hash(test_kvs);
+        std::vector<std::string> diags = r.diagnostics;
+        if (!r.error.empty())
+            diags.push_back(r.error);
+        std::vector<std::pair<std::string, EvalValue>> timing_kvs;
+        timing_kvs.emplace_back("queue-us", make_int(static_cast<std::int64_t>(r.queue_us)));
+        timing_kvs.emplace_back("exec-us", make_int(static_cast<std::int64_t>(r.exec_us)));
+        std::vector<std::pair<std::string, EvalValue>> kvs;
+        kvs.emplace_back("status", offload_kw(r.status));
+        kvs.emplace_back("diagnostics", offload_string_list(diags));
+        kvs.emplace_back("tests", tests);
+        kvs.emplace_back("timing", offload_hash(timing_kvs));
+        kvs.emplace_back("mode", offload_kw(r.mode));
+        return offload_hash(kvs);
+    };
+
+    add("offload:snapshot", [&ev, offload_handles](const auto&) -> EvalValue {
+        std::string source = ev.authoritative_workspace_source();
+        std::lock_guard lock(offload_handles->mutex);
+        const auto id = offload_handles->next_snapshot++;
+        offload_handles->snapshots.emplace(id, std::move(source));
+        return make_int(id);
+    });
+
+    add("offload:submit",
+        [&ev, offload_handles, offload_stage_name, mev](std::span<const EvalValue> a) -> EvalValue {
+            if (a.size() < 2 || !is_int(a[0]))
+                return mev("bad-arg", "offload:submit: expected (snapshot stages ...)");
+            if (!aura::messaging::g_offload_submit)
+                return mev("offload-unavailable",
+                           "offload:submit: offload bridge is not registered");
+            const auto snap_id = as_int(a[0]);
+            std::string source;
+            {
+                std::lock_guard lock(offload_handles->mutex);
+                auto it = offload_handles->snapshots.find(snap_id);
+                if (it == offload_handles->snapshots.end())
+                    return mev("bad-arg", "offload:submit: unknown snapshot handle");
+                source = it->second;
+            }
+            std::vector<std::string> stages;
+            auto collect_stage = [&](const EvalValue& v) {
+                if (auto name = offload_stage_name(v))
+                    stages.push_back(std::move(*name));
+            };
+            if (is_pair(a[1])) {
+                auto cur = a[1];
+                while (is_pair(cur)) {
+                    const auto idx = as_pair_idx(cur);
+                    if (idx >= ev.pairs_.size())
+                        break;
+                    collect_stage(ev.pairs_[idx].car);
+                    cur = ev.pairs_[idx].cdr;
+                }
+            } else if (is_vector(a[1])) {
+                const auto idx = as_vector_idx(a[1]);
+                if (idx < ev.vector_heap_.size())
+                    for (const auto& v : ev.vector_heap_[idx])
+                        collect_stage(v);
+            } else {
+                collect_stage(a[1]);
+            }
+            std::string klass = "compile";
+            for (std::size_t i = 2; i + 1 < a.size(); i += 2) {
+                const auto option = offload_stage_name(a[i]);
+                if (!option)
+                    continue;
+                if (*option == "class") {
+                    if (auto name = offload_stage_name(a[i + 1]))
+                        klass = std::move(*name);
+                }
+            }
+            const int ticket = aura::messaging::g_offload_submit(
+                std::move(source), std::move(stages), std::move(klass));
+            if (ticket == -1)
+                return mev("queue-full", "offload:submit: offload queue is full");
+            if (ticket == -2)
+                return mev("quota-exceeded", "offload:submit: offload quota exceeded");
+            if (ticket < 0)
+                return mev("offload-unavailable",
+                           "offload:submit: offload service is shutting down");
+            return make_int(ticket);
+        });
+
+    add("offload:await",
+        [offload_result_hash, offload_stage_name, mev](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_int(a[0]))
+                return mev("bad-arg", "offload:await: expected a ticket handle");
+            if (!aura::messaging::g_offload_await)
+                return mev("offload-unavailable",
+                           "offload:await: offload bridge is not registered");
+            std::uint64_t timeout_ms = 0;
+            for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
+                const auto option = offload_stage_name(a[i]);
+                if (option && *option == "timeout-ms" && is_int(a[i + 1]) && as_int(a[i + 1]) > 0)
+                    timeout_ms = static_cast<std::uint64_t>(as_int(a[i + 1]));
+            }
+            aura::messaging::OffloadTicketResult result;
+            if (!aura::messaging::g_offload_await(static_cast<int>(as_int(a[0])), timeout_ms,
+                                                  result))
+                return mev("timeout", "offload:await: ticket did not finish before the timeout");
+            return offload_result_hash(result);
+        });
+
+    add("offload:poll", [offload_kw, mev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return mev("bad-arg", "offload:poll: expected a ticket handle");
+        if (!aura::messaging::g_offload_poll)
+            return mev("offload-unavailable", "offload:poll: offload bridge is not registered");
+        return offload_kw(aura::messaging::g_offload_poll(static_cast<int>(as_int(a[0]))));
+    });
+
+    add("offload:cancel", [mev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return mev("bad-arg", "offload:cancel: expected a ticket handle");
+        if (!aura::messaging::g_offload_cancel)
+            return make_bool(false);
+        return make_bool(aura::messaging::g_offload_cancel(static_cast<int>(as_int(a[0]))));
+    });
+
 
     // (typecheck-current) — Type check the workspace AST
     // Uses a persistent TypeRegistry across calls so type IDs are stable.
