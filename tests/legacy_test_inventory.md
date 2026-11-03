@@ -1,7 +1,7 @@
 # Legacy test inventory
 
 **Issue:** [#1957](https://github.com/cybrid-systems/aura/issues/1957)
-**Generated:** 2026-10-31 by `scripts/tools/inventory_legacy_tests.py`
+**Generated:** 2026-11-03 by `scripts/tools/inventory_legacy_tests.py`
 **Status:** living document — re-run the script after consolidations.
 
 ## Purpose
@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 903 | Preferred destination suites |
-| **Total scanned** | **903** | |
+| `tests/core/test_*.cpp` | 904 | Preferred destination suites |
+| **Total scanned** | **904** | |
 
 ### Related artifacts
 
@@ -40,7 +40,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 88 | 88 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 54 | 54 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 132 | 132 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 60 | 60 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 61 | 61 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -742,6 +742,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_occurrence_provenance_chain_completeness.cpp`
 - `tests/compiler/test_occurrence_typing_blame_post_mutate_recovery.cpp`
 - `tests/compiler/test_occurrence_typing_blame_post_mutate_task2.cpp`
+- `tests/serve/test_offload_pool.cpp`
 - `tests/reflect/test_opcode_info_align_a3.cpp`
 - `tests/reflect/test_opcode_reflect.cpp`
 - `tests/core/test_open_issues_meta_batch.cpp`
@@ -2037,13 +2038,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_workspace_mtx_contention.cpp` (—) [domain_suite, theme_compiler] — AC1: Source cites #2523; residual strategy documented
 
-### `uncategorized` — Uncategorized / mixed (60)
+### `uncategorized` — Uncategorized / mixed (61)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (60)
+#### domain/ (61)
 
 - `tests/compiler/test_and_or_error_value.cpp` (—) [domain_suite, theme_compiler] — (#4535 contract: only the UNCAUGHT face prints).
 - `tests/compiler/test_arithmetic_int64_safety.cpp` (—) [large, domain_suite, theme_compiler] — test_arithmetic_int64_safety.cpp — Issues #1150–#1156 Phase 1
@@ -2078,6 +2079,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_module_prefix_dead_heap.cpp` (—) [domain_suite, theme_compiler] — Issue #1488/#1693 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_module_query_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_module_query_batch.cpp — thematic multi-TU batch
 - `tests/core/test_node_meta_bounds.cpp` (—) [domain_suite, theme_core] — AC1: meta(NodeTag{}) returns well-defined sentinel (no UB)
+- `tests/serve/test_offload_pool.cpp` (—) [domain_suite, theme_serve] — tests/serve/test_offload_pool.cpp — #4882 pool core acceptance
 - `tests/compiler/test_open_issues_phase1_batch.cpp` (—) [phase_slice, batch_driver, domain_suite, theme_compiler] — test_open_issues_phase1_batch.cpp — legacy alias for the domain suite.
 - `tests/compiler/test_pack_pipeline_strict.cpp` (—) [domain_suite, theme_compiler] — face lives in test_tree_walker_fallback_strict.cpp (sandbox=off →
 - `tests/core/test_pair_unchecked_safety.cpp` (—) [domain_suite, theme_core] — Issue #1710 (#1978 renamed): issue# moved from filename to header.
