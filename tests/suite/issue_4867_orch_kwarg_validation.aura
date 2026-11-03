@@ -37,8 +37,12 @@
 (orch:spawn-agent "dup4867" (lambda ()
   (let wait () (if release #t (begin (fiber:yield) (wait))))
   'done))
-(check (equal? (caught (lambda () (orch:spawn-agent "dup4867" (lambda () 2))))
-               "orch:spawn-agent: name already running: dup4867")
+; The rejection is the typed deny hash (same contract as #4393), not an
+; exception: callers branch on ok / id / deny-detail.
+(define dup-denied (orch:spawn-agent "dup4867" (lambda () 2)))
+(check (and (not (hash-ref dup-denied "ok"))
+            (= (hash-ref dup-denied "id") 0)
+            (string=? (hash-ref dup-denied "deny-detail" "") "name-reuse-while-live"))
        "#4867 a second live spawn under the same name is rejected")
 (set! release #t)
 (orch:agent-join "dup4867" :timeout-ms 2000)
