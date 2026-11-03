@@ -2178,15 +2178,36 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         // Issue #4839: already joined once? Return the cached value (a
         // raised value is cached as that Error value, so a second join
         // re-raises it). Checked under the same mutex as registration.
+        //
+        // Issue #4872: a fid that is in neither the result registry nor the
+        // bounded repeat-join cache can never be published: fiber:spawn
+        // registers s_fiber_results[fid] before it returns the fid, and a
+        // join erases it. So it is an older repeat join whose cache entry
+        // the FIFO evicted (more than kFiberJoinedCacheCap other joins
+        // since), or a fid fiber:spawn never returned. Both answer void at
+        // once -- the stdin/thread wait paths below would otherwise poll for
+        // a result that cannot arrive (the 200 s deadline, or forever on a
+        // scheduler joiner). The one exception is a live scheduler fiber
+        // that has no fiber:spawn result slot (serve-async join on a raw
+        // fiber id): that keeps the wait-for-done path below.
         {
-            std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
-            if (s_fiber_results.find(fid) == s_fiber_results.end()) {
-                auto oit = s_fiber_joined.find(static_cast<const void*>(&ev));
-                if (oit != s_fiber_joined.end()) {
-                    auto jit = oit->second.find(fid);
-                    if (jit != oit->second.end())
-                        return jit->second;
+            bool unknown = false;
+            {
+                std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
+                if (s_fiber_results.find(fid) == s_fiber_results.end()) {
+                    auto oit = s_fiber_joined.find(static_cast<const void*>(&ev));
+                    if (oit != s_fiber_joined.end()) {
+                        auto jit = oit->second.find(fid);
+                        if (jit != oit->second.end())
+                            return jit->second;
+                    }
+                    unknown = true;
                 }
+            }
+            if (unknown) {
+                if (!(aura::messaging::g_fiber_yield && aura::messaging::g_fiber_lookup &&
+                      aura::messaging::g_fiber_lookup(fid) != nullptr))
+                    return make_void();
             }
         }
 
