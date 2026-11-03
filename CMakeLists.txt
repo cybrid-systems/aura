@@ -249,6 +249,7 @@ target_sources(aura PRIVATE
     src/offload/offload_quota.cpp # Issue #4885: offload ResourceQuota adapter
     # Issue #4887/#4888: private-compiler job bodies + offload:* bridge.
     src/offload/offload_job.cpp
+    src/offload/offload_primitives.cpp
     src/serve/thread_pool.cpp
     src/serve/scheduler.cpp
     src/serve/gc_coordinator.cpp
