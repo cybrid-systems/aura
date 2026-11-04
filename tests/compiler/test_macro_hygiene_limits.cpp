@@ -3337,6 +3337,48 @@ static void ac4390_legacy_eval_macro_denies_without_mse() {
     reset_all();
 }
 
+// Issue #4902: the #4894 call-site memo was gated on the sandbox being
+// inactive, so the production face (Restricted + MacroSelfEvo grant) still
+// cloned the macro body, inner-expanded it and restamped the whole flat on
+// every call. The memo is authorization-independent: only the clone work is
+// reused, while the per-call MacroSelfEvo consult stays.
+static void ac4902_memo_reuse_under_restricted() {
+    reset_all();
+    using aura::compiler::macro_exp::g_clone_macro_body_concurrent_top_level_total;
+    // The service must exist before the grants: constructing an Evaluator
+    // resets the process capability view (production audit defaults).
+    CompilerService cs;
+    // Production face: Restricted + a real MacroSelfEvo grant (the #3409
+    // TenantAdmin-first path lives in grant_self_evo_production).
+    grant_self_evo_production();
+    CHECK(aura::core::sandbox::is_sandbox_active(), "4902: sandbox face is active");
+
+    CHECK(cs.eval("(define-hygienic-macro (or2h4902 a b) (let ((t a)) (if t t b)))").has_value(),
+          "4902: macro definition evaluates");
+    CHECK(cs.eval("(define (f4902 i) (or2h4902 #f i))").has_value(),
+          "4902: calling define evaluates");
+    CHECK(cs.eval("(define (loop4902 i acc) (if (< i 200) (loop4902 (+ i 1) (+ acc (f4902 i))) acc))")
+              .has_value(),
+          "4902: loop define evaluates");
+
+    // The grant is mutation-epoch bound (#2386 fail-closed mid join): the
+    // defines above advanced the epoch, so re-bind it to the epoch the
+    // measured call runs under.
+    grant_self_evo_production();
+    const auto before =
+        g_clone_macro_body_concurrent_top_level_total.load(std::memory_order_relaxed);
+    auto sum = cs.eval("(loop4902 0 0)");
+    const auto after =
+        g_clone_macro_body_concurrent_top_level_total.load(std::memory_order_relaxed);
+    if (!sum)
+        std::println("  4902 eval error: {}", sum.error().format());
+    CHECK(sum && is_int(*sum) && as_int(*sum) == 199 * 200 / 2,
+          "4902: 200 macro calls return the right sum");
+    std::println("  clone entries for 200 calls: {}", after - before);
+    CHECK(after - before <= 2,
+          "4902: call-site memo reused under Restricted (one clone, not 200)");
+    reset_all();
+}
 int run_test_macro_hygiene_limits() {
     std::println("=== Issue #2101: runtime hygiene depth/pass caps ===");
     ac1_runtime_cap_clamps();
@@ -3424,6 +3466,8 @@ int run_test_macro_hygiene_limits() {
     ac4389_capability_deny_stamps_fiber();
     std::println("\n=== Issue #4390: legacy eval expansion needs MacroSelfEvo ===");
     ac4390_legacy_eval_macro_denies_without_mse();
+    std::println("\n=== Issue #4902: hygienic call memo under Restricted + MacroSelfEvo ===");
+    ac4902_memo_reuse_under_restricted();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
