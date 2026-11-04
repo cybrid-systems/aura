@@ -1,0 +1,71 @@
+# Cross-mode consistency gate
+
+A program gives the same result however aura runs it. The gate
+`tests/python/test_issue_4908_cross_mode.py` enforces that (#4908). It
+runs in the CI `build-test` job, in the step "Cross-mode gate + DX
+contracts".
+
+## What it compares
+
+Every program in `tests/cross_mode/*.aura` runs on six faces: the three
+pipelines `AURA_PIPELINE_STRICT` unset (default), `0` and `force-soa`,
+each both directly (`aura prog.aura`) and with `--load`. Every face runs
+with `AURA_SANDBOX=off`.
+
+For each face the gate compares three things against the default/direct
+face:
+
+- stdout
+- the exit code
+- the `line:col` of the first `error:` line on stderr
+
+Any difference fails the gate and is printed as a unified diff.
+
+The corpus is the minimal repro of each split users have hit:
+
+| Programs | Issue |
+|---|---|
+| `i4899_*`, `i4899f_*` | #4899 |
+| `i4901_*` | #4901 |
+| `i4903_*` | #4903 |
+| `i4904_*` | #4904 |
+
+### Kit leg
+
+Set `AURA_STARTER_KITS=<aura-starter-kits checkout>` to also run
+`kits/evolve-strategy` (`KIT_STEPS`, default 20) on the same six faces
+and compare the `summary.json` files. CI clones the kits' latest `main`
+for this, not the `AURA_PIN` the kits use.
+
+## Run it locally
+
+```sh
+python3 tests/python/test_issue_4908_cross_mode.py
+AURA_STARTER_KITS=../aura-starter-kits python3 tests/python/test_issue_4908_cross_mode.py
+```
+
+## Allowlist: intended differences
+
+`tests/cross_mode/allowlist.txt` lists the differences that are known
+and accepted, one per line:
+
+```
+<program glob> <face glob> <field> <reason...>
+```
+
+- `face` is one of `default|strict0|force-soa`, then `/direct` or
+  `/load`. `*` matches any face.
+- `field` is `stdout`, `rc`, `loc` or `*`.
+
+Current entries:
+
+| Programs | Faces | Field | Why |
+|---|---|---|---|
+| `i4899f_*.aura` | `force-soa/*` | `loc` | An error raised inside a procedure body that force-soa runs on the IR is located at the top-level call site, not at the failing expression in the body. stdout and rc still match. The IR instruction's source node id belongs to the defining form's flat, but the producer lookup resolves it against the calling form's flat. (#4909 follow-up) |
+
+Sandbox denials are not part of this gate, because the corpus runs with
+the sandbox off. The sandbox faces (off / default Restricted / soft) are
+compared by the starter kits' `scripts/mode-matrix.sh`.
+
+To add an entry, give the reason and the issue that will remove it. A
+new difference with no entry fails CI.
