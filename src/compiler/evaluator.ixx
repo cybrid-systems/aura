@@ -2862,6 +2862,11 @@ public:
     // body returned normally, when it returned an error VALUE, or when the
     // apply was refused (a stale closure, an arity miss, a densify refuse).
     std::optional<aura::diag::Diagnostic> take_raised_diagnostic();
+    // Issue #4908 / #4909: the IR define bridge turns a failed
+    // call_closure into nullopt. The interpreter parks the failure here so
+    // the call site reports it (effect-denied, unbound …) instead of
+    // "eval_flat: invalid closure".
+    void park_raised_diagnostic(aura::diag::Diagnostic d);
 
     // Module loaded callback: called after a module file is successfully loaded.
     using ModuleLoadedFn = std::function<void(const std::string& source, const std::string& path)>;
@@ -10646,6 +10651,10 @@ public:
     // add_mutate. Nested boundary → empty handle, ok=true. Acquire fail →
     // ok=false. Impl: evaluator_mutation_boundary.cpp
     [[nodiscard]] HeapMutateGuardHandle maybe_auto_guard_heap_mutate(bool& ok) noexcept;
+    // Issue #4908 / #4909: why the last auto-guard admit was refused
+    // (AdmissionRejected: …). Appended to the naked-mutate error so the
+    // refusal is not reported without its cause.
+    std::string heap_guard_reject_reason_;
     template <typename Call>
     inline types::EvalValue invoke_prim_with_telemetry_at(std::string_view name, std::size_t slot,
                                                           Call&& call) {
@@ -10675,7 +10684,10 @@ public:
                     return primitives_detail::make_primitive_error(
                         string_heap_, error_values_,
                         std::string("naked mutate: ") + std::string(name) +
-                            " requires MutationBoundaryGuard",
+                            " requires MutationBoundaryGuard" +
+                            (heap_guard_reject_reason_.empty()
+                                 ? std::string()
+                                 : " (" + heap_guard_reject_reason_ + ")"),
                         primitive_error_counter_ptr());
                 }
             }

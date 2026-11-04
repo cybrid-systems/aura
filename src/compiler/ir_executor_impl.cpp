@@ -1162,6 +1162,11 @@ EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const
         // real cause.
         depth_exceeded_ = false;
         set_pending_user_arity(std::format("recursion depth exceeded (>{})", ir_max_call_depth()));
+    } else if (!result && context_.evaluator) {
+        // Issue #4908 / #4909: same bridge, any other raised diagnostic
+        // (effect-denied set-car! under Restricted + force-soa --load was
+        // reported as "eval_flat: invalid closure").
+        context_.evaluator->park_raised_diagnostic(result.error());
     }
     return result;
 }
