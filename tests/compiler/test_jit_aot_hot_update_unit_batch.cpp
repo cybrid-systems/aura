@@ -1776,7 +1776,167 @@ int run_hot_update_nested_lambda_4648() {
 }
 
 } // namespace aura_jit_run_hot_update_nested_lambda_4648
-// ─── end issue #4648 nested-lambda hot-update ───
+// ─── Issue #4924: the bounded creator-edge table (kMaxClosureCreatorEdges
+// = 32) evicts the OLDEST nested-lambda edge, so the define drop walk no
+// longer listed that callee: the evicted func_id is missing from
+// func_only_ids, the nested lambda's binding is "__lambda__#<id>" (not the
+// define / define#...) and the live closure is unnamed, so nothing
+// MustDeopt'ed it and the held closure kept the pre-mutate ScalarFn after
+// the define's hot update. The runtime now remembers the evicted func_ids
+// per owner (bounded, same cap) and merges them back into the drop's
+// func_only_ids, so an evicted nested lambda is retired with the define.
+namespace aura_jit_run_hot_update_closure_edge_cap_4924 {
+
+// C-linkage runtime bridges (the module interface does not export them).
+extern "C" void aura_note_ir_func_owner(std::int64_t func_id, const char* owner_name);
+extern "C" void aura_note_ir_func_define(std::int64_t func_id, const char* name);
+extern "C" void aura_register_fn_named(const char* name, std::int64_t func_id,
+                                       std::int64_t (*fn)(std::int64_t*, std::uint32_t),
+                                       std::int32_t local_count, std::int32_t arg_count,
+                                       std::int32_t env_count);
+extern "C" std::int64_t aura_jit_fn_ptr_for_test(std::int64_t func_id);
+extern "C" void aura_drop_jit_fn_native_for_define(const char* name);
+
+namespace {
+    std::atomic<int> g_ac4924_stale_hits{0};
+    std::atomic<int> g_ac4924_other_hits{0};
+
+    // Every nested lambda gets its OWN ScalarFn, like the JIT (one compiled
+    // body per "__lambda__#<id>"). A shared pointer would let the define
+    // drop's pointer scan clear the evicted slot by accident and hide the
+    // missing-edge defect.
+    template <int N> std::int64_t ac4924_nested_scalar_n(std::int64_t* locals, std::uint32_t argc) {
+        (void)locals;
+        (void)argc;
+        g_ac4924_stale_hits.fetch_add(1, std::memory_order_relaxed);
+        return 492401 + N;
+    }
+    using Ac4924ScalarFn = std::int64_t (*)(std::int64_t*, std::uint32_t);
+    template <std::size_t... I>
+    constexpr std::array<Ac4924ScalarFn, sizeof...(I)>
+    ac4924_scalar_table(std::index_sequence<I...>) {
+        return {&ac4924_nested_scalar_n<static_cast<int>(I)>...};
+    }
+    const std::array<Ac4924ScalarFn, 72>& ac4924_scalars() {
+        static const auto table = ac4924_scalar_table(std::make_index_sequence<72>{});
+        return table;
+    }
+    // An unrelated define's nested lambda — the negative control.
+    std::int64_t ac4924_other_scalar(std::int64_t* locals, std::uint32_t argc) {
+        (void)locals;
+        (void)argc;
+        g_ac4924_other_hits.fetch_add(1, std::memory_order_relaxed);
+        return 499999;
+    }
+
+    // The JIT's production publish order: the MakeClosure owner edge, the
+    // named ScalarFn publish, then the func_id -> "__lambda__#<id>" binding.
+    void ac4924_install_lambda(std::int64_t fid, const char* owner, std::size_t slot) {
+        const std::string sym = "__lambda__#" + std::to_string(fid);
+        aura_note_ir_func_owner(fid, owner);
+        aura_register_fn_named(sym.c_str(), fid, ac4924_scalars()[slot], 1, 0, 0);
+        aura_note_ir_func_define(fid, sym.c_str());
+    }
+} // namespace
+
+// AC1 (the defect): 33 nested lambdas overflow the 32-edge table. The
+// evicted (oldest) edge still belongs to the define, so the drop must
+// retire it and MustDeopt the live closure that indexes it.
+bool ac4924_evicted_edge_retired() {
+    std::println("\n--- 4924 AC1 (ac4924_evicted_edge_retired): the 32-edge cap "
+                 "does not leak an evicted nested lambda ---");
+    constexpr std::int64_t kFirst = 200;
+    constexpr std::int64_t kCount = 33;
+    constexpr std::int64_t kOther = 280;
+    for (std::int64_t i = 0; i < kCount; ++i)
+        ac4924_install_lambda(kFirst + i, "ac4924_owner", static_cast<std::size_t>(i));
+    aura_note_ir_func_owner(kOther, "ac4924_other");
+    aura_register_fn_named("__lambda__#280", kOther, ac4924_other_scalar, 1, 0, 0);
+    aura_note_ir_func_define(kOther, "__lambda__#280");
+    const auto cid = aura_alloc_closure(kFirst);      // evicted edge
+    const auto kept = aura_alloc_closure(kFirst + 1); // retained edge
+    const auto oid = aura_alloc_closure(kOther);
+    CHECK(cid >= 0 && kept >= 0 && oid >= 0, "4924 AC1: closures allocated");
+    std::int64_t args[1] = {0};
+    CHECK(aura_jit_fn_ptr_for_test(kFirst) != 0,
+          "4924 AC1: the evicted nested lambda slot is installed before the update");
+    CHECK(aura_closure_call(cid, args, 0) == 492401,
+          "4924 AC1: the evicted-edge closure runs the native body before the update");
+    CHECK(aura_closure_call(kept, args, 0) == 492402,
+          "4924 AC1: a retained-edge closure runs the native body before the update");
+    CHECK(aura_closure_call(oid, args, 0) == 499999,
+          "4924 AC1: the unrelated closure runs its native body before the update");
+    const auto hits0 = g_ac4924_stale_hits.load(std::memory_order_relaxed);
+    const auto pending0 = aura_jit_deopt_pending_count();
+    aura_drop_jit_fn_native_for_define("ac4924_owner");
+    CHECK(aura_jit_fn_ptr_for_test(kFirst) == 0,
+          "4924 AC1: the evicted nested lambda's ScalarFn slot is retired");
+    CHECK(aura_closure_get_must_deopt(cid) == 1,
+          "4924 AC1: the evicted nested lambda's closure is MustDeopt'ed");
+    CHECK(aura_jit_fn_ptr_for_test(kFirst + 1) == 0,
+          "4924 AC1: the retained nested lambda's ScalarFn slot is retired");
+    CHECK(aura_closure_get_must_deopt(kept) == 1,
+          "4924 AC1: the retained nested lambda's closure is MustDeopt'ed");
+    CHECK(aura_closure_call(cid, args, 0) != 492401,
+          "4924 AC1: the evicted-edge closure does not return the pre-rebind value");
+    CHECK(g_ac4924_stale_hits.load(std::memory_order_relaxed) == hits0,
+          "4924 AC1: the pre-mutate ScalarFn is not entered after the drop");
+    CHECK(aura_jit_fn_ptr_for_test(kOther) != 0,
+          "4924 AC1: an unrelated define's nested lambda slot stays installed");
+    CHECK(aura_closure_get_must_deopt(oid) == 0,
+          "4924 AC1: an unrelated define's closure is not MustDeopt'ed");
+    CHECK(aura_closure_call(oid, args, 0) == 499999,
+          "4924 AC1: the unrelated closure still enters native");
+    CHECK(aura_jit_deopt_pending_count() == pending0,
+          "4924 AC1: the drop does not raise deopt_pending_count");
+    aura_free_closure(cid);
+    aura_free_closure(kept);
+    aura_free_closure(oid);
+    return true;
+}
+
+// AC2: at or below the cap there is no eviction and the #4648 drop walk is
+// unchanged — every owned nested lambda is retired.
+bool ac4924_below_cap_unchanged() {
+    std::println("\n--- 4924 AC2 (ac4924_below_cap_unchanged): 32 edges still "
+                 "retire without eviction ---");
+    constexpr std::int64_t kFirst = 300;
+    constexpr std::int64_t kCount = 32;
+    for (std::int64_t i = 0; i < kCount; ++i)
+        ac4924_install_lambda(kFirst + i, "ac4924_owner32", 40u + static_cast<std::size_t>(i));
+    const auto cid = aura_alloc_closure(kFirst);
+    const auto last = aura_alloc_closure(kFirst + kCount - 1);
+    CHECK(cid >= 0 && last >= 0, "4924 AC2: closures allocated");
+    std::int64_t args[1] = {0};
+    CHECK(aura_closure_call(cid, args, 0) == 492441,
+          "4924 AC2: the first nested lambda runs native before the update");
+    aura_drop_jit_fn_native_for_define("ac4924_owner32");
+    CHECK(aura_jit_fn_ptr_for_test(kFirst) == 0,
+          "4924 AC2: the first nested lambda's slot is retired");
+    CHECK(aura_closure_get_must_deopt(cid) == 1,
+          "4924 AC2: the first nested lambda's closure is MustDeopt'ed");
+    CHECK(aura_jit_fn_ptr_for_test(kFirst + kCount - 1) == 0,
+          "4924 AC2: the last nested lambda's slot is retired");
+    CHECK(aura_closure_get_must_deopt(last) == 1,
+          "4924 AC2: the last nested lambda's closure is MustDeopt'ed");
+    CHECK(aura_closure_call(cid, args, 0) != 492441,
+          "4924 AC2: the closure does not return the pre-rebind value");
+    aura_free_closure(cid);
+    aura_free_closure(last);
+    return true;
+}
+
+int run_hot_update_closure_edge_cap_4924() {
+    std::println("\n=== Issue #4924: the creator-edge cap must not leak a nested lambda ===");
+    ac4924_evicted_edge_retired();
+    ac4924_below_cap_unchanged();
+    std::println("\n=== Results: {} passed, {} failed ===", ::aura::test::g_passed,
+                 ::aura::test::g_failed);
+    return ::aura::test::g_failed == 0 ? 0 : 1;
+}
+
+} // namespace aura_jit_run_hot_update_closure_edge_cap_4924
+// ─── end issue #4924 closure-creator edge cap ───
 
 int main() {
     std::println("\n######## run_aot_hot_update_inc_1640 ########");
@@ -1810,6 +1970,13 @@ int main() {
     if (int rc = aura_jit_run_hot_update_nested_lambda_4648::run_hot_update_nested_lambda_4648();
         rc != 0) {
         std::println("run_hot_update_nested_lambda_4648 FAILED rc={}", rc);
+        return rc;
+    }
+    std::println("\n######## run_hot_update_closure_edge_cap_4924 ########");
+    if (int rc =
+            aura_jit_run_hot_update_closure_edge_cap_4924::run_hot_update_closure_edge_cap_4924();
+        rc != 0) {
+        std::println("run_hot_update_closure_edge_cap_4924 FAILED rc={}", rc);
         return rc;
     }
     if (::aura::test::g_failed)
