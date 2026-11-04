@@ -3192,29 +3192,31 @@ public:
         // so it belongs to the last top-level form. Falling back to the root
         // (always 1:1) made main report the error at the first form and, in
         // direct mode, resume after it: forms 2..N ran a second time.
-        const auto loc_of = [&flat](ast::NodeId id) {
-            const auto nv = flat.get(id);
-            return aura::diag::SourceLocation{nv.line == 0 ? 1u : nv.line,
-                                              nv.col == 0 ? 1u : nv.col, 0};
+        const auto loc_of = [&flat](ast::NodeId node_id) {
+            const auto node_view = flat.get(node_id);
+            return aura::diag::SourceLocation{node_view.line == 0 ? 1u : node_view.line,
+                                              node_view.col == 0 ? 1u : node_view.col, 0};
         };
         ast::NodeId top_form = root;
         if (root != ast::NULL_NODE && root < flat.size()) {
-            const auto rv = flat.get(root);
-            if (rv.tag == ast::NodeTag::Begin && !rv.children.empty()) {
-                top_form = rv.child(rv.children.size() - 1);
+            const auto root_view = flat.get(root);
+            if (root_view.tag == ast::NodeTag::Begin && !root_view.children.empty()) {
+                top_form = root_view.child(root_view.children.size() - 1);
                 if (escaped_stmt != 0 && escaped_stmt < flat.size()) {
                     // The top-level child that starts at or before the
                     // escaped statement (children are in source order).
-                    const auto sv = flat.get(static_cast<ast::NodeId>(escaped_stmt));
-                    const auto before = [](std::uint32_t al, std::uint32_t ac, std::uint32_t bl,
-                                           std::uint32_t bc) {
-                        return al < bl || (al == bl && ac <= bc);
+                    const auto stmt_view = flat.get(static_cast<ast::NodeId>(escaped_stmt));
+                    const auto before = [](std::uint32_t lhs_line, std::uint32_t lhs_col,
+                                           std::uint32_t rhs_line, std::uint32_t rhs_col) {
+                        return lhs_line < rhs_line || (lhs_line == rhs_line && lhs_col <= rhs_col);
                     };
-                    for (std::size_t i = 0; i < rv.children.size(); ++i) {
-                        const auto cv = flat.get(rv.child(i));
-                        if (cv.line == 0 || !before(cv.line, cv.col, sv.line, sv.col))
+                    for (std::size_t child_index = 0; child_index < root_view.children.size();
+                         ++child_index) {
+                        const auto child_view = flat.get(root_view.child(child_index));
+                        if (child_view.line == 0 ||
+                            !before(child_view.line, child_view.col, stmt_view.line, stmt_view.col))
                             break;
-                        top_form = rv.child(i);
+                        top_form = root_view.child(child_index);
                     }
                 }
             }

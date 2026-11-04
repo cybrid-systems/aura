@@ -467,8 +467,14 @@ static void ac4465_escaped_primitive_continues() {
         f << "(display \"after\")\n";
     }
     auto bare_run = run_file_4460(bin, "/tmp/aura-4465-bare.aura", face);
-    CHECK(bare_run.rc == 0, "4465: bare primitive still exits 0");
-    CHECK(bare_run.out == "beforeafter", "4465: bare primitive still continues");
+    // Issue #4899 replaces #4465's "bare primitive still exits 0" contract:
+    // a runtime error in statement position is a located diagnostic with a
+    // non-zero exit, not a silently discarded error value. The direct file
+    // face still runs the forms after it (#4460 resume).
+    CHECK(bare_run.rc == 1, "4899: bare primitive reports (was #4465 exit 0)");
+    CHECK(bare_run.out == "beforeafter", "4899: bare primitive still continues");
+    CHECK(count_sub(bare_run.err, "vector-ref: index 5 out of range for vector of length 3") == 1,
+          "4899: bare primitive names the cause once");
 
     // Issue #4750: the --load face (frozen snapshot; what the suite/e2e
     // harnesses spawn) must report the same escaped error as one located
