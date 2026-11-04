@@ -3610,13 +3610,21 @@ public:
         // macro was redefined, keeps the definition in effect here.
         auto& ev_4901 = evaluator_;
         struct MacroViewPin4901 {
-            aura::ast::FlatAST* f;
-            decltype(ev_4901)& ev;
+            MacroViewPin4901(aura::ast::FlatAST* flat_ast, decltype(ev_4901) evaluator_ref)
+                : flat_ast_(flat_ast)
+                , evaluator_(evaluator_ref) {}
             ~MacroViewPin4901() {
-                if (f != nullptr)
-                    f->macro_view_seq_4901 = ev.macro_seq_4901();
+                if (flat_ast_ != nullptr)
+                    flat_ast_->macro_view_seq_4901 = evaluator_.macro_seq_4901();
             }
-        } macro_view_pin_4901{flat_ptr, ev_4901};
+            MacroViewPin4901(const MacroViewPin4901&) = delete;
+            MacroViewPin4901& operator=(const MacroViewPin4901&) = delete;
+
+        private:
+            aura::ast::FlatAST* flat_ast_;
+            decltype(ev_4901) evaluator_;
+        };
+        const MacroViewPin4901 macro_view_pin_4901{flat_ptr, ev_4901};
         auto pr = aura::parser::parse_to_flat(input, *flat_ptr, *pool_ptr);
         if (pr.root == aura::ast::NULL_NODE) {
             return std::unexpected(parse_error_diag(pr));
@@ -12819,15 +12827,26 @@ public:
         const std::string pending_key_4904 = std::string("\x01pending-4904:") + name_str;
         ir_value_define_closure_owners_[pending_key_4904] = binding;
         struct PendingOwnerErase4904 {
-            CompilerService* self;
-            std::unique_lock<std::recursive_mutex>& gate;
-            const std::string& key;
+            PendingOwnerErase4904(CompilerService* service,
+                                  std::unique_lock<std::recursive_mutex>& gate_lock,
+                                  const std::string& erase_key)
+                : service_(service)
+                , gate_(gate_lock)
+                , erase_key_(erase_key) {}
             ~PendingOwnerErase4904() {
-                if (!gate.owns_lock())
-                    self->relock_ir_gate_(gate); // #4765
-                self->ir_value_define_closure_owners_.erase(key);
+                if (!gate_.owns_lock())
+                    service_->relock_ir_gate_(gate_); // #4765
+                service_->ir_value_define_closure_owners_.erase(erase_key_);
             }
-        } pending_erase_4904{this, ir_gate, pending_key_4904};
+            PendingOwnerErase4904(const PendingOwnerErase4904&) = delete;
+            PendingOwnerErase4904& operator=(const PendingOwnerErase4904&) = delete;
+
+        private:
+            CompilerService* service_;
+            std::unique_lock<std::recursive_mutex>& gate_;
+            const std::string& erase_key_;
+        };
+        const PendingOwnerErase4904 pending_erase_4904{this, ir_gate, pending_key_4904};
         if (ir_gate.owns_lock())
             ir_gate.unlock();
         auto result = binding->interpreter->execute();
