@@ -268,15 +268,18 @@ export inline std::string effect_denied_hint(std::string_view effect) {
     if (file.empty())
         file = "file.aura";
     if (effect == "mutate")
-        return std::format("hint: to experiment run 'aura soft {}' (grants mutate on this "
-                           "workspace); for local development AURA_SANDBOX=off; in production "
-                           "grant the mutate effect",
-                           file);
+        return std::format("hint: run 'aura --preset dev {}' (or 'aura soft {}'; grants mutate "
+                           "on this workspace); for local development AURA_SANDBOX=off; in "
+                           "production grant the mutate effect",
+                           file, file);
     if (effect == "write" || effect == "exec" || effect == "network" || effect == "ffi" ||
         effect == "read")
-        return std::format("hint: to experiment run 'aura soft --allow {} {}'; for local "
-                           "development AURA_SANDBOX=off; in production grant the {} effect",
-                           effect, file, effect);
+        return std::format("hint: run 'aura --grant {} {}'{}; for local development "
+                           "AURA_SANDBOX=off; in production grant the {} effect",
+                           effect, file,
+                           effect == "write" ? std::string_view(" (or --preset dev)")
+                                             : std::string_view(""),
+                           effect);
     if (effect == "macro-self-evo")
         return std::string("hint: user macros need MacroSelfEvo; for local development "
                            "AURA_SANDBOX=off ('aura soft' does not grant it); in production "

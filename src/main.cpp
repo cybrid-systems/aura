@@ -739,6 +739,38 @@ static std::string positioned_form_4908(std::uint32_t line, std::uint32_t column
     return out;
 }
 
+// Issue #4912: `preset = "dev"` from ./aura.toml, else from the aura.toml next
+// to the entry file. Only that one key is read; anything else is ignored.
+static std::string read_toml_preset_4912(const std::string& entry_path) {
+    std::vector<std::filesystem::path> candidates{std::filesystem::path("aura.toml")};
+    if (!entry_path.empty())
+        candidates.push_back(std::filesystem::path(entry_path).parent_path() / "aura.toml");
+    for (const auto& c : candidates) {
+        std::ifstream in(c);
+        if (!in)
+            continue;
+        std::string line;
+        while (std::getline(in, line)) {
+            auto t = std::string_view(line);
+            while (!t.empty() && (t.front() == ' ' || t.front() == '\t'))
+                t.remove_prefix(1);
+            if (!t.starts_with("preset"))
+                continue;
+            t.remove_prefix(6);
+            while (!t.empty() && (t.front() == ' ' || t.front() == '\t'))
+                t.remove_prefix(1);
+            if (t.empty() || t.front() != '=')
+                continue;
+            t.remove_prefix(1);
+            auto q1 = t.find('"');
+            auto q2 = q1 == std::string_view::npos ? q1 : t.find('"', q1 + 1);
+            if (q2 != std::string_view::npos)
+                return std::string(t.substr(q1 + 1, q2 - q1 - 1));
+        }
+    }
+    return {};
+}
+
 // Issue #4908: a producer location the evaluator really recorded. 1:1 of the
 // root source is the "no location" stamp (an `error` call without a
 // recorded producer), not the first column of the file.
@@ -3729,6 +3761,19 @@ int main(int argc, char* argv[]) {
         std::println(std::cerr, "A program file stops at its first top-level error (rc=1);");
         std::println(std::cerr,
                      "  --keep-going (or AURA_KEEP_GOING=1) runs the remaining forms too.");
+        std::println(std::cerr, "Capability presets (#4912):");
+        std::println(std::cerr,
+                     "  {} --preset dev file.aura   mutate + read + write (self-evolving "
+                     "programs)",
+                     prog);
+        std::println(std::cerr,
+                     "  {} --preset ci  file.aura   same as dev (write not yet "
+                     "path-scoped)",
+                     prog);
+        std::println(std::cerr, "  {} --preset prod file.aura  the Restricted default", prog);
+        std::println(std::cerr, "  --grant mutate,write,ffi,exec,network / --deny … adjust it; "
+                                "--quiet drops the caps line.");
+        std::println(std::cerr, "  Also AURA_PRESET=dev or preset = \"dev\" in aura.toml.");
         std::println(std::cerr, "Soft experiments (#4575):");
         std::println(std::cerr,
                      "  {} soft file.aura              Restricted Mutate on this workspace", prog);
@@ -3790,6 +3835,8 @@ int main(int argc, char* argv[]) {
             p = j < list.size() ? j + 1 : j;
             if (tok.empty())
                 continue;
+            if (tok == "mutate") // Issue #4912: always part of a soft/preset session
+                continue;
             std::uint16_t bit = 0;
             if (tok == "ffi")
                 bit = static_cast<std::uint16_t>(Effect::Ffi);
@@ -3814,9 +3861,102 @@ int main(int argc, char* argv[]) {
             soft_allow_list.append(tok);
         }
     };
+    // Issue #4912: capability presets. `--preset dev|ci|prod` (or
+    // AURA_PRESET, or `preset = "..."` in ./aura.toml) picks the session;
+    // `--grant` / `--deny` adjust it; `--quiet` drops the caps banner.
+    std::string preset_4912;
+    bool preset_bad_4912 = false;
+    bool quiet_4912 = false;
+    bool grant_seen_4912 = false;
+    bool deny_mutate_4912 = false;
+    std::uint16_t deny_bits_4912 = 0;
+    std::string entry_path_4912;
+    auto take_deny_4912 = [&](std::string_view list) {
+        using aura::core::capability::Effect;
+        std::size_t p = 0;
+        while (p < list.size()) {
+            auto j = list.find(',', p);
+            if (j == std::string_view::npos)
+                j = list.size();
+            auto tok = list.substr(p, j - p);
+            p = j + 1;
+            while (!tok.empty() && tok.front() == ' ')
+                tok.remove_prefix(1);
+            while (!tok.empty() && tok.back() == ' ')
+                tok.remove_suffix(1);
+            if (tok.empty())
+                continue;
+            if (tok == "mutate")
+                deny_mutate_4912 = true;
+            else if (tok == "ffi")
+                deny_bits_4912 |= static_cast<std::uint16_t>(Effect::Ffi);
+            else if (tok == "write")
+                deny_bits_4912 |= static_cast<std::uint16_t>(Effect::Write);
+            else if (tok == "exec" || tok == "shell")
+                deny_bits_4912 |= static_cast<std::uint16_t>(Effect::Exec);
+            else if (tok == "network" || tok == "net")
+                deny_bits_4912 |= static_cast<std::uint16_t>(Effect::Network);
+            else {
+                soft_allow_bad = true;
+                soft_allow_bad_tok = std::string(tok);
+                return;
+            }
+        }
+    };
+    auto flag_value_4912 = [&](int& i, std::string_view a, std::string_view name,
+                               std::string_view& out) -> bool {
+        if (a == name) {
+            if (i + 1 >= argc)
+                return false;
+            out = argv[++i];
+            return true;
+        }
+        out = a.substr(name.size() + 1);
+        return true;
+    };
     if (argc > 1) {
         for (int i = 1; i < argc; ++i) {
             const std::string_view a(argv[i]);
+            if (a == "--quiet") { // Issue #4912
+                quiet_4912 = true;
+                continue;
+            }
+            if (a == "--preset" || a.starts_with("--preset=")) { // Issue #4912
+                std::string_view v;
+                if (!flag_value_4912(i, a, "--preset", v) ||
+                    (v != "dev" && v != "ci" && v != "prod")) {
+                    preset_bad_4912 = true;
+                    preset_4912 = std::string(v);
+                    break;
+                }
+                preset_4912 = std::string(v);
+                continue;
+            }
+            if (a == "--grant" || a.starts_with("--grant=")) { // Issue #4912
+                std::string_view v;
+                if (!flag_value_4912(i, a, "--grant", v)) {
+                    soft_allow_bad = true;
+                    soft_allow_bad_tok = "--grant";
+                    break;
+                }
+                grant_seen_4912 = true;
+                take_allow(v);
+                if (soft_allow_bad)
+                    break;
+                continue;
+            }
+            if (a == "--deny" || a.starts_with("--deny=")) { // Issue #4912
+                std::string_view v;
+                if (!flag_value_4912(i, a, "--deny", v)) {
+                    soft_allow_bad = true;
+                    soft_allow_bad_tok = "--deny";
+                    break;
+                }
+                take_deny_4912(v);
+                if (soft_allow_bad)
+                    break;
+                continue;
+            }
             if (a == "-h" || a == "--help") {
                 print_denseness_usage(argv[0]);
                 return 0;
@@ -3897,9 +4037,10 @@ int main(int argc, char* argv[]) {
             std::string file_text((std::istreambuf_iterator<char>(f)),
                                   std::istreambuf_iterator<char>());
             // Issue #4916: exactly one program file is the entry file.
-            if (!source_from_argv)
+            if (!source_from_argv) {
                 register_entry_file_4916(argv[i], file_text);
-            else
+                entry_path_4912 = argv[i];
+            } else
                 aura::diag::set_entry_source_file(0);
             all_input += file_text;
             source_from_argv = true;
@@ -3907,13 +4048,58 @@ int main(int argc, char* argv[]) {
         }
     }
     const bool stop_first_4909 = from_file_4909 && !keep_going_4909;
+    if (preset_bad_4912) {
+        std::println(std::cerr, "error: unknown --preset '{}'", preset_4912);
+        std::println(std::cerr, "hint: --preset dev | ci | prod");
+        return 1;
+    }
     if (soft_allow_bad) {
-        std::println(std::cerr, "error: unknown --allow token '{}'", soft_allow_bad_tok);
-        std::println(std::cerr,
-                     "hint: ffi, write, exec|shell, network|net (mutate is already granted)");
+        std::println(std::cerr, "error: unknown capability token '{}'", soft_allow_bad_tok);
+        if (soft_allow_bad_tok == "macro-self-evo" || soft_allow_bad_tok == "tenant-admin" ||
+            soft_allow_bad_tok == "syscall")
+            std::println(std::cerr,
+                         "hint: {} is never granted from the command line (it stays a "
+                         "host-side grant; #4912)",
+                         soft_allow_bad_tok);
+        else
+            std::println(std::cerr, "hint: mutate, read, write, ffi, exec|shell, network|net");
         print_denseness_usage(argv[0]);
         return 1;
     }
+    // Issue #4912: resolve the preset (flag > AURA_PRESET > ./aura.toml or
+    // the entry file's aura.toml) and fold it into the soft session.
+    if (preset_4912.empty()) {
+        if (const char* ev = std::getenv("AURA_PRESET"); ev && *ev)
+            preset_4912 = ev;
+        else
+            preset_4912 = read_toml_preset_4912(entry_path_4912);
+        if (!preset_4912.empty() && preset_4912 != "dev" && preset_4912 != "ci" &&
+            preset_4912 != "prod") {
+            std::println(std::cerr, "error: unknown preset '{}' (AURA_PRESET / aura.toml)",
+                         preset_4912);
+            std::println(std::cerr, "hint: dev | ci | prod");
+            return 1;
+        }
+    }
+    if (preset_4912 == "prod" && grant_seen_4912) {
+        std::println(std::cerr, "error: --preset prod takes no --grant (it is the Restricted "
+                                "default)");
+        return 1;
+    }
+    const bool soft_explicit_4912 = soft_launch;
+    if (preset_4912 == "dev" || preset_4912 == "ci") {
+        soft_launch = true;
+        soft_extra = static_cast<std::uint16_t>(
+            soft_extra | static_cast<std::uint16_t>(aura::core::capability::Effect::Write));
+    }
+    if (grant_seen_4912 && preset_4912 != "prod")
+        soft_launch = true;
+    soft_extra = static_cast<std::uint16_t>(soft_extra & ~deny_bits_4912);
+    if (deny_mutate_4912)
+        soft_launch = false;
+    if (!soft_launch && !preset_4912.empty() && !quiet_4912)
+        std::println(std::cerr, "aura: preset={} sandbox=restricted caps=read (default)",
+                     preset_4912);
 
     aura::compiler::CompilerService cs;
     // Issue #4864: the oneshot file / expression face is the SAME script face
@@ -4001,6 +4187,13 @@ int main(int argc, char* argv[]) {
 
     // Issue #4575: mint only once we have a program. Refuse exits before
     // any form runs. The banner is the one stderr line for this launch.
+    // Issue #4912: a preset under AURA_SANDBOX=off has nothing to grant.
+    if (soft_launch && !soft_explicit_4912 && cs.evaluator().effect_sandbox_mode() == 0) {
+        soft_launch = false;
+        if (!quiet_4912)
+            std::println(std::cerr, "aura: preset={} sandbox=off (every capability)",
+                         preset_4912.empty() ? "custom" : preset_4912);
+    }
     if (soft_launch) {
         const auto st = cs.evaluator().enter_soft_session(soft_extra);
         if (!st.active) {
@@ -4023,12 +4216,29 @@ int main(int argc, char* argv[]) {
             std::format("aura: sandbox=restricted, soft auto-grant: mutate(tenant={}, ws={}) "
                         "token=soft-auto-grant",
                         st.tenant, st.workspace_id);
-        if (!soft_allow_list.empty()) {
+        if (!preset_4912.empty() || grant_seen_4912 || deny_bits_4912 != 0) {
+            // Issue #4912: one line naming the effective capability set.
+            using aura::core::capability::Effect;
+            std::string caps = "mutate,read";
+            const std::pair<Effect, const char*> names[] = {{Effect::Write, "write"},
+                                                            {Effect::Ffi, "ffi"},
+                                                            {Effect::Exec, "exec"},
+                                                            {Effect::Network, "network"}};
+            for (const auto& [e, n] : names)
+                if ((st.effects & static_cast<std::uint16_t>(e)) != 0) {
+                    caps += ',';
+                    caps += n;
+                }
+            line = std::format("aura: preset={} sandbox=restricted caps={} (tenant={}, ws={})",
+                               preset_4912.empty() ? "custom" : preset_4912, caps, st.tenant,
+                               st.workspace_id);
+        } else if (!soft_allow_list.empty()) {
             line.push_back(' ');
             line += "allow=";
             line += soft_allow_list;
         }
-        std::println(std::cerr, "{}", line);
+        if (!quiet_4912)
+            std::println(std::cerr, "{}", line);
     }
 
     // Split into balanced S-expressions by tracking paren balance
