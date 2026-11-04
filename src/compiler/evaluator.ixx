@@ -3825,6 +3825,47 @@ public:
     [[nodiscard]] bool require_failure_is_diagnostic() const noexcept {
         return require_failure_is_diagnostic_;
     }
+    // Issue #4901: registry sequence for FlatAST::macro_view_seq_4901.
+    [[nodiscard]] std::uint64_t macro_seq_4901() const noexcept {
+        return macro_seq_4901_.load(std::memory_order_acquire);
+    }
+    // Issue #4901: record the definition just stored in macros_[name].
+    void note_macro_def_4901(const std::string& name) {
+        auto it = macros_.find(name);
+        if (it == macros_.end() || !(it->second.hygienic || it->second.preserved))
+            return;
+        auto& hist = macro_history_4901_[name];
+        constexpr std::size_t kMaxHist = 32;
+        if (hist.size() >= kMaxHist)
+            hist.erase(hist.begin());
+        const auto seq = macro_seq_4901_.fetch_add(1, std::memory_order_acq_rel) + 1;
+        hist.push_back(MacroHist4901{seq, std::make_shared<MacroDef>(it->second)});
+    }
+    // Issue #4901: the definition a call in flat `f` expands with. A flat
+    // whose top-level eval already finished (a procedure body defined by an
+    // earlier form, called now) sees the last definition registered by then;
+    // a redefinition after it must not change what the procedure does. Null
+    // means "use the live definition": the flat is still live, the live
+    // definition is its own, or nothing was registered before its pin.
+    [[nodiscard]] std::shared_ptr<MacroDef> pinned_macro_def_4901(std::string_view name,
+                                                                  const aura::ast::FlatAST* f,
+                                                                  const MacroDef& live) const {
+        if (f == nullptr || f->macro_view_seq_4901 == 0 || live.flat == f ||
+            !(live.hygienic || live.preserved))
+            return nullptr;
+        auto it = macro_history_4901_.find(name);
+        if (it == macro_history_4901_.end())
+            return nullptr;
+        std::shared_ptr<MacroDef> best;
+        for (const auto& h : it->second) {
+            if (h.seq > f->macro_view_seq_4901)
+                break;
+            best = h.def;
+        }
+        if (!best || (best->flat == live.flat && best->body_id == live.body_id))
+            return nullptr;
+        return best;
+    }
     // Issue #4899 follow-up: the statement node an escaped error value left
     // the IR entry function (__top__) through, with the flat it belongs to.
     // The service maps it onto the top-level form main resumes after; a tail
@@ -7049,6 +7090,22 @@ private:
     ModuleLoadedFn module_loaded_cb_;
     std::unordered_map<std::string, MacroDef, aura::core::TransparentStringHash, std::equal_to<>>
         macros_;
+    // Issue #4901: every registration of a hygienic macro, in order, with
+    // its registry sequence. A procedure body whose flat finished its
+    // top-level eval at sequence S expands a call with the last definition
+    // registered at or before S (see pinned_macro_def_4901). Bounded per
+    // name; the shared_ptr keeps a superseded definition valid while a
+    // walker frame expands with it.
+    struct MacroHist4901 {
+        std::uint64_t seq = 0;
+        std::shared_ptr<MacroDef> def;
+    };
+    std::unordered_map<std::string, std::vector<MacroHist4901>, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        macro_history_4901_;
+    // Starts at 1 so a flat that finished before any registration (pin 1)
+    // sees none of them.
+    std::atomic<std::uint64_t> macro_seq_4901_{1};
     // Issue #4894: bumped on every macros_ registration; a memoized
     // hygienic call-site expansion is reused only under the same epoch.
     std::atomic<std::uint64_t> macros_epoch_4894_{0};

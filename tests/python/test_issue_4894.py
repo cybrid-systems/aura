@@ -96,11 +96,15 @@ class TestMemoKeepsSemantics4894(unittest.TestCase):
             "(display (f 1)) (newline)\n"
             "(define-hygienic-macro (m x) (* x 10))\n"
             "(display (f 1)) (newline)\n"
+            "(define (g x) (m x))\n"
+            "(display (list (g 1) (m 1))) (newline)\n"
         )
-        # force-soa walks each form, so the second call sees the new macro
-        # (the memo is keyed on the registry epoch). STRICT=0 expands the
-        # whole file up front, which is a separate, pre-existing contract.
-        self._check(src, "2\n10", stricts=("force-soa",))
+        # The memo is keyed on the registry epoch, so a redefinition is not
+        # served from a stale expansion: code written after it (g, the
+        # top-level call) sees the new macro. Issue #4901: f was defined
+        # before the redefinition and keeps the definition in effect then,
+        # on force-soa as on the whole-file face.
+        self._check(src, "2\n2\n(10 10)")
 
     def test_nested_macros_and_two_call_sites(self) -> None:
         src = (

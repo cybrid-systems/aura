@@ -7390,6 +7390,7 @@ public:
         generation_.store(1, std::memory_order_release);
         match_info_.clear();
         root = NULL_NODE;
+        macro_view_seq_4901 = 0; // Issue #4901
     }
 
     std::size_t size() const { return tag_.size(); }
@@ -11230,6 +11231,12 @@ public:
     }
 
     NodeId root = NULL_NODE;
+    // Issue #4901: the macro registry sequence (Evaluator::macro_seq_4901)
+    // when this flat's top-level eval finished; 0 while it is still live
+    // (never finished, or cleared). A macro call in a procedure body that
+    // runs later, from another eval, expands with the definition that was
+    // in effect then, not a redefinition made after it.
+    std::uint64_t macro_view_seq_4901 = 0;
 
     // Issue #738: workspace-layer COW epoch mirrored from
     // WorkspaceNode::cow_epoch on switch / lazy clone.

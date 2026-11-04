@@ -7528,7 +7528,12 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         auto cname = std::string(p->resolve(callee.sym_id));
                         auto macro_it = macros_.find(cname);
                         if (macro_it != macros_.end()) {
-                            auto& md = macro_it->second;
+                            // Issue #4901: a procedure defined by an earlier
+                            // form keeps the definition in effect when that
+                            // form finished (force-soa evaluates one form at
+                            // a time, so the static pass never saw it).
+                            auto md_pin_4901 = pinned_macro_def_4901(cname, f, macro_it->second);
+                            auto& md = md_pin_4901 ? *md_pin_4901 : macro_it->second;
                             bool is_rest = md.dotted;
                             // Issue #4834: a macro call is fixed-arity unless
                             // the macro declares a trailing rest parameter.
@@ -11251,6 +11256,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                                           p,
                                                           body_id,
                                                           eval_program_for_pool(p)};
+                    note_macro_def_4901(std::string(name)); // Issue #4901
                     macros_epoch_4894_.fetch_add(1, std::memory_order_acq_rel);
                     return EvalResult(make_void());
                 }
