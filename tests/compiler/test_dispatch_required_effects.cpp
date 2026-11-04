@@ -3144,6 +3144,132 @@ static void ac4505_inrange_reader_prims() {
     ev.set_effect_sandbox_mode(0);
 }
 
+// Issue #4905: the missing-key error arm of hash-ref. hash_ref_key_text
+// and Evaluator::make_hash_ref_missing_error copied the key bytes with no
+// intern-stamp consult, so on an EMPTY table (the probe stops at the first
+// empty slot, so denied stays false) tenant 9 could read tenant 7's bytes
+// out of the raised error. The key slot must be consulted BEFORE
+// eval_hash_key_hash and the copy; a refused key reads as absent, the
+// 2-arg raise names it "<key>", and exactly one IsolationDeny row lands.
+// Record 0 and Soft/Off stay allow (the helper's early return).
+static void ac4905_hash_ref_missing_key_error() {
+    std::println("\n--- #4905: hash-ref missing-key error key gate ---");
+    using aura::compiler::types::as_error_idx;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::as_string_idx;
+    using aura::compiler::types::EvalValue;
+    using aura::compiler::types::is_error;
+    using aura::compiler::types::is_hash;
+    using aura::compiler::types::is_int;
+    using aura::compiler::types::is_string;
+    using aura::compiler::types::make_int;
+    using aura::compiler::types::make_string;
+    reset_all();
+    aura::core::bump_mutation_epoch(1);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1); // Restricted + MT -> production face
+    auto lookup = [&](const char* name) { return ev.primitives().lookup(name); };
+    auto hash_fn = lookup("hash");
+    auto href_fn = lookup("hash-ref");
+    CHECK(hash_fn && href_fn, "4905: hash-ref prims present");
+    if (!(hash_fn && href_fn)) {
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        set_mode(SandboxMode::Off);
+        ev.set_effect_sandbox_mode(0);
+        return;
+    }
+
+    EvalValue secret7;
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        secret7 = make_string(static_cast<std::uint64_t>(ev.push_string_heap("secret-token")));
+    }
+    CHECK(is_string(secret7), "4905: tenant 7 mints the stamped secret");
+
+    EvalValue empty9;
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        empty9 = (*hash_fn)({});
+    }
+    CHECK(is_hash(empty9), "4905: tenant 9 mints its own empty table");
+    if (!is_hash(empty9)) {
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        set_mode(SandboxMode::Off);
+        ev.set_effect_sandbox_mode(0);
+        return;
+    }
+
+    reset_security_event_ring_for_test();
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        auto r = (*href_fn)({empty9, secret7});
+        CHECK(is_error(r), "4905: tenant 9 2-arg miss raises");
+        if (is_error(r)) {
+            const auto eidx = static_cast<std::size_t>(as_error_idx(r));
+            CHECK(eidx < ev.error_values_.size() && is_string(ev.error_values_[eidx]),
+                  "4905: error carries a message");
+            if (eidx < ev.error_values_.size() && is_string(ev.error_values_[eidx])) {
+                const auto msg = ev.copy_string_heap_at(
+                    static_cast<std::size_t>(as_string_idx(ev.error_values_[eidx])));
+                CHECK(msg.find("secret-token") == std::string::npos,
+                      "4905: foreign key bytes absent from the error");
+                CHECK(msg.find("<key>") != std::string::npos, "4905: refused key named <key>");
+                CHECK(msg.find("not found") != std::string::npos,
+                      "4905: #4855 missing-key shape kept");
+            }
+        }
+        CHECK(ring_isolation_deny_count("hash-ref") == 1,
+              "4905: one IsolationDeny for the refused 2-arg read");
+        auto d = (*href_fn)({empty9, secret7, make_int(7)});
+        CHECK(is_int(d) && as_int(d) == 7, "4905: 3-arg form answers the default");
+        CHECK(ring_isolation_deny_count("hash-ref") == 2,
+              "4905: one IsolationDeny for the refused 3-arg read");
+    }
+
+    // The owner still gets the #4855 diagnostic naming its own key.
+    {
+        aura::compiler::Evaluator::TenantScope t7(ev, 7);
+        auto empty7 = (*hash_fn)({});
+        auto r = (*href_fn)({empty7, secret7});
+        CHECK(is_error(r), "4905: owner 2-arg miss raises");
+        if (is_error(r)) {
+            const auto eidx = static_cast<std::size_t>(as_error_idx(r));
+            if (eidx < ev.error_values_.size() && is_string(ev.error_values_[eidx])) {
+                const auto msg = ev.copy_string_heap_at(
+                    static_cast<std::size_t>(as_string_idx(ev.error_values_[eidx])));
+                CHECK(msg.find("\"secret-token\"") != std::string::npos,
+                      "4905: owner key is still named with its bytes");
+                CHECK(msg.find("<key>") == std::string::npos, "4905: owner key is not masked");
+            }
+        }
+    }
+
+    // Soft/Off: the helper returns before the stamp array read, so the
+    // same call names the bytes again and records no IsolationDeny.
+    set_mode(SandboxMode::Off);
+    ev.set_effect_sandbox_mode(0);
+    {
+        aura::compiler::Evaluator::TenantScope t9(ev, 9);
+        auto r = (*href_fn)({empty9, secret7});
+        CHECK(is_error(r), "4905: Off still raises for a missing key");
+        if (is_error(r)) {
+            const auto eidx = static_cast<std::size_t>(as_error_idx(r));
+            if (eidx < ev.error_values_.size() && is_string(ev.error_values_[eidx])) {
+                const auto msg = ev.copy_string_heap_at(
+                    static_cast<std::size_t>(as_string_idx(ev.error_values_[eidx])));
+                CHECK(msg.find("secret-token") != std::string::npos,
+                      "4905: Off keeps the historical allow");
+            }
+        }
+    }
+
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    set_mode(SandboxMode::Off);
+    ev.set_effect_sandbox_mode(0);
+}
+
 // Issue #4518: the kEffectNone reader bypass. apply copies pairs_[idx].car
 // into the callee arg vector; list->string walks the spine; %base64-encode /
 // %base64-decode / %hex-encode / %hex-decode copy string_heap_ bytes
@@ -5645,6 +5771,8 @@ int run_test_dispatch_required_effects() {
 
     // ── Issue #4505: in-range reader prims tenant gate ──
     ac4505_inrange_reader_prims();
+    // ── Issue #4905: hash-ref missing-key error key gate ──
+    ac4905_hash_ref_missing_key_error();
     ac4530_string_gate_siblings();
 
     // ── Issue #4518: apply / %-encoding / f64 reader tenant gate ──

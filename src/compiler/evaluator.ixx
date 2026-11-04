@@ -17700,7 +17700,12 @@ public:
         std::string key_text;
         if (types::is_string(key)) {
             const auto sidx = types::as_string_idx(key);
-            if (sidx < string_heap_.size())
+            // Issue #4905: the error value is payload -- consult the key
+            // slot's intern stamp before copying its bytes (the same
+            // fail-closed shape as substring / string-ref). A refused
+            // slot leaves key_text empty so the message names "<key>".
+            if (sidx < string_heap_.size() &&
+                inrange_string_tenant_allows(sidx, /*required_effects=*/0, "hash-ref"))
                 key_text = "\"" + string_heap_[sidx] + "\"";
         } else if (types::is_int(key)) {
             key_text = std::to_string(types::as_int(key));
