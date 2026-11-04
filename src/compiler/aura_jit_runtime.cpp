@@ -4615,6 +4615,17 @@ static std::mutex g_ir_closure_creators_mtx;
 // otherwise grow this map without limit. Oldest edge first.
 static constexpr std::size_t kMaxClosureCreatorEdges = 32;
 
+// Issue #4924: the bounded edge vector evicts its oldest edge, so the
+// define drop's collector would no longer list that callee. A nested
+// lambda's binding is "__lambda__#<id>" (neither the define nor
+// define#...) and its live closure is unnamed, so nothing else MustDeopts
+// it: the held closure kept the pre-mutate ScalarFn after the define's
+// hot update. Remember the evicted func_ids per owner (bounded, same cap)
+// and merge them into the drop's func_only_ids. A re-published edge
+// clears its evicted mark. Not a closure table, not a query key, not a
+// metrics field.
+static std::unordered_map<std::string, std::vector<int64_t>> g_ir_closure_evicted;
+
 // Issue #4387: constructor registrations observed while an AOT reload is
 // staging. Published into the live tables only on commit. Rollback clears
 // this vector and does not write g_jit_fns. Replaced pointers are the
@@ -4935,13 +4946,45 @@ extern "C" void aura_note_ir_func_owner(int64_t func_id, const char* owner_name)
     if (func_id < 0 || owner_name == nullptr || owner_name[0] == '\0')
         return;
     std::lock_guard<std::mutex> lock(g_ir_closure_creators_mtx);
-    auto& callees = g_ir_closure_creators[std::string(owner_name)];
+    const std::string owner(owner_name);
+    auto& callees = g_ir_closure_creators[owner];
+    auto& evicted = g_ir_closure_evicted[owner];
+    auto forget_evicted = [&evicted](int64_t fid) {
+        for (auto it = evicted.begin(); it != evicted.end(); ++it) {
+            if (*it == fid) {
+                evicted.erase(it);
+                return;
+            }
+        }
+    };
     for (int64_t fid : callees) {
-        if (fid == func_id)
+        if (fid == func_id) {
+            // Issue #4924: the edge is live again, so a later define drop
+            // reaches it through the edge vector itself.
+            forget_evicted(func_id);
             return;
+        }
     }
-    if (callees.size() >= kMaxClosureCreatorEdges)
+    if (callees.size() >= kMaxClosureCreatorEdges) {
+        // Issue #4924: remember the evicted callee so the define drop
+        // still retires its ScalarFn slot and MustDeopts its live
+        // closures instead of leaving the pre-mutate native reachable.
+        const int64_t evicted_id = callees.front();
         callees.erase(callees.begin());
+        bool remembered = false;
+        for (int64_t fid : evicted) {
+            if (fid == evicted_id) {
+                remembered = true;
+                break;
+            }
+        }
+        if (!remembered) {
+            if (evicted.size() >= kMaxClosureCreatorEdges)
+                evicted.erase(evicted.begin());
+            evicted.push_back(evicted_id);
+        }
+    }
+    forget_evicted(func_id);
     callees.push_back(func_id);
 }
 
@@ -5217,18 +5260,46 @@ static bool jit_key_matches_define(std::string_view key, std::string_view name) 
 // define (or define#...). Level 2+: the creators named by a retired
 // nested lambda's own symbol name -- the binding the #4405 walk reads
 // (and erases) below.
+// Issue #4924: append one creator's closure-body func_ids -- the live
+// edge vector plus the edges the 32-edge cap evicted. Caller holds
+// g_ir_closure_creators_mtx.
+static void append_closure_creator_func_ids_locked(const std::string& creator,
+                                                   std::vector<int64_t>& out,
+                                                   std::unordered_set<int64_t>& seen_ids) {
+    const auto cit = g_ir_closure_creators.find(creator);
+    if (cit != g_ir_closure_creators.end()) {
+        for (int64_t fid : cit->second) {
+            if (seen_ids.insert(fid).second)
+                out.push_back(fid);
+        }
+    }
+    const auto eit = g_ir_closure_evicted.find(creator);
+    if (eit != g_ir_closure_evicted.end()) {
+        for (int64_t fid : eit->second) {
+            if (seen_ids.insert(fid).second)
+                out.push_back(fid);
+        }
+    }
+}
+
 static std::vector<int64_t> collect_nested_lambda_func_ids_locked(std::string_view name) {
     std::vector<int64_t> out;
     std::unordered_set<int64_t> seen_ids;
     {
         std::lock_guard<std::mutex> lock(g_ir_closure_creators_mtx);
-        for (const auto& [creator, callees] : g_ir_closure_creators) {
-            if (!jit_key_matches_define(creator, name))
+        for (const auto& entry : g_ir_closure_creators) {
+            if (!jit_key_matches_define(entry.first, name))
                 continue;
-            for (int64_t fid : callees) {
-                if (seen_ids.insert(fid).second)
-                    out.push_back(fid);
-            }
+            append_closure_creator_func_ids_locked(entry.first, out, seen_ids);
+        }
+        // Issue #4924: the matching owners' evicted marks were merged
+        // above, and this drop retires those func_ids now. Drop the marks
+        // so a re-compiled define does not re-merge retired ids.
+        for (auto it = g_ir_closure_evicted.begin(); it != g_ir_closure_evicted.end();) {
+            if (jit_key_matches_define(it->first, name))
+                it = g_ir_closure_evicted.erase(it);
+            else
+                ++it;
         }
     }
     // Transitive: a nested lambda's own nested lambdas are created by
@@ -5239,13 +5310,7 @@ static std::vector<int64_t> collect_nested_lambda_func_ids_locked(std::string_vi
         if (bind == g_ir_func_define_names.end() || bind->second.empty())
             continue;
         std::lock_guard<std::mutex> lock(g_ir_closure_creators_mtx);
-        const auto cit = g_ir_closure_creators.find(bind->second);
-        if (cit == g_ir_closure_creators.end())
-            continue;
-        for (int64_t fid : cit->second) {
-            if (seen_ids.insert(fid).second)
-                out.push_back(fid);
-        }
+        append_closure_creator_func_ids_locked(bind->second, out, seen_ids);
     }
     return out;
 }
