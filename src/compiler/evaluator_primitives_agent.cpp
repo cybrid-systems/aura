@@ -13,6 +13,7 @@
 module;
 
 #include "runtime_shared.h"
+#include "messaging_bridge.h" // Issue #4904: EvalMutexWaitLockGuard
 // Issue #444: CompilerMetrics is the central observability
 // struct; the strategy pheromone counters live there.
 // observability_metrics.h is a plain header (not a
@@ -3482,6 +3483,18 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         if (live == nullptr)
             live = aura::serve::g_scheduler;
         aura::serve::parallel_orch::BatchResult batch;
+        // Issue #4904: a host-thread caller (CLI main, no scheduler fiber)
+        // blocks in Fiber::join below. When the call came from an IR define
+        // body (force-soa: (define (go) (parallel-intend ...)) then (go)),
+        // this thread holds that define's exec_mtx, and every task thunk the
+        // body minted dispatches back into the same interpreter and needs
+        // that mutex on a worker thread: the join never returned. Drop the
+        // eval / exec mutexes across the join exactly like fiber:join and a
+        // mailbox wait do (#4711 / #4717); they come back before the results
+        // are read. A scheduler-fiber caller keeps its existing behaviour.
+        std::optional<aura::messaging::EvalMutexWaitLockGuard> host_join_wait_4904;
+        if (aura::serve::g_current_fiber == nullptr)
+            host_join_wait_4904.emplace();
         if (live != nullptr) {
             batch = aura::serve::parallel_orch::parallel_intend(*live, tasks, policy);
         } else {
@@ -3494,6 +3507,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             if (runner.joinable())
                 runner.join();
         }
+        host_join_wait_4904.reset();
 
         using aura::serve::parallel_orch::BatchStatus;
         const char* status_str = "invalid";
