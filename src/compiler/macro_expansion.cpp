@@ -4348,8 +4348,13 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
             bool dotted;
             bool hygienic;  // Issue #120
             bool preserved; // Issue #230 #2
+            NodeId def_id;  // Issue #4901: position of the MacroDef node
         };
-        std::unordered_map<std::string, MD, aura::core::TransparentStringHash, std::equal_to<>>
+        // Issue #4901: one entry per definition, in node order. A single
+        // name -> MD map made the file final definition rewrite every call
+        // (macro hoisting: 11 1000 printed as 1000 1000).
+        std::unordered_map<std::string, std::vector<MD>, aura::core::TransparentStringHash,
+                           std::equal_to<>>
             local_macros;
         bool has_macro_def = false;
 
@@ -4378,8 +4383,9 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
                 // single-form string `eval` already takes.
                 if (!is_hygienic && !is_preserved)
                     continue;
-                local_macros[macro_name] = MD{&flat,     &pool,       std::move(params), body_id,
-                                              is_dotted, is_hygienic, is_preserved};
+                local_macros[macro_name].push_back(MD{&flat,     &pool,       std::move(params),
+                                                      body_id,  is_dotted, is_hygienic,
+                                                      is_preserved, id});
             }
         }
 
@@ -4433,12 +4439,26 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
                     auto cname = std::string(pool.resolve(callee_v.sym_id));
                     auto it = local_macros.find(cname);
                     if (it != local_macros.end()) {
+                        // Issue #4901: the definition in effect at this call
+                        // is the last one written before it, not the file
+                        // final one. Entries are pushed in ascending node
+                        // order, so stop at the first definition at or after
+                        // this call. A call before any definition stays
+                        // unexpanded and is reported as an unbound call.
+                        const MD* md_at = nullptr;
+                        for (const auto& cand : it->second) {
+                            if (cand.def_id >= id)
+                                break;
+                            md_at = &cand;
+                        }
+                        if (md_at == nullptr)
+                            continue;
+                        auto& md = *md_at;
                         // Build substitution: macro param → arg expression.
                         // Issue #146 follow-up: route through the pure
                         // helper. Rest-param handling stays here because
                         // it requires FlatAST mutation (allocating a
                         // pair-list) — that's stateful, not pure.
-                        auto& md = it->second;
                         // Issue #4834: leave a fixed-arity mismatch
                         // unexpanded here so eval_flat reports it at the
                         // call site (this pass has no diagnostic channel).
