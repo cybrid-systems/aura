@@ -50,6 +50,8 @@ import aura.compiler.soa_view;
 extern "C" int aura_ir_active_drains_total() noexcept;
 // Issue #4768: the process-wide skip probe for the control-arm knob.
 extern "C" void aura_gc_reclaim_off_note_tw_skip() noexcept;
+// Issue #4915: 0 outside a fiber body (src/serve/fiber.cpp).
+extern "C" std::uint64_t aura_fiber_current_id();
 // Issue #4768: publish the closure-id cursor at the stand-down check (see
 // aura_gc_sweep_publish_closure_hi).
 extern "C" void aura_gc_sweep_publish_closure_hi(std::uint64_t v) noexcept;
@@ -1530,7 +1532,21 @@ bool Evaluator::reclaim_tw_unreachable_now() {
     // Issue #4768: snapshot BEFORE the stand-down read; a sibling body that
     // starts walking after this point mints newborn ids the release must keep.
     aura_gc_sweep_publish_closure_hi(closure_id_watermark());
-    if (aura_tw_plain_walkers_other() > 0 || aura_ir_active_drains_total() > 0 ||
+    // Issue #4915: only FOREIGN IR drains stand this sweep down. A drain on
+    // this thread's own stack (force-soa runs (define x (f ...)) through the
+    // IR bridge, so a whole tree-walked program can sit under one suspended
+    // IR caller) publishes its frames, cells and closure envs through the
+    // thread-local ir_inflight providers collected below. #4747 used the
+    // plain count, so under force-soa this sweep never ran: closures and
+    // cells grew by thousands per step (the IR driver's own sweep roots every
+    // env frame, #4790, so it cannot recycle them) and every mutate:rebind
+    // scanned all of them. Bodies inside a fiber keep the #4747 rule: a
+    // fiber can yield inside IR and resume on another worker, so its
+    // provider entry does not prove the drain is still here.
+    const int local_ir_drivers = ir_inflight::distinct_drivers();
+    const int foreign_ir_drains = aura_ir_active_drains_total() - local_ir_drivers;
+    if (aura_tw_plain_walkers_other() > 0 || foreign_ir_drains > 0 ||
+        (local_ir_drivers > 0 && aura_fiber_current_id() != 0) ||
         aura_fiber_bodies_running_other() > 0)
         return false;
     // Issue #4768: same knob, same point as the IR-side sweep: after the
@@ -1588,7 +1604,9 @@ bool Evaluator::reclaim_tw_unreachable_now() {
     // by IRInterpreter::drain_call_stack; a plain tree-walked program has
     // none on the stack and pays one empty vector.
     std::vector<std::int64_t> ir_roots;
-    if (ir_inflight::collect(ir_roots) > 0) {
+    if (local_ir_drivers > 0)
+        (void)ir_inflight::collect_closure_envs(ir_roots);
+    if (ir_inflight::collect(ir_roots) > 0 || !ir_roots.empty()) {
         held.reserve(held.size() + ir_roots.size());
         for (const auto raw : ir_roots)
             held.push_back(types::EvalValue(raw));

@@ -39,6 +39,11 @@ struct Provider {
     Collector collect = nullptr;
     void* ctx = nullptr;
     Reclaimer reclaim = nullptr;
+    // Issue #4915: the captured env values of every IR closure the driver
+    // holds. Only the tree-walker sweep asks for them: it cannot see IR
+    // closures, so a pair or walker closure reachable only through an IR
+    // closure env would otherwise be unmarked.
+    Collector collect_closure_envs = nullptr;
 };
 
 // Thread-local, mirroring IRInterpreter::t_active_'s nesting: a deopt
@@ -48,8 +53,9 @@ inline thread_local std::vector<Provider> g_providers;
 // RAII registration. Nested scopes pop in reverse order (LIFO), like
 // TwFrameReg / ActiveInstanceGuard.
 struct ScopedProvider {
-    ScopedProvider(Collector collect, void* ctx, Reclaimer reclaim = nullptr) noexcept {
-        g_providers.push_back(Provider{collect, ctx, reclaim});
+    ScopedProvider(Collector collect, void* ctx, Reclaimer reclaim = nullptr,
+                   Collector collect_closure_envs = nullptr) noexcept {
+        g_providers.push_back(Provider{collect, ctx, reclaim, collect_closure_envs});
     }
     ~ScopedProvider() {
         if (!g_providers.empty())
@@ -68,6 +74,36 @@ inline std::size_t collect(std::vector<std::int64_t>& out) {
             p.collect(p.ctx, out);
     }
     return out.size() - before;
+}
+
+// Issue #4915: the IR closure env values of every driver on this thread.
+inline std::size_t collect_closure_envs(std::vector<std::int64_t>& out) {
+    const auto before = out.size();
+    for (const auto& p : g_providers) {
+        if (p.collect_closure_envs != nullptr)
+            p.collect_closure_envs(p.ctx, out);
+    }
+    return out.size() - before;
+}
+
+// Issue #4915: how many distinct IR interpreters are draining on this
+// thread's stack (a deopt resume can re-enter one instance, so nested
+// entries with the same ctx count once - the same unit as the process-wide
+// aura_ir_active_drains_total count).
+inline int distinct_drivers() {
+    int n = 0;
+    for (std::size_t i = 0; i < g_providers.size(); ++i) {
+        bool seen = false;
+        for (std::size_t j = 0; j < i; ++j) {
+            if (g_providers[j].ctx == g_providers[i].ctx) {
+                seen = true;
+                break;
+            }
+        }
+        if (!seen)
+            ++n;
+    }
+    return n;
 }
 
 // Issue #4816: run the innermost IR driver's sweep. -1 = no IR driver with a

@@ -577,6 +577,17 @@ EvalResult IRInterpreter::drain_call_stack(std::size_t base) {
         // Issue #4816: (gc-heap) under --load sweeps through this driver.
         [](void* ctx) -> int {
             return static_cast<IRInterpreter*>(ctx)->reclaim_unreachable_now() ? 1 : 0;
+        },
+        // Issue #4915: every IR closure env, for the tree-walker sweep (it
+        // cannot walk IR closures). Conservative: all held closures, live or
+        // not - the walker never frees IR closures, only what they name.
+        [](void* ctx, std::vector<std::int64_t>& out) {
+            const auto* self = static_cast<const IRInterpreter*>(ctx);
+            for (const auto& [id, ircl] : self->runtime_closures_) {
+                (void)id;
+                for (const auto& v : ircl.env)
+                    out.push_back(v.val);
+            }
         });
     // Issue #4600 §3 (phase 3): consecutive same-function tail-call
     // replacements = the named-let back-edge as the interpreter sees it
