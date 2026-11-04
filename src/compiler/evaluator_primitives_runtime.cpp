@@ -86,8 +86,16 @@ namespace {
                 return false;
             msg = ev.copy_string_heap_at(sidx);
         }
+        // Issue #4909: in a program file, name where the error was produced
+        // ("error: main.aura:3:11: car: not a pair"). The REPL and -e keep
+        // the legacy unlocated line.
+        std::string where;
+        if (ev.require_failure_is_diagnostic()) {
+            if (auto loc = ev.error_location(v))
+                where = loc->format() + ": ";
+        }
         std::fflush(stdout);
-        std::fprintf(stderr, "error: %s\n", msg.c_str());
+        std::fprintf(stderr, "error: %s%s\n", where.c_str(), msg.c_str());
         std::fflush(stderr);
         g_displayed_errors.fetch_add(1, std::memory_order_relaxed);
         return true;

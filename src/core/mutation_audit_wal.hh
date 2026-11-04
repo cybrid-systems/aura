@@ -20,6 +20,8 @@
 #include <string_view>
 #include <vector>
 
+#include <unistd.h> // geteuid: per-user default WAL dir (#4907)
+
 #include "core/wal_append_fail_slo.h" // #3056 shared append-fail SLO
 
 namespace aura::core::audit_wal {
@@ -858,7 +860,7 @@ struct MutationAuditWal {
 };
 
 // Issue #2150: resolve WAL directory.
-//   AURA_MUTATION_AUDIT_WAL → AURA_PERSIST_DIR → $TMPDIR/aura-audit (default).
+//   AURA_MUTATION_AUDIT_WAL → AURA_PERSIST_DIR → $TMPDIR/aura-audit-<euid> (default, #4907).
 // Explicit env always wins over the default dir (AC4).
 [[nodiscard]] inline std::string
 resolve_mutation_audit_wal_dir(bool* used_default = nullptr) noexcept {
@@ -877,7 +879,10 @@ resolve_mutation_audit_wal_dir(bool* used_default = nullptr) noexcept {
         tmp = "/tmp";
     if (used_default)
         *used_default = true;
-    return std::string(tmp) + "/aura-audit";
+    // Issue #4907: per-user default. A shared $TMPDIR/aura-audit owned by
+    // another user (or an earlier root container) made every mutation of a
+    // fresh install fail closed with security-schedule:wal-enable-failed.
+    return std::string(tmp) + "/aura-audit-" + std::to_string(::geteuid());
 }
 
 inline MutationAuditWal& g_mutation_audit_wal() noexcept {

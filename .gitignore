@@ -45,3 +45,6 @@ memory/*.md
 
 # transient build artifact (empty file from a prior compile attempt)
 /main
+
+# Issue #4907: release / bundle output (scripts/tools/release.sh, bundle.sh)
+/dist/

@@ -2,14 +2,16 @@
 # Issue #675: reproducible release tarball + SBOM.
 #
 # Usage:
-#   SOURCE_DATE_EPOCH=1704067200 ./scripts/release.sh 1.0.0
+#   SOURCE_DATE_EPOCH=1704067200 ./scripts/tools/release.sh 1.0.0
 #
 # Produces:
 #   dist/aura-<version>.tar.gz
 #   dist/aura-sbom.json
+#   dist/aura-<version>-linux-<arch>.tar.gz (+ .sha256): the runnable bundle (#4907)
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Issue #4907: this script lives in scripts/tools/, two levels below the root.
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 
 VERSION="${1:-dev}"
@@ -37,6 +39,9 @@ TARBALL="$ROOT/dist/aura-$VERSION.tar.gz"
 mkdir -p "$ROOT/dist"
 tar -C "$STAGE/.." -czf "$TARBALL" "stage-aura-$VERSION"
 rm -rf "$STAGE"
+
+# Issue #4907: the runnable per-arch bundle (own loader + libc; any host glibc).
+scripts/tools/bundle.sh build_repro "$VERSION"
 
 echo "✓ Release tarball: $TARBALL"
 echo "✓ SBOM: $ROOT/dist/aura-sbom.json"

@@ -26,7 +26,7 @@ jobs:
       - name: Build release tarball
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          ./scripts/release.sh "$VERSION"
+          ./scripts/tools/release.sh "$VERSION"  # #4907: was ./scripts/release.sh (missing)
 
       # Issue #2722: RELEASE chaos SOAK hard deploy gate. Required for
       # any tag / release candidate that claims multi-fiber mutation
@@ -52,5 +52,6 @@ jobs:
         with:
           files: |
             dist/aura-*.tar.gz
+            dist/aura-*.tar.gz.sha256
             dist/aura-sbom.json
           generate_release_notes: true
