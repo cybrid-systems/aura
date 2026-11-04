@@ -1,0 +1,3 @@
+(when #f (display "a"))
+(display "b")
+(newline)

@@ -1,0 +1,3 @@
+(define x 1)
+(car 5)
+(display "after") (newline)

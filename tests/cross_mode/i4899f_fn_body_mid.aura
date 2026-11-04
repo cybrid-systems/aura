@@ -1,0 +1,4 @@
+(define (f) (car 5) 1)
+(display "x") (newline)
+(f)
+(display "after") (newline)

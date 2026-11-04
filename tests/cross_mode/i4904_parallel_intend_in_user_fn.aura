@@ -1,0 +1,4 @@
+(define (f) (parallel-intend (vector (lambda () 1) (lambda () 2))))
+(display (hash-ref (f) "status")) (newline)
+(define v (f))
+(display (hash-ref v "status")) (newline)

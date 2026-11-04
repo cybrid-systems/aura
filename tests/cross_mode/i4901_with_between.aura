@@ -1,0 +1,5 @@
+(define-hygienic-macro (hm2 x) (+ x 1))
+(display (hm2 10)) (newline)
+(display "between") (newline)
+(define-hygienic-macro (hm2 x) (* x 100))
+(display (hm2 10)) (newline)

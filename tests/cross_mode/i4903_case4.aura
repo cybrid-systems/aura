@@ -1,0 +1,2 @@
+(begin (when #t (display "a")) (when #t (display "b")))
+(newline)
