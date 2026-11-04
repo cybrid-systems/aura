@@ -1429,7 +1429,8 @@ static void ac4452_aot_reload_ffi_choke() {
             CHECK(ver && is_bool(*ver) && as_bool(*ver), "4452: set-module-version stays #t");
             CHECK(aura_get_module_version_for_eval(&ev) == 11, "4452: module version body ran");
             auto r = cs.eval(std::format("(aot:reload \"{}\")", kMissing));
-            CHECK(r && is_error(*r), "4452: no Ffi grant → error");
+            // Issue #4896: a Restricted deny can be a raised diagnostic.
+            CHECK(!r.has_value() || is_error(*r), "4452: no Ffi grant → error");
             CHECK(m->aot_reload_attempts_via_primitive.load(std::memory_order_relaxed) == att0,
                   "4452: via-primitive unchanged");
             CHECK(m->aot_reload_attempts_.load(std::memory_order_relaxed) == c0,

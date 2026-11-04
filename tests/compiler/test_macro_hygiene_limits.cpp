@@ -3114,7 +3114,8 @@ static void ac4389_capability_deny_stamps_fiber() {
         const auto size0 = flat.size();
         arm_restricted_no_mse_4389();
         auto r = ev.eval_flat(flat, pool, call, ev.top_env());
-        CHECK(eval_error_has(r, "capability-deny"), "4389: eval_flat returns capability-deny");
+        CHECK(eval_error_has(r, "capability-deny") || eval_error_has(r, "macro-self-evo"),
+              "4389: eval_flat returns the macro-self-evo deny");
         CHECK(!(r.has_value() && is_int(*r) && as_int(*r) == 3),
               "4389: eval_flat does not run the unexpanded body");
         CHECK(flat.size() == size0, "4389: eval_flat clone wrote nothing");
@@ -3258,8 +3259,8 @@ static void ac4390_legacy_eval_macro_denies_without_mse() {
         set_mode(SandboxMode::Restricted);
         aura_test_reset_macro_hygiene_last_limit_reason_full();
         auto denied = cs.eval_ir(repro);
-        CHECK(eval_error_has(denied, "capability-deny"),
-              "4390: eval_ir defmacro is capability-deny");
+        CHECK(eval_error_has(denied, "capability-deny") || eval_error_has(denied, "macro-self-evo"),
+              "4390: eval_ir defmacro is the macro-self-evo deny");
         CHECK(!(denied.has_value() && is_int(*denied) && as_int(*denied) == 2),
               "4390: eval_ir does not return the template value");
         CHECK(own_fiber_limit_reason_4389() != kHygieneLimitReasonCapabilityDeny,
@@ -3280,8 +3281,8 @@ static void ac4390_legacy_eval_macro_denies_without_mse() {
         set_mode(SandboxMode::Restricted);
         aura_test_reset_macro_hygiene_last_limit_reason_full();
         auto denied = cs.eval_ir(preserved);
-        CHECK(eval_error_has(denied, "capability-deny"),
-              "4390: eval_ir preserved is capability-deny");
+        CHECK(eval_error_has(denied, "capability-deny") || eval_error_has(denied, "macro-self-evo"),
+              "4390: eval_ir preserved is the macro-self-evo deny");
         CHECK(!(denied.has_value() && is_int(*denied) && as_int(*denied) == 7),
               "4390: preserved call is not evaluated");
         CHECK(own_fiber_limit_reason_4389() != kHygieneLimitReasonCapabilityDeny,
@@ -3319,8 +3320,8 @@ static void ac4390_legacy_eval_macro_denies_without_mse() {
                   "4390: legacy deny does not stamp the fiber");
             CHECK(body.find("check_macro_self_evo") != std::string::npos,
                   "4390: helper uses check_macro_self_evo");
-            CHECK(body.find("\"capability-deny\"") != std::string::npos,
-                  "4390: helper returns capability-deny");
+            CHECK(body.find("kMacroSelfEvoDenyMessage") != std::string::npos,
+                  "4390: helper returns the actionable macro-self-evo deny");
         }
         CHECK(src.find("SyntaxMarker::MacroIntroduced") != std::string::npos,
               "4390: hygienic clone still stamps MacroIntroduced");
