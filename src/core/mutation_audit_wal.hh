@@ -461,10 +461,10 @@ struct MutationAuditWal {
                     continue;
                 const auto mid = name.substr(6, name.size() - 6 - 4);
                 try {
-                    const auto n = static_cast<std::uint32_t>(std::stoul(mid));
-                    seg_indices.push_back(n);
-                    if (!any || n > max_seg) {
-                        max_seg = n;
+                    const auto seg_no = static_cast<std::uint32_t>(std::stoul(mid));
+                    seg_indices.push_back(seg_no);
+                    if (!any || seg_no > max_seg) {
+                        max_seg = seg_no;
                         any = true;
                     }
                 } catch (...) {
@@ -486,11 +486,12 @@ struct MutationAuditWal {
             std::vector<AuditWalRecord> newest_first;
             // Issue #4921: the loop index is hoisted so the post-loop value
             // marks the first UNREAD segment: after the scan stops, indices
-            // s-1 .. 0 were never read (s==0 means every segment was read).
-            std::uint32_t s = max_seg + 1;
-            for (; any && newest_first.size() < max_replay && s > 0; --s) {
+            // seg_end-1 .. 0 were never read (seg_end==0 means every segment was read).
+            std::uint32_t seg_end = max_seg + 1;
+            for (; any && newest_first.size() < max_replay && seg_end > 0; --seg_end) {
                 const auto path =
-                    (fs::path(new_dir) / ("audit-" + std::to_string(s - 1) + ".wal")).string();
+                    (fs::path(new_dir) / ("audit-" + std::to_string(seg_end - 1) + ".wal"))
+                        .string();
                 auto part = read_segment_file(path);
                 newest_first.insert(newest_first.end(), part.rbegin(), part.rend());
             }
@@ -502,8 +503,8 @@ struct MutationAuditWal {
             // list, so retention holes do not count).
             bool replay_truncated = newest_first.size() > max_replay;
             if (!replay_truncated && newest_first.size() >= max_replay) {
-                for (const auto n : seg_indices) {
-                    if (n < s) {
+                for (const auto seg_no : seg_indices) {
+                    if (seg_no < seg_end) {
                         replay_truncated = true;
                         break;
                     }
@@ -558,17 +559,18 @@ struct MutationAuditWal {
             if (cap > 0 && seg_indices.size() > cap) {
                 const std::uint64_t total = static_cast<std::uint64_t>(max_seg) + 1;
                 const std::uint64_t floor64 = total > cap ? total - cap : 0;
-                for (const auto n : seg_indices) {
-                    if (static_cast<std::uint64_t>(n) >= floor64)
+                for (const auto seg_no : seg_indices) {
+                    if (static_cast<std::uint64_t>(seg_no) >= floor64)
                         continue;
                     bool any_removed = false;
                     const auto audit_p =
-                        (fs::path(dir) / ("audit-" + std::to_string(n) + ".wal")).string();
+                        (fs::path(dir) / ("audit-" + std::to_string(seg_no) + ".wal")).string();
                     if (fs::remove(audit_p, ec))
                         any_removed = true;
                     ec.clear();
                     const auto typed_p =
-                        (fs::path(dir) / ("typed-summary-" + std::to_string(n) + ".wal")).string();
+                        (fs::path(dir) / ("typed-summary-" + std::to_string(seg_no) + ".wal"))
+                            .string();
                     if (fs::remove(typed_p, ec))
                         any_removed = true;
                     ec.clear();
