@@ -156,7 +156,7 @@ static size_t tl_arena_resolve_capacity(size_t capacity) {
         return capacity;
     if (const char* env = std::getenv("AURA_TL_ARENA_INITIAL_MB")) {
         char* end = nullptr;
-        long mb = std::strtol(env, &end, 10);
+        const long mb = std::strtol(env, &end, 10);
         if (end != env && mb > 0 && mb <= 1024)
             return static_cast<size_t>(mb) * 1024u * 1024u;
     }
@@ -220,8 +220,8 @@ void* tl_arena_alloc(TLarena* arena, size_t size, size_t align) {
             return nullptr;
     }
 
-    size_t aligned = (arena->offset + align - 1) & ~(align - 1);
-    size_t needed = aligned + size;
+    const size_t aligned = (arena->offset + align - 1) & ~(align - 1);
+    const size_t needed = aligned + size;
     if (needed > arena->capacity) {
         // Double until large enough (preserves growth; handles size > 2×cap).
         size_t new_cap = arena->capacity ? arena->capacity : TLarena::kDefaultCapacity;
@@ -1409,7 +1409,7 @@ static void write_closure_cache_entry(ClosureCacheEntry& e, int64_t closure_id,
 }
 
 static void invalidate_closure_cache_for(int64_t closure_id) {
-    int cache_idx = static_cast<int>(closure_id % CLOSURE_CACHE_SIZE);
+    const int cache_idx = static_cast<int>(closure_id % CLOSURE_CACHE_SIZE);
     if (g_closure_cache[cache_idx].closure_id == closure_id)
         clear_closure_cache_entry(g_closure_cache[cache_idx]);
     // Also scan in case of collisions that left other slots (rare; size=64)
@@ -4949,7 +4949,7 @@ extern "C" void aura_note_ir_func_owner(int64_t func_id, const char* owner_name)
     const std::string owner(owner_name);
     auto& callees = g_ir_closure_creators[owner];
     auto& evicted = g_ir_closure_evicted[owner];
-    auto forget_evicted = [&evicted](int64_t fid) {
+    const auto forget_evicted = [&evicted](int64_t fid) {
         for (auto it = evicted.begin(); it != evicted.end(); ++it) {
             if (*it == fid) {
                 evicted.erase(it);
@@ -4972,7 +4972,7 @@ extern "C" void aura_note_ir_func_owner(int64_t func_id, const char* owner_name)
         const int64_t evicted_id = callees.front();
         callees.erase(callees.begin());
         bool remembered = false;
-        for (int64_t fid : evicted) {
+        for (const int64_t fid : evicted) {
             if (fid == evicted_id) {
                 remembered = true;
                 break;
