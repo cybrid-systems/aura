@@ -63,7 +63,8 @@
     "name": "coerce_arith",
     "code": "(+ 1 \"2\")",
     "pipeline": "eval",
-    "expected_err": "type mismatch"
+    "expected_err": "type mismatch",
+    "expected_status": 1
   },
   {
     "name": "coerce_strlen",
