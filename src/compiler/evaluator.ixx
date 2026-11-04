@@ -150,11 +150,11 @@ export class PrimFn {
     }
     template <class F> static void destroy_erased(void* obj) { static_cast<F*>(obj)->~F(); }
 
-    template <class F> void bind_callable(F&& f) {
+    template <class F> void bind_callable(F&& callable) {
         using Decayed = std::decay_t<F>;
         clear();
         if constexpr (std::is_convertible_v<Decayed, FnPtr>) {
-            ptr_ = static_cast<FnPtr>(f);
+            ptr_ = static_cast<FnPtr>(callable);
             return;
         }
         invoker_ = &invoke_erased<Decayed>;
@@ -163,11 +163,11 @@ export class PrimFn {
         storage_size_ = sizeof(Decayed);
         if constexpr (sizeof(Decayed) <= kSboBytes &&
                       alignof(Decayed) <= alignof(std::max_align_t)) {
-            ::new (static_cast<void*>(sbo_)) Decayed(std::forward<F>(f));
+            ::new (static_cast<void*>(sbo_)) Decayed(std::forward<F>(callable));
         } else {
             // Soft large-capture overflow: one heap box at registration, not per apply.
             heap_ = ::operator new(sizeof(Decayed));
-            ::new (heap_) Decayed(std::forward<F>(f));
+            ::new (heap_) Decayed(std::forward<F>(callable));
         }
     }
 
@@ -177,81 +177,81 @@ public:
     ~PrimFn() { clear(); }
 
     // Free function / function pointer — zero-allocation dispatch path.
-    PrimFn(FnPtr fn) noexcept
-        : ptr_(fn) {}
+    PrimFn(FnPtr function_ptr) noexcept
+        : ptr_(function_ptr) {}
 
     template <class F>
         requires(!std::is_same_v<std::decay_t<F>, PrimFn> &&
                  !std::is_same_v<std::decay_t<F>, std::nullptr_t> &&
                  !std::is_same_v<std::decay_t<F>, FnPtr>)
-    PrimFn(F&& fn) {
-        bind_callable(std::forward<F>(fn));
+    PrimFn(F&& callable) {
+        bind_callable(std::forward<F>(callable));
     }
 
-    PrimFn(const PrimFn& o) {
-        ptr_ = o.ptr_;
-        if (o.invoker_ == nullptr)
+    PrimFn(const PrimFn& other) {
+        ptr_ = other.ptr_;
+        if (other.invoker_ == nullptr)
             return;
-        invoker_ = o.invoker_;
-        cloner_ = o.cloner_;
-        destroyer_ = o.destroyer_;
-        storage_size_ = o.storage_size_;
-        if (o.heap_ != nullptr) {
-            heap_ = ::operator new(o.storage_size_);
-            o.cloner_(heap_, o.heap_);
+        invoker_ = other.invoker_;
+        cloner_ = other.cloner_;
+        destroyer_ = other.destroyer_;
+        storage_size_ = other.storage_size_;
+        if (other.heap_ != nullptr) {
+            heap_ = ::operator new(other.storage_size_);
+            other.cloner_(heap_, other.heap_);
         } else {
-            o.cloner_(static_cast<void*>(sbo_), static_cast<const void*>(o.sbo_));
+            other.cloner_(static_cast<void*>(sbo_), static_cast<const void*>(other.sbo_));
         }
     }
 
-    PrimFn(PrimFn&& o) noexcept {
-        ptr_ = o.ptr_;
-        invoker_ = o.invoker_;
-        cloner_ = o.cloner_;
-        destroyer_ = o.destroyer_;
-        storage_size_ = o.storage_size_;
-        heap_ = o.heap_;
-        if (o.invoker_ != nullptr && o.heap_ == nullptr && o.cloner_ != nullptr) {
+    PrimFn(PrimFn&& other) noexcept {
+        ptr_ = other.ptr_;
+        invoker_ = other.invoker_;
+        cloner_ = other.cloner_;
+        destroyer_ = other.destroyer_;
+        storage_size_ = other.storage_size_;
+        heap_ = other.heap_;
+        if (other.invoker_ != nullptr && other.heap_ == nullptr && other.cloner_ != nullptr) {
             // Move SBO payload via clone+destroy (F may not be nothrow-move).
-            o.cloner_(static_cast<void*>(sbo_), static_cast<const void*>(o.sbo_));
-            o.destroyer_(static_cast<void*>(o.sbo_));
+            other.cloner_(static_cast<void*>(sbo_), static_cast<const void*>(other.sbo_));
+            other.destroyer_(static_cast<void*>(other.sbo_));
         }
-        o.ptr_ = nullptr;
-        o.invoker_ = nullptr;
-        o.cloner_ = nullptr;
-        o.destroyer_ = nullptr;
-        o.heap_ = nullptr;
-        o.storage_size_ = 0;
+        other.ptr_ = nullptr;
+        other.invoker_ = nullptr;
+        other.cloner_ = nullptr;
+        other.destroyer_ = nullptr;
+        other.heap_ = nullptr;
+        other.storage_size_ = 0;
     }
 
-    PrimFn& operator=(const PrimFn& o) {
-        if (this == &o)
+    PrimFn& operator=(const PrimFn& other) {
+        if (this == &other)
             return *this;
-        PrimFn tmp(o);
+        PrimFn tmp(other);
         *this = std::move(tmp);
         return *this;
     }
 
-    PrimFn& operator=(PrimFn&& o) noexcept {
-        if (this == &o)
+    PrimFn& operator=(PrimFn&& other) noexcept {
+        if (this == &other)
             return *this;
         clear();
-        ptr_ = o.ptr_;
-        invoker_ = o.invoker_;
-        cloner_ = o.cloner_;
-        destroyer_ = o.destroyer_;
-        storage_size_ = o.storage_size_;
-        heap_ = o.heap_;
-        if (o.invoker_ != nullptr && o.heap_ == nullptr && o.cloner_ != nullptr) {
-            o.cloner_(static_cast<void*>(sbo_), static_cast<const void*>(o.sbo_));
-            o.destroyer_(static_cast<void*>(o.sbo_));
+        ptr_ = other.ptr_;
+        invoker_ = other.invoker_;
+        cloner_ = other.cloner_;
+        destroyer_ = other.destroyer_;
+        storage_size_ = other.storage_size_;
+        heap_ = other.heap_;
+        if (other.invoker_ != nullptr && other.heap_ == nullptr && other.cloner_ != nullptr) {
+            other.cloner_(static_cast<void*>(sbo_), static_cast<const void*>(other.sbo_));
+            other.destroyer_(static_cast<void*>(other.sbo_));
         }
-        o.ptr_ = nullptr;
-        o.invoker_ = nullptr;
-        o.cloner_ = nullptr;
-        o.destroyer_ = nullptr;
-        o.heap_ = nullptr;
-        o.storage_size_ = 0;
+        other.ptr_ = nullptr;
+        other.invoker_ = nullptr;
+        other.cloner_ = nullptr;
+        other.destroyer_ = nullptr;
+        other.heap_ = nullptr;
+        other.storage_size_ = 0;
         return *this;
     }
 
