@@ -1,0 +1,4 @@
+name = "{{name}}"
+entry = "main.aura"
+preset = "dev"
+out = "out"

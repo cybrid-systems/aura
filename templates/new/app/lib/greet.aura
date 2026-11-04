@@ -1,0 +1,3 @@
+;; lib/greet.aura — a module; every top-level define is visible to requirers; module paths are project-root relative.
+(define (greet who) (string-append "hello, " who))
+(define (sum-to n) (if (= n 0) 0 (+ n (sum-to (- n 1)))))

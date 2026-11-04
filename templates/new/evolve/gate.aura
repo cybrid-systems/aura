@@ -1,0 +1,6 @@
+;; gate.aura — what counts as progress. Edit fitness / keep? to change it.
+;; Target: params near (3 -2). Fitness is the negated squared distance.
+(define (fitness p)
+  (let ((a (car p)) (b (cadr p)))
+    (- 0 (+ (* (- a 3) (- a 3)) (* (+ b 2) (+ b 2))))))
+(define (keep? cur cand) (> (fitness cand) (fitness cur)))

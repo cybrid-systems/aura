@@ -1,0 +1,6 @@
+;; main.aura — entry point (aura run). require paths are relative to the project root.
+(require "lib/greet")
+
+(display (greet "world"))
+(newline)
+(display (format "sum 1..10 = ~a\n" (sum-to 10)))

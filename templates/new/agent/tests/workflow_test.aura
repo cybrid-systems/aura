@@ -1,0 +1,5 @@
+(require "workflow")
+(define r (orch:run-workflow (vector (hash "tasks" (vector (lambda () (square 2)) (lambda () (square 3)))
+                                           "region-keys" (vector 1 2)))))
+(display (list (hash-ref r "stages-ok") (hash-ref r "stages-failed") (summarize (list 1 2))))
+(newline)

@@ -771,6 +771,324 @@ static std::string read_toml_preset_4912(const std::string& entry_path) {
     return {};
 }
 
+// Issue #4913: one flat `key = "value"` from an aura.toml.
+static std::string read_toml_key_4913(const std::filesystem::path& toml, std::string_view key) {
+    std::ifstream in(toml);
+    std::string line;
+    while (in && std::getline(in, line)) {
+        std::string_view t(line);
+        while (!t.empty() && (t.front() == ' ' || t.front() == '\t'))
+            t.remove_prefix(1);
+        if (!t.starts_with(key))
+            continue;
+        t.remove_prefix(key.size());
+        while (!t.empty() && (t.front() == ' ' || t.front() == '\t'))
+            t.remove_prefix(1);
+        if (t.empty() || t.front() != '=')
+            continue;
+        const auto q1 = t.find('"');
+        const auto q2 = q1 == std::string_view::npos ? q1 : t.find('"', q1 + 1);
+        if (q2 != std::string_view::npos)
+            return std::string(t.substr(q1 + 1, q2 - q1 - 1));
+    }
+    return {};
+}
+
+// Issue #4913: the nearest directory at or above `start` holding aura.toml.
+static std::optional<std::filesystem::path> find_project_root_4913(std::filesystem::path start) {
+    std::error_code ec;
+    start = std::filesystem::weakly_canonical(std::filesystem::absolute(start, ec), ec);
+    for (auto p = start;; p = p.parent_path()) {
+        if (std::filesystem::is_regular_file(p / "aura.toml", ec))
+            return p;
+        if (p == p.parent_path())
+            return std::nullopt;
+    }
+}
+
+static std::string sh_quote_4913(std::string_view s) {
+    std::string out = "'";
+    for (const char c : s) {
+        if (c == '\'')
+            out += "'\\''";
+        else
+            out += c;
+    }
+    out += '\'';
+    return out;
+}
+
+static std::string slurp_4913(const std::filesystem::path& p) {
+    std::ifstream in(p, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+#include "cli_templates_4913.inc"
+
+// `aura new [app|evolve|agent] <dir>`
+static int aura_new_4913(int argc, char** argv) {
+    auto known = [](std::string_view t) {
+        for (const auto& f : kTemplates4913)
+            if (f.tpl == t)
+                return true;
+        return false;
+    };
+    std::string tpl = "app";
+    std::string dir;
+    if (argc == 3 && !known(argv[2])) {
+        dir = argv[2];
+    } else if (argc == 4) {
+        tpl = argv[2];
+        dir = argv[3];
+    } else {
+        std::println(std::cerr, "usage: {} new [app|evolve|agent] <dir>", argv[0]);
+        return 1;
+    }
+    if (!known(tpl)) {
+        std::println(std::cerr, "error: unknown template '{}'", tpl);
+        std::println(std::cerr, "hint: app (modules + tests), evolve (self-evolving program + "
+                                "report), agent (orch workflow)");
+        return 1;
+    }
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (fs::exists(dir, ec) && !fs::is_empty(dir, ec)) {
+        std::println(std::cerr, "error: '{}' already exists and is not empty", dir);
+        return 1;
+    }
+    auto name = fs::weakly_canonical(fs::absolute(dir, ec), ec).filename().string();
+    if (name.empty())
+        name = "aura-project";
+    int n = 0;
+    for (const auto& f : kTemplates4913) {
+        if (f.tpl != tpl)
+            continue;
+        std::string body(f.body);
+        for (std::size_t p = 0; (p = body.find("{{name}}", p)) != std::string::npos;)
+            body.replace(p, 8, name);
+        const fs::path dst = fs::path(dir) / fs::path(f.path);
+        fs::create_directories(dst.parent_path(), ec);
+        std::ofstream out(dst, std::ios::binary);
+        out << body;
+        if (!out) {
+            std::println(std::cerr, "error: cannot write {}", dst.string());
+            return 1;
+        }
+        ++n;
+    }
+    std::println("created {} ({} template, {} files)", dir, tpl, n);
+    std::println("next: cd {} && {} run", dir, "aura");
+    return 0;
+}
+
+static bool caps_flag_with_value_4913(std::string_view a) {
+    return a == "--preset" || a == "--grant" || a == "--deny" || a == "--allow";
+}
+
+// `aura test [--update] [options] [tests/x.aura …]`: run each test with
+// cwd = project root and compare its stdout with the .golden beside it.
+static int aura_test_4913(const std::filesystem::path& root, const std::vector<std::string>& opts,
+                          const std::vector<std::string>& picks, bool update) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    std::vector<fs::path> tests;
+    if (!picks.empty()) {
+        for (const auto& p : picks)
+            tests.push_back(fs::relative(fs::absolute(p, ec), root, ec));
+    } else if (fs::is_directory(root / "tests", ec)) {
+        for (const auto& e : fs::recursive_directory_iterator(root / "tests", ec))
+            if (e.is_regular_file() && e.path().extension() == ".aura")
+                tests.push_back(fs::relative(e.path(), root, ec));
+        std::ranges::sort(tests);
+    }
+    if (tests.empty()) {
+        std::println("no tests (tests/*.aura)");
+        return 0;
+    }
+    std::string self;
+    if (auto p = fs::read_symlink("/proc/self/exe", ec); !ec)
+        self = p.string();
+    else if (const char* b = std::getenv("AURA_BIN"))
+        self = b;
+    const auto tmp =
+        fs::temp_directory_path(ec) / std::format("aura-test-{}", static_cast<long>(::getpid()));
+    fs::create_directories(tmp, ec);
+    int failed = 0;
+    for (std::size_t i = 0; i < tests.size(); ++i) {
+        const auto& t = tests[i];
+        const auto out_p = tmp / std::format("{}.out", i);
+        const auto err_p = tmp / std::format("{}.err", i);
+        std::string cmd = sh_quote_4913(self) + " --quiet";
+        for (const auto& o : opts)
+            cmd += " " + sh_quote_4913(o);
+        cmd += " " + sh_quote_4913(t.string()) + " </dev/null >" + sh_quote_4913(out_p.string()) +
+               " 2>" + sh_quote_4913(err_p.string());
+        const auto t0 = std::chrono::steady_clock::now();
+        const int st = std::system(cmd.c_str());
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - t0)
+                            .count();
+        const int rc = st == -1 ? -1 : WEXITSTATUS(st);
+        const std::string got = slurp_4913(out_p);
+        auto golden = t;
+        golden.replace_extension(".golden");
+        std::string why;
+        if (update && rc == 0) {
+            std::ofstream(golden, std::ios::binary) << got;
+        } else if (fs::exists(golden, ec)) {
+            const std::string want = slurp_4913(golden);
+            if (got != want) {
+                std::size_t line = 1, k = 0;
+                while (k < got.size() && k < want.size() && got[k] == want[k])
+                    line += got[k++] == '\n';
+                auto line_at = [](const std::string& s, std::size_t k) {
+                    auto b = s.rfind('\n', k == 0 ? 0 : k - 1);
+                    b = (b == std::string::npos || k == 0) ? 0 : b + 1;
+                    auto e = s.find('\n', b);
+                    return s.substr(b, e == std::string::npos ? std::string::npos : e - b);
+                };
+                why = std::format("stdout differs from {} at line {}:\n    want: {}\n    got:  {}",
+                                  golden.string(), line, line_at(want, k), line_at(got, k));
+            }
+        }
+        if (why.empty() && rc != 0)
+            why = std::format("exit {}", rc);
+        if (why.empty()) {
+            std::println("ok   {} ({} ms)", t.string(), ms);
+            continue;
+        }
+        ++failed;
+        std::println("FAIL {} — {}", t.string(), why);
+        std::istringstream err(slurp_4913(err_p));
+        std::string l;
+        for (int shown = 0; shown < 8 && std::getline(err, l); ++shown)
+            std::println("    {}", l);
+    }
+    fs::remove_all(tmp, ec);
+    std::println("{} passed, {} failed", tests.size() - static_cast<std::size_t>(failed), failed);
+    return failed == 0 ? 0 : 1;
+}
+
+// Issue #4913: project front door. Returns an exit code for the commands it
+// finishes itself (new, test); otherwise rewrites argv for the normal path
+// (run → `aura [opts] <entry>`, soft/caps + --load → the file face, which the
+// #4908 gate holds to the same semantics as --load).
+static std::vector<std::string> g_front_args_4913;
+static std::vector<char*> g_front_argv_4913;
+static std::optional<int> front_door_4913(int& argc, char**& argv) {
+    if (argc < 2)
+        return std::nullopt;
+    auto rewrite = [&](std::vector<std::string> args) {
+        g_front_args_4913 = std::move(args);
+        g_front_argv_4913.clear();
+        for (auto& s : g_front_args_4913)
+            g_front_argv_4913.push_back(s.data());
+        g_front_argv_4913.push_back(nullptr);
+        argc = static_cast<int>(g_front_args_4913.size());
+        argv = g_front_argv_4913.data();
+    };
+    const std::string_view sub(argv[1]);
+    if (sub == "help") {
+        rewrite({argv[0], "--help"});
+        return std::nullopt;
+    }
+    if (sub == "new")
+        return aura_new_4913(argc, argv);
+    namespace fs = std::filesystem;
+    if (sub == "run" || sub == "test") {
+        std::vector<std::string> opts, pos;
+        bool quiet = false, update = false;
+        for (int i = 2; i < argc; ++i) {
+            const std::string_view a(argv[i]);
+            if (a == "--update" && sub == "test") {
+                update = true;
+            } else if (!a.empty() && a[0] == '-') {
+                quiet = quiet || a == "--quiet";
+                opts.emplace_back(a);
+                if (caps_flag_with_value_4913(a) && i + 1 < argc)
+                    opts.emplace_back(argv[++i]);
+            } else {
+                pos.emplace_back(a);
+            }
+        }
+        std::error_code ec;
+        const auto cwd = fs::current_path(ec);
+        const fs::path start =
+            (sub == "run" && !pos.empty()) ? fs::absolute(pos[0], ec).parent_path() : cwd;
+        const auto root = find_project_root_4913(start);
+        if (!root) {
+            std::println(std::cerr, "error: no aura.toml in {} or any parent directory",
+                         start.string());
+            std::println(std::cerr,
+                         "hint: '{} new app <dir>' creates a project; '{} file.aura' "
+                         "runs a single file",
+                         argv[0], argv[0]);
+            return 1;
+        }
+        std::vector<std::string> abs_pos;
+        for (const auto& p : pos)
+            abs_pos.push_back(fs::absolute(p, ec).string());
+        fs::current_path(*root, ec);
+        if (ec) {
+            std::println(std::cerr, "error: cannot enter {}: {}", root->string(), ec.message());
+            return 1;
+        }
+        // Module paths are project-root relative: (require "lib/x").
+        std::string ap = root->string();
+        if (const char* old = std::getenv("AURA_PATH"); old && *old)
+            ap += std::string(":") + old;
+        ::setenv("AURA_PATH", ap.c_str(), 1);
+        const auto toml = *root / "aura.toml";
+        if (sub == "test")
+            return aura_test_4913(*root, opts, abs_pos, update);
+        std::string entry = abs_pos.empty() ? read_toml_key_4913(toml, "entry") : abs_pos[0];
+        if (entry.empty())
+            entry = "main.aura";
+        if (!abs_pos.empty())
+            entry = fs::relative(entry, *root, ec).string();
+        if (!fs::is_regular_file(*root / entry, ec)) {
+            std::println(std::cerr, "error: entry '{}' not found in {}", entry, root->string());
+            std::println(std::cerr, "hint: set entry = \"main.aura\" in aura.toml");
+            return 1;
+        }
+        if (!quiet) {
+            const auto out = read_toml_key_4913(toml, "out");
+            std::println(std::cerr, "aura: project={} entry={}{}", root->string(), entry,
+                         out.empty() ? std::string() : " out=" + (*root / out).string());
+        }
+        std::vector<std::string> args{argv[0]};
+        args.insert(args.end(), opts.begin(), opts.end());
+        args.push_back(entry);
+        args.insert(args.end(), pos.begin() + (pos.empty() ? 0 : 1), pos.end());
+        rewrite(std::move(args));
+        return std::nullopt;
+    }
+    // soft / --preset / --grant … followed by --load f → the file face.
+    std::vector<std::string> args{argv[0]};
+    int i = 1;
+    for (; i < argc; ++i) {
+        const std::string_view a(argv[i]);
+        if ((a == "soft" && i == 1) || a == "--quiet" || a == "--keep-going" ||
+            a.starts_with("--preset=") || a.starts_with("--grant=") || a.starts_with("--deny=") ||
+            a.starts_with("--allow=")) {
+            args.emplace_back(a);
+            continue;
+        }
+        if (caps_flag_with_value_4913(a) && i + 1 < argc) {
+            args.emplace_back(a);
+            args.emplace_back(argv[++i]);
+            continue;
+        }
+        break;
+    }
+    if (i > 1 && i < argc && std::string_view(argv[i]) == "--load") {
+        for (++i; i < argc; ++i)
+            args.emplace_back(argv[i]);
+        rewrite(std::move(args));
+    }
+    return std::nullopt;
+}
+
 // Issue #4908: a producer location the evaluator really recorded. 1:1 of the
 // root source is the "no location" stamp (an `error` call without a
 // recorded producer), not the first column of the file.
@@ -990,6 +1308,10 @@ int main(int argc, char* argv[]) {
     // shell variable; seed process environ from self path so getenv and
     // child shells see the absolute binary (avoids "aura: not found" / 127).
     aura::compiler::paths::ensure_aura_bin_environ(argc > 0 ? argv[0] : nullptr);
+
+    // Issue #4913: aura new / run / test / help and `soft --load`.
+    if (auto rc = front_door_4913(argc, argv))
+        return *rc;
 
     // Issue #2076 / #2053: production security defaults before any runtime:
     //   AURA_SANDBOX → Restricted (default) | off | strict
@@ -3753,9 +4075,48 @@ int main(int argc, char* argv[]) {
     auto print_denseness_usage = [&](const char* prog) {
         std::println(std::cerr, "usage: {} [options] [file.aura …]", prog);
         std::println(std::cerr, "       {} -e '(+ 1 2)'", prog);
-        std::println(std::cerr, "       {} soft [--allow ffi,write] [file.aura …]", prog);
+        std::println(std::cerr, "       {} soft [--allow ffi,write] [--load] [file.aura …]", prog);
         std::println(std::cerr, "       echo '(+ 1 2)' | {}", prog);
         std::println(std::cerr, "       {} < file.aura", prog);
+        std::println(std::cerr, "");
+        std::println(std::cerr, "Projects (#4913):");
+        std::println(std::cerr,
+                     "  {} new [app|evolve|agent] <dir>  scaffold aura.toml, tests/, CI, "
+                     "README",
+                     prog);
+        std::println(std::cerr,
+                     "  {} run [entry.aura] [options]    run the project entry with its "
+                     "aura.toml preset",
+                     prog);
+        std::println(std::cerr,
+                     "  {} test [--update] [tests/x.aura] run tests/*.aura against "
+                     "tests/*.golden",
+                     prog);
+        std::println(std::cerr,
+                     "  (require \"lib/x\") in a project resolves from the project root.");
+        std::println(std::cerr, "Options:");
+        std::println(std::cerr, "  -e, --eval EXPR     evaluate EXPR (repeatable)");
+        std::println(std::cerr, "  --load FILE         run FILE (same semantics as '{} FILE')",
+                     prog);
+        std::println(std::cerr, "  --keep-going        keep running forms after a top-level error");
+        std::println(std::cerr, "  --preset P, --grant CAPS, --deny CAPS, --quiet   capabilities "
+                                "(below)");
+        std::println(std::cerr, "  --no-arena, --worker-threads N, --health-port N");
+        std::println(std::cerr, "Tools (read code from the argument or stdin):");
+        std::println(std::cerr, "  --fmt [--check] | --unparse   format; --check exits 1 when not "
+                                "formatted");
+        std::println(std::cerr,
+                     "  --typecheck | --auto-fix      type diagnostics / suggested fixes");
+        std::println(std::cerr, "  --query Q | --query-and-fix   structural queries over the code");
+        std::println(std::cerr,
+                     "  --evo-explain                 explain an evolution step (AURA_OBS=1)");
+        std::println(std::cerr, "  --inspect [ir|…], --ir, --jit, --jit-session   compiler views");
+        std::println(std::cerr, "  --env, --env-json             runtime environment report");
+        std::println(std::cerr, "  --freeze, --emit-binary, --cache, --cache-open, --write   "
+                                "artifacts");
+        std::println(std::cerr,
+                     "  --serve, --serve-async, --health-server, --strategy, --hot-swap  "
+                     "services");
         std::println(std::cerr, "");
         std::println(std::cerr, "Programs are read from stdin when no file/-e is given.");
         std::println(std::cerr, "A program file stops at its first top-level error (rc=1);");

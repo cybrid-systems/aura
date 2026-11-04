@@ -1,0 +1,5 @@
+(require "lib/greet")
+(display (greet "aura"))
+(newline)
+(display (sum-to 4))
+(newline)
