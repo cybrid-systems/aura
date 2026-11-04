@@ -7651,7 +7651,13 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 // pass, so every call cloned the body, inner-
                                 // expanded it and restamped the WHOLE flat —
                                 // which grew per call: O(N^2) for N calls.
-                                const bool memo_ok_4894 = !aura::core::sandbox::is_sandbox_active();
+                                // Issue #4902: the memo is safe on the
+                                // production (sandbox-active) face too. The
+                                // per-call MacroSelfEvo consult moves to the
+                                // memo-hit arm below, so a grant/deny is
+                                // still re-checked on every call; only the
+                                // clone + full-flat restamp is reused.
+                                constexpr bool memo_ok_4894 = true;
                                 const auto memo_epoch_4894 =
                                     macros_epoch_4894_.load(std::memory_order_acquire);
                                 if (memo_ok_4894) {
@@ -7679,6 +7685,16 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                         }
                                     }
                                     if (memo_hit != aura::ast::NULL_NODE) {
+                                        // Issue #4902: clone_macro_body's
+                                        // depth-0 MacroSelfEvo gate is what a
+                                        // non-memoized call pays for. Keep the
+                                        // per-call consult here so a revoked or
+                                        // missing grant still denies; only the
+                                        // expansion work is reused.
+                                        if (aura::core::sandbox::is_sandbox_active()) {
+                                            if (auto denied = legacy_eval_macro_self_evo_deny())
+                                                return std::unexpected(*denied);
+                                        }
                                         auto memo_result = eval_flat(*f, *p, memo_hit, eval_env);
                                         if (!memo_result)
                                             return memo_result;
