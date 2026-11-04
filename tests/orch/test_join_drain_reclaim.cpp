@@ -5843,6 +5843,165 @@ static void ac4658_4_adopt_rejects_and_source_cite() {
           "4658 AC4: no docs/design/4658-* per #1655");
 }
 
+// ── Issue #4923: adopt must refuse an import_proxy (observation view) ──
+// agent_import_handoff stamps import_proxy and keeps the source-owned
+// raw serve::Fiber* (#4756: the importer must not dereference it). adopt
+// pushed that row onto the destination Scope's supervision plane, so
+// cancel_all / ~AgentScope request_cancel'd the SOURCE Evaluator's body —
+// and dereferenced a dangling Fiber* once the source Scheduler was gone.
+// Fail closed: adopt rejects the proxy (no ownership move, handles_
+// unchanged) and the cancel walk skips import_proxy as defense in depth
+// for a row that predates the guard.
+
+static void ac4923_1_adopt_rejects_import_proxy() {
+    using aura::orch::agent_export_handoff;
+    using aura::orch::agent_import_handoff;
+    using aura::orch::AgentScope;
+    using aura::orch::AgentSpec;
+    using aura::orch::spawn_agent_with_mailbox;
+    using aura::serve::SchedRunner;
+    using aura::serve::Scheduler;
+    std::println("\n--- #4923 AC1: adopt(import_proxy) false; dst cancel_all spares source ---");
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    std::string prev_sb_s = prev_sb ? prev_sb : "";
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    apply_production_audit_defaults();
+    std::atomic<bool> stop_4923a{false};
+    {
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        AgentSpec spec;
+        spec.name = "4923-src";
+        spec.attach_mailbox = true;
+        spec.body = [&] {
+            while (!stop_4923a.load(std::memory_order_acquire))
+                aura::orch::fiber_sleep_ms(2);
+        };
+        AgentScope src_scope(sched); // source Evaluator supervision root
+        auto src = spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(src.ok && src.fiber, "4923 AC1: source spawn ok");
+        auto tok = agent_export_handoff(src);
+        AgentScope dst_scope(sched); // destination Evaluator
+        auto proxy = agent_import_handoff(tok, nullptr, sched);
+        CHECK(proxy.ok && proxy.import_proxy, "4923 AC1: proxy stamped");
+        const auto rows0 = dst_scope.handles().size();
+        CHECK(!dst_scope.adopt(proxy), "4923 AC1: adopt refuses an import_proxy");
+        CHECK(dst_scope.handles().size() == rows0, "4923 AC1: handles_ unchanged on reject");
+        CHECK(proxy.ok && proxy.import_proxy && proxy.fiber == tok.fiber,
+              "4923 AC1: caller handle not moved / still a proxy");
+        dst_scope.cancel_all();
+        CHECK(tok.fiber && !tok.fiber->is_cancel_requested(),
+              "4923 AC1: dst cancel_all does not cancel the source body");
+        stop_4923a.store(true, std::memory_order_release);
+        const auto jr = join_agent(src, JoinPolicy{.primary_ms = 1000, .drain_ms = 200});
+        CHECK(jr.status == JoinStatus::Ok, "4923 AC1: source handle still joins Ok");
+    }
+    apply_dev_audit_defaults();
+    if (!prev_sb_s.empty())
+        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_SANDBOX");
+}
+
+// #4923 defense in depth: a proxy row that already reached the plane
+// (the test-only adopt entry is the "predates the guard" caller) must not
+// be cancelled by cancel_all. The source body keeps running and joins Ok.
+static void ac4923_2_pre_guard_proxy_row_not_cancelled() {
+    using aura::orch::agent_export_handoff;
+    using aura::orch::agent_import_handoff;
+    using aura::orch::AgentScope;
+    using aura::orch::AgentSpec;
+    using aura::orch::spawn_agent_with_mailbox;
+    using aura::serve::SchedRunner;
+    using aura::serve::Scheduler;
+    std::println("\n--- #4923 AC2: pre-guard proxy row skipped by cancel_all ---");
+    apply_dev_audit_defaults();
+    std::atomic<bool> stop_4923b{false};
+    {
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        AgentSpec spec;
+        spec.name = "4923-row";
+        spec.attach_mailbox = true;
+        spec.body = [&] {
+            while (!stop_4923b.load(std::memory_order_acquire))
+                aura::orch::fiber_sleep_ms(2);
+        };
+        auto src = spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(src.ok && src.fiber, "4923 AC2: source spawn ok");
+        auto tok = agent_export_handoff(src);
+        AgentScope dst_scope(sched);
+        auto proxy = agent_import_handoff(tok, nullptr, sched);
+        CHECK(proxy.ok && proxy.import_proxy, "4923 AC2: proxy stamped");
+        // Test-only entry: bypasses the adopt guard, reproducing a row
+        // that predates it (or a future caller that forgets the check).
+        auto row = dst_scope.adopt_handle_without_spec_for_test(std::move(proxy));
+        CHECK(row.ok && row.import_proxy, "4923 AC2: proxy row on the plane");
+        CHECK(dst_scope.handles().size() == 1, "4923 AC2: row present");
+        dst_scope.cancel_all();
+        CHECK(tok.fiber && !tok.fiber->is_cancel_requested(),
+              "4923 AC2: cancel walk skips the import_proxy row");
+        stop_4923b.store(true, std::memory_order_release);
+        const auto jr = join_agent(src, JoinPolicy{.primary_ms = 1000, .drain_ms = 200});
+        CHECK(jr.status == JoinStatus::Ok, "4923 AC2: source handle still joins Ok");
+    }
+}
+
+// #4923 AC3: the source Scheduler dies before the destination Scope. Its
+// fibers are freed, so tok.fiber is dangling; both cancel_all and the
+// ~AgentScope walk must skip the proxy row (ASan heap-use-after-free
+// otherwise — the deref site is h.fiber->is_done()/request_cancel).
+static void ac4923_3_source_sched_death_no_proxy_deref() {
+    using aura::orch::agent_export_handoff;
+    using aura::orch::agent_import_handoff;
+    using aura::orch::AgentScope;
+    using aura::orch::AgentSpec;
+    using aura::orch::spawn_agent_with_mailbox;
+    using aura::serve::SchedRunner;
+    using aura::serve::Scheduler;
+    std::println(
+        "\n--- #4923 AC3: source ~Scheduler → dst Scope teardown does not deref proxy ---");
+    apply_dev_audit_defaults();
+    std::atomic<bool> stop_4923c{false};
+    aura::orch::HandoffToken tok_keep;
+    {
+        Scheduler sched_a(1);
+        SchedRunner runner_a(sched_a);
+        AgentSpec spec;
+        spec.name = "4923-dead-src";
+        spec.attach_mailbox = true;
+        spec.body = [&] {
+            while (!stop_4923c.load(std::memory_order_acquire)) {
+                if (aura::serve::g_current_fiber &&
+                    aura::serve::g_current_fiber->is_cancel_requested())
+                    return;
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+        };
+        auto src = spawn_agent_with_mailbox(sched_a, std::move(spec));
+        CHECK(src.ok && src.fiber, "4923 AC3: source spawn ok");
+        tok_keep = agent_export_handoff(src);
+        stop_4923c.store(true, std::memory_order_release);
+        (void)join_agent(src, JoinPolicy{.primary_ms = 1000, .drain_ms = 200});
+        src.fiber = nullptr; // host drops the raw view before ~Scheduler
+    } // ~Scheduler frees every fiber — tok_keep.fiber dangles now
+    CHECK(tok_keep.mailbox != nullptr, "4923 AC3: token kept its shared mailbox");
+    tok_keep.mailbox->on_scheduler_invalidated(); // #2782: detach dead attachers
+    {
+        Scheduler sched_b(1);
+        SchedRunner runner_b(sched_b);
+        AgentScope dst_scope(sched_b);
+        auto proxy = agent_import_handoff(tok_keep, nullptr, sched_b);
+        CHECK(proxy.ok && proxy.import_proxy, "4923 AC3: proxy stamped");
+        auto row = dst_scope.adopt_handle_without_spec_for_test(std::move(proxy));
+        CHECK(row.ok && row.fiber == tok_keep.fiber,
+              "4923 AC3: dangling fiber view is on the plane");
+        dst_scope.cancel_all(); // must skip import_proxy (no deref)
+        CHECK(dst_scope.handles().size() == 1, "4923 AC3: row still owned by the scope");
+    } // ~AgentScope: cancel walk + join plane skip the proxy row
+    CHECK(true, "4923 AC3: scope teardown over a dead proxy row is deref-free");
+}
+
 
 // ── Issue #4659: drain_ms=0 joins get a floor auto-wait budget ──────────
 // reclaimed_retry_budget_ms(0) was 0 → the join_agents shared residual
@@ -11393,6 +11552,10 @@ int run_test_join_drain_reclaim() {
     ac4658_2_bare_spawn_no_adopt_contract_unchanged();
     ac4658_3_soft_face_zero_cost_adopt_opt_in();
     ac4658_4_adopt_rejects_and_source_cite();
+    std::println("\n=== Issue #4923: adopt refuses an import_proxy (no source cancel) ===");
+    ac4923_1_adopt_rejects_import_proxy();
+    ac4923_2_pre_guard_proxy_row_not_cancelled();
+    ac4923_3_source_sched_death_no_proxy_deref();
     std::println("\n=== Issue #4659: drain_ms=0 joins get a floor auto-wait budget ===");
     ac4659_1_zero_drain_batch_floor_cleans_late_exit();
     ac4659_2_budget_formula_floor();
