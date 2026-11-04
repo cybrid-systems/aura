@@ -1,0 +1,3 @@
+(define r (parallel-intend (vector (lambda () 1) (lambda () 2))))
+(display (list (hash-ref r "status") (hash-ref r "ok-count")))
+(newline)

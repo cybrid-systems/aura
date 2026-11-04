@@ -1,0 +1,2 @@
+(let loop ((i 0)) (when (< i 3) (display i) (loop (+ i 1))))
+(newline)

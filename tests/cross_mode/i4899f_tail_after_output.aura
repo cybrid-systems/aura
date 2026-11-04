@@ -1,0 +1,5 @@
+(display "A")
+(newline)
+(display "B")
+(newline)
+(car 5)

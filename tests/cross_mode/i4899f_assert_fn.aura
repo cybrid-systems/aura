@@ -1,0 +1,3 @@
+(define (chk x) (if (< x 0) (error "neg") x))
+(chk -1)
+(display "after") (newline)

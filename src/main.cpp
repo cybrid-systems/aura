@@ -723,6 +723,31 @@ struct TopLevelForm4865 {
     std::uint32_t line = 1;
     std::uint32_t column = 1;
 };
+// Issue #4908: the form's text preceded by the newlines/spaces that put it
+// at its real file position. Evaluating this instead of the bare text makes
+// every location the parser records (this form's, and those of procedures
+// it defines that fail in a later form) file-absolute, so force-soa reports
+// the same line:col as the whole-program faces.
+static std::string positioned_form_4908(std::uint32_t line, std::uint32_t column,
+                                        std::string_view prefix, std::string_view text,
+                                        std::string_view suffix) {
+    std::string out(static_cast<std::size_t>(line > 0 ? line - 1 : 0), '\n');
+    out.append(static_cast<std::size_t>(column > 0 ? column - 1 : 0), ' ');
+    out += prefix;
+    out += text;
+    out += suffix;
+    return out;
+}
+
+// Issue #4908: a producer location the evaluator really recorded. 1:1 of the
+// root source is the "no location" stamp (an `error` call without a
+// recorded producer), not the first column of the file.
+template <class OptLoc> static bool recorded_loc_4908(const OptLoc& el) {
+    if (!el || !el->valid())
+        return false;
+    return el->file_id != 0 || el->line != 1 || el->column != 1;
+}
+
 static std::vector<TopLevelForm4865> split_top_level_forms_4865(std::string_view src) {
     // Issue #4869: reader-aware top-level form split. The caller has already
     // parsed the whole source successfully, so this only has to find form
@@ -2766,7 +2791,8 @@ int main(int argc, char* argv[]) {
             aura::compiler::set_tree_walker_fallback_policy(
                 aura::compiler::TreeWalkerFallbackPolicy::Allow);
             for (auto& tf : split_top_level_forms_4865(content)) {
-                auto r = cs.eval(tf.text);
+                auto r = cs.eval(positioned_form_4908(tf.line, tf.column, {}, tf.text, {}));
+                bool loc_absolute = true; // Issue #4908: positioned eval
                 // Issue #4899 follow-up: a top-level form's error value is a
                 // located diagnostic, as on the whole-program --load face
                 // (`(define x (car 5))`, `(f)` whose body fails). It used to
@@ -2775,18 +2801,21 @@ int main(int argc, char* argv[]) {
                     !aura::compiler::types::is_string(*r)) {
                     aura::diag::Diagnostic d{cs.evaluator().error_value_kind(*r),
                                              cs.evaluator().soft_error_message(*r)};
-                    if (auto el = cs.evaluator().error_location(*r); el && el->file_id != 0)
-                        d.location = *el; // Issue #4916: inside a required module
-                    else
+                    if (auto el = cs.evaluator().error_location(*r); recorded_loc_4908(el))
+                        d.location = *el; // #4916 module file / #4908 absolute
+                    else {
                         d.location = per_form_error_value_location_4899(tf.text);
+                        loc_absolute = false;
+                    }
                     r = std::unexpected(std::move(d));
                 }
                 if (!r) {
-                    // Issue #4875: form-relative -> file coordinates.
+                    // Issue #4875: form-relative -> file coordinates (only the
+                    // per-form fallback location is form-relative now, #4908).
                     // Issue #4916: a location in another file is already
                     // in that file's coordinates.
                     auto d = r.error();
-                    if (d.location.valid() && d.location.file_id == 0) {
+                    if (!loc_absolute && d.location.valid() && d.location.file_id == 0) {
                         if (d.location.line == 1 && d.location.column > 0 && tf.column > 1)
                             d.location.column += tf.column - 1;
                         d.location.line += tf.line - 1;
@@ -4321,8 +4350,10 @@ int main(int argc, char* argv[]) {
                                         !form_head_is_definitional_4893(form) &&
                                         !form_builds_closure_or_task_4892(form);
                 constexpr std::string_view kBeginPrefix4892 = "(begin ";
-                auto fr = wrap_begin ? cs.eval(std::string(kBeginPrefix4892) + form + ")")
-                                     : cs.eval(form);
+                auto fr = cs.eval(positioned_form_4908(
+                    tf.line, tf.column, wrap_begin ? kBeginPrefix4892 : std::string_view{}, form,
+                    wrap_begin ? std::string_view{")"} : std::string_view{}));
+                bool loc_absolute = true; // Issue #4908: positioned eval
                 // Issue #4896: a Restricted dispatch deny that came back as
                 // the form's error VALUE (top-level `(set-car! q 5)`) was
                 // dropped here as an ordinary result: no diagnostic, rc=0.
@@ -4336,22 +4367,28 @@ int main(int argc, char* argv[]) {
                 if (fr && aura::compiler::types::is_error(*fr) &&
                     !aura::compiler::types::is_string(*fr)) {
                     auto msg = cs.evaluator().soft_error_message(*fr);
-                    const bool denied = msg.starts_with("effect-denied:");
                     aura::diag::Diagnostic d{cs.evaluator().error_value_kind(*fr), std::move(msg)};
                     // Issue #4909: a refusal without a recorded producer
                     // still gets the form's location (it printed none).
                     // Issue #4916: a producer inside a module keeps its file.
+                    // Issue #4908: the positioned eval made a recorded
+                    // producer location file-absolute (an earlier define's
+                    // body included), so keep it on every face.
                     const auto el = cs.evaluator().error_location(*fr);
-                    if (el && (denied || el->file_id != 0))
+                    if (recorded_loc_4908(el))
                         d.location = *el;
-                    else
+                    else {
                         d.location = per_form_error_value_location_4899(form);
+                        loc_absolute = false;
+                    }
                     fr = std::unexpected(std::move(d));
                 }
                 if (!fr && wrap_begin) {
                     // Map the location back onto the unwrapped form text.
                     auto& loc = fr.error().location;
-                    if (loc.file_id == 0 && loc.line == 1 && loc.column > kBeginPrefix4892.size())
+                    const std::uint32_t first_col = tf.column + kBeginPrefix4892.size();
+                    if (loc_absolute && loc.file_id == 0 && loc.line == tf.line &&
+                        loc.column >= first_col)
                         loc.column -= static_cast<std::uint32_t>(kBeginPrefix4892.size());
                 }
                 if (!fr) {
@@ -4365,7 +4402,7 @@ int main(int argc, char* argv[]) {
                     // the real file coordinates so the diagnostic points at
                     // the actual line/column (e.g. after a block comment).
                     auto& loc = fr.error().location;
-                    if (loc.valid() && loc.file_id == 0) {
+                    if (!loc_absolute && loc.valid() && loc.file_id == 0) {
                         if (loc.line == 1 && loc.column > 0 && tf.column > 1)
                             loc.column += tf.column - 1;
                         loc.line += tf.line - 1;
@@ -4382,8 +4419,12 @@ int main(int argc, char* argv[]) {
                     // later use of the macro the deny never registered.
                     if (fr.error().message.find("macro-self-evo not granted") != std::string::npos)
                         break;
-                    if (stop_first_4909) // Issue #4909: first error stops a file
+                    if (stop_first_4909) { // Issue #4909: first error stops a file
+                        // The value of the form before the error is not the
+                        // program's value: print nothing (the default face).
+                        last_out.clear();
                         break;
+                    }
                     continue;
                 }
                 // Mirror the whole-program face: only the LAST top-level

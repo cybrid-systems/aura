@@ -1,0 +1,4 @@
+(define-hygienic-macro (hm x) (+ x 1))
+(display (hm 10)) (newline)
+(define-hygienic-macro (hm x) (* x 100))
+(display (hm 10)) (newline)

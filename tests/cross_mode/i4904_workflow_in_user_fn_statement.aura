@@ -1,0 +1,4 @@
+(define (go) (orch:run-workflow (vector (hash "tasks" (vector (lambda () 1) (lambda () (+ 1 1)))))))
+(display "pre") (newline)
+(go)
+(display "post") (newline)
