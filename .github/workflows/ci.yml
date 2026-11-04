@@ -362,6 +362,28 @@ jobs:
         AURA_RUNTIME_DIR: ${{ github.workspace }}
       run: python3 build.py s0-metrics
 
+    # Issue #4908: cross-mode consistency gate + the DX contract tests
+    # (#4899-#4919). The corpus runs under {default, STRICT=0, force-soa} x
+    # {direct, --load} and fails with a diff on any stdout / rc / first-error
+    # line:col split not in tests/cross_mode/allowlist.txt. The kit leg runs
+    # aura-starter-kits evolve-strategy (latest main, 20 steps) on the same
+    # faces and compares summary.json. See docs/cross-mode.md.
+    - name: Cross-mode gate + DX contracts (#4908)
+      env:
+        AURA_RUNTIME_DIR: ${{ github.workspace }}
+        KIT_STEPS: "20"
+      run: |
+        set -e
+        git clone -q --depth 1 https://github.com/cybrid-systems/aura-starter-kits "$RUNNER_TEMP/aura-starter-kits"
+        export AURA_STARTER_KITS="$RUNNER_TEMP/aura-starter-kits"
+        rc=0
+        for t in tests/python/test_issue_490*.py tests/python/test_issue_491*.py; do
+          echo "::group::$t"
+          python3 "$t" || rc=1
+          echo "::endgroup::"
+        done
+        exit $rc
+
     # Issue #1569: hard SLO gate for compiler pipeline benchmarks.
     # Main only — PR wall time; regressions still caught on merge-to-main.
     # --runs 3: single-run after a cold compile is a 5× flake on vec_basic.
