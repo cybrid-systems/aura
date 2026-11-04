@@ -3697,6 +3697,9 @@ int main(int argc, char* argv[]) {
         std::println(std::cerr, "       {} < file.aura", prog);
         std::println(std::cerr, "");
         std::println(std::cerr, "Programs are read from stdin when no file/-e is given.");
+        std::println(std::cerr, "A program file stops at its first top-level error (rc=1);");
+        std::println(std::cerr,
+                     "  --keep-going (or AURA_KEEP_GOING=1) runs the remaining forms too.");
         std::println(std::cerr, "Soft experiments (#4575):");
         std::println(std::cerr,
                      "  {} soft file.aura              Restricted Mutate on this workspace", prog);
@@ -3721,6 +3724,18 @@ int main(int argc, char* argv[]) {
     // (--serve, --ir, …) to earlier branches (they return).
     std::string all_input;
     bool source_from_argv = false;
+    // Issue #4909: a program file stops at its first uncaught top-level
+    // error (one diagnostic, rc=1) instead of running the rest of the file
+    // into a cascade of follow-on errors. --keep-going / AURA_KEEP_GOING=1
+    // restores the run-every-form contract (#4460/#4467). -e / stdin keep it.
+    bool from_file_4909 = false;
+    bool keep_going_4909 = [] {
+        const char* v = std::getenv("AURA_KEEP_GOING");
+        if (!v)
+            return false;
+        const std::string_view s(v);
+        return s == "1" || s == "true" || s == "yes";
+    }();
     // Issue #4575: `aura soft` is the launcher. It is not an env var.
     // `--allow` is recognized only after `soft`. Plain `aura --allow`
     // stays an unknown option.
@@ -3792,6 +3807,10 @@ int main(int argc, char* argv[]) {
             // Already consumed in the pre-parse loop (sets g_use_arena=false).
             if (a == "--no-arena")
                 continue;
+            if (a == "--keep-going") { // Issue #4909
+                keep_going_4909 = true;
+                continue;
+            }
             // Health / worker flags may appear before denseness source args.
             if (a == "--worker-threads") {
                 if (i + 1 < argc)
@@ -3855,8 +3874,10 @@ int main(int argc, char* argv[]) {
                 aura::diag::set_entry_source_file(0);
             all_input += file_text;
             source_from_argv = true;
+            from_file_4909 = true;
         }
     }
+    const bool stop_first_4909 = from_file_4909 && !keep_going_4909;
     if (soft_allow_bad) {
         std::println(std::cerr, "error: unknown --allow token '{}'", soft_allow_bad_tok);
         std::println(std::cerr,
@@ -4361,6 +4382,8 @@ int main(int argc, char* argv[]) {
                     // later use of the macro the deny never registered.
                     if (fr.error().message.find("macro-self-evo not granted") != std::string::npos)
                         break;
+                    if (stop_first_4909) // Issue #4909: first error stops a file
+                        break;
                     continue;
                 }
                 // Mirror the whole-program face: only the LAST top-level
@@ -4543,6 +4566,8 @@ int main(int argc, char* argv[]) {
             }
             err = true;
             file_resume = true;
+            if (stop_first_4909) // Issue #4909: first error stops a file
+                resume_at = exprs.size();
         }
         for (std::size_t i = resume_at; !macro_deny && i < exprs.size(); ++i) {
             auto& e = exprs[i];
@@ -4572,6 +4597,8 @@ int main(int argc, char* argv[]) {
                     std::println(std::cerr, "error: {}", r2.error().format_with_source(e));
                 }
                 err = true;
+                if (stop_first_4909) // Issue #4909: first error stops a file
+                    break;
                 // Issue #4875: a reader/parse error means the source at this
                 // point could not be read, so later-looking forms are not a
                 // trustworthy suffix (a bare '#' must stop the file). Runtime

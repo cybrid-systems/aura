@@ -1021,14 +1021,14 @@ EOF
 (pr "x" (no-such-proc 1))
 (pr "after" (g 5))
 EOF
-    out=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 15 "$aura_abs" "$dir/a.aura" 2>"$dir/a.err")
+    out=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 15 "$aura_abs" --keep-going "$dir/a.aura" 2>"$dir/a.err")
     err=$(cat "$dir/a.err")
     if [ "$out" = $'one 2\ntwo 3' ] && printf '%s' "$err" | grep -q 'unbound variable: no-such-proc'; then
         _record_pass "4355-error-does-not-rerun-prefix"
     else
         _record_fail "4355-error-does-not-rerun-prefix" "       stdout:" "$out" "       stderr:" "$err"
     fi
-    out=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 15 "$aura_abs" "$dir/b.aura" 2>"$dir/b.err")
+    out=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 15 "$aura_abs" --keep-going "$dir/b.aura" 2>"$dir/b.err")
     err=$(cat "$dir/b.err")
     if printf '%s' "$out" | grep -q 'g=8' && printf '%s' "$out" | grep -q 'after=10' \
         && ! printf '%s' "$err" | grep -q 'invalid closure'; then
