@@ -10437,9 +10437,23 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                     // Issue #4682 step 2: probe the persistent define index
                     // per referenced name (O(refs)) instead of walking all W
                     // root children.
+                    // Issue #4925: a Define nested in a top-level
+                    // (begin ...) is still a top-level binding, but its
+                    // parent is the inner Begin, not flat.root. Treat that
+                    // shape as top-level too, or the narrow cone drops the
+                    // root scope and the lifted caller reads the binding as
+                    // unbound / with a stale arity.
+                    auto is_top_level_define = [&flat](aura::ast::NodeId d) {
+                        const auto p = flat.parent_of(d);
+                        if (p == flat.root)
+                            return true;
+                        return p != aura::ast::NULL_NODE &&
+                               flat.tag(p) == aura::ast::NodeTag::Begin &&
+                               flat.parent_of(p) == flat.root;
+                    };
                     for (auto sym : want_syms) {
                         for (auto d : flat.defines_for_sym(static_cast<aura::ast::SymId>(sym))) {
-                            if (flat.parent_of(d) == flat.root && d != rec.target_node) {
+                            if (is_top_level_define(d) && d != rec.target_node) {
                                 need_root = true;
                                 break;
                             }

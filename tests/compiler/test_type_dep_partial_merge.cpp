@@ -254,11 +254,37 @@ namespace _2283_detail {
 
 } // namespace _2283_detail
 
+// ---------------------------------------------------------------------------
+// Issue #4925: a Define under a top-level (begin ...) is a top-level define.
+// infer_flat_partial's need_root only counted root-direct-child Defines, so a
+// rebind that references g from a top-level (begin (define g ...)) rebuilt the
+// narrow cone without the root Begin and lost g's binding. The observable
+// contract is the cone composition: the root must join the affected set.
+// ---------------------------------------------------------------------------
+static void ac4925_top_level_begin_define_adds_root() {
+    std::println("\n--- #4925: top-level (begin (define ...)) joins the narrow cone ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(begin (define (g x) x))\\n(define (f) (g 1))\")").has_value(),
+          "4925: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4925: eval-current");
+    const auto added_before = query_field(cs, "type-dep-partial-nodes-added");
+    auto r = cs.eval("(mutate:rebind \"f\" \"(lambda () (g 1))\" \"t\")");
+    CHECK(r.has_value() && !aura::compiler::types::is_error(*r), "4925: rebind commits");
+    const auto added = query_field(cs, "type-dep-partial-nodes-added") - added_before;
+    std::println("  4925: type-dep-partial-nodes-added delta = {}", added);
+    CHECK(added >= 1, "4925: the root Begin joins the narrow cone for a cross-form define");
+    auto call = cs.eval("(f)");
+    CHECK(call.has_value() && aura::compiler::types::is_int(*call) &&
+              aura::compiler::types::as_int(*call) == 1,
+          "4925: f still calls g with the right arity");
+}
+
 } // namespace aura_type_dep_partial_merge_2283
 
 int run_test_type_dep_partial_merge() {
     std::println("=== Issue #2283: type_dep_graph_ systematic merge ===");
     aura_type_dep_partial_merge_2283::_2283_detail::run_2283_type_dep_partial_merge();
+    aura_type_dep_partial_merge_2283::ac4925_top_level_begin_define_adds_root();
     return RUN_ALL_TESTS();
 }
 
