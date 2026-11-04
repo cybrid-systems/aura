@@ -1642,8 +1642,13 @@ static void ac3969_2_explicit_cancel_failfast_cancels() {
     ac3206_set_prod(true);
     Scheduler sched(1);
     Ac3969SchedRunner runner(sched);
-    AgentScope scope(sched);
+    // The Fiber owner must outlive the scope: ~AgentScope joins the adopted
+    // handle, so a fiber_owned declared after `scope` is deleted first and
+    // that join reads a freed Fiber (CI x86_64: malloc(): mismatching
+    // next->prev_size (unsorted) at the next Scheduler ctor). Declare it
+    // before the scope so the join runs while the fiber is still alive.
     auto fiber_owned = std::make_unique<Fiber>([] {});
+    AgentScope scope(sched);
     AgentHandle parked;
     parked.ok = true;
     parked.name = "park-3969";
@@ -1690,8 +1695,13 @@ static void ac3969_3_restartn_bare_adopt_skips() {
     ac3206_set_prod(true);
     Scheduler sched(1);
     Ac3969SchedRunner runner(sched);
-    AgentScope scope(sched);
+    // The Fiber owner must outlive the scope: ~AgentScope joins the adopted
+    // handle, so a fiber_owned declared after `scope` is deleted first and
+    // that join reads a freed Fiber (CI x86_64: malloc(): mismatching
+    // next->prev_size (unsorted) at the next Scheduler ctor). Declare it
+    // before the scope so the join runs while the fiber is still alive.
     auto fiber_owned = std::make_unique<Fiber>([] {});
+    AgentScope scope(sched);
     AgentHandle adopted;
     adopted.ok = true;
     adopted.name = "bare-3969";
@@ -2601,8 +2611,13 @@ static void ac4236_2_circuit_breaker_residual_cancels_scope() {
     ac3206_set_prod(true);
     Scheduler sched(1);
     Ac3969SchedRunner runner(sched);
-    AgentScope scope(sched);
+    // The Fiber owner must outlive the scope: ~AgentScope joins the adopted
+    // handle, so a fiber_owned declared after `scope` is deleted first and
+    // that join reads a freed Fiber (CI x86_64: malloc(): mismatching
+    // next->prev_size (unsorted) at the next Scheduler ctor). Declare it
+    // before the scope so the join runs while the fiber is still alive.
     auto fiber_owned = std::make_unique<Fiber>([] {});
+    AgentScope scope(sched);
     AgentHandle parked;
     parked.ok = true;
     parked.name = "park-4236";
