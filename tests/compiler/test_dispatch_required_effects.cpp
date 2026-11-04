@@ -4342,7 +4342,8 @@ int run_test_dispatch_required_effects() {
         const auto ddeny0 = cm ? cm->dispatch_required_effects_deny_total.load() : 0;
         const auto se0 = g_security_event_ring().total.load(std::memory_order_relaxed);
         auto r = cs.eval("(hash-set! *h3720* 3 4)");
-        CHECK(r && is_error(*r), "3720 AC1: deny without Mutate grant");
+        // Issue #4896: the IR face raises the deny as a diagnostic.
+        CHECK(!r.has_value() || is_error(*r), "3720 AC1: deny without Mutate grant");
         auto len1 = cs.eval("(hash-length *h3720*)");
         CHECK(len1 && is_int(*len1) && as_int(*len1) == 1, "3720 AC1: table unchanged");
         if (cm)
@@ -4414,7 +4415,9 @@ int run_test_dispatch_required_effects() {
         aura::compiler::IRContext ctx(ev.primitives(), nullptr, cm2, &ev);
         aura::compiler::IRInterpreter interp(mod, ctx);
         auto ir = interp.execute();
-        CHECK(ir.has_value() && is_int(*ir) && as_int(*ir) == 1,
+        // Issue #4896: HashSet deny raises (no value) when no try is open;
+        // when a value is returned it must still be the untouched length 1.
+        CHECK(!ir.has_value() || (is_int(*ir) && as_int(*ir) == 1),
               "3720 AC2: IR HashSet deny leaves length 1");
         if (cm2)
             CHECK(cm2->dispatch_required_effects_deny_total.load() > ddeny0,
@@ -4555,19 +4558,19 @@ int run_test_dispatch_required_effects() {
         const auto ddeny0 = cm ? cm->dispatch_required_effects_deny_total.load() : 0;
         const auto se0 = g_security_event_ring().total.load(std::memory_order_relaxed);
         auto r1 = cs.eval("(set-car! *p4036* 9)");
-        CHECK(r1 && is_error(*r1), "4036 AC1: set-car! denies with empty grants");
+        CHECK(!r1.has_value() || is_error(*r1), "4036 AC1: set-car! denies with empty grants");
         auto c1 = cs.eval("(car *p4036*)");
         CHECK(c1 && is_int(*c1) && as_int(*c1) == 1, "4036 AC1: car unchanged");
         auto r2 = cs.eval("(set-cdr! *p4036* 9)");
-        CHECK(r2 && is_error(*r2), "4036 AC1: set-cdr! denies");
+        CHECK(!r2.has_value() || is_error(*r2), "4036 AC1: set-cdr! denies");
         auto c2 = cs.eval("(cdr *p4036*)");
         CHECK(c2 && is_int(*c2) && as_int(*c2) == 2, "4036 AC1: cdr unchanged");
         auto r3 = cs.eval("(string-fill! *s4036* 88)");
-        CHECK(r3 && is_error(*r3), "4036 AC1: string-fill! denies");
+        CHECK(!r3.has_value() || is_error(*r3), "4036 AC1: string-fill! denies");
         auto c3 = cs.eval("(car (string->list *s4036*))");
         CHECK(c3 && is_int(*c3) && as_int(*c3) == 97, "4036 AC1: string content unchanged");
         auto r4 = cs.eval("(closure:free! 0)");
-        CHECK(r4 && is_error(*r4), "4036 AC1: closure:free! denies");
+        CHECK(!r4.has_value() || is_error(*r4), "4036 AC1: closure:free! denies");
         if (cm)
             CHECK(cm->dispatch_required_effects_deny_total.load() > ddeny0,
                   "4036 AC1: dispatch deny counter advanced");
@@ -4624,7 +4627,7 @@ int run_test_dispatch_required_effects() {
         auto got = cs.eval("(car *p4036su*)");
         CHECK(got && is_int(*got) && as_int(*got) == 42, "4036 AC2: write landed");
         auto r2 = cs.eval("(set-car! *p4036su* 43)");
-        CHECK(r2 && is_error(*r2), "4036 AC2: grant consumed exactly once");
+        CHECK(!r2.has_value() || is_error(*r2), "4036 AC2: grant consumed exactly once");
         auto got2 = cs.eval("(car *p4036su*)");
         CHECK(got2 && is_int(*got2) && as_int(*got2) == 42, "4036 AC2: second write denied");
     }
