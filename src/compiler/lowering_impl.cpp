@@ -1354,9 +1354,12 @@ static std::uint32_t lower_flat_expr(
                         // form leaves the loop the way begin lets an error
                         // leave (#2570) — it is not a value the loop may drop.
                         // The Begin rule (Issue #4552) decides when the error
-                        // escapes: inside a lambda body or a try body.
-                        const bool escape_errors =
-                            state.lambda_depth > 0 || !state.err_escapes.empty();
+                        // escapes. Issue #4899 follow-up: since #4899 that is
+                        // every depth, the top level included; a top-level
+                        // `(while (< i 3) (car i) ...)` under force-soa direct
+                        // dropped the body error (rc=0) while the walker
+                        // faces raised it.
+                        constexpr bool escape_errors = true;
                         auto cond_id = all_thunk ? flat.get(v.child(1)).child(0) : v.child(1);
                         auto head = state.alloc_block();
                         state.emit(IROpcode::Jump, head);

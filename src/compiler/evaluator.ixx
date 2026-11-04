@@ -3825,6 +3825,23 @@ public:
     [[nodiscard]] bool require_failure_is_diagnostic() const noexcept {
         return require_failure_is_diagnostic_;
     }
+    // Issue #4899 follow-up: the statement node an escaped error value left
+    // the IR entry function (__top__) through, with the flat it belongs to.
+    // The service maps it onto the top-level form main resumes after; a tail
+    // error value (no escape Return) leaves this unset.
+    void note_ir_entry_escape_stmt(const void* flat, std::uint32_t node) noexcept {
+        ir_entry_escape_flat_ = flat;
+        ir_entry_escape_node_ = node;
+    }
+    void set_file_resume_form_4899(const aura::diag::SourceLocation& l) noexcept {
+        set_file_resume_form(l);
+    }
+    [[nodiscard]] std::uint32_t take_ir_entry_escape_stmt(const void* flat) noexcept {
+        const auto n = ir_entry_escape_flat_ == flat ? ir_entry_escape_node_ : 0u;
+        ir_entry_escape_flat_ = nullptr;
+        ir_entry_escape_node_ = 0;
+        return n;
+    }
     // Issue #4575: file-mode require denied inside pre_exec. The kept
     // Call is replayed once; the stash is the diagnostic, so the gate
     // does not run a second time and IR does not void the failure.
@@ -7068,6 +7085,8 @@ private:
     Env* require_inject_env_ = nullptr;
     // Issue #4460: file-mode oneshot (see set_require_failure_is_diagnostic).
     bool require_failure_is_diagnostic_ = false;
+    const void* ir_entry_escape_flat_ = nullptr; // Issue #4899 follow-up
+    std::uint32_t ir_entry_escape_node_ = 0;
     // Issue #4575: diagnostic from a require that pre_exec kept in the AST.
     std::optional<aura::diag::Diagnostic> pre_exec_require_diag_{};
     // Issue #4465: outermost eval_flat while that flag is on. Only a direct

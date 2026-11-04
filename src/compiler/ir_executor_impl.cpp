@@ -2550,6 +2550,13 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                     ret_val,
                                     aura::diag::SourceLocation{nv.line == 0 ? 1u : nv.line,
                                                                nv.col == 0 ? 1u : nv.col, 0});
+                                // Issue #4899 follow-up: which top-level
+                                // statement escaped the entry, so main
+                                // resumes after it (a location inside an
+                                // earlier define body must not re-run forms).
+                                if (func.name == "__top__")
+                                    context_.evaluator->note_ir_entry_escape_stmt(
+                                        rflat, instr.source_ast_node_id);
                             }
                         }
                     }

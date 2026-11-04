@@ -173,7 +173,10 @@ class BenchmarkGate1936(unittest.TestCase):
             "timed_out": False,
         }
         self.assertTrue(m.check_eval_result(arith, mismatch))
-        self.assertFalse(m.check_eval_result(arith, dict(mismatch, returncode=1)))
+        # Issue #4899: the error now exits 1 on the oneshot face too.
+        self.assertTrue(m.check_eval_result(arith, dict(mismatch, returncode=1)))
+        self.assertFalse(m.check_eval_result(arith, dict(mismatch, returncode=-11)))
+        self.assertFalse(m.check_eval_result(arith, dict(mismatch, returncode=1, timed_out=True)))
         self.assertFalse(
             m.check_eval_result(
                 arith,
@@ -190,7 +193,7 @@ class BenchmarkGate1936(unittest.TestCase):
         m = self.m
         original = m.run_aura
 
-        def stub(code, args=None):
+        def stub(code, args=None, env=None):
             return ("42", "", 0.001, 1, False)
 
         m.run_aura = stub  # type: ignore[method-assign]

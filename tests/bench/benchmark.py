@@ -235,16 +235,21 @@ def check_eval_result(bench: BenchCase, result: dict) -> bool:
     # Issue #4268: non-zero exit / timeout cannot PASS even if stdout matched.
     if result.get("timed_out"):
         return False
+    # Issue #4463: a case may require the type-mismatch stderr line.
+    # That line contains "error:" and is the pass condition, not a crash.
+    # A silent coerced integer no longer satisfies coerce_arith.
+    # Issue #4899: a top-level runtime error now exits 1 on every face (the
+    # oneshot stdin face used to echo `<error>` and exit 0), so an expected
+    # error passes with exit 0 or 1. A crash (signal / abort) still fails.
+    if bench.expected_err:
+        if result.get("returncode", 0) not in (0, 1):
+            return False
+        return bench.expected_err in result.get("stderr", "")
     if result.get("returncode", 0) != 0:
         return False
     out = result.get("stdout", "")
     if "parse error" in out:
         return False
-    # Issue #4463: a case may require the type-mismatch stderr line.
-    # That line contains "error:" and is the pass condition, not a crash.
-    # A silent coerced integer no longer satisfies coerce_arith.
-    if bench.expected_err:
-        return bench.expected_err in result.get("stderr", "")
     if "error:" in result.get("stderr", ""):
         if "coercion" in result.get("stderr", ""):
             pass
