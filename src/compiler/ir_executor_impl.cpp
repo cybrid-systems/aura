@@ -2532,8 +2532,29 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     break;
                 }
 
-                case IROpcode::Return:
-                    return locals[ops[0]];
+                case IROpcode::Return: {
+                    // Issue #4899: a statement-position error value that
+                    // escapes the entry function is turned into a located
+                    // diagnostic by the service. Record the source node of
+                    // the statement the escape belongs to (lowering stamps
+                    // it on this Return) so the diagnostic points there.
+                    const auto& ret_val = locals[ops[0]];
+                    if (is_error(ret_val) && !types::is_string(ret_val) &&
+                        context_.evaluator != nullptr && instr.source_ast_node_id != 0) {
+                        if (auto* rflat = context_.evaluator->current_flat(); rflat != nullptr) {
+                            const auto nid =
+                                static_cast<aura::ast::NodeId>(instr.source_ast_node_id);
+                            if (nid < rflat->size()) {
+                                const auto nv = rflat->get(nid);
+                                context_.evaluator->note_error_location(
+                                    ret_val,
+                                    aura::diag::SourceLocation{nv.line == 0 ? 1u : nv.line,
+                                                               nv.col == 0 ? 1u : nv.col, 0});
+                            }
+                        }
+                    }
+                    return ret_val;
+                }
 
                 case IROpcode::MakeClosure: {
                     // Issue #4357: reuse an empty-env closure of this function.

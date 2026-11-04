@@ -3172,6 +3172,28 @@ public:
         return aura::core::make_unexpected_from_kind_name(aura::diag::kind_name(d.kind), d.message);
     }
 
+    // Issue #4899: file mode (oneshot) turns a top-level statement-position
+    // error VALUE that escaped the entry function into a located diagnostic,
+    // the shape the tree walker already produces (#4465). Without this the IR
+    // entry returned the value: main printed <error> (or nothing when a later
+    // form overwrote the last value) and exited 0.
+    [[nodiscard]] EvalResult file_mode_statement_error_4899(EvalResult r, ast::FlatAST& flat,
+                                                            ast::NodeId root) {
+        if (!r || !evaluator_.require_failure_is_diagnostic())
+            return r;
+        if (!types::is_error(*r) || types::is_string(*r))
+            return r;
+        auto msg = evaluator_.soft_error_message(*r);
+        auto loc = evaluator_.error_location(*r);
+        if (!loc) {
+            const auto nv = flat.get(root);
+            loc = aura::diag::SourceLocation{nv.line == 0 ? 1u : nv.line,
+                                             nv.col == 0 ? 1u : nv.col, 0};
+        }
+        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::TypeError,
+                                                      std::move(msg), *loc, root});
+    }
+
     [[nodiscard]] EvalResult eval(std::string_view input) {
         // Issue #4674: CLI oneshot holds this lock in main (#4356). Tests,
         // the REPL, and --serve enter eval directly. Thread-fallback
@@ -4069,7 +4091,8 @@ public:
                 auto jit_result = try_jit_execute(ir_mod, &last_escape_maps_);
                 if (jit_result) {
                     record_eval_result_shape(session_id_, last_ir_mod_, nullptr, *jit_result);
-                    return *jit_result;
+                    return file_mode_statement_error_4899(std::move(*jit_result), *flat_ptr,
+                                                           expanded_root);
                 }
             }
         }
@@ -4196,7 +4219,9 @@ public:
 
             last_closures_ = ir_interp.list_closures();
             last_cells_ = ir_interp.list_cells();
-            return result;
+            // Issue #4899: a statement-position error value must not be the
+            // silent program result.
+            return file_mode_statement_error_4899(std::move(result), *flat_ptr, expanded_root);
         } catch (const std::exception& e) {
             return std::unexpected(aura::diag::Diagnostic{
                 aura::diag::ErrorKind::TypeError, std::string("runtime type error: ") + e.what()});
@@ -4537,7 +4562,8 @@ public:
         // The guard (constructed in eval_ir) fires the auto-
         // invoke on scope exit, covering ALL return paths.
         // See PostEvalAutoInvokeGuard for the full pattern.
-        return result;
+        // Issue #4899: same statement-position conversion as eval().
+        return file_mode_statement_error_4899(std::move(result), *flat_ptr, expanded_root);
     }
 
     // ── --jit: compile via LLVM ORC JIT and execute ──────────────
