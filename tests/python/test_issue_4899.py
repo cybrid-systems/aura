@@ -55,11 +55,9 @@ class TestStatementPositionErrors4899(unittest.TestCase):
                 tag = f"strict={strict or 'default'} direct={direct}"
                 self.assertNotEqual(p.returncode, 0, f"{tag}: {p.stdout!r} {p.stderr!r}")
                 self.assertIn(needle, p.stderr, f"{tag}: {p.stderr!r}")
-                # The direct file face resumes after the failing form
-                # (#4460); --load stops at the first failed form, which is its
-                # existing convention.
-                if direct:
-                    self.assertIn("after", p.stdout, f"{tag}: later forms keep running: {p.stdout!r}")
+                # Issue #4909: the direct file face now stops at the first
+                # failed form, the same as --load (one semantics, #4908).
+                self.assertNotIn("after", p.stdout, f"{tag}: stops at the first error: {p.stdout!r}")
 
     def test_vector_ref_statement_position(self) -> None:
         self._assert_reported(VREF, "vector-ref")

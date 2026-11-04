@@ -4532,9 +4532,15 @@ void register_workspace_query_primitives(
         if (op == "root")
             return call_named("query:root", rest);
 
+        // Issue #4909: `(query :code)` is not an op, but the primitive
+        // `query:code` exists — say so instead of only listing the ops.
+        std::string hint;
+        if (const std::string prim = "query:" + op; ev.primitives().lookup(prim))
+            hint = " — did you mean (" + prim + " …)?";
         return mev("bad-arg", "unknown query op ':" + op +
                                   "' — use :node :children :parent :find :def-use :mutation-log "
-                                  ":mutation-provenance");
+                                  ":mutation-provenance" +
+                                  hint);
     });
 
     // Issue #2628: core query:* public aliases removed (use (query :op)).
