@@ -3820,6 +3820,11 @@ public:
     void set_require_failure_is_diagnostic(bool on) noexcept {
         require_failure_is_diagnostic_ = on;
     }
+    // Issue #4899: the IR entry needs this face to decide whether an escaped
+    // statement-position error value becomes a located diagnostic.
+    [[nodiscard]] bool require_failure_is_diagnostic() const noexcept {
+        return require_failure_is_diagnostic_;
+    }
     // Issue #4575: file-mode require denied inside pre_exec. The kept
     // Call is replayed once; the stash is the diagnostic, so the gate
     // does not run a second time and IR does not void the failure.

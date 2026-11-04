@@ -1854,15 +1854,25 @@ static std::uint32_t lower_flat_expr(
             }
             // Second pass: lower all children — defines find their pre-bound cells
             // Issue #4552: an error value from a non-tail child leaves the
-            // body (tree-walker begin parity, #2570). Inside a lambda body,
-            // or a try body at any level.
-            const bool escape_errors = state.lambda_depth > 0 || !state.err_escapes.empty();
+            // body (tree-walker begin parity, #2570). Issue #4899: this holds
+            // at the top level too. The entry function used to discard a
+            // statement-position error value, so `(car 5)` at the top of a
+            // program printed nothing and the run exited 0 while the tree
+            // walker raised it. The value now escapes every non-tail
+            // statement; file mode turns the escaped value into a located
+            // diagnostic at the service boundary.
             std::uint32_t last_slot = 0;
             for (std::size_t bi = 0; bi < v.children.size(); ++bi) {
                 const auto c = v.child(bi);
                 last_slot = lower_flat_expr(state, flat, pool, c, cache, cache_hits);
-                if (escape_errors && bi + 1 < v.children.size() && !form_cannot_be_error(flat, c))
+                if (bi + 1 < v.children.size() && !form_cannot_be_error(flat, c)) {
+                    // The Return that escapes carries this statement's source
+                    // node, so the error value can be located (#4899).
+                    const auto prev_source = state.current_source_id;
+                    state.current_source_id = c;
                     emit_error_escape(state, last_slot);
+                    state.current_source_id = prev_source;
+                }
             }
             if (!v.children.empty())
                 return last_slot;
