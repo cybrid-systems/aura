@@ -866,6 +866,177 @@ void ac4646_se_wal_append_miss_denies_mutate() {
     fs::remove_all(dir, cec);
 }
 
+// Issue #4921: a bounded replay that dropped records must not publish its
+// window as a complete crash recovery. MutationAuditWal::enable reads
+// segments newest→oldest and stops at max_replay; when the cap cut records
+// from the last-read segment, or older segments stayed unread, the window is
+// partial and audit_crash_recovery_success must not move (the #4660 / #4695
+// SecurityEventWal contract). The explicit-mid scan-all fallback and the
+// Soft / WAL-off faces stay unchanged.
+void ac4921_bounded_replay_truncation() {
+    using aura::core::audit_wal::AuditWalRecord;
+    using aura::core::audit_wal::g_mutation_audit_wal;
+    using aura::core::audit_wal::make_record;
+    using aura::core::audit_wal::snapshot_audit_wal_stats;
+
+    constexpr std::uint64_t kMidBase = 4921100;
+    const auto base = fs::temp_directory_path() / "aura-audit-wal-4921";
+    std::error_code bsec;
+    fs::remove_all(base, bsec);
+
+    // Seed n records through the live append path; rotate=true forces a
+    // segment rotation after 4 records so the replay has two segments.
+    auto seed_dir = [&](const fs::path& d, int n, bool rotate) {
+        std::error_code ec;
+        fs::remove_all(d, ec);
+        fs::create_directories(d, ec);
+        auto& w = g_mutation_audit_wal();
+        CHECK(w.enable(d.string(), nullptr, 0), "4921: seed enable");
+        if (rotate)
+            w.set_rotate_bytes(sizeof(AuditWalRecord) * 4);
+        for (int i = 0; i < n; ++i) {
+            CHECK(w.append(make_record(static_cast<std::uint64_t>(i), /*timestamp_ms=*/1,
+                                       /*fiber_id=*/1, /*nodes_changed=*/1, /*epoch_delta=*/0,
+                                       /*target_node=*/7, "mut-op", /*effect_bits=*/1,
+                                       /*tenant_id=*/1, kMidBase + static_cast<std::uint64_t>(i),
+                                       /*epoch=*/1, /*effect_denied=*/false, "4921")),
+                  "4921: seed append");
+        }
+        w.disable();
+    };
+
+    std::println("\n--- #4921 AC1: 8 records / max_replay=4 → truncated, no success stamp ---");
+    {
+        reset_all();
+        const auto d = base / "cap";
+        seed_dir(d, 8, false);
+        reset_all(); // zero the counters before the measured replay
+        std::vector<AuditWalRecord> out;
+        auto& w = g_mutation_audit_wal();
+        CHECK(w.enable(d.string(), &out, 4), "4921 AC1: enable with max_replay=4");
+        const auto snap = snapshot_audit_wal_stats();
+        CHECK(out.size() == 4, "4921 AC1: window carries 4 records");
+        CHECK(snap.replay_count == 1, "4921 AC1: replay_count=1");
+        CHECK(snap.crash_recovery_success == 0,
+              "4921 AC1: truncated window is not crash-recovery success");
+        CHECK(!out.empty() && out.front().provenance_mutation_id == kMidBase + 4 &&
+                  out.back().provenance_mutation_id == kMidBase + 7,
+              "4921 AC1: window is the newest 4 records");
+        w.disable();
+        fs::remove_all(d);
+    }
+
+    std::println("\n--- #4921 AC2: 4 records / max_replay=4, nothing unread → success=1 ---");
+    {
+        reset_all();
+        const auto d = base / "full";
+        seed_dir(d, 4, false);
+        reset_all();
+        std::vector<AuditWalRecord> out;
+        auto& w = g_mutation_audit_wal();
+        CHECK(w.enable(d.string(), &out, 4), "4921 AC2: enable with max_replay=4");
+        const auto snap = snapshot_audit_wal_stats();
+        CHECK(out.size() == 4, "4921 AC2: whole history replayed");
+        CHECK(snap.replay_count == 1, "4921 AC2: replay_count=1");
+        CHECK(snap.crash_recovery_success == 1,
+              "4921 AC2: complete window stamps crash-recovery success");
+        w.disable();
+        fs::remove_all(d);
+    }
+
+    std::println("\n--- #4921 AC3: cap stops with an unread older segment → truncated ---");
+    {
+        reset_all();
+        const auto d = base / "segs";
+        seed_dir(d, 8, true); // audit-0.wal 0..3, audit-1.wal 4..7
+        reset_all();
+        std::vector<AuditWalRecord> out;
+        auto& w = g_mutation_audit_wal();
+        CHECK(w.enable(d.string(), &out, 4), "4921 AC3: enable with max_replay=4");
+        const auto snap = snapshot_audit_wal_stats();
+        CHECK(out.size() == 4, "4921 AC3: only the newest segment fits the window");
+        CHECK(snap.replay_count == 1, "4921 AC3: replay_count=1");
+        CHECK(snap.crash_recovery_success == 0,
+              "4921 AC3: an unread older segment withholds the success stamp");
+        // The window dropped seq 0..3, but the explicit-mid scan-all behind
+        // query:security-audit / query:mutation-audit-log still joins them.
+        const auto dropped = w.find_by_provenance_mutation_id_scan_all_segments(kMidBase);
+        CHECK(dropped.has_value() && dropped->provenance_mutation_id == kMidBase,
+              "4921 AC3: scan-all still finds the mid outside the window");
+        w.disable();
+        fs::remove_all(d);
+    }
+
+    std::println("\n--- #4921 AC4: production enable over a >ring history ---");
+    {
+        reset_all();
+        apply_production_audit_defaults();
+        const auto d = base / "prod";
+        std::error_code ec;
+        fs::remove_all(d, ec);
+        fs::create_directories(d, ec);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        CHECK(ev.enable_mutation_audit_wal(d.string()), "4921 AC4: production WAL on");
+        constexpr int kCount = 65; // Evaluator::kMutationAuditRingSize + 1
+        for (int i = 0; i < kCount; ++i) {
+            CHECK(g_mutation_audit_wal().append(make_record(
+                      static_cast<std::uint64_t>(i), 1, 1, 1, 0, 7, "prod-op", 1, 1,
+                      kMidBase + 1000 + static_cast<std::uint64_t>(i), i + 1, false, "4921")),
+                  "4921 AC4: append");
+        }
+        ev.disable_mutation_audit_wal();
+        reset_all();
+        const auto before = snapshot_audit_wal_stats();
+        CHECK(ev.enable_mutation_audit_wal(d.string()), "4921 AC4: restart replays the history");
+        const auto after = snapshot_audit_wal_stats();
+        CHECK(after.replay_count == before.replay_count + 1, "4921 AC4: replay ran once");
+        CHECK(after.crash_recovery_success == before.crash_recovery_success,
+              "4921 AC4: ring-bounded replay is not complete recovery");
+        CHECK(ev.mutation_audit_total() == 64, "4921 AC4: ring total stays the window size");
+        CHECK(href_m(cs, "replay-count") == 1 && href_m(cs, "crash-recovery-success") == 0,
+              "4921 AC4: query:audit-wal-stats withholds the success counter");
+        auto list_text = [&](const aura::compiler::types::EvalValue& root) {
+            std::string text;
+            auto cur = root;
+            for (int n = 0; n < 16 && is_pair(cur); ++n) {
+                const auto& pr = ev.pairs()[as_pair_idx(cur)];
+                if (is_string(pr.car)) {
+                    const auto idx = as_string_idx(pr.car);
+                    if (idx < ev.string_heap().size())
+                        text += std::string(ev.string_heap()[idx]) + "\n";
+                }
+                cur = pr.cdr;
+            }
+            return text;
+        };
+        auto audit = cs.eval(
+            std::format("(engine:metrics \"query:security-audit\" 16 0 0 0 {})", kMidBase + 1000));
+        CHECK(audit && is_pair(*audit), "4921 AC4: mid outside the window still joins");
+        const auto audit_text = (audit && is_pair(*audit)) ? list_text(*audit) : std::string{};
+        CHECK(audit_text.find("mutation_id=4922100") != std::string::npos,
+              "4921 AC4: join kept the dropped mid");
+        ev.disable_mutation_audit_wal();
+        fs::remove_all(d, ec);
+    }
+
+    std::println("\n--- #4921 AC5: Soft / WAL-off stays unchanged (no replay, no stamp) ---");
+    {
+        reset_all();
+        apply_dev_audit_defaults();
+        CompilerService cs;
+        CHECK(!cs.evaluator().mutation_audit_wal_enabled(), "4921 AC5: WAL off under Soft");
+        const auto snap = snapshot_audit_wal_stats();
+        CHECK(snap.replay_count == 0 && snap.crash_recovery_success == 0,
+              "4921 AC5: WAL-off replay/success stay 0");
+        CHECK(href_m(cs, "crash-recovery-success") == 0, "4921 AC5: stats stay 0");
+    }
+
+    std::error_code cec;
+    fs::remove_all(base, cec);
+    reset_all();
+}
+
 int main() {
     reset_all();
     const auto dir = make_tmpdir();
@@ -1283,6 +1454,8 @@ int main() {
     ac4641_audit_persist_dir_production_gate();
 
     ac4646_se_wal_append_miss_denies_mutate();
+
+    ac4921_bounded_replay_truncation();
 
     // Cleanup temp
     std::error_code ec;

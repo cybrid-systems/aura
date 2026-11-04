@@ -482,12 +482,30 @@ struct MutationAuditWal {
         if (out_replay) {
             out_replay->clear();
             std::vector<AuditWalRecord> newest_first;
-            for (std::uint32_t s = max_seg + 1; any && newest_first.size() < max_replay && s > 0;
-                 --s) {
+            // Issue #4921: the loop index is hoisted so the post-loop value
+            // marks the first UNREAD segment: after the scan stops, indices
+            // s-1 .. 0 were never read (s==0 means every segment was read).
+            std::uint32_t s = max_seg + 1;
+            for (; any && newest_first.size() < max_replay && s > 0; --s) {
                 const auto path =
                     (fs::path(new_dir) / ("audit-" + std::to_string(s - 1) + ".wal")).string();
                 auto part = read_segment_file(path);
                 newest_first.insert(newest_first.end(), part.rbegin(), part.rend());
+            }
+            // Issue #4921: replay-window truncation marker, mirroring the
+            // SecurityEventWal fix (#4660 / #4695). The window did not reach
+            // the oldest record on disk when the cap dropped records from the
+            // last-read segment, or when the scan hit max_replay with an
+            // existing segment still unread (seg_indices is the exact dirent
+            // list, so retention holes do not count).
+            bool replay_truncated = newest_first.size() > max_replay;
+            if (!replay_truncated && newest_first.size() >= max_replay) {
+                for (const auto n : seg_indices) {
+                    if (n < s) {
+                        replay_truncated = true;
+                        break;
+                    }
+                }
             }
             // Keep last max_replay (oldest→newest).
             if (newest_first.size() > max_replay)
@@ -495,7 +513,12 @@ struct MutationAuditWal {
             std::reverse(newest_first.begin(), newest_first.end());
             *out_replay = std::move(newest_first);
             g_audit_wal_metrics().audit_wal_replay_count.fetch_add(1, std::memory_order_relaxed);
-            if (!out_replay->empty())
+            // Issue #4921: a non-empty window is not crash recovery when it
+            // dropped records — the success counter is the completeness
+            // signal blame / replay consumers read, so a partial window must
+            // not publish it. Records outside the window still join by mid
+            // through find_by_provenance_mutation_id_scan_all_segments.
+            if (!out_replay->empty() && !replay_truncated)
                 g_audit_wal_metrics().audit_crash_recovery_success.fetch_add(
                     1, std::memory_order_relaxed);
         }
