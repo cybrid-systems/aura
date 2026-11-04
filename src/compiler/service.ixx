@@ -3179,16 +3179,57 @@ public:
     // form overwrote the last value) and exited 0.
     [[nodiscard]] EvalResult file_mode_statement_error_4899(EvalResult r, ast::FlatAST& flat,
                                                             ast::NodeId root) {
+        // Issue #4899 follow-up: always consume the IR entry escape stamp so a
+        // later eval never reads a stale one.
+        const auto escaped_stmt = evaluator_.take_ir_entry_escape_stmt(&flat);
         if (!r || !evaluator_.require_failure_is_diagnostic())
             return r;
         if (!types::is_error(*r) || types::is_string(*r))
             return r;
+        // Issue #4899 follow-up: locate the TOP-LEVEL form the error left
+        // through. A non-tail statement stamps its node on the escaping
+        // Return; a tail error value (the program's last form) has no escape,
+        // so it belongs to the last top-level form. Falling back to the root
+        // (always 1:1) made main report the error at the first form and, in
+        // direct mode, resume after it: forms 2..N ran a second time.
+        const auto loc_of = [&flat](ast::NodeId id) {
+            const auto nv = flat.get(id);
+            return aura::diag::SourceLocation{nv.line == 0 ? 1u : nv.line,
+                                              nv.col == 0 ? 1u : nv.col, 0};
+        };
+        ast::NodeId top_form = root;
+        if (root != ast::NULL_NODE && root < flat.size()) {
+            const auto rv = flat.get(root);
+            if (rv.tag == ast::NodeTag::Begin && !rv.children.empty()) {
+                top_form = rv.child(rv.children.size() - 1);
+                if (escaped_stmt != 0 && escaped_stmt < flat.size()) {
+                    // The top-level child that starts at or before the
+                    // escaped statement (children are in source order).
+                    const auto sv = flat.get(static_cast<ast::NodeId>(escaped_stmt));
+                    const auto before = [](std::uint32_t al, std::uint32_t ac, std::uint32_t bl,
+                                           std::uint32_t bc) {
+                        return al < bl || (al == bl && ac <= bc);
+                    };
+                    for (std::size_t i = 0; i < rv.children.size(); ++i) {
+                        const auto cv = flat.get(rv.child(i));
+                        if (cv.line == 0 || !before(cv.line, cv.col, sv.line, sv.col))
+                            break;
+                        top_form = rv.child(i);
+                    }
+                }
+            }
+        }
+        if (top_form != ast::NULL_NODE && top_form < flat.size())
+            evaluator_.set_file_resume_form_4899(loc_of(top_form));
         auto msg = evaluator_.soft_error_message(*r);
         auto loc = evaluator_.error_location(*r);
         if (!loc) {
-            const auto nv = flat.get(root);
-            loc = aura::diag::SourceLocation{nv.line == 0 ? 1u : nv.line, nv.col == 0 ? 1u : nv.col,
-                                             0};
+            if (escaped_stmt != 0 && escaped_stmt < flat.size())
+                loc = loc_of(static_cast<ast::NodeId>(escaped_stmt));
+            else if (top_form != ast::NULL_NODE && top_form < flat.size())
+                loc = loc_of(top_form);
+            else
+                loc = loc_of(root);
         }
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::TypeError, std::move(msg), *loc, root});

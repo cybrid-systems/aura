@@ -656,6 +656,16 @@ static bool form_mentions_symbol_4893(std::string_view f, std::string_view name)
     return false;
 }
 
+// Issue #4899 follow-up: form-relative location for a top-level form's error
+// VALUE on the force-soa per-form faces. The value's recorded location can
+// belong to another form's flat (a procedure defined by an earlier form), so
+// the per-form coordinates would point at the wrong text; name the failing
+// top-level form's head instead (1:2 for "(define x (car 5))", the same
+// column the whole-program face reports for a statement).
+static aura::diag::SourceLocation per_form_error_value_location_4899(std::string_view form) {
+    return aura::diag::SourceLocation{1u, (!form.empty() && form[0] == '(') ? 2u : 1u, 0};
+}
+
 // Issue #4865: split top-level forms so force-soa can evaluate them one at a
 // time. The define must run/register its evaluator value cell before a later
 // form's inline lambda is lowered; a single whole-file eval lowers every form
@@ -2706,6 +2716,17 @@ int main(int argc, char* argv[]) {
                 aura::compiler::TreeWalkerFallbackPolicy::Allow);
             for (auto& tf : split_top_level_forms_4865(content)) {
                 auto r = cs.eval(tf.text);
+                // Issue #4899 follow-up: a top-level form's error value is a
+                // located diagnostic, as on the whole-program --load face
+                // (`(define x (car 5))`, `(f)` whose body fails). It used to
+                // be dropped: no output, rc=0.
+                if (r && aura::compiler::types::is_error(*r) &&
+                    !aura::compiler::types::is_string(*r)) {
+                    aura::diag::Diagnostic d{aura::diag::ErrorKind::TypeError,
+                                             cs.evaluator().soft_error_message(*r)};
+                    d.location = per_form_error_value_location_4899(tf.text);
+                    r = std::unexpected(std::move(d));
+                }
                 if (!r) {
                     // Issue #4875: form-relative -> file coordinates.
                     auto d = r.error();
@@ -4220,15 +4241,24 @@ int main(int argc, char* argv[]) {
                 // the form's error VALUE (top-level `(set-car! q 5)`) was
                 // dropped here as an ordinary result: no diagnostic, rc=0.
                 // The whole-program face raises it; do the same.
+                // Issue #4899 follow-up: the same holds for EVERY error value
+                // a top-level form returns. The whole-program face turns a
+                // statement's error value into a located diagnostic (walker
+                // #4465, IR entry #4899); the per-form face only did so for
+                // effect-denied, so `(define x (car 5))` (the IR value-define
+                // bind returns the cell value) printed nothing and exited 0.
                 if (fr && aura::compiler::types::is_error(*fr) &&
                     !aura::compiler::types::is_string(*fr)) {
                     auto msg = cs.evaluator().soft_error_message(*fr);
-                    if (msg.starts_with("effect-denied:")) {
-                        aura::diag::Diagnostic d{aura::diag::ErrorKind::TypeError, std::move(msg)};
+                    const bool denied = msg.starts_with("effect-denied:");
+                    aura::diag::Diagnostic d{aura::diag::ErrorKind::TypeError, std::move(msg)};
+                    if (denied) {
                         if (auto el = cs.evaluator().error_location(*fr))
                             d.location = *el;
-                        fr = std::unexpected(std::move(d));
+                    } else {
+                        d.location = per_form_error_value_location_4899(form);
                     }
+                    fr = std::unexpected(std::move(d));
                 }
                 if (!fr && wrap_begin) {
                     // Map the location back onto the unwrapped form text.
