@@ -3962,7 +3962,14 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
         }
     }
 
-    return make_void();
+    // Issue #4900: a macro body whose evaluated value is a DATA list (for
+    // example the dotted-rest body "rest", which substitutes the list of
+    // remaining arguments) is not a form to call. Returning void here made
+    // the force-soa face print () for (m 1 2 3), while the static
+    // expansion face evaluates the same clone in place and yields (2 3).
+    // Keep the value: it is the body result, exactly what the static
+    // face produces. Only a pair with no callable head reaches this arm.
+    return data;
 }
 // ── Runtime type helpers for type annotation checking ────────
 static aura::core::TypeTag runtime_type_tag(const types::EvalValue& v) {
