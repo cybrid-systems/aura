@@ -2148,6 +2148,22 @@ public:
         std::erase(external_root_slots_for_densify_, slot);
     }
 
+    // Issue #4915: batch form of the forget above. One linear pass over the
+    // slot list for the whole batch. The per-slot form walked the full list
+    // once per forgotten slot (closure count x registered slots per densify
+    // commit), so mutate:rebind under force-soa grew superlinearly with the
+    // number of closures/frames allocated between rebinds.
+    void forget_external_root_slots_for_densify(const std::unordered_set<void**>& slots) noexcept {
+        if (slots.empty() || external_root_slots_for_densify_.empty())
+            return;
+        std::erase_if(external_root_slots_for_densify_, [&](void** s) {
+            if (!slots.contains(s))
+                return false;
+            external_root_slot_set_for_densify_.erase(s);
+            return true;
+        });
+    }
+
     // Issue #3055 / #3781: observe-only live pointer for the post-Moving
     // stale scan. Not a slot (no rewrite) and not cover (#3017). After
     // objects_moved>0, if `p` is still a this-window densify-old key the
@@ -5231,6 +5247,17 @@ public:
         for (auto& [_, arena] : arenas_) {
             if (arena)
                 arena->forget_external_root_slot_for_densify(slot);
+        }
+    }
+
+    // Issue #4915: batch forget across the group (one pass per arena).
+    void forget_external_root_slots_all(const std::unordered_set<void**>& slots) noexcept {
+        if (slots.empty())
+            return;
+        std::shared_lock<std::shared_mutex> lock(arenas_mtx_);
+        for (auto& [_, arena] : arenas_) {
+            if (arena)
+                arena->forget_external_root_slots_for_densify(slots);
         }
     }
 
