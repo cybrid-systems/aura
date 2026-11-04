@@ -268,6 +268,17 @@ static bool form_cannot_be_error(const FlatAST& flat, NodeId id) {
         case NodeTag::Lambda:
         case NodeTag::Quote:
             return true;
+        case NodeTag::Define:
+            // Issue #4899: a define's value is the value it binds. When that
+            // value is itself a lambda the statement yields a closure -- never
+            // an error value. This matters on the JIT face, whose values use
+            // the raw closure-id convention: id 33 (0x21) has the RefError tag
+            // shape and the escape check would return it as an error, dropping
+            // every later statement once a program has 34 closures (#4569's
+            // 200-define program is the canary). A define of an arbitrary
+            // expression still gets the escape.
+            return !flat.get(id).children.empty() &&
+                   form_cannot_be_error(flat, flat.get(id).child(0));
         default:
             return false;
     }
