@@ -709,8 +709,24 @@ jobs:
     - name: Install Trivy
       run: |
         mkdir -p "$RUNNER_TEMP/bin"
-        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-          | sh -s -- -b "$RUNNER_TEMP/bin" v0.72.0
+        # Pin the release asset and retry. The upstream install.sh runs its
+        # own curl with no retry/backoff, and a transient DNS failure there
+        # (curl exit 6) failed this job before the scan ever ran.
+        url="https://github.com/aquasecurity/trivy/releases/download/v0.72.0/trivy_0.72.0_Linux-64bit.tar.gz"
+        ok=0
+        for attempt in 1 2 3 4 5; do
+          if curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 \
+               --connect-timeout 20 \
+               -o "$RUNNER_TEMP/trivy.tar.gz" "$url"; then
+            ok=1
+            break
+          fi
+          echo "trivy download failed (attempt $attempt); retrying"
+          sleep $((attempt * 10))
+        done
+        test "$ok" = 1
+        tar -xzf "$RUNNER_TEMP/trivy.tar.gz" -C "$RUNNER_TEMP/bin" trivy
+        "$RUNNER_TEMP/bin/trivy" --version
         echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
     - name: Security scan
