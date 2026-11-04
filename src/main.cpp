@@ -4900,6 +4900,7 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             std::string last_out;
+            bool last_closure_4908 = false; // Issue #4908: see below
             bool any_error = false;
             std::vector<std::string> user_macros_4893;
             for (auto& tf : split_top_level_forms_4865(all_input)) {
@@ -5015,6 +5016,7 @@ int main(int argc, char* argv[]) {
                         // The value of the form before the error is not the
                         // program's value: print nothing (the default face).
                         last_out.clear();
+                        last_closure_4908 = false;
                         break;
                     }
                     continue;
@@ -5022,9 +5024,19 @@ int main(int argc, char* argv[]) {
                 // Mirror the whole-program face: only the LAST top-level
                 // form's value is printed, and a void last form prints
                 // nothing (an earlier non-void form must not leak out).
-                last_out = is_void(*fr) ? std::string{} : fmt_val(*fr, cs);
+                // Issue #4908: format_value warns "program returned an
+                // uncalled function" as it formats a closure, so formatting
+                // every form's value warned for an intermediate
+                // (eval-current) / lambda value the whole-program face never
+                // prints. Defer a top-level closure to the end.
+                last_closure_4908 = !is_void(*fr) && aura::compiler::types::is_closure(*fr);
+                last_out = is_void(*fr) || last_closure_4908 ? std::string{} : fmt_val(*fr, cs);
                 if (value_define || special_define)
                     cs.sync_soft_export_cells_for_ir();
+            }
+            if (last_closure_4908) {
+                std::println(std::cerr, "⚠ program returned an uncalled function");
+                last_out = "#<procedure>";
             }
             if (!last_out.empty())
                 std::println("{}", last_out);
