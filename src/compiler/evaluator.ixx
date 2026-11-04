@@ -1975,6 +1975,12 @@ namespace primitives_detail {
     // Issue #751: defined in evaluator_eval_flat.cpp (after Evaluator is complete).
     void bump_prim_error_unified_total() noexcept;
 
+    // Issue #4922: defined in evaluator_primitives_io.cpp. ~Evaluator drops
+    // the fds this instance minted (sys-open / tcp-*); the fd owner rows are
+    // process-wide, so teardown is the only place they can be released when
+    // a tenant never calls sys-close.
+    void release_minted_fds(const Evaluator& ev) noexcept;
+
     // Issue #3020: domain query:* hash builders. Size from planned key
     // count (next_pow2(max(planned*2, 64))); insert miss stamps
     // overflow=1 and bumps query_hash_overflow_total. Prefer
