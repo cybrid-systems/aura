@@ -1167,6 +1167,19 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                                        "hash-ref"))
                 return a.size() >= 3 ? a[2] : make_void();
             auto* ht = g_hash_tables[hidx];
+            // Issue #4905: the key slot's intern stamp gates the bytes too.
+            // Consult it BEFORE the hash reads them and before the miss
+            // error copies them; a refused key reads as absent (3-arg
+            // default) and the 2-arg raise names it "<key>".
+            if (is_string(a[1]) &&
+                !ev.inrange_string_tenant_allows(as_string_idx(a[1]),
+                                                 /*required_effects=*/0, "hash-ref")) {
+                if (a.size() >= 3)
+                    return a[2];
+                return make_primitive_error(string_heap, error_values,
+                                            "hash-ref: key <key> not found",
+                                            primitive_error_counter);
+            }
             // Issue #4612: probe by hash (open addressing) instead of
             // scanning every slot -- a miss used to cost O(capacity).
             const auto kh = eval_hash_key_hash(a[1], string_heap);
