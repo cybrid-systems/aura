@@ -3603,6 +3603,18 @@ public:
             nullptr, "stack-cover-dies-at-return", alloc);
         flat_ptr = arena_.create_with_cover<aura::ast::FlatAST>(
             nullptr, "stack-cover-dies-at-return", alloc);
+        // Issue #4901: when this eval returns, pin the macro view of its
+        // flat. A procedure it defined, called by a later eval after a
+        // macro was redefined, keeps the definition in effect here.
+        auto& ev_4901 = evaluator_;
+        struct MacroViewPin4901 {
+            aura::ast::FlatAST* f;
+            decltype(ev_4901)& ev;
+            ~MacroViewPin4901() {
+                if (f != nullptr)
+                    f->macro_view_seq_4901 = ev.macro_seq_4901();
+            }
+        } macro_view_pin_4901{flat_ptr, ev_4901};
         auto pr = aura::parser::parse_to_flat(input, *flat_ptr, *pool_ptr);
         if (pr.root == aura::ast::NULL_NODE) {
             return std::unexpected(parse_error_diag(pr));

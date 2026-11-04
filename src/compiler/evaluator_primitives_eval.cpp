@@ -562,6 +562,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                                                           flat_ptr,
                                                           pool_ptr,
                                                           body_id};
+                        ev.note_macro_def_4901(macro_name); // Issue #4901
                         ev.macros_epoch_4894_.fetch_add(1, std::memory_order_acq_rel);
                     }
                 }
