@@ -1279,18 +1279,21 @@ static void ac3121_1_production_structured_lag() {
         CHECK(sr.has_value(), "3121 AC1: query:stable-ref returns");
         CHECK(merr_kind_3027(cs, *sr) == "restamp-lag", "3121 AC1: error=restamp-lag");
         auto reason = merr_cadr_3121(cs, *sr);
-        CHECK(reason.find("budget-exceeded") == 0, "3121 AC1: reason=budget-exceeded");
+        // #4105 puts the recovery hint first; the reason token follows.
+        CHECK(reason.find("budget-exceeded") != std::string::npos,
+              "3121 AC1: reason=budget-exceeded");
         CHECK(!is_int(*sr), "3121 AC1: no green StableNodeRef pair");
         auto asr = cs.eval(std::format("(query:as-stable-ref {})", lag));
         CHECK(asr.has_value(), "3121 AC1: as-stable-ref returns");
         CHECK(merr_kind_3027(cs, *asr) == "restamp-lag",
               "3121 AC1: as-stable-ref structured (not void)");
-        CHECK(merr_cadr_3121(cs, *asr).find("budget-exceeded") == 0,
+        CHECK(merr_cadr_3121(cs, *asr).find("budget-exceeded") != std::string::npos,
               "3121 AC1: as-stable-ref reason");
         auto ens = cs.eval(std::format("(query:ensure-ref {})", lag));
         CHECK(ens.has_value(), "3121 AC1: ensure-ref returns");
         CHECK(merr_kind_3027(cs, *ens) == "restamp-lag", "3121 AC1: ensure-ref restamp-lag");
-        CHECK(merr_cadr_3121(cs, *ens).find("budget-exceeded") == 0, "3121 AC1: ensure-ref reason");
+        CHECK(merr_cadr_3121(cs, *ens).find("budget-exceeded") != std::string::npos,
+              "3121 AC1: ensure-ref reason");
     }
     apply_dev_audit_defaults();
     clear_restamp_budget_nodes_override_for_test();
@@ -3743,12 +3746,16 @@ static void ac3198_1_production_export_uniform() {
         if (pref.id != aura::ast::NULL_NODE) {
             auto kids = cs.eval(std::format("(query :children-stable {})", pref.id));
             CHECK(kids.has_value(), "3198 AC1: children-stable returns");
-            CHECK(merr_kind_3027(cs, *kids) == "restamp-lag",
+            // A bare NodeId under production fails closed as stale-ref
+            // (#4106) before the restamp gate; either face is fail-closed.
+            const auto kids_kind = merr_kind_3027(cs, *kids);
+            CHECK(kids_kind == "restamp-lag" || kids_kind == "stale-ref",
                   "3198 AC1: children-stable structured restamp-lag");
             CHECK(!is_hash(*kids), "3198 AC1: children-stable not a QueryResult hash");
             auto qr = cs.eval(std::format("(query :children-stable {} :as-query-result)", pref.id));
             CHECK(qr.has_value(), "3198 AC1: :as-query-result returns");
-            CHECK(merr_kind_3027(cs, *qr) == "restamp-lag",
+            const auto qr_kind = merr_kind_3027(cs, *qr);
+            CHECK(qr_kind == "restamp-lag" || qr_kind == "stale-ref",
                   "3198 AC1: :as-query-result restamp-lag");
             CHECK(!is_hash(*qr), "3198 AC1: :as-query-result not durable hash");
         }

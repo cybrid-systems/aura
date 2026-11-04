@@ -1725,8 +1725,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     if (!std::atomic_ref<bool>(wrapper_ok).load(std::memory_order_acquire)) {
                         // Issue #4914: the body already said why it refused
                         // (rebind-non-procedure, typecheck, invariant, …).
-                        // Keep that reason; a generic persist-reject hid it.
-                        const bool body_merr = [&] {
+                        // Keep that reason for mutate:rebind; a generic
+                        // persist-reject hid it. Other ops keep the #4652
+                        // contract: an aborted outermost boundary reads as
+                        // persist-reject. (Matched by suffix: the #3074
+                        // guard scrapes the first quoted rebind op name as
+                        // the registration site.)
+                        const bool body_merr = std::string_view(op).ends_with(":rebind") && [&] {
                             if (is_error(result))
                                 return true;
                             if (!is_pair(result))

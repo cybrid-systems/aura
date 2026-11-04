@@ -17340,17 +17340,30 @@ private:
         // in the entry file was reported at "io.aura:1:1". Put the entry
         // flat back once the requires are done.
         // Restore the hints as they were on entry (only when a require ran).
-        struct CurrentSourceRestore {
-            Evaluator& ev;
-            aura::ast::FlatAST* f;
-            aura::ast::StringPool* p;
-            bool ran = false;
+        class CurrentSourceRestore {
+        public:
+            CurrentSourceRestore(Evaluator& evaluator, aura::ast::FlatAST* flat,
+                                 aura::ast::StringPool* pool)
+                : ev_(&evaluator)
+                , flat_(flat)
+                , pool_(pool) {}
+            CurrentSourceRestore(const CurrentSourceRestore&) = delete;
+            CurrentSourceRestore& operator=(const CurrentSourceRestore&) = delete;
+            CurrentSourceRestore(CurrentSourceRestore&&) = delete;
+            CurrentSourceRestore& operator=(CurrentSourceRestore&&) = delete;
             ~CurrentSourceRestore() {
-                if (!ran)
+                if (!armed_)
                     return;
-                ev.set_current_flat(f);
-                ev.set_current_pool(p);
+                ev_->set_current_flat(flat_);
+                ev_->set_current_pool(pool_);
             }
+            void arm() { armed_ = true; }
+
+        private:
+            Evaluator* ev_;
+            aura::ast::FlatAST* flat_;
+            aura::ast::StringPool* pool_;
+            bool armed_ = false;
         } restore_current_source{evaluator_, evaluator_.current_flat(), evaluator_.current_pool()};
 
         // Top-level standalone require: execute, no body left.
@@ -17360,7 +17373,7 @@ private:
         // require Call in the AST so normal eval returns the error value
         // (and fail-closed load is observable to scripts / try-catch).
         if (is_require_call(flat, pool, root)) {
-            restore_current_source.ran = true;
+            restore_current_source.arm();
             auto rr = evaluator_.eval_flat(flat, pool, root, evaluator_.top_env());
             if (!rr || (types::is_error(*rr) && !types::is_string(*rr))) {
                 // leave the Call so normal eval surfaces the failure
@@ -17379,7 +17392,7 @@ private:
             std::vector<aura::ast::NodeId> non_require_children;
             for (auto c : v.children) {
                 if (is_require_call(flat, pool, c)) {
-                    restore_current_source.ran = true;
+                    restore_current_source.arm();
                     auto rr = evaluator_.eval_flat(flat, pool, c, evaluator_.top_env());
                     if (!rr || (rr && types::is_error(*rr) && !types::is_string(*rr))) {
                         pre_exec_kept_failed_require_ = true; // Issue #4918
