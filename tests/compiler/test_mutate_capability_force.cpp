@@ -541,7 +541,10 @@ void run_issue_4575() {
                        // no effect; the refusal comes at the call.
                        "(http-get \"http://127.0.0.1:9/x\")\n"
                        "(shell \"true\")\n");
-            auto deny = run_aura(bin, face, "soft /tmp/aura-4575-deny.aura");
+            // Issue #4909: a program file stops at its first uncaught error;
+            // this run checks every refusal, so it keeps going.
+            const std::string kg = std::string(face) + " AURA_KEEP_GOING=1";
+            auto deny = run_aura(bin, kg, "soft /tmp/aura-4575-deny.aura");
             const auto d = deny.out + deny.err;
             CHECK(d.find("effect-denied: write") != std::string::npos, "4575: CLI write denied");
             CHECK(d.find("op=std/ffi") != std::string::npos, "4575: CLI ffi denied");
@@ -549,7 +552,7 @@ void run_issue_4575() {
                   "4575: CLI network denied");
             CHECK(d.find("effect-denied: exec") != std::string::npos, "4575: CLI exec denied");
 
-            auto allow = run_aura(bin, face, "soft --allow write,ffi /tmp/aura-4575-deny.aura");
+            auto allow = run_aura(bin, kg, "soft --allow write,ffi /tmp/aura-4575-deny.aura");
             const auto a = allow.out + allow.err;
             CHECK(allow.err.find("allow=write,ffi") != std::string::npos,
                   "4575: banner records opt-in");

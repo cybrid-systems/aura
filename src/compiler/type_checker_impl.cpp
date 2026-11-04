@@ -8620,55 +8620,72 @@ bool InferenceEngine::note_uncovered_bidirectional_tag(FlatAST& flat, NodeId nod
 // Issue #3700: Quote peel — Production walks inner Calls/Lets so a
 // mutate under Quote re-infers; caches fresh_var (not Dynamic). Soft
 // keeps Dynamic and does not require a child walk.
-TypeId InferenceEngine::synthesize_flat_quote(FlatAST& flat, StringPool& pool, NodeView v) {
-    // Issue #3700
-    if (aura::compiler::typed_audit::production_defaults_active()) {
-        // Issue #4914: a quoted list whose head is not a symbol or a lambda
-        // — `(1 2 3)`, `((fast . 2) (slow . 5))` — can never be an
-        // application; it is data. Walk into it instead of typing it as a
-        // Call (that reported `cannot apply non-function Int` and failed
-        // the production solve for `(quote (1 2 3))`). A quoted ordinary
-        // application `(+ 1 "hi")` keeps the #3700 walk.
-        // A bare symbol is data too, and so is a list headed by a symbol
-        // that names nothing (`(fast . 2)`, `(vol-filter 20)`).
-        auto names_something = [&](NodeView hv) {
-            const auto nm = pool.resolve(hv.sym_id);
-            if (nm.empty() || nm[0] == ':')
-                return false;
-            const std::string s(nm);
-            if (env_.lookup(s).valid())
-                return true;
-            return registered_prim_probe_ && registered_prim_probe_(registered_prim_ctx_, s);
-        };
-        auto walk = [&](this const auto& self, NodeId id) -> void {
-            if (id == NULL_NODE || id >= flat.size())
-                return;
-            const auto cv = flat.get(id);
-            if (cv.tag == NodeTag::Variable)
-                return;                    // a quoted symbol
-            if (cv.tag == NodeTag::Pair) { // a quoted dotted pair `(a . b)`
-                for (std::size_t j = 0; j < cv.children.size(); ++j)
-                    self(cv.child(static_cast<std::uint32_t>(j)));
-                return;
-            }
-            if (cv.tag == NodeTag::Call && !cv.children.empty()) {
-                const auto head = cv.child(0);
-                const auto hv = head < flat.size() ? flat.get(head) : cv;
-                const bool application = hv.tag == NodeTag::Lambda ||
-                                         (hv.tag == NodeTag::Variable && names_something(hv));
-                if (!application) {
-                    for (std::size_t j = 0; j < cv.children.size(); ++j)
-                        self(cv.child(static_cast<std::uint32_t>(j)));
-                    return;
-                }
-            }
-            (void)synthesize_flat(flat, pool, id, cv);
-        };
-        for (std::size_t i = 0; i < v.children.size(); ++i)
-            walk(v.child(static_cast<std::uint32_t>(i)));
-        return cs_.fresh_var();
+// Issue #4914: queue a quoted node's children so they are visited in order.
+static void quote_queue_children_4914(const NodeView& nv, std::vector<NodeId>& work) {
+    for (std::size_t j = nv.children.size(); j-- > 0;)
+        work.push_back(nv.child(static_cast<std::uint32_t>(j)));
+}
+
+// Issue #4914: is the quoted node `id` an application (typed by the #3700
+// production walk) or data? A head that is a lambda, a symbol that names a
+// binding or primitive, or a call whose own head is an application makes an
+// application: `(+ 1 "hi")`, `((lambda ((x : Int)) x) "hi")`. Literal or
+// unknown heads are data: `(1 2 3)`, `((fast . 2) (slow . 5))`, `(vol-filter 20)`.
+template <class Env, class Probe>
+static bool quote_is_application_4914(const FlatAST& flat, StringPool& pool, NodeId id, Env& env,
+                                      const Probe& probe, const void* probe_ctx, int depth) {
+    if (id == NULL_NODE || id >= flat.size() || depth > 64)
+        return false;
+    const auto hv = flat.get(id);
+    if (hv.tag == NodeTag::Lambda)
+        return true;
+    if (hv.tag == NodeTag::Variable) {
+        const auto nm = pool.resolve(hv.sym_id);
+        if (nm.empty() || nm[0] == ':')
+            return false;
+        return nm == "lambda" || env.lookup(std::string(nm)).valid() ||
+               (probe && probe(probe_ctx, nm));
     }
-    return reg_.dynamic_type();
+    if (hv.tag == NodeTag::Call && !hv.children.empty())
+        return quote_is_application_4914(flat, pool, hv.child(0), env, probe, probe_ctx, depth + 1);
+    return false;
+}
+
+// Issue #4914: true when quoted `id` needs no typing as a whole: it is
+// absent, a symbol, or data whose children were queued on `work` (in order).
+template <class Env, class Probe>
+static bool quote_datum_children_4914(const FlatAST& flat, StringPool& pool, NodeId id,
+                                      std::vector<NodeId>& work, Env& env, const Probe& probe,
+                                      const void* probe_ctx) {
+    if (id == NULL_NODE || id >= flat.size())
+        return true;
+    const auto cv = flat.get(id);
+    if (cv.tag == NodeTag::Variable)
+        return true; // a quoted symbol
+    const bool data =
+        cv.tag == NodeTag::Pair ||
+        (cv.tag == NodeTag::Call && !cv.children.empty() &&
+         !quote_is_application_4914(flat, pool, cv.child(0), env, probe, probe_ctx, 0));
+    if (!data)
+        return false;
+    quote_queue_children_4914(cv, work);
+    return true;
+}
+
+TypeId InferenceEngine::synthesize_flat_quote(FlatAST& flat, StringPool& pool, NodeView v) {
+    // Issue #3700 (#4914: quoted data is walked as data)
+    if (!aura::compiler::typed_audit::production_defaults_active())
+        return reg_.dynamic_type();
+    std::vector<NodeId> work;
+    quote_queue_children_4914(v, work);
+    while (!work.empty()) {
+        const auto child_id = work.back();
+        work.pop_back();
+        if (!quote_datum_children_4914(flat, pool, child_id, work, env_, registered_prim_probe_,
+                                       registered_prim_ctx_))
+            (void)synthesize_flat(flat, pool, child_id, flat.get(child_id));
+    }
+    return cs_.fresh_var();
 }
 
 // Issue #903 Phase 1: ownership-op peels from synthesize_flat switch.

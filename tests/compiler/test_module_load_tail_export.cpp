@@ -235,7 +235,11 @@ static Cli4460 run_load_4750(const std::string& bin, const std::string& src,
     Cli4460 r;
     const char* outp = "/tmp/aura-4750-out.txt";
     const char* errp = "/tmp/aura-4750-err.txt";
-    std::string cmd = "timeout 15 env -u AURA_SANDBOX -u AURA_PIPELINE_STRICT -u AURA_PATH " +
+    std::string cmd = "timeout 15 env -u AURA_SANDBOX -u AURA_PIPELINE_STRICT -u AURA_PATH "
+                      // Issue #4909: a file now stops at its first uncaught
+                      // error; these cases pin the run-on contract (later
+                      // forms run, every error is reported) --keep-going keeps.
+                      "AURA_KEEP_GOING=1 " +
                       assignments + " '" + bin + "' --load '" + src + "' >'" + std::string(outp) +
                       "' 2>'" + std::string(errp) + "'";
     const int raw = std::system(cmd.c_str());
@@ -257,7 +261,11 @@ static Cli4460 run_file_4460(const std::string& bin, const std::string& src,
     const char* outp = "/tmp/aura-4460-out.txt";
     const char* errp = "/tmp/aura-4460-err.txt";
     // Options before NAME=VALUE. Soft face, isolated module path.
-    std::string cmd = "timeout 15 env -u AURA_SANDBOX -u AURA_PIPELINE_STRICT -u AURA_PATH " +
+    std::string cmd = "timeout 15 env -u AURA_SANDBOX -u AURA_PIPELINE_STRICT -u AURA_PATH "
+                      // Issue #4909: a file now stops at its first uncaught
+                      // error; these cases pin the run-on contract (later
+                      // forms run, every error is reported) --keep-going keeps.
+                      "AURA_KEEP_GOING=1 " +
                       assignments + " '" + bin + "' '" + src + "' >'" + std::string(outp) +
                       "' 2>'" + std::string(errp) + "'";
     const int raw = std::system(cmd.c_str());
@@ -511,7 +519,11 @@ static Cli4460 run_file_4467(const std::string& bin, const std::string& src,
     Cli4460 r;
     const char* outp = "/tmp/aura-4467-out.txt";
     const char* errp = "/tmp/aura-4467-err.txt";
-    std::string cmd = "timeout 15 env -u AURA_SANDBOX -u AURA_PIPELINE_STRICT -u AURA_PATH " +
+    std::string cmd = "timeout 15 env -u AURA_SANDBOX -u AURA_PIPELINE_STRICT -u AURA_PATH "
+                      // Issue #4909: a file now stops at its first uncaught
+                      // error; these cases pin the run-on contract (later
+                      // forms run, every error is reported) --keep-going keeps.
+                      "AURA_KEEP_GOING=1 " +
                       assignments + " '" + bin + "' '" + src + "' >'" + std::string(outp) +
                       "' 2>'" + std::string(errp) + "'";
     const int raw = std::system(cmd.c_str());

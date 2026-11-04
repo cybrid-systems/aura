@@ -117,40 +117,40 @@ namespace detail {
         std::uint32_t entry = 0;
     };
     inline SourceFileTable& source_file_table() {
-        static SourceFileTable t;
-        return t;
+        static SourceFileTable table;
+        return table;
     }
 } // namespace detail
 
 // Register (or refresh) a file; returns its id (>= 1).
 export inline std::uint32_t register_source_file(std::string path, std::string content) {
-    auto& t = detail::source_file_table();
-    std::lock_guard lock(t.mu);
-    for (std::size_t i = 0; i < t.files.size(); ++i) {
-        if (t.files[i].path == path) {
-            t.files[i].content = std::move(content);
-            return static_cast<std::uint32_t>(i + 1);
+    auto& table = detail::source_file_table();
+    const std::lock_guard lock(table.mu);
+    for (std::size_t idx = 0; idx < table.files.size(); ++idx) {
+        if (table.files[idx].path == path) {
+            table.files[idx].content = std::move(content);
+            return static_cast<std::uint32_t>(idx + 1);
         }
     }
-    t.files.push_back(SourceFile{std::move(path), std::move(content)});
-    return static_cast<std::uint32_t>(t.files.size());
+    table.files.push_back(SourceFile{std::move(path), std::move(content)});
+    return static_cast<std::uint32_t>(table.files.size());
 }
 
 // The entry program: locations with file_id 0 are shown in this file.
-export inline void set_entry_source_file(std::uint32_t id) {
-    auto& t = detail::source_file_table();
-    std::lock_guard lock(t.mu);
-    t.entry = id;
+export inline void set_entry_source_file(std::uint32_t file_id) {
+    auto& table = detail::source_file_table();
+    const std::lock_guard lock(table.mu);
+    table.entry = file_id;
 }
 
-export inline std::optional<SourceFile> source_file(std::uint32_t id) {
-    auto& t = detail::source_file_table();
-    std::lock_guard lock(t.mu);
-    if (id == 0)
-        id = t.entry;
-    if (id == 0 || id > t.files.size())
+export inline std::optional<SourceFile> source_file(std::uint32_t file_id) {
+    auto& table = detail::source_file_table();
+    const std::lock_guard lock(table.mu);
+    if (file_id == 0)
+        file_id = table.entry;
+    if (file_id == 0 || file_id > table.files.size())
         return std::nullopt;
-    return t.files[id - 1];
+    return table.files[file_id - 1];
 }
 
 // Issue #4916: the path a report shows — relative to the cwd when the
@@ -158,9 +158,9 @@ export inline std::optional<SourceFile> source_file(std::uint32_t id) {
 export inline std::string display_source_path(std::string path) {
     if (path.empty() || path[0] != '/')
         return path;
-    std::error_code ec;
-    auto cwd = std::filesystem::current_path(ec).string();
-    if (ec || cwd.empty())
+    std::error_code err;
+    auto cwd = std::filesystem::current_path(err).string();
+    if (err || cwd.empty())
         return path;
     if (!cwd.ends_with('/'))
         cwd += '/';
@@ -169,53 +169,53 @@ export inline std::string display_source_path(std::string path) {
     return path;
 }
 
-export inline std::string source_file_path(std::uint32_t id) {
-    auto& t = detail::source_file_table();
-    std::lock_guard lock(t.mu);
-    if (id == 0)
-        id = t.entry;
-    if (id == 0 || id > t.files.size())
+export inline std::string source_file_path(std::uint32_t file_id) {
+    auto& table = detail::source_file_table();
+    const std::lock_guard lock(table.mu);
+    if (file_id == 0)
+        file_id = table.entry;
+    if (file_id == 0 || file_id > table.files.size())
         return {};
-    return t.files[id - 1].path;
+    return table.files[file_id - 1].path;
 }
 
 // Bind a module FlatAST to its file. id 0 drops the binding.
-export inline void bind_flat_to_source_file(const void* flat, std::uint32_t id) {
-    auto& t = detail::source_file_table();
-    std::lock_guard lock(t.mu);
-    for (auto it = t.flats.begin(); it != t.flats.end(); ++it) {
-        if (it->first == flat) {
-            if (id == 0)
-                t.flats.erase(it);
+export inline void bind_flat_to_source_file(const void* flat, std::uint32_t file_id) {
+    auto& table = detail::source_file_table();
+    const std::lock_guard lock(table.mu);
+    for (auto pos = table.flats.begin(); pos != table.flats.end(); ++pos) {
+        if (pos->first == flat) {
+            if (file_id == 0)
+                table.flats.erase(pos);
             else
-                it->second = id;
+                pos->second = file_id;
             return;
         }
     }
-    if (id != 0)
-        t.flats.emplace_back(flat, id);
+    if (file_id != 0)
+        table.flats.emplace_back(flat, file_id);
 }
 
 // A module arena is being freed: drop every FlatAST bound to that file
 // so a later FlatAST at a reused address is not shown as that module.
 export inline void unbind_source_file_flats(std::string_view path) {
-    auto& t = detail::source_file_table();
-    std::lock_guard lock(t.mu);
-    std::uint32_t id = 0;
-    for (std::size_t i = 0; i < t.files.size(); ++i)
-        if (t.files[i].path == path)
-            id = static_cast<std::uint32_t>(i + 1);
-    if (id == 0)
+    auto& table = detail::source_file_table();
+    const std::lock_guard lock(table.mu);
+    std::uint32_t file_id = 0;
+    for (std::size_t idx = 0; idx < table.files.size(); ++idx)
+        if (table.files[idx].path == path)
+            file_id = static_cast<std::uint32_t>(idx + 1);
+    if (file_id == 0)
         return;
-    std::erase_if(t.flats, [id](const auto& e) { return e.second == id; });
+    std::erase_if(table.flats, [file_id](const auto& bound) { return bound.second == file_id; });
 }
 
 export inline std::uint32_t source_file_for_flat(const void* flat) {
-    auto& t = detail::source_file_table();
-    std::lock_guard lock(t.mu);
-    for (const auto& [f, id] : t.flats)
-        if (f == flat)
-            return id;
+    auto& table = detail::source_file_table();
+    const std::lock_guard lock(table.mu);
+    for (const auto& [bound_flat, bound_id] : table.flats)
+        if (bound_flat == flat)
+            return bound_id;
     return 0;
 }
 
@@ -242,21 +242,21 @@ export struct SourceLocation {
 // or empty when the message is not a refusal.
 export inline std::string effect_denied_effect(std::string_view msg) {
     constexpr std::string_view kEff = "effect-denied: ";
-    if (auto p = msg.find(kEff); p != std::string_view::npos) {
-        auto rest = msg.substr(p + kEff.size());
-        auto end = rest.find_first_of(" ;");
+    if (const auto pos = msg.find(kEff); pos != std::string_view::npos) {
+        const auto rest = msg.substr(pos + kEff.size());
+        const auto end = rest.find_first_of(" ;");
         return std::string(rest.substr(0, end));
     }
     constexpr std::string_view kCap = "capability denied: ";
-    if (auto p = msg.find(kCap); p != std::string_view::npos) {
-        auto rest = msg.substr(p + kCap.size());
+    if (const auto pos = msg.find(kCap); pos != std::string_view::npos) {
+        const auto rest = msg.substr(pos + kCap.size());
         if (rest.starts_with("io-read"))
             return "read";
         if (rest.starts_with("io-write"))
             return "write";
         if (rest.starts_with("exec"))
             return "exec";
-        auto end = rest.find_first_of(" ;");
+        const auto end = rest.find_first_of(" ;");
         return std::string(rest.substr(0, end));
     }
     return {};
@@ -281,9 +281,9 @@ export inline std::string effect_denied_hint(std::string_view effect) {
                                              : std::string_view(""),
                            effect);
     if (effect == "macro-self-evo")
-        return std::string("hint: user macros need MacroSelfEvo; for local development "
-                           "AURA_SANDBOX=off ('aura soft' does not grant it); in production "
-                           "grant MacroSelfEvo");
+        return {"hint: user macros need MacroSelfEvo; for local development "
+                "AURA_SANDBOX=off ('aura soft' does not grant it); in production "
+                "grant MacroSelfEvo"};
     return std::format("hint: for local development AURA_SANDBOX=off; in production grant the "
                        "{} effect",
                        effect.empty() ? std::string_view("missing") : effect);
@@ -366,7 +366,7 @@ export struct Diagnostic {
         if (blame) {
             // Display party in lowercase (historical format strings).
             // Issue #342: Narrowing — annotation_src carries predicate + cond NodeId.
-            auto party_ident = party_name(blame->party);
+            const auto party_ident = party_name(blame->party);
             std::string party_str(party_ident);
             for (char& c : party_str)
                 if (c >= 'A' && c <= 'Z')
@@ -384,7 +384,7 @@ export struct Diagnostic {
         // Issue #4909: every refusal carries one actionable hint line
         // (also when it is wrapped, e.g. inside a require failure).
         if (message.find("hint:") == std::string::npos) {
-            if (auto eff = effect_denied_effect(message); !eff.empty())
+            if (const auto eff = effect_denied_effect(message); !eff.empty())
                 out += "\n  " + effect_denied_hint(eff);
         }
 

@@ -181,6 +181,15 @@ std::string Evaluator::resolve_module_path(const std::string& path) const {
     return {};
 }
 
+// Issue #4918: the entry program's directory ("" when it has none).
+static std::string entry_base_dir() {
+    const auto entry = aura::diag::source_file_path(0);
+    const auto slash = entry.rfind('/');
+    if (slash == std::string::npos)
+        return {};
+    return slash == 0 ? std::string("/") : entry.substr(0, slash);
+}
+
 // Issue #4918: the directory "./x" resolves against right now.
 std::string Evaluator::module_base_dir() const {
     if (!module_base_dirs_.empty())

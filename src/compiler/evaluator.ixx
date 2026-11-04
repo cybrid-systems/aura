@@ -6877,13 +6877,6 @@ public:
     // Issue #4918: "./x" base — the running module's directory, else the
     // entry file's (diag entry source file), else "" (stdin / -e: cwd).
     std::string module_base_dir() const;
-    static std::string entry_base_dir() {
-        const auto entry = aura::diag::source_file_path(0);
-        const auto slash = entry.rfind('/');
-        if (slash == std::string::npos)
-            return {};
-        return slash == 0 ? std::string("/") : entry.substr(0, slash);
-    }
     std::vector<std::string> module_search_candidates(const std::string& path) const;
     // Issue #3174 / #3176: host prims for std/{io,fs,net,socket,git,process,ffi}
     // are deferred off the boot registrar (SlimSurface / primitives.md). Require
@@ -17676,7 +17669,7 @@ public:
         const auto idx = types::as_error_idx(err);
         if (idx == 0)
             return; // shared overflow / default slot
-        std::lock_guard<std::mutex> lock(
+        const std::lock_guard<std::mutex> lock(
             ::aura::compiler::primitives_detail::primitive_error_store_mutex());
         if (user_error_marks_.capacity() <
             ::aura::compiler::primitives_detail::kPrimitiveErrorStoreReserve)
