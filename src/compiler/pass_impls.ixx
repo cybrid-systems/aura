@@ -65,12 +65,21 @@ namespace aura::compiler {
 // opcode/operands for folding (replace / replace_bool / replace_f64),
 // type_id / narrow_evidence for propagation (there is no SoA
 // provenance column; analysis writes nothing).
-static aura::ir::BasicBlock materialize_soa_block_aos(const IRFunctionSoA& func,
-                                                      const BasicBlockSoA& block) {
-    aura::ir::BasicBlock out;
+// Issue #4927: the AoS scratch is reused across the whole module walk, so a
+// module with N dirty blocks no longer pays N BasicBlock vector allocations
+// per stage (one per block). Only a capacity growth reallocates, and that
+// cold-path event is counted for the regression test.
+export inline std::atomic<std::uint64_t> g_pure_wrap_aos_scratch_reallocs{0};
+
+static void materialize_soa_block_aos(const IRFunctionSoA& func, const BasicBlockSoA& block,
+                                      aura::ir::BasicBlock& out) {
     out.id = block.block_id;
     const auto span = block.end_idx > block.start_idx ? block.end_idx - block.start_idx : 0;
-    out.instructions.reserve(span);
+    out.instructions.clear();
+    if (out.instructions.capacity() < span) {
+        g_pure_wrap_aos_scratch_reallocs.fetch_add(1, std::memory_order_relaxed);
+        out.instructions.reserve(span);
+    }
     for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
         if (i >= func.opcodes_.size())
             break;
@@ -94,7 +103,6 @@ static aura::ir::BasicBlock materialize_soa_block_aos(const IRFunctionSoA& func,
             instr.source_marker = func.source_markers_[i];
         out.instructions.push_back(std::move(instr));
     }
-    return out;
 }
 
 // ── ComputeKindWrap — analysis pass (wraps pure function) ─────
@@ -173,13 +181,14 @@ public:
     void run_on_dirty_blocks_only(IRModuleV2& mod) {
         aura::compiler::ir_soa_migration::record_consumer_pass();
         results_.clear();
+        aura::ir::BasicBlock scratch; // Issue #4927: reused across functions/blocks.
         for (auto& func : mod.functions) {
             ComputeKindResult result;
             auto [runs, skips] = func.for_each_block(
                 [&](std::uint32_t /*bid*/, BasicBlockSoA& block) {
-                    auto instrs = materialize_soa_block_aos(func, block);
+                    materialize_soa_block_aos(func, block, scratch);
                     result.per_block_inst_kind.push_back(
-                        aura::compiler::compute_kind_instructions(instrs.instructions));
+                        aura::compiler::compute_kind_instructions(scratch.instructions));
                 },
                 /*dirty_only=*/true);
             if (runs > 0) {
@@ -580,10 +589,11 @@ public:
     void run(IRModuleV2& mod, bool dirty_blocks_only = true) {
         aura::compiler::ir_soa_migration::record_consumer_pass();
         folded_ = 0;
+        aura::ir::BasicBlock instrs; // Issue #4927: reused across functions/blocks.
         for (auto& func : mod.functions) {
             auto [runs, skips] = func.for_each_block(
                 [&](std::uint32_t /*bid*/, BasicBlockSoA& block) {
-                    auto instrs = materialize_soa_block_aos(func, block);
+                    materialize_soa_block_aos(func, block, instrs);
                     // Per-block known-map reset: cross-block ConstI64
                     // propagation must not leak (fold_function parity).
                     known_.clear();
@@ -2964,10 +2974,11 @@ public:
         extended_ops_propagated_ = 0;
         fixpoint_rounds_ = 0;
         const_ground_stamped_ = 0;
+        aura::ir::BasicBlock temp; // Issue #4927: reused across functions/blocks.
         for (auto& func : mod.functions) {
             auto [runs, skips] = func.for_each_block(
                 [&](std::uint32_t /*bid*/, BasicBlockSoA& block) {
-                    auto temp = materialize_soa_block_aos(func, block);
+                    materialize_soa_block_aos(func, block, temp);
                     run_on_block(temp);
                     // Write back the stamped columns — run_on_block mutates
                     // instr.type_id / instr.narrow_evidence only.

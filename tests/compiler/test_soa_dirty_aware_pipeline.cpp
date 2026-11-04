@@ -283,6 +283,50 @@ static void ac3583_4_no_invent_no_mangle() {
 
 } // namespace
 
+// ── Issue #4927 ────────────────────────────────────────────────────────
+// The default PureWrap pack used to materialize one AoS BasicBlock per dirty
+// block (a heap vector per stage per block). The scratch is now reused across
+// the module walk, so only a capacity growth reallocates.
+static IRModuleV2 make_multi_dirty_mod_4927(std::uint32_t block_count) {
+    IRModuleV2 mod;
+    auto fi = mod.add_function("f4927", 4);
+    for (std::uint32_t b = 0; b < block_count; ++b) {
+        auto bi = mod.add_block(fi);
+        mod.add_instruction(fi, IROpcode::ConstI64, {b, 7, 0, 0}, 0, 1, 0, 0);
+        mod.add_instruction(fi, IROpcode::Add, {100u + b, b, b, 0}, 0, 1, 0, 0);
+        mod.seal_block(fi, bi);
+    }
+    // Issue #4927 fixture: block_dirty_ has no entries until the emitter
+    // sizes it, so mark_all_blocks_dirty() alone is a no-op here.
+    auto& fn = mod.functions[fi];
+    fn.block_dirty_.assign(fn.blocks_.size(), 1);
+    fn.instruction_dirty_.assign(fn.opcodes_.size(), 1);
+    return mod;
+}
+
+static void ac4927_1_no_per_dirty_block_scratch_alloc() {
+    std::println("\n--- #4927 AC1: dirty-block count does not add AoS scratch allocs ---");
+    auto run_once = [](std::uint32_t blocks) -> std::uint64_t {
+        auto mod = make_multi_dirty_mod_4927(blocks);
+        const auto before =
+            aura::compiler::g_pure_wrap_aos_scratch_reallocs.load(std::memory_order_relaxed);
+        ComputeKindWrap ck;
+        ConstantFoldingWrap cf;
+        TypePropagationPass tp;
+        ShapeWrap sh;
+        CHECK(run_production_soa_pure_wrap_pack(mod, ck, cf, tp, sh),
+              "4927 AC1: SoA PureWrap pack ok");
+        return aura::compiler::g_pure_wrap_aos_scratch_reallocs.load(std::memory_order_relaxed) -
+               before;
+    };
+    const auto one = run_once(1);
+    const auto four = run_once(4);
+    std::println("  4927 AC1: scratch reallocs 1 dirty block={}, 4 dirty blocks={}", one, four);
+    CHECK(one > 0, "4927 AC1: cold scratch allocates at least once per materializing stage");
+    CHECK(four <= one, "4927 AC1: four dirty blocks add no per-block scratch allocation");
+    CHECK(four <= 3, "4927 AC1: at most one cold scratch allocation per materializing stage");
+}
+
 int run_test_soa_dirty_aware_pipeline() {
     std::println("=== Issue #2143: SoaDirtyAwarePass + run_dirty_pipeline ===");
 
@@ -1111,7 +1155,9 @@ int run_test_soa_dirty_aware_pipeline() {
     ac3583_3_soft_zero_cost();
     ac3583_4_no_invent_no_mangle();
 
-    std::println("\n=== #2143/#2907/#3488/#3502/#3583/#3689/#3701/#3822/#4007/#4516 results: "
+    ac4927_1_no_per_dirty_block_scratch_alloc();
+
+    std::println("\n=== #2143/#2907/#3488/#3502/#3583/#3689/#3701/#3822/#4007/#4516/#4927 results: "
                  "{} passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed ? 1 : 0;
