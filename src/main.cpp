@@ -1089,6 +1089,23 @@ static std::optional<int> front_door_4913(int& argc, char**& argv) {
         for (++i; i < argc; ++i)
             args.emplace_back(argv[i]);
         rewrite(std::move(args));
+        return std::nullopt;
+    }
+    // Issue #4908 / #4912: a plain `--load f` must honour the same preset as
+    // `aura f` (AURA_PRESET, or preset = "..." in ./aura.toml or next to f).
+    // The snapshot face never resolves presets, so the Restricted default
+    // denied what the file face granted. Route it through the file face,
+    // exactly as an explicit `--preset dev --load f` already is. Under
+    // AURA_SANDBOX=off a preset grants nothing, so keep the snapshot face.
+    if (i == 1 && argc > 2 && std::string_view(argv[1]) == "--load") {
+        const char* sb = std::getenv("AURA_SANDBOX");
+        const char* ev = std::getenv("AURA_PRESET");
+        const bool off = sb && std::string_view(sb) == "off";
+        if (!off && ((ev && *ev) || !read_toml_preset_4912(argv[2]).empty())) {
+            for (int j = 2; j < argc; ++j)
+                args.emplace_back(argv[j]);
+            rewrite(std::move(args));
+        }
     }
     return std::nullopt;
 }
