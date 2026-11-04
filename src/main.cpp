@@ -905,8 +905,12 @@ static int aura_test_4913(const std::filesystem::path& root, const std::vector<s
         std::println("no tests (tests/*.aura)");
         return 0;
     }
+    // Issue #4907: in the prebuilt bundle /proc/self/exe is the bundled
+    // loader (rt/ld.so); its bin/aura launcher exports itself as AURA_SELF.
     std::string self;
-    if (auto p = fs::read_symlink("/proc/self/exe", ec); !ec)
+    if (const char* s = std::getenv("AURA_SELF"); s && *s && ::access(s, X_OK) == 0)
+        self = s;
+    else if (auto p = fs::read_symlink("/proc/self/exe", ec); !ec)
         self = p.string();
     else if (const char* b = std::getenv("AURA_BIN"))
         self = b;

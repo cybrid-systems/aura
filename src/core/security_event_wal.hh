@@ -798,7 +798,7 @@ struct SecurityEventWal {
 // dev builds skip the persist layer entirely).
 [[nodiscard]] inline std::string resolve_security_event_wal_dir() noexcept {
     // Reuse mutation_audit_wal's resolution — AURA_MUTATION_AUDIT_WAL
-    // → AURA_PERSIST_DIR → $TMPDIR/aura-audit. Side-car lives next to
+    // → AURA_PERSIST_DIR → $TMPDIR/aura-audit-<euid>. Side-car lives next to
     // the audit-N.wal files.
     return ::aura::core::audit_wal::resolve_mutation_audit_wal_dir();
 }
