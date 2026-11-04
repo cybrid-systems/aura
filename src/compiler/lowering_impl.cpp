@@ -658,6 +658,56 @@ static std::uint32_t lower_flat_expr(
                     return result_slot;
                 }
 
+                // ── (when c body ...) / (unless c body ...) ──────────────
+                // Issue #4903: these are tree-walker special forms. Under
+                // force-soa (ContinueIr) a top-level `(when #t (display "a"))`
+                // reached this switch as an ordinary call: every argument
+                // (the body too) was evaluated eagerly, then `when` itself was
+                // called -> "cannot call: when", rc=1, and a named-let loop
+                // guarded by `when` never stopped. Lower them as the `if`
+                // they are: body in sequence on the taken arm (non-tail error
+                // values escape like a Begin body, #4552/#4899), unspecified
+                // value on the other arm.
+                if ((callee_name == "when" || callee_name == "unless") && v.children.size() >= 2) {
+                    const bool is_when = callee_name == "when";
+                    auto cond_slot =
+                        lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
+                    auto body_blk = state.alloc_block();
+                    auto skip_blk = state.alloc_block();
+                    auto merge_blk = state.alloc_block();
+                    if (is_when)
+                        state.emit(IROpcode::Branch, cond_slot, body_blk, skip_blk);
+                    else
+                        state.emit(IROpcode::Branch, cond_slot, skip_blk, body_blk);
+                    auto phi_slot = state.alloc_local();
+                    state.cur_block = body_blk;
+                    std::uint32_t body_val = 0;
+                    if (v.children.size() == 2) {
+                        body_val = state.alloc_local();
+                        state.emit(IROpcode::ConstVoid, body_val, 1);
+                    } else {
+                        for (std::size_t bi = 2; bi < v.children.size(); ++bi) {
+                            const auto c = v.child(bi);
+                            body_val = lower_flat_expr(state, flat, pool, c, cache, cache_hits);
+                            if (bi + 1 < v.children.size() && !form_cannot_be_error(flat, c)) {
+                                const auto prev_source = state.current_source_id;
+                                state.current_source_id = c;
+                                emit_error_escape(state, body_val);
+                                state.current_source_id = prev_source;
+                            }
+                        }
+                    }
+                    state.emit(IROpcode::Local, phi_slot, body_val);
+                    state.emit(IROpcode::Jump, merge_blk);
+                    state.cur_block = skip_blk;
+                    auto skip_val = state.alloc_local();
+                    state.emit(IROpcode::ConstVoid, skip_val, 1);
+                    state.emit(IROpcode::Local, phi_slot, skip_val);
+                    state.emit(IROpcode::Jump, merge_blk);
+                    state.cur_block = merge_blk;
+                    return phi_slot;
+                }
+
                 // ── (with-arena (size) body ...) ──────────────────────
                 if (callee_name == "with-arena") {
                     auto result_slot = state.alloc_local();
