@@ -1,0 +1,3 @@
+;; workflow.aura — the work each task does.
+(define (square n) (* n n))
+(define (summarize xs) (format "~a results" (length xs)))

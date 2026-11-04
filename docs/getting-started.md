@@ -1,0 +1,42 @@
+# Getting started: projects and capabilities (#4912, #4913)
+
+## A project in three commands
+
+    aura new evolve demo      # or: app (modules + tests), agent (orch workflow)
+    cd demo
+    aura run                  # writes out/report.html
+
+`aura new` writes `aura.toml`, the program, `tests/` with golden files, a
+`.github/workflows/ci.yml` and a README. In a project:
+
+| command | what it does |
+|---|---|
+| `aura run [entry.aura]` | runs `entry` from `aura.toml` (default `main.aura`) with the project root as cwd and the project's `preset` |
+| `aura test` | runs every `tests/*.aura` and compares stdout with the `.golden` beside it; `--update` rewrites the goldens |
+| `(require "lib/x")` | resolves from the project root; `"./x"` stays relative to the requiring file |
+
+`aura.toml` keys read today: `entry`, `preset`, `out`.
+
+## Capability presets
+
+The default sandbox is Restricted: a program can read, but it cannot rewrite
+its live AST (`mutate`) or write files. Pick a preset instead of turning the
+sandbox off:
+
+| scenario | run with |
+|---|---|
+| a self-evolving program on your machine (`set-code`, `mutate:rebind`, `ast:restore`, `write-file`) | `--preset dev` |
+| the same program in CI | `--preset ci` (same as dev today; write is not yet limited to `out/`) |
+| a service / untrusted code | `--preset prod` (the Restricted default; takes no `--grant`) |
+| only one extra capability | `--grant write` (or `mutate`, `ffi`, `exec`, `network`) |
+| dev minus something | `--preset dev --deny write` |
+
+The preset can also come from `AURA_PRESET=dev` or `preset = "dev"` in
+`aura.toml` (the flag wins, then the env var, then the file). Every run with a
+preset prints one line naming the effective capabilities, for example
+
+    aura: preset=dev sandbox=restricted caps=mutate,read,write (tenant=0, ws=0)
+
+`--quiet` drops it. `macro-self-evo`, `tenant-admin` and `syscall` are never
+granted from the command line; they remain host-side grants (#4575).
+`AURA_SANDBOX=off` still turns every check off, for local debugging only.

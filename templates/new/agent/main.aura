@@ -1,0 +1,11 @@
+;; main.aura — an orch workflow (aura run). Stages run in order; the tasks
+;; inside one stage run in parallel, each on its own region key (keys must not
+;; overlap, otherwise the stage is refused as "missing-or-overlap-keys").
+(require "workflow")
+
+(define r
+  (orch:run-workflow
+   (vector (hash "tasks" (vector (lambda () (square 1)) (lambda () (square 2)) (lambda () (square 3)))
+                 "region-keys" (vector 1 2 3))
+           (hash "tasks" (vector (lambda () (summarize (list 1 4 9))))))))
+(display (format "stages ok ~a, failed ~a\n" (hash-ref r "stages-ok") (hash-ref r "stages-failed")))

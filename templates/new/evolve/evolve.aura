@@ -1,0 +1,24 @@
+;; evolve.aura — propose → ast:snapshot → mutate:rebind → gate → KEEP or ast:restore
+(define seed 1)
+(define (rand3!)
+  (set! seed (modulo (+ (* seed 1103515245) 12345) 2147483648))
+  (- (modulo (quotient seed 65536) 3) 1))
+(define (propose p) (list (+ (car p) (rand3!)) (+ (cadr p) (rand3!))))
+(define (params->src p) (format "(quote (~a ~a))" (car p) (cadr p)))
+
+;; Returns a list of rows (step decision params fitness), newest first.
+(define (evolve! steps)
+  (let loop ((i 1) (rows '()))
+    (if (> i steps)
+        rows
+        (let* ((cur (live-params))
+               (cand (propose cur))
+               (snap (ast:snapshot (format "step-~a" i)))
+               (ok (mutate:rebind "params" (params->src cand) "evolve")))
+          (eval-current)
+          (if (and (eq? ok #t) (keep? cur cand))
+              (loop (+ i 1) (cons (list i "KEEP" cand (fitness cand)) rows))
+              (begin
+                (ast:restore snap)
+                (eval-current)
+                (loop (+ i 1) (cons (list i "ROLLBACK" cand (fitness cand)) rows))))))))

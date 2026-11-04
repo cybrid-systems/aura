@@ -1,0 +1,16 @@
+;; main.aura — live-AST self-evolution with a gate and an HTML report (aura run).
+(require "gate")
+(require "evolve")
+(require "report")
+
+;; The evolving program lives in the live AST; mutate:rebind rewrites it.
+(set-code "(define params (quote (0 0)))")
+(eval-current)
+(define (live-params) params)
+
+(define rows (reverse (evolve! 40)))
+(define keeps (length (filter (lambda (r) (equal? (cadr r) "KEEP")) rows)))
+(write-report! "out" rows (live-params))
+(display (format "evolved ~a steps: ~a KEEP, ~a ROLLBACK\n" (length rows) keeps (- (length rows) keeps)))
+(display (format "params ~a fitness ~a\n" (live-params) (fitness (live-params))))
+(display "report: out/report.html (audit: out/audit.tsv)\n")

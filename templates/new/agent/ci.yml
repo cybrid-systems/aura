@@ -1,0 +1,17 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/cybrid-systems/aura:latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: aura test
+      - run: aura run
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: out
+          path: out/
+          if-no-files-found: ignore
