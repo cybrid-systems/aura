@@ -12805,10 +12805,32 @@ public:
         // the gate declaration). A nested dispatch inside this run takes the
         // gate itself, and a sibling body may be inside exec_mtx waiting for
         // it - holding both is the inversion.
+        // Issue #4904: the value's own computation can apply a closure it
+        // just minted through the evaluator - (define r (parallel-intend
+        // (vector (lambda () 1)))) hands the thunk to a worker that calls
+        // apply_closure -> dispatch_ir_define_closure. The binding was only
+        // published as an owner AFTER execute() returned, so that dispatch
+        // found no owner and every task came back "apply-failed" (stage
+        // status partial / ok #f in orch:run-workflow). Publish it under a
+        // run-scoped key for the duration of the run; the name's previous
+        // owner stays registered so the old value's closures still resolve.
+        const std::string pending_key_4904 = std::string("\x01pending-4904:") + name_str;
+        ir_value_define_closure_owners_[pending_key_4904] = binding;
+        struct PendingOwnerErase4904 {
+            CompilerService* self;
+            std::unique_lock<std::recursive_mutex>& gate;
+            const std::string& key;
+            ~PendingOwnerErase4904() {
+                if (!gate.owns_lock())
+                    self->relock_ir_gate_(gate); // #4765
+                self->ir_value_define_closure_owners_.erase(key);
+            }
+        } pending_erase_4904{this, ir_gate, pending_key_4904};
         if (ir_gate.owns_lock())
             ir_gate.unlock();
         auto result = binding->interpreter->execute();
         relock_ir_gate_(ir_gate); // #4765
+        ir_value_define_closure_owners_.erase(pending_key_4904);
         publish_ir_closure_cursor_(binding->interpreter->next_closure_id());
         if (!result)
             return false;
@@ -13865,10 +13887,17 @@ public:
             // Issue #4815: a closure a top-level VALUE define minted while
             // computing its value (bind_value_define_via_ir keeps that
             // interpreter alive while it owns closures).
-            for (auto& kv : ir_value_define_closure_owners_) {
-                if (!kv.second || !kv.second->interpreter)
+            // Issue #4904: snapshot the owners under the gate. The loop drops
+            // the gate for every run, and a value define registers / erases
+            // its run-scoped owner meanwhile (bind_value_define_via_ir), so
+            // iterating the live map across the unlock could rehash under us.
+            std::vector<std::shared_ptr<IRDefineEnvBinding>> value_owners_4904;
+            value_owners_4904.reserve(ir_value_define_closure_owners_.size());
+            for (auto& kv : ir_value_define_closure_owners_)
+                value_owners_4904.push_back(kv.second);
+            for (const auto& pinned : value_owners_4904) {
+                if (!pinned || !pinned->interpreter)
                     continue;
-                const std::shared_ptr<IRDefineEnvBinding> pinned = kv.second;
                 if (ir_gate.owns_lock())
                     ir_gate.unlock();
                 types::EvalValue out{};
