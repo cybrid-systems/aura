@@ -649,6 +649,14 @@ public:
             return false; // #2946: typed deny — do not push under contention
         if (!h.ok)
             return false; // failed spawn stub: no fiber / reservation to own
+        // Issue #4923: an import_proxy is an observation view over a
+        // source-owned raw Fiber* (#4756: the importer must not dereference
+        // it). Putting that row on this supervision plane would let
+        // cancel_all / ~AgentScope cancel the SOURCE Evaluator's body, and
+        // deref a dangling Fiber* once the source Scheduler is gone. Same
+        // boundary as join_agent: refuse before the push, handles_ unchanged.
+        if (h.import_proxy)
+            return false;
         // Production admit walk mirrors spawn (#3497 pending / #4393
         // live-running): a second row for a name the scope already holds
         // would steal first-match find. Soft / Off: append-only skip.
@@ -1558,7 +1566,13 @@ private:
             }
         }
         // Issue #2782: null fiber after Scheduler destroy — skip cancel.
+        // Issue #4923: defense in depth — a proxy row is a borrowed view of
+        // another Evaluator's body, never this scope's cancel authority.
+        // adopt rejects import_proxy; a row that predates that guard (or a
+        // future caller) must still not cancel/ deref the source fiber.
         for (auto& h : handles_) {
+            if (h.import_proxy)
+                continue;
             if (h.fiber && !h.fiber->is_done())
                 h.fiber->request_cancel();
         }
