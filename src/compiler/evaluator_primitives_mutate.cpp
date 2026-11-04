@@ -3433,7 +3433,18 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // above; the batch's own appends are the records with
             // mutation_id >= this capture.
             const std::uint64_t initial_mutation_id = flat.next_mutation_id();
+            // Issue #4926: the batch applies the same template to every match;
+            // a failed parse appends SoA rows that rollback_atomic_batch does
+            // NOT reclaim (metadata snapshot only). Capture the pre-batch size
+            // so every abort return can free those template orphans, same
+            // shape as the single-op path (#4652).
+            const std::size_t size_before_batch = static_cast<std::size_t>(flat.size());
             flat.begin_atomic_batch();
+            auto free_batch_parse_orphans = [&flat, size_before_batch]() {
+                if (size_before_batch < static_cast<std::size_t>(flat.size()))
+                    (void)flat.free_orphan_nodes_from(
+                        static_cast<aura::ast::NodeId>(size_before_batch));
+            };
 
             struct PartialFail {
                 aura::ast::NodeId id;
@@ -3459,6 +3470,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                                                     &was_macro)) {
                     flat.rollback_since(initial_mutation_id);
                     flat.rollback_atomic_batch();
+                    free_batch_parse_orphans();
                     ok = false;
                     return *err;
                 }
@@ -3567,6 +3579,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             if (!partial_fails.empty() || !validate_pass) {
                 flat.rollback_since(initial_mutation_id);
                 flat.rollback_atomic_batch();
+                free_batch_parse_orphans();
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                     m->query_replace_batch_partial_fail_total.fetch_add(1,
                                                                         std::memory_order_relaxed);

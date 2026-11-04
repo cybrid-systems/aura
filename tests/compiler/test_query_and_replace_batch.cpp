@@ -310,6 +310,52 @@ static void ac3509_batch_hygiene_gate_source() {
           "3509 AC3: single query-and-replace kept");
 }
 
+// ── Issue #4926 ────────────────────────────────────────────────────────
+// The batch abort rolls the mutation log and metadata back but does not free
+// the SoA rows its template parsed. A top-level eval closes its boundary right
+// after the abort, and the boundary's dual-topology restore happens to reclaim
+// them; put the batch and the follow-up query in ONE top-level (begin ...) and
+// the orphans are live and servable while the boundary is still open.
+static void ac4926_1_batch_abort_frees_parse_orphans() {
+    std::println("\n--- #4926 AC1: batch abort frees template parse orphans ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(Ev(cs, "(define (f x) (f x) (f x))").has_value(), "4926 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4926 AC1: eval-current");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "4926 AC1: workspace");
+    if (!ws)
+        return;
+    const auto size_before = ws->size();
+    const auto freed_before = ws->ghost_orphan_nodes_freed();
+    // Same boundary: batch abort, then a tag query that would serve the
+    // unlinked template LiteralInt rows through the (tag, arity) index.
+    auto r = cs.eval("(begin (mutate:query-and-replace-batch (query:where :callee \"f\") \"1)\") "
+                     "(length (query:filter (query:where :tag \"LiteralInt\"))))");
+    auto* ws_after = cs.evaluator().workspace_flat();
+    CHECK(ws_after == ws, "4926 AC1: same flat");
+    if (!ws_after)
+        return;
+    const bool zero_orphans = r.has_value() && aura::compiler::types::is_int(*r) &&
+                              aura::compiler::types::as_int(*r) == 0;
+    const auto appended = static_cast<std::size_t>(ws_after->size() - size_before);
+    std::println(
+        "  4926 AC1: flat {} -> {} ({} appended), freed {} -> {}, LiteralInt matches {}",
+        size_before, ws_after->size(), appended, freed_before, ws_after->ghost_orphan_nodes_freed(),
+        r.has_value() && aura::compiler::types::is_int(*r) ? aura::compiler::types::as_int(*r)
+                                                           : -1);
+    CHECK(zero_orphans, "4926 AC1: the aborted batch left nothing queryable behind");
+    CHECK(appended > 0, "4926 AC1: the failed batch appended SoA rows");
+    CHECK(ws_after->ghost_orphan_nodes_freed() > freed_before,
+          "4926 AC1: the template parse orphans were freed");
+    for (std::size_t id = size_before; id < ws_after->size(); ++id) {
+        CHECK(ws_after->is_free_slot(id),
+              std::format("4926 AC1: appended row {} is a free slot (not a live orphan)", id));
+    }
+    apply_dev_audit_defaults();
+}
+
 } // namespace
 
 int run_test_query_and_replace_batch() {
@@ -326,6 +372,7 @@ int run_test_query_and_replace_batch() {
     ac2527_7_query_surface_keys();
     ac2527_8_source_doc_comment();
     ac3509_batch_hygiene_gate_source();
+    ac4926_1_batch_abort_frees_parse_orphans();
     std::print("=== Total: {} passed, {} failed ===\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
