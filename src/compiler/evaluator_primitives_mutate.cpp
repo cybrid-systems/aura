@@ -1722,9 +1722,26 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 // wrapper_ok stays true, return unchanged.
                 if (!guard_exempt) {
                     wrapper_guard.reset();
-                    if (!std::atomic_ref<bool>(wrapper_ok).load(std::memory_order_acquire))
+                    if (!std::atomic_ref<bool>(wrapper_ok).load(std::memory_order_acquire)) {
+                        // Issue #4914: the body already said why it refused
+                        // (rebind-non-procedure, typecheck, invariant, …).
+                        // Keep that reason; a generic persist-reject hid it.
+                        const bool body_merr = [&] {
+                            if (is_error(result))
+                                return true;
+                            if (!is_pair(result))
+                                return false;
+                            const auto p0 = ev.pairs_[as_pair_idx(result)];
+                            if (!is_string(p0.car) || !is_pair(p0.cdr))
+                                return false;
+                            const auto p1 = ev.pairs_[as_pair_idx(p0.cdr)];
+                            return is_string(p1.car) && is_int(p1.cdr) && as_int(p1.cdr) == 0;
+                        }();
+                        if (body_merr)
+                            return result;
                         return mev("persist-reject",
                                    std::string(op) + " aborted; topology restored");
+                    }
                 }
                 // Issue #4357: the rebind body guard is nested, so it does
                 // not drain. The outermost dtor above just did. A one-line

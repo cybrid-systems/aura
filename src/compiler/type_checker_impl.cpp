@@ -6391,7 +6391,22 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
             // unless they are equal (consistent_unify's gradual-core fallback
             // silently says Int ~ String is OK, which violates strict mode).
             // In non-strict mode, keep the original gradual behavior.
-            bool arg_exp_unify = cs_.consistent_unify(arg_type, ft.args[i]);
+            // Issue #4914: a ground, non-linear argument passed to a
+            // parameter typed Any (e.g. `list`, `cons`, `display`) is an
+            // upcast and always safe. The #3622 production face exists to
+            // stop a Dynamic VALUE from flowing into a static slot; applying
+            // it to this direction rejected `(list 1 2)` under `aura soft`
+            // (and recorded a CONSISTENT delta that the solver then failed).
+            bool arg_exp_unify = false;
+            {
+                const auto p_top = cs_.find(ft.args[i]);
+                const auto a_top = cs_.find(arg_type);
+                if (p_top == reg_.dynamic_type() && !reg_.is_var(a_top) &&
+                    reg_.linear_of(a_top) == nullptr)
+                    arg_exp_unify = true;
+                else
+                    arg_exp_unify = cs_.consistent_unify(arg_type, ft.args[i]);
+            }
             if (strict_ && arg_exp_unify) {
                 // Issue #79: in strict mode, second-guess the "ground types
                 // are consistent" fallback in consistent_unify (line ~408).
@@ -8608,11 +8623,49 @@ bool InferenceEngine::note_uncovered_bidirectional_tag(FlatAST& flat, NodeId nod
 TypeId InferenceEngine::synthesize_flat_quote(FlatAST& flat, StringPool& pool, NodeView v) {
     // Issue #3700
     if (aura::compiler::typed_audit::production_defaults_active()) {
-        for (std::size_t i = 0; i < v.children.size(); ++i) {
-            auto child_id = v.child(static_cast<std::uint32_t>(i));
-            if (child_id != NULL_NODE)
-                (void)synthesize_flat(flat, pool, child_id, flat.get(child_id));
-        }
+        // Issue #4914: a quoted list whose head is not a symbol or a lambda
+        // — `(1 2 3)`, `((fast . 2) (slow . 5))` — can never be an
+        // application; it is data. Walk into it instead of typing it as a
+        // Call (that reported `cannot apply non-function Int` and failed
+        // the production solve for `(quote (1 2 3))`). A quoted ordinary
+        // application `(+ 1 "hi")` keeps the #3700 walk.
+        // A bare symbol is data too, and so is a list headed by a symbol
+        // that names nothing (`(fast . 2)`, `(vol-filter 20)`).
+        auto names_something = [&](NodeView hv) {
+            const auto nm = pool.resolve(hv.sym_id);
+            if (nm.empty() || nm[0] == ':')
+                return false;
+            const std::string s(nm);
+            if (env_.lookup(s).valid())
+                return true;
+            return registered_prim_probe_ && registered_prim_probe_(registered_prim_ctx_, s);
+        };
+        auto walk = [&](this const auto& self, NodeId id) -> void {
+            if (id == NULL_NODE || id >= flat.size())
+                return;
+            const auto cv = flat.get(id);
+            if (cv.tag == NodeTag::Variable)
+                return;                    // a quoted symbol
+            if (cv.tag == NodeTag::Pair) { // a quoted dotted pair `(a . b)`
+                for (std::size_t j = 0; j < cv.children.size(); ++j)
+                    self(cv.child(static_cast<std::uint32_t>(j)));
+                return;
+            }
+            if (cv.tag == NodeTag::Call && !cv.children.empty()) {
+                const auto head = cv.child(0);
+                const auto hv = head < flat.size() ? flat.get(head) : cv;
+                const bool application = hv.tag == NodeTag::Lambda ||
+                                         (hv.tag == NodeTag::Variable && names_something(hv));
+                if (!application) {
+                    for (std::size_t j = 0; j < cv.children.size(); ++j)
+                        self(cv.child(static_cast<std::uint32_t>(j)));
+                    return;
+                }
+            }
+            (void)synthesize_flat(flat, pool, id, cv);
+        };
+        for (std::size_t i = 0; i < v.children.size(); ++i)
+            walk(v.child(static_cast<std::uint32_t>(i)));
         return cs_.fresh_var();
     }
     return reg_.dynamic_type();
@@ -11102,6 +11155,25 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         }
         if (ancestor_in_affected) {
             continue; // ancestor's recursive walk will cover us
+        }
+        // Issue #4914: a node under a Quote is datum, not code. The cone
+        // can hold a quoted list's inner Call node (the rebind parse marks
+        // every new node); inferring it as an application reported
+        // `cannot apply non-function Int` for `(quote (1 2 3))` and failed
+        // the production solve. Quote itself types the whole datum.
+        {
+            bool under_quote = false;
+            NodeId cur = flat.parent_of(id);
+            std::size_t safety = 0;
+            while (cur != aura::ast::NULL_NODE && cur < flat.size() && safety++ < flat.size()) {
+                if (flat.get(cur).tag == aura::ast::NodeTag::Quote) {
+                    under_quote = true;
+                    break;
+                }
+                cur = flat.parent_of(cur);
+            }
+            if (under_quote)
+                continue;
         }
         // Issue #466: preserve ConstraintSystem across affected
         // nodes; first node full-solves + mark_clean, subsequent

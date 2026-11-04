@@ -6087,8 +6087,20 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         } else if (ev_->panic_auto_rollback_) {
             (void)ev_->restore_panic_checkpoint(); // releases on successful restore
             panic_handled = true;
+        } else if (typed_audit::production_defaults_active()) {
+            // Issue #4914: a failed outermost exit has already run the
+            // abort-restore SSOT (#3423), so the workspace topology is back
+            // at the pre-mutate state and the checkpoint guards nothing.
+            // Leaving it live with the GC defer armed failed the densify
+            // panic_residual axis, and densify-throttle then refused every
+            // later admit — one rejected rebind wedged the workspace for
+            // good (`aura soft`). Accept the restored state instead. Not
+            // restore_panic_checkpoint(): that truncates the value arenas
+            // under results the program already holds (the reject value).
+            ev_->commit_panic_checkpoint(); // includes release_gc_defer once
+            panic_handled = true;
         }
-        // else partial recovery: leave checkpoint + defer armed
+        // else (Soft/Off) partial recovery: leave checkpoint + defer armed
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
             m->outermost_exit_phase3_gc_defer_total.fetch_add(1, std::memory_order_relaxed);
     }

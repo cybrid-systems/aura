@@ -740,26 +740,33 @@ Evaluator::enforce_linear_boundary_consistency(std::uint8_t path, bool mark_all_
                     continue;
                 bool drop = false;
                 std::uint8_t reason = kLinearViolReasonEpochStale;
-                if (cl.bridge_epoch != cur_bridge) {
-                    drop = true;
-                } else if (cl.env_id != NULL_ENV_ID && cl.env_id < env_frames_.size()) {
-                    const auto& fr = env_frames_[cl.env_id];
-                    // Stale frame version under concurrent mutate/compact.
-                    if (fr.version_ != INVALID_VERSION && fr.version_ < cur_ver) {
-                        // Only force-drop if frame has linear state (avoid
-                        // over-invalidating pure non-linear captures).
-                        bool has_linear = false;
-                        for (const auto s : fr.bindings_linear_ownership_state_) {
-                            if (s != linear_rt::Untracked) {
-                                has_linear = true;
-                                break;
-                            }
-                        }
-                        if (has_linear) {
-                            drop = true;
-                            reason = kLinearViolReasonEpochStale;
+                // Issue #4914: this is the LINEAR fence. A closure whose
+                // frame holds no linear state is not a linear hazard on
+                // either axis; a stale bridge on it is refreshed by the
+                // bridge restamp paths. Force-dropping it here failed the
+                // whole boundary (gate linear-boundary) after any bridge
+                // bump — `ast:restore` / `set-code` after a rebind under
+                // `aura soft` — and the residual checkpoint then wedged the
+                // workspace in densify-throttle. Same rule the frame-version
+                // branch below already used.
+                bool has_linear = false;
+                if (cl.env_id != NULL_ENV_ID && cl.env_id < env_frames_.size()) {
+                    for (const auto s : env_frames_[cl.env_id].bindings_linear_ownership_state_) {
+                        if (s != linear_rt::Untracked) {
+                            has_linear = true;
+                            break;
                         }
                     }
+                }
+                if (!has_linear)
+                    continue;
+                if (cl.bridge_epoch != cur_bridge) {
+                    drop = true;
+                } else {
+                    const auto& fr = env_frames_[cl.env_id];
+                    // Stale frame version under concurrent mutate/compact.
+                    if (fr.version_ != INVALID_VERSION && fr.version_ < cur_ver)
+                        drop = true;
                 }
                 if (!drop)
                     continue;
