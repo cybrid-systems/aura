@@ -689,9 +689,22 @@ namespace {
                ::aura::core::provenance::multi_tenant_env_active();
     }
 
+    // Issue #4922: one record per minted fd. The minting Evaluator is part
+    // of the record so teardown closes only fds this instance still owns —
+    // a number the kernel re-hands to another tenant after a close keeps
+    // its new owner and is not closed twice.
+    struct MintedFd {
+        std::uint64_t tenant = 0;
+        const Evaluator* ev = nullptr;
+    };
+
     struct FdTenantTable {
         std::mutex mu;
-        std::unordered_map<int, std::uint64_t> owner;
+        std::unordered_map<int, MintedFd> owner;
+        // Issue #4922: fds this Evaluator minted and has not released yet.
+        // sys-close drains its own entry; ~Evaluator drains the whole set so
+        // a tenant without a sys-close call does not hold an OS fd to exit.
+        std::unordered_map<const Evaluator*, std::unordered_set<int>> owned;
     };
 
     FdTenantTable& fd_tenant_table() {
@@ -704,7 +717,8 @@ namespace {
             return;
         auto& table = fd_tenant_table();
         std::lock_guard<std::mutex> lock(table.mu);
-        table.owner[fd] = ev.capability_tenant_id();
+        table.owner[fd] = MintedFd{ev.capability_tenant_id(), &ev};
+        table.owned[&ev].insert(fd);
     }
 
     void erase_minted_fd_tenant(const Evaluator& ev, int fd) {
@@ -713,6 +727,8 @@ namespace {
         auto& table = fd_tenant_table();
         std::lock_guard<std::mutex> lock(table.mu);
         table.owner.erase(fd);
+        if (const auto it = table.owned.find(&ev); it != table.owned.end())
+            it->second.erase(fd);
     }
 
     // true: the caller may use fd. false: do not recv, send, close, or read.
@@ -729,7 +745,7 @@ namespace {
             const auto it = table.owner.find(fd);
             if (it != table.owner.end()) {
                 minted = true;
-                owner = it->second;
+                owner = it->second.tenant;
             }
         }
         if (minted && owner == ev.capability_tenant_id())
@@ -1425,6 +1441,59 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             m->sys_write_calls.fetch_add(1, std::memory_order_relaxed);
         return make_int(n >= 0 ? static_cast<std::int64_t>(n) : -1);
     });
+
+    // Issue #4922: sys-open had no release path, so every minted fd leaked
+    // an OS fd and a process-wide owner row until exit (fs-only tenants had
+    // no way to free either). sys-close is the release half of the same
+    // capability - no new cap name, effect bit, or query key - and the same
+    // shape as tcp-close: the fd owner map must still name this tenant,
+    // then ::close drops the OS fd and the row so the number can be
+    // re-minted (and re-stamped for its new owner).
+    ev.defer_std_host_prim("sys-close", [&ev, deny_sys](std::span<const EvalValue> a) -> EvalValue {
+        if (auto d = deny_sys(aura::compiler::security::kCapSysOpen,
+                              "capability denied: sys-open required");
+            !is_void(d))
+            return d;
+        if (a.empty() || !is_int(a[0]))
+            return make_void();
+        const int fd = static_cast<int>(as_int(a[0]));
+        if (!minted_fd_tenant_allows(ev, fd, "sys-close"))
+            return make_void();
+        ::close(fd);
+        erase_minted_fd_tenant(ev, fd);
+        return make_void();
+    });
+}
+
+// Issue #4922: ~Evaluator hands back the fds it minted. No-op unless the fd
+// owner face stamped them (Soft / Off and single-tenant Restricted never
+// touch the table), and an fd whose row now names another Evaluator (the
+// number was closed and re-minted) keeps its new owner.
+void release_minted_fds(const Evaluator& ev) noexcept {
+    auto& table = fd_tenant_table();
+    for (;;) {
+        int fd = -1;
+        bool owned_here = false;
+        {
+            std::lock_guard<std::mutex> lock(table.mu);
+            const auto it = table.owned.find(&ev);
+            if (it == table.owned.end())
+                return;
+            if (it->second.empty()) {
+                table.owned.erase(it);
+                return;
+            }
+            fd = *it->second.begin();
+            it->second.erase(it->second.begin());
+            const auto owner = table.owner.find(fd);
+            if (owner != table.owner.end() && owner->second.ev == &ev) {
+                table.owner.erase(owner);
+                owned_here = true;
+            }
+        }
+        if (owned_here)
+            ::close(fd);
+    }
 }
 
 } // namespace aura::compiler::primitives_detail

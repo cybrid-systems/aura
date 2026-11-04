@@ -348,6 +348,14 @@ Evaluator::~Evaluator() {
     // join — a misbehaving agent body can't stall Evaluator teardown.
     cleanup_orch_agents();
 
+    // Issue #4922: no body can still use this Evaluator's fds here, so hand
+    // back every fd it minted through sys-open / tcp-*. The fd owner table is
+    // process-wide; without this a tenant that never calls sys-close holds
+    // both the OS fd and its owner row until process exit. The release is a
+    // no-op when the owner face never stamped (Soft / Off), and it skips a
+    // number that was closed and re-minted under another owner.
+    primitives_detail::release_minted_fds(*this);
+
     // Issue #4386: drop a value-slot arm while arena_group_ is still alive.
     if (densify_unstable_slots_armed_.load(std::memory_order_acquire))
         (void)commit_unstable_densify_root_remap(false);

@@ -1870,6 +1870,235 @@ static void ac4644_2_owner_gate_reaches_every_affected_prim() {
     reset_all();
 }
 
+// Issue #4922: sys-open had no close/erase path, so every minted fd leaked
+// an OS fd plus a process-wide owner row until exit (fs-only tenants could
+// free neither). sys-close is the release half of the same capability and
+// keeps the #4561 owner gate; ~Evaluator drains the fds its instance minted.
+static std::string tenant_fd_file(std::uint64_t tenant) {
+    const std::string base = aura::compiler::security::tenant_host_roots_base();
+    const std::string root = aura::compiler::security::tenant_host_root_for(tenant);
+    ::mkdir(base.c_str(), 0700);
+    ::mkdir(root.c_str(), 0700);
+    const std::string path = root + "/fd4922.txt";
+    {
+        std::ofstream out(path);
+        out << "4922";
+    }
+    return path;
+}
+
+// #3090: grant_capability() stamps provenance mid=0, which Restricted/Strict
+// refuse. Seed the capability on the Off face, then restore the posture under
+// test — the same dance as grant_tenant_admin_mid above.
+static void grant_sys_open_off(Evaluator& ev, std::uint64_t tenant) {
+    using aura::core::sandbox::SandboxMode;
+    const auto prev = aura::core::sandbox::g_sandbox_mode_atomic().load(std::memory_order_acquire);
+    set_mode(SandboxMode::Off);
+    ev.set_capability_tenant_id(tenant);
+    ev.grant_capability(std::string(aura::compiler::security::kCapSysOpen));
+    // deny_sys() also probes Write|Ffi through require_effect; the named
+    // sys-open grant only carries Syscall|Write, so seed the wildcard the
+    // production posture hands a tenant (--grant '*') as well.
+    ev.grant_capability(std::string(aura::compiler::security::kCapWildcard));
+    set_mode(static_cast<SandboxMode>(prev));
+    ev.set_effect_sandbox_mode(1);
+    CHECK(ev.has_capability(aura::compiler::security::kCapSysOpen),
+          "4922: the sys-open grant lands for the tenant");
+}
+
+static void ac4922_1_sys_close_releases_owner_fd() {
+    using aura::compiler::types::is_void;
+    using aura::compiler::types::make_int;
+    using aura::compiler::types::make_string;
+
+    std::println("\n--- #4922: sys-close releases a minted fd; owner gate holds ---");
+    reset_all();
+
+    CompilerService cs_a;
+    CompilerService cs_b;
+    auto& ev_a = cs_a.evaluator();
+    auto& ev_b = cs_b.evaluator();
+    (void)ev_a.ensure_std_host_prims("std/process");
+    (void)ev_b.ensure_std_host_prims("std/process");
+    auto open_a = ev_a.primitives().lookup("sys-open");
+    auto close_a = ev_a.primitives().lookup("sys-close");
+    auto open_b = ev_b.primitives().lookup("sys-open");
+    auto close_b = ev_b.primitives().lookup("sys-close");
+    CHECK(open_a && close_a && open_b && close_b,
+          "4922: sys-close installs with std/process next to sys-open");
+    if (!open_a || !close_a || !open_b || !close_b) {
+        reset_all();
+        return;
+    }
+
+    const auto path_a =
+        make_string(static_cast<std::uint64_t>(ev_a.string_heap_mut().mint("/dev/null")));
+    const auto path_b =
+        make_string(static_cast<std::uint64_t>(ev_b.string_heap_mut().mint("/dev/null")));
+
+    // AC1 (Soft/Off): close really releases the OS fd, so the next open gets
+    // the same number back and a 200-round open/close loop never hits -1.
+    int first = -1;
+    {
+        const auto r = (*open_a)({path_a});
+        first = (is_int(r) && as_int(r) >= 0) ? static_cast<int>(as_int(r)) : -1;
+        CHECK(first >= 0, "4922: sys-open mints an fd");
+        if (first >= 0) {
+            (*close_a)({make_int(first)});
+            CHECK(::fcntl(first, F_GETFD) == -1, "4922: sys-close closed the OS fd");
+            const auto again = (*open_a)({path_a});
+            CHECK(is_int(again) && as_int(again) == first,
+                  "4922: the kernel hands the released number back");
+            if (is_int(again) && as_int(again) >= 0)
+                (*close_a)({make_int(as_int(again))});
+        }
+
+        int last = -1;
+        bool never_denied = true;
+        for (int i = 0; i < 200; ++i) {
+            const auto fd = (*open_a)({path_a});
+            if (!is_int(fd) || as_int(fd) < 0) {
+                never_denied = false;
+                break;
+            }
+            last = static_cast<int>(as_int(fd));
+            (*close_a)({make_int(last)});
+        }
+        CHECK(never_denied, "4922: 200 sys-open/sys-close rounds never return -1");
+        CHECK(last >= 0 && first >= 0 && last <= first + 1,
+              "4922: the loop reuses one fd slot (no OS fd growth)");
+    }
+
+    // AC2/AC3 (Restricted + multi-tenant): the owner row still gates close,
+    // and a number re-minted by another tenant is re-stamped to that tenant.
+    aura::core::bump_mutation_epoch(1);
+    grant_sys_open_off(ev_a, 7);
+    grant_sys_open_off(ev_b, 42);
+    ::setenv("AURA_MULTI_TENANT", "1", 1);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    set_mode(SandboxMode::Restricted);
+    CHECK(ev_a.has_capability(aura::compiler::security::kCapSysOpen) &&
+              ev_b.has_capability(aura::compiler::security::kCapSysOpen),
+          "4922: both tenants hold the sys-open capability");
+
+    const auto path_a_tenant = tenant_fd_file(7);
+    const auto path_b_tenant = tenant_fd_file(42);
+    const auto file_a =
+        make_string(static_cast<std::uint64_t>(ev_a.string_heap_mut().mint(path_a_tenant)));
+    const auto file_b =
+        make_string(static_cast<std::uint64_t>(ev_b.string_heap_mut().mint(path_b_tenant)));
+
+    const auto& ring = g_security_event_ring();
+    auto saw_close_deny = [&](std::uint64_t base, std::uint64_t tenant) {
+        bool saw = false;
+        for (std::uint64_t s = base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (e.seq != s)
+                continue;
+            if (static_cast<int>(e.kind) != static_cast<int>(SecurityEventKind::IsolationDeny))
+                continue;
+            if (std::string_view(e.op) != "sys-close")
+                continue;
+            CHECK(e.tenant_id == tenant, "4922: sys-close deny names the caller");
+            CHECK(e.denied, "4922: sys-close deny row is denied");
+            saw = true;
+        }
+        return saw;
+    };
+
+    int fd_a = -1;
+    {
+        const auto r = (*open_a)({file_a});
+        fd_a = (is_int(r) && as_int(r) >= 0) ? static_cast<int>(as_int(r)) : -1;
+        CHECK(fd_a >= 0, "4922: tenant 7 opens a file under its root");
+        if (fd_a >= 0) {
+            const auto se_foreign = ring.seq.load(std::memory_order_acquire);
+            const auto foreign = (*close_b)({make_int(fd_a)});
+            CHECK(is_void(foreign), "4922: B's sys-close on A's fd returns void");
+            CHECK(saw_close_deny(se_foreign, 42), "4922: B's sys-close emits IsolationDeny");
+            CHECK(::fcntl(fd_a, F_GETFD) != -1, "4922: A's fd survives B's denied close");
+            (*close_a)({make_int(fd_a)});
+
+            // A closed it: the number is free, B's open re-stamps it, and A
+            // must no longer be able to close B's fd.
+            const auto b_open = (*open_b)({file_b});
+            const int fd_b =
+                (is_int(b_open) && as_int(b_open) >= 0) ? static_cast<int>(as_int(b_open)) : -1;
+            CHECK(fd_b == fd_a, "4922: B's open reuses the released number");
+            if (fd_b >= 0) {
+                const auto se_stale = ring.seq.load(std::memory_order_acquire);
+                const auto stale = (*close_a)({make_int(fd_b)});
+                CHECK(is_void(stale), "4922: A's sys-close on B's fd returns void");
+                CHECK(saw_close_deny(se_stale, 7),
+                      "4922: the old owner's close is denied after the re-stamp");
+                CHECK(::fcntl(fd_b, F_GETFD) != -1, "4922: B's re-minted fd stays open");
+                (*close_b)({make_int(fd_b)});
+            }
+        }
+    }
+
+    ::unsetenv("AURA_MULTI_TENANT");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    reset_all();
+
+    // AC4: ~Evaluator releases only its own fds; a surviving Evaluator keeps
+    // the fd it minted. Both listeners come from tcp-listen, which stamps the
+    // process-wide fd owner table without a capability grant (#4644 shape);
+    // the per-Evaluator owned set is what release_minted_fds drains.
+    {
+        aura::core::bump_mutation_epoch(1);
+        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        set_mode(SandboxMode::Restricted);
+
+        CompilerService cs_keep;
+        auto& ev_keep = cs_keep.evaluator();
+        (void)ev_keep.ensure_std_host_prims("std/socket");
+        ev_keep.set_effect_sandbox_mode(1);
+        ev_keep.set_capability_tenant_id(42);
+        auto keep_listen = ev_keep.primitives().lookup("tcp-listen");
+        auto keep_close = ev_keep.primitives().lookup("tcp-close");
+        int fd_keep = -1;
+        if (keep_listen) {
+            const auto r = (*keep_listen)({make_int(0)});
+            fd_keep = (is_int(r) && as_int(r) >= 0) ? static_cast<int>(as_int(r)) : -1;
+        }
+        CHECK(fd_keep >= 0, "4922: the surviving tenant holds an fd");
+
+        auto cs_gone = std::make_unique<CompilerService>();
+        auto& ev_gone = cs_gone->evaluator();
+        (void)ev_gone.ensure_std_host_prims("std/socket");
+        ev_gone.set_effect_sandbox_mode(1);
+        ev_gone.set_capability_tenant_id(7);
+        int fd_gone = -1;
+        if (auto gone_listen = ev_gone.primitives().lookup("tcp-listen")) {
+            const auto r = (*gone_listen)({make_int(0)});
+            fd_gone = (is_int(r) && as_int(r) >= 0) ? static_cast<int>(as_int(r)) : -1;
+        }
+        CHECK(fd_gone >= 0, "4922: the dying tenant mints an fd");
+        CHECK(fd_gone < 0 || fd_gone != fd_keep, "4922: the tenants hold distinct fds");
+
+        cs_gone.reset(); // ~Evaluator → release_minted_fds
+
+        CHECK(fd_gone >= 0 && ::fcntl(fd_gone, F_GETFD) == -1,
+              "4922: ~Evaluator closed the fd it minted");
+        CHECK(fd_keep >= 0 && ::fcntl(fd_keep, F_GETFD) != -1,
+              "4922: ~Evaluator did not close another Evaluator's fd");
+        if (fd_keep >= 0 && keep_close)
+            (*keep_close)({make_int(fd_keep)});
+
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        reset_all();
+    }
+
+    const auto io = read_file("src/compiler/evaluator_primitives_io.cpp");
+    CHECK(!io.empty(), "4922: evaluator_primitives_io.cpp is readable");
+    CHECK(io.find("query:4922") == std::string::npos, "4922: no new query key");
+    CHECK(io.find("defer_std_host_prim(\"sys-close\"") != std::string::npos,
+          "4922: sys-close is a deferred std host prim");
+}
+
 int main() {
     reset_all();
 
@@ -8882,6 +9111,8 @@ int main() {
     // ── Issue #4644: the fd owner map gates the tcp prims and sys-write ──
     ac4644_1_foreign_listener_is_not_drained();
     ac4644_2_owner_gate_reaches_every_affected_prim();
+    // ── Issue #4922: sys-close releases the fds sys-open minted ──
+    ac4922_1_sys_close_releases_owner_fd();
 
     // ── Issue #4691: error-cause readers consult the string stamp ──
     {
