@@ -96,6 +96,17 @@ std::string Evaluator::resolve_module_path(const std::string& path) const {
         return {};
     }
 
+    // Issue #4918: "./x" and "../x" are relative to the requiring file:
+    // the module whose body is running, else the entry file. stdin / -e
+    // have no base and keep the cwd search below.
+    if (path.starts_with("./") || path.starts_with("../")) {
+        const auto base = module_base_dir();
+        if (!base.empty()) {
+            if (auto hit = try_load(base + "/" + path))
+                return *hit;
+        }
+    }
+
     // Search CWD first
     {
         if (char* cwd = ::getcwd(nullptr, 0)) {
@@ -170,6 +181,52 @@ std::string Evaluator::resolve_module_path(const std::string& path) const {
     return {};
 }
 
+// Issue #4918: the directory "./x" resolves against right now.
+std::string Evaluator::module_base_dir() const {
+    if (!module_base_dirs_.empty())
+        return module_base_dirs_.back();
+    return entry_base_dir();
+}
+
+// Issue #4918: the paths resolve_module_path tries, for the miss message.
+std::vector<std::string> Evaluator::module_search_candidates(const std::string& path) const {
+    std::vector<std::string> out;
+    auto add = [&](std::string p) {
+        if (!p.ends_with(".aura"))
+            p += ".aura";
+        if (std::find(out.begin(), out.end(), p) == out.end())
+            out.push_back(std::move(p));
+    };
+    if (!path.empty() && path[0] == '/') {
+        add(path);
+        return out;
+    }
+    std::string rel = path;
+    while (rel.starts_with("./"))
+        rel.erase(0, 2);
+    if (path.starts_with("./") || path.starts_with("../")) {
+        if (const auto base = module_base_dir(); !base.empty())
+            add(base + "/" + rel);
+    }
+    if (char* cwd = ::getcwd(nullptr, 0)) {
+        add(std::string(cwd) + "/" + rel);
+        ::free(cwd);
+    }
+    if (const char* env = ::getenv("AURA_PATH")) {
+        std::string_view ap(env);
+        while (!ap.empty()) {
+            const auto c = ap.find(':');
+            const auto dir = ap.substr(0, c);
+            if (!dir.empty())
+                add(std::string(dir) + "/" + rel);
+            if (c == std::string_view::npos)
+                break;
+            ap.remove_prefix(c + 1);
+        }
+    }
+    return out;
+}
+
 void Evaluator::defer_std_host_prim(std::string name, PrimFn fn) {
     deferred_std_prims_.emplace_back(std::move(name), std::move(fn));
 }
@@ -223,10 +280,20 @@ types::EvalValue Evaluator::ensure_std_host_prims(std::string_view module_path) 
         return types::make_void();
     }
 
-    if (sandbox_mode() || effect_sandbox_mode() != 0) {
+    // Issue #4919: requiring a std module needs no effect. The effect is
+    // checked when a host prim that has it is CALLED, so a program that
+    // only uses file-exists? / path-join loads std/fs under the default
+    // sandbox, and a denied (file-copy ...) is one "effect-denied … hint:"
+    // at that call instead of a module-load-failed cascade. std/ffi keeps
+    // its load-time fence as well (#3176 / #3725 contract: a sandbox with
+    // no ffi grant does not get the c-* surface at all).
+    // Issue #3919: std/llm without a network grant still loads and skips
+    // the http-* install (aura-llm-call answers "no-http-post").
+    if (llm_optional_http && (sandbox_mode() || effect_sandbox_mode() != 0) &&
+        !require_effect(bits, op))
+        return types::make_void();
+    if (want == (1u << 4) && (sandbox_mode() || effect_sandbox_mode() != 0)) {
         if (!require_effect(bits, op)) {
-            if (llm_optional_http)
-                return types::make_void();
             return primitives_detail::make_primitive_error(
                 string_heap_, error_values_,
                 aura::compiler::security::format_deny_reason(bits, capability_tenant_id(), op),
@@ -249,6 +316,11 @@ types::EvalValue Evaluator::ensure_std_host_prims(std::string_view module_path) 
             match = name.starts_with("file-") || name == "directory-list";
         else if (want == (1u << 4))
             match = name.starts_with("c-");
+        // Issue #4919: the call-time check is the dispatch choke —
+        // infer_required_effects_from_name stamps tcp-/http- (network),
+        // git-/sys- (write|exec), shell/command- (exec), file-copy/delete
+        // (write) at add(); require_effect runs on every call. Do not add
+        // a second body check (single-use grants would be consumed twice).
         if (match)
             add(name, fn);
     }
@@ -422,6 +494,21 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     if (resolved.empty()) {
         const auto shown = truncate_path_for_log(path);
         last_module_load_failure_ = std::string("cannot resolve '") + std::string(shown) + "'";
+        // Issue #4918: say where we looked.
+        if (!host_path_policy_active()) {
+            const auto searched = module_search_candidates(gated);
+            if (!searched.empty()) {
+                last_module_load_failure_ += " (searched: ";
+                for (std::size_t i = 0; i < searched.size() && i < 6; ++i) {
+                    if (i != 0)
+                        last_module_load_failure_ += ", ";
+                    last_module_load_failure_ += searched[i];
+                }
+                if (searched.size() > 6)
+                    last_module_load_failure_ += ", …";
+                last_module_load_failure_ += ")";
+            }
+        }
         // Issue #4460: file mode reports this once, on the require form.
         // Other callers keep the operator log and the void return.
         if (!require_failure_is_diagnostic_) {
@@ -537,6 +624,10 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         return types::make_void();
     }
     flat_ptr->root = pr.root;
+    // Issue #4916: diagnostics produced by this module's code name this
+    // file and quote its lines (not the entry file's same line number).
+    aura::diag::bind_flat_to_source_file(flat_ptr,
+                                         aura::diag::register_source_file(resolved, content));
 
     // 6. Create isolated module env (child of top_ for primitive access)
     // Arena-allocate in the per-module arena so closures captured during
@@ -597,6 +688,24 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         RequireInjectGuard& operator=(const RequireInjectGuard&) = delete;
     };
     RequireInjectGuard inject_guard(*this, mod_env);
+    // Issue #4918: "./x" / "../x" inside this module resolve against
+    // this module's directory while its body runs.
+    struct ModuleBaseDirGuard {
+        Evaluator& ev;
+        ModuleBaseDirGuard(Evaluator& e, const std::string& file)
+            : ev(e) {
+            const auto slash = file.rfind('/');
+            ev.module_base_dirs_.push_back(slash == std::string::npos ? std::string(".")
+                                           : slash == 0               ? std::string("/")
+                                                                      : file.substr(0, slash));
+        }
+        ~ModuleBaseDirGuard() noexcept {
+            if (!ev.module_base_dirs_.empty())
+                ev.module_base_dirs_.pop_back();
+        }
+        ModuleBaseDirGuard(const ModuleBaseDirGuard&) = delete;
+        ModuleBaseDirGuard& operator=(const ModuleBaseDirGuard&) = delete;
+    } base_dir_guard(*this, resolved);
 
     auto expanded = aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, flat_ptr->root);
     // Issue #4078: do not eval a refused half-expand. fail_load (below)
@@ -628,6 +737,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
             WorkspaceAdoptIfNeeded wlock_adopt_4264(workspace_mtx_);
             loading_stack_.erase(resolved);
         }
+        aura::diag::unbind_source_file_flats(resolved); // Issue #4916
         arena_group_->reset_module(resolved);
         // First-class error so (require)/(import) can signal failure
         // (void was indistinguishable from empty success in some paths).
@@ -865,6 +975,7 @@ bool Evaluator::gc_module(const std::string& path) {
     // every arena-allocated object as part of reset(), so we no
     // longer need to call env->~Env() manually here — that was the
     // pre-#131 band-aid and would now double-destroy.
+    aura::diag::unbind_source_file_flats(path); // Issue #4916
     arena_group_->reset_module(path);
 
     // Clear the module slot. Swap-with-last keeps indices stable for

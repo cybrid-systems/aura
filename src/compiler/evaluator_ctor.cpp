@@ -438,6 +438,7 @@ Evaluator::~Evaluator() {
     pairs_.clear();
     pair_slot_tenants_.clear(); // Issue #4298: drop owner records with the slots
     error_values_.clear();
+    user_error_marks_.clear(); // Issue #4909
     (void)primitives_detail::push_error_cause(error_values_, make_void());
     opaque_heap_.clear();
     ffi_runtime_.forget_native_slots(); // Issue #4556

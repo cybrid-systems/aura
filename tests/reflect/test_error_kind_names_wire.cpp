@@ -70,6 +70,11 @@ enum class ErrorKind : std::uint8_t {
     // or the wire static_asserts (enum_count vs kDiagErrorKindNameCount)
     // fail — #4474 round, flagged by the ship-4477 agent.
     StaleWorkspace,
+    // Issue #4909 / #4918: user-facing kinds.
+    EffectDenied,
+    UserError,
+    ModuleError,
+    IoError,
 };
 
 enum class BlameParty : std::uint8_t {
@@ -130,7 +135,8 @@ int main() {
     static_assert(enum_name(ErrorKind::Warning) == "Warning");
     static_assert(enum_name(ErrorKind::IRCorruption) == "IRCorruption");
 
-    check(enum_count<ErrorKind>() == 16, "diag count"); // #4349: + StaleWorkspace
+    check(enum_count<ErrorKind>() == 20,
+          "diag count"); // #4349 StaleWorkspace, #4909 +3, #4917 IoError
     for (std::size_t i = 0; i < kDiagErrorKindNameCount; ++i) {
         auto n = enum_name<ErrorKind>(static_cast<int>(i));
         if (n != kDiagErrorKindIdents[i]) {

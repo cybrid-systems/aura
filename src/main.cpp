@@ -662,6 +662,51 @@ static bool form_mentions_symbol_4893(std::string_view f, std::string_view name)
 // the per-form coordinates would point at the wrong text; name the failing
 // top-level form's head instead (1:2 for "(define x (car 5))", the same
 // column the whole-program face reports for a statement).
+// Issue #4916 / #4918: the program file given on the command line is the
+// entry file. Its diagnostics read "main.aura:L:C" and "./x" requires in
+// it resolve against its directory (not the cwd).
+static void register_entry_file_4916(const char* path, std::string content) {
+    std::string p(path);
+    if (char* real = ::realpath(path, nullptr)) {
+        p = real;
+        ::free(real);
+    }
+    aura::diag::set_entry_source_file(
+        aura::diag::register_source_file(std::move(p), std::move(content)));
+}
+
+// Issue #4916: an error inside a required module also names the entry form
+// that called into it ("at helper.aura:4:4 <- main.aura:4:2"), so a call chain
+// across files is not reduced to the innermost frame. The entry position is
+// the head of that top-level form.
+static void print_module_backtrace_4916(const aura::diag::SourceLocation& err, std::uint32_t line,
+                                        std::uint32_t col, std::string_view form_text) {
+    if (!err.valid() || err.file_id == 0 || line == 0)
+        return;
+    const auto entry = aura::diag::display_source_path(aura::diag::source_file_path(0));
+    if (entry.empty())
+        return;
+    if (!form_text.empty() && form_text[0] == '(')
+        ++col;
+    std::println(std::cerr, "  at {} \u2190 {}:{}:{}", err.format(), entry, line, col);
+}
+
+// Same, for a whole-program run: `at` is the stamped top-level form.
+static void print_module_backtrace_at_4916(const aura::diag::SourceLocation& err,
+                                           const aura::diag::SourceLocation& at,
+                                           std::string_view src) {
+    if (!at.valid() || at.file_id != 0)
+        return;
+    std::size_t off = 0;
+    for (std::uint32_t ln = 1; off < src.size() && ln < at.line; ++off)
+        if (src[off] == '\n')
+            ++ln;
+    off += at.column > 0 ? at.column - 1 : 0;
+    if (off > src.size())
+        return;
+    print_module_backtrace_4916(err, at.line, at.column, src.substr(off));
+}
+
 static aura::diag::SourceLocation per_form_error_value_location_4899(std::string_view form) {
     return aura::diag::SourceLocation{1u, (!form.empty() && form[0] == '(') ? 2u : 1u, 0};
 }
@@ -1263,6 +1308,11 @@ int main(int argc, char* argv[]) {
         if (num_workers == 0 && !aura::serve::production_abi_selfcheck_required())
             num_workers = 1;
         std::string file_path = (argc > 2) ? argv[2] : "tests/bench.aura";
+        // Issue #4916: same "file:line:col" face as --load (#4856 parity).
+        if (std::ifstream bf(file_path); bf)
+            register_entry_file_4916(file_path.c_str(),
+                                     std::string((std::istreambuf_iterator<char>(bf)),
+                                                 std::istreambuf_iterator<char>()));
         aura::serve::run_serve_async_bench(file_path, num_workers);
         return aura::serve::serve_async_bench_failed() ? 1 : 0;
 #else
@@ -2652,6 +2702,7 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         std::string content((std::istreambuf_iterator<char>(f)), {});
+        register_entry_file_4916(argv[2], content);
         aura::compiler::CompilerService cs;
         // Issue #4848: --load is the script/denseness face, not the
         // production serve pipeline. The pack default (Forbidden) vetoed
@@ -2722,15 +2773,20 @@ int main(int argc, char* argv[]) {
                 // be dropped: no output, rc=0.
                 if (r && aura::compiler::types::is_error(*r) &&
                     !aura::compiler::types::is_string(*r)) {
-                    aura::diag::Diagnostic d{aura::diag::ErrorKind::TypeError,
+                    aura::diag::Diagnostic d{cs.evaluator().error_value_kind(*r),
                                              cs.evaluator().soft_error_message(*r)};
-                    d.location = per_form_error_value_location_4899(tf.text);
+                    if (auto el = cs.evaluator().error_location(*r); el && el->file_id != 0)
+                        d.location = *el; // Issue #4916: inside a required module
+                    else
+                        d.location = per_form_error_value_location_4899(tf.text);
                     r = std::unexpected(std::move(d));
                 }
                 if (!r) {
                     // Issue #4875: form-relative -> file coordinates.
+                    // Issue #4916: a location in another file is already
+                    // in that file's coordinates.
                     auto d = r.error();
-                    if (d.location.valid()) {
+                    if (d.location.valid() && d.location.file_id == 0) {
                         if (d.location.line == 1 && d.location.column > 0 && tf.column > 1)
                             d.location.column += tf.column - 1;
                         d.location.line += tf.line - 1;
@@ -2739,6 +2795,7 @@ int main(int argc, char* argv[]) {
                     ctx.append(static_cast<std::size_t>(tf.column - 1), ' ');
                     ctx += tf.text;
                     std::println(std::cerr, "error: {}", d.format_with_source(ctx));
+                    print_module_backtrace_4916(d.location, tf.line, tf.column, tf.text);
                     return 1;
                 }
             }
@@ -2749,6 +2806,8 @@ int main(int argc, char* argv[]) {
         auto result = cs.eval(content);
         if (!result) {
             std::println(std::cerr, "error: {}", result.error().format_with_source(content));
+            print_module_backtrace_at_4916(result.error().location,
+                                           cs.evaluator().file_resume_form(), content);
             return 1;
         }
         if (!is_void(*result))
@@ -3787,8 +3846,14 @@ int main(int argc, char* argv[]) {
             }
             if (!all_input.empty())
                 all_input += '\n';
-            all_input +=
-                std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            std::string file_text((std::istreambuf_iterator<char>(f)),
+                                  std::istreambuf_iterator<char>());
+            // Issue #4916: exactly one program file is the entry file.
+            if (!source_from_argv)
+                register_entry_file_4916(argv[i], file_text);
+            else
+                aura::diag::set_entry_source_file(0);
+            all_input += file_text;
             source_from_argv = true;
         }
     }
@@ -4251,19 +4316,21 @@ int main(int argc, char* argv[]) {
                     !aura::compiler::types::is_string(*fr)) {
                     auto msg = cs.evaluator().soft_error_message(*fr);
                     const bool denied = msg.starts_with("effect-denied:");
-                    aura::diag::Diagnostic d{aura::diag::ErrorKind::TypeError, std::move(msg)};
-                    if (denied) {
-                        if (auto el = cs.evaluator().error_location(*fr))
-                            d.location = *el;
-                    } else {
+                    aura::diag::Diagnostic d{cs.evaluator().error_value_kind(*fr), std::move(msg)};
+                    // Issue #4909: a refusal without a recorded producer
+                    // still gets the form's location (it printed none).
+                    // Issue #4916: a producer inside a module keeps its file.
+                    const auto el = cs.evaluator().error_location(*fr);
+                    if (el && (denied || el->file_id != 0))
+                        d.location = *el;
+                    else
                         d.location = per_form_error_value_location_4899(form);
-                    }
                     fr = std::unexpected(std::move(d));
                 }
                 if (!fr && wrap_begin) {
                     // Map the location back onto the unwrapped form text.
                     auto& loc = fr.error().location;
-                    if (loc.line == 1 && loc.column > kBeginPrefix4892.size())
+                    if (loc.file_id == 0 && loc.line == 1 && loc.column > kBeginPrefix4892.size())
                         loc.column -= static_cast<std::uint32_t>(kBeginPrefix4892.size());
                 }
                 if (!fr) {
@@ -4277,7 +4344,7 @@ int main(int argc, char* argv[]) {
                     // the real file coordinates so the diagnostic points at
                     // the actual line/column (e.g. after a block comment).
                     auto& loc = fr.error().location;
-                    if (loc.valid()) {
+                    if (loc.valid() && loc.file_id == 0) {
                         if (loc.line == 1 && loc.column > 0 && tf.column > 1)
                             loc.column += tf.column - 1;
                         loc.line += tf.line - 1;
@@ -4286,6 +4353,7 @@ int main(int argc, char* argv[]) {
                     ctx.append(static_cast<std::size_t>(tf.column - 1), ' ');
                     ctx += form;
                     std::println(std::cerr, "error: {}", fr.error().format_with_source(ctx));
+                    print_module_backtrace_4916(loc, tf.line, tf.column, form); // #4916
                     any_error = true;
                     // Issue #4876: a refused user macro is fatal, as on the
                     // whole-program face. Running on printed a cascade of
@@ -4381,9 +4449,76 @@ int main(int argc, char* argv[]) {
                                 diag.kind == aura::diag::ErrorKind::UnterminatedSExpr;
         std::size_t resume_at = 0;
         bool file_resume = false;
-        if (!parse_fail && diag.location.valid()) {
+        // Issue #4909: a runtime diagnostic without a location used to
+        // fall through to the recovery walk from form 0, so every form
+        // before the failure ran TWICE (output printed twice) and the
+        // error came out unlocated. The executing top-level form is
+        // stamped; when even that is missing, report once and stop.
+        // A location inside a required module (file_id != 0) says nothing
+        // about which entry form was running, so it cannot pick the resume
+        // point either.
+        const auto stamped_form = cs.evaluator().file_resume_form();
+        const bool entry_loc = diag.location.valid() && diag.location.file_id == 0;
+        // Issue #4909: the whole-file eval may run on the tree-walker (a
+        // sibling define is not known at gate time), whose C-stack guard
+        // stops non-tail recursion at 512 frames. That is a limit of the
+        // walker, not of the program: the per-form path runs the same code
+        // on the IR (heap frames, AURA_IR_MAX_CALL_DEPTH). This used to be
+        // recovered by silently re-running every form (output twice). Now:
+        // re-bind the earlier procedure defines (no side effects) on the
+        // per-form path and resume AT the failing form, reporting nothing.
+        bool walker_depth_resume = false;
+        if (!parse_fail && !macro_deny && diag.kind == aura::diag::ErrorKind::InternalError &&
+            diag.message.starts_with("recursion depth exceeded") &&
+            diag.message.find("fiber=") != std::string::npos &&
+            (entry_loc || stamped_form.valid())) {
+            const std::size_t err_off =
+                offset_of(stamped_form.valid() ? stamped_form : diag.location);
+            std::size_t failing = exprs.size();
+            for (std::size_t i = 0; i < exprs.size(); ++i) {
+                if (anchors[i].offset == std::string::npos)
+                    break;
+                if (anchors[i].offset <= err_off)
+                    failing = i;
+                else
+                    break;
+            }
+            if (failing < exprs.size()) {
+                const auto is_proc_define = [](std::string_view f) {
+                    const auto s = f.find_first_not_of(" \t\r\n");
+                    if (s == std::string_view::npos)
+                        return false;
+                    f.remove_prefix(s);
+                    if (f.starts_with("(define ("))
+                        return true;
+                    if (!f.starts_with("(define "))
+                        return false;
+                    f.remove_prefix(8);
+                    const auto e = f.find_first_of(" \t\r\n()");
+                    if (e == std::string_view::npos)
+                        return false;
+                    f.remove_prefix(e);
+                    const auto b = f.find_first_not_of(" \t\r\n");
+                    return b != std::string_view::npos && f.substr(b).starts_with("(lambda ");
+                };
+                for (std::size_t i = 0; i < failing; ++i) {
+                    if (is_proc_define(exprs[i]))
+                        (void)cs.eval(exprs[i]);
+                }
+                resume_at = failing;
+                walker_depth_resume = true;
+            }
+        }
+        if (!walker_depth_resume && !parse_fail && !macro_deny && !entry_loc &&
+            !stamped_form.valid()) {
+            std::println(std::cerr, "error: {}", diag.format_with_source(all_input));
+            err = true;
+            resume_at = exprs.size();
+        }
+        if (!walker_depth_resume && !parse_fail && !macro_deny &&
+            (entry_loc || stamped_form.valid())) {
             auto resume_loc = diag.location;
-            const auto stamped = cs.evaluator().file_resume_form();
+            const auto stamped = stamped_form;
             if (stamped.valid())
                 resume_loc = stamped;
             const std::size_t err_off = offset_of(resume_loc);
@@ -4395,7 +4530,17 @@ int main(int argc, char* argv[]) {
                 else
                     break;
             }
-            std::println(std::cerr, "error: {}", diag.format_with_source(all_input));
+            auto shown = diag;
+            if (!shown.location.valid())
+                shown.location = stamped_form; // Issue #4909: never unlocated
+            std::println(std::cerr, "error: {}", shown.format_with_source(all_input));
+            if (resume_at > 0 && resume_at <= exprs.size() &&
+                anchors[resume_at - 1].offset != std::string::npos) {
+                const auto& a = anchors[resume_at - 1];
+                print_module_backtrace_4916(
+                    shown.location, a.line, a.col,
+                    std::string_view(all_input).substr(a.offset)); // Issue #4916
+            }
             err = true;
             file_resume = true;
         }
@@ -4414,10 +4559,15 @@ int main(int argc, char* argv[]) {
                     auto d = r2.error();
                     // Line 1 of a trimmed form is shifted by the form's
                     // start column. Later lines keep their own columns.
-                    if (d.location.line == 1 && d.location.column > 0 && anchors[i].col > 0)
-                        d.location.column += anchors[i].col - 1;
-                    d.location.line += anchors[i].line - 1;
+                    // Issue #4916: a module location is already in that
+                    // file's coordinates.
+                    if (d.location.file_id == 0) {
+                        if (d.location.line == 1 && d.location.column > 0 && anchors[i].col > 0)
+                            d.location.column += anchors[i].col - 1;
+                        d.location.line += anchors[i].line - 1;
+                    }
                     std::println(std::cerr, "error: {}", d.format_with_source(all_input));
+                    print_module_backtrace_4916(d.location, anchors[i].line, anchors[i].col, e);
                 } else {
                     std::println(std::cerr, "error: {}", r2.error().format_with_source(e));
                 }

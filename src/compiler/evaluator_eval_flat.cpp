@@ -188,6 +188,12 @@ static std::string closest_match(std::string_view name, std::span<const std::str
     return aura::compiler::pure::closest_match_pure(name, candidates, max_dist);
 }
 
+// Issue #4916: the file a node of `flat` came from (0 = entry program).
+// Only called on error paths: a short locked scan of the module table.
+static std::uint32_t diag_fid_4916(const aura::ast::FlatAST* flat) {
+    return aura::diag::source_file_for_flat(flat);
+}
+
 // Issue #4796: names that exist only as std/json defines (not engine
 // primitives). Without (require "std/json") they are unbound; point the
 // caller at the builtin or the module instead of an unrelated
@@ -219,6 +225,13 @@ static std::string_view stdlib_only_unbound_hint(std::string_view name) {
         return "did you mean 'channel:recv'? (non-blocking: channel:try-recv)";
     if (name == "channel-close" || name == "close-channel" || name == "channel-close!")
         return "did you mean 'channel:close'?";
+    // Issue #4909: common Scheme names Aura spells differently.
+    if (name == "memq" || name == "memv")
+        return "did you mean 'member'? (Aura's member compares with equal?; memq/memv are not "
+               "provided)";
+    if (name == "assq" || name == "assv")
+        return "did you mean 'assoc'? (Aura's assoc compares with equal?; assq/assv are not "
+               "provided)";
     return {};
 }
 
@@ -6226,9 +6239,11 @@ static EvalResult file_mode_escaped_primitive(Evaluator& ev, const EvalValue& er
         const auto nv = f.get(form);
         const auto line = nv.line == 0 ? 1u : nv.line;
         const auto col = nv.col == 0 ? 1u : nv.col;
-        loc = aura::diag::SourceLocation{line, col, 0};
+        loc = aura::diag::SourceLocation{line, col, diag_fid_4916(&f)};
     }
-    return std::unexpected(Diagnostic{ErrorKind::TypeError, std::move(msg), *loc, form});
+    // Issue #4909: the program's own (error ...) is an error, a refusal is
+    // effect-denied; only the rest is a type error.
+    return std::unexpected(Diagnostic{ev.error_value_kind(err), std::move(msg), *loc, form});
 }
 
 // ── Phase 4: FlatAST tree-walker evaluator (EvalValue) ───────
@@ -7412,7 +7427,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     // Issue #79: source location from the offending node so the
                     // error report includes line:col instead of just node[id:N].
                     Diagnostic d(ErrorKind::UnboundVariable, std::move(var_name),
-                                 aura::diag::SourceLocation{v.line, v.col, 0}, current_id);
+                                 aura::diag::SourceLocation{v.line, v.col, diag_fid_4916(f)},
+                                 current_id);
                     if (!std_hint.empty())
                         d.with_suggestion(std::string(std_hint));
                     else if (!best.empty())
@@ -7463,7 +7479,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             return std::unexpected(Diagnostic{
                                 ErrorKind::ArityMismatch,
                                 user_arity_message("lambda", pspan.size(), dotted, provided.size()),
-                                aura::diag::SourceLocation{line, col, 0}, current_id});
+                                aura::diag::SourceLocation{line, col, diag_fid_4916(f)},
+                                current_id});
                         }
                         std::vector<EvalValue> iargs;
                         TwPinMany pin_iargs(iargs);
@@ -7560,7 +7577,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                     "macro " + cname + ": expected " + expected + " argument" +
                                         (singular ? "" : "s") + ", got " +
                                         std::to_string(provided_args),
-                                    aura::diag::SourceLocation{arity_line, arity_col, 0},
+                                    aura::diag::SourceLocation{arity_line, arity_col,
+                                                               diag_fid_4916(f)},
                                     current_id});
                             }
 
@@ -8200,7 +8218,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                     Diagnostic d = last.error();
                                     if (require_failure_is_diagnostic_ && !d.location.valid()) {
                                         d.location = aura::diag::SourceLocation{
-                                            v.line == 0 ? 1u : v.line, v.col == 0 ? 1u : v.col, 0};
+                                            v.line == 0 ? 1u : v.line, v.col == 0 ? 1u : v.col,
+                                            diag_fid_4916(f)};
                                         d.node_id = current_id;
                                     }
                                     return surface(std::move(d));
@@ -8249,9 +8268,13 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                         msg = "require \"" + mod_path + "\": " + why;
                                     const auto line = v.line == 0 ? 1u : v.line;
                                     const auto col = v.col == 0 ? 1u : v.col;
-                                    Diagnostic d{ErrorKind::InternalError, std::move(msg),
-                                                 aura::diag::SourceLocation{line, col, 0},
-                                                 current_id};
+                                    // Issue #4918: a module that cannot be
+                                    // found / loaded is the program's problem,
+                                    // not an interpreter bug.
+                                    Diagnostic d{
+                                        ErrorKind::ModuleError, std::move(msg),
+                                        aura::diag::SourceLocation{line, col, diag_fid_4916(f)},
+                                        current_id};
                                     if (resolve_miss)
                                         return std::unexpected(std::move(d));
                                     return surface(std::move(d));
@@ -8927,8 +8950,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 // The cause store is THIS evaluator's
                                 // (primitives_ writes into error_values_), so
                                 // the location table is this one too.
-                                note_error_location(prim_result,
-                                                    aura::diag::SourceLocation{line, col, 0});
+                                note_error_location(prim_result, aura::diag::SourceLocation{
+                                                                     line, col, diag_fid_4916(f)});
                             }
                             return finish_prim_call(cname, prim_result);
                         }
@@ -8972,7 +8995,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 const auto col = v.col == 0 ? 1u : v.col;
                                 return std::unexpected(Diagnostic{
                                     ErrorKind::ArityMismatch, std::move(*msg),
-                                    aura::diag::SourceLocation{line, col, 0}, current_id});
+                                    aura::diag::SourceLocation{line, col, diag_fid_4916(f)},
+                                    current_id});
                             }
                             return std::unexpected(Diagnostic{ErrorKind::InvalidClosure,
                                                               "eval_flat: foreign call failed"});
@@ -9043,7 +9067,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 const auto col = v.col == 0 ? 1u : v.col;
                                 return std::unexpected(Diagnostic{
                                     ErrorKind::ArityMismatch, std::move(*msg),
-                                    aura::diag::SourceLocation{line, col, 0}, current_id});
+                                    aura::diag::SourceLocation{line, col, diag_fid_4916(f)},
+                                    current_id});
                             }
                             return std::unexpected(Diagnostic{ErrorKind::InvalidClosure,
                                                               "eval_flat: invalid closure"});
@@ -9086,7 +9111,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 Diagnostic{ErrorKind::ArityMismatch,
                                            user_arity_message(arity_name, cl.params.size(),
                                                               cl.dotted, provided.size()),
-                                           aura::diag::SourceLocation{line, col, 0}, current_id});
+                                           aura::diag::SourceLocation{line, col, diag_fid_4916(f)},
+                                           current_id});
                         }
                         // Issue #4682 (6b): opt-in native tier (exact; the
                         // hook returns nullopt unless the native body ran
@@ -9620,7 +9646,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         // earlier top-level form (side effects ran twice).
                         Diagnostic{ErrorKind::TypeError, "cannot call: " + callee_name,
                                    aura::diag::SourceLocation{v.line == 0 ? 1u : v.line,
-                                                              v.col == 0 ? 1u : v.col, 0},
+                                                              v.col == 0 ? 1u : v.col,
+                                                              diag_fid_4916(f)},
                                    current_id}
                             .with_suggestion(std::move(suggestion)));
                 }
@@ -11118,14 +11145,15 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         auto best = closest_match(name, candidates);
                         // Issue #79: source location from the offending node.
                         Diagnostic d(ErrorKind::UnboundVariable, "set!: " + std::string(name),
-                                     aura::diag::SourceLocation{v.line, v.col, 0}, current_id);
+                                     aura::diag::SourceLocation{v.line, v.col, diag_fid_4916(f)},
+                                     current_id);
                         if (!best.empty())
                             d.with_suggestion("did you mean '" + best + "'?");
                         return std::unexpected(std::move(d));
                     }
-                    return std::unexpected(
-                        Diagnostic{ErrorKind::UnboundVariable, "set!: " + std::string(name),
-                                   aura::diag::SourceLocation{v.line, v.col, 0}, current_id});
+                    return std::unexpected(Diagnostic{
+                        ErrorKind::UnboundVariable, "set!: " + std::string(name),
+                        aura::diag::SourceLocation{v.line, v.col, diag_fid_4916(f)}, current_id});
                 }
                 case aura::ast::NodeTag::Quote: {
                     if (v.children.empty())

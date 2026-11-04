@@ -536,12 +536,17 @@ void run_issue_4575() {
                        "(newline)\n"
                        "(require \"std/ffi\")\n"
                        "(require \"std/net\")\n"
-                       "(require \"std/process\")\n");
+                       "(require \"std/process\")\n"
+                       // Issue #4919: requiring std/net / std/process needs
+                       // no effect; the refusal comes at the call.
+                       "(http-get \"http://127.0.0.1:9/x\")\n"
+                       "(shell \"true\")\n");
             auto deny = run_aura(bin, face, "soft /tmp/aura-4575-deny.aura");
             const auto d = deny.out + deny.err;
             CHECK(d.find("effect-denied: write") != std::string::npos, "4575: CLI write denied");
             CHECK(d.find("op=std/ffi") != std::string::npos, "4575: CLI ffi denied");
-            CHECK(d.find("op=std/net") != std::string::npos, "4575: CLI network denied");
+            CHECK(d.find("effect-denied: network") != std::string::npos,
+                  "4575: CLI network denied");
             CHECK(d.find("effect-denied: exec") != std::string::npos, "4575: CLI exec denied");
 
             auto allow = run_aura(bin, face, "soft --allow write,ffi /tmp/aura-4575-deny.aura");
@@ -551,7 +556,8 @@ void run_issue_4575() {
             CHECK(a.find("effect-denied: write") == std::string::npos, "4575: write opted in");
             CHECK(a.find("op=std/ffi") == std::string::npos, "4575: ffi opted in");
             CHECK(a.find("effect-denied: exec") != std::string::npos, "4575: exec still denied");
-            CHECK(a.find("op=std/net") != std::string::npos, "4575: network still denied");
+            CHECK(a.find("effect-denied: network") != std::string::npos,
+                  "4575: network still denied");
 
             auto bad = run_aura(bin, face, "soft --allow tenant-admin /tmp/aura-4575-ok.aura");
             CHECK(bad.rc != 0, "4575: unknown --allow exits");

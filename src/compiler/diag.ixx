@@ -3,6 +3,7 @@ module;
 #include <cstdint>
 #include <expected>
 #include <format>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -51,6 +52,17 @@ export enum class ErrorKind : std::uint8_t {
     // error — a documented, recoverable face: run (eval-current) to
     // re-bind, then retry.
     StaleWorkspace,
+    // Issue #4909: a sandbox / capability refusal. Not a type error: the
+    // program is fine, the run did not grant an effect. format() adds a
+    // `hint:` line with the smallest grant that unblocks it.
+    EffectDenied,
+    // Issue #4909: the program's own (error ...) / (raise ...) escaped.
+    UserError,
+    // Issue #4918: a (require ...) / (load ...) that could not resolve,
+    // parse or evaluate its module. Not an interpreter bug.
+    ModuleError,
+    // Issue #4917: a host I/O operation failed (path + reason).
+    IoError,
 };
 
 // ── Blame Info (design §6.3) ────────────────────────────────────
@@ -86,6 +98,127 @@ export constexpr std::string_view party_name(BlameParty p) {
     return blame_party_name(static_cast<std::size_t>(p));
 }
 
+// ── Issue #4916: source file table ─────────────────────────────
+// A diagnostic names the file it came from. file_id 0 is the entry
+// program (the file given on the command line, when there is exactly
+// one); every module that (require ...) loads gets its own id. The
+// table also maps a module's FlatAST to its id so the evaluator can
+// stamp a location that was produced inside that module's code.
+export struct SourceFile {
+    std::string path;
+    std::string content;
+};
+
+namespace detail {
+    struct SourceFileTable {
+        std::mutex mu;
+        std::vector<SourceFile> files; // file_id - 1
+        std::vector<std::pair<const void*, std::uint32_t>> flats;
+        std::uint32_t entry = 0;
+    };
+    inline SourceFileTable& source_file_table() {
+        static SourceFileTable t;
+        return t;
+    }
+} // namespace detail
+
+// Register (or refresh) a file; returns its id (>= 1).
+export inline std::uint32_t register_source_file(std::string path, std::string content) {
+    auto& t = detail::source_file_table();
+    std::lock_guard lock(t.mu);
+    for (std::size_t i = 0; i < t.files.size(); ++i) {
+        if (t.files[i].path == path) {
+            t.files[i].content = std::move(content);
+            return static_cast<std::uint32_t>(i + 1);
+        }
+    }
+    t.files.push_back(SourceFile{std::move(path), std::move(content)});
+    return static_cast<std::uint32_t>(t.files.size());
+}
+
+// The entry program: locations with file_id 0 are shown in this file.
+export inline void set_entry_source_file(std::uint32_t id) {
+    auto& t = detail::source_file_table();
+    std::lock_guard lock(t.mu);
+    t.entry = id;
+}
+
+export inline std::optional<SourceFile> source_file(std::uint32_t id) {
+    auto& t = detail::source_file_table();
+    std::lock_guard lock(t.mu);
+    if (id == 0)
+        id = t.entry;
+    if (id == 0 || id > t.files.size())
+        return std::nullopt;
+    return t.files[id - 1];
+}
+
+// Issue #4916: the path a report shows — relative to the cwd when the
+// file is under it (helper.aura, kits/x/main.aura), else as registered.
+export inline std::string display_source_path(std::string path) {
+    if (path.empty() || path[0] != '/')
+        return path;
+    std::error_code ec;
+    auto cwd = std::filesystem::current_path(ec).string();
+    if (ec || cwd.empty())
+        return path;
+    if (!cwd.ends_with('/'))
+        cwd += '/';
+    if (path.starts_with(cwd) && path.size() > cwd.size())
+        return path.substr(cwd.size());
+    return path;
+}
+
+export inline std::string source_file_path(std::uint32_t id) {
+    auto& t = detail::source_file_table();
+    std::lock_guard lock(t.mu);
+    if (id == 0)
+        id = t.entry;
+    if (id == 0 || id > t.files.size())
+        return {};
+    return t.files[id - 1].path;
+}
+
+// Bind a module FlatAST to its file. id 0 drops the binding.
+export inline void bind_flat_to_source_file(const void* flat, std::uint32_t id) {
+    auto& t = detail::source_file_table();
+    std::lock_guard lock(t.mu);
+    for (auto it = t.flats.begin(); it != t.flats.end(); ++it) {
+        if (it->first == flat) {
+            if (id == 0)
+                t.flats.erase(it);
+            else
+                it->second = id;
+            return;
+        }
+    }
+    if (id != 0)
+        t.flats.emplace_back(flat, id);
+}
+
+// A module arena is being freed: drop every FlatAST bound to that file
+// so a later FlatAST at a reused address is not shown as that module.
+export inline void unbind_source_file_flats(std::string_view path) {
+    auto& t = detail::source_file_table();
+    std::lock_guard lock(t.mu);
+    std::uint32_t id = 0;
+    for (std::size_t i = 0; i < t.files.size(); ++i)
+        if (t.files[i].path == path)
+            id = static_cast<std::uint32_t>(i + 1);
+    if (id == 0)
+        return;
+    std::erase_if(t.flats, [id](const auto& e) { return e.second == id; });
+}
+
+export inline std::uint32_t source_file_for_flat(const void* flat) {
+    auto& t = detail::source_file_table();
+    std::lock_guard lock(t.mu);
+    for (const auto& [f, id] : t.flats)
+        if (f == flat)
+            return id;
+    return 0;
+}
+
 // Source location (line/column, 1-indexed)
 export struct SourceLocation {
     std::uint32_t line = 0;
@@ -96,9 +229,62 @@ export struct SourceLocation {
     std::string format() const {
         if (!valid())
             return "?";
+        // Issue #4916: file:line:col whenever the file is known.
+        if (auto path = source_file_path(file_id); !path.empty())
+            return std::format("{}:{}:{}", display_source_path(std::move(path)), line, column);
         return std::format("{}:{}", line, column);
     }
 };
+
+// ── Issue #4909: sandbox refusals are actionable ────────────────
+// The refusal text is "effect-denied: <effect> not granted …" (or the
+// older "capability denied: io-… required"). Returns the effect name,
+// or empty when the message is not a refusal.
+export inline std::string effect_denied_effect(std::string_view msg) {
+    constexpr std::string_view kEff = "effect-denied: ";
+    if (auto p = msg.find(kEff); p != std::string_view::npos) {
+        auto rest = msg.substr(p + kEff.size());
+        auto end = rest.find_first_of(" ;");
+        return std::string(rest.substr(0, end));
+    }
+    constexpr std::string_view kCap = "capability denied: ";
+    if (auto p = msg.find(kCap); p != std::string_view::npos) {
+        auto rest = msg.substr(p + kCap.size());
+        if (rest.starts_with("io-read"))
+            return "read";
+        if (rest.starts_with("io-write"))
+            return "write";
+        if (rest.starts_with("exec"))
+            return "exec";
+        auto end = rest.find_first_of(" ;");
+        return std::string(rest.substr(0, end));
+    }
+    return {};
+}
+
+// One line naming the smallest grant that unblocks the run.
+export inline std::string effect_denied_hint(std::string_view effect) {
+    auto file = display_source_path(source_file_path(0));
+    if (file.empty())
+        file = "file.aura";
+    if (effect == "mutate")
+        return std::format("hint: to experiment run 'aura soft {}' (grants mutate on this "
+                           "workspace); for local development AURA_SANDBOX=off; in production "
+                           "grant the mutate effect",
+                           file);
+    if (effect == "write" || effect == "exec" || effect == "network" || effect == "ffi" ||
+        effect == "read")
+        return std::format("hint: to experiment run 'aura soft --allow {} {}'; for local "
+                           "development AURA_SANDBOX=off; in production grant the {} effect",
+                           effect, file, effect);
+    if (effect == "macro-self-evo")
+        return std::string("hint: user macros need MacroSelfEvo; for local development "
+                           "AURA_SANDBOX=off ('aura soft' does not grant it); in production "
+                           "grant MacroSelfEvo");
+    return std::format("hint: for local development AURA_SANDBOX=off; in production grant the "
+                       "{} effect",
+                       effect.empty() ? std::string_view("missing") : effect);
+}
 
 // Structured diagnostic — typed error with location and context
 export struct Diagnostic {
@@ -149,6 +335,16 @@ export struct Diagnostic {
     }
 
     // Format as human-readable error string (single line)
+    // Issue #4909: the kind a reader sees. A refusal raised through the
+    // generic primitive-error path still arrives as TypeError; it is a
+    // sandbox decision, not a type error.
+    ErrorKind display_kind() const {
+        if (kind == ErrorKind::TypeError &&
+            (message.starts_with("effect-denied:") || message.starts_with("capability denied:")))
+            return ErrorKind::EffectDenied;
+        return kind;
+    }
+
     std::string format() const {
         std::string out;
         if (location.valid())
@@ -156,8 +352,12 @@ export struct Diagnostic {
         else if (node_id != ~0u)
             out += std::format("node[{}]: ", node_id);
 
-        out += std::string(kind_name(kind));
-        out += ": " + message;
+        const auto shown = display_kind();
+        out += std::string(kind_name(shown));
+        if (shown == ErrorKind::EffectDenied && message.starts_with("effect-denied: "))
+            out += ": " + message.substr(std::string_view("effect-denied: ").size());
+        else
+            out += ": " + message;
 
         // Blame info (design §6.3)
         if (blame) {
@@ -178,9 +378,16 @@ export struct Diagnostic {
         if (!suggestion.empty())
             out += "\n  " + suggestion;
 
+        // Issue #4909: every refusal carries one actionable hint line
+        // (also when it is wrapped, e.g. inside a require failure).
+        if (message.find("hint:") == std::string::npos) {
+            if (auto eff = effect_denied_effect(message); !eff.empty())
+                out += "\n  " + effect_denied_hint(eff);
+        }
+
         // Print context in reverse order (innermost first)
         for (auto it = context_stack.rbegin(); it != context_stack.rend(); ++it)
-            out += std::format("\n  while {}", *it);
+            out += std::format("\n  {}", it->starts_with("at ") ? *it : "while " + *it);
 
         return out;
     }
@@ -195,6 +402,14 @@ export struct Diagnostic {
     std::string format_with_source(std::string_view source) const {
         auto out = format();
 
+        // Issue #4916: the excerpt comes from the file the error is in,
+        // not from whatever program text the caller holds.
+        std::optional<SourceFile> own;
+        if (location.file_id != 0) {
+            own = source_file(location.file_id);
+            if (own)
+                source = own->content;
+        }
         if (location.valid() && !source.empty()) {
             // Extract the relevant line from source (1-indexed)
             std::uint32_t current_line = 1;

@@ -196,7 +196,8 @@ static void ac_1158_1176() {
     // #1163 deny write to /proc/self/mem
     {
         auto r = cs.eval(R"((write-file "/proc/self/mem" "x"))");
-        CHECK(r && is_void(*r), "write-file /proc/self/mem → void");
+        // Issue #4917: a refused write is an error value (was a silent void).
+        CHECK(!r || is_error(*r), "write-file /proc/self/mem → error");
     }
 
     // #1160 / #3174 http-get: returns without shell crash (std/net host prim)

@@ -752,22 +752,23 @@ static void ac4471_file_lines_and_resume() {
         count_sub(lines.err, "unbound variable: foo") != 1 ||
         count_sub(lines.err, "unbound variable: bar") != 1 ||
         count_sub(lines.err, "unbound variable: baz") != 1 ||
-        lines.err.find("error: 3:") == std::string::npos ||
-        lines.err.find("error: 8:") == std::string::npos ||
-        lines.err.find("error: 11:") == std::string::npos ||
+        lines.err.find(".aura:3:") == std::string::npos ||
+        lines.err.find(".aura:8:") == std::string::npos ||
+        lines.err.find(".aura:11:") == std::string::npos ||
         lines.err.find("(bar 2)") == std::string::npos ||
         lines.err.find("(baz 3)") == std::string::npos) {
         std::println(std::cerr, "4471 lines rc {} out [{}] err [{}]", lines.rc, lines.out,
                      lines.err);
     }
+    // Issue #4916: file-mode diagnostics name the file ("x.aura:3:").
     CHECK(lines.rc == 1, "4471: later errors exit 1");
     CHECK(lines.out == "one\ntwo\nthree\n", "4471: one two three once");
     CHECK(count_sub(lines.err, "unbound variable: foo") == 1, "4471: foo once");
     CHECK(count_sub(lines.err, "unbound variable: bar") == 1, "4471: bar once");
     CHECK(count_sub(lines.err, "unbound variable: baz") == 1, "4471: baz once");
-    CHECK(lines.err.find("error: 3:") != std::string::npos, "4471: foo on line 3");
-    CHECK(lines.err.find("error: 8:") != std::string::npos, "4471: bar on line 8");
-    CHECK(lines.err.find("error: 11:") != std::string::npos, "4471: baz on line 11");
+    CHECK(lines.err.find(".aura:3:") != std::string::npos, "4471: foo on line 3");
+    CHECK(lines.err.find(".aura:8:") != std::string::npos, "4471: bar on line 8");
+    CHECK(lines.err.find(".aura:11:") != std::string::npos, "4471: baz on line 11");
     CHECK(lines.err.find("(foo 1)") != std::string::npos, "4471: foo snippet");
     CHECK(lines.err.find("(bar 2)") != std::string::npos, "4471: bar snippet");
     CHECK(lines.err.find("(baz 3)") != std::string::npos, "4471: baz snippet");
@@ -781,14 +782,14 @@ static void ac4471_file_lines_and_resume() {
     }
     auto span = run_file_4460(bin, span_path, face);
     if (span.rc != 1 || count_sub(span.err, "unbound variable: bar") != 1 ||
-        span.err.find("error: 3:") == std::string::npos ||
+        span.err.find(".aura:3:") == std::string::npos ||
         span.err.find("(bar)") == std::string::npos) {
         std::println(std::cerr, "4471 span rc {} out [{}] err [{}]", span.rc, span.out, span.err);
     }
     CHECK(span.rc == 1, "4471: multiline form exits 1");
     CHECK(count_sub(span.err, "unbound variable: foo") == 1, "4471: span foo once");
     CHECK(count_sub(span.err, "unbound variable: bar") == 1, "4471: span bar once");
-    CHECK(span.err.find("error: 3:") != std::string::npos, "4471: bar on file line 3");
+    CHECK(span.err.find(".aura:3:") != std::string::npos, "4471: bar on file line 3");
     CHECK(span.err.find("(bar)") != std::string::npos, "4471: bar snippet keeps the line");
 
     const char* zork_path = "/tmp/aura-4471-zork.aura";
@@ -809,7 +810,7 @@ static void ac4471_file_lines_and_resume() {
     CHECK(zork.rc == 1, "4471: zork exits 1");
     CHECK(zork.out == "1\n2\n", "4471: 1 and 2 once");
     CHECK(count_sub(zork.err, "unbound variable: zork") == 1, "4471: zork once");
-    CHECK(zork.err.find("error: 3:") != std::string::npos, "4471: zork stays on the define");
+    CHECK(zork.err.find(".aura:3:") != std::string::npos, "4471: zork stays on the define");
 
     const char* after_path = "/tmp/aura-4471-after.aura";
     {

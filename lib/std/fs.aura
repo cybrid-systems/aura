@@ -8,7 +8,8 @@
 ;   (path-basename path)       → filename part
 ;   (path-extname path)        → extension (incl dot) | ""
 ;   (file-read path)           → contents string | ""
-;   (file-write path content)  → #t on success
+;   (file-write path content)  → #t on success, else write-file's io error
+;   (make-directory path)      → 1 (mkdir -p; needs the write effect)
 ;   (file-exists? path)        → #t | #f
 ;   (file-size path)           → integer | 0
 ;   (dir-list path)            → list of entries | ()
@@ -66,11 +67,13 @@
     (if (string? v) v "")))
 
 (define (file-write path content)
-  (write-file path content)
-  #t)
+  ;; Issue #4917: a failed write is an error value, not a silent #t.
+  (let ((r (write-file path content)))
+    (if (error? r) r #t)))
 
-(define (file-exists? path)
-  (not (null? (read-file path))))
+;; Issue #4919: the host prim (lstat; Bool). One definition: std/io
+;; re-exports the same prim. Loading std/fs needs no effect.
+(define file-exists? file-exists?)
 
 (define (file-size path)
   (let ((v (read-file path)))
