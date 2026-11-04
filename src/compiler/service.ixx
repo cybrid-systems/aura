@@ -3187,11 +3187,11 @@ public:
         auto loc = evaluator_.error_location(*r);
         if (!loc) {
             const auto nv = flat.get(root);
-            loc = aura::diag::SourceLocation{nv.line == 0 ? 1u : nv.line,
-                                             nv.col == 0 ? 1u : nv.col, 0};
+            loc = aura::diag::SourceLocation{nv.line == 0 ? 1u : nv.line, nv.col == 0 ? 1u : nv.col,
+                                             0};
         }
-        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::TypeError,
-                                                      std::move(msg), *loc, root});
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::TypeError, std::move(msg), *loc, root});
     }
 
     [[nodiscard]] EvalResult eval(std::string_view input) {
@@ -4092,7 +4092,7 @@ public:
                 if (jit_result) {
                     record_eval_result_shape(session_id_, last_ir_mod_, nullptr, *jit_result);
                     return file_mode_statement_error_4899(std::move(*jit_result), *flat_ptr,
-                                                           expanded_root);
+                                                          expanded_root);
                 }
             }
         }

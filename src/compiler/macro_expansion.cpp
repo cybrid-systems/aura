@@ -4383,9 +4383,8 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
                 // single-form string `eval` already takes.
                 if (!is_hygienic && !is_preserved)
                     continue;
-                local_macros[macro_name].push_back(MD{&flat,     &pool,       std::move(params),
-                                                      body_id,  is_dotted, is_hygienic,
-                                                      is_preserved, id});
+                local_macros[macro_name].push_back(MD{&flat, &pool, std::move(params), body_id,
+                                                      is_dotted, is_hygienic, is_preserved, id});
             }
         }
 

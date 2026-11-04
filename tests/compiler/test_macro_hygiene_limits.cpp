@@ -3357,9 +3357,10 @@ static void ac4902_memo_reuse_under_restricted() {
           "4902: macro definition evaluates");
     CHECK(cs.eval("(define (f4902 i) (or2h4902 #f i))").has_value(),
           "4902: calling define evaluates");
-    CHECK(cs.eval("(define (loop4902 i acc) (if (< i 200) (loop4902 (+ i 1) (+ acc (f4902 i))) acc))")
-              .has_value(),
-          "4902: loop define evaluates");
+    CHECK(
+        cs.eval("(define (loop4902 i acc) (if (< i 200) (loop4902 (+ i 1) (+ acc (f4902 i))) acc))")
+            .has_value(),
+        "4902: loop define evaluates");
 
     // The grant is mutation-epoch bound (#2386 fail-closed mid join): the
     // defines above advanced the epoch, so re-bind it to the epoch the
@@ -3375,8 +3376,7 @@ static void ac4902_memo_reuse_under_restricted() {
     CHECK(sum && is_int(*sum) && as_int(*sum) == 199 * 200 / 2,
           "4902: 200 macro calls return the right sum");
     std::println("  clone entries for 200 calls: {}", after - before);
-    CHECK(after - before <= 2,
-          "4902: call-site memo reused under Restricted (one clone, not 200)");
+    CHECK(after - before <= 2, "4902: call-site memo reused under Restricted (one clone, not 200)");
     reset_all();
 }
 int run_test_macro_hygiene_limits() {
