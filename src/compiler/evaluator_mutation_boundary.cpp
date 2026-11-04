@@ -8994,6 +8994,26 @@ void Evaluator::densify_unstable_append_value_slots(std::vector<void**>& known, 
 void Evaluator::densify_forget_value_slots_() noexcept {
     if (!arena_group_)
         return;
+    // Issue #4915: forget the whole batch in one pass per arena. The
+    // per-slot forget erased from each arena's slot list once per value
+    // slot (O(closures x slots)), which made force-soa rebind grow with
+    // every closure allocated since the last densify.
+    try {
+        std::unordered_set<void**> batch;
+        batch.reserve(densify_opaque_value_slots_.size() + densify_modules_value_slots_.size() +
+                      densify_closure_value_slots_.size());
+        auto add_vec = [&](std::vector<void*>& slots) {
+            for (void*& s : slots)
+                batch.insert(&s);
+        };
+        add_vec(densify_opaque_value_slots_);
+        add_vec(densify_modules_value_slots_);
+        add_vec(densify_closure_value_slots_);
+        arena_group_->forget_external_root_slots_all(batch);
+        return;
+    } catch (...) {
+        // [SILENCE-PRIM-#4915] allocation failure: fall back to per-slot forget.
+    }
     auto forget_vec = [&](std::vector<void*>& slots) {
         for (void*& s : slots)
             arena_group_->forget_external_root_slot_all(&s);
