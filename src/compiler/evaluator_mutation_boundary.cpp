@@ -1555,6 +1555,16 @@ types::EvalValue Evaluator::abort_after_insert_child_for_test(ast::NodeId parent
     });
 }
 
+// Issue #4908: set only around maybe_auto_guard_heap_mutate's admit (a
+// language-level set-car! / vector-set! / hash-set! on user data). Such a
+// heap-slot guard never relocates the AST and its exit skips the densify
+// walks (#4346), so the moving-densify agent throttle - which exists to stop
+// AST mutation during an incomplete remap - must not refuse it. It did:
+// under the Restricted default (production defaults) + force-soa, a
+// set-code workspace latched the throttle and the next ordinary set-car!
+// failed as "naked mutate", while sandbox=off ran the same program.
+static thread_local bool t_heap_auto_guard_admit_4908 = false;
+
 Evaluator::HeapMutateGuardHandle Evaluator::maybe_auto_guard_heap_mutate(bool& ok) noexcept {
     ok = true;
     if (any_active_mutation_boundary())
@@ -1579,9 +1589,12 @@ Evaluator::HeapMutateGuardHandle Evaluator::maybe_auto_guard_heap_mutate(bool& o
     // (HeapMutateGuardHandle). A stack success flag dies at this return
     // → asan-verify stack-use-after-return in ~Guard (hash-set! / vector-set!).
     // nullptr → owned_flag_ on the Guard object (alive until handle drop).
+    t_heap_auto_guard_admit_4908 = true;
     auto gr = MutationBoundaryGuard::try_acquire(*this, /*pending=*/1, nullptr);
+    t_heap_auto_guard_admit_4908 = false;
     if (!gr) {
         heap_slot_quiet_for_next_boundary_ = false;
+        heap_guard_reject_reason_ = gr.error().message;
         ok = false;
         return {};
     }
@@ -3330,6 +3343,8 @@ maybe_reject_mutation_concurrency_health(Evaluator& ev, bool region_concurrent) 
 // throttle is still set afterwards, admit refuses. Soft/Off never calls.
 static bool densify_throttle_still_blocks_admit(Evaluator& ev) noexcept {
     if (!typed_audit::production_defaults_active())
+        return false;
+    if (t_heap_auto_guard_admit_4908)
         return false;
     if (!aura::core::moving_densify_health::agent_throttle_for_moving_densify())
         return false;

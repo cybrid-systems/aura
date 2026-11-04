@@ -1782,6 +1782,10 @@ std::optional<aura::diag::Diagnostic> Evaluator::take_raised_diagnostic() {
     return take_pending_apply_diagnostic();
 }
 
+void Evaluator::park_raised_diagnostic(aura::diag::Diagnostic d) {
+    park_pending_apply_diagnostic(std::move(d));
+}
+
 // apply_closure — looks up closures_, foreign functions, or IR bridge
 std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const EvalValue> args) {
     // Issue #4467: drop a message left by a caller that did not take it.
