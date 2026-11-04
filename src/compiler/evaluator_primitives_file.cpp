@@ -4,6 +4,7 @@
 
 module;
 
+#include <cerrno>
 #include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -154,8 +155,48 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_string(id);
     });
 
+    // Issue #4917: every write-file failure is an error value naming the
+    // path and the reason ("io error: write-file /x/y: ENOENT: directory
+    // does not exist"). It used to be (), indistinguishable from success.
+    const auto io_fail = [&ev](std::string_view op, std::string_view path,
+                               std::string_view why) -> EvalValue {
+        std::string msg(op);
+        if (!path.empty()) {
+            msg += ' ';
+            msg += path;
+        }
+        msg += ": ";
+        msg += why;
+        auto err = make_primitive_error(ev.string_heap_, ev.error_values_, msg,
+                                        ev.primitive_error_counter_ptr());
+        ev.mark_error_kind(err, Evaluator::kErrorMarkIo);
+        return err;
+    };
+    const auto errno_reason = [](int e) -> std::string {
+        switch (e) {
+            case ENOENT:
+                return "ENOENT: directory does not exist";
+            case EACCES:
+                return "EACCES: permission denied";
+            case ELOOP:
+                return "ELOOP: refusing to follow a symlink";
+            case EISDIR:
+                return "EISDIR: is a directory";
+            case ENOTDIR:
+                return "ENOTDIR: a path component is not a directory";
+            case ENOSPC:
+                return "ENOSPC: no space left on device";
+            case EROFS:
+                return "EROFS: read-only file system";
+            default:
+                return std::format("errno {}: {}", e, std::strerror(e));
+        }
+    };
+
     // AURA_SIDE_EFFECT_PRIM — write-file requires Write effect (#2057).
-    add("write-file", [&ev, path_is_denied, deny_io](std::span<const EvalValue> a) {
+    // Returns 1 on success (documented in lib/std/INDEX.aura).
+    add("write-file", [&ev, path_is_denied, deny_io, io_fail,
+                       errno_reason](std::span<const EvalValue> a) {
         using aura::compiler::security::kEffectWrite;
         if (!ev.require_effect(kEffectWrite, "write-file")) {
             return make_primitive_error(ev.string_heap_, ev.error_values_,
@@ -168,19 +209,19 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
             is_error(denied))
             return denied;
         if (a.size() < 2 || !is_string(a[0]))
-            return make_void();
+            return io_fail("write-file", "", "expected (write-file path-string content)");
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
-            return make_void();
+            return io_fail("write-file", "", "invalid path string");
         auto& path = ev.mutable_string_at(idx);
         // Issue #1163: refuse /proc/self/mem and other process-memory paths.
         if (path_is_denied(path))
-            return make_void();
+            return io_fail("write-file", path, "denied: protected path");
         // Issue #3802: Restricted+MT / Strict → resolve under tenant root;
         // cross-tenant / escape → deny + IsolationDeny SE, zero write.
         std::string resolved_path;
         if (!ev.check_tenant_host_path(path, resolved_path, "write-file"))
-            return make_void();
+            return io_fail("write-file", path, "denied: tenant path");
         const std::string& use_path = resolved_path;
         std::string content;
         if (is_string(a[1])) {
@@ -190,39 +231,98 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
                 // principal's stamped string. In-range before the bytes
                 // reach the host buffer; deny leaves the file untouched.
                 if (!ev.inrange_string_tenant_allows(cidx, kEffectWrite, "write-file"))
-                    return make_void();
+                    return io_fail("write-file", path, "denied: tenant string");
                 content = ev.string_at(cidx);
             }
         } else if (is_int(a[1])) {
             content = std::to_string(as_int(a[1]));
         } else {
-            return make_void();
+            return io_fail("write-file", path, "content must be a string or integer");
         }
         // O_NOFOLLOW | O_CREAT | O_WRONLY — no symlink follow to sensitive targets.
         // Issue #3802: use_path is tenant-rooted under Restricted+MT / Strict.
         int fd =
             ::open(use_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
         if (fd < 0)
-            return make_void();
+            return io_fail("write-file", path, errno_reason(errno));
         struct stat st{};
         if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
             ::close(fd);
-            return make_void();
+            return io_fail("write-file", path, "not a regular file");
         }
         const char* p = content.data();
         std::size_t left = content.size();
         while (left > 0) {
             auto n = ::write(fd, p, left);
+            if (n < 0 && errno == EINTR)
+                continue;
             if (n <= 0) {
+                const int e = n < 0 ? errno : EIO;
                 ::close(fd);
-                return make_void();
+                return io_fail("write-file", path, errno_reason(e));
             }
             p += n;
             left -= static_cast<std::size_t>(n);
         }
-        ::close(fd);
+        if (::close(fd) != 0)
+            return io_fail("write-file", path, errno_reason(errno));
         return make_int(1);
     });
+
+    // Issue #4917: create an output directory without a shell. Same
+    // Write gate and path policy as write-file; creates parents (mkdir -p).
+    // 1 when the directory exists afterwards, else an io error value.
+    add("make-directory",
+        [&ev, path_is_denied, deny_io, io_fail, errno_reason](std::span<const EvalValue> a) {
+            using aura::compiler::security::kEffectWrite;
+            if (!ev.require_effect(kEffectWrite, "make-directory")) {
+                return make_primitive_error(
+                    ev.string_heap_, ev.error_values_,
+                    aura::compiler::security::format_deny_reason(
+                        kEffectWrite, ev.capability_tenant_id(), "make-directory"),
+                    ev.primitive_error_counter_ptr());
+            }
+            if (auto denied = deny_io(aura::compiler::security::kCapIoWrite,
+                                      "capability denied: io-write required");
+                is_error(denied))
+                return denied;
+            if (a.empty() || !is_string(a[0]))
+                return io_fail("make-directory", "", "expected (make-directory path-string)");
+            auto idx = as_string_idx(a[0]);
+            if (idx >= ev.string_heap_.size())
+                return io_fail("make-directory", "", "invalid path string");
+            auto& path = ev.mutable_string_at(idx);
+            if (path.empty())
+                return io_fail("make-directory", "", "empty path");
+            if (path_is_denied(path))
+                return io_fail("make-directory", path, "denied: protected path");
+            std::string resolved;
+            if (!ev.check_tenant_host_path(path, resolved, "make-directory"))
+                return io_fail("make-directory", path, "denied: tenant path");
+            // mkdir -p, one component at a time; never follow a symlink as the
+            // final component (lstat check after each step).
+            std::size_t pos = resolved[0] == '/' ? 1 : 0;
+            while (true) {
+                const auto slash = resolved.find('/', pos);
+                const std::string part =
+                    slash == std::string::npos ? resolved : resolved.substr(0, slash);
+                if (!part.empty() && part != "." && part != "..") {
+                    if (::mkdir(part.c_str(), 0755) != 0 && errno != EEXIST)
+                        return io_fail("make-directory", path, errno_reason(errno));
+                    struct stat st{};
+                    if (::lstat(part.c_str(), &st) != 0)
+                        return io_fail("make-directory", path, errno_reason(errno));
+                    if (!S_ISDIR(st.st_mode))
+                        return io_fail("make-directory", path,
+                                       S_ISLNK(st.st_mode) ? errno_reason(ELOOP)
+                                                           : errno_reason(ENOTDIR));
+                }
+                if (slash == std::string::npos)
+                    break;
+                pos = slash + 1;
+            }
+            return make_int(1);
+        });
 
     // Issue #2478: require io-read — /proc/self/cmdline can leak secrets
     // (API keys, DSNs) from process argv. Same gate as file-exists? recon.
@@ -261,20 +361,21 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
                                    is_error(denied))
                                    return denied;
                                if (a.empty() || !is_string(a[0]))
-                                   return make_int(0);
+                                   return make_bool(false);
                                auto idx = as_string_idx(a[0]);
                                if (idx >= ev.string_heap_.size())
-                                   return make_int(0);
+                                   return make_bool(false);
                                auto& path = ev.mutable_string_at(idx);
                                if (path_is_denied(path))
-                                   return make_int(0);
+                                   return make_bool(false);
                                // Issue #3835: Restricted+MT / Strict tenant root (mirror
                                // write-file).
                                std::string resolved;
                                if (!ev.check_tenant_host_path(path, resolved, "file-exists?"))
-                                   return make_int(0);
+                                   return make_bool(false);
                                struct stat st;
-                               return make_int(::lstat(resolved.c_str(), &st) == 0 ? 1 : 0);
+                               // Issue #4919: a predicate — #t / #f, as std/fs documents.
+                               return make_bool(::lstat(resolved.c_str(), &st) == 0);
                            });
 
     ev.defer_std_host_prim("file-copy", [&ev, is_regular, path_is_denied, deny_io](const auto& a) {

@@ -1003,7 +1003,10 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
             cause = make_string(static_cast<std::uint64_t>(ev.push_string_heap(std::move(text))));
         }
         auto eidx = primitives_detail::push_error_cause(ev.error_values_, cause);
-        return make_error(eidx);
+        // Issue #4909: this is the program's own error, not a type error.
+        const auto err = make_error(eidx);
+        ev.mark_user_error(err);
+        return err;
     });
 
     add("assert", [&ev](std::span<const EvalValue> a) -> EvalValue {
@@ -1020,7 +1023,9 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
     add("raise", [&ev](std::span<const EvalValue> a) -> EvalValue {
         auto cause = a.empty() ? make_void() : a[0];
         auto eidx = primitives_detail::push_error_cause(ev.error_values_, cause);
-        return make_error(eidx);
+        const auto err = make_error(eidx);
+        ev.mark_user_error(err); // Issue #4909
+        return err;
     });
 
     add("error?", [&ev](std::span<const EvalValue> a) -> EvalValue {

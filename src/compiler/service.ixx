@@ -3233,8 +3233,9 @@ public:
             else
                 loc = loc_of(root);
         }
+        // Issue #4909: user (error ...) → "error:", refusals → effect-denied.
         return std::unexpected(
-            aura::diag::Diagnostic{aura::diag::ErrorKind::TypeError, std::move(msg), *loc, root});
+            aura::diag::Diagnostic{evaluator_.error_value_kind(*r), std::move(msg), *loc, root});
     }
 
     [[nodiscard]] EvalResult eval(std::string_view input) {
@@ -3692,10 +3693,16 @@ public:
         // so the remaining expression can go through the IR path without fallback.
         // Issue #123: capture the (possibly stripped) root and use it for
         // the rest of the eval pipeline.
+        pre_exec_kept_failed_require_ = false;
         expanded_root = pre_exec_requires(*flat_ptr, *pool_ptr, expanded_root);
         // Issue #4575: a denied require stays in the tree. Replay it on
         // the walker so prefix forms run and IR cannot ConstVoid the deny.
-        if (evaluator_.has_pending_require_diag()) {
+        // Issue #4918: a require that failed to RESOLVE is kept too but not
+        // stashed (#4817 re-runs it in program order); IR lowering would
+        // ConstVoid it, so a missing module was silent with rc=0. File mode
+        // replays it on the walker as well.
+        if (evaluator_.has_pending_require_diag() ||
+            (pre_exec_kept_failed_require_ && evaluator_.require_failure_is_diagnostic())) {
             auto result =
                 evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
             if (auto leftover = evaluator_.take_pending_require_diag()) {
@@ -4376,9 +4383,15 @@ public:
         // Pre-execute top-level require/import/use calls to fill ir_cache_
         // so cached define functions are available during lowering.
         // Issue #123: capture the (possibly stripped) root.
+        pre_exec_kept_failed_require_ = false;
         expanded_root = pre_exec_requires(*flat_ptr, *pool_ptr, expanded_root);
         // Issue #4575: same replay as eval(). A denied require is not void.
-        if (evaluator_.has_pending_require_diag()) {
+        // Issue #4918: a require that failed to RESOLVE is kept too but not
+        // stashed (#4817 re-runs it in program order); IR lowering would
+        // ConstVoid it, so a missing module was silent with rc=0. File mode
+        // replays it on the walker as well.
+        if (evaluator_.has_pending_require_diag() ||
+            (pre_exec_kept_failed_require_ && evaluator_.require_failure_is_diagnostic())) {
             auto result =
                 evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
             if (auto leftover = evaluator_.take_pending_require_diag()) {
@@ -5869,7 +5882,10 @@ public:
     }
 
     // Reset a specific module's arena.
-    void reset_module(const std::string& name) { arena_group_.reset_module(name); }
+    void reset_module(const std::string& name) {
+        aura::diag::unbind_source_file_flats(name); // Issue #4916
+        arena_group_.reset_module(name);
+    }
 
     // ── Module-level state for incremental compilation ──────────────
 
@@ -11623,7 +11639,8 @@ public:
     // node_dep from the post-unload string graph, mark remaining callers
     // dirty. Soft/Off tear V2 down too (AC3).
     void unload_module(const std::string& name) {
-        IrCacheGate ir_gate(ir_cache_gate_); // #4717 shared IR/closure cache
+        IrCacheGate ir_gate(ir_cache_gate_);        // #4717 shared IR/closure cache
+        aura::diag::unbind_source_file_flats(name); // Issue #4916
         arena_group_.reset_module(name);
 
         std::vector<std::string> to_remove;
@@ -17310,11 +17327,31 @@ private:
     // the expression so the remaining body can go through IR without fallback.
     // Returns the new root node (with requires removed), or original root.
     // Side effect: fills ir_cache_ + evaluator env via compile_module.
+    // Issue #4918: pre_exec_requires left a failed require in the tree.
+    bool pre_exec_kept_failed_require_ = false;
     aura::ast::NodeId pre_exec_requires(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                         aura::ast::NodeId root) {
         if (root >= flat.size())
             return root;
         auto v = flat.get(root);
+        // Issue #4916: loading a module walks the module's own flat, and the
+        // walker leaves current_flat()/current_pool() on it. The IR program
+        // that runs next reads node locations through that hint, so a deny
+        // in the entry file was reported at "io.aura:1:1". Put the entry
+        // flat back once the requires are done.
+        // Restore the hints as they were on entry (only when a require ran).
+        struct CurrentSourceRestore {
+            Evaluator& ev;
+            aura::ast::FlatAST* f;
+            aura::ast::StringPool* p;
+            bool ran = false;
+            ~CurrentSourceRestore() {
+                if (!ran)
+                    return;
+                ev.set_current_flat(f);
+                ev.set_current_pool(p);
+            }
+        } restore_current_source{evaluator_, evaluator_.current_flat(), evaluator_.current_pool()};
 
         // Top-level standalone require: execute, no body left.
         // The caller should detect NULL_NODE and skip the rest
@@ -17323,11 +17360,13 @@ private:
         // require Call in the AST so normal eval returns the error value
         // (and fail-closed load is observable to scripts / try-catch).
         if (is_require_call(flat, pool, root)) {
+            restore_current_source.ran = true;
             auto rr = evaluator_.eval_flat(flat, pool, root, evaluator_.top_env());
-            if (!rr)
-                return root; // leave for normal eval to surface unexpected
-            if (rr && types::is_error(*rr) && !types::is_string(*rr))
-                return root; // leave Call so eval returns the error value
+            if (!rr || (types::is_error(*rr) && !types::is_string(*rr))) {
+                // leave the Call so normal eval surfaces the failure
+                pre_exec_kept_failed_require_ = true; // Issue #4918
+                return root;
+            }
             return aura::ast::NULL_NODE;
         }
 
@@ -17340,8 +17379,10 @@ private:
             std::vector<aura::ast::NodeId> non_require_children;
             for (auto c : v.children) {
                 if (is_require_call(flat, pool, c)) {
+                    restore_current_source.ran = true;
                     auto rr = evaluator_.eval_flat(flat, pool, c, evaluator_.top_env());
                     if (!rr || (rr && types::is_error(*rr) && !types::is_string(*rr))) {
+                        pre_exec_kept_failed_require_ = true; // Issue #4918
                         // Keep this require + remaining siblings for normal eval
                         // (begin abort-on-error will stop after the failed require).
                         non_require_children.push_back(c);

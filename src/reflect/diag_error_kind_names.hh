@@ -15,7 +15,7 @@
 
 namespace aura::diag {
 
-inline constexpr std::size_t kDiagErrorKindNameCount = 16;
+inline constexpr std::size_t kDiagErrorKindNameCount = 20;
 
 inline constexpr std::string_view kDiagErrorKindIdents[kDiagErrorKindNameCount] = {
     "ParseError",        "UnexpectedToken",
@@ -26,6 +26,8 @@ inline constexpr std::string_view kDiagErrorKindIdents[kDiagErrorKindNameCount] 
     "InternalError",     "OutOfMemory",
     "UncaughtException", "Note",
     "Warning",           "StaleWorkspace",
+    "EffectDenied",      "UserError",
+    "ModuleError",       "IoError",
 };
 
 inline constexpr std::string_view kDiagErrorKindDisplay[kDiagErrorKindNameCount] = {
@@ -45,6 +47,10 @@ inline constexpr std::string_view kDiagErrorKindDisplay[kDiagErrorKindNameCount]
     "note",
     "warning",
     "stale workspace",
+    "effect-denied",
+    "error",
+    "module error",
+    "io error",
 };
 
 inline constexpr std::size_t kBlamePartyNameCount = 5;

@@ -367,6 +367,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             ev.cells_.shrink_to_fit();
             ev.truncate_cell_nil_marks(0); // Issue #4789
             ev.error_values_.clear();
+            ev.user_error_marks_.clear(); // Issue #4909
             ev.error_values_.shrink_to_fit();
             {
                 // Issue #4831: the registry teardown is a publish-path peer.
@@ -557,6 +558,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         // clear strings/pairs when results are no longer needed.
         // ev.vector_heap_, ev.opaque_heap_ are safe to clear here.
         ev.error_values_.clear();
+        ev.user_error_marks_.clear(); // Issue #4909
         ev.error_values_.shrink_to_fit();
         {
             // Issue #4831: same publish-path peer as (gc-heap) — a live

@@ -4396,7 +4396,9 @@ void InferenceEngine::init_primitive_env_part0(TypeId Int, TypeId Bool, TypeId F
 
     // IO/网络原语
     register_primitive("load-module", {String}, Dyn);
-    register_primitive("write-file", {String, String}, Void);
+    // Issue #4917: 1 on success, an io error value on failure (never ()).
+    register_primitive("write-file", {String, String}, Int);
+    register_primitive("make-directory", {String}, Int);
     register_primitive("read-file", {String}, String);
 
     // Arithmetic: (Number, Number) -> Number (Int or Float promotion)
@@ -4554,9 +4556,9 @@ void InferenceEngine::init_primitive_env_part1(TypeId Int, TypeId Bool, TypeId F
     register_primitive("read-file", {String}, String);
     register_primitive("load-module", {String}, Dyn);
     register_primitive("import", {String}, Dyn);
-    register_primitive("write-file", {String, String}, Void);
-    // file-exists? returns 0/1 (Int), not Bool — matches evaluator_primitives_file.cpp
-    register_primitive("file-exists?", {String}, Int);
+    register_primitive("write-file", {String, String}, Int); // #4917
+    // Issue #4919: file-exists? is Bool in the prim, here and in std/fs.
+    register_primitive("file-exists?", {String}, Bool);
     register_primitive("gensym", {}, String);
 
     // Typed mutation operators (runtime-only, minimal type info)
@@ -4708,8 +4710,8 @@ void InferenceEngine::init_primitive_env_part2(TypeId Int, TypeId Bool, TypeId F
     auto _num = reg_.make_var("num");
 
     // std/io — return types match evaluator partition primitives (Int 0/1 for
-    // success/failure, not Bool; the runtime never makes Bool here)
-    register_primitive("file-exists?", {String}, Int);
+    // success/failure). Issue #4919: file-exists? is a predicate (Bool).
+    register_primitive("file-exists?", {String}, Bool);
     register_primitive("file-size", {String}, Int);
     register_primitive("file-copy", {String, String}, Int);
     register_primitive("file-delete", {String}, Int);

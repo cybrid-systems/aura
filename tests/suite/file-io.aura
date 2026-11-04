@@ -8,10 +8,10 @@
             42)))
 
 (test-suite "file:exists"
-  (check (positive? (file-exists? "/tmp/aura-suite-test.txt"))))
+  (check (eq? #t (file-exists? "/tmp/aura-suite-test.txt"))))
 
 (test-suite "file:not-exists"
-  (check (zero? (file-exists? "/tmp/nonexistent-file-xyz123"))))
+  (check (eq? #f (file-exists? "/tmp/nonexistent-file-xyz123"))))
 
 (test-suite "file:size"
   (check (= (file-size "/tmp/aura-suite-test.txt") 2)))
@@ -23,7 +23,7 @@
 (test-suite "file:delete"
   (begin (write-file "/tmp/aura-suite-del.txt" "x")
          (file-delete "/tmp/aura-suite-del.txt")
-         (check (zero? (file-exists? "/tmp/aura-suite-del.txt")))))
+         (check (not (file-exists? "/tmp/aura-suite-del.txt")))))
 
 (test-suite "file:directory-list"
   (check (positive? (length (directory-list "/tmp")))))

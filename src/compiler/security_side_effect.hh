@@ -70,7 +70,7 @@ infer_required_effects_from_name(std::string_view name) noexcept {
     // Issue #4575: write-file's body checks Write only. Dispatch must
     // not also demand Exec, or --allow write cannot lift it while shell
     // (Exec) stays denied. file:write / sys-* / git-* stay Write|Exec.
-    if (name == "write-file")
+    if (name == "write-file" || name == "make-directory") // #4917
         return kEffectWrite;
     if (name.starts_with("file:write") || name.starts_with("sys-write") ||
         name.starts_with("sys-open") || name.starts_with("git-"))
@@ -122,8 +122,10 @@ infer_required_effects_from_name(std::string_view name) noexcept {
     // (would double-consume single-use). Sibling host writes:
     if (name == "shell" || name.starts_with("command-"))
         return kEffectExec;
+    // Issue #4919: a file copy / delete is a filesystem write, not an
+    // exec (same as write-file, #4575): `--allow write` lifts it.
     if (name == "file-copy" || name == "file-delete" || name == "file-write")
-        return static_cast<std::uint16_t>(kEffectWrite | kEffectExec);
+        return kEffectWrite;
     // Issue #4452: (aot:reload path) dlopens a caller path. Sibling
     // aot:set/get-region-mask and aot:set/get-module-version do not, so
     // the aot: prefix stays kEffectNone. Exact name stamps kEffectFfi at

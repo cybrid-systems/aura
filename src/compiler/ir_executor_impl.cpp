@@ -775,7 +775,12 @@ std::optional<Diagnostic> IRInterpreter::effect_deny_diagnostic_4896_(const Eval
     auto msg = context_.evaluator->soft_error_message(v);
     if (!msg.starts_with("effect-denied:"))
         return std::nullopt;
-    return Diagnostic{ErrorKind::TypeError, std::move(msg)};
+    Diagnostic d{ErrorKind::TypeError, std::move(msg)};
+    // Issue #4909: every refusal is located (the producer's location
+    // when one was recorded; the calling sites add the instruction's).
+    if (auto el = context_.evaluator->error_location(v))
+        d.location = *el;
+    return d;
 }
 
 // Issue #1513 / #1616: dual-check IRClosure (bridge_epoch + EnvFrame version_/id
@@ -909,8 +914,10 @@ static bool ir_user_arity_bad(const aura::ir::IRFunction& func, std::size_t got)
 static SourceLocation ir_call_arity_loc(const IRInstruction* instr, Evaluator* ev) {
     std::uint32_t line = 1;
     std::uint32_t col = 1;
+    std::uint32_t fid = 0;
     if (ev && instr && instr->source_ast_node_id != 0) {
         auto* flat = ev->current_flat();
+        fid = aura::diag::source_file_for_flat(flat); // Issue #4916
         const auto nid = static_cast<aura::ast::NodeId>(instr->source_ast_node_id);
         if (flat && nid < flat->size()) {
             auto call = flat->get(nid);
@@ -920,7 +927,7 @@ static SourceLocation ir_call_arity_loc(const IRInstruction* instr, Evaluator* e
                 col = call.col;
         }
     }
-    return SourceLocation{line, col, 0};
+    return SourceLocation{line, col, fid};
 }
 
 static std::string ir_arity_proc_name(const aura::ir::IRFunction& func, const IRInstruction* instr,
@@ -2288,7 +2295,11 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         }
                     }
                     if (auto deny = effect_deny_diagnostic_4896_(out)) // #4896
+                    {
+                        if (!deny->location.valid()) // Issue #4909
+                            deny->location = ir_call_arity_loc(&instr, context_.evaluator);
                         return std::unexpected(std::move(*deny));
+                    }
                     locals[ops[0]] = out;
                     break;
                 }
@@ -2376,8 +2387,11 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         // discarded: the write was dropped, no diagnostic, rc=0.
                         // The tree-walker raises it; do the same when no IR
                         // handler is open in this frame.
-                        if (auto deny = effect_deny_diagnostic_4896_(*presult))
+                        if (auto deny = effect_deny_diagnostic_4896_(*presult)) {
+                            if (!deny->location.valid()) // Issue #4909
+                                deny->location = ir_call_arity_loc(&instr, context_.evaluator);
                             return std::unexpected(std::move(*deny));
+                        }
                         locals[result_slot] = *presult;
                     }
                     break;
@@ -2511,8 +2525,12 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                 locals[ops[3]] = context_.evaluator->invoke_prim_with_telemetry(
                                     prim_name, [&]() { return (*pfn)(call_args); });
                                 // Issue #4896: same deny raise as the PrimCall arm.
-                                if (auto deny = effect_deny_diagnostic_4896_(locals[ops[3]]))
+                                if (auto deny = effect_deny_diagnostic_4896_(locals[ops[3]])) {
+                                    if (!deny->location.valid()) // Issue #4909
+                                        deny->location =
+                                            ir_call_arity_loc(&instr, context_.evaluator);
                                     return std::unexpected(std::move(*deny));
+                                }
                             } else if (aura::compiler::typed_audit::production_defaults_active()) {
                                 // #3834 / #3798: production + null owner — void,
                                 // zero side effects (mirror PrimCall arm).
@@ -2548,8 +2566,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                 const auto nv = rflat->get(nid);
                                 context_.evaluator->note_error_location(
                                     ret_val,
-                                    aura::diag::SourceLocation{nv.line == 0 ? 1u : nv.line,
-                                                               nv.col == 0 ? 1u : nv.col, 0});
+                                    aura::diag::SourceLocation{
+                                        nv.line == 0 ? 1u : nv.line, nv.col == 0 ? 1u : nv.col,
+                                        aura::diag::source_file_for_flat(rflat)}); // #4916
                                 // Issue #4899 follow-up: which top-level
                                 // statement escaped the entry, so main
                                 // resumes after it (a location inside an

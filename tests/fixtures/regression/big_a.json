@@ -74,19 +74,19 @@
   {
     "name": "file-delete",
     "code": "(begin (require \"std/io\" all:) (write-file \"/tmp/aura-del-test.txt\" \"x\")(file-delete \"/tmp/aura-del-test.txt\")(file-exists? \"/tmp/aura-del-test.txt\"))",
-    "expect_out": "0",
+    "expect_out": "#f",
     "expect_err": ""
   },
   {
     "name": "file-exists",
     "code": "(begin (require \"std/io\" all:) (file-exists? \"/tmp/aura-regr.txt\"))",
-    "expect_out": "1",
+    "expect_out": "#t",
     "expect_err": ""
   },
   {
     "name": "file-exists-not",
     "code": "(begin (require \"std/io\" all:) (file-exists? \"/tmp/aura-nonexistent-xyz\"))",
-    "expect_out": "0",
+    "expect_out": "#f",
     "expect_err": ""
   },
   {
@@ -98,19 +98,19 @@
   {
     "name": "file-prim-delete",
     "code": "(begin (require \"std/io\" all:) (write-file \"/tmp/aura-fp2.txt\" \"x\") (file-delete \"/tmp/aura-fp2.txt\") (file-exists? \"/tmp/aura-fp2.txt\"))",
-    "expect_out": "0",
+    "expect_out": "#f",
     "expect_err": ""
   },
   {
     "name": "file-prim-exists-no",
     "code": "(begin (require \"std/io\" all:) (file-exists? \"/tmp/aura-fp-nope-xyz\"))",
-    "expect_out": "0",
+    "expect_out": "#f",
     "expect_err": ""
   },
   {
     "name": "file-prim-exists-yes",
     "code": "(begin (require \"std/io\" all:) (write-file \"/tmp/aura-fp1.txt\" \"hi\") (file-exists? \"/tmp/aura-fp1.txt\"))",
-    "expect_out": "1",
+    "expect_out": "#t",
     "expect_err": ""
   },
   {

@@ -6868,6 +6868,17 @@ public:
     types::EvalValue load_module_file(const std::string& path);
     // Resolve a module path (supports AURA_PATH, .aura extension).
     std::string resolve_module_path(const std::string& path) const;
+    // Issue #4918: "./x" base — the running module's directory, else the
+    // entry file's (diag entry source file), else "" (stdin / -e: cwd).
+    std::string module_base_dir() const;
+    static std::string entry_base_dir() {
+        const auto entry = aura::diag::source_file_path(0);
+        const auto slash = entry.rfind('/');
+        if (slash == std::string::npos)
+            return {};
+        return slash == 0 ? std::string("/") : entry.substr(0, slash);
+    }
+    std::vector<std::string> module_search_candidates(const std::string& path) const;
     // Issue #3174 / #3176: host prims for std/{io,fs,net,socket,git,process,ffi}
     // are deferred off the boot registrar (SlimSurface / primitives.md). Require
     // of those modules installs them. Sandbox without the matching effect
@@ -7171,6 +7182,8 @@ private:
     // Set by load_module_file on cannot-resolve / parse error. The require
     // form reads it once. Cleared at the next load.
     std::string last_module_load_failure_;
+    // Issue #4918: directories of the modules whose bodies are running.
+    std::vector<std::string> module_base_dirs_;
     std::vector<std::string> module_names_; // display names for modules
     std::unordered_map<std::string, ast::ASTArena*, aura::core::TransparentStringHash,
                        std::equal_to<>>
@@ -7400,6 +7413,8 @@ public:
     // and never overwritten, so an error that escapes to the top level is
     // located at the failing form instead of the outermost call.
     std::vector<aura::diag::SourceLocation> error_locations_;
+    // Issue #4909: 1 = produced by the program's (error ...) / (raise ...).
+    std::vector<std::uint8_t> user_error_marks_;
     std::vector<void*> opaque_heap_; // opaque pointers (indexed by OpaqueRef)
     // Issue #4386: stable copies of opaque_heap_ / modules_ / closure body
     // pointers. Their element addresses are what live_compact rewrites.
@@ -17643,6 +17658,47 @@ public:
         if (!loc.valid())
             return std::nullopt;
         return loc;
+    }
+    // Issue #4909 / #4917: an escaped error value's report kind. The
+    // program's own (error ...) / (raise ...) is "error:", a failed host
+    // I/O op is "io error:". Indexed like error_locations_, same lock.
+    static constexpr std::uint8_t kErrorMarkUser = 1;
+    static constexpr std::uint8_t kErrorMarkIo = 2;
+    void mark_error_kind(types::EvalValue err, std::uint8_t mark) {
+        if (!types::is_error(err) || types::is_string(err))
+            return;
+        const auto idx = types::as_error_idx(err);
+        if (idx == 0)
+            return; // shared overflow / default slot
+        std::lock_guard<std::mutex> lock(
+            ::aura::compiler::primitives_detail::primitive_error_store_mutex());
+        if (user_error_marks_.capacity() <
+            ::aura::compiler::primitives_detail::kPrimitiveErrorStoreReserve)
+            user_error_marks_.reserve(
+                ::aura::compiler::primitives_detail::kPrimitiveErrorStoreReserve);
+        if (user_error_marks_.size() <= idx)
+            user_error_marks_.resize(idx + 1, 0);
+        user_error_marks_[idx] = mark;
+    }
+    void mark_user_error(types::EvalValue err) { mark_error_kind(err, kErrorMarkUser); }
+    [[nodiscard]] std::uint8_t error_mark(types::EvalValue err) const {
+        if (!types::is_error(err) || types::is_string(err))
+            return 0;
+        const auto idx = types::as_error_idx(err);
+        return idx != 0 && idx < user_error_marks_.size() ? user_error_marks_[idx] : 0;
+    }
+    [[nodiscard]] bool is_user_error(types::EvalValue err) const {
+        return error_mark(err) == kErrorMarkUser;
+    }
+    [[nodiscard]] aura::diag::ErrorKind error_value_kind(types::EvalValue err) const {
+        switch (error_mark(err)) {
+            case kErrorMarkUser:
+                return aura::diag::ErrorKind::UserError;
+            case kErrorMarkIo:
+                return aura::diag::ErrorKind::IoError;
+            default:
+                return aura::diag::ErrorKind::TypeError; // display_kind() maps refusals
+        }
     }
     // Issue #4273: Soft serve must not report status=ok with value <error>
     // (pick-best soft_bad_value / set-code truncated CASE). Surface the

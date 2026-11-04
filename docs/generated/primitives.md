@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**500** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**501** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -11,7 +11,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 56 primitives (11%)
-- **core**: 409 primitives (82%)
+- **core**: 410 primitives (82%)
 - **internal-observable**: 34 primitives (7%)
 - **convenience**: 1 primitives (0%)
 
@@ -152,7 +152,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `c-struct-set!` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (285)
+## Core builtins (286)
 
 - `%base64-decode` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -311,6 +311,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `m4-borrow` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `m4-move` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `m4-return!` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `make-directory` *[core]* — `src/compiler/evaluator_primitives_file.cpp`
 - `make-f64vector` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
 - `make-vector` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `map` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
@@ -710,7 +711,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (409)
+### Core builtins (must remain primitive) (410)
 
 - `%base64-decode` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` — `src/compiler/evaluator_primitives_char.cpp`
@@ -922,6 +923,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `m4-borrow` — `src/compiler/evaluator_primitives_math.cpp`
 - `m4-move` — `src/compiler/evaluator_primitives_math.cpp`
 - `m4-return!` — `src/compiler/evaluator_primitives_math.cpp`
+- `make-directory` — `src/compiler/evaluator_primitives_file.cpp`
 - `make-f64vector` — `src/compiler/evaluator_primitives_char.cpp`
 - `make-vector` — `src/compiler/evaluator_primitives_vector.cpp`
 - `map` — `src/compiler/evaluator_primitives_list.cpp`

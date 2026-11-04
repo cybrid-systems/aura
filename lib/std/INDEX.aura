@@ -144,7 +144,7 @@
             "(require \"std/hot-update-monitor\" all:)"))
     ; ── IO / system ──
     (list "io"
-      (list "File I/O host prims (file-exists?/copy/delete/size, directory-list) — sandbox requires io effects (#3174)"
+      (list "File I/O host prims (file-exists? → Bool, file-copy/delete/size, directory-list); also via std/fs. Loading needs no effect; file-copy/delete check write at the call (#4919). write-file / make-directory are core: 1 or an io error (#4917)"
             "(require \"std/io\" all:)"))
     (list "net"
       (list "HTTP client host prims — sandbox requires network effect (#3174)"
