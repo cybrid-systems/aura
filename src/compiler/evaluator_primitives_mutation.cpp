@@ -86,9 +86,7 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (const char* p = k; *p; ++p)
                     h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
+                const auto fp = ::aura::compiler::hash::fingerprint(h);
                 auto kidx = ev.string_heap_.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 EvalValue val_ev = make_int(v);
@@ -98,7 +96,7 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto hcap = ht->capacity;
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
+                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
                         keys[idx] = key_ev.val;
                         vals[idx] = val_ev.val;
@@ -221,9 +219,7 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k; *p; ++p)
                 h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
+            const auto fp = ::aura::compiler::hash::fingerprint(h);
             auto kidx = ev.string_heap_.mint(k);
             EvalValue key_ev = make_string(kidx);
             EvalValue val_ev = make_int(v);
@@ -233,7 +229,7 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             auto hcap = ht->capacity;
             for (std::size_t at = 0; at < hcap; ++at) {
                 auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
+                if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                     meta[idx] = fp;
                     keys[idx] = key_ev.val;
                     vals[idx] = val_ev.val;
@@ -522,15 +518,13 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
+                const auto fp = ::aura::compiler::hash::fingerprint(h);
                 auto kidx = ev.string_heap_.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < cap; ++at) {
                     auto idx = ((h >> 1) + at) & (cap - 1);
-                    if (meta[idx] == 0xFF) {
+                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
                         keys[idx] = key_ev.val;
                         vals[idx] = make_int(static_cast<std::int64_t>(v)).val;
@@ -596,15 +590,13 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
+                const auto fp = ::aura::compiler::hash::fingerprint(h);
                 auto kidx = ev.string_heap_.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < cap; ++at) {
                     auto idx = ((h >> 1) + at) & (cap - 1);
-                    if (meta[idx] == 0xFF) {
+                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
                         keys[idx] = key_ev.val;
                         vals[idx] = entry.second.val;
@@ -625,13 +617,11 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (char c : std::string("last-operator"))
                 h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
+            const auto fp = ::aura::compiler::hash::fingerprint(h);
             bool inserted = false;
             for (std::size_t at = 0; at < cap; ++at) {
                 auto idx = ((h >> 1) + at) & (cap - 1);
-                if (meta[idx] == 0xFF) {
+                if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                     meta[idx] = fp;
                     keys[idx] = last_op_key_ev.val;
                     vals[idx] = last_op_val_ev.val;
@@ -719,9 +709,7 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
+                const auto fp = ::aura::compiler::hash::fingerprint(h);
                 EvalValue key_ev = make_string(k == "mutation-id"   ? k_id
                                                : k == "operator"    ? k_op
                                                : k == "target-node" ? k_tgt
@@ -730,7 +718,7 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
                 bool inserted = false;
                 for (std::size_t at = 0; at < cap; ++at) {
                     auto idx = ((h >> 1) + at) & (cap - 1);
-                    if (meta[idx] == 0xFF) {
+                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
                         keys[idx] = key_ev.val;
                         vals[idx] = v.val;
@@ -837,12 +825,10 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (const char* p = k_str; *p; ++p)
                     h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
+                const auto fp = ::aura::compiler::hash::fingerprint(h);
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
+                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
                         auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
@@ -1057,12 +1043,10 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (const char* p = k_str; *p; ++p)
                     h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
+                const auto fp = ::aura::compiler::hash::fingerprint(h);
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
+                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
                         auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
@@ -1116,12 +1100,10 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (const char* p = k_str; *p; ++p)
                     h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
+                const auto fp = ::aura::compiler::hash::fingerprint(h);
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
+                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
                         auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
