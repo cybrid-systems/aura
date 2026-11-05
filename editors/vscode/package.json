@@ -1,0 +1,36 @@
+{
+  "name": "aura-lang",
+  "displayName": "Aura",
+  "description": "Aura syntax highlighting + `aura lsp` (diagnostics, goto-definition)",
+  "version": "0.1.0",
+  "publisher": "cybrid-systems",
+  "license": "Apache-2.0",
+  "engines": { "vscode": "^1.75.0" },
+  "categories": ["Programming Languages"],
+  "main": "./extension.js",
+  "activationEvents": ["onLanguage:aura"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "aura",
+        "aliases": ["Aura", "aura"],
+        "extensions": [".aura"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      { "language": "aura", "scopeName": "source.aura", "path": "./syntaxes/aura.tmLanguage.json" }
+    ],
+    "configuration": {
+      "title": "Aura",
+      "properties": {
+        "aura.path": {
+          "type": "string",
+          "default": "aura",
+          "description": "Path to the aura binary (runs `aura lsp`)."
+        }
+      }
+    }
+  },
+  "dependencies": { "vscode-languageclient": "^9.0.1" }
+}

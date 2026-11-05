@@ -826,6 +826,7 @@ static std::string slurp_4913(const std::filesystem::path& p) {
 
 #include "cli_templates_4913.inc"
 #include "cli_evo_4910.inc"
+#include "cli_lsp_4911.inc"
 
 // `aura new [app|evolve|agent] <dir>`
 static int aura_new_4913(int argc, char** argv) {
@@ -981,6 +982,9 @@ static int aura_test_4913(const std::filesystem::path& root, const std::vector<s
 // #4908 gate holds to the same semantics as --load).
 static std::vector<std::string> g_front_args_4913;
 static std::vector<char*> g_front_argv_4913;
+// Issue #4911: `aura repl [FILE]` — REPL even on a pipe, FILE pre-:load'ed.
+static bool g_repl_4911 = false;
+static std::string g_repl_file_4911;
 static std::optional<int> front_door_4913(int& argc, char**& argv) {
     if (argc < 2)
         return std::nullopt;
@@ -1002,6 +1006,32 @@ static std::optional<int> front_door_4913(int& argc, char**& argv) {
         return aura_new_4913(argc, argv);
     if (sub == "evo")
         return aura_evo_4910(argc, argv);
+    if (sub == "lsp")
+        return aura_lsp_4911();
+    if (sub == "repl") {
+        // `aura repl [--preset P|--grant C|--deny C|…] [FILE]`: options pass
+        // through to the normal parser; FILE is :load'ed by the REPL itself.
+        g_repl_4911 = true;
+        // The REPL evaluates one top-level form at a time under the Restricted
+        // soft session, the shape that trips #4928 (Moving compaction after
+        // set-code leaves closures called through map/apply returning void).
+        // An interactive session has no fragmentation budget to defend, so
+        // keep Moving compaction off unless the user pins it.
+        ::setenv("AURA_ARENA_MOVING_COMPACT", "0", 0);
+        std::vector<std::string> args{argv[0]};
+        for (int i = 2; i < argc; ++i) {
+            const std::string_view a(argv[i]);
+            if (!a.starts_with("-")) {
+                g_repl_file_4911 = argv[i];
+                continue;
+            }
+            args.emplace_back(a);
+            if ((a == "--preset" || a == "--grant" || a == "--deny") && i + 1 < argc)
+                args.emplace_back(argv[++i]);
+        }
+        rewrite(std::move(args));
+        return std::nullopt;
+    }
     namespace fs = std::filesystem;
     if (sub == "run" || sub == "test") {
         std::vector<std::string> opts, pos;
@@ -2738,7 +2768,8 @@ int main(int argc, char* argv[]) {
         if (argc > 2) {
             input = argv[2];
         } else {
-            std::getline(std::cin, input);
+            // Issue #4911: the whole program, not just its first line.
+            input.assign(std::istreambuf_iterator<char>(std::cin), {});
         }
         // Issue #79: use the structured result so we can return a proper
         // exit code. The old code parsed the output for "diagnostics:"
@@ -4264,6 +4295,15 @@ int main(int argc, char* argv[]) {
                      "  {} evo report --html DIR             static HTML timeline, score curve, "
                      "diffs",
                      prog);
+        std::println(std::cerr, "REPL (#4911):");
+        std::println(std::cerr,
+                     "  {} repl [file.aura]   REPL; :load/:reload FILE, :ws, :worldline, "
+                     ":snapshot, :restore ID, :help",
+                     prog);
+        std::println(std::cerr,
+                     "  {} lsp                stdio language server (diagnostics, "
+                     "goto-definition); see docs/editor.md",
+                     prog);
         std::println(std::cerr, "Options:");
         std::println(std::cerr, "  -e, --eval EXPR     evaluate EXPR (repeatable)");
         std::println(std::cerr, "  --load FILE         run FILE (same semantics as '{} FILE')",
@@ -4599,11 +4639,17 @@ int main(int argc, char* argv[]) {
     }
     // Issue #4912: resolve the preset (flag > AURA_PRESET > ./aura.toml or
     // the entry file's aura.toml) and fold it into the soft session.
+    // Issue #4911: `aura repl FILE` reads FILE's aura.toml preset; the REPL is
+    // a development face, so it defaults to dev (:reload needs mutate).
+    if (g_repl_4911 && entry_path_4912.empty())
+        entry_path_4912 = g_repl_file_4911;
     if (preset_4912.empty()) {
         if (const char* ev = std::getenv("AURA_PRESET"); ev && *ev)
             preset_4912 = ev;
         else
             preset_4912 = read_toml_preset_4912(entry_path_4912);
+        if (preset_4912.empty() && g_repl_4911)
+            preset_4912 = "dev";
         if (!preset_4912.empty() && preset_4912 != "dev" && preset_4912 != "ci" &&
             preset_4912 != "prod") {
             std::println(std::cerr, "error: unknown preset '{}' (AURA_PRESET / aura.toml)",
@@ -4695,8 +4741,27 @@ int main(int argc, char* argv[]) {
     // while preserving interactive TTY behavior unchanged.
     // Issue #2767: never enter interactive REPL when -e / file supplied.
     bool interactive = (argc == 1) && ::isatty(STDIN_FILENO) && !source_from_argv;
-    if (interactive) {
+    if (interactive || g_repl_4911) {
+        // Issue #4911: `aura repl` honours the preset / grants like a file run.
+        if (g_repl_4911 && soft_launch && cs.evaluator().effect_sandbox_mode() != 0) {
+            const auto st = cs.evaluator().enter_soft_session(soft_extra);
+            if (!quiet_4912)
+                std::println(std::cerr, "aura: repl preset={} soft auto-grant: {}",
+                             preset_4912.empty() ? "custom" : preset_4912,
+                             st.active ? "mutate,read" : "refused");
+        }
         aura::Repl repl(cs);
+        if (g_repl_4911) {
+            // Interactive input can name any std binding (assq, string-join,
+            // …), so load the full prelude a file run would load lazily.
+            if (auto pre = cs.eval("(require \"std/list\" all:)(require \"std/string\" all:)"
+                                   "(require \"std/hash\" all:)(require \"std/math\" all:)");
+                !pre)
+                std::println(std::cerr, "aura: repl std prelude failed: {}",
+                             pre.error().format_with_source("prelude"));
+        }
+        if (!g_repl_file_4911.empty())
+            repl.load(g_repl_file_4911);
         repl.run();
         return 0;
     }
