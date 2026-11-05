@@ -200,6 +200,60 @@ static void ac3611_5_source_and_linter();
 static void ac3657_2_reject_arms_pending_ub();
 static void ac3657_5_source_and_linter();
 
+// ── Issue #4930: warm define-root hit must not scan root's children ──
+// A root-level define consult proves membership with define_root_is_child_.
+// That used to walk flat.root's whole child list (O(W)) per hop on both the
+// cache-hit and tag-index paths. The maintained parent link answers it in
+// O(1); the child-list scan stays only as a torn-state fallback, so a warm
+// workspace (W=2000) must never grow the scan counter.
+static void ac4930_1_warm_hit_uses_parent_link() {
+    std::println("\n--- #4930: warm define-root hit uses the parent link ---");
+    const auto ixx = read_file("src/compiler/service.ixx");
+    auto pos = ixx.find("static bool define_root_is_child_(");
+    CHECK(pos != std::string::npos, "4930: define_root_is_child_ present");
+    const auto body = ixx.substr(pos, 900);
+    const auto link_at = body.find("flat.parent_of(cur) == par");
+    const auto scan_at = body.find("flat.children(par)");
+    CHECK(link_at != std::string::npos, "4930: parent-link fast path present");
+    CHECK(scan_at != std::string::npos && link_at < scan_at,
+          "4930: parent link decides before the child-list scan");
+
+    CompilerService cs;
+    std::string src = "(set-code \"";
+    for (int i = 0; i < 2000; ++i) {
+        src += "(define w4930_" + std::to_string(i) + " (lambda (x) (+ x " + std::to_string(i) +
+               "))) ";
+    }
+    src += "(define f4930 (lambda (x) (+ x 1))) ";
+    src += "(define g4930 (lambda (x) (f4930 x)))\")";
+    CHECK(cs.eval(src).has_value(), "4930: set-code W=2000");
+    CHECK(cs.eval("(eval-current)").has_value(), "4930: eval W=2000");
+
+    const auto link0 =
+        aura::compiler::g_define_root_parent_link_hits.load(std::memory_order_relaxed);
+    const auto scan0 =
+        aura::compiler::g_define_root_child_list_scans.load(std::memory_order_relaxed);
+    bool rebound = true;
+    for (int i = 0; i < 20; ++i) {
+        rebound = rebound &&
+                  cs.eval("(mutate:rebind \"f4930\" \"(lambda (x) (+ x 2))\" \"w\")").has_value();
+        rebound = rebound && cs.eval("(eval-current)").has_value();
+    }
+    CHECK(rebound, "4930: 20 same-name rebinds accepted");
+    const auto link1 =
+        aura::compiler::g_define_root_parent_link_hits.load(std::memory_order_relaxed);
+    const auto scan1 =
+        aura::compiler::g_define_root_child_list_scans.load(std::memory_order_relaxed);
+    std::println("  4930: parent-link hits +{}, child-list scans +{}", link1 - link0,
+                 scan1 - scan0);
+    CHECK(link1 > link0, "4930: warm consults resolved through the parent link");
+    CHECK(scan1 == scan0, "4930: warm hit path never scanned root's children");
+    auto r = cs.eval("(g4930 5)");
+    CHECK(r.has_value() && aura::compiler::types::is_int(*r) &&
+              aura::compiler::types::as_int(*r) == 7,
+          "4930: g4930 observes the rebound f (7)");
+}
+
 int run_test_cascade_decision_residual_atomic_3135() {
     std::println("=== Issue #3135: cascade-decision residual atomic ===");
     CHECK(true, "ac3135: issue stamp");
@@ -394,6 +448,9 @@ int run_test_cascade_decision_residual_atomic_3135() {
     std::println("\n=== Issue #3657: unslotted string edge / reject must arm ===");
     ac3657_2_reject_arms_pending_ub();
     ac3657_5_source_and_linter();
+
+    std::println("\n=== Issue #4930: warm define-root hit uses the parent link ===");
+    ac4930_1_warm_hit_uses_parent_link();
 
     std::println("\n=== Final: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
