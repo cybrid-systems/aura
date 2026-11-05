@@ -16,6 +16,7 @@ module;
 #include "observability_metrics.h"
 #include "rebind_phase_stats.h"   // per-phase rebind timing (opt-in)
 #include "hash_meta.h"            // FNV constants for stats hash
+#include "basis_points.h"         // Issue #905: basis-point rate helpers
 #include "typed_mutation_audit.h" // Issue #1589
 #include "compiler/ownership_rebind.h" // Issue #2695: unified OwnershipEnv rebind API post-densify/steal/Agent
 #include "test/test_strategy.h"            // Issue #1887: hot-path / self-mod strategy metrics
@@ -11287,8 +11288,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             {
                 const auto att = c.aot_hotupdate_attempts.load(std::memory_order_relaxed);
                 const auto aud = c.aot_hotupdate_audits.load(std::memory_order_relaxed);
-                const std::int64_t cov =
-                    att == 0 ? 10000 : static_cast<std::int64_t>((aud * 10000ull) / att);
+                const std::int64_t cov = ::aura::compiler::basis_points(aud, att);
                 insert_kv("audit-coverage-bp", cov); // basis points (10000 = 100%)
             }
             return query_hash_finish(ht, ev.string_heap_, overflowed, ev);

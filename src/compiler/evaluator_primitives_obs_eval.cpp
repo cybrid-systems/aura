@@ -6960,8 +6960,8 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 const auto cow =
                     m.flatast_locked_move_out_cow_total.load(std::memory_order_relaxed);
                 const auto sum = ex + cow;
-                // exclusive ratio in basis points (0..10000); 10000 if no samples.
-                const auto ratio_bp = sum == 0 ? 10000ull : (ex * 10000ull) / sum;
+                // exclusive ratio in basis points (0..10000); 0 if no samples.
+                const auto ratio_bp = ::aura::compiler::basis_points(ex, sum);
                 insert_kv("flatast-locked-exclusive-ratio-bp", static_cast<std::int64_t>(ratio_bp));
             }
             insert_kv("flatast-locked-exclusive-wired", 1);
@@ -11361,7 +11361,8 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("cross-cow-soft-migrate-same-gen-wired", 1);
                 // Soft rate (same-gen / (same-gen + hard)). Clamp [0, 10000] (×100 for 2dp).
                 const std::int64_t denom = soft_same + hard_cow;
-                const std::int64_t soft_rate_x10000 = denom > 0 ? (soft_same * 10000) / denom : 0;
+                const std::int64_t soft_rate_x10000 =
+                    ::aura::compiler::basis_points(soft_same, denom);
                 insert_kv("cross-cow-soft-rate-x10000", soft_rate_x10000);
                 // Schema-2603 cross-link.
                 insert_kv("schema-2603", 2603);

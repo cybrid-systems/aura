@@ -7,7 +7,8 @@ module;
 #include "runtime_shared.h"
 #include "security_capabilities.h" // Issue #4428: kEffectMutate on the value-path consult
 #include "messaging_bridge.h"
-#include "hash_meta.h" // FNV constants (#901)
+#include "hash_meta.h"
+#include "basis_points.h" // Issue #905: basis-point rate helpers // FNV constants (#901)
 #include "observability_metrics.h"
 #include "render_telemetry.hh"
 #include "core/arena_auto_policy_stats.h"
@@ -1335,8 +1336,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                     compact_est += ev.arena_group_->module_arena(name).compact_estimate();
                 }
             }
-            std::int64_t frag_bp =
-                (cap > 0) ? static_cast<std::int64_t>(((cap - used) * 10000) / cap) : 0;
+            std::int64_t frag_bp = ::aura::compiler::basis_points(cap - used, cap);
             // Build 5-tuple via (e1 . (e2 . (e3 . (e4 . e5)))) pattern,
             // matching the issue body contract. Cell order:
             //   e1=compaction-count, e2=defrag-attempted-count,

@@ -643,7 +643,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const auto h = load(module_export_cache::g_hit);
             const auto m = load(module_export_cache::g_miss);
             const auto denom = h + m;
-            insert_kv("hit-rate-bp", denom > 0 ? (h * 10000) / denom : 0);
+            insert_kv("hit-rate-bp", ::aura::compiler::basis_points(h, denom));
             return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
@@ -1840,8 +1840,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             std::int64_t mailbox_backpressure_p99 = 0;
             if (mb_bp > 0) {
                 const auto denom = mb_pushes + mb_bp;
-                const auto rate_bp =
-                    denom > 0 ? static_cast<std::int64_t>((mb_bp * 10000u) / denom) : 10000;
+                const auto rate_bp = ::aura::compiler::basis_points(mb_bp, denom);
                 mailbox_backpressure_p99 =
                     std::min<std::int64_t>(10000, 50 + rate_bp + static_cast<std::int64_t>(mb_bp));
             }

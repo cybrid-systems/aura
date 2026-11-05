@@ -8946,7 +8946,8 @@ void ObservabilityPrims::register_jit_p68(PrimRegistrar add, Evaluator& ev) {
                                               g_typed_mutation_audit_counters.invariant_audits.load(
                                                   std::memory_order_relaxed)));
             insert_kv("hit-rate-bp",
-                      triggered > 0 ? (triggered - violations) * 10000 / triggered : 10000);
+                      ::aura::compiler::basis_points(
+                          triggered > violations ? triggered - violations : 0, triggered));
             insert_kv("hotpath-guard-exit-wired", 1);
             insert_kv("schema", 1894); // lineage 839 / 1614
             insert_kv("issue", 1894);

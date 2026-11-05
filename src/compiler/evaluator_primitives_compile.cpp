@@ -835,7 +835,7 @@ void CompilePrims::register_compile_p6(PrimRegistrar add, Evaluator& ev) {
                 solve_us = m->delta_solve_time_us.load(std::memory_order_relaxed);
             }
             std::uint64_t total = snap.hits + snap.misses + snap.stale;
-            std::uint64_t ratio_bp = (total > 0) ? (snap.misses * 10000u / total) : 0;
+            std::uint64_t ratio_bp = ::aura::compiler::basis_points(snap.misses, total);
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"cache-hits-total", make_int(static_cast<std::int64_t>(snap.hits))},
                 {"cache-misses-total", make_int(static_cast<std::int64_t>(snap.misses))},
@@ -919,7 +919,7 @@ void CompilePrims::register_compile_p7(PrimRegistrar add, Evaluator& ev) {
                 total = m->ir_instructions_total.load(std::memory_order_relaxed);
                 with_type = m->ir_instructions_with_type_total.load(std::memory_order_relaxed);
             }
-            std::uint64_t coverage_bp = (total > 0) ? (with_type * 10000u / total) : 0;
+            std::uint64_t coverage_bp = ::aura::compiler::basis_points(with_type, total);
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"ir-instructions-total", make_int(static_cast<std::int64_t>(total))},
                 {"ir-instructions-with-type-total", make_int(static_cast<std::int64_t>(with_type))},
@@ -4549,7 +4549,7 @@ void CompilePrims::register_compile_p46(PrimRegistrar add, Evaluator& ev) {
                     m->incremental_typecheck_re_inferred_total.load(std::memory_order_relaxed);
             }
             const std::uint64_t avg_bp =
-                (auto_invocations > 0) ? (re_inferred * 10000u) / auto_invocations : 0;
+                ::aura::compiler::basis_points(re_inferred, auto_invocations);
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"auto-invocations-total", make_int(static_cast<std::int64_t>(auto_invocations))},
                 {"re-inferred-total", make_int(static_cast<std::int64_t>(re_inferred))},
@@ -4592,7 +4592,7 @@ void CompilePrims::register_compile_p47(PrimRegistrar add, Evaluator& ev) {
             }
             const std::uint64_t gen_total = snap.stale + snap.gen_saved;
             const std::uint64_t ratio_bp =
-                (gen_total > 0) ? (snap.gen_saved * 10000u) / gen_total : 0;
+                ::aura::compiler::basis_points(snap.gen_saved, gen_total);
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"cache-hits-total", make_int(static_cast<std::int64_t>(snap.hits))},
                 {"cache-misses-total", make_int(static_cast<std::int64_t>(snap.misses))},
@@ -4718,9 +4718,9 @@ void CompilePrims::register_compile_p48(PrimRegistrar add, Evaluator& ev) {
             }
             const std::uint64_t total_visited = per_symbol_visited + ancestor_visited;
             const std::uint64_t path_share_bp =
-                (total_visited > 0) ? (per_symbol_visited * 10000u) / total_visited : 0;
+                ::aura::compiler::basis_points(per_symbol_visited, total_visited);
             const std::uint64_t avg_per_symbol_bp =
-                (per_symbol_used > 0) ? (per_symbol_visited * 10000u) / per_symbol_used : 0;
+                ::aura::compiler::basis_points(per_symbol_visited, per_symbol_used);
             const std::uint64_t per_defuse_index_visited_avg_bp =
                 (per_defuse_index_used > 0)
                     ? (per_defuse_index_visited * 10000u) / per_defuse_index_used
