@@ -6728,7 +6728,8 @@ std::optional<TypeId> InferenceEngine::synthesize_flat_call_arith(FlatAST& flat,
     // static set were observed freed mid-run by an OrchSchedHolder worker
     // thread (ASAN heap-use-after-free in arith.count() — obs_facade
     // rc=139 CI red; same class as the service.ixx tree_walker_only leak).
-    static const aura::core::immortal<std::unordered_set<std::string>> arith{std::unordered_set<std::string>{"+", "-", "*", "/"}};
+    static const aura::core::immortal<std::unordered_set<std::string>> arith{
+        std::unordered_set<std::string>{"+", "-", "*", "/"}};
     // Issue #4762: a string LITERAL operand of a numeric primitive can never
     // succeed — the runtime raises "expected Int, got String" (#4735) — so it
     // is a type error in every face, not only the production hard face. Only
