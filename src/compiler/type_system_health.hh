@@ -227,9 +227,7 @@ compute_type_system_health(const TypeSystemHealthSnapshot& s) noexcept {
 
 // Rate helper: 0 when denom == 0 (vacuous healthy / no reject signal).
 [[nodiscard]] inline std::uint64_t rate_bp(std::uint64_t num, std::uint64_t den) noexcept {
-    if (den == 0)
-        return 0;
-    return (num * 10000u) / den;
+    return static_cast<std::uint64_t>(::aura::compiler::basis_points(num, den));
 }
 
 // Layered DCE efficiency: vacuous 10000 when no runs and no elisions;
