@@ -103,9 +103,7 @@ namespace {
     }
 
     [[nodiscard]] std::uint8_t eval_hash_fingerprint(std::uint64_t h) noexcept {
-        auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-        if (fp == 0xFF)
-            fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
+        const auto fp = ::aura::compiler::hash::fingerprint(h);
         return fp;
     }
 

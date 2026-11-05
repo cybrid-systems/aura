@@ -292,12 +292,10 @@ void register_workspace_query_primitives(
             std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
                 h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
+            const auto fp = ::aura::compiler::hash::fingerprint(h);
             for (std::size_t at = 0; at < hcap; ++at) {
                 auto i = ((h >> 1) + at) & (hcap - 1);
-                if (meta[i] == 0xFF) {
+                if (meta[i] == ::aura::compiler::hash::kEmptySlot) {
                     meta[i] = fp;
                     auto kidx = ws.string_heap.mint(k_str);
                     keys[i] = make_string(static_cast<std::uint64_t>(kidx)).val;
@@ -1327,12 +1325,10 @@ void register_workspace_query_primitives(
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (const char* p = k_str; *p; ++p)
                     h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
+                const auto fp = ::aura::compiler::hash::fingerprint(h);
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
+                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
                         auto kidx = ws.string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
@@ -1481,12 +1477,10 @@ void register_workspace_query_primitives(
             std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
                 h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
+            const auto fp = ::aura::compiler::hash::fingerprint(h);
             for (std::size_t at = 0; at < hcap; ++at) {
                 auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
+                if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                     meta[idx] = fp;
                     auto kidx = ws.string_heap.mint(k_str);
                     keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
@@ -3155,12 +3149,10 @@ void register_workspace_query_primitives(
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (const char* p = k_str; *p; ++p)
                     h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
+                const auto fp = ::aura::compiler::hash::fingerprint(h);
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto i = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[i] == 0xFF) {
+                    if (meta[i] == ::aura::compiler::hash::kEmptySlot) {
                         meta[i] = fp;
                         auto kidx = ws.string_heap.mint(k_str);
                         keys[i] = make_string(static_cast<std::uint64_t>(kidx)).val;
@@ -3246,12 +3238,10 @@ void register_workspace_query_primitives(
             std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
                 h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
+            const auto fp = ::aura::compiler::hash::fingerprint(h);
             for (std::size_t at = 0; at < hcap; ++at) {
                 auto i = ((h >> 1) + at) & (hcap - 1);
-                if (meta[i] == 0xFF) {
+                if (meta[i] == ::aura::compiler::hash::kEmptySlot) {
                     meta[i] = fp;
                     auto kidx = ws.string_heap.mint(k_str);
                     keys[i] = make_string(static_cast<std::uint64_t>(kidx)).val;
@@ -4239,15 +4229,13 @@ void register_workspace_query_primitives(
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
+                const auto fp = ::aura::compiler::hash::fingerprint(h);
                 auto kidx = ws.string_heap.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < cap; ++at) {
                     auto idx = ((h >> 1) + at) & (cap - 1);
-                    if (meta[idx] == 0xFF) {
+                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
                         keys[idx] = key_ev.val;
                         vals[idx] = v.val;
@@ -4375,9 +4363,7 @@ void register_workspace_query_primitives(
                     std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE;
+                    const auto fp = ::aura::compiler::hash::fingerprint(h);
                     EvalValue key_ev = make_string(k == "record-id"   ? k_id
                                                    : k == "var"       ? k_v
                                                    : k == "predicate" ? k_p
@@ -4385,7 +4371,7 @@ void register_workspace_query_primitives(
                     bool inserted = false;
                     for (std::size_t at = 0; at < cap; ++at) {
                         auto idx = ((h >> 1) + at) & (cap - 1);
-                        if (meta[idx] == 0xFF) {
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                             meta[idx] = fp;
                             keys[idx] = key_ev.val;
                             vals[idx] = v.val;
@@ -4715,12 +4701,10 @@ void register_workspace_query_primitives(
             std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (const char* p = k_str; *p; ++p)
                 h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
+            const auto fp = ::aura::compiler::hash::fingerprint(h);
             for (std::size_t at = 0; at < hcap; ++at) {
                 auto i = ((h >> 1) + at) & (hcap - 1);
-                if (meta[i] == 0xFF) {
+                if (meta[i] == ::aura::compiler::hash::kEmptySlot) {
                     meta[i] = fp;
                     auto kidx = ws.string_heap.mint(k_str);
                     keys[i] = make_string(static_cast<std::uint64_t>(kidx)).val;
