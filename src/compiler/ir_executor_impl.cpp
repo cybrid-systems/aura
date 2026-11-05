@@ -952,33 +952,36 @@ static SourceLocation ir_call_arity_loc(const IRInstruction* instr, Evaluator* e
 // IR, a required module) runs while the evaluator's current flat is the
 // caller's, so the id was out of range there and nothing was recorded: the
 // error was then located at the outermost call instead of the failing form.
-// Prefer the function's own bridge flat; fall back to the current flat.
-// The bridge's flat is a non-owning view of arena memory: only trust it while
-// its epoch is current (a reset arena bumps the epoch, #223).
-static const aura::ast::FlatAST* ir_fn_flat_4909(Evaluator* ev, const aura::ir::IRModule* mod,
-                                                 const aura::ir::IRFunction* fn,
-                                                 aura::ast::NodeId nid) noexcept {
-    if (!mod || !fn || fn->id >= mod->functions.size() || &mod->functions[fn->id] != fn ||
-        fn->id >= mod->closure_bridge.size())
-        return nullptr;
-    const auto& bd = mod->closure_bridge[fn->id];
-    if (bd.bridge_epoch != 0 && bd.bridge_epoch != ev->current_bridge_epoch())
-        return nullptr;
-    const auto* flat = bd.flat.get();
-    if (!flat || nid >= flat->size() || flat->get(nid).line == 0)
-        return nullptr;
-    return flat;
-}
-
+// Issue #4909 recorded the location through the bridge's flat; Issue #4931
+// replaced that with the owned node_locs snapshot the bridge captures at
+// lowering time (the flat view can outlive its arena).
 static void ir_note_producer_4909(const IRInstruction* instr, Evaluator* ev,
                                   const aura::ir::IRModule* mod, const aura::ir::IRFunction* fn,
                                   const EvalValue& v) {
     if (!is_error(v) || types::is_string(v) || !ev || !instr || instr->source_ast_node_id == 0)
         return;
     const auto nid = static_cast<aura::ast::NodeId>(instr->source_ast_node_id);
-    const aura::ast::FlatAST* flat = ir_fn_flat_4909(ev, mod, fn, nid);
-    if (!flat)
-        flat = ev->current_flat();
+    // Issue #4931: use the locations captured at lowering time instead of
+    // dereferencing the bridge's flat. That flat is a non-owning view of the
+    // lowering arena; mutate:rebind lowers from a temp-arena rebuild, so the
+    // view is dead once the mutation returns even though its epoch still
+    // matches. Reading a node out of it SIGSEGV'd in
+    // FlatAST::assemble_nodeview (4363 soft arm, small stacks).
+    if (mod && fn && fn->id < mod->functions.size() && &mod->functions[fn->id] == fn &&
+        fn->id < mod->closure_bridge.size()) {
+        const auto& bd = mod->closure_bridge[fn->id];
+        if (const auto* loc = bd.find_node_loc(nid); loc != nullptr) {
+            // source_file_for_flat is a pointer-key lookup: it never touches
+            // the (possibly dead) flat.
+            ev->note_error_location(
+                v, SourceLocation{loc->line, loc->col,
+                                  aura::diag::source_file_for_flat(bd.flat.get())});
+            return;
+        }
+    }
+    // No captured location: fall back to the live current flat, exactly as
+    // the pre-#4909 path did.
+    const aura::ast::FlatAST* flat = ev->current_flat();
     if (!flat || nid >= flat->size())
         return;
     const auto nv = flat->get(nid);

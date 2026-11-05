@@ -14,6 +14,7 @@
 #if defined(__linux__) && !defined(__APPLE__)
 #include <execinfo.h>
 #include <dlfcn.h>
+#include <fcntl.h> // Issue #4931: open(2) for /proc/self/maps in the crash handler
 #endif
 #include "serve/serve_async.h"
 #include "serve/scheduler.h"
@@ -1430,6 +1431,131 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // Issue #4931: a SIGSEGV whose si_addr sits on (or just below) the
+    // faulting thread's own stack is an overflow, not a wild pointer. The
+    // old handler only consulted dladdr(), so a 512K-stack exhaustion in
+    // FlatAST::assemble_nodeview reported "si_addr ... is outside any loaded
+    // module (use-after-free or uninit ptr?)" and sent triage down the wrong
+    // path. Read /proc/self/maps with raw syscalls (async-signal-safe, runs
+    // on the alternate stack) and report the used depth instead.
+    static auto report_stack_exhaustion = +[](const void* bad, const void* sp) -> bool {
+        if (bad == nullptr || sp == nullptr)
+            return false;
+        static char maps_buf[262144];
+        const int fd = ::open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
+        if (fd < 0)
+            return false;
+        long total = 0;
+        while (total < static_cast<long>(sizeof(maps_buf)) - 1) {
+            const long got =
+                static_cast<long>(::read(fd, maps_buf + total, sizeof(maps_buf) - 1 - total));
+            if (got <= 0)
+                break;
+            total += got;
+        }
+        ::close(fd);
+        if (total <= 0)
+            return false;
+        maps_buf[total] = '\0';
+
+        const auto sp_u = reinterpret_cast<unsigned long long>(sp);
+        const auto bad_u = reinterpret_cast<unsigned long long>(bad);
+        unsigned long long lo = 0, hi = 0;   // mapping that holds sp
+        unsigned long long slo = 0, shi = 0; // the [stack] mapping
+        long i = 0;
+        while (i < total) {
+            long j = i;
+            while (j < total && maps_buf[j] != '\n')
+                ++j;
+            // "start-end perms ... [stack]"
+            unsigned long long a = 0, b = 0;
+            long k = i;
+            auto hexval = [](char c) -> int {
+                if (c >= '0' && c <= '9')
+                    return c - '0';
+                if (c >= 'a' && c <= 'f')
+                    return c - 'a' + 10;
+                if (c >= 'A' && c <= 'F')
+                    return c - 'A' + 10;
+                return -1;
+            };
+            while (k < j) {
+                const int v = hexval(maps_buf[k]);
+                if (v < 0)
+                    break;
+                a = (a << 4) | static_cast<unsigned long long>(v);
+                ++k;
+            }
+            bool ok = k < j && maps_buf[k] == '-';
+            if (ok)
+                ++k;
+            while (ok && k < j) {
+                const int v = hexval(maps_buf[k]);
+                if (v < 0)
+                    break;
+                b = (b << 4) | static_cast<unsigned long long>(v);
+                ++k;
+            }
+            if (ok) {
+                bool is_stack = false;
+                for (long t = i; t + 6 <= j; ++t) {
+                    if (maps_buf[t] == '[' && maps_buf[t + 1] == 's' && maps_buf[t + 2] == 't' &&
+                        maps_buf[t + 3] == 'a' && maps_buf[t + 4] == 'c' &&
+                        maps_buf[t + 5] == 'k') {
+                        is_stack = true;
+                        break;
+                    }
+                }
+                if (is_stack && (slo == 0 || (sp_u >= a && sp_u < b))) {
+                    slo = a;
+                    shi = b;
+                }
+                if (sp_u >= a && sp_u < b) {
+                    lo = a;
+                    hi = b;
+                }
+            }
+            i = j + 1;
+        }
+        // The faulting sp normally sits inside the thread's stack mapping.
+        // An oversized frame (`sub sp, #N` past the guard) lands just BELOW
+        // the mapping and the first store faults at sp+off, so accept an sp
+        // in the guard window too.
+        constexpr unsigned long long kGuardWindow = 1024ULL * 1024ULL;
+        if (lo == 0 && slo != 0) {
+            const bool sp_inside = sp_u >= slo && sp_u < shi;
+            const bool sp_in_guard = sp_u < slo && (slo - sp_u) <= kGuardWindow;
+            if (sp_inside || sp_in_guard) {
+                lo = slo;
+                hi = shi;
+            }
+        }
+        if (lo == 0 || hi <= lo)
+            return false;
+        const unsigned long long stack_sz = hi - lo;
+        const bool sp_below = sp_u < lo;
+        // Used depth: bytes consumed from the stack top, including an
+        // oversized frame that already spilled into the guard page.
+        const unsigned long long used = sp_below ? (stack_sz + (lo - sp_u)) : (hi - sp_u);
+        const bool in_stack = bad_u >= lo && bad_u < hi;
+        const bool below_stack = bad_u < lo && (lo - bad_u) <= kGuardWindow;
+        const unsigned long long dist = bad_u >= sp_u ? bad_u - sp_u : sp_u - bad_u;
+        if (!((in_stack || below_stack) && dist <= (256ULL * 1024ULL)))
+            return false;
+        char line[512];
+        const int n =
+            std::snprintf(line, sizeof(line),
+                          "si_addr %p is stack exhaustion: used %llu of %llu bytes of stack "
+                          "[%p,%p) (sp %p, fault %lld bytes from sp)%s\n",
+                          bad, used, stack_sz, reinterpret_cast<const void*>(lo),
+                          reinterpret_cast<const void*>(hi), sp,
+                          static_cast<long long>(bad_u) - static_cast<long long>(sp_u),
+                          sp_below ? " [sp past the stack bottom: oversized frame]" : "");
+        if (n > 0)
+            (void)!::write(2, line, n);
+        return true;
+    };
+
     static auto crash_handler = +[](int sig, siginfo_t* info, void* ucontext) {
         // Use raw write(2) — stdio may be in undefined state.
         const char* name = sig == SIGSEGV   ? "SIGSEGV"
@@ -1500,7 +1626,14 @@ int main(int argc, char* argv[]) {
             if (ln > 0)
                 (void)!::write(2, line, ln);
         }
-        if (info && info->si_addr) {
+        // Issue #4931: classify a stack-overflow fault before falling back
+        // to dladdr(), which cannot resolve a stack address and used to
+        // report it as a use-after-free/wild pointer.
+        // Only address-bearing faults carry a meaningful si_addr (for
+        // SIGABRT/SIGFPE the union holds the signal's own payload).
+        const bool stack_overflow = (sig == SIGSEGV || sig == SIGBUS) && info && info->si_addr &&
+                                    report_stack_exhaustion(info->si_addr, sp);
+        if (!stack_overflow && info && info->si_addr) {
             Dl_info dlinfo;
             char line[512];
             int ln;
