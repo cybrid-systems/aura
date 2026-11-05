@@ -113,6 +113,19 @@ class MagicConstantsInvariant(unittest.TestCase):
                     offenders.append(f"{rel(path)}:{lineno}: {line.strip()}")
         self.assertEqual(offenders, [], "inline hash-slot fingerprint rule found")
 
+    def test_no_full_basis_point_fallback(self) -> None:
+        # Policy: an empty denominator means "no data" (0 bp). The only
+        # sanctioned 100% is basis_points_vacuous_full(), which lives in
+        # basis_points.h and names the vacuous-truth cases explicitly.
+        offenders = []
+        for path in source_files():
+            if path.name == "basis_points.h":
+                continue
+            for lineno, line in enumerate(code_lines(path), 1):
+                if re.search(r":\s*10000(?:u|ull)?\b", line):
+                    offenders.append(f"{rel(path)}:{lineno}: {line.strip()}")
+        self.assertEqual(offenders, [], "100% fallback without vacuous_full")
+
     def test_ascii_classification_uses_char_literals(self) -> None:
         offenders = []
         for path in source_files():

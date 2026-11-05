@@ -3452,7 +3452,7 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                         m->type_dep_graph_affected_expand_total.load(std::memory_order_relaxed))
                   : 0;
             const std::int64_t merge_ratio_bp =
-                affected_expand > 0 ? (partial_nodes_added * 10000) / affected_expand : 0;
+                ::aura::compiler::basis_points(partial_nodes_added, affected_expand);
             insert_kv("type-dep-partial-merge-total", partial_merge_total);
             insert_kv("type-dep-partial-nodes-added", partial_nodes_added);
             insert_kv("type-dep-graph-affected-expand-total", affected_expand);
