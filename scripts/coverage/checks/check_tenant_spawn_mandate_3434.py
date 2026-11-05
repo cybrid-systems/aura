@@ -69,7 +69,8 @@ def main() -> int:
 
     # AC2: resume hook rebind + hard mismatch surface (already built).
     must("aura_fiber_install_tenant_scope_for_resume", "AC2 hook", hook)
-    must("TenantScope(*ev, assigned", "AC2 rebind to assigned", hook)
+    # #4936: the scope is owned by make_unique<Evaluator::TenantScope>(...).
+    must("TenantScope>(*ev, assigned", "AC2 rebind to assigned", hook)
     must("tenant_scope_mismatch_hard", "AC2 hard mismatch metric", hook)
     must("fiber-principal-mismatch", "AC2 IsolationDeny reason", hook)
     must("ac3434_2_steal_resume_rebind", "AC2 test", test)
