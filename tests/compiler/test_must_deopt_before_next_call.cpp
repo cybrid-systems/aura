@@ -283,7 +283,7 @@ int run_test_must_deopt_before_next_call() {
             // Issue #4636: the native-dispatch cycle guard (the refuse for a
             // callee that re-enters the innermost native activation, also
             // ahead of the consume block) moved them further — same rule.
-            const auto body = rt.substr(call, 12500);
+            const auto body = aura::test::aura_source_block_after(rt, call);
             CHECK(body.find("g_closure_must_deopt[cid] = 0") != std::string::npos,
                   "3247 AC2: call path still clears under exclusive");
             CHECK(body.find("g_closure_bridge_epochs[cid] = 0") != std::string::npos,
