@@ -545,6 +545,9 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             }
         }
 
+        // Issue #4933: parsed query:pattern entries live in this arena —
+        // drop them before the reset frees their memory.
+        ev.clear_pattern_parse_cache();
         // Reset temp arena (O(1) — frees all cl_flat/cl_pool/copy_env)
         ev.temp_arena_->reset();
         // Record the eval-depth snapshot so memory-pressure knows

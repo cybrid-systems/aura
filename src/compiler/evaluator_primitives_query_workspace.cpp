@@ -3732,19 +3732,30 @@ void register_workspace_query_primitives(
                 return mev("bad-arg", "query:pattern: missing pattern string");
             auto idx = pattern_string_idx;
 
-            // Phase 2.5.0: pat_pool stays separate from canonical_pool.
-            // Patterns parse into a fresh FlatAST + pool per call (ws.temp_arena
-            // reclaims at gc-temp). The wildcard "..." sym is intern'd in
-            // pat_pool so pat_node.sym_id comparisons work — sharing the
-            // canonical pool would mix pattern-specific garbage into the long-
-            // lived workspace, and the pattern's sym_ids would clash with
-            // workspace sym_ids (different ASTs, same pool). Documented
-            // exception to the canonical-pool migration — see commit 14682c5.
-            // Parse pattern string into its own FlatAST (separate from workspace).
-            // Use ws.temp_arena so (gc-temp) reclaims it per call.
-            auto alloc = ws.temp_arena->allocator();
-            auto* pat_pool = ws.temp_arena->create<aura::ast::StringPool>(alloc);
-            auto* pat_flat = ws.temp_arena->create<aura::ast::FlatAST>(alloc);
+            // Phase 2.5.0: pat_pool stays separate from canonical_pool. The
+            // wildcard "..." sym is intern'd in pat_pool so pat_node.sym_id
+            // comparisons work — sharing the canonical pool would mix
+            // pattern-specific garbage into the long-lived workspace, and the
+            // pattern's sym_ids would clash with workspace sym_ids (different
+            // ASTs, same pool). Documented exception to the canonical-pool
+            // migration — see commit 14682c5.
+            // Issue #4933: the parse is text-only, so an identical pattern text
+            // is parsed once per temp_arena generation instead of on every
+            // call (two arena creates + parse_to_flat + wildcard intern).
+            // (gc-temp) resets the arena and drops the cache.
+            const std::string& pattern_text = ws.string_heap[idx];
+            aura::compiler::PatternParseCacheEntry cached_pattern;
+            const bool pattern_cached = ev.lookup_pattern_parse(pattern_text, cached_pattern);
+            aura::ast::StringPool* pat_pool = pattern_cached ? cached_pattern.pool : nullptr;
+            aura::ast::FlatAST* pat_flat = pattern_cached ? cached_pattern.flat : nullptr;
+            aura::ast::NodeId pattern_root =
+                pattern_cached ? cached_pattern.root : aura::ast::NULL_NODE;
+            std::uint32_t wildcard_sym = pattern_cached ? cached_pattern.wildcard_sym : 0;
+            if (!pattern_cached) {
+                auto alloc = ws.temp_arena->allocator();
+                pat_pool = ws.temp_arena->create<aura::ast::StringPool>(alloc);
+                pat_flat = ws.temp_arena->create<aura::ast::FlatAST>(alloc);
+            }
             // Issue #2363: GeneralObjectPin adopt (site 4/7) — query:pattern.
             aura::core::lifetime::GeneralObjectPin pat_pool_pin;
             aura::core::lifetime::GeneralObjectPin pat_flat_pin;
@@ -3753,15 +3764,20 @@ void register_workspace_query_primitives(
                     pat_pool_pin, pat_flat_pin, static_cast<void*>(pat_pool),
                     static_cast<void*>(pat_flat)))
                 return make_void();
-            auto pr = aura::parser::parse_to_flat(ws.string_heap[idx], *pat_flat, *pat_pool);
-            if (!pr.success || pr.root == aura::ast::NULL_NODE)
-                return make_void();
-
-            // Intern "..." in the pattern pool for wildcard matching.
-            // (Symbol comparison keeps the wildcard + capture paths
-            // orthogonal — "?x" is a capture, "..." is the legacy
-            // single-subtree / new Kleene-star wildcard, never both.)
-            auto wildcard_sym = pat_pool->intern("...");
+            if (!pattern_cached) {
+                auto pr = aura::parser::parse_to_flat(pattern_text, *pat_flat, *pat_pool);
+                if (!pr.success || pr.root == aura::ast::NULL_NODE)
+                    return make_void();
+                pattern_root = pr.root;
+                // Intern "..." in the pattern pool for wildcard matching.
+                // (Symbol comparison keeps the wildcard + capture paths
+                // orthogonal — "?x" is a capture, "..." is the legacy
+                // single-subtree / new Kleene-star wildcard, never both.)
+                wildcard_sym = pat_pool->intern("...");
+                ev.store_pattern_parse(pattern_text, aura::compiler::PatternParseCacheEntry{
+                                                         ws.temp_arena, pat_pool, pat_flat,
+                                                         pattern_root, wildcard_sym});
+            }
 
             // Issue #482: use the shared QueryMatcher from query_matcher.hh.
             // Same matcher used by mutate:replace-pattern, so the two
@@ -3883,7 +3899,7 @@ void register_workspace_query_primitives(
             // nodes) this is a real win — the O(N × Depth) becomes
             // O(N) when the pattern's children count is a strong
             // filter.
-            auto pat_root_node = pat_flat->get(pr.root);
+            auto pat_root_node = pat_flat->get(pattern_root);
             const std::size_t pat_child_count = pat_root_node.children.size();
             const bool pat_root_is_wildcard = pat_root_node.tag == aura::ast::NodeTag::Variable &&
                                               pat_root_node.sym_id == wildcard_sym;
@@ -3894,12 +3910,12 @@ void register_workspace_query_primitives(
             // must do a full walk. In the default strict mode the
             // arity is still fixed (single-subtree wildcard), so the
             // index helps regardless of ellipsis presence.
-            const bool pat_has_ellipsis = matcher.pat_has_ellipsis_rec(pr.root);
+            const bool pat_has_ellipsis = matcher.pat_has_ellipsis_rec(pattern_root);
             // Issue #292: (:guard <sub-pat> "expr") wrappers have
             // tag=Call, arity=2-3 — the index fast path would skip
             // positions whose (tag, arity) doesn't match. Force
             // slow path for guard wrappers.
-            const bool pat_is_guard = matcher.is_guard_root(pr.root);
+            const bool pat_is_guard = matcher.is_guard_root(pattern_root);
             const bool use_index_fast_path =
                 !pat_root_is_wildcard && !pat_is_guard && (!nested_arity || !pat_has_ellipsis);
 
@@ -4001,7 +4017,7 @@ void register_workspace_query_primitives(
                     // pollute the next position's attempt.
                     matcher.state.captures.clear();
                     matcher.state.depth = 0;
-                    if (matcher.match_subtree(id, pr.root)) {
+                    if (matcher.match_subtree(id, pattern_root)) {
                         // Issue #292: guard predicate check.
                         if (!check_guard())
                             continue;
@@ -4089,7 +4105,7 @@ void register_workspace_query_primitives(
                         continue;
                     matcher.state.captures.clear();
                     matcher.state.depth = 0;
-                    if (matcher.match_subtree(id, pr.root)) {
+                    if (matcher.match_subtree(id, pattern_root)) {
                         // Issue #292: guard predicate check.
                         if (!check_guard())
                             continue;
