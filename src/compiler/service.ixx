@@ -1,5 +1,5 @@
 module;
-#include "core/ownership.hh" // Issue #4936: immortal<T>
+#include "core/ownership.hh"                // Issue #4936: immortal<T>
 #include "rebind_phase_stats.h"             // per-phase rebind timing (opt-in)
 #include "compiler/security_capabilities.h" // Issue #4876: macro deny text
 #include <algorithm>
@@ -2753,71 +2753,72 @@ public:
         // static set were observed freed mid-run by an OrchSchedHolder
         // worker thread (ASAN heap-use-after-free in the visitor count()
         // — obs_facade rc=139 CI red).
-        static const aura::core::immortal<std::unordered_set<std::string>> tree_walker_only{std::unordered_set<std::string>{
-            // EDSL / AI agent primitives
-            "define-type",
-            "set-code",
-            "eval-current",
-            "apply",
-            "typecheck-current",
-            "typed-mutate",
-            "typed-mutate-atomic", // Issue #1442 / #1408 EDSL atomic multi-mutate
-            "rollback",
-            "mutation-log",
-            "query-mutation-log",
-            "ir-cache-v2:dirty?",
-            "ir-cache-v2:dependents",
-            // Mutation primitives (issue #165/#166): tree-walker so the
-            // returned bool/Int propagates correctly. The IR pipeline
-            // either silently drops unknown primitives or wraps them as
-            // ConstI64 0, breaking the success checks in
-            // test_issue_165/166 (e.g. "mutate > 0").
-            "mutate:rebind",
-            "mutate:set-body",
-            "mutate:remove-node",
-            "mutate:move-node",
-            "intend",
-            "fiber:spawn",
-            "fiber:join",
-            "define-strategy",
-            "register-strategy!",
-            "intend-history",
-            "intend-analytics",
-            "strategy-field",
-            "strategy-set-field!",
-            "strategy-inspect",
-            "coverage-report",
-            // C FFI — tree-walker needed to dispatch closure calls
-            "c-func",
-            "c-load",
-            // Messaging primitives (tree-walker for argument passing)
-            "send",
-            "recv",
-            "my-id",
-            "json-encode",
-            "json-get-string",
-            "json-parse",
-            // Scheduler metrics (Issue #32)
-            "orch:metrics",
-            "orch:reset-metrics",
-            // Special forms not in IR
-            "when",
-            "set!",
-            "load",
-            "equal?",
-            "unless",
-            "export",
-            "and",
-            "or",
-            "cond",
-            "case",
-            // Capability special forms
-            "with-capability",
-            "check-capability",
-            "capability-stack", // DEPRECATED — uses primitive path instead
-            // Module system (env side-effects)
-            // "import", "use", "require" — now in lowering_known
-        }};
+        static const aura::core::immortal<std::unordered_set<std::string>> tree_walker_only{
+            std::unordered_set<std::string>{
+                // EDSL / AI agent primitives
+                "define-type",
+                "set-code",
+                "eval-current",
+                "apply",
+                "typecheck-current",
+                "typed-mutate",
+                "typed-mutate-atomic", // Issue #1442 / #1408 EDSL atomic multi-mutate
+                "rollback",
+                "mutation-log",
+                "query-mutation-log",
+                "ir-cache-v2:dirty?",
+                "ir-cache-v2:dependents",
+                // Mutation primitives (issue #165/#166): tree-walker so the
+                // returned bool/Int propagates correctly. The IR pipeline
+                // either silently drops unknown primitives or wraps them as
+                // ConstI64 0, breaking the success checks in
+                // test_issue_165/166 (e.g. "mutate > 0").
+                "mutate:rebind",
+                "mutate:set-body",
+                "mutate:remove-node",
+                "mutate:move-node",
+                "intend",
+                "fiber:spawn",
+                "fiber:join",
+                "define-strategy",
+                "register-strategy!",
+                "intend-history",
+                "intend-analytics",
+                "strategy-field",
+                "strategy-set-field!",
+                "strategy-inspect",
+                "coverage-report",
+                // C FFI — tree-walker needed to dispatch closure calls
+                "c-func",
+                "c-load",
+                // Messaging primitives (tree-walker for argument passing)
+                "send",
+                "recv",
+                "my-id",
+                "json-encode",
+                "json-get-string",
+                "json-parse",
+                // Scheduler metrics (Issue #32)
+                "orch:metrics",
+                "orch:reset-metrics",
+                // Special forms not in IR
+                "when",
+                "set!",
+                "load",
+                "equal?",
+                "unless",
+                "export",
+                "and",
+                "or",
+                "cond",
+                "case",
+                // Capability special forms
+                "with-capability",
+                "check-capability",
+                "capability-stack", // DEPRECATED — uses primitive path instead
+                // Module system (env side-effects)
+                // "import", "use", "require" — now in lowering_known
+            }};
 
         // Root-level bare variables (like `pi`, `sort`) may come from runtime imports.
         // The lowering doesn't know about them, so fallback to tree-walker.
@@ -2848,17 +2849,18 @@ public:
         // static set were observed freed mid-run by an OrchSchedHolder
         // worker thread (ASAN heap-use-after-free in the visitor count()
         // — obs_facade rc=139 CI red).
-        static const aura::core::immortal<std::unordered_set<std::string>> lowering_known{std::unordered_set<std::string>{
-            "try",
-            "catch",
-            "raise",
-            "require",
-            "import",
-            "use",
-            "with-arena",
-            "performance-region",
-            "evolution-region",
-        }};
+        static const aura::core::immortal<std::unordered_set<std::string>> lowering_known{
+            std::unordered_set<std::string>{
+                "try",
+                "catch",
+                "raise",
+                "require",
+                "import",
+                "use",
+                "with-arena",
+                "performance-region",
+                "evolution-region",
+            }};
 
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             auto nv = flat.get(id);
@@ -2972,74 +2974,76 @@ public:
         // static set were observed freed mid-run by an OrchSchedHolder
         // worker thread (ASAN heap-use-after-free in the visitor count()
         // — obs_facade rc=139 CI red).
-        static const aura::core::immortal<std::unordered_set<std::string>> tree_walker_only{std::unordered_set<std::string>{
-            // EDSL / AI agent primitives
-            "define-type",
-            "set-code",
-            "eval-current",
-            "apply",
-            "typecheck-current",
-            "typed-mutate",
-            "typed-mutate-atomic", // Issue #1442
-            "rollback",
-            "mutation-log",
-            "query-mutation-log",
-            "ir-cache-v2:dirty?",
-            "ir-cache-v2:dependents",
-            "mutate:rebind",
-            "mutate:set-body",
-            "mutate:remove-node",
-            "mutate:move-node",
-            "intend",
-            "fiber:spawn",
-            "fiber:join",
-            "define-strategy",
-            "register-strategy!",
-            "intend-history",
-            "intend-analytics",
-            "strategy-field",
-            "strategy-set-field!",
-            "strategy-inspect",
-            "coverage-report",
-            "c-func",
-            "c-load",
-            "send",
-            "recv",
-            "my-id",
-            "json-encode",
-            "json-get-string",
-            "json-parse",
-            "orch:metrics",
-            "orch:reset-metrics",
-            "when",
-            "set!",
-            "load",
-            "equal?",
-            "unless",
-            "export",
-            "and",
-            "or",
-            "cond",
-            "case",
-            "with-capability",
-            "check-capability",
-            "capability-stack",
-        }};
+        static const aura::core::immortal<std::unordered_set<std::string>> tree_walker_only{
+            std::unordered_set<std::string>{
+                // EDSL / AI agent primitives
+                "define-type",
+                "set-code",
+                "eval-current",
+                "apply",
+                "typecheck-current",
+                "typed-mutate",
+                "typed-mutate-atomic", // Issue #1442
+                "rollback",
+                "mutation-log",
+                "query-mutation-log",
+                "ir-cache-v2:dirty?",
+                "ir-cache-v2:dependents",
+                "mutate:rebind",
+                "mutate:set-body",
+                "mutate:remove-node",
+                "mutate:move-node",
+                "intend",
+                "fiber:spawn",
+                "fiber:join",
+                "define-strategy",
+                "register-strategy!",
+                "intend-history",
+                "intend-analytics",
+                "strategy-field",
+                "strategy-set-field!",
+                "strategy-inspect",
+                "coverage-report",
+                "c-func",
+                "c-load",
+                "send",
+                "recv",
+                "my-id",
+                "json-encode",
+                "json-get-string",
+                "json-parse",
+                "orch:metrics",
+                "orch:reset-metrics",
+                "when",
+                "set!",
+                "load",
+                "equal?",
+                "unless",
+                "export",
+                "and",
+                "or",
+                "cond",
+                "case",
+                "with-capability",
+                "check-capability",
+                "capability-stack",
+            }};
         // Intentionally leaked (no destructor): the buckets of a function-local
         // static set were observed freed mid-run by an OrchSchedHolder
         // worker thread (ASAN heap-use-after-free in the visitor count()
         // — obs_facade rc=139 CI red).
-        static const aura::core::immortal<std::unordered_set<std::string>> lowering_known{std::unordered_set<std::string>{
-            "try",
-            "catch",
-            "raise",
-            "require",
-            "import",
-            "use",
-            "with-arena",
-            "performance-region",
-            "evolution-region",
-        }};
+        static const aura::core::immortal<std::unordered_set<std::string>> lowering_known{
+            std::unordered_set<std::string>{
+                "try",
+                "catch",
+                "raise",
+                "require",
+                "import",
+                "use",
+                "with-arena",
+                "performance-region",
+                "evolution-region",
+            }};
 
         bool needs = false;
         const std::size_t visited = flat.walk_subtree(root, [&](aura::ast::NodeId id) {

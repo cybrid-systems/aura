@@ -47,7 +47,7 @@ module;
 #include <unordered_map>
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "core/fiber_context.hh" // Issue #4842: per-execution-context body inheritance
-#include "core/ownership.hh" // Issue #4936: NoCopy
+#include "core/ownership.hh"     // Issue #4936: NoCopy
 
 // Default ON when the TU is compiled outside the CMake graph (tools/IDE).
 #ifndef AURA_ENABLE_SYNTHESIZE

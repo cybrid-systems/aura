@@ -13,7 +13,7 @@ module;
 #include "typed_mutation_audit.h"     // Issue #1892: hygiene skip audit trail
 #include <array>
 #include "reflect/node_tag_names.hh" // Issue #4345: shared NodeTag names
-#include "core/ownership.hh" // Issue #4936: NoCopy
+#include "core/ownership.hh"         // Issue #4936: NoCopy
 
 module aura.compiler.evaluator;
 

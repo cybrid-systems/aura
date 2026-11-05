@@ -90,7 +90,7 @@ module;
 #include "orch/security_schedule_gate.h"           // Issue #2630: evaluate_security_schedule admit
 #include "compiler/mutation_concurrency_health.hh" // Issue #2985: health admit gate
 #include "compiler/castop_density_policy.hh" // Issue #3699: density streak gate reject pending
-#include "core/ownership.hh" // Issue #4936: NoCopy
+#include "core/ownership.hh"                 // Issue #4936: NoCopy
 
 // Issue #3102: import aura.compiler.dirty_propagation. The 3 abort sites plus
 // boundary enter call aura::compiler::dirty::truncate_type_cone_to_size plus
