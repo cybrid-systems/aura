@@ -1189,12 +1189,6 @@ static std::optional<int> front_door_4913(int& argc, char**& argv) {
         // `aura repl [--preset P|--grant C|--deny C|…] [FILE]`: options pass
         // through to the normal parser; FILE is :load'ed by the REPL itself.
         g_repl_4911 = true;
-        // The REPL evaluates one top-level form at a time under the Restricted
-        // soft session, the shape that trips #4928 (Moving compaction after
-        // set-code leaves closures called through map/apply returning void).
-        // An interactive session has no fragmentation budget to defend, so
-        // keep Moving compaction off unless the user pins it.
-        ::setenv("AURA_ARENA_MOVING_COMPACT", "0", 0);
         std::vector<std::string> args{argv[0]};
         for (int i = 2; i < argc; ++i) {
             const std::string_view a(argv[i]);

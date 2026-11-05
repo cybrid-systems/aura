@@ -227,6 +227,42 @@ struct MovingDensifyHealthSnapshot {
     return pin_held && !incomplete && untracked_kept == 0 && root_fail == 0;
 }
 
+// Issue #4928: a Moving attempt whose relocation was REFUSED before it
+// touched anything (#4288 / #3857 temp-canary or #2971 precondition soft
+// gate: objects_moved == 0, no incomplete remap, no untracked kept, no
+// root-remap fail) publishes a red window — that is right for the mutate
+// admit / Agent throttle (would_allow_mutate stays false, #4288). It is NOT
+// evidence of a stale reference: the heap layout is exactly the previous
+// window's. The apply-side densify-stale refuse (#3421 / #3648) used to read
+// that red window as "references may be stale" and refused every closure
+// apply until the next green window, so a mutate inside a running closure
+// (temp canaries live → Moving always soft-gated) made every later lambda
+// return void. Such a publish records its seq here; the apply arms skip the
+// window refuse only while this exact window is current AND the window it
+// replaced was not itself apply-red (a refused attempt never clears an
+// earlier real stale window). LCP + remap tombstone checks still run.
+// Test injectors that store the g_last_* atomics directly bump the seq and
+// therefore never match.
+inline constexpr int kRelocateRefusedNoStaleIssue = 4928;
+inline std::atomic<std::uint64_t> g_last_relocate_refused_clean_seq{~std::uint64_t{0}};
+
+[[nodiscard]] inline bool window_relocate_refused_clean() noexcept {
+    return g_last_relocate_refused_clean_seq.load(std::memory_order_relaxed) ==
+           g_last_window_seq.load(std::memory_order_relaxed);
+}
+
+// Apply-side view: red window that is not a clean refused-relocation window.
+[[nodiscard]] inline bool window_apply_red() noexcept {
+    if (window_would_allow_mutate(g_last_had_moving_densify.load(std::memory_order_relaxed) != 0,
+                                  g_last_pin_contract_held.load(std::memory_order_relaxed) != 0,
+                                  g_last_moving_incomplete_remap.load(std::memory_order_relaxed) !=
+                                      0,
+                                  g_last_untracked_kept.load(std::memory_order_relaxed),
+                                  g_last_root_remap_fail_total.load(std::memory_order_relaxed)))
+        return false;
+    return !window_relocate_refused_clean();
+}
+
 // Issue #3421 soak: did the last publish actually move objects? Helper so
 // the apply arms can refuse a densify-old publish under an LCP deny without
 // reading g_last_objects_moved directly (#3848 AC5 pins objects_moved-keyed
@@ -284,7 +320,10 @@ compute_moving_unified_success(bool moving_blocked_precondition, bool pin_contra
 inline void publish_last_moving_densify_window(
     bool had_moving_densify, bool pin_contract_held, bool moving_incomplete_remap,
     std::uint64_t objects_moved, std::uint64_t untracked_kept, std::uint64_t root_remap_fail_total,
-    std::uint64_t external_roots_prep_registered_cleared = 0) noexcept {
+    std::uint64_t external_roots_prep_registered_cleared = 0,
+    bool relocate_refused_no_move = false) noexcept {
+    // Issue #4928: sample the apply view of the window being replaced.
+    const bool prev_apply_red = window_apply_red();
     g_last_had_moving_densify.store(had_moving_densify ? 1 : 0, std::memory_order_relaxed);
     g_last_pin_contract_held.store(pin_contract_held ? 1 : 0, std::memory_order_relaxed);
     g_last_moving_incomplete_remap.store(moving_incomplete_remap ? 1 : 0,
@@ -298,13 +337,25 @@ inline void publish_last_moving_densify_window(
     // registered_cleared so Agent dashboards see caller compliance.
     g_last_external_roots_prep_registered.store(external_roots_prep_registered_cleared,
                                                 std::memory_order_relaxed);
-    g_last_window_seq.fetch_add(1, std::memory_order_relaxed);
+    const auto seq = g_last_window_seq.fetch_add(1, std::memory_order_relaxed) + 1;
+    const bool refused_clean = relocate_refused_no_move && !prev_apply_red && objects_moved == 0 &&
+                               !moving_incomplete_remap && untracked_kept == 0 &&
+                               root_remap_fail_total == 0;
+    if (refused_clean)
+        g_last_relocate_refused_clean_seq.store(seq, std::memory_order_relaxed);
 
     const bool allow =
         window_would_allow_mutate(had_moving_densify, pin_contract_held, moving_incomplete_remap,
                                   untracked_kept, root_remap_fail_total);
     // Soft throttle only under production-hard (#2596). Soft/sandbox observe-only.
-    if (production_hard_active() && had_moving_densify && !allow) {
+    // Issue #4928: a clean refused relocation neither sets nor clears the
+    // throttle. Setting it locked every later mutate out (#4067 recover
+    // retries the same soft gate while the caller's closure is still on the
+    // stack, so it never clears) although the heap is exactly the previous
+    // window's; it still cannot vacuous-clear (#4288: would_allow stays false).
+    if (refused_clean) {
+        // leave g_agent_throttle_for_moving_densify as the previous window left it
+    } else if (production_hard_active() && had_moving_densify && !allow) {
         const auto prev =
             g_agent_throttle_for_moving_densify.exchange(1, std::memory_order_relaxed);
         if (prev == 0)

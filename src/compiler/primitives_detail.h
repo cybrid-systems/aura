@@ -275,4 +275,13 @@ namespace primitives_detail {
 
 } // namespace aura::compiler
 
+// Issue #4928: Evaluator::apply_closure returns nullopt on a production
+// densify hard-refuse (#3421 / #3648). A callback caller (map, filter,
+// apply, ...) used to read that as no value and cons void, so a red
+// densify window made every lambda silently return (). The refuse path
+// raises this thread-local flag; callback callers clear it before the
+// apply and take it after a nullopt to surface a diagnostic instead.
+extern "C" void aura_clear_apply_densify_refuse() noexcept;
+extern "C" bool aura_take_apply_densify_refuse() noexcept;
+
 #endif // AURA_COMPILER_PRIMITIVES_DETAIL_H

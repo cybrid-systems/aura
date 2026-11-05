@@ -759,9 +759,16 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         if (is_closure(fn)) {
             auto cid = as_closure_id(fn);
+            aura_clear_apply_densify_refuse();
             auto result = ev.apply_closure(cid, args);
             if (result)
                 return *result;
+            // Issue #4928: fail closed on a densify hard-refuse.
+            if (aura_take_apply_densify_refuse())
+                return make_primitive_error(
+                    ev.string_heap_, ev.error_values_,
+                    "apply: closure apply refused: Moving densify window incomplete (#4928)",
+                    ev.primitive_error_counter_ptr());
         }
         return make_void();
     });

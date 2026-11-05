@@ -5075,6 +5075,90 @@ static void ac4288_phase5_blocked_publish_closes_window() {
     aura::compiler::reset_mutation_concurrency_health_admit_for_test();
 }
 
+// ── Issue #4928: a relocation refused before it moved anything is red for
+// mutate admit (#4288) but no stale-ref evidence for the apply refuse ──
+static void ac4928_relocate_refused_window_not_apply_red() {
+    std::println("\n--- #4928: refused-before-move window is not apply-red ---");
+    namespace mdh = aura::core::moving_densify_health;
+    mdh::reset_moving_densify_health_for_test();
+    // Pure header: clean refused publish after a green window.
+    mdh::publish_last_moving_densify_window(true, true, false, 0, 0, 0);
+    CHECK(!mdh::window_apply_red(), "4928: green window not apply-red");
+    mdh::publish_last_moving_densify_window(true, false, false, 0, 0, 0, 0,
+                                            /*relocate_refused_no_move=*/true);
+    CHECK(!mdh::snapshot().would_allow_mutate, "4928: mutate admit stays red (#4288)");
+    CHECK(mdh::window_relocate_refused_clean(), "4928: refused window recorded clean");
+    CHECK(!mdh::window_apply_red(), "4928: refused window not apply-red");
+    // Throttle: a clean refused publish neither sets nor clears it.
+    mdh::note_agent_throttle_for_moving_densify();
+    mdh::publish_last_moving_densify_window(true, false, false, 0, 0, 0, 0, true);
+    CHECK(mdh::agent_throttle_for_moving_densify(), "4928: clean refuse does not clear throttle");
+    mdh::clear_agent_throttle_for_moving_densify();
+    // A refused attempt never clears an earlier real stale window.
+    mdh::publish_last_moving_densify_window(true, false, true, 3, 1, 0);
+    CHECK(mdh::window_apply_red(), "4928: incomplete window apply-red");
+    mdh::publish_last_moving_densify_window(true, false, false, 0, 0, 0, 0, true);
+    CHECK(!mdh::window_relocate_refused_clean(), "4928: refused after red stays red");
+    CHECK(mdh::window_apply_red(), "4928: refused after red is apply-red");
+    // A flag with moved objects / incomplete is ignored.
+    mdh::reset_moving_densify_health_for_test();
+    mdh::publish_last_moving_densify_window(true, false, false, 2, 0, 0, 0, true);
+    CHECK(!mdh::window_relocate_refused_clean(), "4928: moved>0 never clean");
+    // Direct-store injectors bump the seq → the clean record no longer matches.
+    mdh::reset_moving_densify_health_for_test();
+    mdh::publish_last_moving_densify_window(true, false, false, 0, 0, 0, 0, true);
+    CHECK(mdh::window_relocate_refused_clean(), "4928: clean before inject");
+    mdh::g_last_window_seq.fetch_add(1, std::memory_order_relaxed);
+    CHECK(!mdh::window_relocate_refused_clean(), "4928: injected window not clean");
+    CHECK(mdh::window_apply_red(), "4928: injected red window is apply-red");
+
+    // Phase-5: temp canary soft-gates Moving (the #4288 shape) → clean.
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    mdh::reset_moving_densify_health_for_test();
+    mdh::clear_agent_throttle_for_moving_densify();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::ast::set_moving_compact_enabled(1);
+    aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
+    // Earlier members leave per-eval LCP Reject stamps; an LCP-blocked
+    // window is a real fail-closed (#3782) window, not the shape here.
+    aura::core::lifetime_consistency_proof::reset_lcp_eval_slots_for_test();
+    aura::core::lifetime_consistency_proof::reset_densify_entry_lcp_blocked_for_test();
+    aura::core::densify_consistency::reset_densify_consistency_for_test();
+    aura::compiler::MutationConcurrencyHealthSnapshot clean;
+    aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean);
+    {
+        CompilerService cs;
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        aura::ast::set_moving_compact_enabled(1);
+        auto& ev = cs.evaluator();
+        int sentinel = 0;
+        aura::ast::note_temporary_moving_live_ptr(&sentinel);
+        bool ok = true;
+        auto g = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &ok);
+        if (!g.has_value()) {
+            CHECK(false, std::format("4928: guard acquire ({})", g.error().message));
+        } else {
+            g.value().reset();
+            const auto hs = mdh::snapshot();
+            CHECK(!hs.would_allow_mutate, "4928: Phase-5 soft-gate keeps admit red");
+            CHECK(hs.objects_moved == 0, "4928: Phase-5 soft-gate moved nothing");
+            CHECK(mdh::window_relocate_refused_clean(), "4928: Phase-5 soft-gate recorded clean");
+            CHECK(!mdh::window_apply_red(), "4928: Phase-5 soft-gate not apply-red");
+            CHECK(!hs.agent_throttle, "4928: Phase-5 soft-gate does not set throttle");
+        }
+        aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    }
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    mdh::clear_agent_throttle_for_moving_densify();
+    mdh::reset_moving_densify_health_for_test();
+    aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
+    aura::core::densify_consistency::reset_densify_consistency_for_test();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+}
+
 // ── Issue #4751: zero-arena sticky-recovery retry folds the canary gate ──
 // #4288 closed the Phase-5 face of this hole: the #3857/#4066 temporary-canary
 // soft gate lives inside each arena's live_compact(Moving), so a window whose
@@ -5996,7 +6080,9 @@ static void ac3955_sticky_recover_lock_held() {
           "3955: production-only keep-lock");
     const auto rec = mb.find("recover_moving_sticky_densify_off(/*retry_densify=*/true)");
     CHECK(rec != std::string::npos, "3955: #3128 recover site");
-    const auto rwin = mb.substr(rec, 1800);
+    // Issue #4928: 1800 -> 2000 (the Phase-5 publish gained the
+    // refused-no-move argument; ordering row unchanged).
+    const auto rwin = mb.substr(rec, 2000);
     CHECK(rwin.find("release_workspace_then_drain_after_densify_()") != std::string::npos,
           "3955: unlock after recover");
     const auto recfn = mb.find("Evaluator::recover_moving_sticky_densify_off");
@@ -9660,6 +9746,7 @@ int run_test_moving_densify_fail_closed() {
     ac4143_4_wiring_no_invent();
     ac4287_blocked_retry_publish_closes_window();
     ac4288_phase5_blocked_publish_closes_window();
+    ac4928_relocate_refused_window_not_apply_red();
 
     std::println("\n=== Issue #4751: zero-arena sticky-recovery retry folds "
                  "the canary gate (#4288 sibling; extends fail_closed per #81967) ===");

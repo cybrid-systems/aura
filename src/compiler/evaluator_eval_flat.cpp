@@ -523,6 +523,10 @@ static bool production_apply_closure_densify_hard_refuse(ast::ASTArena* arena, c
     // through to the #3421 checks unchanged.
     // Issue #3848: window consult runs even when last publish had
     // objects_moved==0 (tombstones may still be present).
+    // Issue #4928: a red window published by a relocation REFUSED before it
+    // moved anything (window_relocate_refused_clean) is no stale-ref
+    // evidence — fall through to the LCP + remap tombstone checks instead of
+    // refusing every apply until the next green window.
     if (!aura::core::moving_densify_health::window_would_allow_mutate(
             aura::core::moving_densify_health::g_last_had_moving_densify.load(
                 std::memory_order_relaxed) != 0,
@@ -533,7 +537,8 @@ static bool production_apply_closure_densify_hard_refuse(ast::ASTArena* arena, c
             aura::core::moving_densify_health::g_last_untracked_kept.load(
                 std::memory_order_relaxed),
             aura::core::moving_densify_health::g_last_root_remap_fail_total.load(
-                std::memory_order_relaxed))) {
+                std::memory_order_relaxed)) &&
+        !aura::core::moving_densify_health::window_relocate_refused_clean()) {
         densify_refuse_seq_note(/*window_green=*/false, /*quiet=*/false);
         return true;
     }
@@ -569,8 +574,23 @@ static bool production_apply_closure_densify_hard_refuse(ast::ASTArena* arena, c
     return false;
 }
 
+// Issue #4928: see primitives_detail.h. Thread-local so a fiber's refuse is
+// only read by the callback caller on the same thread.
+namespace {
+    thread_local bool t_apply_densify_refused = false;
+}
+extern "C" void aura_clear_apply_densify_refuse() noexcept {
+    t_apply_densify_refused = false;
+}
+extern "C" bool aura_take_apply_densify_refuse() noexcept {
+    const bool r = t_apply_densify_refused;
+    t_apply_densify_refused = false;
+    return r;
+}
+
 static void note_apply_closure_densify_hard_refuse(CompilerMetrics* metrics,
                                                    Evaluator& ev) noexcept {
+    t_apply_densify_refused = true;
     if (metrics)
         metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
     ev.bump_compiler_root_dangling_prevented();
@@ -669,7 +689,8 @@ static bool production_ffi_apply_densify_hard_refuse(ast::ASTArena* arena, const
             aura::core::moving_densify_health::g_last_untracked_kept.load(
                 std::memory_order_relaxed),
             aura::core::moving_densify_health::g_last_root_remap_fail_total.load(
-                std::memory_order_relaxed))) {
+                std::memory_order_relaxed)) &&
+        !aura::core::moving_densify_health::window_relocate_refused_clean()) {
         densify_refuse_seq_note(/*window_green=*/false, /*quiet=*/false);
         return true;
     }
