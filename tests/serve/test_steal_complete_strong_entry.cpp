@@ -354,7 +354,7 @@ int run_test_steal_complete_strong_entry() {
         CHECK(fn != std::string::npos, "AC2: strong entry present");
         // Window covers Panic clear → residual → LayoutStamp after
         // #3048/#3209 session-revoke lead-in + #3343 probe marker.
-        const auto body = fm.substr(fn, 16000);
+        const auto body = aura::test::aura_source_block_after(fm, fn);
         const auto i_clear = body.find("clear_gc_defer_for_evaluator");
         const auto i_resid = body.find("force_clear_residual_defer_for_evaluator");
         const auto i_stamp = body.find("has_resume_layout_stamp");
