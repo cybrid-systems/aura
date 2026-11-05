@@ -9,11 +9,22 @@ namespace aura::compiler {
 // 10000 = 100.00%. Use for all (num*scale)/den percentage fields.
 inline constexpr std::int64_t kBasisPointScale = 10000;
 
-// Safe basis-point rate: 0 when den==0.
+// Basis-point rate for a measured population. An empty denominator means
+// "no samples yet", so the result is 0 (no data), never a vacuous 100%.
 [[nodiscard]] inline constexpr std::int64_t basis_points(std::uint64_t num,
                                                          std::uint64_t den) noexcept {
     if (den == 0)
         return 0;
+    return static_cast<std::int64_t>((num * static_cast<std::uint64_t>(kBasisPointScale)) / den);
+}
+
+// Only for predicates that are vacuously true over an empty set (e.g.
+// "every recorded sample was complete" with zero samples). Do not use for a
+// rate whose empty denominator means "no data yet" — that is basis_points().
+[[nodiscard]] inline constexpr std::int64_t basis_points_vacuous_full(std::uint64_t num,
+                                                                      std::uint64_t den) noexcept {
+    if (den == 0)
+        return kBasisPointScale;
     return static_cast<std::int64_t>((num * static_cast<std::uint64_t>(kBasisPointScale)) / den);
 }
 
