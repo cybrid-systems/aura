@@ -165,7 +165,7 @@ Evaluator::build_ast_lifecycle_hash(std::span<const std::pair<std::string, EvalV
 
 
 void* Evaluator::create_workspace_tree() {
-    auto* tree = new WorkspaceTree();
+    auto tree = std::make_unique<WorkspaceTree>();
     WorkspaceNode root;
     root.name = "root";
     root.is_root = true;
@@ -173,21 +173,22 @@ void* Evaluator::create_workspace_tree() {
     root.flat = nullptr;
     root.pool = nullptr;
     tree->nodes_.push_back(std::move(root));
-    return tree;
+    return tree.release(); // owned by the caller's slot; freed by destroy_workspace_tree
 }
 
 void Evaluator::destroy_workspace_tree(void* wt) {
     if (!wt)
         return;
-    auto* tree = static_cast<WorkspaceTree*>(wt);
+    const std::unique_ptr<WorkspaceTree> tree{static_cast<WorkspaceTree*>(wt)};
     // Delete owned flats (child workspaces that had COW triggered)
     for (auto& node : tree->nodes_) {
         if (!node.is_root && node.has_own_flat) {
-            delete node.flat;
-            delete node.pool;
+            std::unique_ptr<aura::ast::FlatAST>{node.flat}.reset();
+            std::unique_ptr<aura::ast::StringPool>{node.pool}.reset();
+            node.flat = nullptr;
+            node.pool = nullptr;
         }
     }
-    delete tree;
 }
 
 // Issue #141 AC: lazy COW trigger. Called by mutate:* primitives
@@ -358,6 +359,8 @@ bool Evaluator::restore_panic_checkpoint() {
         PanicReinstallScope() noexcept {
             ++aura::compiler::security::panic_checkpoint_reinstall_depth();
         }
+        PanicReinstallScope(const PanicReinstallScope&) = delete;
+        PanicReinstallScope& operator=(const PanicReinstallScope&) = delete;
         ~PanicReinstallScope() {
             auto& depth = aura::compiler::security::panic_checkpoint_reinstall_depth();
             if (depth > 0)

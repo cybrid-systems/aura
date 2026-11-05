@@ -55,6 +55,7 @@ public:
 
     // Non-copyable, non-movable: a moved arena would invalidate every
     // outstanding pointer (the whole point of this class is stability).
+    ~TypeEntryArena() = default;
     TypeEntryArena(const TypeEntryArena&) = delete;
     TypeEntryArena& operator=(const TypeEntryArena&) = delete;
     TypeEntryArena(TypeEntryArena&&) = delete;

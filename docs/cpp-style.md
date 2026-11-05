@@ -21,12 +21,20 @@ contracts, so `cmake/clang_contract_shim.h` expands `pre` / `post` / `contract_a
 ## 1. Resources and ownership (R.*)
 
 - R1 **[hard]** No bare `new` / `delete` / `malloc` / `free`. Ownership is a `std::unique_ptr`, a container or an
-  arena (`cppcoreguidelines-owning-memory`, `cppcoreguidelines-no-malloc`).
-- R2 **[review]** Process-lifetime singletons that fibers may touch after static destruction use
-  `aura::core::immortal<T>()`, not a hand-written `static auto* p = new T`.
+  arena (`cppcoreguidelines-owning-memory`, `cppcoreguidelines-no-malloc`). The vocabulary is in
+  `src/core/ownership.hh`: `unique_file` / `open_file` / `close_file` for `FILE*`, `unique_c_ptr<T>` for memory a C
+  API hands out (`realpath`, `getcwd`), `opaque_ptr` / `adopt_opaque<T>` for a pimpl member whose type the module
+  interface cannot name, and `c_alloc` / `c_free` for the C heap shared with JIT code and C ABI callers (the only
+  malloc-family calls in the tree). A pointer handed across a C ABI leaves a `unique_ptr` with `release()` and is
+  adopted back into one on the other side. `gsl::owner<T*>` marks the rare raw owner (deleters).
+- R2 **[review]** Process-lifetime singletons that fibers may touch after static destruction are
+  `static aura::core::immortal<T> x;`, not a hand-written `static auto* p = new T`.
 - R3 **[review]** A raw `T*` or `T&` never owns. Nullable non-owning parameters are `T*`, non-null ones `T&`.
 - R4 **[soft]** Define all five special members or none; spell the rest `= default` / `= delete`
-  (`cppcoreguidelines-special-member-functions`).
+  (`cppcoreguidelines-special-member-functions`). An RAII guard is never copyable: delete its copy pair (the moves
+  are then suppressed too), or, for an aggregate guard, end it with `[[no_unique_address]] aura::core::NoCopy
+  no_copy{};` so brace initialisation keeps working. A type whose atomics make a move a copy spells the move as
+  delegating to the copy.
 - R5 **[review]** Nodes and slots are held by strong ids (`NodeId`, `SymId`, ...). Never hold a raw pointer or index
   across compaction / densify (the #4928 class of bug).
 - R6 **[hard]** No use after `std::move` (`bugprone-use-after-move`); no dangling `string_view` / `span`

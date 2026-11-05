@@ -79,6 +79,7 @@ module;
 // methods are actually invoked).
 #include "compiler/agent_name_table_fwd.h"
 #include "compiler/handoff_token_stash_fwd.h"
+#include "core/ownership.hh" // #4936 opaque_ptr
 
 export module aura.compiler.evaluator;
 import aura.compiler.macro_expansion;
@@ -770,6 +771,12 @@ public:
                                     std::memory_order_relaxed);
         return *this;
     }
+    // The atomic members make a move a copy; spelled out so the rule of
+    // five is explicit (cpp-style R4).
+    Env(Env&& o)
+        : Env(std::as_const(o)) {}
+    Env& operator=(Env&& o) { return *this = std::as_const(o); }
+    ~Env() = default;
     void set_parent(const Env* p) { parent_ = p; }
     void set_primitives(const Primitives* p) { primitives_ = p; }
     // P0 step 2 (EnvFrame SoA migration, symmetric to EnvFrame): removed
@@ -1280,6 +1287,13 @@ export struct CopyableAtomicU64 {
         v.store(o.v.load(std::memory_order_acquire), std::memory_order_release);
         return *this;
     }
+    // An atomic has no cheaper move than a load/store copy.
+    CopyableAtomicU64(CopyableAtomicU64&& o) noexcept
+        : CopyableAtomicU64(std::as_const(o)) {}
+    CopyableAtomicU64& operator=(CopyableAtomicU64&& o) noexcept {
+        return *this = std::as_const(o);
+    }
+    ~CopyableAtomicU64() = default;
     CopyableAtomicU64& operator=(std::uint64_t x) noexcept {
         v.store(x, std::memory_order_release);
         return *this;
@@ -1601,15 +1615,14 @@ private:
         Page* p = root_[pg].load(std::memory_order_acquire);
         if (p != nullptr)
             return p;
-        auto* fresh = new (std::nothrow) Page();
+        std::unique_ptr<Page> fresh{new (std::nothrow) Page()};
         if (fresh == nullptr)
             return nullptr;
-        if (!root_[pg].compare_exchange_strong(p, fresh, std::memory_order_acq_rel,
+        if (!root_[pg].compare_exchange_strong(p, fresh.get(), std::memory_order_acq_rel,
                                                std::memory_order_acquire)) {
-            delete fresh; // another writer installed it
-            return p;
+            return p; // another writer installed it; fresh is freed
         }
-        return fresh;
+        return fresh.release(); // root_ owns it until destroy_all()
     }
     [[nodiscard]] Block* ensure_block(size_type i) noexcept {
         const size_type blk = i >> kBlockSlotBits;
@@ -1622,16 +1635,15 @@ private:
         Block* b = page->blocks[blk & kPageBlockMask].load(std::memory_order_acquire);
         if (b != nullptr)
             return b;
-        auto* fresh = new (std::nothrow) Block();
+        std::unique_ptr<Block> fresh{new (std::nothrow) Block()};
         if (fresh == nullptr)
             return nullptr;
         Block* expect = nullptr;
         if (!page->blocks[blk & kPageBlockMask].compare_exchange_strong(
-                expect, fresh, std::memory_order_acq_rel, std::memory_order_acquire)) {
-            delete fresh;
+                expect, fresh.get(), std::memory_order_acq_rel, std::memory_order_acquire)) {
             return expect;
         }
-        return fresh;
+        return fresh.release(); // the page owns it until destroy_all()
     }
     [[nodiscard]] Block* find_block(size_type i) const noexcept {
         const size_type blk = i >> kBlockSlotBits;
@@ -1651,14 +1663,12 @@ private:
     }
     void destroy_all() noexcept {
         for (size_type pg = 0; pg < kRootPages; ++pg) {
-            Page* page = root_[pg].exchange(nullptr, std::memory_order_acq_rel);
+            const std::unique_ptr<Page> page{
+                root_[pg].exchange(nullptr, std::memory_order_acq_rel)};
             if (page == nullptr)
                 continue;
-            for (auto& b : page->blocks) {
-                Block* blk = b.exchange(nullptr, std::memory_order_acq_rel);
-                delete blk;
-            }
-            delete page;
+            for (auto& b : page->blocks)
+                std::unique_ptr<Block>{b.exchange(nullptr, std::memory_order_acq_rel)}.reset();
         }
         size_.store(0, std::memory_order_release);
     }
@@ -1860,6 +1870,7 @@ export struct Closure {
     std::uint8_t linear_state = 0;
 
     Closure() = default;
+    ~Closure() = default;
     Closure(const Closure&) = default;
     Closure& operator=(const Closure&) = default;
     // Aggregate-style ctor (replaces brace-init after user move ctors; eval_flat).
@@ -2602,6 +2613,8 @@ public:
     // destructor to free their std::vector bindings_ heap allocations.
     // Without this, arena-allocated Envs leak at process exit (the
     // arena's bump-allocator doesn't run destructors).
+    Evaluator(const Evaluator&) = delete;
+    Evaluator& operator=(const Evaluator&) = delete;
     ~Evaluator();
     // Issue #1746: stable identity for thread-local maps (depth slot).
     // Never recycled; survives free-list address reuse so Guard depth
@@ -3058,6 +3071,7 @@ public:
             pool_ = ev.workspace_pool_;
             gen_ = ev.workspace_flat_gen_.load(std::memory_order_acquire);
         }
+        ~WorkspaceFlatPin() = default;
         WorkspaceFlatPin(const WorkspaceFlatPin&) = delete;
         WorkspaceFlatPin& operator=(const WorkspaceFlatPin&) = delete;
         WorkspaceFlatPin(WorkspaceFlatPin&&) noexcept = default;
@@ -7099,8 +7113,9 @@ private:
     // Issue #912: typed pointer preferred; void* kept for set_type_registry
     // ABI with CompilerService (core::TypeRegistry lives in another module).
     void* type_registry_ = nullptr; // points to aura::core::TypeRegistry
-    // Issue #911: true when type_registry_ was allocated by this Evaluator.
-    bool owns_type_registry_ = false;
+    // Issue #911: owns type_registry_ when this Evaluator allocated it; empty
+    // when the registry is wired from outside (set_type_registry).
+    aura::core::opaque_ptr type_registry_owned_;
     // Issue #3867: FnKey-style sharded closures map (16 shards) — the
     // #3832 TLS-miss path no longer contends on one process-wide mutex
     // under closure storms; writers no longer gate every miss.
@@ -8922,9 +8937,7 @@ private:
     std::vector<NameResEntry>& name_res_by_node() {
         auto& c = eval_ctx();
         if (!c.name_res_cache) {
-            c.name_res_cache = std::shared_ptr<void>(new std::vector<NameResEntry>(), [](void* p) {
-                delete static_cast<std::vector<NameResEntry>*>(p);
-            });
+            c.name_res_cache = std::make_shared<std::vector<NameResEntry>>();
         }
         return *static_cast<std::vector<NameResEntry>*>(c.name_res_cache.get());
     }
@@ -8933,10 +8946,7 @@ private:
     std::vector<std::uint8_t>& let_bind_kind() {
         auto& c = eval_ctx();
         if (!c.let_bind_kind_cache) {
-            c.let_bind_kind_cache =
-                std::shared_ptr<void>(new std::vector<std::uint8_t>(), [](void* p) {
-                    delete static_cast<std::vector<std::uint8_t>*>(p);
-                });
+            c.let_bind_kind_cache = std::make_shared<std::vector<std::uint8_t>>();
         }
         return *static_cast<std::vector<std::uint8_t>*>(c.let_bind_kind_cache.get());
     }
@@ -9313,6 +9323,7 @@ public:
                 self->spawn_region_inflight_.erase(key);
                 self->spawn_region_inflight_cv_.notify_all();
             }
+            [[no_unique_address]] ::aura::core::NoCopy no_copy{};
         } rel{this, region_key, false};
 
         auto invoke = [&]() {
@@ -9321,6 +9332,7 @@ public:
             struct DepthReset {
                 int& depth;
                 ~DepthReset() { --depth; }
+                [[no_unique_address]] ::aura::core::NoCopy no_copy{};
             } reset{depth};
             body();
         };
@@ -9366,6 +9378,7 @@ public:
                         ++it;
                 }
             }
+            [[no_unique_address]] ::aura::core::NoCopy no_copy{};
         } hold_clear{this, &apply};
         if (owner_identity != 0) {
             std::lock_guard<std::mutex> guard(agent_apply_pause_mu_);
@@ -19951,7 +19964,7 @@ public:
         last_typecheck_ok_ = false;
     }
     [[nodiscard]] void* persistent_typechecker() const noexcept {
-        return persistent_typechecker_opaque_;
+        return persistent_typechecker_opaque_.get();
     }
     [[nodiscard]] std::uint64_t persistent_typechecker_reuse_total() const noexcept {
         return persistent_tc_reuse_total_;
@@ -19975,9 +19988,9 @@ public:
     // Cache epoch for Guard-exit / infer_flat_partial stamp (defuse_version).
     [[nodiscard]] std::uint64_t current_cache_epoch() const noexcept;
     // Test / Agent accessor: non-null after first successful refresh.
-    [[nodiscard]] void* guard_infer_engine() noexcept { return guard_infer_engine_opaque_; }
+    [[nodiscard]] void* guard_infer_engine() noexcept { return guard_infer_engine_opaque_.get(); }
     [[nodiscard]] const void* guard_infer_engine() const noexcept {
-        return guard_infer_engine_opaque_;
+        return guard_infer_engine_opaque_.get();
     }
 
 private:
@@ -19992,15 +20005,21 @@ private:
                                                std::string_view op, ast::NodeId target_node = 0,
                                                std::uint64_t tenant_id = 0,
                                                std::uint64_t provenance_mutation_id = 0) noexcept;
-    // Opaque InferenceEngine* + DiagnosticCollector* (#2144). Managed only
-    // in evaluator_typecheck.cpp (avoids type_checker import in this iface).
-    void* guard_infer_engine_opaque_ = nullptr;
-    void* guard_infer_diag_opaque_ = nullptr;
+    // Opaque InferenceEngine + DiagnosticCollector owners (#2144). Managed
+    // only in evaluator_typecheck.cpp (avoids type_checker import in this
+    // iface). The engine refers to the collector, so the destructor drops
+    // the engine first via destroy_guard_infer_engine().
+    aura::core::opaque_ptr guard_infer_engine_opaque_;
+    aura::core::opaque_ptr guard_infer_diag_opaque_;
     std::uint64_t guard_infer_registry_gen_ = 0;
     void destroy_guard_infer_engine() noexcept;
     // Issue #2180: long-lived TypeChecker* holding commit CS + occurrence vars
     // imported from the last infer_flat_partial (opaque; typecheck TU only).
+    // commit_type_checker_opaque_ is a view: it points at the object owned
+    // by commit_type_checker_owned_, or aliases the #2220 persistent checker
+    // (then commit_type_checker_owned_ is empty).
     void* commit_type_checker_opaque_ = nullptr;
+    aura::core::opaque_ptr commit_type_checker_owned_;
     std::uint64_t commit_tc_registry_gen_ = 0;
     bool commit_cs_live_ = false;
     // Issue #3003 / #3004: type-export authority (default true = pre-#3003).
@@ -20017,11 +20036,11 @@ private:
     std::atomic<bool> type_export_outermost_success_face_{true};
     // Issue #3170 / #3512: staged occurrence-persist fingerprint (0 = unstaged).
     std::uint64_t expected_occurrence_fp_ = 0;
-    // Opaque std::vector<TypeId>* — stashed occurrence span for commit.
-    void* commit_occurrence_vars_opaque_ = nullptr;
+    // Opaque std::vector<TypeId> owner — stashed occurrence span for commit.
+    aura::core::opaque_ptr commit_occurrence_vars_opaque_;
     void destroy_commit_type_checker() noexcept;
     // Issue #2220: primary long-lived TypeChecker for mutate/inline typecheck.
-    void* persistent_typechecker_opaque_ = nullptr;
+    aura::core::opaque_ptr persistent_typechecker_opaque_;
     std::uint64_t persistent_tc_registry_gen_ = 0;
     std::uint64_t persistent_tc_workspace_gen_ = 0;
     std::uint64_t persistent_tc_create_total_ = 0;
@@ -20598,11 +20617,11 @@ inline bool WorkspaceTree::delete_child(std::uint32_t idx) {
     // Issue #2789: only free a true COW clone (has_own_flat && flat is
     // distinct from parent_flat_). Shared evaluator flats must not be
     // deleted even if has_own_flat was incorrectly set historically.
-    ast::FlatAST* owned_flat = nullptr;
-    ast::StringPool* owned_pool = nullptr;
+    std::unique_ptr<ast::FlatAST> owned_flat;
+    std::unique_ptr<ast::StringPool> owned_pool;
     if (n.has_own_flat && n.flat != nullptr && n.flat != n.parent_flat_) {
-        owned_flat = n.flat;
-        owned_pool = n.pool;
+        owned_flat.reset(n.flat);
+        owned_pool.reset(n.pool);
     }
     n.flat = nullptr;
     n.pool = nullptr;
@@ -20613,8 +20632,8 @@ inline bool WorkspaceTree::delete_child(std::uint32_t idx) {
     n.generation = 0;
     n.has_own_flat = false;
     n.merge_base.reset(); // Issue #4776
-    delete owned_flat;
-    delete owned_pool;
+    owned_flat.reset();   // flat before pool, as before
+    owned_pool.reset();
     return true;
 }
 

@@ -34,6 +34,7 @@ public:
     explicit ShardedCounter(std::uint64_t v) noexcept {
         shards_[0].v.store(v, std::memory_order_relaxed);
     }
+    ~ShardedCounter() = default;
     ShardedCounter(const ShardedCounter& o) noexcept
         : ShardedCounter(o.load()) {}
     ShardedCounter& operator=(const ShardedCounter& o) noexcept {

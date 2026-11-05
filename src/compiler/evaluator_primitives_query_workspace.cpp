@@ -13,6 +13,7 @@ module;
 #include "typed_mutation_audit.h"     // Issue #1892: hygiene skip audit trail
 #include <array>
 #include "reflect/node_tag_names.hh" // Issue #4345: shared NodeTag names
+#include "core/ownership.hh" // Issue #4936: NoCopy
 
 module aura.compiler.evaluator;
 
@@ -2908,6 +2909,7 @@ void register_workspace_query_primitives(
                             .count());
                     ev.note_query_shared_lock_us(us);
                 }
+                [[no_unique_address]] ::aura::core::NoCopy no_copy{};
             } lock_timer{ev, lock_t0};
             if (a.empty() || !is_string(a[0]))
                 return mev("bad-arg", "usage: (query:by-marker marker-name [limit-int] "
@@ -3582,6 +3584,7 @@ void register_workspace_query_primitives(
                             .count());
                     ev.note_query_shared_lock_us(us);
                 }
+                [[no_unique_address]] ::aura::core::NoCopy no_copy{};
             } lock_timer{ev, lock_t0};
             if (a.empty())
                 return mev("bad-arg",

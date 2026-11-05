@@ -132,6 +132,7 @@ private:
 class PerDefUseIndexTracker {
 public:
     PerDefUseIndexTracker() = default;
+    ~PerDefUseIndexTracker() = default;
     PerDefUseIndexTracker(const PerDefUseIndexTracker& o) {
         TrackerLockGuard lk(o.lock_);
         per_index_ = o.per_index_;

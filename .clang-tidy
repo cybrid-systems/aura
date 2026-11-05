@@ -86,6 +86,10 @@ CheckOptions:
   # flags every std::format in noexcept code. Other exception types still
   # count; stderr prints in noexcept code use aura::core::eprintln_nothrow.
   bugprone-exception-escape.IgnoredExceptions: 'format_error'
+  # #4936 (R4): a deleted copy already suppresses the implicit moves, and a
+  # NoCopy member implicitly deletes all four; neither needs more spelling.
+  cppcoreguidelines-special-member-functions.AllowMissingMoveFunctionsWhenCopyIsDeleted: true
+  cppcoreguidelines-special-member-functions.AllowImplicitlyDeletedCopyOrMove: true
 
 # Keep this file under 200 lines for reviewer ergonomics.
 # If you need to add a check, document the WHY in a comment.

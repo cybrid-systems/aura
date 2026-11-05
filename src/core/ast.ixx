@@ -1136,6 +1136,7 @@ public:
         , data_(std::make_shared<vector_type>(allocator_type{resource_})) {}
 
     // Copy: share storage (O(1)).
+    ~CowPmrVector() = default;
     CowPmrVector(const CowPmrVector& other) noexcept
         : resource_(other.resource_)
         , data_(other.data_) {}
@@ -5997,6 +5998,7 @@ public:
         explicit CombinedStructuralMetadataWriteGuard(FlatAST* ast) noexcept
             : structural_(ast)
             , metadata_(ast) {}
+        ~CombinedStructuralMetadataWriteGuard() = default;
         CombinedStructuralMetadataWriteGuard(const CombinedStructuralMetadataWriteGuard&) = delete;
         CombinedStructuralMetadataWriteGuard&
         operator=(const CombinedStructuralMetadataWriteGuard&) = delete;
@@ -8588,6 +8590,8 @@ private:
             while (f.type_face_journal_lock_.test_and_set(std::memory_order_acquire)) {
             }
         }
+        TypeFaceJournalLock(const TypeFaceJournalLock&) = delete;
+        TypeFaceJournalLock& operator=(const TypeFaceJournalLock&) = delete;
         ~TypeFaceJournalLock() { f.type_face_journal_lock_.clear(std::memory_order_release); }
     };
 
@@ -9086,6 +9090,7 @@ public:
         CopyableAtomicU16() noexcept = default;
         CopyableAtomicU16(std::uint16_t x) noexcept
             : v(x) {}
+        ~CopyableAtomicU16() = default;
         CopyableAtomicU16(const CopyableAtomicU16& o) noexcept
             : v(o.v.load(std::memory_order_relaxed)) {}
         CopyableAtomicU16(CopyableAtomicU16&& o) noexcept

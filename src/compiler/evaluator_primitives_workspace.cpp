@@ -6,6 +6,7 @@ module;
 #include "runtime_shared.h"
 #include "security_capabilities.h"
 #include "typed_mutation_audit.h" // Issue #4435: production_defaults_active
+#include "core/ownership.hh"      // #4936 immortal<T>
 
 module aura.compiler.evaluator;
 
@@ -82,7 +83,7 @@ std::mutex& worldline_driver_mtx_4778() {
     return m;
 }
 std::unordered_map<const void*, WorldlineDriver4778>& worldline_drivers_4778() {
-    static auto* m = new std::unordered_map<const void*, WorldlineDriver4778>();
+    static ::aura::core::immortal<std::unordered_map<const void*, WorldlineDriver4778>> m;
     return *m;
 }
 // Fiber id holding the worldline of evaluator `key` (tree `tree`) other than
@@ -452,7 +453,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             return make_int(-1);
         // Ensure tree exists
         if (!ev.workspace_tree_) {
-            auto* wtt = new WorkspaceTree();
+            auto wtt = std::make_unique<WorkspaceTree>();
             WorkspaceNode root;
             root.name = "root";
             root.is_root = true;
@@ -460,7 +461,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             root.flat = ev.workspace_flat_;
             root.pool = ev.workspace_pool_;
             wtt->nodes_.push_back(std::move(root));
-            ev.workspace_tree_ = wtt;
+            ev.workspace_tree_ = wtt.release(); // freed by Evaluator::destroy_workspace_tree
         }
         auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
         // If this is a shared tree (e.g., from serve mode), update the root
@@ -1130,8 +1131,8 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                 // Issue #4378: expire closures holding the doomed flat before
                 // the delete (heap-use-after-free in the expire walk).
                 (void)ev.expire_closures_with_flat(ws.flat);
-                delete ws.flat;
-                delete ws.pool;
+                std::unique_ptr<aura::ast::FlatAST>{ws.flat}.reset();
+                std::unique_ptr<aura::ast::StringPool>{ws.pool}.reset();
                 ws.flat = ws.parent_flat_;
                 ws.pool = ws.parent_pool_;
                 ws.has_own_flat = false;

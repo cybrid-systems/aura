@@ -5,8 +5,10 @@
 // push/pop pair (or a lock frame) can never straddle two workers.
 
 #include "core/fiber_context.hh"
+#include "core/ownership.hh" // #4936 gsl::owner
 
 #include <atomic>
+#include <memory>
 #include <new>
 
 namespace aura::core::fiber_ctx {
@@ -21,7 +23,7 @@ namespace {
     // leak one Context (~0.5 KB per fiber:spawn). PlainContextOwner deletes
     // it when the thread exits and clears the cached pointers that may
     // still name it.
-    thread_local Context* t_ctx_plain = nullptr;
+    thread_local gsl::owner<Context*> t_ctx_plain = nullptr;
 
 
     // Nested attach stack (a fiber body may drive another fiber).
@@ -34,7 +36,7 @@ namespace {
 
     struct PlainContextOwner {
         ~PlainContextOwner() {
-            Context* c = t_ctx_plain;
+            gsl::owner<Context*> c = t_ctx_plain;
             if (!c)
                 return;
             if (t_ctx_cur == c)
@@ -43,6 +45,7 @@ namespace {
             delete c;
             g_ctx_plain_freed_total.fetch_add(1, std::memory_order_relaxed);
         }
+        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
     };
     thread_local PlainContextOwner t_ctx_plain_owner;
 
@@ -69,12 +72,15 @@ Context* plain_context() noexcept {
     return t_ctx_plain;
 }
 
+// #4936: the C ABI hands the Context out as an opaque handle. Ownership is a
+// std::unique_ptr on both sides of the boundary; the handle is released to the
+// caller here and re-adopted by aura_fiber_ctx_destroy.
 extern "C" Context* aura_fiber_ctx_create(std::uint64_t owner_fiber) noexcept {
-    auto* ctx = new (std::nothrow) Context();
+    std::unique_ptr<Context> ctx{new (std::nothrow) Context()};
     if (!ctx)
         return nullptr;
     ctx->owner_fiber = owner_fiber;
-    return ctx;
+    return ctx.release();
 }
 
 extern "C" void aura_fiber_ctx_destroy(Context* ctx) noexcept {
@@ -90,7 +96,7 @@ extern "C" void aura_fiber_ctx_destroy(Context* ctx) noexcept {
             t_ctx_cur = nullptr;
         }
     }
-    delete ctx;
+    const std::unique_ptr<Context> owned{ctx}; // frees on return
 }
 
 extern "C" void aura_fiber_ctx_attach(Context* ctx) noexcept {

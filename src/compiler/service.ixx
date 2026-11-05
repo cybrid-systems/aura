@@ -1,4 +1,5 @@
 module;
+#include "core/ownership.hh" // Issue #4936: immortal<T>
 #include "rebind_phase_stats.h"             // per-phase rebind timing (opt-in)
 #include "compiler/security_capabilities.h" // Issue #4876: macro deny text
 #include <algorithm>
@@ -864,6 +865,7 @@ namespace {
         struct OsrBusyGuard {
             int& flag;
             ~OsrBusyGuard() { flag = 0; }
+            [[no_unique_address]] ::aura::core::NoCopy no_copy{};
         } osr_busy_guard{t_jit_osr_busy};
         t_jit_osr_busy = 1;
         const std::int64_t v = reinterpret_cast<aura::jit::ScalarFn>(fnp)(
@@ -896,6 +898,8 @@ namespace {
             // turn the escape into a sentinel protocol violation).
             aura_jit_set_osr_host(&jit_osr_enter_host_impl);
         }
+        JitDeoptHostArm(const JitDeoptHostArm&) = delete;
+        JitDeoptHostArm& operator=(const JitDeoptHostArm&) = delete;
         ~JitDeoptHostArm() {
             t_jit_deopt_host = prev;
             if (!prev.mod) {
@@ -2749,7 +2753,7 @@ public:
         // static set were observed freed mid-run by an OrchSchedHolder
         // worker thread (ASAN heap-use-after-free in the visitor count()
         // — obs_facade rc=139 CI red).
-        static const auto* const tree_walker_only = new std::unordered_set<std::string>{
+        static const aura::core::immortal<std::unordered_set<std::string>> tree_walker_only{std::unordered_set<std::string>{
             // EDSL / AI agent primitives
             "define-type",
             "set-code",
@@ -2813,7 +2817,7 @@ public:
             "capability-stack", // DEPRECATED — uses primitive path instead
             // Module system (env side-effects)
             // "import", "use", "require" — now in lowering_known
-        };
+        }};
 
         // Root-level bare variables (like `pi`, `sort`) may come from runtime imports.
         // The lowering doesn't know about them, so fallback to tree-walker.
@@ -2844,7 +2848,7 @@ public:
         // static set were observed freed mid-run by an OrchSchedHolder
         // worker thread (ASAN heap-use-after-free in the visitor count()
         // — obs_facade rc=139 CI red).
-        static const auto* const lowering_known = new std::unordered_set<std::string>{
+        static const aura::core::immortal<std::unordered_set<std::string>> lowering_known{std::unordered_set<std::string>{
             "try",
             "catch",
             "raise",
@@ -2854,7 +2858,7 @@ public:
             "with-arena",
             "performance-region",
             "evolution-region",
-        };
+        }};
 
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             auto nv = flat.get(id);
@@ -2968,7 +2972,7 @@ public:
         // static set were observed freed mid-run by an OrchSchedHolder
         // worker thread (ASAN heap-use-after-free in the visitor count()
         // — obs_facade rc=139 CI red).
-        static const auto* const tree_walker_only = new std::unordered_set<std::string>{
+        static const aura::core::immortal<std::unordered_set<std::string>> tree_walker_only{std::unordered_set<std::string>{
             // EDSL / AI agent primitives
             "define-type",
             "set-code",
@@ -3020,12 +3024,12 @@ public:
             "with-capability",
             "check-capability",
             "capability-stack",
-        };
+        }};
         // Intentionally leaked (no destructor): the buckets of a function-local
         // static set were observed freed mid-run by an OrchSchedHolder
         // worker thread (ASAN heap-use-after-free in the visitor count()
         // — obs_facade rc=139 CI red).
-        static const auto* const lowering_known = new std::unordered_set<std::string>{
+        static const aura::core::immortal<std::unordered_set<std::string>> lowering_known{std::unordered_set<std::string>{
             "try",
             "catch",
             "raise",
@@ -3035,7 +3039,7 @@ public:
             "with-arena",
             "performance-region",
             "evolution-region",
-        };
+        }};
 
         bool needs = false;
         const std::size_t visited = flat.walk_subtree(root, [&](aura::ast::NodeId id) {
@@ -3855,6 +3859,7 @@ public:
                             aura::ast::FlatAST* flat;
                             aura::ast::NodeId root;
                             ~RestoreRoot() { flat->root = root; }
+                            [[no_unique_address]] ::aura::core::NoCopy no_copy{};
                         } restore{flat_ptr, flat_ptr->root};
                         flat_ptr->root = cid_reg;
                         (void)cache_define_prefer_partial(input, *flat_ptr, *pool_ptr, cid_reg,
@@ -15319,6 +15324,7 @@ public:
                 struct UnlockGuard {
                     Evaluator& e;
                     ~UnlockGuard() { e.unlock_workspace_shared(); }
+                    [[no_unique_address]] ::aura::core::NoCopy no_copy{};
                 } guard{eval_mut};
                 const auto* wf = eval_mut.workspace_flat();
                 if (wf) {
@@ -15866,6 +15872,7 @@ public:
         // Disallow copy
         MutationTransaction(const MutationTransaction&) = delete;
         MutationTransaction& operator=(const MutationTransaction&) = delete;
+        MutationTransaction& operator=(MutationTransaction&&) = delete;
         // Allow move
         MutationTransaction(MutationTransaction&& other) noexcept
             : ast(other.ast)
@@ -16017,6 +16024,7 @@ public:
         // Disallow copy
         TypedTransactionGuard(const TypedTransactionGuard&) = delete;
         TypedTransactionGuard& operator=(const TypedTransactionGuard&) = delete;
+        TypedTransactionGuard& operator=(TypedTransactionGuard&&) = delete;
         // Allow move
         TypedTransactionGuard(TypedTransactionGuard&& other) noexcept
             : svc(other.svc)
@@ -16223,6 +16231,8 @@ public:
                 : ev(e)
                 , scratch(s)
                 , saved_top(e.top_env().pool()) {}
+            DetachScratchPool(const DetachScratchPool&) = delete;
+            DetachScratchPool& operator=(const DetachScratchPool&) = delete;
             ~DetachScratchPool() {
                 if (!scratch)
                     return;
@@ -16595,6 +16605,7 @@ public:
         struct UnlockGuard {
             Evaluator& e;
             ~UnlockGuard() { e.unlock_workspace_shared(); }
+            [[no_unique_address]] ::aura::core::NoCopy no_copy{};
         } guard{eval_mut};
         auto hist = (node == aura::ast::NULL_NODE) ? source->all_mutations()
                                                    : source->mutation_history(node);
@@ -18755,6 +18766,8 @@ public:
     // Issue #300 follow-up #1: drop per-fiber / main-thread
     // mutation checkpoints before arena teardown so PCV
     // children_snapshot copies do not race ~workspace_flat_.
+    CompilerService(const CompilerService&) = delete;
+    CompilerService& operator=(const CompilerService&) = delete;
     ~CompilerService() {
         evaluator_.set_tw_tier_hook_4682(nullptr, nullptr);
         evaluator_.set_exit_quiesce_hook(nullptr, nullptr);

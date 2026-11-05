@@ -19,6 +19,7 @@
 #include "core/gc_hooks.h"       // Issue #1364
 #include "core/lifetime_pin.hh"  // Issue #3023: post-join linear_roots unpin
 #include "core/fiber_context.hh" // Issue #4716: per-fiber evaluator execution context
+#include "core/ownership.hh"     // Issue #4936: immortal<T>
 #include <unordered_map> // Issue #2726: process-wide Fiber* registry for cross-fiber cancel lookup
 
 #include <sys/mman.h>
@@ -262,7 +263,7 @@ namespace {
         std::unordered_map<std::uint64_t, Fiber*> fibers;
     };
     FiberRegistry& fiber_registry() noexcept {
-        static FiberRegistry* registry = new FiberRegistry();
+        static aura::core::immortal<FiberRegistry> registry;
         return *registry;
     }
     // Issue #2726 pins these names (check_cross_fiber_hold_budget_cancel_2726
@@ -2575,6 +2576,7 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
             Fiber* f;
             bool prev;
             ~JoinWaitYieldFlag() { f->set_join_wait_yield_allowed(prev); }
+            [[no_unique_address]] ::aura::core::NoCopy no_copy{};
         } join_wait_flag{self, prev_join_wait};
 
         // Wait loop: BlockingIO yield parks until target Done wakes us

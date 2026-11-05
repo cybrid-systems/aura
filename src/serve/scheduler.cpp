@@ -9,6 +9,7 @@
 #include "steal_safety.h"              // Issue #3950: Ready residual-zero
 #include <cstring>
 #include <unistd.h>
+#include "core/ownership.hh" // Issue #4936: NoCopy
 
 extern "C" int aura_production_defaults_active_probe() noexcept;
 
@@ -491,6 +492,7 @@ std::int64_t spawn_with_pinned_body(Scheduler& sched, void* evaluator, Fiber::Fu
                     if (evaluator)
                         aura_fiber_release_pending_body_latest(evaluator);
                 }
+                [[no_unique_address]] ::aura::core::NoCopy no_copy{};
             } pin_release{evaluator};
             body();
         },

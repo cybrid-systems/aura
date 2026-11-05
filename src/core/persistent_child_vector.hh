@@ -377,6 +377,7 @@ public:
     }
 
     // Copy / move: O(1) (shared_ptr copy).
+    ~PersistentChildVector() = default;
     PersistentChildVector(const PersistentChildVector&) = default;
     PersistentChildVector& operator=(const PersistentChildVector&) = default;
     // Custom move: the default move would leave size_ at its old
@@ -763,36 +764,35 @@ private:
         return reinterpret_cast<std::uintptr_t>(&tls_token);
     }
 
-    static void tls_recycle(Storage* raw) noexcept {
-        if (!raw) {
+    // #4936: takes ownership; returning without moving `owned` frees it.
+    static void tls_recycle(std::unique_ptr<Storage> owned) noexcept {
+        if (!owned) {
             return;
         }
         if (!pcv_tls_scratch_active()) {
-            delete raw;
             return;
         }
         auto& fl = tls_freelist();
         const auto tid = current_tid();
         if (fl.owner_tid != 0 && fl.owner_tid != tid) {
             // Allocated on another thread (fiber steal) — free, do not recycle.
-            delete raw;
             return;
         }
         fl.owner_tid = tid;
         for (std::size_t i = 0; i < kTlsSlots; ++i) {
             if (!fl.slots[i]) {
                 // Reset logical fill for reuse (capacity remains kTlsMaxElems).
-                fl.slots[i].reset(raw);
+                fl.slots[i] = std::move(owned);
                 g_pcv_hotpath_metrics().tls_scratch_recycle_total.fetch_add(
                     1, std::memory_order_relaxed);
                 return;
             }
         }
-        delete raw; // freelist full
+        // freelist full: `owned` frees the storage
     }
 
     static void tls_storage_deleter(const Storage* p) noexcept {
-        tls_recycle(const_cast<Storage*>(p));
+        tls_recycle(std::unique_ptr<Storage>(const_cast<Storage*>(p)));
     }
 
     // Issue #3429: pop a warm #2406 TLS slot. Empty when inactive,
@@ -830,8 +830,9 @@ private:
         if (pcv_tls_scratch_active() && n <= kTlsMaxElems) {
             g_pcv_hotpath_metrics().tls_scratch_miss_total.fetch_add(1, std::memory_order_relaxed);
             tls_last_alloc_was_hit() = false;
-            Storage* raw = new Storage(kTlsMaxElems);
-            return StoragePtr(raw, tls_storage_deleter);
+            // The shared_ptr owns it at once; on a failed control-block
+            // allocation it runs the deleter itself.
+            return StoragePtr(new Storage(kTlsMaxElems), tls_storage_deleter);
         }
         tls_last_alloc_was_hit() = false;
         return std::make_shared<Storage>(n);

@@ -14,6 +14,7 @@
 #include <atomic>
 #include <cstdint>
 #include <string>
+#include "core/ownership.hh" // Issue #4936: NoCopy
 
 namespace aura::compiler {
 
@@ -6637,6 +6638,7 @@ struct CompilerMetrics {
             struct UnlockGuard {
                 std::atomic_flag* f;
                 ~UnlockGuard() { f->clear(std::memory_order_release); }
+                [[no_unique_address]] ::aura::core::NoCopy no_copy{};
             } guard{&primitive_fastpath_per_prim_lock_};
             if (slot >= primitive_fastpath_per_prim_capacity_) {
                 std::size_t new_cap = primitive_fastpath_per_prim_capacity_ == 0
@@ -6644,6 +6646,9 @@ struct CompilerMetrics {
                                           : primitive_fastpath_per_prim_capacity_;
                 while (new_cap <= slot)
                     new_cap *= 2;
+                // Old arrays are retired by leaking (see the NOTE below):
+                // lock-free readers may still be indexing them.
+                // NOLINTNEXTLINE(cppcoreguidelines-owning-memory): deliberate bounded leak (#4936)
                 auto* new_arr = new std::atomic<std::uint64_t>[new_cap];
                 // std::atomic default-initializes to indeterminate value
                 // (NOT zero!) — explicitly zero-init the new slots.

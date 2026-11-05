@@ -16,6 +16,7 @@ module;
 #include "tenant_host_path.hh"     // #3802 tenant FS path-prefix
 #include "tenant_exec_fs_jail.hh"  // #4413 landlock + stat emulation
 #include "write_scope.hh"          // #4912 write:out/
+#include "core/ownership.hh"       // #4936 unique_file / immortal<T>
 
 module aura.compiler.evaluator;
 
@@ -142,16 +143,15 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
             ::close(fd);
             return make_void();
         }
-        FILE* fp = ::fdopen(fd, "r");
+        const ::aura::core::unique_file fp{::fdopen(fd, "r")}; // owns fd from here
         if (!fp) {
             ::close(fd);
             return make_void();
         }
         std::string content;
         char buf[4096];
-        while (std::size_t n = ::fread(buf, 1, sizeof(buf), fp))
+        while (std::size_t n = ::fread(buf, 1, sizeof(buf), fp.get()))
             content.append(buf, n);
-        ::fclose(fp); // also closes fd
         auto id = ev.string_heap_.mint(std::move(content));
         return make_string(id);
     });

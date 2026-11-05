@@ -16,6 +16,8 @@
 // an audit trail like the security WAL, not a program file write.
 #pragma once
 
+#include "core/ownership.hh" // #4936 unique_file
+
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -179,13 +181,15 @@ inline std::string log_append(const Entry& e) {
     const std::filesystem::path p(s.path);
     if (p.has_parent_path())
         std::filesystem::create_directories(p.parent_path(), ec);
-    std::FILE* f = std::fopen(s.path.c_str(), "a");
+    ::aura::core::unique_file f = ::aura::core::open_file(s.path.c_str(), "a");
     if (!f) {
         s.last_error = "cannot open " + s.path;
         return {};
     }
-    const bool ok = std::fwrite(line.data(), 1, line.size(), f) == line.size();
-    std::fclose(f);
+    // #4936: the close is the final flush; a failure there (ENOSPC) used to
+    // be ignored and the entry reported as written.
+    const bool wrote = std::fwrite(line.data(), 1, line.size(), f.get()) == line.size();
+    const bool ok = ::aura::core::close_file(f) && wrote;
     if (!ok) {
         s.last_error = "short write to " + s.path;
         return {};

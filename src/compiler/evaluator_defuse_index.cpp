@@ -723,7 +723,7 @@ struct DefUseIndex {
 void defuse_index_destroy(void** slot) {
     if (!slot || !*slot)
         return;
-    delete static_cast<DefUseIndex*>(*slot);
+    const std::unique_ptr<DefUseIndex> owned{static_cast<DefUseIndex*>(*slot)};
     *slot = nullptr;
 }
 
@@ -778,8 +778,9 @@ void Evaluator::install_defuse_subsystem() {
             return nullptr;
         auto idx = static_cast<DefUseIndex*>(defuse_index_);
         if (!idx) {
-            idx = new DefUseIndex();
-            defuse_index_ = idx;
+            auto fresh = std::make_unique<DefUseIndex>();
+            idx = fresh.get();
+            defuse_index_ = fresh.release(); // owned by the slot; freed by defuse_index_destroy
             idx->build(*workspace_flat_, *workspace_pool_);
             // Issue #1129 / #4109: monotonic bump (never reset to a
             // hardcoded 1 — snapshots must stay comparable) + ride every

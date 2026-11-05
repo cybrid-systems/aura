@@ -56,6 +56,7 @@
 #include "orch/agent_spawn.h"
 
 #include "compiler/typed_mutation_audit.h" // #2946 production_defaults_active
+#include "core/ownership.hh"               // #4936 immortal<T>
 
 #include <atomic>
 #include <algorithm>
@@ -2397,7 +2398,7 @@ inline std::unordered_map<void*, std::unique_ptr<AgentScope>>& g_evaluator_agent
     // in _M_insert_unique_node (ASAN). The scopes themselves are still
     // dropped at the session boundary (drop_agent_scope /
     // reset_all_agent_scopes_for_test), so only the empty container leaks.
-    static auto* m = new std::unordered_map<void*, std::unique_ptr<AgentScope>>();
+    static aura::core::immortal<std::unordered_map<void*, std::unique_ptr<AgentScope>>> m;
     return *m;
 }
 

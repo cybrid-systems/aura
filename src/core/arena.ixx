@@ -24,6 +24,7 @@ module;
 #include "core/moving_cover_probe.h" // Issue #3633: root-remap covered-old probe (window-exit reconciliation)
 #include "core/moving_densify_health.hh" // Issue #3123 production auto-arm + clear reason
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "core/ownership.hh" // Issue #4936: NoCopy
 export module aura.core.arena;
 import std;
 import aura.core.error;
@@ -2262,6 +2263,8 @@ public:
         return (arena_owner_ != nullptr) == (quota_allow_fn_ != nullptr);
     }
 
+    ASTArena(const ASTArena&) = delete;
+    ASTArena& operator=(const ASTArena&) = delete;
     ~ASTArena() {
         live_arena_remap_detail::unnote(this);
         // Issue #2382 / #3124: clear installed hooks under their mutexes
@@ -4581,6 +4584,7 @@ public:
                                 if (owner)
                                     aura::core::densify_consistency::clear_densify_in_flight(owner);
                             }
+                            [[no_unique_address]] ::aura::core::NoCopy no_copy{};
                         } auto_arm_inflight{inflight_owner};
                         if (inflight_owner)
                             aura::core::densify_consistency::arm_densify_in_flight(inflight_owner);

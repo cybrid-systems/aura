@@ -130,6 +130,8 @@ struct FunctionMeta {
 class AuraJIT {
 public:
     AuraJIT();
+    AuraJIT(const AuraJIT&) = delete;
+    AuraJIT& operator=(const AuraJIT&) = delete;
     ~AuraJIT();
 
     bool available() const;

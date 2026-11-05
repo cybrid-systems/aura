@@ -58,6 +58,7 @@ module;
 #include "curl_stub.h"
 #endif
 #include "messaging_bridge.h"
+#include "core/ownership.hh" // Issue #4936: NoCopy
 
 module aura.compiler.evaluator;
 
@@ -169,6 +170,7 @@ namespace {
             if (handle)
                 ::dlclose(handle);
         }
+        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
     };
     CurlAPI& get_curl() {
         static CurlAPI c;

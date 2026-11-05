@@ -202,7 +202,8 @@ private:
     QueryExpr parse_call(std::string_view expr);
 
     ASTIndex index_;
-    mutable SymRefIndex* sym_index_ = nullptr;
+    // Issue #4936: owned (the raw pointer was never freed).
+    mutable std::unique_ptr<SymRefIndex> sym_index_;
     mutable bool sym_index_built_ = false;
     MetricsProvider* metrics_provider = nullptr;
 
