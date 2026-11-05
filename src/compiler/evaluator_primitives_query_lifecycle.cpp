@@ -1060,9 +1060,11 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             // Success rate: mutations that did not roll back / (mutations + rollbacks)
             // Use trail successes proxy when mutation log rollbacks available.
             const std::uint64_t mut_den = mut_total + rollback;
-            const std::int64_t mut_success_bp = ::aura::compiler::basis_points(mut_total, mut_den);
+            const std::int64_t mut_success_bp =
+                ::aura::compiler::basis_points_vacuous_full(mut_total, mut_den);
             const std::uint64_t inv_den = inv_aud == 0 ? 0 : inv_aud;
-            const std::int64_t inv_pass_bp = ::aura::compiler::basis_points(inv_pass, inv_den);
+            const std::int64_t inv_pass_bp =
+                ::aura::compiler::basis_points_vacuous_full(inv_pass, inv_den);
             const std::int64_t aot_cov_bp = ::aura::compiler::basis_points(aot_aud, aot_att);
             const std::int64_t stack_life =
                 static_cast<std::int64_t>(ev->get_per_fiber_mutation_stack_depth_max());
@@ -1227,10 +1229,7 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 load_m(&CompilerMetrics::mutation_boundary_exception_rollback_total);
             const std::uint64_t rollback_attempts = rollback_ok + rollback_log + guard_exc;
             const std::int64_t rollback_success_rate_bp =
-                rollback_attempts == 0
-                    ? 10000
-                    : static_cast<std::int64_t>((rollback_ok * 10000ull) /
-                                                (rollback_attempts > 0 ? rollback_attempts : 1));
+                ::aura::compiler::basis_points_vacuous_full(rollback_ok, rollback_attempts);
 
             // ── Latency p99 proxy: max hold duration (us); hist top bucket ──
             const std::uint64_t hold_max_us =
@@ -1249,7 +1248,8 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             const std::uint64_t inv_pass = ac.invariant_all_pass.load(std::memory_order_relaxed);
             const std::uint64_t inv_fail =
                 ac.invariant_violations_caught.load(std::memory_order_relaxed);
-            const std::int64_t inv_pass_bp = ::aura::compiler::basis_points(inv_pass, inv_aud);
+            const std::int64_t inv_pass_bp =
+                ::aura::compiler::basis_points_vacuous_full(inv_pass, inv_aud);
 
             // ── Issue #2030: provenance blame completeness + occurrence hit rate ──
             // blame_completeness_ratio = complete / (complete + miss) in bp.
@@ -1264,8 +1264,8 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
                               : ac.blame_propagation_miss_total.load(std::memory_order_relaxed);
             const std::uint64_t blame_den = blame_c + blame_m;
             const std::int64_t blame_completeness_ratio_bp =
-                blame_den == 0 ? 10000
-                               : static_cast<std::int64_t>((blame_c * 10000ull) / blame_den);
+                ::aura::compiler::basis_points_vacuous_full(
+                    blame_c, blame_den); // completeness over no samples is vacuously true
             // occurrence_narrowing_post_mutate_hit_rate: renarrow hits/total,
             // else stale-refresh blame-complete ratio, else N/A → 10000.
             const std::uint64_t renarrow_hits =
@@ -1277,7 +1277,8 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             const std::uint64_t occ_blame_ok =
                 load_m(&CompilerMetrics::occurrence_blame_chain_complete_total);
             const std::uint64_t narrowing_refresh = ev->get_narrowing_refresh_count();
-            std::int64_t occurrence_narrowing_post_mutate_hit_rate_bp = 10000;
+            std::int64_t occurrence_narrowing_post_mutate_hit_rate_bp =
+                10000; // N/A = perfect until data
             if (renarrow_total > 0) {
                 occurrence_narrowing_post_mutate_hit_rate_bp =
                     static_cast<std::int64_t>((renarrow_hits * 10000ull) / renarrow_total);
@@ -1301,7 +1302,7 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 load_m(&CompilerMetrics::linear_occurrence_predicate_safe_total);
             const std::uint64_t lin_den = lin_reval + lin_escape;
             const std::int64_t linear_occurrence_consistency_bp =
-                ::aura::compiler::basis_points(lin_reval, lin_den);
+                ::aura::compiler::basis_points_vacuous_full(lin_reval, lin_den);
             const std::uint64_t type_ok = ac.type_invariant_ok.load(std::memory_order_relaxed);
             const std::uint64_t type_fail = ac.type_invariant_fail.load(std::memory_order_relaxed);
             const std::uint64_t lin_ok = ac.linear_invariant_ok.load(std::memory_order_relaxed);
@@ -1312,17 +1313,11 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             const std::uint64_t prov_fail =
                 ac.provenance_invariant_fail.load(std::memory_order_relaxed);
             const std::int64_t type_invariant_ratio_bp =
-                (type_ok + type_fail) == 0
-                    ? 10000
-                    : static_cast<std::int64_t>((type_ok * 10000ull) / (type_ok + type_fail));
+                ::aura::compiler::basis_points_vacuous_full(type_ok, type_ok + type_fail);
             const std::int64_t linear_invariant_ratio_bp =
-                (lin_ok + lin_inv_fail) == 0
-                    ? 10000
-                    : static_cast<std::int64_t>((lin_ok * 10000ull) / (lin_ok + lin_inv_fail));
+                ::aura::compiler::basis_points_vacuous_full(lin_ok, lin_ok + lin_inv_fail);
             const std::int64_t provenance_invariant_ratio_bp =
-                (prov_ok + prov_fail) == 0
-                    ? 10000
-                    : static_cast<std::int64_t>((prov_ok * 10000ull) / (prov_ok + prov_fail));
+                ::aura::compiler::basis_points_vacuous_full(prov_ok, prov_ok + prov_fail);
             const std::int64_t linear_provenance_consistency_bp = static_cast<std::int64_t>(
                 aura::core::provenance::linear_provenance_consistency_bp());
             (void)lin_pred_safe;
@@ -1505,9 +1500,7 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             // success rate: ok / (ok + fail); empty → 10000 bp
             const std::uint64_t attempts = batch_refresh + fails;
             const std::int64_t success_rate_bp =
-                attempts == 0 ? 10000
-                              : static_cast<std::int64_t>((batch_refresh * 10000ull) /
-                                                          (attempts > 0 ? attempts : 1));
+                ::aura::compiler::basis_points_vacuous_full(batch_refresh, attempts);
             const std::int64_t fail_rate_bp = 10000 - success_rate_bp;
             // fail rate < 0.1% ⇒ fail_rate_bp < 10 for multi-round loops
             const std::int64_t lat_avg_us =

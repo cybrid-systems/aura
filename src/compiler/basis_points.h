@@ -19,8 +19,10 @@ inline constexpr std::int64_t kBasisPointScale = 10000;
 }
 
 // Only for predicates that are vacuously true over an empty set (e.g.
-// "every recorded sample was complete" with zero samples). Do not use for a
-// rate whose empty denominator means "no data yet" — that is basis_points().
+// "every recorded sample was complete" with zero samples). Also use it for
+// the N/A=perfect convention on health/adaptive inputs, where a fresh process
+// must not look degraded before any sample exists. Informational rates use
+// basis_points().
 [[nodiscard]] inline constexpr std::int64_t basis_points_vacuous_full(std::uint64_t num,
                                                                       std::uint64_t den) noexcept {
     if (den == 0)
