@@ -10770,6 +10770,16 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 rollback_still_void_defs();
                                 return val;
                             }
+                            // Issue #4909: an error VALUE (a closure call that
+                            // returned one, e.g. `(define r (f 5))` with
+                            // `(car z)` in f) was stored in the cell and the
+                            // file ran on with rc=0 — the sequential face
+                            // already reports it. File root only: the error
+                            // becomes the located diagnostic for this define.
+                            if (file_root && is_error(*val) && !is_string(*val)) {
+                                rollback_still_void_defs();
+                                return finish_child(std::move(val), v.child(letrec_idx[i]));
+                            }
                             cells_[cell_ids[i]] = *val;
                         }
                         // Phase 3: remaining non-define / non-prologue exprs

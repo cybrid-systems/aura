@@ -1057,7 +1057,13 @@ static Diagnostic ir_cannot_call_diag(const IRInstruction* instr, const EvalValu
         else
             name = "value";
     }
-    return Diagnostic{ErrorKind::TypeError, "cannot call: " + name, ir_call_arity_loc(instr, ev)};
+    Diagnostic d{ErrorKind::TypeError, "cannot call: " + name, ir_call_arity_loc(instr, ev)};
+    // Issue #4909: force-soa reaches an unbound common Scheme name here (the
+    // walker face says "unbound variable … did you mean"); keep the hint.
+    if (name == "memq" || name == "memv")
+        d.with_suggestion("did you mean 'member'? (Aura's member compares with equal?; "
+                          "memq/memv are not provided)");
+    return d;
 }
 
 static std::optional<Diagnostic> ir_user_arity_diag(const IRInstruction* instr,
