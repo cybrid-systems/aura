@@ -166,10 +166,10 @@ struct WorkspaceIsolationPolicy {
     std::uint64_t denials = 0;
     bool isolation_enabled = false; // false = permissive (tenant id 0 / unset)
     bool strict_sandbox_linked = false;
-    // Issue #2530: 1024 slots — aligned with Capability / SecurityEvent rings.
+    // Issue #2530: aligned with the SecurityEvent ring (#2225), single SSOT.
     // Soft / Off paths pay nothing when record_audit is never called.
     // Earlier-than-window events rely on WAL (AC3).
-    static constexpr std::size_t kAuditRing = 1024;
+    static constexpr std::size_t kAuditRing = ::aura::core::security_event::kSecurityEventRingSize;
     // Issue #2530: shared_mutex + published slots (was bare array — torn reads).
     mutable std::shared_mutex audit_ring_mtx_;
     PublishedIsolationSlot audit_ring[kAuditRing]{};
