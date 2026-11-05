@@ -60,6 +60,13 @@ inline constexpr int kSecurityEventWalPhase = 1;
 inline constexpr int kSecurityEventWalIssue = 2225;
 inline constexpr char kSecurityEventWalMagic[8] = {'S', 'E', 'C', 'W', 'A', 'L', '1', '0'};
 inline constexpr std::uint32_t kSecurityEventWalVersion = 1;
+// On-disk field widths are the format spec: name them so the struct and
+// the size assertion cannot drift independently.
+inline constexpr std::size_t kWalOpFieldBytes = 40;
+inline constexpr std::size_t kWalReasonFieldBytes = 64;
+inline constexpr std::size_t kWalReservedFieldBytes = 8;
+inline constexpr std::string_view kWalSegmentPrefix = "security-event-";
+inline constexpr std::string_view kWalSegmentSuffix = ".wal";
 // Default rotate after ~1 MiB of records (matches mutation_audit_wal
 // so segments rotate in lockstep under heavy audit).
 inline constexpr std::uint64_t kDefaultRotateBytes = 1ull << 20;
@@ -77,13 +84,15 @@ struct SecurityEventWalRecord {
     std::uint64_t tenant_id = 0;
     std::uint64_t mutation_id = 0;
     std::uint64_t epoch = 0;
-    char op[40]{};
-    char reason[64]{};
-    std::uint8_t reserved[8]{};
+    char op[kWalOpFieldBytes]{};
+    char reason[kWalReasonFieldBytes]{};
+    std::uint8_t reserved[kWalReservedFieldBytes]{};
 };
 #pragma pack(pop)
 
-static_assert(sizeof(SecurityEventWalRecord) == 8 + 8 + 1 + 1 + 2 + 8 + 8 + 8 + 8 + 40 + 64 + 8,
+static_assert(sizeof(SecurityEventWalRecord) == 8 + 8 + 1 + 1 + 2 + 8 + 8 + 8 + 8 +
+                                                    kWalOpFieldBytes + kWalReasonFieldBytes +
+                                                    kWalReservedFieldBytes,
               "SecurityEventWalRecord size stable for WAL format");
 
 // Issue #3109: production WAL append fail-closed option (SE + mutation
@@ -470,9 +479,11 @@ struct SecurityEventWal {
                     continue;
                 const auto name = ent.path().filename().string();
                 // security-event-N.wal
-                if (name.rfind("security-event-", 0) != 0 || !name.ends_with(".wal"))
+                if (name.rfind(kWalSegmentPrefix, 0) != 0 || !name.ends_with(kWalSegmentSuffix))
                     continue;
-                const auto mid = name.substr(15, name.size() - 15 - 4); // strip prefix + ".wal"
+                const auto mid =
+                    name.substr(kWalSegmentPrefix.size(),
+                                name.size() - kWalSegmentPrefix.size() - kWalSegmentSuffix.size());
                 try {
                     const auto n = static_cast<std::uint32_t>(std::stoul(mid));
                     seg_indices.push_back(n);
