@@ -41,4 +41,5 @@ dir=$tmp/${name%.tar.gz}
 rm -rf "$prefix/current" && mv "$dir" "$prefix/current"
 ln -sf "$prefix/current/bin/aura" "$bindir/aura"
 echo "aura install: ok — $("$bindir/aura" -e '(display "aura runs")' 2>&1 | tail -1)"
+echo "aura install: $("$bindir/aura" --version 2>/dev/null || echo "aura $version")"
 case ":$PATH:" in *":$bindir:"*) ;; *) echo "aura install: add $bindir to PATH" ;; esac

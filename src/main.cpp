@@ -976,6 +976,13 @@ static int aura_test_4913(const std::filesystem::path& root, const std::vector<s
     return failed == 0 ? 0 : 1;
 }
 
+#ifndef AURA_BUILD_VERSION
+#define AURA_BUILD_VERSION "dev"
+#endif
+#ifndef AURA_BUILD_GIT_SHA
+#define AURA_BUILD_GIT_SHA "unknown"
+#endif
+
 // Issue #4913: project front door. Returns an exit code for the commands it
 // finishes itself (new, test); otherwise rewrites argv for the normal path
 // (run → `aura [opts] <entry>`, soft/caps + --load → the file face, which the
@@ -998,6 +1005,12 @@ static std::optional<int> front_door_4913(int& argc, char**& argv) {
         argv = g_front_argv_4913.data();
     };
     const std::string_view sub(argv[1]);
+    // Issue #4934: `aura --version` / `-V` → "aura <version> (<git sha>)".
+    // AURA_BUILD_VERSION is `nightly`, `X.Y.Z` (release tag) or `dev`.
+    if (sub == "--version" || sub == "-V") {
+        std::println("aura {} ({})", AURA_BUILD_VERSION, AURA_BUILD_GIT_SHA);
+        return 0;
+    }
     if (sub == "help") {
         rewrite({argv[0], "--help"});
         return std::nullopt;

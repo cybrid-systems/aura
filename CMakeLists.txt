@@ -185,6 +185,23 @@ if(APPLE)
 endif()
 
 add_executable(aura)
+# Issue #4934: `aura --version`. AURA_BUILD_VERSION: -D or $AURA_VERSION
+# (bundle/release set it to `nightly` or `X.Y.Z`), else "dev". The sha is read
+# at configure time (fresh in CI/release builds).
+if(NOT DEFINED AURA_BUILD_VERSION)
+    if(DEFINED ENV{AURA_VERSION} AND NOT "$ENV{AURA_VERSION}" STREQUAL "")
+        set(AURA_BUILD_VERSION "$ENV{AURA_VERSION}")
+    else()
+        set(AURA_BUILD_VERSION "dev")
+    endif()
+endif()
+execute_process(COMMAND git -C "${CMAKE_SOURCE_DIR}" rev-parse --short=9 HEAD
+    OUTPUT_VARIABLE AURA_BUILD_GIT_SHA OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if(AURA_BUILD_GIT_SHA STREQUAL "")
+    set(AURA_BUILD_GIT_SHA "unknown")
+endif()
+set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+    "AURA_BUILD_VERSION=\"${AURA_BUILD_VERSION}\"" "AURA_BUILD_GIT_SHA=\"${AURA_BUILD_GIT_SHA}\"")
 set_property(TARGET aura PROPERTY CXX_MODULE_STD ON)
 
 aura_target_cxx_modules(aura WITH_REPL)
