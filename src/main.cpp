@@ -825,6 +825,27 @@ static std::string slurp_4913(const std::filesystem::path& p) {
 }
 
 #include "cli_templates_4913.inc"
+
+#ifndef AURA_BUILD_VERSION
+#define AURA_BUILD_VERSION "dev"
+#endif
+
+// Issue #4913: the image tag a new project's CI runs and its aura.toml pins:
+// a release build (`X.Y.Z`) uses its own tag; nightly and local builds use
+// `nightly` (published on every main push, unlike `latest`, which exists only
+// once a release does).
+static std::string project_channel_4913() {
+    const std::string_view v(AURA_BUILD_VERSION);
+    int dots = 0;
+    bool ok = !v.empty();
+    for (const char c : v) {
+        if (c == '.')
+            ++dots;
+        else if (c < '0' || c > '9')
+            ok = false;
+    }
+    return ok && dots == 2 && v.front() != '.' && v.back() != '.' ? std::string(v) : "nightly";
+}
 #include "cli_evo_4910.inc"
 #include "cli_lsp_4911.inc"
 
@@ -867,6 +888,7 @@ static int aura_new_4913(int argc, char** argv) {
     auto name = fs::weakly_canonical(fs::absolute(dir, ec), ec).filename().string();
     if (name.empty())
         name = "aura-project";
+    const auto channel = project_channel_4913();
     int n = 0;
     for (const auto& f : kTemplates4913) {
         if (f.tpl != tpl)
@@ -874,6 +896,8 @@ static int aura_new_4913(int argc, char** argv) {
         std::string body(f.body);
         for (std::size_t p = 0; (p = body.find("{{name}}", p)) != std::string::npos;)
             body.replace(p, 8, name);
+        for (std::size_t p = 0; (p = body.find("{{channel}}", p)) != std::string::npos;)
+            body.replace(p, 11, channel);
         const fs::path dst = fs::path(dir) / fs::path(f.path);
         fs::create_directories(dst.parent_path(), ec);
         std::ofstream out(dst, std::ios::binary);

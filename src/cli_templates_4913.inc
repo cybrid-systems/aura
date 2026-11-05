@@ -16,6 +16,12 @@ inline constexpr TemplateFile4913 kTemplates4913[] = {
 entry = "main.aura"
 preset = "dev"
 out = "out"
+
+# The aura release this project was made with; .github/workflows/ci.yml runs
+# the ghcr.io/cybrid-systems/aura image with the same tag. require paths
+# resolve from the project root, std/* ships with aura.
+[dependencies]
+aura = "{{channel}}"
 )AURA"},
     {"app", ".github/workflows/ci.yml", R"AURA(name: ci
 on: [push, pull_request]
@@ -23,7 +29,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura:latest
+      image: ghcr.io/cybrid-systems/aura:{{channel}}
     steps:
       - uses: actions/checkout@v4
       - run: aura test
@@ -70,6 +76,12 @@ better, and otherwise rolls back with `ast:restore`.
 entry = "main.aura"
 preset = "dev"
 out = "out"
+
+# The aura release this project was made with; .github/workflows/ci.yml runs
+# the ghcr.io/cybrid-systems/aura image with the same tag. require paths
+# resolve from the project root, std/* ships with aura.
+[dependencies]
+aura = "{{channel}}"
 )AURA"},
     {"evolve", ".github/workflows/ci.yml", R"AURA(name: ci
 on: [push, pull_request]
@@ -77,7 +89,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura:latest
+      image: ghcr.io/cybrid-systems/aura:{{channel}}
     steps:
       - uses: actions/checkout@v4
       - run: aura test
@@ -177,6 +189,12 @@ An orch workflow: `workflow.aura` defines the stages, `main.aura` runs them.
 entry = "main.aura"
 preset = "dev"
 out = "out"
+
+# The aura release this project was made with; .github/workflows/ci.yml runs
+# the ghcr.io/cybrid-systems/aura image with the same tag. require paths
+# resolve from the project root, std/* ships with aura.
+[dependencies]
+aura = "{{channel}}"
 )AURA"},
     {"agent", ".github/workflows/ci.yml", R"AURA(name: ci
 on: [push, pull_request]
@@ -184,7 +202,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura:latest
+      image: ghcr.io/cybrid-systems/aura:{{channel}}
     steps:
       - uses: actions/checkout@v4
       - run: aura test
