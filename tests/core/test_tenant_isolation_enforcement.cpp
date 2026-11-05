@@ -1444,9 +1444,8 @@ static void ac4414_module_reader_host_path() {
               "4414: load-module fences the .aura-type sibling");
         CHECK(loader.find("O_RDONLY | O_NOFOLLOW | O_CLOEXEC") != std::string::npos,
               "4414: load-module reader is O_NOFOLLOW");
-        CHECK(loader.find(
-                  "host_path_policy_active() ? std::move(gated) : resolve_module_path(gated)") !=
-                  std::string::npos,
+        CHECK(loader.find("resolved.swap(gated);") != std::string::npos &&
+                  loader.find("resolved = resolve_module_path(gated);") != std::string::npos,
               "4414: active load still uses the gated path");
         CHECK(exempt.find("\"query:module-exports\"") == std::string::npos &&
                   exempt.find("\"check-module-signature\"") == std::string::npos &&
@@ -8241,9 +8240,8 @@ int main() {
         CHECK(loader.find("check_tenant_host_path(path, gated, \"load-module\")") !=
                   std::string::npos,
               "4399 AC3: load_module_file wires check_tenant_host_path");
-        CHECK(loader.find(
-                  "host_path_policy_active() ? std::move(gated) : resolve_module_path(gated)") !=
-                  std::string::npos,
+        CHECK(loader.find("resolved.swap(gated);") != std::string::npos &&
+                  loader.find("resolved = resolve_module_path(gated);") != std::string::npos,
               "4399 AC3: active load uses the gated path; passthrough keeps resolve_module_path");
         CHECK(exempt.find("\"serialize-workspace\"") == std::string::npos,
               "4399 AC3: serialize-workspace not added to EXEMPT_2ARG_OPS");

@@ -277,9 +277,9 @@ static_assert(kShapeInlinePairId < kShapeInlineMaxId,
 static_assert(kShapeInlineMaxId <= 255, "Issue #1519: ShapeID table must fit in uint8 fast path");
 
 // Per-tier size total must equal SmallObjectPool layout (3MB / 3).
-inline constexpr std::size_t kSmallPoolTotalBytes = 3 * 1024 * 1024;
+inline constexpr std::size_t kSmallPoolTotalBytes = 3uz * 1024 * 1024;
 inline constexpr std::size_t kPerTierExpected = kSmallPoolTotalBytes / kExpectedTierCount;
-static_assert(kPerTierExpected == 1024 * 1024,
+static_assert(kPerTierExpected == 1024uz * 1024,
               "Issue #1519: per-tier region must stay 1MB (3MB pool / 3 tiers)");
 
 // ── Issue #1620: Arena / Value / Shape / FlatAST / SoAView deepen ──

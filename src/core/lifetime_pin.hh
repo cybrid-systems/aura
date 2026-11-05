@@ -823,6 +823,15 @@ inline RemapResult remap_pins_pointing_to(void* old_ptr, void* new_ptr, std::uin
                 continue;
             if (arena_id_filter != 0 && p->arena_id() != arena_id_filter)
                 continue;
+            // Issue #4936: densify packing reuses vacated slots (#3350), so a
+            // window can hold both A->B and B->C. The caller walks those pairs
+            // in unordered_map order; if A->B runs first, the pin just moved
+            // onto B would be moved again to C. A pin already stamped with
+            // this window's generation has been rebased: skip it. The skip
+            // needs a concrete arena (generations are per arena) and a
+            // nonzero generation.
+            if (arena_id_filter != 0 && new_gen != 0 && p->gen() == new_gen)
+                continue;
             if (p->ptr() != old_ptr) {
                 // Issue #4663: range face — rebase an interior pin by its
                 // offset when the caller armed the walk with the moved

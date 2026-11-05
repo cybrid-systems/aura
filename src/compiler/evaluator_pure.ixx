@@ -26,6 +26,7 @@
 
 module;
 #include "compiler/locked_string_heap.hh" // Issue #4543
+#include "core/diag_print.hh"             // #4936 eprintln_nothrow
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -77,8 +78,9 @@ inline void note_int_zero_truth_test() noexcept {
     }();
     static std::atomic<bool> warned{false};
     if (enabled && !warned.exchange(true))
-        std::println(std::cerr, "aura: warning: condition tested integer 0; since #4491 only #f "
-                                "is false and 0 is true (AURA_TRUTHY_WARN)");
+        ::aura::core::eprintln_nothrow(
+            "aura: warning: condition tested integer 0; since #4491 only #f "
+            "is false and 0 is true (AURA_TRUTHY_WARN)");
 }
 export inline bool is_truthy(const types::EvalValue& v) noexcept {
     // Issue #4491: shared with JIT / constant folding via value_tags.h.

@@ -4433,26 +4433,26 @@ void ObservabilityPrims::register_eval_p28(PrimRegistrar add, Evaluator& ev) {
         "query:envframe-dualpath-enforce-stats", [&ev](const auto&) -> EvalValue {
             // mirror-write: new foundation atomic
             // (0 until AC1 bind/bind_symid mirror wire-up).
-            const std::int64_t mirror_write =
+            const auto mirror_write = static_cast<std::int64_t>(
                 ev.compiler_metrics()
                     ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                           ->envframe_dualpath_mirror_write_total.load(std::memory_order_relaxed)
-                    : 0;
+                    : std::uint64_t{0});
             // dualpath-refresh: new foundation atomic
             // (0 until AC2 materialize_call_env refresh wire-up).
-            const std::int64_t dualpath_refresh =
+            const auto dualpath_refresh = static_cast<std::int64_t>(
                 ev.compiler_metrics()
                     ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                           ->envframe_dualpath_refresh_total.load(std::memory_order_relaxed)
-                    : 0;
+                    : std::uint64_t{0});
             // consistency-violations: new foundation atomic
             // (0 until AC3 GCEnvWalkFn consistency violation wire-up).
-            const std::int64_t consistency_violations =
+            const auto consistency_violations = static_cast<std::int64_t>(
                 ev.compiler_metrics()
                     ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                           ->envframe_dualpath_consistency_violations_total.load(
                               std::memory_order_relaxed)
-                    : 0;
+                    : std::uint64_t{0});
             auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
             if (!ht)
                 return make_void();
@@ -4579,26 +4579,26 @@ void ObservabilityPrims::register_eval_p29(PrimRegistrar add, Evaluator& ev) {
         "query:aot-hotupdate-stats", [&ev](const auto&) -> EvalValue {
             // region-isolation: new foundation atomic
             // (0 until AC1 region isolation wire-up).
-            const std::int64_t region_isolation =
+            const auto region_isolation = static_cast<std::int64_t>(
                 ev.compiler_metrics()
                     ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                           ->aot_hotupdate_region_isolation_total.load(std::memory_order_relaxed)
-                    : 0;
+                    : std::uint64_t{0});
             // dispatch-stale: new foundation atomic
             // (0 until AC3 dispatch stale prevention wire-up).
-            const std::int64_t dispatch_stale =
+            const auto dispatch_stale = static_cast<std::int64_t>(
                 ev.compiler_metrics()
                     ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                           ->aot_hotupdate_dispatch_stale_prevented_total.load(
                               std::memory_order_relaxed)
-                    : 0;
+                    : std::uint64_t{0});
             // multi-agent-reload: new foundation atomic
             // (0 until AC1 multi-agent reload wire-up).
-            const std::int64_t multi_agent_reload =
+            const auto multi_agent_reload = static_cast<std::int64_t>(
                 ev.compiler_metrics()
                     ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                           ->aot_hotupdate_multi_agent_reload_total.load(std::memory_order_relaxed)
-                    : 0;
+                    : std::uint64_t{0});
             // Issue #1883: TypedMutationAudit AOT hot-update counters
             // (attempts/success/fail/invariant_fail) + #590 isolation fields.
             using namespace aura::compiler::typed_audit;
@@ -17254,7 +17254,9 @@ void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
             if (a.size() >= 2 && is_int(a[1]))
                 min_violations = static_cast<std::uint64_t>(as_int(a[1]) > 0 ? as_int(a[1]) : 0);
             if (a.size() >= 3 && is_int(a[2]))
-                min_depth = as_int(a[2]);
+                min_depth = static_cast<int>(std::clamp<std::int64_t>(
+                    as_int(a[2]), std::numeric_limits<int>::min(),
+                    std::numeric_limits<int>::max())); // #4936: no silent wrap
             const bool filter_active = (min_violations > 0 || min_depth > 0);
             const std::uint64_t filtered_entries =
                 filter_active

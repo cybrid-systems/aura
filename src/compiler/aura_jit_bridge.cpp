@@ -1126,8 +1126,8 @@ static std::uint64_t lookup_stable_func_id_recycle_serial_for_eval_locked(void* 
 // Total entries across all eval owners (for query surface; AC5).
 static std::uint64_t stable_func_id_map_size_locked() {
     std::uint64_t total = 0;
-    for (const auto& [eval, inner] : g_eval_to_stable_func_id)
-        total += inner.size();
+    for (const auto& inner : g_eval_to_stable_func_id | std::views::values)
+        total += inner.size(); // #4936: a sum, so map order does not matter
     return total;
 }
 
@@ -1598,8 +1598,9 @@ void commit_func_table_swap() {
                 const auto nh = g_func_id_name_hash[i].load(std::memory_order_acquire);
                 if (nh == 0)
                     continue;
-                for (const auto& [eval, inner] : g_eval_to_stable_func_id) {
-                    (void)eval;
+                // #4936: every match is collected and all are staled below,
+                // so the pointer-keyed map order does not matter.
+                for (const auto& inner : g_eval_to_stable_func_id | std::views::values) {
                     for (const auto& [name, binding] : inner) {
                         if (binding.id == i) {
                             staged_names.push_back(name);
@@ -2598,8 +2599,8 @@ extern "C" void aura_aot_soft_stale_peer_slots_for_name(const char* name, void* 
         return;
     std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
     const auto want = reinterpret_cast<std::uintptr_t>(owner);
-    for (const auto& [eval, inner] : g_eval_to_stable_func_id) {
-        (void)eval;
+    // #4936: every foreign slot is marked; map order does not matter.
+    for (const auto& inner : g_eval_to_stable_func_id | std::views::values) {
         auto it = inner.find(name);
         if (it == inner.end())
             continue;
@@ -5273,7 +5274,8 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
             bool foreign_owned = false;
             {
                 std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
-                for (const auto& [eval, inner] : g_eval_to_stable_func_id) {
+                // #4936: an any-of test; map order does not matter.
+                for (const auto& inner : g_eval_to_stable_func_id | std::views::values) {
                     auto it = inner.find(name);
                     if (it == inner.end())
                         continue;
@@ -7003,7 +7005,7 @@ extern "C" void aura_hot_update_maybe_retry_exhausted_min_dirty(void) {
 
 namespace {
 struct AotSlotCAbiReg {
-    AotSlotCAbiReg() {
+    AotSlotCAbiReg() noexcept { // #4936: static init must not throw
         aura_register_aot_slot_c_abi(
             &aot_count_live_generation_behind_slots_impl, &aot_inject_live_stale_slot_for_test_impl,
             &aot_clear_slot_for_test_impl, &aot_invalidate_all_stale_slots_for_eval_impl,

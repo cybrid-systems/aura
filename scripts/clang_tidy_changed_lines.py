@@ -37,6 +37,10 @@ HARD = (
     "bugprone-use-after-move",
     "bugprone-unchecked-optional-access",
     "bugprone-dangling-handle",
+    "bugprone-empty-catch",  # B1: [SILENCE-PRIM-#N] marks intentional swallows
+    "bugprone-exception-escape",  # B1: eprintln_nothrow; format_error ignored (.clang-tidy)
+    "bugprone-narrowing-conversions",  # B1: explicit static_cast at the conversion
+    "bugprone-implicit-widening-of-multiplication-result",  # B1: 2uz * 1024 ...
     "cppcoreguidelines-owning-memory",
     "cppcoreguidelines-no-malloc",
     "cppcoreguidelines-pro-type-cstyle-cast",
@@ -49,9 +53,7 @@ HARD = (
 )
 # Reported only; promoted to HARD batch by batch (#4936 B1-B8).
 SOFT = (
-    "bugprone-exception-escape",
-    "bugprone-empty-catch",
-    "bugprone-narrowing-conversions",
+    "bugprone-nondeterministic-pointer-iteration-order",  # B1: views::keys/values when order-free
     "cppcoreguidelines-init-variables",
     "cppcoreguidelines-special-member-functions",
     "cppcoreguidelines-missing-std-forward",

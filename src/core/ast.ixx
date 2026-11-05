@@ -7768,8 +7768,9 @@ public:
                 auto count = child_counts[i];
                 // Issue #221: build each per-node PCV from the
                 // flat column via the range constructor.
+                const auto first = flat_children.begin() + static_cast<std::ptrdiff_t>(offset);
                 ast.children_[i] = PersistentChildVector<NodeId>(
-                    flat_children.begin() + offset, flat_children.begin() + offset + count);
+                    first, first + static_cast<std::ptrdiff_t>(count));
                 offset += count;
             }
         }

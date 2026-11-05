@@ -4,6 +4,7 @@
 module;
 
 #include "runtime_shared.h"
+#include "core/diag_print.hh" // #4936 eprintln_nothrow
 #include "messaging_bridge.h"
 
 #include "security_capabilities.h"
@@ -223,8 +224,9 @@ namespace {
             out.push_back(slot->value().val);
         }
         // Issue #4839: a joined result stays reachable for repeated joins.
-        for (const auto& owner_entry : s_fiber_joined)
-            for (const auto& joined : owner_entry.second)
+        // #4936: GC roots; the order they are pushed in does not matter.
+        for (const auto& joined_by_owner : s_fiber_joined | std::views::values)
+            for (const auto& joined : joined_by_owner)
                 out.push_back(joined.second.val);
         return out.size() - before;
     }
@@ -2911,18 +2913,19 @@ void Evaluator::drain_thread_fibers() noexcept {
                 // teardown stays bounded. Residual risk limited to this
                 // path, surfaced via WARN + abandon counter.
                 g_thread_fiber_dtor_abandon_total.fetch_add(1, std::memory_order_relaxed);
-                std::println(std::cerr,
-                             "[fiber:drain] WARN: thread-fiber {} not ready after "
-                             "2000ms at ~Evaluator; detaching (stuck body?)",
-                             fid);
+                ::aura::core::eprintln_nothrow(
+                    "[fiber:drain] WARN: thread-fiber {} not ready after "
+                    "2000ms at ~Evaluator; detaching (stuck body?)",
+                    fid);
                 worker.detach();
             }
         }
     } catch (const std::system_error&) {
-        // Best-effort: thread join/detach or cv wait failed — never
-        // propagate out of ~Evaluator (noexcept).
+        // [SILENCE-PRIM-#4936] Best-effort: thread join/detach or cv wait
+        // failed — never propagate out of ~Evaluator (noexcept).
     } catch (const std::bad_alloc&) {
-        // Best-effort: registry growth failed — never propagate (noexcept).
+        // [SILENCE-PRIM-#4936] Best-effort: registry growth failed — never
+        // propagate (noexcept).
     }
 }
 

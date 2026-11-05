@@ -22,6 +22,8 @@
 #include "serve/aura_platform.h"
 #include "serve/runtime_production_abi.h" // #2955 production ABI self-check
 #include "compiler/runtime_paths.h"       // #906
+#include "core/parse_number.hh"           // #4936 exception-free parse
+#include "core/diag_print.hh"             // #4936 eprintln_nothrow
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 // Issue #2076 / #2053: production security defaults (must be before import std).
 #include "compiler/security_defaults.hh"
@@ -1512,7 +1514,7 @@ static std::vector<TopLevelForm4865> split_top_level_forms_4865(std::string_view
     return out;
 }
 
-int main(int argc, char* argv[]) {
+static int aura_main(int argc, char* argv[]) {
     // Issue #137: register an atexit handler that frees the
     // runtime's hash tables. The `hash` primitive in the
     // evaluator creates these via FlatHashTable::create; they
@@ -2477,10 +2479,8 @@ int main(int argc, char* argv[]) {
                         int timeout_sec = 30;
                         auto timeout_it = cmd.find("timeout");
                         if (timeout_it != cmd.end()) {
-                            try {
-                                timeout_sec = std::stoi(timeout_it->second);
-                            } catch (...) {
-                            }
+                            timeout_sec = aura::core::parse_leading_int<int>(timeout_it->second)
+                                              .value_or(timeout_sec);
                         }
                         auto future = std::async(std::launch::async, [&]() {
                             return aura::serve::detail::eval_top_level_forms(
@@ -5678,4 +5678,18 @@ int main(int argc, char* argv[]) {
 
     // Issue #4497: an error consumed by display/write also fails the run.
     return (err || aura_displayed_error_count() > 0) ? 1 : 0;
+}
+
+// Issue #4936 (Core Guidelines E.12 / bugprone-exception-escape): an exception
+// that escapes main calls std::terminate with no message. Report it and exit
+// with EX_SOFTWARE (70) instead.
+int main(int argc, char* argv[]) {
+    try {
+        return aura_main(argc, argv);
+    } catch (const std::exception& e) {
+        ::aura::core::eprintln_nothrow("aura: fatal: uncaught exception: {}", e.what());
+    } catch (...) {
+        ::aura::core::eprintln_nothrow("aura: fatal: uncaught non-standard exception");
+    }
+    return 70;
 }

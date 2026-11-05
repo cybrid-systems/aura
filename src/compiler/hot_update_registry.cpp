@@ -3309,7 +3309,9 @@ void set_shape_storm_thunk(int active) {
     aura::compiler::hot_update_registry().set_shape_storm_active(active != 0);
 }
 struct StormCAbiReg {
-    StormCAbiReg() { aura_register_storm_c_abi(&storm_level_thunk, &set_shape_storm_thunk); }
+    StormCAbiReg() noexcept {
+        aura_register_storm_c_abi(&storm_level_thunk, &set_shape_storm_thunk);
+    }
 };
 [[maybe_unused]] StormCAbiReg g_storm_c_abi_reg;
 } // namespace

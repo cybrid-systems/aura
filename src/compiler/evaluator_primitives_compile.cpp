@@ -3057,8 +3057,9 @@ void CompilePrims::register_compile_p28(PrimRegistrar add, Evaluator& ev) {
             auto total_defines = svc->ir_cache_v2_size();
             auto dirty_funcs = svc->total_dirty_func_count();
             if (total_defines > 0) {
-                ratio_bp = (dirty_funcs * ::aura::compiler::kBasisPointScale) /
-                           static_cast<std::int64_t>(total_defines);
+                ratio_bp =
+                    (static_cast<std::int64_t>(dirty_funcs) * ::aura::compiler::kBasisPointScale) /
+                    static_cast<std::int64_t>(total_defines);
             }
             cascade_depth = static_cast<std::int64_t>(snap.mark_dirty_total_nodes);
             bridge_overhead = static_cast<std::int64_t>(snap.closure_bridge_calls);

@@ -1404,7 +1404,7 @@ namespace {
 // fiber side calls them; we don't need the Evaluator to
 // know about Fiber (one-way dependency).
 struct FiberHookRegistrar {
-    FiberHookRegistrar() {
+    FiberHookRegistrar() noexcept { // #4936
         aura::serve::g_fiber_setter_ = fiber_setter_impl;
         aura::serve::g_fiber_sync_mutation_stack_ = fiber_sync_mutation_stack_impl;
         aura::serve::g_fiber_storage_deleter_ = fiber_storage_deleter_impl;
@@ -1920,7 +1920,7 @@ namespace {
 // Runs once per process; safe under serve-async / standalone.
 namespace {
     struct FlushHookRegistrar {
-        FlushHookRegistrar() {
+        FlushHookRegistrar() noexcept { // #4936
             aura::messaging::g_flush_mutation_boundary = &flush_mutation_boundary_trampoline;
             // Issue #354: register the
             // mutation-boundary-held check trampoline.
@@ -2100,7 +2100,7 @@ namespace {
     }
 
     struct PanicCheckpointRegistrar {
-        PanicCheckpointRegistrar() {
+        PanicCheckpointRegistrar() noexcept { // #4936
             aura::messaging::g_pending_panic_checkpoint = &pending_panic_checkpoint_trampoline;
             aura::messaging::g_transfer_panic_checkpoint = &transfer_panic_checkpoint_trampoline;
             aura::messaging::g_block_gc_for_pending_checkpoint =
@@ -2332,7 +2332,7 @@ extern "C" int aura_evaluator_mutation_boundary_held_nonlocal() noexcept {
 // Static init once: first call from any TU that links fiber mutation.
 namespace {
     struct ArenaBoundaryDepthWire {
-        ArenaBoundaryDepthWire() {
+        ArenaBoundaryDepthWire() noexcept { // #4936
             aura::ast::set_arena_mutation_boundary_depth_fn(
                 +[]() noexcept -> std::size_t { return Evaluator::mutation_boundary_depth(); });
             // Issue #3739: auto-arm Moving restamp Densify (same site as

@@ -4550,7 +4550,7 @@ public:
         escape_pass.run(ir_mod);
 
         last_ir_mod_ = ir_mod;
-        auto& live_ir_mod = *last_ir_mod_; // Issue #4936: engaged just above
+        const auto& live_ir_mod = *last_ir_mod_; // Issue #4936: engaged just above
         last_ir_stats_ = aura::ir::compute_ir_stats(live_ir_mod);
         last_escape_maps_ = escape_pass.take_maps();
         // Issue #2100: accumulate MacroIntroduced IR attrs for deopt restore.
@@ -5888,7 +5888,7 @@ public:
 
     // Get or create a per-module arena.
     ast::ASTArena& module_arena(const std::string& name,
-                                std::size_t initial_size = 8 * 1024 * 1024) {
+                                std::size_t initial_size = 8uz * 1024 * 1024) {
         return arena_group_.module_arena(name, initial_size);
     }
 
@@ -17201,7 +17201,7 @@ private:
             // Parse as int64 (don't support hex/oct/bin here — full
             // eval handles them).
             try {
-                std::string ts(t);
+                const std::string ts(t);
                 std::size_t consumed = 0;
                 long long v = std::stoll(ts, &consumed);
                 if (consumed == ts.size())
@@ -17214,7 +17214,7 @@ private:
         // Float?
         if (t.find('.') != std::string_view::npos) {
             try {
-                std::string ts(t);
+                const std::string ts(t);
                 std::size_t consumed = 0;
                 double v = std::stod(ts, &consumed);
                 if (consumed == ts.size())
@@ -18658,7 +18658,7 @@ private:
         }
     };
     CountingMR arena_upstream_mr_{};
-    ast::ASTArena arena_{8 * 1024 * 1024, &arena_upstream_mr_};
+    ast::ASTArena arena_{8uz * 1024 * 1024, &arena_upstream_mr_};
     ast::ASTArena temp_arena_;
     ast::ArenaGroup arena_group_;
     Evaluator evaluator_;

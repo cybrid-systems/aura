@@ -117,7 +117,7 @@ namespace {
              ::aura::core::provenance::multi_tenant_env_active());
         if (prod_pair_face) {
             const std::uint64_t slot_tenant =
-                (id < g_pair_slot_tenants.size()) ? g_pair_slot_tenants[id] : 0;
+                (id < g_pair_slot_tenants.size()) ? g_pair_slot_tenants[id] : std::uint64_t{0};
             if (slot_tenant != ev.capability_tenant_id()) {
                 (void)ev.check_workspace_isolation(ev.capability_tenant_id(), slot_tenant,
                                                    /*required_effects=*/0, op);

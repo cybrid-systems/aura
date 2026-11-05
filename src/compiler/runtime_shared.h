@@ -93,7 +93,7 @@ struct TLarena {
     size_t offset = 0;
     // 0 = resolve to kDefaultCapacity (or env) on first init/alloc.
     size_t capacity = 0;
-    static constexpr size_t kDefaultCapacity = 1024 * 1024; // 1MB (#1359)
+    static constexpr size_t kDefaultCapacity = 1024uz * 1024; // 1MB (#1359)
     // Issue #3265: external mark stack so pop does not read arena memory
     // (intervening allocs used to scramble offset). Soft unmatched pop
     // is a no-op (zero extra); Full contract_assert.

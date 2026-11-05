@@ -240,12 +240,13 @@ export struct ArenaStats {
                            "{} defrags (last saved {}B) | "
                            "{} live-defrags ({} marked, {} relocates) | "
                            "deopt {}/{} throttled | frag_post {}bp",
-                           used / 1048576.0, capacity / 1048576.0, peak_used / 1048576.0,
-                           allocation_count, wasted, compaction_count, last_compaction_saved,
-                           total_compaction_saved, defrag_attempted_count, last_defrag_saved,
-                           live_defrag_attempted_count, live_objects_marked_total,
-                           live_relocate_count, compact_deopt_triggered, compact_deopt_throttled,
-                           frag_post_compact_bp);
+                           static_cast<double>(used) / 1048576.0,
+                           static_cast<double>(capacity) / 1048576.0,
+                           static_cast<double>(peak_used) / 1048576.0, allocation_count, wasted,
+                           compaction_count, last_compaction_saved, total_compaction_saved,
+                           defrag_attempted_count, last_defrag_saved, live_defrag_attempted_count,
+                           live_objects_marked_total, live_relocate_count, compact_deopt_triggered,
+                           compact_deopt_throttled, frag_post_compact_bp);
     }
 
     // Fragmentation ratio: (capacity - used) / capacity.
@@ -356,7 +357,7 @@ public:
     // Size classes (must be sorted ascending)
     static constexpr std::size_t kTierSizes[] = {16, 32, 64};
     static constexpr std::size_t kNumTiers = 3;
-    static constexpr std::size_t kSmallPoolSize = 3 * 1024 * 1024;          // 3MB total
+    static constexpr std::size_t kSmallPoolSize = 3uz * 1024 * 1024;        // 3MB total
     static constexpr std::size_t kPerTierSize = kSmallPoolSize / kNumTiers; // 1MB each
     static constexpr std::size_t kMaxSmallSize = kTierSizes[kNumTiers - 1]; // 64
 
@@ -1730,7 +1731,7 @@ public:
     // Default upstream is the system allocator. Tests can pass a
     // counting memory_resource to verify that destructors run
     // before resource_.release() (see Issue #1382 contract test).
-    explicit ASTArena(std::size_t initial_size = 8 * 1024 * 1024,
+    explicit ASTArena(std::size_t initial_size = 8uz * 1024 * 1024,
                       std::pmr::memory_resource* upstream = std::pmr::new_delete_resource())
         : initial_size_(initial_size)
         , buffer_(initial_size)
@@ -3332,15 +3333,14 @@ public:
                     this_window_remap, &linear_roots_covered_old);
                 std::unordered_set<void*> old_addrs;
                 old_addrs.reserve(this_window_remap.size());
-                for (const auto& [old_ptr, new_ptr] : this_window_remap)
-                    old_addrs.insert(old_ptr);
+                old_addrs.insert_range(this_window_remap | std::views::keys); // #4936
                 // Issue #3350: densify packing reuses vacated slots, so a
                 // this-window remap value can equal another this-window key.
                 // After remap_linear_roots those destinations are live
                 // post-move identities, not stale. Exclude them from the
                 // verify miss set (linear_roots do not block Moving the way
                 // live_pin_count does).
-                for (const auto& [old_ptr, new_ptr] : this_window_remap)
+                for (void* new_ptr : this_window_remap | std::views::values) // #4936
                     old_addrs.erase(new_ptr);
                 const bool contract_held =
                     aura::core::lifetime::verify_pins_under_moving_compact(arena_id_, old_addrs);
@@ -5177,7 +5177,7 @@ public:
     }
 
     // Get or create an arena for a module
-    ASTArena& module_arena(const std::string& name, std::size_t initial_size = 8 * 1024 * 1024)
+    ASTArena& module_arena(const std::string& name, std::size_t initial_size = 8uz * 1024 * 1024)
         pre(!name.empty()) pre(initial_size >= 1024) {
         std::unique_lock<std::shared_mutex> lock(arenas_mtx_);
         auto it = arenas_.find(name);

@@ -21,6 +21,7 @@
 #ifndef AURA_ORCH_AGENT_SPAWN_H
 #define AURA_ORCH_AGENT_SPAWN_H
 
+#include "core/parse_number.hh" // #4936 exception-free parse
 #include "core/resource_quota.hh"
 #include "core/sandbox.hh"               // Issue #3434/#3494: is_sandbox_active() + MT spawn gate
 #include "orch/security_schedule_gate.h" // Issue #3777: schedule-gate-at-spawn preflight
@@ -495,20 +496,14 @@ inline std::uint64_t resolve_mailbox_bp_decay_ms() noexcept {
     // Prefer #2398 WINDOW_MS; fall back to #2465 DECAY_MS; else default.
     const char* window = std::getenv("AURA_ORCH_BP_WINDOW_MS");
     if (window && *window) {
-        try {
-            return static_cast<std::uint64_t>(std::stoull(window));
-        } catch (...) {
-            // fall through to DECAY_MS / default
-        }
+        if (const auto v = aura::core::parse_leading_int<std::uint64_t>(window))
+            return *v;
+        // unparsable: fall through to DECAY_MS / default
     }
     const char* env = std::getenv("AURA_ORCH_BP_DECAY_MS");
     if (!env || !*env)
         return kMailboxBpWindowMsDefault;
-    try {
-        return static_cast<std::uint64_t>(std::stoull(env));
-    } catch (...) {
-        return kMailboxBpWindowMsDefault;
-    }
+    return aura::core::parse_leading_int<std::uint64_t>(env).value_or(kMailboxBpWindowMsDefault);
 }
 // Issue #2398: alias — window_ms is the public name for the quiet period.
 inline std::uint64_t resolve_mailbox_bp_window_ms() noexcept {
@@ -3207,7 +3202,7 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
             if (attach && mb && serve::g_current_fiber)
                 mb->detach(serve::g_current_fiber);
         },
-        2 * 1024 * 1024, start_fifo);
+        2uz * 1024 * 1024, start_fifo);
 
     if (!f) {
         // Issue #1600 / #2155: Scheduler::spawn returns nullptr on fiber

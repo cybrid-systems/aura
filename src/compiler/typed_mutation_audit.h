@@ -4025,7 +4025,8 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
     }
     // Issue #4534: stamp the proof face scalars for the fidelity stats
     // handler (readiness bp / force reason code / occurrence consistent).
-    g_last_proof_readiness_bp.store(p.readiness_bp, std::memory_order_relaxed);
+    g_last_proof_readiness_bp.store(static_cast<std::int64_t>(p.readiness_bp),
+                                    std::memory_order_relaxed);
     g_last_proof_force_reason_code.store(static_cast<std::int64_t>(p.force_reason_code),
                                          std::memory_order_relaxed);
     g_last_proof_occurrence_consistent.store(p.occurrence_consistent ? 1 : 0,
@@ -4035,7 +4036,8 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
     g_tls_stamp_last_look_tc = nullptr;
     // Issue #4534: stamp the proof face scalars for the fidelity stats
     // handler (readiness bp / force reason code / occurrence consistent).
-    g_last_proof_readiness_bp.store(p.readiness_bp, std::memory_order_relaxed);
+    g_last_proof_readiness_bp.store(static_cast<std::int64_t>(p.readiness_bp),
+                                    std::memory_order_relaxed);
     g_last_proof_force_reason_code.store(static_cast<std::int64_t>(p.force_reason_code),
                                          std::memory_order_relaxed);
     g_last_proof_occurrence_consistent.store(p.occurrence_consistent ? 1 : 0,
@@ -4100,7 +4102,8 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outco
         g_tls_remount_latched_green_veto = 1;
         // The #4534 scalar stamps: force_reason_code 17 is the Agent-visible
         // denial reason for the latched strip.
-        g_last_proof_readiness_bp.store(p.readiness_bp, std::memory_order_relaxed);
+        g_last_proof_readiness_bp.store(static_cast<std::int64_t>(p.readiness_bp),
+                                        std::memory_order_relaxed);
         g_last_proof_force_reason_code.store(static_cast<std::int64_t>(p.force_reason_code),
                                              std::memory_order_relaxed);
         g_last_proof_occurrence_consistent.store(p.occurrence_consistent ? 1 : 0,
@@ -4156,7 +4159,8 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outco
     // Issue #2899: publish face bits for IR Move/Drop fast-path.
     publish_last_proof_face(p.would_allow_commit, p.linear_ok);
     // Issue #4534: stamp the proof face scalars (see the live builder).
-    g_last_proof_readiness_bp.store(p.readiness_bp, std::memory_order_relaxed);
+    g_last_proof_readiness_bp.store(static_cast<std::int64_t>(p.readiness_bp),
+                                    std::memory_order_relaxed);
     g_last_proof_force_reason_code.store(static_cast<std::int64_t>(p.force_reason_code),
                                          std::memory_order_relaxed);
     g_last_proof_occurrence_consistent.store(p.occurrence_consistent ? 1 : 0,
@@ -4164,7 +4168,8 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outco
     g_tls_stamp_last_look_tc = nullptr;
     // Issue #4534: stamp the proof face scalars (same face as the live
     // path — explicit outcome overrides included).
-    g_last_proof_readiness_bp.store(p.readiness_bp, std::memory_order_relaxed);
+    g_last_proof_readiness_bp.store(static_cast<std::int64_t>(p.readiness_bp),
+                                    std::memory_order_relaxed);
     g_last_proof_force_reason_code.store(static_cast<std::int64_t>(p.force_reason_code),
                                          std::memory_order_relaxed);
     g_last_proof_occurrence_consistent.store(p.occurrence_consistent ? 1 : 0,
