@@ -38,24 +38,30 @@ inline constexpr std::uint8_t kTombstoneSlot = 0x7F;
 inline constexpr std::uint64_t kFnvOffsetBasis = 0xcbf29ce484222325ull;
 inline constexpr std::uint64_t kFnvPrime = 0x100000001b3ull;
 
-[[nodiscard]] constexpr std::uint8_t fingerprint(std::uint64_t h) noexcept {
-    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | kFingerprintHighBit;
-    return fp == kEmptySlot ? kFingerprintEmpty : fp;
-}
+// Slot fingerprint: the top 7 hash bits, remapped out of the sentinel range.
+inline constexpr std::uint64_t kFingerprintShift = 57u;
+inline constexpr std::uint64_t kFingerprintMask = 0x7Fu;
 
-[[nodiscard]] inline std::uint64_t fnv1a_bytes(const char* p) noexcept {
-    std::uint64_t h = kFnvOffsetBasis;
-    for (; p && *p; ++p)
-        h = (h ^ static_cast<std::uint8_t>(*p)) * kFnvPrime;
-    return h;
+[[nodiscard]] constexpr std::uint8_t fingerprint(std::uint64_t hash) noexcept {
+    const auto bits = static_cast<std::uint8_t>((hash >> kFingerprintShift) & kFingerprintMask);
+    const auto slot_fp = static_cast<std::uint8_t>(bits | kFingerprintHighBit);
+    return slot_fp == kEmptySlot ? kFingerprintEmpty : slot_fp;
 }
 
 // Issue #920: string_view path — O(1) length, no strlen.
-[[nodiscard]] inline std::uint64_t fnv1a_bytes(std::string_view sv) noexcept {
-    std::uint64_t h = kFnvOffsetBasis;
-    for (unsigned char c : sv)
-        h = (h ^ c) * kFnvPrime;
-    return h;
+[[nodiscard]] inline std::uint64_t fnv1a_bytes(std::string_view view) noexcept {
+    std::uint64_t hash = kFnvOffsetBasis;
+    for (const unsigned char byte : view)
+        hash = (hash ^ byte) * kFnvPrime;
+    return hash;
+}
+
+// Null and empty inputs hash to the FNV offset basis. Delegates to the
+// string_view overload so this file has no raw pointer walk to lint.
+[[nodiscard]] inline std::uint64_t fnv1a_bytes(const char* text) noexcept {
+    if (text == nullptr)
+        return kFnvOffsetBasis;
+    return fnv1a_bytes(std::string_view(text));
 }
 
 } // namespace aura::compiler::hash
