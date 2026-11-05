@@ -1,6 +1,6 @@
 # Issue #4907: aura runtime image (no toolchain). Built from a bundle made by
 # scripts/tools/bundle.sh; one image per architecture, merged into a manifest list.
-#   docker run --rm -v "$PWD:/w" -w /w ghcr.io/cybrid-systems/aura main.aura
+#   docker run --rm -v "$PWD:/w" -w /w ghcr.io/cybrid-systems/aura:nightly main.aura
 FROM ubuntu:24.04
 ARG BUNDLE
 ADD ${BUNDLE} /opt/

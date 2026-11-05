@@ -5,8 +5,8 @@
 #     -> dist/aura-<version>-linux-<arch>.tar.gz and .tar.gz.sha256
 #
 # The bundle carries its own loader, glibc and libstdc++ (rt/), so it runs on
-# any Linux host of the same architecture whatever its glibc (Ubuntu 22.04 is
-# glibc 2.35; the toolchain image is 2.44). bin/aura is a small launcher.
+# Linux hosts of the same architecture with an older glibc (CI verifies Ubuntu
+# 24.04, glibc 2.39; the toolchain image is Ubuntu 26.10, glibc 2.44). bin/aura is a small launcher.
 set -euo pipefail
 ROOT=${AURA_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}
 BUILD=$(cd "${1:-$ROOT/build}" && pwd)
