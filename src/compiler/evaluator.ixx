@@ -2433,6 +2433,19 @@ export struct SoftSessionStatus {
     std::uint16_t effects = 0;
 };
 
+// Issue #4933: one parsed query:pattern, valid only for the temp_arena
+// generation it was built in. The parse is text-only (it never touches the
+// workspace FlatAST), so repeated query:pattern calls with the same text can
+// reuse it instead of paying two arena creates + parse_to_flat + the
+// wildcard intern on every call.
+export struct PatternParseCacheEntry {
+    aura::ast::ASTArena* arena = nullptr;
+    aura::ast::StringPool* pool = nullptr;
+    aura::ast::FlatAST* flat = nullptr;
+    aura::ast::NodeId root = aura::ast::NULL_NODE;
+    std::uint32_t wildcard_sym = 0;
+};
+
 export class Evaluator {
     friend void primitives_detail::register_mutate_primitives(
         std::function<void(std::string, PrimFn)> add, Evaluator& ev,
@@ -2672,6 +2685,7 @@ public:
         if (temp_arena_ && temp_arena_ != a)
             temp_arena_->clear_arena_owner();
         temp_arena_ = a;
+        clear_pattern_parse_cache(); // Issue #4933: parses died with the old arena
         if (temp_arena_)
             temp_arena_->set_arena_owner(this, &Evaluator::arena_quota_allow);
     }
@@ -6904,6 +6918,11 @@ private:
     mutable std::mutex arena_set_mtx_;
     ast::ASTArena* arena_ = nullptr;
     ast::ASTArena* temp_arena_ = nullptr;
+    // Issue #4933: parsed query:pattern cache (text -> temp_arena object).
+    mutable std::mutex pattern_parse_cache_mu_;
+    mutable std::unordered_map<std::string, PatternParseCacheEntry> pattern_parse_cache_;
+    mutable std::atomic<std::uint64_t> pattern_parse_cache_hits_{0};
+    mutable std::atomic<std::uint64_t> pattern_parse_cache_misses_{0};
     // Owned multi-arena manager. Created in ctor so load_module_file can
     // hand each module its own arena without depending on a caller setting
     // it up. Lives for the Evaluator's whole lifetime.
@@ -12323,6 +12342,37 @@ public:
     }
     [[nodiscard]] std::uint64_t get_macro_introduced_skipped_in_query() const noexcept {
         return macro_introduced_skipped_in_query_.load(std::memory_order_relaxed);
+    }
+    // Issue #4933: parsed-pattern cache. A hit is valid only while the
+    // cached entry belongs to the current temp_arena; (gc-temp) resets that
+    // arena and clears the cache, so a recycled address can never be served.
+    [[nodiscard]] bool lookup_pattern_parse(const std::string& text,
+                                            PatternParseCacheEntry& out) const {
+        std::lock_guard<std::mutex> lock(pattern_parse_cache_mu_);
+        const auto it = pattern_parse_cache_.find(text);
+        if (it == pattern_parse_cache_.end() || it->second.arena != temp_arena_) {
+            pattern_parse_cache_misses_.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+        out = it->second;
+        pattern_parse_cache_hits_.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+    void store_pattern_parse(const std::string& text, const PatternParseCacheEntry& e) {
+        std::lock_guard<std::mutex> lock(pattern_parse_cache_mu_);
+        if (pattern_parse_cache_.size() >= 128)
+            pattern_parse_cache_.clear();
+        pattern_parse_cache_[text] = e;
+    }
+    void clear_pattern_parse_cache() {
+        std::lock_guard<std::mutex> lock(pattern_parse_cache_mu_);
+        pattern_parse_cache_.clear();
+    }
+    [[nodiscard]] std::uint64_t get_pattern_parse_cache_hits() const noexcept {
+        return pattern_parse_cache_hits_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_pattern_parse_cache_misses() const noexcept {
+        return pattern_parse_cache_misses_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_total_query_calls() const noexcept {
         return total_query_calls_.load(std::memory_order_relaxed);

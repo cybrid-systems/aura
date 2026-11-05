@@ -994,6 +994,38 @@ namespace aura_issue_547_detail {
         return true;
     }
 
+    // ── Issue #4933: one parse per pattern text per temp_arena generation ──
+    bool test_query_pattern_parse_cache_4933() {
+        std::println("\n--- #4933: repeated query:pattern reuses the parsed pattern ---");
+        CompilerService cs;
+        (void)cs.eval("(set-code \"(define (add4933 x y) (+ x y)) (add4933 1 2)\")");
+        (void)cs.eval("(eval-current)");
+        const auto hits0 = cs.evaluator().get_pattern_parse_cache_hits();
+        const auto misses0 = cs.evaluator().get_pattern_parse_cache_misses();
+        auto first = cs.eval("(query:pattern \"(+ ?a ?b)\")");
+        CHECK(first.has_value(), "#4933: first query:pattern returns");
+        const auto hits1 = cs.evaluator().get_pattern_parse_cache_hits();
+        const auto misses1 = cs.evaluator().get_pattern_parse_cache_misses();
+        CHECK(misses1 == misses0 + 1, "#4933: first call parses the pattern");
+        CHECK(hits1 == hits0, "#4933: first call is not served from the parse cache");
+        const auto len_first = cs.eval("(length (query:pattern \"(+ ?a ?b)\"))");
+        const auto misses2 = cs.evaluator().get_pattern_parse_cache_misses();
+        const auto hits2 = cs.evaluator().get_pattern_parse_cache_hits();
+        CHECK(misses2 == misses1, "#4933: repeat call performs no new parse");
+        CHECK(hits2 > hits1, "#4933: repeat call is served from the parse cache");
+        const auto len_second = cs.eval("(length (query:pattern \"(+ ?a ?b)\"))");
+        CHECK(len_first.has_value() && len_second.has_value() &&
+                  aura::compiler::types::as_int(*len_first) ==
+                      aura::compiler::types::as_int(*len_second),
+              "#4933: cached and parsed patterns return the same match count");
+        // (gc-temp) resets the temp arena the parse lived in.
+        (void)cs.eval("(gc-temp)");
+        auto after_gc = cs.eval("(query:pattern \"(+ ?a ?b)\")");
+        CHECK(after_gc.has_value(), "#4933: query:pattern after gc-temp returns");
+        CHECK(cs.evaluator().get_pattern_parse_cache_misses() > misses2,
+              "#4933: gc-temp drops the cached parse");
+        return true;
+    }
     int run_tests() {
         std::println("═══ Issue #547 verification tests ═══\n");
         std::println("Layer 1: tag_arity_index observability + dirty hook");
@@ -1003,6 +1035,7 @@ namespace aura_issue_547_detail {
         std::println("\nLayer 2: query:pattern hygiene + stats primitives");
         test_query_pattern_index_stats();
         test_query_pattern_hygiene_stats();
+        test_query_pattern_parse_cache_4933();
         test_respect_hygiene_keyword();
         test_default_filters_macro_introduced();
         std::println("\nLayer 3: stress + regression");
