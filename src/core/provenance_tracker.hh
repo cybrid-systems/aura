@@ -19,8 +19,9 @@
 
 #include <atomic>
 #include <cstdint>
-#include <cstdlib>     // getenv — Issue #2404 AURA_STABLE_REF_EXPORT_HARD_REJECT
-#include <string_view> // Issue #2705 AURA_HARD_CAPTURE_TENANT env parse
+#include <cstdlib>                 // getenv — Issue #2404 AURA_STABLE_REF_EXPORT_HARD_REJECT
+#include <string_view>             // Issue #2705 AURA_HARD_CAPTURE_TENANT env parse
+#include "compiler/basis_points.h" // Issue #905: basis-point rate helpers
 
 namespace aura::core::provenance {
 
@@ -758,7 +759,9 @@ validate_linear_provenance(std::uint8_t linear_state, std::uint32_t node_id = 0,
     auto& m = g_provenance_enforcement();
     const auto c = m.linear_provenance_checks_total.load(std::memory_order_relaxed);
     const auto ok = m.linear_provenance_ok_total.load(std::memory_order_relaxed);
-    return c > 0 ? (ok * 10000u) / c : 10000u;
+    // Completeness is vacuously true when no checks ran; this is the one
+    // metric that deliberately reports 100% rather than "no data".
+    return static_cast<std::uint64_t>(::aura::compiler::basis_points_vacuous_full(ok, c));
 }
 
 // Issue #1877: last MacroIntroduced hygiene → provenance stamp so truncated

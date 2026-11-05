@@ -385,7 +385,8 @@ export [[nodiscard]] inline std::uint64_t coercion_provenance_completeness_bp() 
     const auto c = g_coercion_provenance_complete_total.load(std::memory_order_relaxed);
     const auto m = g_coercion_provenance_miss_total.load(std::memory_order_relaxed);
     const auto d = c + m;
-    return d > 0 ? (c * 10000u) / d : 10000u; // no samples → vacuously complete
+    // Completeness over an empty population is vacuously true by contract.
+    return static_cast<std::uint64_t>(::aura::compiler::basis_points_vacuous_full(c, d));
 }
 
 // Issue #2648: Soft evidence-loss rate as basis points (0–10000).
@@ -398,7 +399,7 @@ export [[nodiscard]] inline std::uint64_t coercion_evidence_loss_bp() noexcept {
     const auto complete = g_coercion_provenance_complete_total.load(std::memory_order_relaxed);
     const auto elided = g_dead_coercion_ast_elided_total.load(std::memory_order_relaxed);
     const auto denom = skip + complete + elided;
-    return denom > 0 ? (skip * 10000u) / denom : 0u;
+    return static_cast<std::uint64_t>(::aura::compiler::basis_points(skip, denom));
 }
 
 // Issue #2674: layered evidence-coherence invariant (refine #2645 — was
