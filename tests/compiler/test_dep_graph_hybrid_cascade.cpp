@@ -1046,7 +1046,7 @@ static void ac3486_3_soft_zero_extra() {
     const auto svc = read_file("src/compiler/service.ixx");
     auto rel_pos = svc.find("std::size_t relower_dirty_defines_from_workspace()");
     CHECK(rel_pos != std::string::npos, "3486 AC3: peel found");
-    auto rel_win = svc.substr(rel_pos, 20000);
+    auto rel_win = aura::test::aura_source_block_after(svc, rel_pos);
     CHECK(rel_win.find("Issue #3486") != std::string::npos, "3486 AC3: peel cites #3486");
     const auto p3486 = rel_win.find("Issue #3486");
     auto block = rel_win.substr(p3486, 2500);
@@ -1157,7 +1157,7 @@ static void ac3615_3_soft_zero_extra_path() {
     const auto rel_pos = svc.find("std::size_t relower_dirty_defines_from_workspace()");
     CHECK(rel_pos != std::string::npos, "3615 AC3: peel function present");
     if (rel_pos != std::string::npos) {
-        const auto rel_win = svc.substr(rel_pos, 12000);
+        const auto rel_win = aura::test::aura_source_block_after(svc, rel_pos);
         CHECK(rel_win.find("fail_closed_soft_dual_graph_parity_before_partial_cone_") !=
                   std::string::npos,
               "3615 AC3: relower uses cone helper");

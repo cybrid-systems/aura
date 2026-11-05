@@ -332,7 +332,7 @@ int run_test_cache_stamp_restamp_contract() {
         CHECK(peel != std::string::npos, "3481 AC2: instr peel exists");
         const auto relower = svc.find("bool relower_define_blocks(");
         CHECK(relower != std::string::npos, "3481 AC2: relower_define_blocks");
-        const auto win = svc.substr(relower, 22000);
+        const auto win = aura::test::aura_source_block_after(svc, relower);
         CHECK(win.find("ack_cache_entry_fences_live_") != std::string::npos,
               "3481 AC2: peel acks fences");
         CHECK(win.find("Issue #3481") != std::string::npos, "3481 AC2: relower cites #3481");

@@ -7615,7 +7615,7 @@ static void ac4576_inflight_blocks_env_compact() {
     const auto fn = env.find("std::size_t Evaluator::compact_env_frames()");
     CHECK(fn != std::string::npos, "4576: compact_env_frames present");
     if (fn != std::string::npos) {
-        const auto body = env.substr(fn, 20000);
+        const auto body = aura::test::aura_source_block_after(env, fn);
         const auto probe = body.find("densify_in_flight_for(this)");
         const auto lock = body.find("compact_env_frames_lock_");
         // Issue #4717 step 2: env_frames_ is a stable-address slot store; compact
