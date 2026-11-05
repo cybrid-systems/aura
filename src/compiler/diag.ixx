@@ -63,6 +63,10 @@ export enum class ErrorKind : std::uint8_t {
     ModuleError,
     // Issue #4917: a host I/O operation failed (path + reason).
     IoError,
+    // Issue #4909: a heap mutator (set-car! / vector-set! / hash-set! ...)
+    // whose MutationBoundaryGuard admit was refused (AdmissionRejected: ...).
+    // A runtime admission decision, not a type error in the program.
+    MutationRefused,
 };
 
 // ── Blame Info (design §6.3) ────────────────────────────────────
@@ -289,6 +293,28 @@ export inline std::string effect_denied_hint(std::string_view effect) {
                        effect.empty() ? std::string_view("missing") : effect);
 }
 
+// ── Issue #4909: heap-mutate admission refusals ─────────────────
+// The refusal text is "naked mutate: <prim> requires MutationBoundaryGuard
+// (AdmissionRejected: <reason>)". One line naming what to do next.
+export inline std::string naked_mutate_hint(std::string_view msg) {
+    if (msg.find("densify") != std::string_view::npos ||
+        msg.find("production-residual-sticky") != std::string_view::npos)
+        return {"hint: the live AST is mid-remap after set-code / mutate:rebind; run "
+                "(eval-current) before mutating data, or use AURA_SANDBOX=off for local "
+                "development"};
+    if (msg.find("concurrency-health") != std::string_view::npos ||
+        msg.find("hold-budget") != std::string_view::npos ||
+        msg.find("mailbox") != std::string_view::npos ||
+        msg.find("region-overlap") != std::string_view::npos)
+        return {"hint: too many concurrent mutations hold the boundary; retry the step or "
+                "run fewer mutating agents at once"};
+    if (msg.find("security-schedule") != std::string_view::npos)
+        return {"hint: a security audit of an earlier mutation is still running; retry the "
+                "step after it finishes"};
+    return {"hint: wrap the mutation in a mutation boundary (mutate:* / agent step) or use "
+            "AURA_SANDBOX=off for local development"};
+}
+
 // Structured diagnostic — typed error with location and context
 export struct Diagnostic {
     ErrorKind kind = ErrorKind::InternalError;
@@ -345,6 +371,8 @@ export struct Diagnostic {
         if (kind == ErrorKind::TypeError &&
             (message.starts_with("effect-denied:") || message.starts_with("capability denied:")))
             return ErrorKind::EffectDenied;
+        if (kind == ErrorKind::TypeError && message.starts_with("naked mutate: "))
+            return ErrorKind::MutationRefused;
         return kind;
     }
 
@@ -359,6 +387,8 @@ export struct Diagnostic {
         out += std::string(kind_name(shown));
         if (shown == ErrorKind::EffectDenied && message.starts_with("effect-denied: "))
             out += ": " + message.substr(std::string_view("effect-denied: ").size());
+        else if (shown == ErrorKind::MutationRefused)
+            out += ": " + message.substr(std::string_view("naked mutate: ").size());
         else
             out += ": " + message;
 
@@ -386,6 +416,8 @@ export struct Diagnostic {
         if (message.find("hint:") == std::string::npos) {
             if (const auto eff = effect_denied_effect(message); !eff.empty())
                 out += "\n  " + effect_denied_hint(eff);
+            else if (shown == ErrorKind::MutationRefused)
+                out += "\n  " + naked_mutate_hint(message);
         }
 
         // Print context in reverse order (innermost first)

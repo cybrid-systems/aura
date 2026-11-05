@@ -1948,6 +1948,34 @@ int main() {
             }
         }
 
+        // ── 1b. Issue #4909: a refused heap-mutate admit is labelled and hinted ──
+        {
+            const auto d = Diagnostic(ErrorKind::TypeError,
+                                      "naked mutate: set-car! requires MutationBoundaryGuard "
+                                      "(AdmissionRejected: densify-throttle)");
+            const auto f = d.format();
+            if (f.starts_with("mutation refused: set-car! requires MutationBoundaryGuard") &&
+                f.find("type error") == std::string::npos &&
+                f.find("\n  hint: ") != std::string::npos &&
+                f.find("(eval-current)") != std::string::npos) {
+                ++ts_passed;
+            } else {
+                std::println(std::cerr, "TS FAIL: #4909 naked mutate label/hint, got: {}", f);
+                ++ts_failed;
+            }
+            const auto g = Diagnostic(ErrorKind::TypeError,
+                                      "naked mutate: vector-set! requires MutationBoundaryGuard "
+                                      "(AdmissionRejected: concurrency-health:hold-slo)")
+                               .format();
+            if (g.starts_with("mutation refused: ") && g.find("\n  hint: ") != std::string::npos &&
+                g.find("concurrent") != std::string::npos) {
+                ++ts_passed;
+            } else {
+                std::println(std::cerr, "TS FAIL: #4909 naked mutate health hint, got: {}", g);
+                ++ts_failed;
+            }
+        }
+
         // ── 2. consistent_subtype ──────────────────────────────
         {
             TypeRegistry treg;
