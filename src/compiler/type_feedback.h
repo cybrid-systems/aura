@@ -53,7 +53,8 @@ inline constexpr std::uint8_t kRecvVector = 2;
 inline constexpr std::uint8_t kRecvHash = 3;
 inline constexpr std::uint8_t kRecvOther = 4;
 
-// JIT shape_map bytes (aura_jit.h). Not ShapeID (SHAPE_INT is 2 there).
+// JIT shape_map bytes (aura_jit.h: kJitShape*). Not ShapeID
+// (shape::SHAPE_INT is 2).
 inline constexpr std::uint8_t kJitInt = 1;
 inline constexpr std::uint8_t kJitFloat = 2;
 
@@ -638,7 +639,7 @@ inline std::string render(std::string_view name) {
 
 // Fills JIT shape codes for monomorphic user arguments. Macro-origin
 // functions stay generic (#1610). An Other arg refuses the map.
-// Empty feedback returns false (no synthetic SHAPE_INT seed).
+// Empty feedback returns false (no synthetic kJitShapeInt seed).
 inline bool shape_map_from_feedback(std::string_view fn_name, std::uint8_t source_marker,
                                     std::uint32_t local_count, const ArgSlot* args,
                                     std::uint32_t nargs, std::vector<std::uint8_t>& storage) {

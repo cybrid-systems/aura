@@ -1022,7 +1022,7 @@ struct LLVMBuilder {
     const uint8_t* shape_map = nullptr;
     uint32_t shape_map_size = 0;
 
-    // Issue #4522: raw-double shadow slot per SHAPE_FLOAT local
+    // Issue #4522: raw-double shadow slot per kJitShapeFloat local
     // (named-let float accumulator unboxing). 1:1 with llvm_locals;
     // nullptr = the slot is not float-profiled (stays in the boxed
     // tagged domain). For a float-known slot the shadow double is the
@@ -1037,7 +1037,7 @@ struct LLVMBuilder {
     // must return it verbatim, not the stale shadow). Shape change /
     // deopt is handled by the existing L2 invalidation +
     // SpecJITController recompile semantics (no new guard, no new
-    // counter): the next compile simply has no SHAPE_FLOAT slots and
+    // counter): the next compile simply has no kJitShapeFloat slots and
     // lowers fully boxed again.
     std::vector<llvm::Value*> flocals{};
     std::vector<llvm::Value*> funboxed{};
@@ -1285,7 +1285,7 @@ struct LLVMBuilder {
     // RESULT slot (ops[0]). 0 = unknown. When nonzero, it's a 1-byte
     // shape encoding (matches shape_map). The L1/L2 fast paths below
     // prefer this over indexing into the side-channel shape_map.
-    // (SHAPE_INT / SHAPE_PAIR / SHAPE_STRING constants live in aura_jit.h.)
+    // (kJitShapeInt / kJitShapePair / kJitShapeString constants live in aura_jit.h.)
 
     // Read the shape_id from the instruction, falling back to the
     // side-channel shape_map if the instruction has no shape set.
@@ -1382,7 +1382,7 @@ struct LLVMBuilder {
     llvm::Function* fn_pair_inline_ok = nullptr;
     // Issue #157 Phase 1c: in-LLVM-callable deopt counter. The
     // JIT emits a call to this at the start of every deopt basic
-    // block (bb_slow in OpCar/OpCdr SHAPE_PAIR lowering) so the
+    // block (bb_slow in OpCar/OpCdr kJitShapePair lowering) so the
     // g_workspace_deopt_count is incremented on the hot path.
     // Runtime definition: extern "C" void aura_deopt_inc() in
     // aura_jit_runtime.cpp.
@@ -1537,7 +1537,7 @@ struct LLVMBuilder {
         // for the L2 version check. The runtime function is
         // extern "C" uint64_t aura_get_defuse_version() (defined in
         // aura_jit_runtime.cpp). The JIT emits calls to it at function
-        // entry (capture expected_version) and at each L2 SHAPE_PAIR
+        // entry (capture expected_version) and at each L2 kJitShapePair
         // use (check current version, deopt to slow path on mismatch).
         fn_get_defuse_version =
             llvm::Function::Create(llvm::FunctionType::get(i64, false),
@@ -1801,7 +1801,7 @@ struct LLVMBuilder {
     }
 
     // ── Issue #4522: float-local (unboxed accumulator) helpers ──
-    // True when slot carries a raw-double shadow (SHAPE_FLOAT in the
+    // True when slot carries a raw-double shadow (kJitShapeFloat in the
     // profiled shape_map at compile time). Slot indices beyond the
     // map (e.g. the #157 defuse-version slot) never qualify.
     inline bool is_flocal(uint32_t slot) const {
@@ -2439,10 +2439,10 @@ struct LLVMBuilder {
             irb->SetInsertPoint(bb_ok);
         };
         // Issue #4522: unboxed float arith over float-known locals. When
-        // both operand slots carry SHAPE_FLOAT profile feedback, lower
+        // both operand slots carry kJitShapeFloat profile feedback, lower
         // add/sub/mul/div as raw FP ops on the shadow doubles: no
         // aura_alloc_float per iteration, no tag checks (same speculative
-        // trust as the L2 unchecked pair access and the SHAPE_INT OpDiv
+        // trust as the L2 unchecked pair access and the kJitShapeInt OpDiv
         // path — a shape violation is a recompile/deopt event, not an
         // in-loop guard). kind: 0 add, 1 sub, 2 mul, 3 div.
         auto emit_flocal_arith = [&](const FlatInstruction& finst, int kind) -> bool {
@@ -2467,13 +2467,13 @@ struct LLVMBuilder {
             return true;
         };
         // Issue #4523: shape-specialized tag-check elision for arith
-        // operands. A slot the profiled shape_map pins to SHAPE_FLOAT is a
+        // operands. A slot the profiled shape_map pins to kJitShapeFloat is a
         // float WITHOUT executing jit_is_float on it — the same speculative
         // trust as the #4522 unboxed flocal arith and the L2 unchecked pair
         // access: a shape violation is a recompile/deopt event via the
         // existing SpecJITController invalidation (no new guard, no new
         // counter, no new query key), not an in-loop check. is_flocal is
-        // exactly the "map says SHAPE_FLOAT" predicate for slots (the
+        // exactly the "map says kJitShapeFloat" predicate for slots (the
         // shadows are created 1:1 from it), gated on the #1610 hygiene the
         // flocal intercepts share: MacroIntroduced instructions and
         // macro-origin functions never specialize. Mixed pairs (one known
@@ -2507,7 +2507,7 @@ struct LLVMBuilder {
         };
         // Issue #4462: tagged add/sub/mul that leaves the fixnum domain
         // promotes to float. A previous promotion is a value <= FLOAT_BIAS,
-        // so SHAPE_INT still has to notice it. kind: 0 add, 1 sub, 2 mul.
+        // so kJitShapeInt still has to notice it. kind: 0 add, 1 sub, 2 mul.
         // Issue #4523: a_known_float/b_known_float skip that operand's
         // jit_is_float (static true folds any_float and the promote
         // dispatch; the float arm becomes the only arm).
@@ -2626,7 +2626,7 @@ struct LLVMBuilder {
                 if (metrics)
                     metrics->l1_fixnum_fast_total.fetch_add(1, std::memory_order_relaxed);
             }
-            // Issue #4523: a profiled-SHAPE_FLOAT operand is numeric
+            // Issue #4523: a profiled-kJitShapeFloat operand is numeric
             // without a tag test and reads its raw-double shadow directly
             // (the emit_flocal_arith trust — no rebox, no flag check, no
             // float_ref call); the unknown operand keeps the generic
@@ -2827,14 +2827,14 @@ struct LLVMBuilder {
                 if (emit_flocal_arith(inst, 3))
                     return true;
                 // Issue #4523: per-operand shape elision — a
-                // profiled-SHAPE_FLOAT operand is numeric without a tag
+                // profiled-kJitShapeFloat operand is numeric without a tag
                 // test; the unknown operand's guard stays (RefError
                 // surface unchanged). raw_f: float-known result slot + a
                 // known float operand takes the raw IEEE quotient (the
                 // integer-specialized arm declines it).
                 const bool a_f = operand_known_float(inst.ops[1]);
                 const bool b_f = operand_known_float(inst.ops[2]);
-                const bool spec_int = (inst_shape(inst) == SHAPE_INT);
+                const bool spec_int = (inst_shape(inst) == kJitShapeInt);
                 const bool raw_f = (a_f || b_f) && !spec_int && is_flocal(inst.ops[0]);
                 auto dividend = (raw_f && a_f) ? nullptr : load(inst.ops[1]);
                 auto divisor = (raw_f && b_f) ? nullptr : load(inst.ops[2]);
@@ -3128,9 +3128,9 @@ struct LLVMBuilder {
                                                                c64(AURA_STRING_LOW8)); // #4502
                     // Combine: ref -> 10; string -> 4; else 1 (treat as
                     // fixnum; over-approximation — interpreter re-checks).
-                    auto* pair_id = c64(SHAPE_PAIR);     // 10
-                    auto* string_id = c64(SHAPE_STRING); // 4
-                    auto* int_id = c64(SHAPE_INT);       // 1
+                    auto* pair_id = c64(kJitShapePair);     // 10
+                    auto* string_id = c64(kJitShapeString); // 4
+                    auto* int_id = c64(kJitShapeInt);       // 1
                     auto* shape_sel1 = irb->CreateSelect(is_ref, pair_id, int_id);
                     auto* shape_val = irb->CreateSelect(is_string_approx, string_id, shape_sel1);
                     // Compare against expected
@@ -3957,7 +3957,7 @@ struct LLVMBuilder {
                 // pair-allocator. The result is still a tagged AuraPair
                 // value (encoded as the address of the stack slot), but
                 // we avoid the call + the global heap round-trip.
-                if (inst_shape(inst) == SHAPE_PAIR && fn.escape_map &&
+                if (inst_shape(inst) == kJitShapePair && fn.escape_map &&
                     result_slot < fn.local_count && !fn.escape_map[result_slot]) {
                     if (inst.narrow_evidence != 0 || inst.type_id != 0)
                         aura::compiler::jit_typed_mutation::record_type_propagation_stamp();
@@ -4034,7 +4034,7 @@ struct LLVMBuilder {
                           irb->CreateLoad(llvm::Type::getInt64Ty(ctx), spair_car[inst.ops[1]]));
                     return true;
                 }
-                // Issue #157 Phase 1b: L2 SHAPE_PAIR version check + deopt.
+                // Issue #157 Phase 1b: L2 kJitShapePair version check + deopt.
                 //
                 // Single-threaded code takes the fast path
                 // (aura_pair_car_unchecked, no bounds, no lock) — the
@@ -4078,7 +4078,7 @@ struct LLVMBuilder {
                 // mid-body (acceptance mode over the #4567 corpus).
                 const bool pair_guard_exit = frame_deopt_ok;
                 const bool pair_force = pair_guard_exit && jit_force_guard_deopt() >= 1;
-                bool spec_pair = (inst_shape(inst) == SHAPE_PAIR) || pair_force;
+                bool spec_pair = (inst_shape(inst) == kJitShapePair) || pair_force;
                 if (spec_pair && pair_guard_exit) {
                     auto* i64_ty = llvm::Type::getInt64Ty(ctx);
                     llvm::Value* match = nullptr;
@@ -4267,7 +4267,7 @@ struct LLVMBuilder {
                 // mid-body (acceptance mode over the #4567 corpus).
                 const bool pair_guard_exit = frame_deopt_ok;
                 const bool pair_force = pair_guard_exit && jit_force_guard_deopt() >= 1;
-                bool spec_pair = (inst_shape(inst) == SHAPE_PAIR) || pair_force;
+                bool spec_pair = (inst_shape(inst) == kJitShapePair) || pair_force;
                 if (spec_pair && pair_guard_exit) {
                     auto* i64_ty = llvm::Type::getInt64Ty(ctx);
                     llvm::Value* match = nullptr;
@@ -5229,7 +5229,7 @@ static bool emit_native_object_llvm(const FlatFunction& fn, const std::string& o
     for (uint32_t i = 0; i < fn.local_count; ++i)
         builder.llvm_locals.push_back(builder.irb->CreateAlloca(llvm::Type::getInt64Ty(local_ctx)));
 
-    // Issue #4522: raw-double shadow slots for SHAPE_FLOAT locals —
+    // Issue #4522: raw-double shadow slots for kJitShapeFloat locals —
     // same unboxed-accumulator lowering as the JIT path. builder.shape_map
     // deliberately stays unset here so inst_shape-based L1/L2 fallbacks
     // are unchanged; the float-local intercepts key off flocals alone.
@@ -5238,7 +5238,7 @@ static bool emit_native_object_llvm(const FlatFunction& fn, const std::string& o
     if (fn.shape_map && fn.source_marker != 1) {
         auto* i8_zero = llvm::ConstantInt::get(llvm::Type::getInt8Ty(local_ctx), 0);
         for (uint32_t i = 0; i < fn.local_count; ++i) {
-            if (fn.shape_map[i] != SHAPE_FLOAT)
+            if (fn.shape_map[i] != kJitShapeFloat)
                 continue;
             builder.flocals[i] = builder.irb->CreateAlloca(llvm::Type::getDoubleTy(local_ctx));
             builder.funboxed[i] = builder.irb->CreateAlloca(llvm::Type::getInt8Ty(local_ctx));
@@ -5810,7 +5810,7 @@ struct AuraJIT::Impl {
         for (uint32_t i = 0; i < fn.local_count; ++i)
             builder.llvm_locals.push_back(builder.irb->CreateAlloca(llvm::Type::getInt64Ty(ctx)));
 
-        // Issue #4522: raw-double shadow slots for SHAPE_FLOAT locals
+        // Issue #4522: raw-double shadow slots for kJitShapeFloat locals
         // (named-let float accumulator unboxing). Created only from
         // profile feedback (fn.shape_map); macro-origin functions (#1610
         // per-fn marker) never specialize. The i1 flag alloca starts 0
@@ -5820,7 +5820,7 @@ struct AuraJIT::Impl {
         if (fn.shape_map && fn.source_marker != 1) {
             auto* i8_zero = llvm::ConstantInt::get(llvm::Type::getInt8Ty(ctx), 0);
             for (uint32_t i = 0; i < fn.local_count; ++i) {
-                if (fn.shape_map[i] != SHAPE_FLOAT)
+                if (fn.shape_map[i] != kJitShapeFloat)
                     continue;
                 builder.flocals[i] = builder.irb->CreateAlloca(llvm::Type::getDoubleTy(ctx));
                 builder.funboxed[i] = builder.irb->CreateAlloca(llvm::Type::getInt8Ty(ctx));
@@ -5838,7 +5838,7 @@ struct AuraJIT::Impl {
         // Issue #157 Phase 1b: reserve an extra local slot (at index
         // fn.local_count) for the captured defuse_version_. At function
         // entry we call aura_get_defuse_version() and store the result
-        // here; at each L2 SHAPE_PAIR use we compare the current
+        // here; at each L2 kJitShapePair use we compare the current
         // version against this captured value. On mismatch, deopt to
         // the slow path (aura_pair_car / aura_pair_cdr with bounds +
         // lock). On match, take the fast path (aura_pair_car_unchecked
@@ -5871,7 +5871,7 @@ struct AuraJIT::Impl {
                     llvm::ArrayType::get(llvm::Type::getInt64Ty(ctx), fn.local_count));
             }
         }
-        // Issue #4572: the captured version is only read by the SHAPE_PAIR
+        // Issue #4572: the captured version is only read by the kJitShapePair
         // car/cdr lowering below; functions without car/cdr (fib, loops)
         // and L2 functions (pair_ok path) skip the per-activation call.
         bool reads_pairs = false;
