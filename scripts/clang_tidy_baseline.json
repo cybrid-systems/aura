@@ -8,7 +8,7 @@
     "src/exec",
     "src/compiler"
   ],
-  "total": 22526,
+  "total": 22484,
   "counts": {
     "src/compiler/aot_mangle.h|bugprone-easily-swappable-parameters": 4,
     "src/compiler/aot_mangle.h|misc-const-correctness": 6,
@@ -84,11 +84,6 @@
     "src/compiler/float_repr.hh|cppcoreguidelines-pro-bounds-pointer-arithmetic": 1,
     "src/compiler/float_repr.hh|portability-avoid-pragma-once": 1,
     "src/compiler/float_repr.hh|readability-identifier-length": 2,
-    "src/compiler/hash_meta.h|bugprone-signed-bitwise": 6,
-    "src/compiler/hash_meta.h|cppcoreguidelines-pro-bounds-pointer-arithmetic": 3,
-    "src/compiler/hash_meta.h|misc-const-correctness": 6,
-    "src/compiler/hash_meta.h|readability-identifier-length": 21,
-    "src/compiler/hash_meta.h|readability-implicit-bool-conversion": 6,
     "src/compiler/hot_update_registry.cpp|bugprone-easily-swappable-parameters": 3,
     "src/compiler/hot_update_registry.cpp|bugprone-empty-catch": 4,
     "src/compiler/hot_update_registry.cpp|bugprone-signed-bitwise": 3,
