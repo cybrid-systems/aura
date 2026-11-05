@@ -8,6 +8,11 @@ Entry points for humans and AI Agents working in this repository.
 - Strategy and prioritization: [tests/STRATEGY.md](../tests/STRATEGY.md)
 - Issue contracts (do not add a grep `check_*.py` per ticket): [tests/COVERAGE.md](../tests/COVERAGE.md)
 
+## C++ style
+
+- Rules and gate markers: [cpp-style.md](cpp-style.md) (Issue #4936)
+- Changed-lines clang-tidy gate: `scripts/clang_tidy_changed_lines.py`
+
 ## Engine primitives (C++)
 
 Adding or changing built-in primitives follows the **primitive authoring contract**:
