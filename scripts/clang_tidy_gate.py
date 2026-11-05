@@ -161,10 +161,16 @@ def run_one(entry: dict, db_path: Path, timeout: int) -> tuple[str, str, int, st
     return rel, (proc.stdout or "") + (proc.stderr or ""), proc.returncode, ""
 
 
-def parse_diagnostics(rel: str, output: str, rc: int) -> tuple[dict[tuple[str, str], int], list[tuple[str, str, str]]]:
+def parse_diagnostics(
+    rel: str, output: str, rc: int, seen_diag: set[tuple[str, str, str, str, str]] | None = None
+) -> tuple[dict[tuple[str, str], int], list[tuple[str, str, str]]]:
     counts: dict[tuple[str, str], int] = {}
     samples: list[tuple[str, str, str]] = []
-    seen_diag: set[tuple[str, str, str, str, str]] = set()
+    # A shared set dedupes across TUs too: a finding in a header included by
+    # N parseable TUs is one finding, not N (a new #include elsewhere must not
+    # multiply the header's debt past its baseline).
+    if seen_diag is None:
+        seen_diag = set()
     saw_diag = False
     for line in output.splitlines():
         match = DIAG_RE.match(line.strip())
@@ -273,10 +279,11 @@ def main() -> int:
 
     total: dict[str, int] = {}
     all_samples: list[tuple[str, str, str]] = []
+    seen_all: set[tuple[str, str, str, str, str]] = set()
     for rel, output, rc, err in results:
         if err:
             print(f"warning: {rel}: {err}")
-        counts, samples = parse_diagnostics(rel, output, rc)
+        counts, samples = parse_diagnostics(rel, output, rc, seen_all)
         all_samples.extend(samples)
         for (path, check), count in counts.items():
             total[key(path, check)] = total.get(key(path, check), 0) + count
