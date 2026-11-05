@@ -543,8 +543,18 @@ static void ac4474r3_large_heap_window() {
         return Sample{trigger, ms(t2 - t1) * 1000.0 / kReps, ms(t1 - t0) * 1000.0 / kReps};
     };
 
-    const Sample mid = measure(300000);
-    const Sample big = measure(3000000);
+    // Timing on a shared CI runner is one-sided noisy (a descheduled
+    // loop reads slow). Take five samples per size and keep the median
+    // overhead so polluted samples cannot fail the ratio.
+    const auto measure_median = [&](int n) -> Sample {
+        std::array<Sample, 5> samples{measure(n), measure(n), measure(n), measure(n), measure(n)};
+        const auto ovh = [](const Sample& s) { return s.alloc_us - s.empty_us; };
+        std::sort(samples.begin(), samples.end(),
+                  [&](const Sample& a, const Sample& b) { return ovh(a) < ovh(b); });
+        return samples[2];
+    };
+    const Sample mid = measure_median(300000);
+    const Sample big = measure_median(3000000);
 
     // AC1: the window itself — ~300k live (flat region before and after
     // the fix) and ~3M live both sit at live/32 + 128; the 3M window
