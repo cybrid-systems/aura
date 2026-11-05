@@ -15,7 +15,13 @@
 | `aura test` | runs every `tests/*.aura` and compares stdout with the `.golden` beside it; `--update` rewrites the goldens |
 | `(require "lib/x")` | resolves from the project root; `"./x"` stays relative to the requiring file |
 
-`aura.toml` keys read today: `entry`, `preset`, `out`.
+`aura.toml` keys read today: `entry`, `preset`, `out`. Its `[dependencies]`
+table records `aura = "<channel>"`: the aura release the project was made with
+(`nightly` from a nightly or local build, `X.Y.Z` from a release). The generated
+CI runs `ghcr.io/cybrid-systems/aura:<channel>`, so it works before any stable
+release exists; bump both lines together to move the project to a release.
+Modules are files in the project (`require` resolves from the root) and `std/*`
+ships with aura; there is no package registry yet.
 
 ## Capability presets
 

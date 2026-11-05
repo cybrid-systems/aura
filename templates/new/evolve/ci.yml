@@ -4,7 +4,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura:latest
+      image: ghcr.io/cybrid-systems/aura:{{channel}}
     steps:
       - uses: actions/checkout@v4
       - run: aura test

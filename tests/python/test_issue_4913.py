@@ -68,6 +68,20 @@ class FrontDoor(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("1 passed, 0 failed", r.stdout)
 
+    def test_ci_image_is_a_published_channel(self) -> None:
+        # `:latest` exists only after a release; a dev/nightly build pins
+        # `:nightly` (pushed on every main build) in both ci.yml and aura.toml.
+        for tpl in ("app", "evolve", "agent"):
+            p = self.new(tpl, f"c-{tpl}")
+            ci = (p / ".github/workflows/ci.yml").read_text()
+            toml = (p / "aura.toml").read_text()
+            self.assertNotIn("{{", ci + toml)
+            self.assertNotIn(":latest", ci)
+            self.assertIn("image: ghcr.io/cybrid-systems/aura:nightly\n", ci)
+            self.assertIn('[dependencies]\naura = "nightly"\n', toml)
+            r = run(["run", "--quiet"], p)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
     def test_evolve_report_under_5s(self) -> None:
         p = self.new("evolve", "demo")
         t0 = time.monotonic()
