@@ -4943,7 +4943,7 @@ static void ac4143_3_source_cite_clear_after_retry() {
     // Issue #4751: window retargeted 8500 -> 9800 (the recovery canary fold
     // shifts the post-publish clear ~8.7KB and the post-publish
     // sticky_cleared resolution ~9.5KB out from the signature).
-    const auto win = mb.substr(fn, 9800);
+    const auto win = aura::test::aura_source_block_after(mb, fn);
     const auto compact = win.find("arena_group_->compact_all_moving_pinned()");
     const auto clear = win.find("clear_moving_incomplete_remap_sticky_densify_off_reason");
     CHECK(compact != std::string::npos && clear != std::string::npos && compact < clear,
@@ -5155,7 +5155,7 @@ static void ac4751_zero_arena_retry_folds_canary_gate() {
     CHECK(fn != std::string::npos, "4751: recover fn present");
     if (fn != std::string::npos) {
         // Issue #4751: 9200 covers the post-publish clear the fold shifted.
-        const auto win = mut.substr(fn, 9200);
+        const auto win = aura::test::aura_source_block_after(mut, fn);
         const auto fold = win.find("if (!blocked && moving_temp_canary_live_())");
         const auto bump = win.find("g_moving_blocked_temp_canary_total.fetch_add", fold);
         const auto pub = win.find("publish_last_moving_densify_window(", fold);
@@ -5289,7 +5289,7 @@ static void ac4144_2_no_dual_note_slot_xor() {
     const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     const auto fn = mut.find("std::size_t Evaluator::register_known_moving_densify_root_slots()");
     CHECK(fn != std::string::npos, "4144 AC2: densify-entry walk present");
-    const auto win = mut.substr(fn, 9500);
+    const auto win = aura::test::aura_source_block_after(mut, fn);
     CHECK(win.find("Issue #4144") != std::string::npos, "4144 AC2: walk cites #4144");
     std::string code_only;
     for (std::size_t pos = 0; pos < win.size();) {
@@ -5411,7 +5411,7 @@ static void ac4145_3_guard_source_cite_unreachable() {
     const auto ixx = read_file("src/core/arena.ixx");
     const auto fn = ixx.find("void note_intermediate_create_auto_wire_(void* p) noexcept");
     CHECK(fn != std::string::npos, "4145 AC3: auto_wire_ helper present");
-    const auto win = ixx.substr(fn, 2600);
+    const auto win = aura::test::aura_source_block_after(ixx, fn);
     std::string code_only;
     for (std::size_t pos = 0; pos < win.size();) {
         const auto nl = win.find('\n', pos);
@@ -6001,7 +6001,7 @@ static void ac3955_sticky_recover_lock_held() {
           "3955: unlock after recover");
     const auto recfn = mb.find("Evaluator::recover_moving_sticky_densify_off");
     CHECK(recfn != std::string::npos, "3955: recover fn");
-    const auto recwin = mb.substr(recfn, 5000);
+    const auto recwin = aura::test::aura_source_block_after(mb, recfn);
     CHECK(recwin.find("DensifyInFlightGuard") != std::string::npos,
           "3955: recover still in-flight");
     CHECK(mb.find("Issue #3894: compact under workspace_mtx_") != std::string::npos,
@@ -6020,10 +6020,11 @@ static void ac3956_3958_admit_densify_gates() {
     CHECK(mb.find("try_acquire_for_region") != std::string::npos, "3956: region path present");
     const auto rgn = mb.find("Evaluator::MutationBoundaryGuard::try_acquire_for_region");
     CHECK(rgn != std::string::npos, "3956: region admit");
-    const auto rwin = mb.substr(rgn, 8000); // #4174 (1e86f445d) inserted the recover-truncation
-                                            // staging into the region admit path —
-                                            // densify_in_flight_for now sits ~6KB past the
-                                            // signature; 8KB stays inside the function
+    const auto rwin = aura::test::aura_source_block_after(
+        mb, rgn); // #4174 (1e86f445d) inserted the recover-truncation
+                  // staging into the region admit path —
+                  // densify_in_flight_for now sits ~6KB past the
+                  // signature; 8KB stays inside the function
     CHECK(rwin.find("densify_in_flight_for") != std::string::npos,
           "3956: RegionExclusive samples densify-in-flight");
     CHECK(mb.find("Issue #3958") != std::string::npos, "3958: cite");
@@ -7696,7 +7697,7 @@ static void ac4304_phase5_inflight_spans_publish() {
         // Issue #4751: window retargeted 8000 -> 8400 (the recovery canary
         // fold pushes the in-guard retry publish past 7.4KB; 8400 keeps the
         // row original ~1KB headroom so it does not become a hair-trigger).
-        const auto recwin = mb.substr(rec, 8400);
+        const auto recwin = aura::test::aura_source_block_after(mb, rec);
         const auto g = recwin.find("DensifyInFlightGuard densify_inflight");
         CHECK(g != std::string::npos,
               "4304: recover still names DensifyInFlightGuard densify_inflight");
@@ -7710,7 +7711,7 @@ static void ac4304_phase5_inflight_spans_publish() {
     const auto ffi = flat.find("static bool production_ffi_apply_densify_hard_refuse");
     CHECK(ffi != std::string::npos, "4304: FFI refuse located");
     if (ffi != std::string::npos) {
-        const auto body = flat.substr(ffi, 1800);
+        const auto body = aura::test::aura_source_block_after(flat, ffi);
         const auto gpos = body.find("production_defaults_active()");
         const auto ipos = body.find("densify_in_flight_for(eval_id)");
         const auto spos = body.find("densify_refuse_seq_skip");
@@ -7722,7 +7723,7 @@ static void ac4304_phase5_inflight_spans_publish() {
     }
     const auto clo = flat.find("static bool production_apply_closure_densify_hard_refuse");
     if (clo != std::string::npos) {
-        const auto body = flat.substr(clo, 2000);
+        const auto body = aura::test::aura_source_block_after(flat, clo);
         const auto gpos = body.find("production_defaults_active()");
         const auto ipos = body.find("densify_in_flight_for(eval_id)");
         const auto spos = body.find("densify_refuse_seq_skip");
