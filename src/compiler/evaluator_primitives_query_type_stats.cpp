@@ -2883,8 +2883,7 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                     m ? m->blame_propagation_miss_total.load(std::memory_order_relaxed) : 0;
                 const std::uint64_t blame_den = blame_c + blame_m;
                 const std::int64_t blame_ratio_bp =
-                    blame_den == 0 ? 10000
-                                   : static_cast<std::int64_t>((blame_c * 10000ull) / blame_den);
+                    ::aura::compiler::basis_points_vacuous_full(blame_c, blame_den);
                 const std::uint64_t ren_hits =
                     m ? m->occurrence_renarrow_hits_total.load(std::memory_order_relaxed) : 0;
                 const std::uint64_t ren_tot =
@@ -2894,7 +2893,7 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                 const std::uint64_t occ_blame =
                     m ? m->occurrence_blame_chain_complete_total.load(std::memory_order_relaxed)
                       : 0;
-                std::int64_t occ_hit_bp = 10000;
+                std::int64_t occ_hit_bp = 0;
                 if (ren_tot > 0)
                     occ_hit_bp = static_cast<std::int64_t>((ren_hits * 10000ull) / ren_tot);
                 else if (stale_r > 0)
@@ -2910,8 +2909,7 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                        : 0);
                 const std::uint64_t lin_den = lin_reval + lin_esc;
                 const std::int64_t lin_occ_bp =
-                    lin_den == 0 ? 10000
-                                 : static_cast<std::int64_t>((lin_reval * 10000ull) / lin_den);
+                    ::aura::compiler::basis_points_vacuous_full(lin_reval, lin_den);
                 insert_kv("blame_completeness_ratio", blame_ratio_bp);
                 insert_kv("blame-completeness-ratio-bp", blame_ratio_bp);
                 insert_kv("occurrence_narrowing_post_mutate_hit_rate", occ_hit_bp);
