@@ -649,9 +649,7 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
 
                 for (auto& [key_val, val] : entries) {
                     auto kh = json_object_key_hash(key_val);
-                    auto fp = static_cast<std::uint8_t>((kh >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
+                    const auto fp = ::aura::compiler::hash::fingerprint(kh);
 
                     auto meta = ht->metadata();
                     auto keys = ht->keys();
@@ -661,7 +659,7 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     bool found = false;
                     for (std::size_t at = 0; at < cap; ++at) {
                         auto idx = ((kh >> 1) + at) & (cap - 1);
-                        if (meta[idx] != 0xFF) {
+                        if (::aura::compiler::hash::hash_slot_is_live(meta[idx])) {
                             bool eq = false;
                             auto existing_key = EvalValue{keys[idx]};
                             if (types::is_string(existing_key) && types::is_string(key_val)) {
@@ -696,7 +694,7 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     bool inserted = false;
                     for (std::size_t at = 0; at < cap; ++at) {
                         auto idx = ((kh >> 1) + at) & (cap - 1);
-                        if (meta[idx] == 0xFF) {
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                             meta[idx] = fp;
                             keys[idx] = key_val.val;
                             vals[idx] = val.val;
@@ -718,7 +716,7 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         cap = ht->capacity;
                         for (std::size_t at = 0; at < cap; ++at) {
                             auto idx = ((kh >> 1) + at) & (cap - 1);
-                            if (meta[idx] == 0xFF) {
+                            if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                                 meta[idx] = fp;
                                 keys[idx] = key_val.val;
                                 vals[idx] = val.val;

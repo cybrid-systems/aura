@@ -392,12 +392,10 @@ void CompilePrims::register_compile_p2(PrimRegistrar add, Evaluator& ev) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (const char* p = k_str; *p; ++p)
                     h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
+                const auto fp = ::aura::compiler::hash::fingerprint(h);
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
+                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
                         auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
@@ -465,15 +463,13 @@ void CompilePrims::register_compile_p3(PrimRegistrar add, Evaluator& ev) {
                     std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
+                    const auto fp = ::aura::compiler::hash::fingerprint(h);
                     auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
                         auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                             meta[idx] = fp;
                             keys[idx] = key_ev.val;
                             vals[idx] = v.val;
@@ -566,15 +562,13 @@ void CompilePrims::register_compile_p4(PrimRegistrar add, Evaluator& ev) {
                     std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
+                    const auto fp = ::aura::compiler::hash::fingerprint(h);
                     auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
                         auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                             meta[idx] = fp;
                             keys[idx] = key_ev.val;
                             vals[idx] = v.val;
@@ -681,15 +675,13 @@ void CompilePrims::register_compile_p5(PrimRegistrar add, Evaluator& ev) {
                     std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
+                    const auto fp = ::aura::compiler::hash::fingerprint(h);
                     auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
                         auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                             meta[idx] = fp;
                             keys[idx] = key_ev.val;
                             vals[idx] = v.val;
@@ -802,19 +794,13 @@ void CompilePrims::register_compile_p6(PrimRegistrar add, Evaluator& ev) {
                     // a key whose FNV-1a top byte is 0x7F would
                     // produce fp=0xFF (=HASH_EMPTY), and hash-ref
                     // would skip the slot thinking it's empty.
-                    // (h >> 57) gives a 7-bit value [0x00..0x7F];
-                    // (h >> 57) & 0x7F keeps the 7 bits; | 0x80
-                    // sets the high bit so fp is in [0x80..0xFE],
-                    // never 0xFF.
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
+                    const auto fp = ::aura::compiler::hash::fingerprint(h);
                     auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
                         auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                             meta[idx] = fp;
                             keys[idx] = key_ev.val;
                             vals[idx] = v.val;
@@ -896,17 +882,13 @@ void CompilePrims::register_compile_p7(PrimRegistrar add, Evaluator& ev) {
                     std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    // Issue #258: defensive bump if fp lands on
-                    // HASH_EMPTY sentinel (FNV-1a top bits collision).
-                    if (fp == 0xFF)
-                        fp = 0xFE;
+                    const auto fp = ::aura::compiler::hash::fingerprint(h);
                     auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
                         auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                             meta[idx] = fp;
                             keys[idx] = key_ev.val;
                             vals[idx] = v.val;
@@ -978,15 +960,13 @@ void CompilePrims::register_compile_p8(PrimRegistrar add, Evaluator& ev) {
                     std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE;
+                    const auto fp = ::aura::compiler::hash::fingerprint(h);
                     auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
                         auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                             meta[idx] = fp;
                             keys[idx] = key_ev.val;
                             vals[idx] = v.val;
@@ -1064,15 +1044,13 @@ void CompilePrims::register_compile_p9(PrimRegistrar add, Evaluator& ev) {
                     std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE;
+                    const auto fp = ::aura::compiler::hash::fingerprint(h);
                     auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
                         auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                             meta[idx] = fp;
                             keys[idx] = key_ev.val;
                             vals[idx] = v.val;
@@ -1149,15 +1127,13 @@ void CompilePrims::register_compile_p10(PrimRegistrar add, Evaluator& ev) {
                     std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE;
+                    const auto fp = ::aura::compiler::hash::fingerprint(h);
                     auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
                         auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                             meta[idx] = fp;
                             keys[idx] = key_ev.val;
                             vals[idx] = v.val;
@@ -1237,15 +1213,13 @@ void CompilePrims::register_compile_p11(PrimRegistrar add, Evaluator& ev) {
                     std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE;
+                    const auto fp = ::aura::compiler::hash::fingerprint(h);
                     auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
                         auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                             meta[idx] = fp;
                             keys[idx] = key_ev.val;
                             vals[idx] = v.val;
@@ -1326,15 +1300,13 @@ void CompilePrims::register_compile_p12(PrimRegistrar add, Evaluator& ev) {
                     std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE;
+                    const auto fp = ::aura::compiler::hash::fingerprint(h);
                     auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
                         auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                             meta[idx] = fp;
                             keys[idx] = key_ev.val;
                             vals[idx] = v.val;
@@ -1419,15 +1391,13 @@ void CompilePrims::register_compile_p13(PrimRegistrar add, Evaluator& ev) {
                     std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE;
+                    const auto fp = ::aura::compiler::hash::fingerprint(h);
                     auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
                         auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                             meta[idx] = fp;
                             keys[idx] = key_ev.val;
                             vals[idx] = v.val;
@@ -1531,15 +1501,13 @@ void CompilePrims::register_compile_p14(PrimRegistrar add, Evaluator& ev) {
                     std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE;
+                    const auto fp = ::aura::compiler::hash::fingerprint(h);
                     auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
                         auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                             meta[idx] = fp;
                             keys[idx] = key_ev.val;
                             vals[idx] = v.val;
@@ -1624,15 +1592,13 @@ void CompilePrims::register_compile_p15(PrimRegistrar add, Evaluator& ev) {
                     std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE;
+                    const auto fp = ::aura::compiler::hash::fingerprint(h);
                     auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
                         auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                             meta[idx] = fp;
                             keys[idx] = key_ev.val;
                             vals[idx] = v.val;
@@ -1736,15 +1702,13 @@ void CompilePrims::register_compile_p16(PrimRegistrar add, Evaluator& ev) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
+                const auto fp = ::aura::compiler::hash::fingerprint(h);
                 auto kidx = ev.string_heap_.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
+                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
                         keys[idx] = key_ev.val;
                         vals[idx] = v.val;
@@ -1809,15 +1773,13 @@ void CompilePrims::register_compile_p17(PrimRegistrar add, Evaluator& ev) {
                     std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE;
+                    const auto fp = ::aura::compiler::hash::fingerprint(h);
                     auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
                         auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                             meta[idx] = fp;
                             keys[idx] = key_ev.val;
                             vals[idx] = v.val;
@@ -1892,15 +1854,13 @@ void CompilePrims::register_compile_p18(PrimRegistrar add, Evaluator& ev) {
                     std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE;
+                    const auto fp = ::aura::compiler::hash::fingerprint(h);
                     auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
                         auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                             meta[idx] = fp;
                             keys[idx] = key_ev.val;
                             vals[idx] = v.val;
@@ -1983,15 +1943,13 @@ void CompilePrims::register_compile_p19(PrimRegistrar add, Evaluator& ev) {
                     std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE;
+                    const auto fp = ::aura::compiler::hash::fingerprint(h);
                     auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
                         auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                             meta[idx] = fp;
                             keys[idx] = key_ev.val;
                             vals[idx] = v.val;
@@ -2121,15 +2079,13 @@ void CompilePrims::register_compile_p20(PrimRegistrar add, Evaluator& ev) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
+                const auto fp = ::aura::compiler::hash::fingerprint(h);
                 auto kidx = ev.string_heap_.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
+                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
                         keys[idx] = key_ev.val;
                         vals[idx] = v.val;
@@ -2773,12 +2729,10 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (const char* p = k_str; *p; ++p)
                     h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
+                const auto fp = ::aura::compiler::hash::fingerprint(h);
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
+                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
                         auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
@@ -2846,12 +2800,10 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (const char* p = k_str; *p; ++p)
                     h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
+                const auto fp = ::aura::compiler::hash::fingerprint(h);
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
+                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
                         auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
@@ -2964,12 +2916,10 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (const char* p = k_str; *p; ++p)
                     h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
+                const auto fp = ::aura::compiler::hash::fingerprint(h);
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
+                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
                         auto kidx = ev.string_heap_.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
@@ -3919,12 +3869,10 @@ void CompilePrims::register_compile_p38(PrimRegistrar add, Evaluator& ev) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (const char* p = k_str; *p; ++p)
                     h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
+                const auto fp = ::aura::compiler::hash::fingerprint(h);
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
+                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
                         auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
@@ -4053,14 +4001,12 @@ void CompilePrims::register_compile_p39(PrimRegistrar add, Evaluator& ev) {
         std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
         for (char c : k)
             h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-        auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-        if (fp == 0xFF)
-            fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
+        const auto fp = ::aura::compiler::hash::fingerprint(h);
         const auto kidx = static_cast<std::uint64_t>(ev.push_string_heap(k));
         bool inserted = false;
         for (std::size_t at = 0; at < hcap; ++at) {
             auto idx = ((h >> 1) + at) & (hcap - 1);
-            if (meta[idx] == 0xFF) {
+            if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                 meta[idx] = fp;
                 keys[idx] = make_string(kidx).val;
                 vals[idx] = v.val;
@@ -4716,15 +4662,13 @@ void CompilePrims::register_compile_p48(PrimRegistrar add, Evaluator& ev) {
                     std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE; // avoid HASH_EMPTY collision
+                    const auto fp = ::aura::compiler::hash::fingerprint(h);
                     auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
                         auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                             meta[idx] = fp;
                             keys[idx] = key_ev.val;
                             vals[idx] = v.val;
@@ -4895,15 +4839,13 @@ void CompilePrims::register_compile_p49(PrimRegistrar add, Evaluator& ev) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE; // avoid HASH_EMPTY collision
+                const auto fp = ::aura::compiler::hash::fingerprint(h);
                 auto kidx = ev.string_heap_.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
+                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
                         keys[idx] = key_ev.val;
                         vals[idx] = v.val;
@@ -4982,15 +4924,13 @@ void CompilePrims::register_compile_p50(PrimRegistrar add, Evaluator& ev) {
                     std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE;
+                    const auto fp = ::aura::compiler::hash::fingerprint(h);
                     auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
                         auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                             meta[idx] = fp;
                             keys[idx] = key_ev.val;
                             vals[idx] = v.val;
@@ -5061,15 +5001,13 @@ void CompilePrims::register_compile_p51(PrimRegistrar add, Evaluator& ev) {
                     std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE;
+                    const auto fp = ::aura::compiler::hash::fingerprint(h);
                     auto kidx = ev.string_heap_.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
                         auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                             meta[idx] = fp;
                             keys[idx] = key_ev.val;
                             vals[idx] = v.val;
