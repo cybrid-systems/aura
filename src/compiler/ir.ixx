@@ -612,6 +612,54 @@ export struct ClosureBridgeData {
     // (0=User, 1=MacroIntroduced). Propagated into IRClosure at MakeClosure.
     std::uint8_t source_marker = 0;
     std::uint32_t provenance = 0;
+
+    // Issue #4931: owned source locations for the nodes of this function's
+    // body, captured while the lowering flat is definitely alive.
+    //
+    // flat/pool above are NON-OWNING views of arena memory: mutate:rebind
+    // rebuilds the workspace AST in the evaluator's temp arena and lowers
+    // from that copy, so the FlatAST a bridge points at is freed as soon as
+    // the mutation finishes — while the bridge (and its matching epoch)
+    // outlives it. Dereferencing it to turn an instruction's source id into
+    // a line/column is therefore a use-after-free; it surfaced as a
+    // SIGSEGV inside FlatAST::assemble_nodeview on the 4363 soft arm under a
+    // 512K stack. The diagnostic path reads this table instead (the file id
+    // still comes from the pointer-keyed source_file_for_flat table, which
+    // never dereferences the flat).
+    struct NodeLoc {
+        std::uint32_t node = 0;
+        std::uint32_t line = 0;
+        std::uint32_t col = 1;
+    };
+    std::vector<NodeLoc> node_locs; // sorted by node id
+
+    // Capture line/column for every node of the body subtree.
+    void capture_node_locs() {
+        node_locs.clear();
+        if (!flat || body_id == ast::NULL_NODE || body_id >= flat->size())
+            return;
+        flat->walk_subtree(
+            body_id,
+            [&](ast::NodeId id) {
+                const auto nv = flat->get(id);
+                if (nv.line == 0)
+                    return;
+                node_locs.push_back(
+                    NodeLoc{static_cast<std::uint32_t>(id), nv.line, nv.col == 0 ? 1u : nv.col});
+            },
+            flat->size());
+        std::sort(node_locs.begin(), node_locs.end(),
+                  [](const NodeLoc& a, const NodeLoc& b) { return a.node < b.node; });
+    }
+
+    [[nodiscard]] const NodeLoc* find_node_loc(std::uint32_t id) const noexcept {
+        const auto it =
+            std::lower_bound(node_locs.begin(), node_locs.end(), id,
+                             [](const NodeLoc& l, std::uint32_t v) { return l.node < v; });
+        if (it == node_locs.end() || it->node != id)
+            return nullptr;
+        return &*it;
+    }
 };
 
 export struct IRModule {
@@ -662,6 +710,7 @@ export struct IRModule {
                 bd.source_marker = functions[func_id].marker;
             }
             closure_bridge[func_id] = std::move(bd);
+            closure_bridge[func_id].capture_node_locs();
         }
     }
 
@@ -686,6 +735,7 @@ export struct IRModule {
                 bd.source_marker = functions[func_id].marker;
             }
             closure_bridge[func_id] = std::move(bd);
+            closure_bridge[func_id].capture_node_locs();
         }
     }
 

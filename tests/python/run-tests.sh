@@ -1397,6 +1397,69 @@ _file_4363() {
 }
 _file_4363
 
+# Issue #4931: the soft arm of #4363 used to SIGSEGV under a small stack.
+# The IR diagnostic path resolved the failing form through a closure
+# bridge's FlatAST, a NON-OWNING view of the lowering arena; mutate:rebind
+# lowers from a temp-arena rebuild, so that flat is freed before the call
+# and a 512K stack made the reuse visible (si_addr=0xbb000000c8 in
+# FlatAST::assemble_nodeview). The fix snapshots the body's line/column at
+# lowering time, so the soft arm prints the caught mismatch at any stack size.
+_file_4931_small_stack() {
+    local dir src soft errs
+    dir=$(mktemp -d /tmp/aura-4931ss.XXXXXX)
+    src='
+(define (main)
+  (set-code "(define (hello x) (+ x 1))\n(define (bye y) (hello y))\n(define pet \"cat\")")
+  (eval-current)
+  (display "RB1 ") (write (mutate:rebind "hello" "(lambda (x) (+ x pet))" "w")) (newline)
+  (display "TC1 ") (write (typecheck-incremental)) (newline)
+  (display "CALL1 ") (write (try (hello 3) (catch (e) (list (quote raised) e)))) (newline)
+  (set-code "(define (hello x) (+ x 1))\n(define (bye y) (hello y))")
+  (eval-current)
+  (display "RB2 ") (write (mutate:rebind "bye" "(lambda (y) (hello y y))" "w")) (newline)
+  (display "CODE2 ") (write (query:code)) (newline)
+  (display "TC2 ") (write (typecheck-incremental)) (newline))
+(main)
+'
+    soft=$( ( ulimit -s 512
+              AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 25 "$AURA" -e "$src" ) 2>"$dir/err" )
+    errs=$(cat "$dir/err" 2>/dev/null || true)
+    if printf '%s\n' "$soft" | grep -q 'CALL1 (raised' \
+        && printf '%s\n' "$soft" | grep -q 'expected Int, got String' \
+        && printf '%s\n' "$soft" | grep -q 'CODE2' \
+        && ! printf '%s\n' "$errs" | grep -q 'AURA CRASH'; then
+        _record_pass "4931-soft-arm-512k-stack"
+    else
+        _record_fail "4931-soft-arm-512k-stack" "       soft:" "$soft" "       errs:" "$errs"
+    fi
+    rm -rf "$dir"
+}
+_file_4931_small_stack
+
+# Issue #4931: a SIGSEGV whose si_addr sits on (or just past) the faulting
+# thread's own stack is an overflow. The handler used to call dladdr() only
+# and report "outside any loaded module (use-after-free or uninit ptr?)";
+# it now says "stack exhaustion" with the used depth. Force the overflow with
+# a recursion deeper than a 512K stack holds before the depth guard trips.
+_file_4931_stack_report() {
+    local dir errs
+    dir=$(mktemp -d /tmp/aura-4931so.XXXXXX)
+    ( ulimit -s 512
+      AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 25 "$AURA" -e \
+          '(define (f n) (if (= n 0) 0 (+ 1 (f (- n 1))))) (f 200000)' \
+          >/dev/null 2>"$dir/err" ) || true
+    errs=$(cat "$dir/err" 2>/dev/null || true)
+    if printf '%s\n' "$errs" | grep -q 'AURA CRASH' \
+        && printf '%s\n' "$errs" | grep -q 'is stack exhaustion' \
+        && ! printf '%s\n' "$errs" | grep -q 'outside any loaded module'; then
+        _record_pass "4931-stack-exhaustion-report"
+    else
+        _record_fail "4931-stack-exhaustion-report" "       errs:" "$errs"
+    fi
+    rm -rf "$dir"
+}
+_file_4931_stack_report
+
 # Issue #4364: query:calls drops call sites of a replaced body.
 _file_4364() {
     local dir src
