@@ -1278,16 +1278,16 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 load_m(&CompilerMetrics::occurrence_blame_chain_complete_total);
             const std::uint64_t narrowing_refresh = ev->get_narrowing_refresh_count();
             std::int64_t occurrence_narrowing_post_mutate_hit_rate_bp =
-                10000; // N/A = perfect until data
+                ::aura::compiler::kBasisPointScale; // N/A = perfect until data
             if (renarrow_total > 0) {
                 occurrence_narrowing_post_mutate_hit_rate_bp =
-                    static_cast<std::int64_t>((renarrow_hits * 10000ull) / renarrow_total);
+                    ::aura::compiler::basis_points(renarrow_hits, renarrow_total);
             } else if (stale_refresh > 0) {
                 occurrence_narrowing_post_mutate_hit_rate_bp =
-                    static_cast<std::int64_t>((occ_blame_ok * 10000ull) / stale_refresh);
+                    ::aura::compiler::basis_points_vacuous_full(occ_blame_ok, stale_refresh);
             } else if (narrowing_refresh > 0) {
                 // Refresh activity without miss accounting → treat as hit.
-                occurrence_narrowing_post_mutate_hit_rate_bp = 10000;
+                occurrence_narrowing_post_mutate_hit_rate_bp = ::aura::compiler::kBasisPointScale;
             }
             // Linear × occurrence consistency (process-wide atomics + metrics).
             using namespace aura::compiler::linear_occurrence_mutate;
@@ -1338,14 +1338,17 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 recommendation = 1;
             // health-score: average of inverted risk signals (higher better)
             const std::int64_t hygiene_health =
-                10000 - std::min<std::int64_t>(hygiene_violation_rate_bp, 10000);
+                ::aura::compiler::kBasisPointScale -
+                std::min<std::int64_t>(hygiene_violation_rate_bp,
+                                       ::aura::compiler::kBasisPointScale);
             const std::int64_t inv_health = inv_pass_bp;
             const std::int64_t rb_health = rollback_success_rate_bp;
             const std::int64_t ir_health =
                 hygiene_leakage == 0
-                    ? 10000
-                    : std::max<std::int64_t>(
-                          0, 10000 - static_cast<std::int64_t>(hygiene_leakage * 1000));
+                    ? ::aura::compiler::kBasisPointScale
+                    : std::max<std::int64_t>(0,
+                                             ::aura::compiler::kBasisPointScale -
+                                                 static_cast<std::int64_t>(hygiene_leakage * 1000));
             // Issue #2030: fold blame + occurrence hit rate into health.
             const std::int64_t health_score_bp =
                 (hygiene_health + inv_health + rb_health + ir_health + blame_completeness_ratio_bp +
@@ -1501,7 +1504,7 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             const std::uint64_t attempts = batch_refresh + fails;
             const std::int64_t success_rate_bp =
                 ::aura::compiler::basis_points_vacuous_full(batch_refresh, attempts);
-            const std::int64_t fail_rate_bp = 10000 - success_rate_bp;
+            const std::int64_t fail_rate_bp = ::aura::compiler::kBasisPointScale - success_rate_bp;
             // fail rate < 0.1% ⇒ fail_rate_bp < 10 for multi-round loops
             const std::int64_t lat_avg_us =
                 calls > 0 ? static_cast<std::int64_t>(lat_total / calls) : 0;
@@ -3079,7 +3082,7 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             // AdaptiveSuppress is soft (no isolation / no health crash).
             const bool storm_active = force == shape::kShapeStormForceReasonThreshold;
             // health-bp: 10000 quiet; −2500 when storm active; −min(4000, isolations*100)
-            std::int64_t health_bp = 10000;
+            std::int64_t health_bp = ::aura::compiler::kBasisPointScale;
             if (storm_active)
                 health_bp -= 2500;
             const auto iso_pen =

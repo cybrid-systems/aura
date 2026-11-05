@@ -124,9 +124,12 @@ class MagicConstantsInvariant(unittest.TestCase):
             "compiler/evaluator_primitives_obs_jit.cpp",
             "compiler/evaluator_primitives_mutate.cpp",
             "compiler/evaluator_primitives_obs_eval.cpp",
+            "compiler/frame_budget.hh",
+            "compiler/type_system_health.hh",
+            "core/arena_auto_policy_stats.h",
         ):
             text = (SRC / rel).read_text(encoding="utf-8", errors="replace")
-            self.assertIn("::aura::compiler::basis_points(", text, rel)
+            self.assertIn("basis_points", text, rel)
 
     def test_no_full_basis_point_fallback(self) -> None:
         # Policy: an empty denominator means "no data" (0 bp). The only

@@ -19,6 +19,7 @@
 #define AURA_COMPILER_FRAME_BUDGET_HH
 
 #include "render_prim_template.hh" // aura_is_render_evolution_name
+#include "basis_points.h"          // Issue #905: basis-point helpers
 
 #include <atomic>
 #include <chrono>
@@ -231,7 +232,8 @@ check_present_guardian(std::uint64_t p99_us, std::uint64_t dirty_cells = 0,
     } else if (dirty_cells == 0) {
         d.skip_full_rebuild = true;
     } else {
-        const auto dirty_bp = (dirty_cells * 10000ull) / total_cells;
+        const auto dirty_bp =
+            static_cast<std::uint64_t>(::aura::compiler::basis_points(dirty_cells, total_cells));
         d.skip_full_rebuild = dirty_bp < kTinyDirtyBp;
     }
     if (d.skip_full_rebuild)

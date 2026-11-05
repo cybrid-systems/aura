@@ -6793,7 +6793,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             if (estimate > 0 && dirty_nodes > 0) {
                 const auto scale_bp =
                     std::min<std::int64_t>(10000, 10000 + (dirty_nodes / 10) * 100);
-                estimate = (estimate * scale_bp) / 10000;
+                estimate = (estimate * scale_bp) / ::aura::compiler::kBasisPointScale;
             }
             // recommend-split when estimate > 0.7 * budget (and budget > 0).
             const std::int64_t recommend = (budget > 0 && estimate * 10 > budget * 7) ? 1 : 0;
@@ -7402,14 +7402,14 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                     m->dirty_propagation_full_func_marks.load(std::memory_order_relaxed);
                 const auto den_marks = blk + full_marks;
                 if (den_marks > 0)
-                    dirty_prec_bp = static_cast<std::int64_t>((blk * 10000ull) / den_marks);
+                    dirty_prec_bp = ::aura::compiler::basis_points(blk, den_marks);
                 const auto clean =
                     m->invalidate_early_exit_clean_total.load(std::memory_order_relaxed) +
                     m->relower_skipped_entirely_count.load(std::memory_order_relaxed);
                 const auto full_rl = m->relower_full_called_count.load(std::memory_order_relaxed);
                 const auto den_scope = clean + full_rl;
                 if (den_scope > 0)
-                    min_scope_bp = static_cast<std::int64_t>((clean * 10000ull) / den_scope);
+                    min_scope_bp = ::aura::compiler::basis_points(clean, den_scope);
             }
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"impact-blocks-hit", make_int(impact_blocks_hit)},
@@ -8725,8 +8725,7 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
             const std::int64_t classify_calls = static_cast<std::int64_t>(
                 types::value_classify_call_count.load(std::memory_order_relaxed));
             const auto denom = hits + misses;
-            const std::int64_t hit_rate_bp =
-                denom > 0 ? (hits * 10000) / denom : (hits > 0 ? 10000 : 0);
+            const std::int64_t hit_rate_bp = ::aura::compiler::basis_points(hits, denom);
             // Mirror into CompilerMetrics for dashboards that only read m.
             if (m) {
                 m->value_dispatch_calls_total.store(static_cast<std::uint64_t>(classify_calls),
@@ -12467,8 +12466,7 @@ void ObservabilityPrims::register_eval_p71(PrimRegistrar add, Evaluator& ev) {
             // counters are bumped on partially overlapping paths.
             std::int64_t fastpath_pct = 10000;
             if (call_total > 0) {
-                fastpath_pct =
-                    static_cast<std::int64_t>((fastpath_hits * 10000ull) / (call_total + 1));
+                fastpath_pct = ::aura::compiler::basis_points(fastpath_hits, call_total + 1);
                 if (fastpath_pct > 10000)
                     fastpath_pct = 10000;
             }
@@ -16667,9 +16665,7 @@ void ObservabilityPrims::register_eval_p99(PrimRegistrar add, Evaluator& ev) {
                     std::max(last, m->agent_recovery_last_status.load(std::memory_order_relaxed));
             }
             const std::int64_t rate_bp =
-                attempts == 0
-                    ? 0
-                    : static_cast<std::int64_t>((success * 10000) / attempts); // basis points
+                ::aura::compiler::basis_points(success, attempts); // basis points
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(query_hash_capacity_for(17));

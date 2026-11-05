@@ -5,6 +5,7 @@
 #define AURA_CORE_ARENA_AUTO_POLICY_STATS_H
 
 #include "core/gc_hooks.h"
+#include "compiler/basis_points.h" // Issue #905: basis-point helpers
 
 #include <atomic>
 #include <chrono>
@@ -410,9 +411,7 @@ inline void record_auto_compact_outcome(bool reclaimed_bytes) noexcept {
     const auto fp = auto_compact_false_positive_total.load(std::memory_order_relaxed);
     const auto tp = auto_compact_true_positive_total.load(std::memory_order_relaxed);
     const auto den = fp + tp;
-    if (den == 0)
-        return 0;
-    return (fp * 10000ull) / den;
+    return static_cast<std::uint64_t>(::aura::compiler::basis_points(fp, den));
 }
 
 // Production base thresholds (documented for Agents). #1919 dynamic range 30–60%.
