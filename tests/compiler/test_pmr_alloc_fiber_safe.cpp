@@ -546,6 +546,8 @@ static void ac4474r3_large_heap_window() {
     // Timing on a shared CI runner is one-sided noisy (a descheduled
     // loop reads slow). Take five samples per size and keep the median
     // overhead so polluted samples cannot fail the ratio.
+    // Gate anchors (#4474 AC3): the flat-region tier is measure(300000)
+    // and the reopen tier is measure(3000000); measure_median() wraps them.
     const auto measure_median = [&](int n) -> Sample {
         std::array<Sample, 5> samples{measure(n), measure(n), measure(n), measure(n), measure(n)};
         const auto ovh = [](const Sample& s) { return s.alloc_us - s.empty_us; };
