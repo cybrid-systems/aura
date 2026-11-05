@@ -141,9 +141,20 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // an error value (the #4586 shape), so the caller propagates it and
     // try can catch it. A nullopt is a REFUSED apply (a stale closure, an
     // arity miss, a densify refuse): it stays no value.
+    // Issue #4928: a densify hard-refuse is not "no value" — the closure
+    // never ran. Surface it as an error value so map / filter / for-each
+    // fail closed instead of consing () for every element.
     auto apply_callback = [&ev](std::uint64_t cid, std::span<const EvalValue> args) -> EvalValue {
+        aura_clear_apply_densify_refuse();
         auto r = ev.apply_closure(cid, args);
-        return r ? *r : make_void();
+        if (r)
+            return *r;
+        if (aura_take_apply_densify_refuse())
+            return make_primitive_error(
+                ev.string_heap_, ev.error_values_,
+                "closure apply refused: Moving densify window incomplete (#4928)",
+                ev.primitive_error_counter_ptr());
+        return make_void();
     };
 
     auto apply_unary = [&ev, apply_callback](const EvalValue& fn, const EvalValue& arg,

@@ -4611,13 +4611,20 @@ public:
                                                            r.root_remap_closure_capture_fail_total);
                             const bool pin_for_publish =
                                 r.pin_contract_held && !r.moving_blocked_precondition;
+                            // Issue #4928: a soft-gated auto-arm that moved
+                            // nothing is no stale-ref evidence for apply.
+                            const bool relocate_refused_no_move =
+                                r.moving_blocked_precondition && r.pin_contract_held &&
+                                r.objects_moved == 0 && !r.moved_live_objects &&
+                                !r.moving_incomplete_remap && root_fail == 0;
                             aura::core::moving_densify_health::publish_last_moving_densify_window(
                                 /*had_moving_densify=*/true, pin_for_publish,
                                 r.moving_incomplete_remap,
                                 static_cast<std::uint64_t>(r.objects_moved),
                                 static_cast<std::uint64_t>(r.untracked_kept_count), root_fail,
                                 static_cast<std::uint64_t>(
-                                    r.external_roots_prep_registered_cleared));
+                                    r.external_roots_prep_registered_cleared),
+                                relocate_refused_no_move);
                             // Relocated objects still need Densify restamp
                             // even when the window later soft-gates hard.
                             if (r.objects_moved > 0 || r.moved_live_objects) {

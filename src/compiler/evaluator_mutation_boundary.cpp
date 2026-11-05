@@ -7031,7 +7031,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     static_cast<std::uint64_t>(densify_objects_moved),
                     static_cast<std::uint64_t>(densify_untracked_kept),
                     static_cast<std::uint64_t>(densify_root_remap_fails),
-                    static_cast<std::uint64_t>(densify_external_roots_prep_registered_cleared));
+                    static_cast<std::uint64_t>(densify_external_roots_prep_registered_cleared),
+                    /*#4928 refused, no move*/ blocked && !densify_entry_lcp_blocked &&
+                        !had_moving_densify && pin_contract_held);
             }
             // Issue #4304: in-flight drops only after this publish. When the
             // retry already published, recover's guard cleared the bit and
@@ -8573,7 +8575,8 @@ Evaluator::transaction_guard_host_for_region(Evaluator& ev, std::uint64_t region
 std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
     // Serialize vs set_flat_pool / set_current_* (densify reads *slot).
     std::lock_guard<std::mutex> mutate_targets_lock(mutate_target_mu_);
-    if (!arena_group_)
+    // Issue #4928: arena_ (not a group member) needs the slots too.
+    if (!arena_group_ && !arena_)
         return 0;
     using aura::compiler::root_remap_registered_slots_snapshot;
     std::vector<void**> known_slots;
@@ -8750,8 +8753,14 @@ std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
     }
     densify_unstable_append_value_slots(known_slots, densify_fill);
     if (!known_slots.empty()) {
-        for (void** slot : known_slots)
-            arena_group_->register_external_root_slot_for_densify_all(slot);
+        for (void** slot : known_slots) {
+            if (arena_group_)
+                arena_group_->register_external_root_slot_for_densify_all(slot);
+            if (arena_)
+                arena_->register_external_root_slot_for_densify(slot);
+            if (temp_arena_ && temp_arena_ != arena_)
+                temp_arena_->register_external_root_slot_for_densify(slot);
+        }
         // Issue #3368: do NOT note_post_moving_live_ptr_canary_all(`*slot`) as a
         // post-Moving canary here (do NOT dual-note).
         // Lineage: this reverses the Issue #3092 dual-note wiring —
@@ -8777,7 +8786,8 @@ std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
     // inventory: one atomic (Soft / no temps). Runs even when
     // known_slots is empty so a densify window that only has temps
     // still fail-closes. Not a second pin registry.
-    arena_group_->note_temporary_moving_live_canaries_all();
+    if (arena_group_)
+        arena_group_->note_temporary_moving_live_canaries_all();
     return known_slots.size();
 }
 
@@ -8901,7 +8911,8 @@ Evaluator::recover_moving_sticky_densify_off(bool retry_densify) noexcept {
                 /*had_moving_densify=*/true, pin_for_publish, compact_r.moving_incomplete_remap_any,
                 static_cast<std::uint64_t>(compact_r.objects_moved_total),
                 static_cast<std::uint64_t>(compact_r.untracked_kept_total), root_fail,
-                static_cast<std::uint64_t>(compact_r.external_roots_prep_registered_total));
+                static_cast<std::uint64_t>(compact_r.external_roots_prep_registered_total),
+                /*#4928*/ blocked && !densify_entry_lcp_blocked && compact_r.pin_contract_held);
             // Issue #4143: clear the recovery sticky only AFTER the retry
             // published a unified-green window (pin held ∧ ¬incomplete ∧
             // untracked==0 ∧ root_fail==0 — same surface as

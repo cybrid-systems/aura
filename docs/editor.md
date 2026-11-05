@@ -29,11 +29,6 @@ Typical loop with the evolve-strategy kit: `KIT_STEPS=1 aura repl main.aura`
 `backtest.aura`, `:reload backtest.aura`, then `(evolve! 1 2 train val)` runs
 another step without regenerating the prices.
 
-`aura repl` starts with Moving arena compaction off
-(`AURA_ARENA_MOVING_COMPACT=0`, unless already set in the environment). This
-works around #4928: under the soft session, evaluating one form at a time after
-`set-code` could otherwise leave closures called through `map` returning void.
-
 ## `aura lsp` — diagnostics and goto-definition
 
 `aura lsp` speaks the Language Server Protocol over stdio:
