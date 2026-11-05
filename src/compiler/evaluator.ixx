@@ -6676,7 +6676,7 @@ public:
             const auto r = resolve_env_frame_detailed_assume_env_frame_locks(cur);
             if (!r)
                 return;
-            if (!std::forward<F>(f)(cur, *r.frame))
+            if (!f(cur, *r.frame)) // called per frame: never forward/move f
                 return;
             cur = r.frame->parent_id;
         }
@@ -6698,7 +6698,7 @@ public:
             const auto r = resolve_env_frame_detailed_assume_env_frame_locks(cur);
             if (!r)
                 return;
-            if (!std::forward<F>(f)(cur, *r.frame))
+            if (!f(cur, *r.frame)) // called per frame: never forward/move f
                 return;
             cur = r.frame->parent_id;
         }

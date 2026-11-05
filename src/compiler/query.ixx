@@ -391,11 +391,13 @@ std::vector<std::string> tokenize_rt(std::string_view s) {
         if (c == '(' || c == ')') {
             if (!cur.empty()) {
                 tokens.push_back(std::move(cur));
+                cur.clear(); // moved-from: valid but unspecified
             }
             tokens.emplace_back(1, c);
         } else if (c == ' ' || c == '\t' || c == '\n') {
             if (!cur.empty()) {
                 tokens.push_back(std::move(cur));
+                cur.clear(); // moved-from: valid but unspecified
             }
         } else {
             cur += c;

@@ -11564,8 +11564,10 @@ void Evaluator::refresh_define_env_publication(aura::ast::FlatAST& flat, const s
         ci = alloc_cell(*refreshed);
     else if (ci < cells().size()) {
         // Issue #4715 AC2: same private-cell rule as rebind.
-        if (!fiber_cow_overlay_capture_define_cell(*this, name, *refreshed,
-                                                   static_cast<std::uint64_t>(ci)))
+        // Issue #4936: qualified; this is aura::compiler, not primitives_detail
+        // (GCC accepted the unqualified name via the friend declaration, Clang does not).
+        if (!primitives_detail::fiber_cow_overlay_capture_define_cell(
+                *this, name, *refreshed, static_cast<std::uint64_t>(ci)))
             cells()[ci] = *refreshed;
     }
     // Issue #4779: the name already advertises cell ci - do not bind it

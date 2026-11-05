@@ -2253,6 +2253,8 @@ public:
         // FlatAST, which requires a different hot-swap path (TODO).
         if (!last_ir_mod_ || last_ir_mod_->functions.empty())
             return false;
+        // Issue #4936: one checked deref after the guard above.
+        auto& live_ir_mod = *last_ir_mod_;
 
         // Issue #1262/#1264: acquire mutation epoch with fence before
         // hot-swap so concurrent invalidate_function / mutate cannot
@@ -2265,8 +2267,8 @@ public:
 
         // Find existing function by name
         std::uint32_t existing_id = 0xFFFFFFFF;
-        for (std::uint32_t i = 0; i < last_ir_mod_->functions.size(); ++i) {
-            if (last_ir_mod_->functions[i].name == name) {
+        for (std::uint32_t i = 0; i < live_ir_mod.functions.size(); ++i) {
+            if (live_ir_mod.functions[i].name == name) {
                 existing_id = i;
                 break;
             }
@@ -2331,7 +2333,7 @@ public:
         metrics_.hot_swap_versioned_mangle_enforced.fetch_add(1, std::memory_order_relaxed);
 
         // Hot-swap: replace in last_ir_mod_ at existing_id, preserving the id
-        return last_ir_mod_->hot_swap_function(existing_id, std::move(new_mod.functions[new_id]));
+        return live_ir_mod.hot_swap_function(existing_id, std::move(new_mod.functions[new_id]));
     }
 
     // ── Inter-agent messaging (P0) ──────────────────────────
@@ -4548,14 +4550,15 @@ public:
         escape_pass.run(ir_mod);
 
         last_ir_mod_ = ir_mod;
-        last_ir_stats_ = aura::ir::compute_ir_stats(*last_ir_mod_);
+        auto& live_ir_mod = *last_ir_mod_; // Issue #4936: engaged just above
+        last_ir_stats_ = aura::ir::compute_ir_stats(live_ir_mod);
         last_escape_maps_ = escape_pass.take_maps();
         // Issue #2100: accumulate MacroIntroduced IR attrs for deopt restore.
-        note_macro_ir_attrs_from_module(*last_ir_mod_);
+        note_macro_ir_attrs_from_module(live_ir_mod);
 
         aura::compiler::IRContext ctx(evaluator_.primitives(), &type_registry_, &metrics_,
                                       &evaluator_);
-        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, ctx);
+        aura::compiler::IRInterpreter ir_interp(live_ir_mod, ctx);
         seed_eval_interp_closure_cursor_4895_(ir_interp);
         ir_interp.set_strategy(strategy_);
         if (!last_escape_maps_.empty())
@@ -9348,9 +9351,10 @@ public:
         std::vector<aura::ir::ClosureBridgeData> bridge_bundle;
         for (auto& func : ir_mod.functions) {
             if (func.id != ir_mod.entry_function_id) {
+                const auto fid = func.id; // read before the move below
                 bundle.push_back(std::move(func));
-                if (func.id < ir_mod.closure_bridge.size())
-                    bridge_bundle.push_back(ir_mod.closure_bridge[func.id]);
+                if (fid < ir_mod.closure_bridge.size())
+                    bridge_bundle.push_back(ir_mod.closure_bridge[fid]);
                 else
                     bridge_bundle.emplace_back();
             }
@@ -11785,6 +11789,8 @@ public:
             // No cache yet — seed it with a regular eval_ir first
             return eval_ir(new_code);
         }
+        // Issue #4936: one checked deref; the cache is seeded above.
+        auto& live_ir_mod = *last_ir_mod_;
 
         auto alloc = arena_.allocator();
         aura::ast::StringPool pool(alloc);
@@ -11801,14 +11807,14 @@ public:
         // Hot-swap each function from new_mod into the cached module
         for (auto& new_func : new_mod.functions) {
             auto func_id = new_func.id;
-            if (func_id < last_ir_mod_->functions.size()) {
+            if (func_id < live_ir_mod.functions.size()) {
                 new_func.id = func_id;
-                (*last_ir_mod_).functions[func_id] = std::move(new_func);
+                live_ir_mod.functions[func_id] = std::move(new_func);
             } else {
-                last_ir_mod_->functions.push_back(std::move(new_func));
+                live_ir_mod.functions.push_back(std::move(new_func));
             }
         }
-        last_ir_mod_->entry_function_id = new_mod.entry_function_id;
+        live_ir_mod.entry_function_id = new_mod.entry_function_id;
 
         // Re-run passes on the hot-swapped module
         TypeSpecializationWrap ts(&type_registry_);
@@ -11832,7 +11838,7 @@ public:
         // Issue #3329: production purity / SoA / DirtyPropagator gate.
         // Issue #4007: hot-swap still restamps the cached AoS module;
         // named factory stays the V2 PureWrap pack.
-        aura::compiler::run_production_pipeline(*last_ir_mod_, ts, tprop, ck, ar, cf, dce);
+        aura::compiler::run_production_pipeline(live_ir_mod, ts, tprop, ck, ar, cf, dce);
         accumulate_type_propagation_metrics(tprop);
         accumulate_coercion_pass_metrics(ts, dce);
 
@@ -11849,7 +11855,7 @@ public:
 
         aura::compiler::IRContext ctx(evaluator_.primitives(), &type_registry_, &metrics_,
                                       &evaluator_);
-        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, ctx);
+        aura::compiler::IRInterpreter ir_interp(live_ir_mod, ctx);
         ir_interp.set_strategy(strategy_);
         if (strict_mode_)
             ir_interp.set_strict_mode(true);
@@ -12044,10 +12050,11 @@ public:
                 if (func.name.empty() || func.name == "__lambda__") {
                     func.name = name + std::string("#") + std::to_string(own_pos++);
                 }
+                const auto fid = func.id; // read before the move below
                 bundle.push_back(std::move(func));
                 // Save bridge data
-                if (func.id < ir_mod.closure_bridge.size())
-                    bridge_bundle.push_back(ir_mod.closure_bridge[func.id]);
+                if (fid < ir_mod.closure_bridge.size())
+                    bridge_bundle.push_back(ir_mod.closure_bridge[fid]);
                 else
                     bridge_bundle.emplace_back();
             }
