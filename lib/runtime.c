@@ -144,13 +144,13 @@ _Static_assert(AURA_VALUE_ABI == 4, "runtime.c is written for value ABI 4");
 #define IS_STRING(v) AURA_IS_STRING(v)
 #define STRING_IDX(v) ((int)AURA_STRING_IDX(v))
 #define MAKE_STRING_SENTINEL(i) AURA_MAKE_STRING(i)
-#define SPECIAL_TAG(v) (((v) >> 2) & 3)
+#define SPECIAL_TAG(v) AURA_IMM_KIND(v)
 #define IS_UNSPEC(v) ((v) == AURA_V_UNSPEC) // #4502 step 4
 
 // ── Enum-compatible tag values (use static const instead of macros to avoid enum conflict)
-static const int KWD_FALSE = 0;
-static const int KWD_TRUE = 1;
-static const int KWD_VOID = 2;
+static const int KWD_FALSE = AURA_KIND_FALSE;
+static const int KWD_TRUE = AURA_KIND_TRUE;
+static const int KWD_VOID = AURA_KIND_VOID;
 
 // ── Type tags for aura_display_val (kept for backward compat) ─
 enum ValueTag {
@@ -766,7 +766,7 @@ extern double aura_float_ref(int64_t val);
 extern int64_t aura_alloc_float(double d);
 
 int64_t aura_cast_op(int64_t val, int64_t type_tag) {
-    int is_bool = (val == 3 || val == 7);
+    int is_bool = (val == AURA_V_FALSE || val == AURA_V_TRUE);
     int is_string = IS_STRING(val);
     int is_fixnum = IS_FIXNUM(val); // #4482
     int is_float = AURA_IS_FLOAT(val);
