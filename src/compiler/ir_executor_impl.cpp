@@ -970,7 +970,7 @@ static void ir_note_producer_4909(const IRInstruction* instr, Evaluator* ev,
     if (mod && fn && fn->id < mod->functions.size() && &mod->functions[fn->id] == fn &&
         fn->id < mod->closure_bridge.size()) {
         const auto& bd = mod->closure_bridge[fn->id];
-        if (const auto* loc = bd.find_node_loc(nid); loc != nullptr) {
+        if (const auto* loc = find_bridge_node_loc(bd, nid); loc != nullptr) {
             // source_file_for_flat is a pointer-key lookup: it never touches
             // the (possibly dead) flat.
             ev->note_error_location(

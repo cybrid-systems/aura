@@ -12414,24 +12414,24 @@ public:
     // arena and clears the cache, so a recycled address can never be served.
     [[nodiscard]] bool lookup_pattern_parse(const std::string& text,
                                             PatternParseCacheEntry& out) const {
-        std::lock_guard<std::mutex> lock(pattern_parse_cache_mu_);
-        const auto it = pattern_parse_cache_.find(text);
-        if (it == pattern_parse_cache_.end() || it->second.arena != temp_arena_) {
+        const std::lock_guard<std::mutex> lock(pattern_parse_cache_mu_);
+        const auto iter = pattern_parse_cache_.find(text);
+        if (iter == pattern_parse_cache_.end() || iter->second.arena != temp_arena_) {
             pattern_parse_cache_misses_.fetch_add(1, std::memory_order_relaxed);
             return false;
         }
-        out = it->second;
+        out = iter->second;
         pattern_parse_cache_hits_.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
-    void store_pattern_parse(const std::string& text, const PatternParseCacheEntry& e) {
-        std::lock_guard<std::mutex> lock(pattern_parse_cache_mu_);
+    void store_pattern_parse(const std::string& text, const PatternParseCacheEntry& entry) {
+        const std::lock_guard<std::mutex> lock(pattern_parse_cache_mu_);
         if (pattern_parse_cache_.size() >= 128)
             pattern_parse_cache_.clear();
-        pattern_parse_cache_[text] = e;
+        pattern_parse_cache_[text] = entry;
     }
     void clear_pattern_parse_cache() {
-        std::lock_guard<std::mutex> lock(pattern_parse_cache_mu_);
+        const std::lock_guard<std::mutex> lock(pattern_parse_cache_mu_);
         pattern_parse_cache_.clear();
     }
     [[nodiscard]] std::uint64_t get_pattern_parse_cache_hits() const noexcept {
