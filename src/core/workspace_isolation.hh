@@ -169,7 +169,9 @@ struct WorkspaceIsolationPolicy {
     // Issue #2530: aligned with the SecurityEvent ring (#2225), single SSOT.
     // Soft / Off paths pay nothing when record_audit is never called.
     // Earlier-than-window events rely on WAL (AC3).
-    static constexpr std::size_t kAuditRing = ::aura::core::security_event::kSecurityEventRingSize;
+    static constexpr std::size_t kAuditRing = 1024;
+    static_assert(kAuditRing == ::aura::core::security_event::kSecurityEventRingSize,
+                  "audit ring must stay aligned with the SecurityEvent ring (#2225/#2530)");
     // Issue #2530: shared_mutex + published slots (was bare array — torn reads).
     mutable std::shared_mutex audit_ring_mtx_;
     PublishedIsolationSlot audit_ring[kAuditRing]{};
