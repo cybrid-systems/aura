@@ -41,6 +41,7 @@ module;
 #include "../core/persistent_child_vector.hh"
 #include "../core/layout_stamp.hh"        // Issue #2170: LayoutStamp capture + publisher
 #include "../reflect/hygiene_validate.hh" // Issue #3637: MutationReflectHealth boundary backstop
+#include "hash_meta.h"                    // FNV constants (#901)
 // lifetime_pin.hh omitted: import aura.core.lifetime_pin provides
 // restamp_all_pins_for_arena; dual include+import makes the call ambiguous.
 #include "../core/workspace_epoch.hh"    // Issue #2170: current_mutation_epoch() for capture
@@ -223,7 +224,7 @@ freeze_proof_goal_truth_from_type_checker(void* tc_handle) noexcept {
         t.goal_fingerprint = 0;
         return t;
     }
-    std::uint64_t h = 0xcbf29ce484222325ULL; // FNV offset basis
+    std::uint64_t h = ::aura::compiler::hash::kFnvOffsetBasis; // FNV offset basis
     const std::size_t n =
         goals.size() < kProofGoalFingerprintMaxGoals ? goals.size() : kProofGoalFingerprintMaxGoals;
     for (std::size_t i = 0; i < n; ++i) {

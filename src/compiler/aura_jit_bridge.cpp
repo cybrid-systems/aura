@@ -39,6 +39,7 @@
 #include <unistd.h>                        // Issue #237 v4: readlink for /proc/self/exe lookup
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
+#include "hash_meta.h" // FNV constants (#901)
 // Defined in aura_jit_runtime.cpp (lock-hooks path for defuse version).
 extern "C" std::uint64_t aura_get_defuse_version(void);
 // Issue #2982: production probe (strong in typed_mutation_audit_hooks).
@@ -2662,7 +2663,7 @@ std::uint64_t peer_jit_name_hash(const char* name) noexcept {
     std::uint64_t h = 1469598103934665603ULL; // FNV-1a 64 offset
     for (const unsigned char* p = reinterpret_cast<const unsigned char*>(name); *p; ++p) {
         h ^= static_cast<std::uint64_t>(*p);
-        h *= 1099511628211ULL;
+        h *= ::aura::compiler::hash::kFnvPrime;
     }
     return h;
 }
@@ -4255,10 +4256,10 @@ static bool aura_reload_aot_module_for_eval_once(void* eval_ptr, const char* pat
         aot_log("aura_reload_aot_module: dlopen failed for %s: %s\n", path, ::dlerror());
         // Issue #2982: production Dlopen path/errno surface (no auto-retry).
         if (aura_production_defaults_active_probe() != 0) {
-            std::uint64_t h = 0xcbf29ce484222325ULL;
+            std::uint64_t h = ::aura::compiler::hash::kFnvOffsetBasis;
             if (path) {
                 for (const unsigned char* p = reinterpret_cast<const unsigned char*>(path); *p; ++p)
-                    h = (h ^ *p) * 0x100000001b3ULL;
+                    h = (h ^ *p) * ::aura::compiler::hash::kFnvPrime;
                 if (h == 0)
                     h = 1;
             } else {

@@ -65,6 +65,7 @@
 
 #include "compiler/aura_jit_bridge.h" // Issue #2093: AotReloadFail enum
 
+#include "hash_meta.h" // FNV constants (#901)
 #if defined(__clang__)
 // Issue #4837: the C-linkage hooks below intentionally return C++ types
 // (GCC does not warn). Clang's -Wreturn-type-c-linkage is fatal under
@@ -128,8 +129,8 @@ inline constexpr std::size_t kEvalForceSlotCap = 8;
 // unit test (test_hot_update_relower_success_coverage) asserts identity
 // on a fixed name corpus.
 [[nodiscard]] inline std::uint64_t relower_success_region_bit(std::string_view name) noexcept {
-    constexpr std::uint64_t kFnv1aOffset = 0xcbf29ce484222325ULL;
-    constexpr std::uint64_t kFnv1aPrime = 0x100000001b3ULL;
+    constexpr std::uint64_t kFnv1aOffset = ::aura::compiler::hash::kFnvOffsetBasis;
+    constexpr std::uint64_t kFnv1aPrime = ::aura::compiler::hash::kFnvPrime;
     std::uint64_t h = kFnv1aOffset;
     for (char c : name) {
         h ^= static_cast<std::uint8_t>(c);

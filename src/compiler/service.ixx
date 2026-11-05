@@ -18361,7 +18361,7 @@ private:
             std::uint64_t h = 1469598103934665603ULL;
             auto mix = [&h](std::uint64_t v) noexcept {
                 h ^= v;
-                h *= 1099511628211ULL;
+                h *= ::aura::compiler::hash::kFnvPrime;
             };
             mix(f.blocks.size());
             for (const auto& blk : f.blocks) {
