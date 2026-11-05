@@ -12,6 +12,7 @@ module;
 #include <stdexcept> // Issue #2480: out_of_range / invalid_argument from stod/stoll
 
 #include "prim_registrar_scaffold.hh" // Issue #2996
+#include "compiler/evo_log_4910.hh"   // Issue #4910: evo:record!
 
 module aura.compiler.evaluator;
 
@@ -66,6 +67,90 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                               std::atomic<std::uint64_t>* primitive_error_counter, Evaluator& ev) {
     using aura::compiler::pure_general;
     using aura::compiler::register_prim;
+
+    // Issue #4910: (evo:record! candidate decision reason evidence [new-src [dur-ms [parent]]])
+    // appends one worldline record to AURA_EVO_LOG (see evo_log_4910.hh) so user
+    // gates land in the same log as mutate:* / ast:restore. Evidence is any
+    // json-encode-able value (hash / list / number / string). Returns the
+    // record id, or #f when the log is off (AURA_EVO_LOG unset).
+    register_prim(
+        add, ev, "evo:record!",
+        [&ev, &string_heap](std::span<const EvalValue> a) -> EvalValue {
+            if (!aura::evo::log_enabled())
+                return make_bool(false);
+            auto text = [&](std::size_t i) -> std::string {
+                if (i >= a.size())
+                    return {};
+                if (is_string(a[i])) {
+                    const auto idx = as_string_idx(a[i]);
+                    return idx < string_heap.size() ? std::string(ev.string_at(idx))
+                                                    : std::string();
+                }
+                if (is_int(a[i]))
+                    return std::to_string(as_int(a[i]));
+                if (is_bool(a[i]))
+                    return as_bool(a[i]) ? "true" : "false";
+                return {};
+            };
+            auto json = [&](std::size_t i) -> std::string {
+                if (i >= a.size())
+                    return {};
+                auto fn = ev.primitives().lookup("json-encode");
+                if (!fn)
+                    return {};
+                const EvalValue r = (*fn)({a[i]});
+                if (!is_string(r))
+                    return {};
+                const auto idx = as_string_idx(r);
+                return idx < string_heap.size() ? std::string(ev.string_at(idx)) : std::string();
+            };
+            std::string decision = text(1);
+            std::string up = decision;
+            for (auto& c : up)
+                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            if (up == "KEEP" || up == "ROLLBACK" || up == "REJECT")
+                decision = up == "REJECT" ? "ROLLBACK" : up;
+            double dur = 0.0;
+            if (a.size() > 5) {
+                if (is_int(a[5]))
+                    dur = static_cast<double>(as_int(a[5]));
+                else if (is_float(a[5]))
+                    dur = as_float(a[5]);
+            }
+            const std::string target = text(0);
+            const std::string reason = text(2);
+            const std::string evidence = json(3);
+            const std::string new_src = text(4);
+            const std::string parent = text(6);
+            const std::string id = aura::evo::log_append({.kind = "record",
+                                                          .target = target,
+                                                          .decision = decision,
+                                                          .reason = reason,
+                                                          .evidence_json = evidence,
+                                                          .old_src = {},
+                                                          .new_src = new_src,
+                                                          .parent = parent,
+                                                          .dur_ms = dur});
+            if (id.empty())
+                return make_bool(false);
+            return types::make_string(string_heap.mint(id));
+        },
+        aura::compiler::impure_general(
+            255,
+            "(evo:record! candidate decision reason evidence [new-src dur-ms parent]) -> id|#f",
+            "Append a worldline record to the evolution log (AURA_EVO_LOG; #4910)."));
+
+    // Issue #4910: (evo:log-path) -> the active evolution log path, or #f.
+    register_prim(
+        add, ev, "evo:log-path",
+        [&string_heap](std::span<const EvalValue>) -> EvalValue {
+            const std::string p = aura::evo::log_path();
+            if (p.empty())
+                return make_bool(false);
+            return types::make_string(string_heap.mint(p));
+        },
+        aura::compiler::impure_general(0, "(evo:log-path) -> string|#f",
+                                       "Active evolution log path (AURA_EVO_LOG), or #f (#4910)."));
 
     // json-encode: convert Aura value to JSON string
     // (json-encode value) → string

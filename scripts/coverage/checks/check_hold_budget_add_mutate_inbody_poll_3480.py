@@ -60,8 +60,11 @@ def main() -> int:
         # old 18000 edge.
         # #4385 (session mid noted before require_effect) grew it again:
         # hold-budget-cancel now sits at +21938 — past the old 21000 edge.
+        # #4910 (evolution-log step wrapper evo_call_4910 at the top of
+        # add_mutate) grew it: hold-budget-cancel now sits at +29270, past the
+        # old 25000 edge.
         # Grow with the lambda, assertions unchanged.
-        win = mut[start : start + 25000]
+        win = mut[start : start + 31000]
         must("Issue #3480", "AC6 cite", win)
         must("auto result = fn(a);", "AC1 after fn(a)", win)
         fn = win.find("auto result = fn(a);")

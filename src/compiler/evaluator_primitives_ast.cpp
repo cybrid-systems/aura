@@ -12,6 +12,7 @@ module;
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "compiler/mark_all_owner_clear.hh" // Issue #4360: restore clears IR owners
 #include "typed_mutation_audit.h"           // Issue #4598: production restore stays on mark-all
+#include "compiler/evo_log_4910.hh"         // Issue #4910: ast:restore → evolution log
 
 module aura.compiler.evaluator;
 
@@ -259,6 +260,28 @@ using types::make_primitive;
 using types::make_string;
 using types::make_vector;
 using types::make_void;
+
+// Issue #4910: ast:restore is a worldline ROLLBACK (evolution log).
+template <class F> auto evo_wrap_restore_4910(F body) {
+    return [body = std::move(body)](std::span<const EvalValue> a) -> EvalValue {
+        if (!aura::evo::log_enabled()) [[likely]]
+            return body(a);
+        const auto t0 = std::chrono::steady_clock::now();
+        EvalValue r = body(a);
+        const double ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
+                .count();
+        const std::string target =
+            (!a.empty() && is_int(a[0])) ? "snapshot:" + std::to_string(as_int(a[0])) : "";
+        const bool ok = !is_error(r) && !(is_bool(r) && !as_bool(r));
+        aura::evo::log_append({.kind = "ast:restore",
+                               .target = target,
+                               .decision = "ROLLBACK",
+                               .reason = ok ? "restored" : "restore failed",
+                               .dur_ms = ms});
+        return r;
+    };
+}
 
 void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                              std::function<void()> destroy_defuse_index,
@@ -806,6 +829,12 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
     // We try the direct path first; on failure (e.g. workspace
     // pool/flat is null, which shouldn't happen but be defensive)
     // we fall through to the source path.
+    // Issue #4910: temporarily route `add` through the evolution-log wrap so the
+    // registration stays a literal add("ast:restore", …) for the surface scanners.
+    const PrimRegistrar add_plain_4910 = add;
+    add = [add_plain_4910](std::string n, PrimFn f) {
+        add_plain_4910(std::move(n), PrimFn(evo_wrap_restore_4910(std::move(f))));
+    };
     add("ast:restore", [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
@@ -1275,6 +1304,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         }
         return make_bool(ok_fallback);
     });
+    add = add_plain_4910; // Issue #4910: restore the plain registrar
 
     // (ast:diff [id])
     //   → ((tag . line) ...)

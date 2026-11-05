@@ -30,6 +30,7 @@ module;
 #include "serve/fiber.h"                   // Issue #2237: aura_fiber_current_id
 #include "compiler/mutation_hold_budget.h" // Issue #3480: inbody poll + force-release counters
 #include "compiler/mutate_type_gate.hh"    // Issue #4357: light rebind stays off under hard gate
+#include "compiler/evo_log_4910.hh"        // Issue #4910: evolution log (worldline)
 
 module aura.compiler.evaluator;
 
@@ -48,6 +49,7 @@ import aura.compiler.hardware_backend;
 import aura.compiler.service; // Issue #1442: typed_mutate_atomic
 import aura.compiler.soa_view;
 import aura.compiler.macro_expansion; // Issue #3215: note_hygiene_last_limit_reason
+import aura.core.ast_unparse;         // Issue #4910: rebind old/new define text
 
 // Issue #1950: after module + imports so Evaluator/EvalValue are in scope.
 #include "compiler/mutation_guard_helpers.hh"
@@ -369,6 +371,12 @@ using types::make_primitive;
 using types::make_string;
 using types::make_vector;
 using types::make_void;
+
+// Issue #4910: outermost-mutate depth for the evolution log (a mutate body
+// that reaches another mutate:* is one worldline step, not several).
+namespace {
+    thread_local int g_evo_depth_4910 = 0;
+} // namespace
 
 namespace {
 
@@ -1274,7 +1282,102 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return;
         // Capture concrete op name for check_and_record_effect / isolation.
         auto op_name = std::make_shared<std::string>(std::move(name));
-        add(*op_name,
+        // Issue #4910: evolution-log step for one outermost mutate:* call.
+        // Stateless lambda in this friend scope (reads Evaluator internals);
+        // copied into every wrapped primitive.
+        const auto evo_call_4910 = [](Evaluator& ev, const std::string& op,
+                                      std::span<const EvalValue> a, auto&& call) -> EvalValue {
+            if (g_evo_depth_4910 > 0)
+                return call();
+            struct Depth {
+                Depth() { ++g_evo_depth_4910; }
+                ~Depth() { --g_evo_depth_4910; }
+            } depth;
+            auto str_arg = [&ev](const EvalValue& v) -> std::string {
+                if (!is_string(v))
+                    return {};
+                const auto idx = as_string_idx(v);
+                return idx < ev.string_heap_.size() ? std::string(ev.string_at(idx))
+                                                    : std::string();
+            };
+            auto define_src = [&ev](std::string_view name) -> std::string {
+                auto* flat = ev.workspace_flat_;
+                auto* pool = ev.workspace_pool_;
+                if (!flat || !pool || name.empty())
+                    return {};
+                aura::ast::NodeId found = aura::ast::NULL_NODE;
+                for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+                    if (flat->is_free_slot(id) || flat->tag(id) != aura::ast::NodeTag::Define)
+                        continue;
+                    const auto sym = flat->sym_id(id);
+                    if (sym != aura::ast::INVALID_SYM && pool->resolve(sym) == name)
+                        found = id;
+                }
+                if (found == aura::ast::NULL_NODE)
+                    return {};
+                aura::ast::UnparseOptions o;
+                o.define_fn_sugar = true;
+                return aura::ast::unparse_to_string(*flat, *pool, found, o);
+            };
+            std::string target = a.empty() ? std::string() : str_arg(a[0]);
+            if (target.empty() && !a.empty() && is_int(a[0]))
+                target = "node:" + std::to_string(as_int(a[0]));
+            const bool by_name = !target.empty() && !target.starts_with("node:");
+            const std::string old_src = by_name ? define_src(target) : std::string();
+            std::string new_src = a.size() > 1 ? str_arg(a[1]) : std::string();
+            const auto t0 = std::chrono::steady_clock::now();
+            EvalValue r = call();
+            const double ms =
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
+                    .count();
+            std::string decision = "KEEP";
+            std::string reason;
+            if (is_error(r)) {
+                decision = "ROLLBACK";
+                reason = "error";
+            } else if (is_bool(r) && !as_bool(r)) {
+                decision = "ROLLBACK";
+                reason = "returned #f";
+            } else if (is_pair(r)) {
+                // make_merr: (kind-string . (message-string . 0)).
+                const auto p = as_pair_idx(r);
+                if (p < ev.pairs_.size() && is_string(ev.pairs_[p].car) &&
+                    is_pair(ev.pairs_[p].cdr)) {
+                    const auto q = as_pair_idx(ev.pairs_[p].cdr);
+                    if (q < ev.pairs_.size() && is_string(ev.pairs_[q].car)) {
+                        decision = "ROLLBACK";
+                        reason = str_arg(ev.pairs_[p].car) + ": " + str_arg(ev.pairs_[q].car);
+                    }
+                }
+            }
+            if (decision == "KEEP" && by_name) {
+                if (auto now = define_src(target); !now.empty())
+                    new_src = std::move(now);
+            }
+            aura::evo::log_append({.kind = op,
+                                   .target = target,
+                                   .decision = decision,
+                                   .reason = reason,
+                                   .evidence_json = {},
+                                   .old_src = old_src,
+                                   .new_src = new_src,
+                                   .parent = {},
+                                   .dur_ms = ms});
+            return r;
+        };
+        // Issue #4910: `ade` = add + evolution-log wrap: every mutate:* lands
+        // in AURA_EVO_LOG when set (one acquire load when it is not). Same
+        // width as `add` so the body below keeps its indentation.
+        auto ade = [&add, &ev, op_name, evo_call_4910](std::string n, auto body) {
+            add(std::move(n),
+                [&ev, op_name, evo_call_4910,
+                 body = std::move(body)](std::span<const EvalValue> a) -> EvalValue {
+                    if (!aura::evo::log_enabled()) [[likely]]
+                        return body(a);
+                    return evo_call_4910(ev, *op_name, a, [&] { return body(a); });
+                });
+        };
+        ade(*op_name,
             [&ev, mev, fn, op_name, guard_exempt,
              unpack_stable_ref_arg](std::span<const EvalValue> a) -> EvalValue {
                 using aura::compiler::security::kCapMutate;
