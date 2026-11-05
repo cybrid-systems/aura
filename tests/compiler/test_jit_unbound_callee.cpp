@@ -134,7 +134,7 @@ int run_test_jit_unbound_callee_4607() {
         auto jit = svc.find("[[nodiscard]] EvalResult exec_jit(");
         CHECK(jit != std::string::npos, "AC3: exec_jit entry present");
         if (jit != std::string::npos) {
-            auto body = svc.substr(jit, 12000);
+            auto body = aura::test::aura_source_block_after(svc, jit);
             CHECK(body.find("if (!unbound_globals.empty())") != std::string::npos,
                   "AC3: exec_jit refuses to compile a program with an unresolved name");
             CHECK(body.find("evaluator_.eval_flat(") != std::string::npos,

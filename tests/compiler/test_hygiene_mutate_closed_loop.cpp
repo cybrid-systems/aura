@@ -6362,7 +6362,7 @@ static void ac3979_2_reexpand_truncate_not_depth0_gated() {
     const auto eef = read_file("src/compiler/evaluator_eval_flat.cpp");
     const auto fn = eef.find("Evaluator::post_mutation_macro_reexpand(");
     CHECK(fn != std::string::npos, "3979 AC2: post_mutation_macro_reexpand");
-    const auto win = eef.substr(fn, 18000);
+    const auto win = aura::test::aura_source_block_after(eef, fn);
     const auto ckpt = win.find("rest_spine_pending ? rest_spine_ckpt : flat.size()");
     CHECK(ckpt != std::string::npos, "3979 AC2: clone_ckpt snapshot in reexpand");
     const auto inner = win.find("expand_inner_macros(&flat, &pool, expanded, 0, 10,");

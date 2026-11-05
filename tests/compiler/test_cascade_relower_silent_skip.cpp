@@ -222,7 +222,7 @@ int run_test_cascade_relower_silent_skip() {
         CHECK(!svc.empty(), "3484 AC1: service.ixx readable");
         const auto peel = svc.find("std::size_t relower_dirty_defines_from_workspace()");
         CHECK(peel != std::string::npos, "3484 AC1: peel found");
-        const auto peel_win = svc.substr(peel, 18000);
+        const auto peel_win = aura::test::aura_source_block_after(svc, peel);
         CHECK(peel_win.find("Issue #3484") != std::string::npos, "3484 AC1: peel cites #3484");
         CHECK(peel_win.find("zero_mask_forced_full") != std::string::npos,
               "3484 AC1: zero-mask fail-closed flag");
@@ -231,7 +231,7 @@ int run_test_cascade_relower_silent_skip() {
         CHECK(peel_win.find("++ok") != std::string::npos, "3484 AC3: Soft ++ok skip retained");
         const auto rb = svc.find("bool relower_define_blocks(");
         CHECK(rb != std::string::npos, "3484 AC2: relower_define_blocks");
-        const auto rb_win = svc.substr(rb, 22000);
+        const auto rb_win = aura::test::aura_source_block_after(svc, rb);
         CHECK(rb_win.find("Issue #3484") != std::string::npos, "3484 AC2: instr peel cites #3484");
         CHECK(rb_win.find("production_instr") != std::string::npos ||
                   rb_win.find("pass-only is not an AST-rooted rewrite") != std::string::npos,
