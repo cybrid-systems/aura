@@ -5315,6 +5315,32 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
     }
     flat.restamp_all_node_generations();
     invalidate_tag_arity_index();
+    // Issue #4935: the next eval-current specializes a define from
+    // function_sources_, not from the flat. rebind republishes that row and
+    // marks the define dirty (see the #4324/#3918 block below); this batch
+    // primitive used to leave both on the pre-batch body, so query:code showed
+    // the replacement while (f) still called the old closure. Publish the
+    // owning define of every dirty parent the same way.
+    for (auto pid : dirty_parents) {
+        auto cur = pid;
+        for (int hop = 0; hop < 64 && cur != aura::ast::NULL_NODE && cur < flat.size(); ++hop) {
+            if (flat.is_free_slot(cur))
+                break;
+            if (flat.tag(cur) == aura::ast::NodeTag::Define) {
+                const auto name = workspace_pool_->resolve(flat.sym_id(cur));
+                if (!name.empty()) {
+                    const std::string define_src =
+                        aura::ast::unparse_to_string(flat, *workspace_pool_, cur);
+                    if (update_function_source_fn_ && !define_src.empty())
+                        update_function_source_fn_(std::string(name), define_src);
+                    if (mark_define_dirty_fn_)
+                        mark_define_dirty_fn_(std::string(name));
+                }
+                break;
+            }
+            cur = flat.parent_of(cur);
+        }
+    }
     // Issue #1696: multi-node op — NULL_NODE sentinel, not NodeId 0.
     flat.add_mutation(aura::ast::NULL_NODE, "replace-pattern", pattern_str, repl_template, summary);
     return make_bool(true);

@@ -6386,6 +6386,32 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // mutate:replace-pattern return only live nodes.
         ev.invalidate_tag_arity_index();
 
+        // Issue #4935: eval-current specializes a define from
+        // function_sources_, not from the flat, so publish the owning define of
+        // every dirty parent and mark it dirty (mutate:rebind does the same).
+        // Without this the replacement shows up in query:code while the
+        // already-materialized closure keeps running the old body.
+        for (auto pid : dirty_parents) {
+            auto cur = pid;
+            for (int hop = 0; hop < 64 && cur != NULL_NODE && cur < flat.size(); ++hop) {
+                if (flat.is_free_slot(cur))
+                    break;
+                if (flat.tag(cur) == NodeTag::Define) {
+                    const auto name = ev.workspace_pool_->resolve(flat.sym_id(cur));
+                    if (!name.empty()) {
+                        const std::string define_src =
+                            aura::ast::unparse_to_string(flat, *ev.workspace_pool_, cur);
+                        if (ev.update_function_source_fn_ && !define_src.empty())
+                            ev.update_function_source_fn_(std::string(name), define_src);
+                        if (ev.mark_define_dirty_fn_)
+                            ev.mark_define_dirty_fn_(std::string(name));
+                    }
+                    break;
+                }
+                cur = flat.parent_of(cur);
+            }
+        }
+
         // Issue #1696: multi-node op — log under NULL_NODE, not 0
         // (0 is a real NodeId; NULL_NODE = ~0u is the multi-op sentinel).
         flat.add_mutation(NULL_NODE, "replace-pattern", pattern_str, repl_template, summary);
