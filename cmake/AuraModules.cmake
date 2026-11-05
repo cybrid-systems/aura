@@ -2,6 +2,11 @@
 # Issue #475: single source of truth — adding a module file edits one place.
 
 set(AURA_CXX_MODULE_CORE
+    # Issue #901/#905: numeric constants shared with .cpp consumers.
+    # Module units cannot include hash_meta.h/basis_points.h in their GMF
+    # when importers also include them textually, so this module carries the
+    # same values under aura::core::consts (equality is tested).
+    src/core/consts.ixx
     src/core/arena.ixx
     src/core/concepts.ixx
     # Issue #1885: layering / dependency DAG / cross-layer contracts

@@ -20,6 +20,7 @@ module;
 export module aura.compiler.type_checker;
 
 import std;
+import aura.core.consts; // module-owned numeric constants (#901/#905)
 import aura.core;
 import aura.core.type;
 import aura.diag;
@@ -3551,7 +3552,7 @@ export struct TypeChecker {
         std::uint64_t live_fp = 0;
         const auto& goals = solve_delta_cs_.occurrence_goals_for_test();
         if (!goals.empty()) {
-            std::uint64_t acc = 0xcbf29ce484222325ULL;
+            std::uint64_t acc = ::aura::core::consts::kFnvOffsetBasis;
             const auto n = goals.size() < kProofGoalFingerprintMaxGoals
                                ? goals.size()
                                : kProofGoalFingerprintMaxGoals;
@@ -3769,15 +3770,15 @@ public:
         std::uint64_t h = 1469598103934665603ull; // FNV-1a 64-bit offset
         for (const auto& c : cs) {
             h ^= static_cast<std::uint64_t>(c.kind);
-            h *= 1099511628211ull;
+            h *= ::aura::core::consts::kFnvPrime;
             h ^= static_cast<std::uint64_t>(c.lhs.index);
-            h *= 1099511628211ull;
+            h *= ::aura::core::consts::kFnvPrime;
             h ^= static_cast<std::uint64_t>(c.rhs.index);
-            h *= 1099511628211ull;
+            h *= ::aura::core::consts::kFnvPrime;
         }
         // Mix in the count so an empty set ≠ 1-element set ≠ 2-element set.
         h ^= static_cast<std::uint64_t>(cs.size());
-        h *= 1099511628211ull;
+        h *= ::aura::core::consts::kFnvPrime;
         return h;
     }
     // Issue #1407 R1: hash a single AST node's "type-relevant

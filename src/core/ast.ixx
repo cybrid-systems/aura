@@ -40,6 +40,7 @@ module;
 
 export module aura.core.ast;
 import std;
+import aura.core.consts; // module-owned numeric constants (#901/#905)
 import aura.core.type;
 import aura.core.mutation;
 import aura.core.concepts;
@@ -597,10 +598,10 @@ private:
 private:
     static std::uint64_t hash_str(std::string_view s) {
         // FNV-1a
-        std::uint64_t h = 0xCBF29CE484222325ull;
+        std::uint64_t h = ::aura::core::consts::kFnvOffsetBasis;
         for (auto c : s) {
             h ^= static_cast<std::uint8_t>(c);
-            h *= 0x100000001B3ull;
+            h *= ::aura::core::consts::kFnvPrime;
         }
         return h;
     }
