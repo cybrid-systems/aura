@@ -97,7 +97,10 @@ int run_test_replace_pattern_multi_match_nodeid_stability() {
 
         auto lpos = flat_src.find("eval_flat_apply_mutate_replace_pattern");
         CHECK(lpos != std::string::npos, "AC1: lockless helper");
-        auto lwin = flat_src.substr(lpos, 12000);
+        // Bounded probe on purpose: lpos is the first mention of the lockless
+        // helper, so the window must stay local to it.
+        constexpr std::size_t kLocklessHelperWindowChars = 12000;
+        auto lwin = flat_src.substr(lpos, kLocklessHelperWindowChars);
         CHECK(lwin.find("Issue #2800") != std::string::npos, "AC1: lockless cites #2800");
         CHECK(lwin.find("make_ref_layout") != std::string::npos, "AC1: make_ref_layout");
         CHECK(lwin.find("is_valid_in") != std::string::npos, "AC1: is_valid_in");

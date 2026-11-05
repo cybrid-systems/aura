@@ -191,7 +191,6 @@
     "tests/compiler/test_atomic_batch_core_batch.cpp": 1,
     "tests/compiler/test_atomic_batch_move_noop.cpp": 1,
     "tests/compiler/test_atomic_batch_replace_pattern_sibling.cpp": 4,
-    "tests/compiler/test_atomic_batch_rollback_metric_noise.cpp": 1,
     "tests/compiler/test_audit_mutation_id_unify.cpp": 2,
     "tests/compiler/test_aura_jit_unused_fn_lock.cpp": 1,
     "tests/compiler/test_bidirectional_match_check.cpp": 1,
