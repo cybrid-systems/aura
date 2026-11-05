@@ -3921,7 +3921,14 @@ endif()
 # link) so the fixture binary carries exactly one instantiation of the
 # inline policy chain. Non-pack Soft face:
 # test_tree_walker_fallback_strict.cpp (test_ir_closure_jit_misc_batch).
-add_executable(test_pack_pipeline_strict tests/compiler/test_pack_pipeline_strict.cpp)
+# Issue #4929: pipeline_policy.hh's inline tree_walker_fallback_policy()
+# calls aura::messaging::offload_private_eval_active(), whose definition
+# lives in messaging_bridge_impl.cpp. This fixture links no object library,
+# so carry that TU (the header-only claim predates #4888).
+add_executable(test_pack_pipeline_strict
+    tests/compiler/test_pack_pipeline_strict.cpp
+    src/compiler/messaging_bridge_impl.cpp)
+set_property(TARGET test_pack_pipeline_strict PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_pack_pipeline_strict PRIVATE src)
 target_compile_definitions(test_pack_pipeline_strict PRIVATE AURA_PRODUCTION_PACK=1)
 aura_test_compile_options(test_pack_pipeline_strict)
