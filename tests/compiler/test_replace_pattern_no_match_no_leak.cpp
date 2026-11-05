@@ -63,7 +63,10 @@ int run_test_replace_pattern_no_match_no_leak() {
         auto lpos = flat.find("eval_flat_apply_mutate_replace_pattern");
         CHECK(lpos != std::string::npos, "AC1: lockless helper");
         // #2800/#2802 two-phase + nest-safe; #3664 MatchSub lengthened matcher.
-        auto lwin = flat.substr(lpos, 16000);
+        // Bounded probe on purpose: lpos is the first mention of the lockless
+        // helper (declaration or call site), so the window must stay local.
+        constexpr std::size_t kLocklessHelperWindowChars = 16000;
+        auto lwin = flat.substr(lpos, kLocklessHelperWindowChars);
         CHECK(lwin.find("Issue #2798") != std::string::npos, "AC1: lockless cites #2798");
         CHECK(lwin.find("free_orphan_nodes_from") != std::string::npos,
               "AC1: lockless free_orphan_nodes_from");

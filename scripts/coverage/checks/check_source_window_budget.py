@@ -9,6 +9,10 @@ brace-matched bodies (aura::test::aura_source_block_after /
 scripts/coverage/checks/_source_scan.py); this gate freezes what is left so
 new windows cannot accumulate.
 
+A window may be spelled as a named constant, but the name must end in
+`WindowChars` (k<Thing>WindowChars): those are counted too, so naming is
+documentation for the reader, not an escape hatch for the gate.
+
 Policy: a file may keep or shrink its existing window count; exceeding the
 baseline fails and names the new lines. Prefer the brace helpers instead.
 """
@@ -32,7 +36,7 @@ CHECKER_DIR = "scripts/coverage/checks"
 WINDOW_MIN = 1500  # a body window; shorter budgets are local near-anchor probes
 
 SUFFIXES = (".cpp", ".hpp", ".hh")
-CXX_WINDOW_RE = re.compile(r"\.substr\(\s*[^,]+,\s*(\d+)\s*\)")
+CXX_WINDOW_RE = re.compile(r"\.substr\(\s*[^,]+,\s*(?:(\d+)|(k[A-Za-z0-9_]*Window[A-Za-z0-9_]*))\s*\)")
 PY_WINDOW_RE = re.compile(r"\[\s*\w+\s*:\s*\w+\s*\+\s*(\d+)\s*\]")
 
 
@@ -48,7 +52,8 @@ def _scan() -> dict[str, list[str]]:
             rel = str(path.relative_to(ROOT))
             for lineno, line in enumerate(path.read_text(errors="ignore").splitlines(), 1):
                 for match in CXX_WINDOW_RE.finditer(line):
-                    if int(match.group(1)) >= WINDOW_MIN:
+                    named = match.group(2)
+                    if named or int(match.group(1)) >= WINDOW_MIN:
                         found.setdefault(rel, []).append(f"{rel}:{lineno}: {line.strip()}")
     checks = ROOT / CHECKER_DIR
     if checks.is_dir():

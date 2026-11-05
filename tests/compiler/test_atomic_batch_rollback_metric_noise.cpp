@@ -95,20 +95,20 @@ int run_test_atomic_batch_rollback_metric_noise() {
         std::println("\n--- AC1: abort path skips linear_post_mutate_enforce_all ---");
         auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
         CHECK(!mut.empty(), "AC1: mutate readable");
-        auto pos = mut.find("add_mutate(\"mutate:atomic-batch\"");
-        if (pos == std::string::npos)
-            pos = mut.find("mutate:atomic-batch");
+        // The registration moved off add_mutate(...) to a bare name row, so the
+        // old 22000-char window started at an unrelated comment 300KB away.
+        // Anchor on the quoted name and take the handler lambda's body.
+        auto pos = mut.find("\"mutate:atomic-batch\",");
         CHECK(pos != std::string::npos, "AC1: atomic-batch present");
-        auto win = mut.substr(pos, 22000);
+        auto win = pos == std::string::npos ? std::string{}
+                                            : aura::test::aura_source_block_after(mut, pos);
         CHECK(win.find("Issue #2796") != std::string::npos, "AC1: cites #2796");
         CHECK(win.find("abort_batch_workspace") != std::string::npos, "AC1: abort helper");
         // Helper body must not call enforce_all (only comments may mention it).
         auto hpos = win.find("auto abort_batch_workspace");
         CHECK(hpos != std::string::npos, "AC1: helper pos");
-        auto hend = win.find("while (is_pair(op_list))", hpos);
-        if (hend == std::string::npos)
-            hend = hpos + 800;
-        auto hbody = win.substr(hpos, hend - hpos);
+        auto hbody = hpos == std::string::npos ? std::string{}
+                                               : aura::test::aura_source_block_after(win, hpos);
         // Strip comments: no live call of enforce_all in helper.
         CHECK(hbody.find("linear_post_mutate_enforce_all()") != std::string::npos,
               "AC1: comment documents skip");
