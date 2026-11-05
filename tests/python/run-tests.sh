@@ -1421,7 +1421,13 @@ _file_4931_small_stack() {
   (display "TC2 ") (write (typecheck-incremental)) (newline))
 (main)
 '
-    soft=$( ( ulimit -s 512
+    # ASAN's instrumentation inflates stack frames enough that even `main`
+    # overflows a 512K stack at startup (seen in asan-build). Keep the 512K
+    # regression on the release binary; under ASAN use a normal stack — ASAN
+    # still reports the UAF this case was written for.
+    local stack_kb=512
+    [ "$AURA_ASAN" = 1 ] && stack_kb=16384
+    soft=$( ( ulimit -s "$stack_kb"
               AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 25 "$AURA" -e "$src" ) 2>"$dir/err" )
     errs=$(cat "$dir/err" 2>/dev/null || true)
     if printf '%s\n' "$soft" | grep -q 'CALL1 (raised' \
@@ -1442,6 +1448,13 @@ _file_4931_small_stack
 # it now says "stack exhaustion" with the used depth. Force the overflow with
 # a recursion deeper than a 512K stack holds before the depth guard trips.
 _file_4931_stack_report() {
+    # ASAN installs its own SIGSEGV handler and prints its own stack-overflow
+    # report, so the AURA CRASH classifier never runs. The release suite
+    # (build-test) exercises this path; skip only the ASAN variant.
+    if [ "$AURA_ASAN" = 1 ]; then
+        echo "  ↷  4931-stack-exhaustion-report: SKIPPED — ASAN owns SIGSEGV (release suite covers)"
+        return
+    fi
     local dir errs
     dir=$(mktemp -d /tmp/aura-4931so.XXXXXX)
     ( ulimit -s 512
