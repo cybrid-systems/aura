@@ -8,6 +8,8 @@ namespace aura::compiler {
 
 // 10000 = 100.00%. Use for all (num*scale)/den percentage fields.
 inline constexpr std::int64_t kBasisPointScale = 10000;
+// Floating-point form for ratio math computed in double (same value).
+inline constexpr double kBasisPointScaleF = static_cast<double>(kBasisPointScale);
 
 // Basis-point rate for a measured population. An empty denominator means
 // "no samples yet", so the result is 0 (no data), never a vacuous 100%.
