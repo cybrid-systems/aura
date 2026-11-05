@@ -537,9 +537,7 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
             std::uint64_t h = ::aura::compiler::hash::kFnvOffsetBasis;
             for (const char* p = k; *p; ++p)
                 h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::hash::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
+            const auto fp = ::aura::compiler::hash::fingerprint(h);
             // Issue #1397: string_heap_ push_back atomic — hoist the
             // size() + push_back() out of an inner block so `kidx` is
             // visible to the `make_string(kidx).val` call below.
@@ -551,7 +549,7 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
             auto hcap = ht->capacity;
             for (std::size_t at = 0; at < hcap; ++at) {
                 auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
+                if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                     meta[idx] = fp;
                     keys[idx] = make_string(kidx).val;
                     vals[idx] = make_int(v).val;

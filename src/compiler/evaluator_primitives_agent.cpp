@@ -975,15 +975,13 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE;
+                    const auto fp = ::aura::compiler::hash::fingerprint(h);
                     auto kidx = ev.push_string_heap(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
                         auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                             meta[idx] = fp;
                             keys[idx] = key_ev.val;
                             vals[idx] = v.val;
@@ -2865,15 +2863,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
+                const auto fp = ::aura::compiler::hash::fingerprint(h);
                 auto kidx = ev.push_string_heap(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto slot = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[slot] == 0xFF) {
+                    if (meta[slot] == ::aura::compiler::hash::kEmptySlot) {
                         meta[slot] = fp;
                         keys[slot] = key_ev.val;
                         vals[slot] = v.val;
@@ -3748,15 +3744,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (char c : k)
                 h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
+            const auto fp = ::aura::compiler::hash::fingerprint(h);
             auto kidx = ev.push_string_heap(k);
             EvalValue key_ev = make_string(kidx);
             bool inserted = false;
             for (std::size_t at = 0; at < hcap; ++at) {
                 auto slot = ((h >> 1) + at) & (hcap - 1);
-                if (meta[slot] == 0xFF) {
+                if (meta[slot] == ::aura::compiler::hash::kEmptySlot) {
                     meta[slot] = fp;
                     keys[slot] = key_ev.val;
                     vals[slot] = v.val;
