@@ -24,6 +24,7 @@ module;
 #include "serve/fiber.h"
 #include "core/workspace_epoch.hh"
 #include "compiler/locked_string_heap.hh" // LockedStringHeap for the name helper
+#include "hash_meta.h"                    // FNV constants (#901)
 // #4715: header-only overlay data layer. Included in the GLOBAL module
 // fragment: it only declares templates (no EvalValue), so it needs no
 // module import, and including <algorithm>/<mutex> after `import std`
@@ -138,15 +139,13 @@ namespace {
         auto keys = ht->keys();
         auto vals = ht->values();
         auto put = [&](std::string_view k, const EvalValue& v) {
-            std::uint64_t h = 0xcbf29ce484222325ULL;
+            std::uint64_t h = ::aura::compiler::hash::kFnvOffsetBasis;
             for (unsigned char c : k)
-                h = (h ^ c) * 0x100000001b3ULL;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
+                h = (h ^ c) * ::aura::compiler::hash::kFnvPrime;
+            const auto fp = ::aura::compiler::hash::fingerprint(h);
             for (std::size_t at = 0; at < ht->capacity; ++at) {
                 const auto idx = ((h >> 1) + at) & (ht->capacity - 1);
-                if (meta[idx] != 0xFF)
+                if (meta[idx] != ::aura::compiler::hash::kEmptySlot)
                     continue;
                 meta[idx] = fp;
                 keys[idx] =

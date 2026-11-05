@@ -68,15 +68,13 @@ namespace {
             std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
             for (char c : k)
                 h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
+            const auto fp = ::aura::compiler::hash::fingerprint(h);
             // Use public helper — anonymous helpers are not friends of Evaluator.
             const auto kidx = static_cast<std::uint64_t>(ev.push_string_heap(k));
             bool inserted = false;
             for (std::size_t at = 0; at < hcap; ++at) {
                 auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
+                if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                     meta[idx] = fp;
                     keys[idx] = make_string(kidx).val;
                     vals[idx] = v.val;
