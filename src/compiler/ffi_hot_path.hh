@@ -17,6 +17,7 @@
 #include <string>
 #include <string_view>
 
+#include "hash_meta.h" // FNV constants (#901)
 // Issue #195: C ABI — 0 when no fiber (host thread / tests).
 extern "C" std::uint64_t aura_fiber_current_id();
 
@@ -127,10 +128,10 @@ inline FFIBatchHotPathStats& g_ffi_hot_path_stats() noexcept {
 // FNV-1a 64 — stable for binding name / signature hashing.
 [[nodiscard]] inline std::uint64_t ffi_sig_hash(std::string_view name,
                                                 std::string_view signature = {}) noexcept {
-    std::uint64_t h = 14695981039346656037ull;
+    std::uint64_t h = ::aura::compiler::hash::kFnvOffsetBasis;
     auto mix = [&](unsigned char c) {
         h ^= c;
-        h *= 1099511628211ull;
+        h *= ::aura::compiler::hash::kFnvPrime;
     };
     for (char c : name)
         mix(static_cast<unsigned char>(c));

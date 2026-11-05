@@ -33,6 +33,7 @@
 #include <utility>
 #include <vector>
 
+#include "hash_meta.h" // FNV constants (#901)
 namespace aura::compiler::jit_assume {
 
 enum class Kind : std::uint8_t { Define = 1, Fingerprint = 2, GlobalEpoch = 3 };
@@ -273,7 +274,7 @@ struct Fnv {
         const auto* b = static_cast<const unsigned char*>(p);
         for (std::size_t i = 0; i < n; ++i) {
             h ^= b[i];
-            h *= 1099511628211ULL;
+            h *= ::aura::compiler::hash::kFnvPrime;
         }
     }
     void u64(std::uint64_t v) noexcept { bytes(&v, sizeof v); }

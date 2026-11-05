@@ -21,6 +21,7 @@ module;
 #include "compiler/typed_mutation_audit.h" // Issue #2277: typed_audit namespace + g_typed_mutation_audit_counters (C++20 modules do NOT transit .ixx purview includes to .cpp impl units, so include directly here).
 #include "compiler/mutate_type_gate.hh"    // Issue #4363: GMF so is_hard() shares the process gate
 
+#include "hash_meta.h" // FNV constants (#901)
 module aura.compiler.type_checker;
 import std;
 import aura.core.mutation;
@@ -3855,7 +3856,7 @@ std::uint64_t ConstraintSystem::compute_dirty_set_hash() const {
     std::uint64_t h = 1469598103934665603ull; // FNV offset basis
     auto mix = [&h](std::uint64_t v) {
         h ^= v;
-        h *= 1099511628211ull; // FNV prime
+        h *= ::aura::compiler::hash::kFnvPrime; // FNV prime
     };
     for (std::size_t i = 0; i < constraint_dirty_.size(); ++i) {
         if (constraint_dirty_[i] && i < constraints_.size()) {
@@ -3877,7 +3878,7 @@ std::uint64_t ConstraintSystem::compute_vars_hash() const {
     std::uint64_t h = 1469598103934665603ull;
     auto mix = [&h](std::uint64_t v) {
         h ^= v;
-        h *= 1099511628211ull;
+        h *= ::aura::compiler::hash::kFnvPrime;
     };
     // parent_ / binding_ / rank_ are the #4310 test mirror (usually empty
     // in a real solve). The solver state is uf_sparse_, mixed in index
@@ -8447,15 +8448,15 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
         }
         // Issue #2564: record ADT match goal for Soft delta reverify roots.
         if (exh.checked && subject_type.valid()) {
-            std::uint64_t covered_hash = 0xcbf29ce484222325ull; // FNV offset
+            std::uint64_t covered_hash = ::aura::compiler::hash::kFnvOffsetBasis; // FNV offset
             if (auto* mi = flat.get_match_info(node_id)) {
                 for (auto s : mi->used_constructors) {
                     covered_hash ^= static_cast<std::uint64_t>(s);
-                    covered_hash *= 0x100000001b3ull;
+                    covered_hash *= ::aura::compiler::hash::kFnvPrime;
                 }
                 if (mi->has_wildcard) {
                     covered_hash ^= 0x5full;
-                    covered_hash *= 0x100000001b3ull;
+                    covered_hash *= ::aura::compiler::hash::kFnvPrime;
                 }
             }
             cs_.note_adt_match_goal(static_cast<std::uint32_t>(node_id), subject_type.index,
@@ -13637,7 +13638,7 @@ std::vector<aura::ast::NodeId> affected_subtree_for_symbol(const aura::ast::Flat
 // miss, never a wrong type.
 namespace aura_issue_1407_detail {
     constexpr std::uint64_t kFnvOffset = 1469598103934665603ull;
-    constexpr std::uint64_t kFnvPrime = 1099511628211ull;
+    constexpr std::uint64_t kFnvPrime = ::aura::compiler::hash::kFnvPrime;
     constexpr std::uint32_t kMaxShapeDepth = 8;
 } // namespace aura_issue_1407_detail
 

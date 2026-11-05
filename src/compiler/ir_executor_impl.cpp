@@ -27,6 +27,7 @@ module;
 #include "compiler/user_arity.hh"          // Issue #4467: call-site procedure arity
 #include "compiler/locked_string_heap.hh" // Issue #4608: the IR reads strings from the evaluator heap
 #include "compiler/ir_inflight_roots.hh" // Issue #4617: IR frame roots for the TW reclaim
+#include "hash_meta.h"                   // FNV constants (#901)
 // Issue #4568: this TU owns the feedback row map. The macro must be
 // set before the include so the definition arrives via the header
 // (a global module fragment may only contain preprocessor inclusion).
@@ -1427,17 +1428,17 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
             info.nblocks = static_cast<std::uint32_t>(func.blocks.size());
             if (info.nblocks > feedback::kMaxBlocks)
                 info.nblocks = feedback::kMaxBlocks;
-            std::uint64_t h = 14695981039346656037ull;
+            std::uint64_t h = ::aura::compiler::hash::kFnvOffsetBasis;
             std::uint32_t cursor = 0;
             for (std::uint32_t bi = 0; bi < func.blocks.size(); ++bi) {
                 if (bi < info.nblocks)
                     info.bases[bi] = cursor;
                 for (const auto& ins : func.blocks[bi].instructions) {
                     h ^= static_cast<std::uint64_t>(ins.opcode);
-                    h *= 1099511628211ull;
+                    h *= ::aura::compiler::hash::kFnvPrime;
                     for (int k = 0; k < 4; ++k) {
                         h ^= ins.operands[k];
-                        h *= 1099511628211ull;
+                        h *= ::aura::compiler::hash::kFnvPrime;
                     }
                     ++cursor;
                 }

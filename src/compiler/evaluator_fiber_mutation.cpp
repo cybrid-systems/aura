@@ -44,6 +44,7 @@ module;
 #include <memory>   // Issue #1880: unique_ptr for soft-path sentinel
 #include <optional> // Issue #2555: optional TransactionGuard for orch agent body
 
+#include "hash_meta.h" // FNV constants (#901)
 module aura.compiler.evaluator;
 
 import std;
@@ -2969,7 +2970,7 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
             steal_goal_truth_2910.fingerprint_overflow =
                 goals.size() > typed_audit::kProofGoalFingerprintMaxGoals;
             if (!goals.empty()) {
-                std::uint64_t hmix = 0xcbf29ce484222325ULL;
+                std::uint64_t hmix = ::aura::compiler::hash::kFnvOffsetBasis;
                 const std::size_t n = goals.size() < typed_audit::kProofGoalFingerprintMaxGoals
                                           ? goals.size()
                                           : typed_audit::kProofGoalFingerprintMaxGoals;
