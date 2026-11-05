@@ -333,6 +333,8 @@ auto capture_stdout_during(Fn&& fn)
                 try {
                     drain.join();
                 } catch (...) {
+                    // [SILENCE-PRIM-#4936] join failed (EDEADLK/EINVAL): the
+                    // drain thread is already gone; stdout is restored above.
                 }
             }
             if (read_fd >= 0) {

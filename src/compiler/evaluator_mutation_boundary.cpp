@@ -100,6 +100,7 @@ import aura.compiler.dirty_propagation;
 
 #include <cassert>
 #include <chrono>
+#include <ranges>
 #include <cstdlib>
 #include <memory>
 #include <mutex>
@@ -1434,6 +1435,9 @@ void Evaluator::enter_mutation_boundary() {
     // the dtor see it. Lightweight checkpoints stay off this path —
     // flush treats lightweight as an AST change.
     cp.heap_slot_only = heap_slot_enter && !lightweight;
+    // Issue #4936: the enter restamp below needs these after cp is moved.
+    const auto entry_version = cp.version;
+    const auto entry_mutation_log_size = cp.mutation_log_size;
     active_mutation_stack().push_back(std::move(cp));
     // Issue #3102: AC2 — open the per-boundary TLS tracker so apply_coercion_map
     // pushes nodes that the abort path can consume + force-dirty. depth>0
@@ -1474,7 +1478,7 @@ void Evaluator::enter_mutation_boundary() {
         // Issue #4730: bump + ride in one shard-barrier critical section.
         // Issue #189: the total-mutations counter (stats-only, relaxed) is
         // bumped by the same helper.
-        (void)bump_defuse_and_restamp(cp.version, cp.mutation_log_size);
+        (void)bump_defuse_and_restamp(entry_version, entry_mutation_log_size);
     }
 }
 // Exit a mutation boundary. Pops the checkpoint. If success
@@ -2125,7 +2129,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     // running Agent scenarios). Cheap when under threshold.
     // #2201: also stamp high-water + pressure for Agent closed-loop.
     if (success && workspace_flat_) {
-        static constexpr std::size_t kCompactThreshold = 64 * 1024; // entries
+        static constexpr std::size_t kCompactThreshold = 64uz * 1024; // entries
         const auto log_sz = workspace_flat_->mutation_log_size();
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
             auto hw = m->mutation_log_high_water.load(std::memory_order_relaxed);
@@ -8211,14 +8215,13 @@ std::uint64_t Evaluator::save_hygiene_checkpoint_handle() noexcept {
     // Reserve slot 0 as a sentinel "invalid"; real ids start at 1.
     if (hygiene_checkpoints_.empty())
         hygiene_checkpoints_.resize(16, std::nullopt);
-    std::size_t slot = 0;
-    for (std::size_t i = 0; i < hygiene_checkpoints_.size(); ++i) {
-        if (!hygiene_checkpoints_[i].has_value()) {
-            slot = i;
-            break;
-        }
-    }
-    if (slot == 0) {
+    // Issue #4936: "no free slot" is its own state. Slot 0 is a valid slot
+    // (handle 1); using 0 as the not-found sentinel evicted a live
+    // checkpoint whenever slot 0 was the free one.
+    const auto free_it = std::ranges::find_if(
+        hygiene_checkpoints_, [](const auto& c) noexcept { return !c.has_value(); });
+    std::size_t slot = static_cast<std::size_t>(free_it - hygiene_checkpoints_.begin());
+    if (free_it == hygiene_checkpoints_.end()) {
         // All slots used; reclaim the lowest-id valid one (oldest
         // checkpoint is least likely to be restored by an Agent
         // mid-session — typical pattern is save → restore within
@@ -8226,9 +8229,9 @@ std::uint64_t Evaluator::save_hygiene_checkpoint_handle() noexcept {
         std::size_t victim = 0;
         std::uint64_t best_age = std::numeric_limits<std::uint64_t>::max();
         for (std::size_t i = 0; i < hygiene_checkpoints_.size(); ++i) {
-            if (hygiene_checkpoints_[i].has_value()) {
+            if (const auto& c = hygiene_checkpoints_[i]) {
                 // Approximate age by saved_defuse_version (older = smaller).
-                const auto v = hygiene_checkpoints_[i]->saved_defuse_version;
+                const auto v = c->saved_defuse_version;
                 if (v < best_age) {
                     best_age = v;
                     victim = i;
@@ -8250,12 +8253,17 @@ bool Evaluator::restore_hygiene_checkpoint_handle(std::uint64_t handle) noexcept
         return false;
     }
     const std::size_t slot = static_cast<std::size_t>(handle) - 1;
-    if (slot >= hygiene_checkpoints_.size() || !hygiene_checkpoints_[slot].has_value()) {
+    if (slot >= hygiene_checkpoints_.size()) {
         bump_hygiene_checkpoint_restore_fail_total();
         return false;
     }
-    HygieneCheckpoint cp = std::move(*hygiene_checkpoints_[slot]);
-    hygiene_checkpoints_[slot].reset();
+    auto& held = hygiene_checkpoints_[slot];
+    if (!held) {
+        bump_hygiene_checkpoint_restore_fail_total();
+        return false;
+    }
+    HygieneCheckpoint cp = std::move(*held);
+    held.reset();
     return restore_hygiene_checkpoint(cp);
 }
 
@@ -8274,9 +8282,12 @@ Evaluator::restore_would_demote_macro_introduced(std::uint64_t handle) const noe
     if (handle == 0 || !workspace_flat_)
         return aura::ast::NULL_NODE;
     const std::size_t slot = static_cast<std::size_t>(handle) - 1;
-    if (slot >= hygiene_checkpoints_.size() || !hygiene_checkpoints_[slot].has_value())
+    if (slot >= hygiene_checkpoints_.size())
         return aura::ast::NULL_NODE;
-    const auto& cp = *hygiene_checkpoints_[slot];
+    const auto& held = hygiene_checkpoints_[slot];
+    if (!held)
+        return aura::ast::NULL_NODE;
+    const auto& cp = *held;
     if (!cp.valid || workspace_flat_->generation() != cp.saved_flat_generation)
         return aura::ast::NULL_NODE;
     const auto& saved = cp.meta.marker;
@@ -9117,8 +9128,7 @@ bool Evaluator::densify_apply_container_remap_(const std::unordered_set<void*>& 
         const bool skip_if_live_dest = check_value_slots && densify_live_containers_prerewritten_;
         std::unordered_set<void*> dests;
         dests.reserve(remap.size());
-        for (const auto& [old, neu] : remap) {
-            (void)old;
+        for (void* neu : remap | std::views::values) { // #4936: set build, order-free
             if (neu)
                 dests.insert(neu);
         }

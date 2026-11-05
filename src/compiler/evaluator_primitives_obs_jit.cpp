@@ -1702,7 +1702,8 @@ void ObservabilityPrims::register_jit_p10(PrimRegistrar add, Evaluator& ev) {
         std::string out;
         auto fmt_arena = [&](const char* label, std::size_t used, std::size_t cap) {
             auto s = std::format("{}{}:{:.1f}MB/{:.1f}MB", out.empty() ? "" : ";", label,
-                                 used / 1048576.0, cap / 1048576.0);
+                                 static_cast<double>(used) / 1048576.0,
+                                 static_cast<double>(cap) / 1048576.0);
             out += s;
         };
         if (ev.arena_) {
@@ -1745,8 +1746,8 @@ void ObservabilityPrims::register_jit_p10(PrimRegistrar add, Evaluator& ev) {
         double total_used = 0.0, total_cap = 0.0;
         if (ev.arena_) {
             auto s = ev.arena_->stats();
-            double u = s.used / 1048576.0;
-            double c = s.capacity / 1048576.0;
+            double u = static_cast<double>(s.used) / 1048576.0;
+            double c = static_cast<double>(s.capacity) / 1048576.0;
             snaps.push_back({"main", u, c, c > 0 ? static_cast<int>(u / c * 100.0) : 0});
             total_used += u;
             total_cap += c;
@@ -1756,8 +1757,8 @@ void ObservabilityPrims::register_jit_p10(PrimRegistrar add, Evaluator& ev) {
                 auto slash = full_name.rfind('/');
                 auto short_name =
                     slash == std::string::npos ? full_name : full_name.substr(slash + 1);
-                double u = stats.used / 1048576.0;
-                double c = stats.capacity / 1048576.0;
+                double u = static_cast<double>(stats.used) / 1048576.0;
+                double c = static_cast<double>(stats.capacity) / 1048576.0;
                 snaps.push_back({short_name, u, c, c > 0 ? static_cast<int>(u / c * 100.0) : 0});
                 total_used += u;
                 total_cap += c;

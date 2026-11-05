@@ -120,6 +120,7 @@ inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -659,8 +660,8 @@ extern "C" void aura_apply_require_stable_id_for_aot_env(void) noexcept {
     if (env != nullptr && env[0] != '\0') {
         const auto ieq = [](const char* a, const char* b) -> bool {
             for (; *a && *b; ++a, ++b) {
-                const char ca = (*a >= 'A' && *a <= 'Z') ? *a + 32 : *a;
-                const char cb = (*b >= 'A' && *b <= 'Z') ? *b + 32 : *b;
+                const char ca = (*a >= 'A' && *a <= 'Z') ? static_cast<char>(*a + ('a' - 'A')) : *a;
+                const char cb = (*b >= 'A' && *b <= 'Z') ? static_cast<char>(*b + ('a' - 'A')) : *b;
                 if (ca != cb)
                     return false;
             }
@@ -787,7 +788,7 @@ static void clear_evaluator_runtime_hooks_impl(void* user) {
 
 namespace {
 struct RegisterEvalHookClearer {
-    RegisterEvalHookClearer() {
+    RegisterEvalHookClearer() noexcept { // #4936
         aura_register_evaluator_runtime_hook_clearer(&clear_evaluator_runtime_hooks_impl);
     }
 };
@@ -1256,7 +1257,7 @@ static std::size_t epoch_invariant_must_deopt_stale_live_closures_impl(void) {
 extern "C" void aura_register_epoch_must_deopt_fn(std::size_t (*fn)(void));
 namespace {
     struct EpochMustDeoptReg {
-        EpochMustDeoptReg() {
+        EpochMustDeoptReg() noexcept { // #4936
             aura_register_epoch_must_deopt_fn(&epoch_invariant_must_deopt_stale_live_closures_impl);
         }
     };
@@ -2321,10 +2322,7 @@ static int remount_capture_cells_via_densify_(std::size_t cid) {
         cand_copy = densify_remap_detail::densify_candidates();
     }
     // Merge remap keys into candidates for fail-closed checks.
-    for (const auto& [old_ptr, neu] : remap_copy) {
-        (void)neu;
-        cand_copy.insert(old_ptr);
-    }
+    cand_copy.insert_range(remap_copy | std::views::keys); // #4936: set union, order-free
     // Caller holds exclusive g_closure_table_mtx, so the span stays stable
     // while cells are rewritten.
     const auto cells = closure_env_cells_for_densify_(cid);
@@ -4157,7 +4155,7 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
                       : 0;
                 if (cur_backfill >= cap_2638) {
                     aura_bump_live_closure_residual_cap_hit_total(1);
-                    aura_closure_set_must_deopt(cid, 1);
+                    aura_closure_set_must_deopt(static_cast<std::int64_t>(cid), 1);
                     continue;
                 }
             }
@@ -6917,7 +6915,7 @@ static int64_t pair_field_locked(int64_t pair_val, bool want_car, const char* op
     // contract — the array is never read).
     if (jit_tenant_gate_armed(sandbox_mode)) {
         const std::uint64_t slot_tenant =
-            (id < g_pair_slot_tenants.size()) ? g_pair_slot_tenants[id] : 0;
+            (id < g_pair_slot_tenants.size()) ? g_pair_slot_tenants[id] : std::uint64_t{0};
         if (jit_tenant_gate(slot_tenant, caller_tenant, op))
             return 0;
     }

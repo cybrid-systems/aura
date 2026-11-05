@@ -5,6 +5,7 @@
 #ifndef AURA_CORE_MUTATION_AUDIT_WAL_HH
 #define AURA_CORE_MUTATION_AUDIT_WAL_HH
 
+#include "core/parse_number.hh" // #4936 exception-free parse
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
@@ -35,7 +36,7 @@ inline constexpr std::uint64_t kDefaultRotateBytes = 1ull << 20;
 // Issue #4641: stdio buffer size of one live segment. The enable swap
 // opens the new segment while the old one is still live, so each stream
 // needs its own buffer (two live FILE* must never share one).
-inline constexpr std::size_t kSegmentBufferBytes = 64 * 1024;
+inline constexpr std::size_t kSegmentBufferBytes = 64uz * 1024;
 
 // Issue #3465: v1 body (pre-reason tail). Readers of old segments
 // consume this many bytes and leave reason[] empty → wal-replay-legacy.
@@ -460,14 +461,13 @@ struct MutationAuditWal {
                 if (name.rfind("audit-", 0) != 0 || !name.ends_with(".wal"))
                     continue;
                 const auto mid = name.substr(6, name.size() - 6 - 4);
-                try {
-                    const auto seg_no = static_cast<std::uint32_t>(std::stoul(mid));
+                if (const auto parsed = aura::core::parse_leading_int<std::uint32_t>(mid)) {
+                    const auto seg_no = *parsed;
                     seg_indices.push_back(seg_no);
                     if (!any || seg_no > max_seg) {
                         max_seg = seg_no;
                         any = true;
                     }
-                } catch (...) {
                 }
             }
         }

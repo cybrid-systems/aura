@@ -460,6 +460,44 @@ void ac4020_remap_misses_orphan_not_nonmatch() {
           "4020 AC4: no standalone test_issue_4020.cpp (extend existing)");
 }
 
+// Issue #4936: a window holding the chain A->B, B->C (#3350 slot reuse)
+// must rebase a pin on A exactly once, whatever order the pairs are walked
+// in. Before the fix, walking A->B first moved the pin to B and then B->C
+// moved it again to C.
+void ac4936_remap_chain_rebases_once() {
+    std::println("\n--- #4936: chained remap A->B, B->C rebases a pin once ---");
+    alignas(8) int a = 1, b = 2, c = 3;
+    const std::uint64_t arena_id = 4936;
+    {
+        LifetimePin pin_a, pin_b;
+        pin_a.pin(&a, /*gen=*/1, arena_id);
+        pin_b.pin(&b, /*gen=*/1, arena_id);
+        // Order 1: A->B first (the failing order before the fix).
+        (void)aura::core::lifetime::remap_pins_pointing_to(&a, &b, /*new_gen=*/2, arena_id);
+        (void)aura::core::lifetime::remap_pins_pointing_to(&b, &c, /*new_gen=*/2, arena_id);
+        CHECK(pin_a.ptr() == &b, "4936: A->B first: pin on A ends on B");
+        CHECK(pin_b.ptr() == &c, "4936: A->B first: pin on B ends on C");
+    }
+    {
+        LifetimePin pin_a, pin_b;
+        pin_a.pin(&a, /*gen=*/1, arena_id);
+        pin_b.pin(&b, /*gen=*/1, arena_id);
+        // Order 2: B->C first (already correct before the fix).
+        (void)aura::core::lifetime::remap_pins_pointing_to(&b, &c, /*new_gen=*/2, arena_id);
+        (void)aura::core::lifetime::remap_pins_pointing_to(&a, &b, /*new_gen=*/2, arena_id);
+        CHECK(pin_a.ptr() == &b, "4936: B->C first: pin on A ends on B");
+        CHECK(pin_b.ptr() == &c, "4936: B->C first: pin on B ends on C");
+    }
+    {
+        // A later window (new generation) still moves an already-rebased pin.
+        LifetimePin pin_a;
+        pin_a.pin(&a, /*gen=*/1, arena_id);
+        (void)aura::core::lifetime::remap_pins_pointing_to(&a, &b, /*new_gen=*/2, arena_id);
+        (void)aura::core::lifetime::remap_pins_pointing_to(&b, &c, /*new_gen=*/3, arena_id);
+        CHECK(pin_a.ptr() == &c, "4936: next window moves the pin again");
+    }
+}
+
 // Issue #4663: remap_pins_pointing_to range-matches interior pins when the
 // caller arms the walk with the moved object's size (old_size > 0): a pin
 // whose ptr is strictly inside [old_ptr, old_ptr + old_size) is rebased by
@@ -1011,6 +1049,7 @@ int run_test_moving_compact() {
     ac2342_5_source_cite();
     ac2375_all_shards_on_arena_zero();
     ac4020_remap_misses_orphan_not_nonmatch();
+    ac4936_remap_chain_rebases_once();
     ac4663_interior_pin_range_remap();
 
     std::println("\n=== #2166 + #2342 + #2375 + #4020 + #4663: {} passed, {} failed ===", g_passed,

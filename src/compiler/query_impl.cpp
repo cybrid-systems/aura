@@ -72,8 +72,9 @@ static std::vector<std::string> tokenize(std::string_view s) {
                 cur += s[i];
                 i++;
             }
-            if (i < s.size())
-                i++; // skip closing quote
+            // Issue #4936: i is on the closing quote; the loop's ++i steps
+            // past it. Stepping here too dropped the next character, so
+            // `(callee "f")` lost its ')' and nested queries parsed wrong.
             tokens.push_back(std::move(cur));
             cur.clear();
         } else {

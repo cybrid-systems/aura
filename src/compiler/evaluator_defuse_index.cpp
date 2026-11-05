@@ -992,11 +992,11 @@ void Evaluator::install_defuse_subsystem() {
                 pairs_.push_back(Pair{kv_ref, stats});
                 stats = new_ref;
             };
-            push_kv("nodes", flat.size());
-            push_kv("scopes", du_idx->scopes_.size());
-            push_kv("def-syms", du_idx->def_syms_.size());
-            push_kv("refs", du_idx->refs_.size());
-            push_kv("callers", du_idx->callers_of_.size());
+            push_kv("nodes", static_cast<std::int64_t>(flat.size()));
+            push_kv("scopes", static_cast<std::int64_t>(du_idx->scopes_.size()));
+            push_kv("def-syms", static_cast<std::int64_t>(du_idx->def_syms_.size()));
+            push_kv("refs", static_cast<std::int64_t>(du_idx->refs_.size()));
+            push_kv("callers", static_cast<std::int64_t>(du_idx->callers_of_.size()));
             push_kv("rebuilds", static_cast<std::int64_t>(defuse_rebuild_count_));
             push_kv("stale-syms", static_cast<std::int64_t>(du_idx->stale_count()));
             push_kv("defuse-version", static_cast<std::int64_t>(du_idx->current_version()));

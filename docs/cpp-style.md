@@ -38,7 +38,10 @@ contracts, so `cmake/clang_contract_shim.h` expands `pre` / `post` / `contract_a
 - T2 **[review]** `reinterpret_cast` only at the JIT/FFI boundary, serialized byte views and tagged-value encoding,
   wrapped in a named `inline` helper. Other byte reinterpretation uses `std::bit_cast`.
 - T3 **[hard]** No `const_cast` (`cppcoreguidelines-pro-type-const-cast`).
-- T4 **[soft]** Narrowing conversions are explicit (`bugprone-narrowing-conversions`).
+- T4 **[hard]** Narrowing conversions are explicit (`bugprone-narrowing-conversions`): `static_cast` at the
+  conversion, `static_cast<std::ptrdiff_t>` for iterator offsets, a typed literal (`std::uint64_t{0}`) in a
+  `?:` whose other arm is a proxy or unsigned type. Size products use a `size_t` operand (`2uz * 1024 * 1024`,
+  `bugprone-implicit-widening-of-multiplication-result`) **[hard]**.
 - T5 **[hard]** `nullptr` and `using` (`modernize-use-nullptr`, `modernize-use-using`); `override` on overrides
   (`modernize-use-override`). New enums are `enum class` **[review]**.
 - T6 **[hard]** No unchecked `std::optional` / `std::expected` access (`bugprone-unchecked-optional-access`).
@@ -60,9 +63,19 @@ contracts, so `cmake/clang_contract_shim.h` expands `pre` / `post` / `contract_a
 - F5 Errors:
   - recoverable errors return `std::expected<T, E>` (`Result<T>` / `AuraResult<T>`) **[review]**;
   - exceptions only at the fiber bridge and around std / LLVM calls that throw, converted on the spot; no exception
-    escapes a `noexcept` function or destructor (`bugprone-exception-escape`) **[soft]**;
-  - no empty `catch` (`bugprone-empty-catch`) **[soft]**;
+    escapes a `noexcept` function, destructor or `main` (`bugprone-exception-escape`) **[hard]**. Diagnostics
+    printed from `noexcept` code use `aura::core::eprintln_nothrow` (`src/core/diag_print.hh`). `.clang-tidy`
+    ignores `std::format_error`: every format string is a compile-time checked `std::format_string`, so do not
+    add `std::vformat` / `std::runtime_format`;
+  - no empty `catch` (`bugprone-empty-catch`) **[hard]**: an intentional swallow (destructor, `noexcept`
+    teardown, best-effort probe) carries the `[SILENCE-PRIM-#N]` marker and says why;
+  - parse numbers with `std::from_chars` (`aura::core::parse_leading_int<T>`), not `std::stoi` in a
+    `try` **[review]**;
   - hot-path functions are `noexcept` **[review]**.
+- F6 **[soft]** Do not let results depend on the iteration order of a pointer-keyed unordered container
+  (`bugprone-nondeterministic-pointer-iteration-order`). If the loop body does not depend on the order (a
+  sum, a set build, mark-all, any-of), iterate `std::views::keys` / `std::views::values` (or `insert_range`)
+  and say so in a comment.
 
 ## 4. Concepts and generics (T.*)
 

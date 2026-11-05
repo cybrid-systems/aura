@@ -1102,7 +1102,11 @@ bool Fiber::check_and_enforce_resume_snapshot_invariant() noexcept {
 // aura_jit_runtime.cpp).
 extern "C" void aura_set_current_fiber_id_fn(std::uint64_t (*)());
 // One-time hook installer via a static initializer.
-static int s_fiber_hook_init = (aura_set_current_fiber_id_fn(&aura_fiber_current_id), 0);
+// Issue #4936: noexcept initializer (static init must not throw).
+[[maybe_unused]] static const int s_fiber_hook_init = []() noexcept {
+    aura_set_current_fiber_id_fn(&aura_fiber_current_id);
+    return 0;
+}();
 
 Scheduler* g_scheduler = nullptr;
 
@@ -2199,7 +2203,8 @@ void Fiber::add_body_exit_hook(BodyExitHook fn, void* ctx) noexcept {
     try {
         body_exit_hooks_.emplace_back(fn, ctx);
     } catch (...) {
-        // OOM: the hook's owner still reclaims its state on teardown.
+        // [SILENCE-PRIM-#4936] OOM: the hook's owner still reclaims its
+        // state on teardown.
     }
 }
 

@@ -499,10 +499,14 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     } sym_intern_pool_reset(*this);
     // 1. Resolve path. Active policy already produced the only path
     // the rest of this load may touch (Issue #4399).
-    // Issue #4936: read the policy once; `gated` is moved only on the policy
-    // path, and the not-found branch below must take the same path.
+    // Issue #4936: read the policy once; `gated` is handed over only on the
+    // policy path, and the not-found branch below must take the same path.
     const bool host_policy = host_path_policy_active();
-    auto resolved = host_policy ? std::move(gated) : resolve_module_path(gated);
+    std::string resolved;
+    if (host_policy)
+        resolved.swap(gated);
+    else
+        resolved = resolve_module_path(gated);
     if (resolved.empty()) {
         const auto shown = truncate_path_for_log(path);
         last_module_load_failure_ = std::string("cannot resolve '") + std::string(shown) + "'";

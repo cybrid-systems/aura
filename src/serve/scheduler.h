@@ -51,7 +51,7 @@ public:
     // start-order queue instead of the LIFO deque, so a batch of scope
     // bodies begins in spawn order (the first-spawned failing body runs
     // before its siblings and :on-join-fail "cancel" can fire early).
-    Fiber* spawn(Fiber::Func func, size_t stack_size = 2 * 1024 * 1024, bool fifo_start = false);
+    Fiber* spawn(Fiber::Func func, size_t stack_size = 2uz * 1024 * 1024, bool fifo_start = false);
 
     // Issue #4851: the worker that owns the FIFO start lane. Scope bodies
     // that share the per-Evaluator apply gate are serialized, so they must
@@ -66,7 +66,7 @@ public:
     // worker_id: 0..num_workers-1. The fiber will always run on
     // that worker, even after yield/wakeup (cache-aware scheduling).
     Fiber* spawn_with_affinity(Fiber::Func func, int worker_id,
-                               size_t stack_size = 2 * 1024 * 1024);
+                               size_t stack_size = 2uz * 1024 * 1024);
 
     // Run the event loop until all fibers are done.
     // This is called on the main thread (IO thread).
@@ -517,7 +517,7 @@ void record_safepoint_blocked_by_long_mutation_us(std::int64_t us) noexcept;
 // worker affinity. Returns the new fiber id, or 0 when the fiber was not
 // created.
 std::int64_t spawn_with_pinned_body(Scheduler& sched, void* evaluator, Fiber::Func body,
-                                    int worker_id, size_t stack_size = 2 * 1024 * 1024);
+                                    int worker_id, size_t stack_size = 2uz * 1024 * 1024);
 } // namespace aura::serve
 
 #endif // AURA_SERVE_SCHEDULER_H

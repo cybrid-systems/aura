@@ -41,8 +41,8 @@ public:
     // so the first few entries don't waste capacity; growth doubles
     // up to a cap of 256 KB so very large registries don't allocate
     // huge chunks they may never fill.
-    static constexpr std::size_t kInitialChunkBytes = 1024;   // 1 KB
-    static constexpr std::size_t kMaxChunkBytes = 256 * 1024; // 256 KB
+    static constexpr std::size_t kInitialChunkBytes = 1024;     // 1 KB
+    static constexpr std::size_t kMaxChunkBytes = 256uz * 1024; // 256 KB
 
     // Default initial chunk size; can be overridden by the caller if
     // they have a known workload (e.g. tests that pre-fill the arena).

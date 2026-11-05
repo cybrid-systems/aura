@@ -468,8 +468,9 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                     (ev.effect_sandbox_mode() == 2 || ::aura::core::sandbox::is_strict() ||
                      ::aura::core::provenance::multi_tenant_env_active());
                 if (prod_pair_face) {
-                    const std::uint64_t slot_tenant =
-                        (id < g_pair_slot_tenants.size()) ? g_pair_slot_tenants[id] : 0;
+                    const std::uint64_t slot_tenant = (id < g_pair_slot_tenants.size())
+                                                          ? g_pair_slot_tenants[id]
+                                                          : std::uint64_t{0};
                     if (slot_tenant != ev.capability_tenant_id()) {
                         (void)ev.check_workspace_isolation(
                             /*target=*/ev.capability_tenant_id(), /*ref_tenant=*/slot_tenant,
@@ -527,8 +528,9 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                     (ev.effect_sandbox_mode() == 2 || ::aura::core::sandbox::is_strict() ||
                      ::aura::core::provenance::multi_tenant_env_active());
                 if (prod_pair_face) {
-                    const std::uint64_t slot_tenant =
-                        (id < g_pair_slot_tenants.size()) ? g_pair_slot_tenants[id] : 0;
+                    const std::uint64_t slot_tenant = (id < g_pair_slot_tenants.size())
+                                                          ? g_pair_slot_tenants[id]
+                                                          : std::uint64_t{0};
                     if (slot_tenant != ev.capability_tenant_id()) {
                         (void)ev.check_workspace_isolation(
                             /*target=*/ev.capability_tenant_id(), /*ref_tenant=*/slot_tenant,
@@ -1035,8 +1037,9 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                 // (#4036 body-choke contract) — no second effect check in the
                 // body, a single-use grant must not double-consume.
                 // Soft/Off: the tenant array is never read, write proceeds.
-                const std::uint64_t slot_tenant =
-                    (idx < g_pair_slot_tenants.size()) ? g_pair_slot_tenants[idx] : 0;
+                const std::uint64_t slot_tenant = (idx < g_pair_slot_tenants.size())
+                                                      ? g_pair_slot_tenants[idx]
+                                                      : std::uint64_t{0};
                 const bool prod_pair_face =
                     ev.effect_sandbox_mode() != 0 &&
                     (ev.effect_sandbox_mode() == 2 || ::aura::core::sandbox::is_strict() ||
@@ -1079,8 +1082,9 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                 // principal under the production face (foreign or unstamped
                 // (0) refused, slot unchanged, IsolationDeny via
                 // check_workspace_isolation); Soft/Off writes unchanged.
-                const std::uint64_t slot_tenant =
-                    (idx < g_pair_slot_tenants.size()) ? g_pair_slot_tenants[idx] : 0;
+                const std::uint64_t slot_tenant = (idx < g_pair_slot_tenants.size())
+                                                      ? g_pair_slot_tenants[idx]
+                                                      : std::uint64_t{0};
                 const bool prod_pair_face =
                     ev.effect_sandbox_mode() != 0 &&
                     (ev.effect_sandbox_mode() == 2 || ::aura::core::sandbox::is_strict() ||

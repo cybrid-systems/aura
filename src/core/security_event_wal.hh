@@ -24,6 +24,7 @@
 #ifndef AURA_CORE_SECURITY_EVENT_WAL_HH
 #define AURA_CORE_SECURITY_EVENT_WAL_HH
 
+#include "core/parse_number.hh" // #4936 exception-free parse
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
@@ -484,14 +485,13 @@ struct SecurityEventWal {
                 const auto mid =
                     name.substr(kWalSegmentPrefix.size(),
                                 name.size() - kWalSegmentPrefix.size() - kWalSegmentSuffix.size());
-                try {
-                    const auto n = static_cast<std::uint32_t>(std::stoul(mid));
+                if (const auto parsed = aura::core::parse_leading_int<std::uint32_t>(mid)) {
+                    const auto n = *parsed;
                     seg_indices.push_back(n);
                     if (!any || n > max_seg) {
                         max_seg = n;
                         any = true;
                     }
-                } catch (...) {
                 }
             }
         }

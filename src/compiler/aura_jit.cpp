@@ -1936,6 +1936,11 @@ struct LLVMBuilder {
         irb->CreateRet(call);
     }
     llvm::Value* c64(int64_t v) { return llvm::ConstantInt::get(llvm::Type::getInt64Ty(ctx), v); }
+    // #4936: unsigned / address constants keep their bit pattern without a
+    // narrowing uint64_t -> int64_t conversion at the call site.
+    llvm::Value* c64u(std::uint64_t v) {
+        return llvm::ConstantInt::get(llvm::Type::getInt64Ty(ctx), v, /*isSigned=*/false);
+    }
     // Issue #4491: the single JIT truthiness test. Must match
     // aura::compiler::pure::is_truthy (see value_tags.h kIntZeroIsFalse).
     // Issue #4482: boxed float = low2 11 inside (STRING_BIAS_2, FLOAT_BIAS].
@@ -4087,8 +4092,9 @@ struct LLVMBuilder {
                     } else {
                         llvm::Value* cur = nullptr;
                         if (jit_defuse_word_enabled()) {
-                            auto* slotp = irb->CreateIntToPtr(c64(aura_jit_defuse_word_slot_addr()),
-                                                              llvm::PointerType::getUnqual(ctx));
+                            auto* slotp =
+                                irb->CreateIntToPtr(c64u(aura_jit_defuse_word_slot_addr()),
+                                                    llvm::PointerType::getUnqual(ctx));
                             auto* wp = irb->CreateLoad(llvm::PointerType::getUnqual(ctx), slotp);
                             wp->setAtomic(llvm::AtomicOrdering::Acquire);
                             wp->setAlignment(llvm::Align(8));
@@ -4138,7 +4144,7 @@ struct LLVMBuilder {
                     // ordering as the hook (Evaluator::get_defuse_version).
                     llvm::Value* cur = nullptr;
                     if (jit_defuse_word_enabled()) {
-                        auto* slotp = irb->CreateIntToPtr(c64(aura_jit_defuse_word_slot_addr()),
+                        auto* slotp = irb->CreateIntToPtr(c64u(aura_jit_defuse_word_slot_addr()),
                                                           llvm::PointerType::getUnqual(ctx));
                         auto* wp = irb->CreateLoad(llvm::PointerType::getUnqual(ctx), slotp);
                         wp->setAtomic(llvm::AtomicOrdering::Acquire);
@@ -4276,8 +4282,9 @@ struct LLVMBuilder {
                     } else {
                         llvm::Value* cur = nullptr;
                         if (jit_defuse_word_enabled()) {
-                            auto* slotp = irb->CreateIntToPtr(c64(aura_jit_defuse_word_slot_addr()),
-                                                              llvm::PointerType::getUnqual(ctx));
+                            auto* slotp =
+                                irb->CreateIntToPtr(c64u(aura_jit_defuse_word_slot_addr()),
+                                                    llvm::PointerType::getUnqual(ctx));
                             auto* wp = irb->CreateLoad(llvm::PointerType::getUnqual(ctx), slotp);
                             wp->setAtomic(llvm::AtomicOrdering::Acquire);
                             wp->setAlignment(llvm::Align(8));
@@ -4321,7 +4328,7 @@ struct LLVMBuilder {
                     // Issue #4600 §5: same direct word read as OpCar.
                     llvm::Value* cur = nullptr;
                     if (jit_defuse_word_enabled()) {
-                        auto* slotp = irb->CreateIntToPtr(c64(aura_jit_defuse_word_slot_addr()),
+                        auto* slotp = irb->CreateIntToPtr(c64u(aura_jit_defuse_word_slot_addr()),
                                                           llvm::PointerType::getUnqual(ctx));
                         auto* wp = irb->CreateLoad(llvm::PointerType::getUnqual(ctx), slotp);
                         wp->setAtomic(llvm::AtomicOrdering::Acquire);
@@ -5898,7 +5905,7 @@ struct AuraJIT::Impl {
             auto* ok = builder.irb->CreateCall(builder.fn_pair_inline_ok, {});
             builder.pair_ok = builder.irb->CreateICmpNE(ok, builder.c64(0));
             builder.pair_dir = builder.irb->CreateIntToPtr(
-                builder.c64(reinterpret_cast<std::uintptr_t>(aura_pair_seg_dir_base())),
+                builder.c64u(reinterpret_cast<std::uintptr_t>(aura_pair_seg_dir_base())),
                 llvm::PointerType::getUnqual(ctx));
         }
         if (reads_pairs && !builder.pair_ok) {
@@ -5978,12 +5985,12 @@ struct AuraJIT::Impl {
                     aura::compiler::jit_assume::stats().prologue_word_armed.fetch_add(
                         1, std::memory_order_relaxed);
                     auto* wptr = builder.irb->CreateIntToPtr(
-                        builder.c64(reinterpret_cast<std::uintptr_t>(&word->v)),
+                        builder.c64u(reinterpret_cast<std::uintptr_t>(&word->v)),
                         llvm::PointerType::getUnqual(ctx));
                     auto* wv = builder.irb->CreateLoad(llvm::Type::getInt64Ty(ctx), wptr);
                     wv->setAtomic(llvm::AtomicOrdering::Acquire);
                     wv->setAlignment(llvm::Align(8));
-                    auto* moved = builder.irb->CreateICmpNE(wv, builder.c64(expected));
+                    auto* moved = builder.irb->CreateICmpNE(wv, builder.c64u(expected));
                     auto* parent_f = builder.func;
                     auto* bb_word_ok = llvm::BasicBlock::Create(ctx, "prologue_word_ok", parent_f);
                     auto* bb_epoch_chk =

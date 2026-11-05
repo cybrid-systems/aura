@@ -18,7 +18,8 @@ module;
 #include <vector>
 #include "core/fiber_context.hh" // Issue #4716: fiber-local execution context
 #include "runtime_shared.h"
-#include "aura_jit_bridge.h" // #2129: aura_get_aot_live_linear_state_fingerprint
+#include "core/diag_print.hh" // #4936 eprintln_nothrow
+#include "aura_jit_bridge.h"  // #2129: aura_get_aot_live_linear_state_fingerprint
 #include "observability_logger.h"
 #include "shape_jit_pass_closedloop_stats.h"
 #include "core/provenance_tracker.hh"      // Issue #2026: validate_linear_provenance
@@ -198,10 +199,10 @@ static void capture_linear_runtime_violation(CompilerMetrics* metrics, std::uint
     // module-internal avoids the C-linkage shim import issue (#1908 pattern).
     metrics->linear_runtime_violation_total.fetch_add(1, std::memory_order_relaxed);
     // Side log: stderr (matches existing pattern).
-    std::println(std::cerr,
-                 "linear-runtime-violation: mutation_id={} opcode={} node={} state={} expected={}",
-                 mutation_id, static_cast<int>(opcode), node_id, static_cast<int>(state),
-                 static_cast<int>(expected));
+    ::aura::core::eprintln_nothrow(
+        "linear-runtime-violation: mutation_id={} opcode={} node={} state={} expected={}",
+        mutation_id, static_cast<int>(opcode), node_id, static_cast<int>(state),
+        static_cast<int>(expected));
     (void)mutation_id; // captured in side log for post-mutate correlation
 }
 
@@ -280,7 +281,7 @@ static bool enforce_linear_ownership_state(std::uint8_t state, LinearOpKind op,
     // counter). Soft / Off: zero-cost (one production_defaults load).
     if ((op == LinearOpKind::Borrow || op == LinearOpKind::MutBorrow) &&
         !ir_per_op_typed_entry_readiness_ok()) {
-        std::println(std::cerr, "error: linear op refused - commit-readiness-refused");
+        ::aura::core::eprintln_nothrow("error: linear op refused - commit-readiness-refused");
         return false;
     }
     // Issue #2026: Moved is never a valid live state for any op (double-drop
@@ -398,7 +399,7 @@ static void record_linear_jit_safety(CompilerMetrics* metrics, IROpcode opcode) 
 // Issue #61 Iter 4: deopt tracing switch. Off by default
 // (perf: avoid a printf on every guard). Enable by setting
 // AURA_DEOPT_TRACE=1 in the env before launching the process.
-static const bool kDeoptTrace = []() {
+static const bool kDeoptTrace = []() noexcept {
     const char* e = std::getenv("AURA_DEOPT_TRACE");
     return e && (e[0] == '1' || e[0] == 't' || e[0] == 'T');
 }();

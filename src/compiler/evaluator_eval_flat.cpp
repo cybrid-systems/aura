@@ -1253,8 +1253,10 @@ namespace {
         for (const auto& fr : frames) {
             if (fr.current && *fr.current)
                 envs.push_back(*fr.current);
-            if (fr.tail && fr.tail->has_value())
-                envs.push_back(&**fr.tail);
+            if (fr.tail) {
+                if (const auto& tail = *fr.tail) // #4936: checked optional
+                    envs.push_back(&*tail);
+            }
             if (!fr.pinned)
                 continue;
             for (const auto& p : *fr.pinned) {
@@ -1296,8 +1298,10 @@ namespace {
         for (const auto& fr : frames) {
             if (fr.current && *fr.current)
                 add_env(*fr.current);
-            if (fr.tail && fr.tail->has_value())
-                add_env(&**fr.tail);
+            if (fr.tail) {
+                if (const auto& tail = *fr.tail) // #4936: checked optional
+                    add_env(&*tail);
+            }
             if (!fr.pinned)
                 continue;
             for (const auto& p : *fr.pinned)
@@ -1656,11 +1660,13 @@ void Evaluator::collect_tw_inflight_roots(std::vector<types::EvalValue>& out) {
             for (const auto& b : (*fr.current)->bindings_symid())
                 out.push_back(b.second);
         }
-        if (fr.tail && fr.tail->has_value()) {
-            for (const auto& b : (**fr.tail).bindings())
-                out.push_back(b.second);
-            for (const auto& b : (**fr.tail).bindings_symid())
-                out.push_back(b.second);
+        if (fr.tail) {
+            if (const auto& tail = *fr.tail) { // #4936: checked optional
+                for (const auto& b : tail->bindings())
+                    out.push_back(b.second);
+                for (const auto& b : tail->bindings_symid())
+                    out.push_back(b.second);
+            }
         }
         if (!fr.pinned)
             continue;
@@ -5064,7 +5070,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
     // Issue #2802: local arena isolates pattern flat/pool from shared
     // temp_arena_ (and from sibling sub-ops in the same atomic-batch).
     // 256 KiB is ample for a pattern AST; heap-backed, not stack.
-    aura::ast::ASTArena pat_arena(/*initial_size=*/256 * 1024);
+    aura::ast::ASTArena pat_arena(/*initial_size=*/256uz * 1024);
     auto alloc = pat_arena.allocator();
     aura::ast::StringPool* pat_pool = nullptr;
     aura::ast::FlatAST* pat_flat = nullptr;
@@ -5878,10 +5884,10 @@ EvalResult Evaluator::eval_flat_apply_mutate_rename_symbol(std::span<const types
     }
     for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
         if (flat.tag(id) == aura::ast::NodeTag::Lambda) {
-            const int n = flat.rename_param(id, old_sym, new_sym, nullptr);
+            const std::size_t n = flat.rename_param(id, old_sym, new_sym, nullptr);
             if (n > 0) {
                 flat.mark_dirty_upward(id);
-                count += n;
+                count += static_cast<int>(n);
             }
         }
     }
@@ -6980,8 +6986,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
             double total_used = 0.0, total_cap = 0.0;
             if (arena_) {
                 auto s = arena_->stats();
-                double u = s.used / 1048576.0;
-                double c = s.capacity / 1048576.0;
+                double u = static_cast<double>(s.used) / 1048576.0;
+                double c = static_cast<double>(s.capacity) / 1048576.0;
                 snaps.push_back({"main", u, c, c > 0 ? static_cast<int>(u / c * 100.0) : 0});
                 total_used += u;
                 total_cap += c;
@@ -6991,8 +6997,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     auto slash = full_name.rfind('/');
                     auto short_name =
                         slash == std::string::npos ? full_name : full_name.substr(slash + 1);
-                    double u = stats.used / 1048576.0;
-                    double c = stats.capacity / 1048576.0;
+                    double u = static_cast<double>(stats.used) / 1048576.0;
+                    double c = static_cast<double>(stats.capacity) / 1048576.0;
                     snaps.push_back(
                         {short_name, u, c, c > 0 ? static_cast<int>(u / c * 100.0) : 0});
                     total_used += u;
@@ -12153,15 +12159,11 @@ void Evaluator::rebind_workspace_defines_on_switch() noexcept {
             snap.mutation_count = static_cast<std::uint64_t>(flat->mutation_log_size());
             snap.define_gen_fp = fp;
             snap.entries = std::move(captured);
-            bool replaced = false;
-            for (auto& s : switch_define_snaps_) {
-                if (s.flat == flat) {
-                    s = std::move(snap);
-                    replaced = true;
-                    break;
-                }
-            }
-            if (!replaced)
+            // Issue #4936: one move of snap (replace-or-append).
+            const auto it = std::ranges::find(switch_define_snaps_, flat, &SwitchDefineSnap::flat);
+            if (it != switch_define_snaps_.end())
+                *it = std::move(snap);
+            else
                 switch_define_snaps_.push_back(std::move(snap));
         }
     } catch (...) {

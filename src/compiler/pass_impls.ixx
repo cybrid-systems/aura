@@ -4049,9 +4049,10 @@ private:
         final_copy.operands[1] = ret_src;
         new_instrs.push_back(final_copy);
         // In-place rewrite.
-        auto insert_pos = block.instructions.begin() + call_pos;
+        auto insert_pos = block.instructions.begin() + static_cast<std::ptrdiff_t>(call_pos);
         block.instructions.insert(insert_pos, new_instrs.begin(), new_instrs.end());
-        block.instructions.erase(block.instructions.begin() + call_pos + new_instrs.size());
+        block.instructions.erase(block.instructions.begin() +
+                                 static_cast<std::ptrdiff_t>(call_pos + new_instrs.size()));
         return true;
     }
 

@@ -1341,7 +1341,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
             // hash-ref structure walk (replaces prior substring content scan).
             // Handles pretty-print whitespace, embedded quotes, null content;
             // size-capped. Unicode \uXXXX is decoded by json-parse.
-            constexpr std::size_t kMaxSynthCodeBytes = 256 * 1024;
+            constexpr std::size_t kMaxSynthCodeBytes = 256uz * 1024;
             std::string code;
             auto parse_fn = ev.primitives_.lookup("json-parse");
             auto href_fn = ev.primitives_.lookup("hash-ref");
