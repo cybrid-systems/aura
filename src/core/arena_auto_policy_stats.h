@@ -39,7 +39,7 @@ inline void record_defrag_fiber_safe_hit() noexcept {
 }
 
 inline void record_fragmentation_post_mutate(double frag_ratio) noexcept {
-    const auto bp = static_cast<std::uint64_t>(frag_ratio * 10000.0);
+    const auto bp = static_cast<std::uint64_t>(frag_ratio * ::aura::compiler::kBasisPointScaleF);
     fragmentation_post_mutate_bp.store(bp, std::memory_order_relaxed);
 }
 
@@ -143,8 +143,9 @@ inline void record_compact_deopt_throttled() noexcept {
     compact_deopt_throttled_total.fetch_add(1, std::memory_order_relaxed);
 }
 inline void record_frag_post_compact(double frag_ratio) noexcept {
-    frag_post_compact_bp.store(static_cast<std::uint64_t>(frag_ratio * 10000.0),
-                               std::memory_order_relaxed);
+    frag_post_compact_bp.store(
+        static_cast<std::uint64_t>(frag_ratio * ::aura::compiler::kBasisPointScaleF),
+        std::memory_order_relaxed);
 }
 inline void record_compact_soft_gated_boundary() noexcept {
     compact_soft_gated_boundary_total.fetch_add(1, std::memory_order_relaxed);
@@ -260,14 +261,14 @@ inline constexpr std::uint64_t kElevatedDeoptRateBp = 1500; // 0.15
 // Publish live ShapeProfiler metrics into the adaptive policy feedback loop.
 inline void publish_shape_deopt_metrics(double deopt_rate_per_fn, bool storm_active,
                                         double stable_ratio) noexcept {
-    const auto rate_bp =
-        static_cast<std::uint64_t>(deopt_rate_per_fn < 0.0     ? 0.0
-                                   : deopt_rate_per_fn > 100.0 ? 1000000.0
-                                                               : deopt_rate_per_fn * 10000.0);
-    const auto stable_bp =
-        static_cast<std::uint64_t>(stable_ratio < 0.0   ? 0.0
-                                   : stable_ratio > 1.0 ? 10000.0
-                                                        : stable_ratio * 10000.0);
+    const auto rate_bp = static_cast<std::uint64_t>(
+        deopt_rate_per_fn < 0.0     ? 0.0
+        : deopt_rate_per_fn > 100.0 ? 1000000.0
+                                    : deopt_rate_per_fn * ::aura::compiler::kBasisPointScaleF);
+    const auto stable_bp = static_cast<std::uint64_t>(
+        stable_ratio < 0.0   ? 0.0
+        : stable_ratio > 1.0 ? ::aura::compiler::kBasisPointScaleF
+                             : stable_ratio * ::aura::compiler::kBasisPointScaleF);
     shape_deopt_rate_bp.store(rate_bp, std::memory_order_relaxed);
     shape_stable_ratio_bp.store(stable_bp, std::memory_order_relaxed);
     shape_deopt_storm_active.store(storm_active, std::memory_order_release);
@@ -290,8 +291,9 @@ inline void record_live_pressure_signal() noexcept {
 inline void record_last_decision(std::uint16_t reason_ext, double headroom,
                                  std::uint64_t deopt_attributed = 0) noexcept {
     last_decision_reason.store(reason_ext, std::memory_order_relaxed);
-    adaptive_headroom_bp.store(static_cast<std::uint64_t>(headroom * 10000.0),
-                               std::memory_order_relaxed);
+    adaptive_headroom_bp.store(
+        static_cast<std::uint64_t>(headroom * ::aura::compiler::kBasisPointScaleF),
+        std::memory_order_relaxed);
     last_deopt_attributed_compact.store(deopt_attributed, std::memory_order_relaxed);
 }
 
@@ -328,7 +330,8 @@ inline void record_last_decision(std::uint16_t reason_ext, double headroom,
         hr = kHeadroomMin;
     if (hr > kHeadroomMax)
         hr = kHeadroomMax;
-    adaptive_headroom_bp.store(static_cast<std::uint64_t>(hr * 10000.0), std::memory_order_relaxed);
+    adaptive_headroom_bp.store(static_cast<std::uint64_t>(hr * ::aura::compiler::kBasisPointScaleF),
+                               std::memory_order_relaxed);
     return hr;
 }
 
@@ -337,7 +340,7 @@ inline void record_last_decision(std::uint16_t reason_ext, double headroom,
     const auto bp = adaptive_headroom_bp.load(std::memory_order_relaxed);
     if (bp == 0)
         return kHeadroomDefault;
-    return static_cast<double>(bp) / 10000.0;
+    return static_cast<double>(bp) / ::aura::compiler::kBasisPointScaleF;
 }
 
 // Live freelist / mark pressure: free slots or recent low-savings defrags.
@@ -449,8 +452,9 @@ inline constexpr std::uint64_t kFalsePositiveTargetBp = 500; // 5%
         thr = kFragThresholdMin;
     if (thr > kFragThresholdMax)
         thr = kFragThresholdMax;
-    dynamic_threshold_bp.store(static_cast<std::uint64_t>(thr * 10000.0),
-                               std::memory_order_relaxed);
+    dynamic_threshold_bp.store(
+        static_cast<std::uint64_t>(thr * ::aura::compiler::kBasisPointScaleF),
+        std::memory_order_relaxed);
     return thr;
 }
 
@@ -477,7 +481,8 @@ evaluate_auto_compact_policy(double frag_ratio, bool defrag_requested, bool dirt
     const bool deopt_p = peek_jit_deopt_pressure();
     const bool storm = shape_deopt_storm_active.load(std::memory_order_acquire);
     const double deopt_rate =
-        static_cast<double>(shape_deopt_rate_bp.load(std::memory_order_relaxed)) / 10000.0;
+        static_cast<double>(shape_deopt_rate_bp.load(std::memory_order_relaxed)) /
+        ::aura::compiler::kBasisPointScaleF;
     const bool elevated_deopt = deopt_p || storm || deopt_rate >= 0.15;
     const bool live_p = peek_live_pressure();
     if (live_p)

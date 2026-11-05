@@ -2280,8 +2280,8 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             const std::uint64_t live = snap.live_nodes;
             const std::uint64_t free = snap.free_slots;
             const std::uint64_t total = snap.total_slots;
-            const std::uint64_t frag_bp =
-                static_cast<std::uint64_t>(snap.fragmentation_ratio * 10000.0);
+            const std::uint64_t frag_bp = static_cast<std::uint64_t>(
+                snap.fragmentation_ratio * ::aura::compiler::kBasisPointScaleF);
             return make_int(static_cast<std::int64_t>(recycle + compact + reuse + live + free +
                                                       total + frag_bp));
         });
@@ -2982,8 +2982,8 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 m ? m->specialization_misses.load(std::memory_order_relaxed) : 0;
             constexpr std::int64_t k_window =
                 static_cast<std::int64_t>(shape::ShapeProfiler::kDefaultWindowSize);
-            constexpr std::int64_t k_ratio_bp =
-                static_cast<std::int64_t>(shape::ShapeProfiler::kDefaultStabilityRatio * 10000.0);
+            constexpr std::int64_t k_ratio_bp = static_cast<std::int64_t>(
+                shape::ShapeProfiler::kDefaultStabilityRatio * ::aura::compiler::kBasisPointScaleF);
             // Issue #2433: capacity 32 (≥24 keys incl. schema-2257 + schema-2433).
             auto* ht = FlatHashTable::create(32);
             if (!ht)
@@ -3039,7 +3039,8 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             // Issue #2257: stability ratio lives in aura::compiler
             // (ir_cache_pure.ixx adaptive feed), not shape:: namespace.
             insert_kv("current-stability-ratio",
-                      static_cast<std::int64_t>(current_shape_stability_ratio() * 10000.0));
+                      static_cast<std::int64_t>(current_shape_stability_ratio() *
+                                                ::aura::compiler::kBasisPointScaleF));
             insert_kv("shape-version-wired", 1);
             insert_kv("schema-2257", 2257);
             insert_kv("issue-2257", 2257);

@@ -114,6 +114,11 @@ class MagicConstantsInvariant(unittest.TestCase):
             encoding="utf-8", errors="replace"
         )
         self.assertIn("basis_points_vacuous_full", health)
+        self.assertIn("kBasisPointScaleF", health)
+        self.assertIn(
+            "kBasisPointScaleF",
+            (SRC / "core" / "arena_auto_policy_stats.h").read_text(encoding="utf-8"),
+        )
         for rel in (
             "compiler/evaluator_primitives_obs_jit.cpp",
             "compiler/evaluator_primitives_mutate.cpp",
