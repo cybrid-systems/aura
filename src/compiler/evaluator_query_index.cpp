@@ -425,16 +425,24 @@ void Evaluator::build_tag_arity_index(std::uint8_t trigger) const {
     build_tag_arity_index_unlocked(trigger);
 }
 
-std::vector<aura::ast::NodeId>
+Evaluator::TagArityBucketView
 Evaluator::snapshot_tag_arity_bucket(std::uint64_t key, std::uint8_t trigger,
                                      bool skip_macro_introduced) const {
-    // Issue #1372 / #1501 / #1892: single unique_lock covers build + bucket
-    // copy. When skip_macro_introduced, serve user-only index so the
-    // default hygienic query:pattern path never iterates MacroIntroduced
-    // roots from the hot (tag,arity) bucket. Also credit the excluded
-    // MacroIntroduced count into macro_introduced_skipped_in_query_ so
-    // AC metrics stay non-zero when the index does the filtering
-    // (defense-in-depth loop never sees those ids).
+    // Issue #1372 / #1501 / #1892 / #2763 / #4932: serve the (tag,arity)
+    // bucket for query:pattern. When skip_macro_introduced, serve the
+    // user-only index so the default hygienic query:pattern path never
+    // iterates MacroIntroduced roots from the hot bucket; the excluded count
+    // is still credited into macro_introduced_skipped_in_query_ so AC metrics
+    // stay non-zero when the index does the filtering (the defense-in-depth
+    // loop never sees those ids).
+    //
+    // Issue #4932: the warm (already synced) path is read-only. It takes only
+    // the shared index lock and returns the immutable, epoch-stamped bucket
+    // snapshot published by an earlier cold probe — no exclusive lock and no
+    // per-call bucket-sized copy. The exclusive lock is taken only when the
+    // index needs a build/sync/prune (cold, appended, dirty), or when this
+    // key has no snapshot at the current epoch yet; that path publishes the
+    // snapshot before serving it.
     //
     // Issue #1913: when armed by tag_arity_index_sync_after_atomic_batch,
     // measure this query:pattern bucket snapshot as post-batch latency.
@@ -449,21 +457,38 @@ Evaluator::snapshot_tag_arity_bucket(std::uint64_t key, std::uint8_t trigger,
         compiler_metrics_ ? static_cast<CompilerMetrics*>(compiler_metrics_)
                                 ->query_pattern_full_rebuild_total.load(std::memory_order_relaxed)
                           : 0;
-    std::unique_lock<std::shared_mutex> wlock(tag_arity_index_mtx_);
-    build_tag_arity_index_unlocked(trigger);
-    if (compiler_metrics_) {
-        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
-        if (m->query_pattern_full_rebuild_total.load(std::memory_order_relaxed) !=
-            full_rebuild_before)
-            g_query_full_scan_fallback_total.fetch_add(1, std::memory_order_relaxed);
-        else
-            g_query_index_hit_total.fetch_add(1, std::memory_order_relaxed);
-    }
-    const auto epoch_at_copy = tag_arity_index_epoch_.load(std::memory_order_acquire);
-    const auto& map = skip_macro_introduced ? tag_arity_index_user_ : tag_arity_index_;
-    if (skip_macro_introduced) {
+
+    auto record_post_batch = [&]() {
+        if (!measure_post_batch)
+            return;
+        const auto us =
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                           std::chrono::steady_clock::now() - t0)
+                                           .count());
+        pattern_query_after_batch_samples_.fetch_add(1, std::memory_order_relaxed);
+        pattern_query_after_batch_latency_us_total_.fetch_add(us, std::memory_order_relaxed);
+        auto prev = pattern_query_after_batch_latency_us_max_.load(std::memory_order_relaxed);
+        while (us > prev && !pattern_query_after_batch_latency_us_max_.compare_exchange_weak(
+                                prev, us, std::memory_order_relaxed)) {
+        }
+        if (auto* cm = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+            cm->pattern_query_after_batch_samples.fetch_add(1, std::memory_order_relaxed);
+            cm->pattern_query_after_batch_latency_us_total.fetch_add(us, std::memory_order_relaxed);
+            auto pmax =
+                cm->pattern_query_after_batch_latency_us_max.load(std::memory_order_relaxed);
+            while (us > pmax && !cm->pattern_query_after_batch_latency_us_max.compare_exchange_weak(
+                                    pmax, us, std::memory_order_relaxed)) {
+            }
+        }
+    };
+
+    // #1892: full bucket size − user-only size = MacroIntroduced excluded.
+    // The caller holds tag_arity_index_mtx_ (shared or exclusive) and only
+    // reads the maps here.
+    auto credit_hygiene_excluded = [&]() {
+        if (!skip_macro_introduced)
+            return;
         tag_arity_hygiene_index_served_total_.fetch_add(1, std::memory_order_relaxed);
-        // #1892: full bucket size − user-only size = MacroIntroduced excluded.
         std::size_t full_n = 0;
         std::size_t user_n = 0;
         if (auto fit = tag_arity_index_.find(key); fit != tag_arity_index_.end())
@@ -486,63 +511,78 @@ Evaluator::snapshot_tag_arity_bucket(std::uint64_t key, std::uint8_t trigger,
                                                                 std::memory_order_relaxed);
             }
         }
-    }
-    auto it = map.find(key);
-    if (it == map.end()) {
-        if (measure_post_batch) {
-            const auto us =
-                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
-                                               std::chrono::steady_clock::now() - t0)
-                                               .count());
-            pattern_query_after_batch_samples_.fetch_add(1, std::memory_order_relaxed);
-            pattern_query_after_batch_latency_us_total_.fetch_add(us, std::memory_order_relaxed);
-            auto prev = pattern_query_after_batch_latency_us_max_.load(std::memory_order_relaxed);
-            while (us > prev && !pattern_query_after_batch_latency_us_max_.compare_exchange_weak(
-                                    prev, us, std::memory_order_relaxed)) {
-            }
-            if (auto* cm = static_cast<CompilerMetrics*>(compiler_metrics_)) {
-                cm->pattern_query_after_batch_samples.fetch_add(1, std::memory_order_relaxed);
-                cm->pattern_query_after_batch_latency_us_total.fetch_add(us,
-                                                                         std::memory_order_relaxed);
-                auto pmax =
-                    cm->pattern_query_after_batch_latency_us_max.load(std::memory_order_relaxed);
-                while (us > pmax &&
-                       !cm->pattern_query_after_batch_latency_us_max.compare_exchange_weak(
-                           pmax, us, std::memory_order_relaxed)) {
+    };
+
+    // ── Warm path (Issue #4932) ──────────────────────────────────────
+    // Synced index + a snapshot for this key at the current epoch → serve
+    // under the shared lock only. The snapshot vector is immutable, so the
+    // returned view stays valid after the lock is dropped (and across later
+    // index mutations, which only drop the map's reference).
+    {
+        std::shared_lock<std::shared_mutex> rlock(tag_arity_index_mtx_);
+        if (tag_arity_index_synced_locked()) {
+            const auto epoch_at_read = tag_arity_index_epoch_.load(std::memory_order_acquire);
+            const auto& snaps = skip_macro_introduced ? tag_arity_bucket_snapshots_user_
+                                                      : tag_arity_bucket_snapshots_;
+            const auto sit = snaps.find(key);
+            if (sit != snaps.end() && sit->second.bucket && sit->second.epoch == epoch_at_read) {
+                TagArityBucketView out(sit->second.bucket);
+                credit_hygiene_excluded();
+                // #1372: documented race-window contract — a differing epoch
+                // means the serve cannot be trusted: empty result, caller
+                // falls back. Unreachable while the shared lock is held
+                // (writers bump the epoch only under the exclusive lock);
+                // kept as a defensive check.
+                if (tag_arity_index_epoch_.load(std::memory_order_acquire) != epoch_at_read) {
+                    tag_arity_index_race_window_hits_.fetch_add(1, std::memory_order_relaxed);
+                    out = TagArityBucketView{};
                 }
-            }
-        }
-        return {};
-    }
-    std::vector<aura::ast::NodeId> out = it->second;
-    // Defensive: under unique_lock epoch cannot change; if it
-    // ever does, count a race-window hit and return empty so
-    // callers fall back safely.
-    if (tag_arity_index_epoch_.load(std::memory_order_acquire) != epoch_at_copy) {
-        tag_arity_index_race_window_hits_.fetch_add(1, std::memory_order_relaxed);
-        return {};
-    }
-    if (measure_post_batch) {
-        const auto us =
-            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
-                                           std::chrono::steady_clock::now() - t0)
-                                           .count());
-        pattern_query_after_batch_samples_.fetch_add(1, std::memory_order_relaxed);
-        pattern_query_after_batch_latency_us_total_.fetch_add(us, std::memory_order_relaxed);
-        auto prev = pattern_query_after_batch_latency_us_max_.load(std::memory_order_relaxed);
-        while (us > prev && !pattern_query_after_batch_latency_us_max_.compare_exchange_weak(
-                                prev, us, std::memory_order_relaxed)) {
-        }
-        if (auto* cm = static_cast<CompilerMetrics*>(compiler_metrics_)) {
-            cm->pattern_query_after_batch_samples.fetch_add(1, std::memory_order_relaxed);
-            cm->pattern_query_after_batch_latency_us_total.fetch_add(us, std::memory_order_relaxed);
-            auto pmax =
-                cm->pattern_query_after_batch_latency_us_max.load(std::memory_order_relaxed);
-            while (us > pmax && !cm->pattern_query_after_batch_latency_us_max.compare_exchange_weak(
-                                    pmax, us, std::memory_order_relaxed)) {
+                g_tag_arity_warm_shared_serve_total.fetch_add(1, std::memory_order_relaxed);
+                if (compiler_metrics_)
+                    g_query_index_hit_total.fetch_add(1, std::memory_order_relaxed);
+                record_post_batch();
+                return out;
             }
         }
     }
+
+    // ── Cold / unsynced path ─────────────────────────────────────────
+    // Build/sync/prune under the exclusive lock (unchanged), then publish an
+    // immutable snapshot for this key so the next probe takes the warm path.
+    TagArityBucketView out;
+    {
+        std::unique_lock<std::shared_mutex> wlock(tag_arity_index_mtx_);
+        build_tag_arity_index_unlocked(trigger);
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            if (m->query_pattern_full_rebuild_total.load(std::memory_order_relaxed) !=
+                full_rebuild_before)
+                g_query_full_scan_fallback_total.fetch_add(1, std::memory_order_relaxed);
+            else
+                g_query_index_hit_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        credit_hygiene_excluded();
+        const auto epoch_at_copy = tag_arity_index_epoch_.load(std::memory_order_acquire);
+        const auto& map = skip_macro_introduced ? tag_arity_index_user_ : tag_arity_index_;
+        auto& snaps =
+            skip_macro_introduced ? tag_arity_bucket_snapshots_user_ : tag_arity_bucket_snapshots_;
+        const auto it = map.find(key);
+        // One bucket-sized copy per publish (cold path only): warm hits reuse
+        // this immutable vector instead of copying it again.
+        auto snap = std::make_shared<const TagArityBucketVec>(it == map.end() ? TagArityBucketVec{}
+                                                                              : it->second);
+        g_tag_arity_bucket_snapshot_builds_total.fetch_add(1, std::memory_order_relaxed);
+        snaps.insert_or_assign(key, TagArityBucketSnapshotEntry{epoch_at_copy, snap});
+        out = TagArityBucketView(std::move(snap));
+        // Defensive: under the exclusive lock the epoch cannot change; if it
+        // ever does, count a race-window hit and return empty so callers fall
+        // back safely.
+        if (tag_arity_index_epoch_.load(std::memory_order_acquire) != epoch_at_copy) {
+            tag_arity_index_race_window_hits_.fetch_add(1, std::memory_order_relaxed);
+            out = TagArityBucketView{};
+        }
+    }
+    record_post_batch();
     return out;
 }
 
@@ -554,10 +594,37 @@ Evaluator::snapshot_tag_all_arities(std::uint32_t tag, std::uint8_t trigger,
                                     bool skip_macro_introduced) const {
     // Issue #3638: same hit/fallback probe semantics as the bucket snapshot
     // (single bump per call — full rebuild = fallback, synced = hit).
+    // Issue #4932: the warm (already synced) path is read-only too — it takes
+    // only the shared index lock, since collecting an already-built tag row
+    // needs no rebuild and no exclusive lock.
     const auto full_rebuild_before =
         compiler_metrics_ ? static_cast<CompilerMetrics*>(compiler_metrics_)
                                 ->query_pattern_full_rebuild_total.load(std::memory_order_relaxed)
                           : 0;
+    auto collect = [tag](const auto& map) {
+        std::vector<aura::ast::NodeId> out;
+        const std::uint64_t tag_hi = static_cast<std::uint64_t>(tag) << 32;
+        for (const auto& [key, bucket] : map) {
+            if ((key & 0xFFFF'FFFF'0000'0000ull) != tag_hi)
+                continue;
+            out.insert(out.end(), bucket.begin(), bucket.end());
+        }
+        return out;
+    };
+
+    // Warm path (Issue #4932): synced index → serve read-only, shared lock only.
+    {
+        std::shared_lock<std::shared_mutex> rlock(tag_arity_index_mtx_);
+        if (tag_arity_index_synced_locked()) {
+            if (skip_macro_introduced)
+                tag_arity_hygiene_index_served_total_.fetch_add(1, std::memory_order_relaxed);
+            if (compiler_metrics_)
+                g_query_index_hit_total.fetch_add(1, std::memory_order_relaxed);
+            return collect(skip_macro_introduced ? tag_arity_index_user_ : tag_arity_index_);
+        }
+    }
+
+    // Cold / unsynced: build or sync under the exclusive lock.
     std::unique_lock<std::shared_mutex> wlock(tag_arity_index_mtx_);
     build_tag_arity_index_unlocked(trigger);
     if (compiler_metrics_) {
@@ -571,14 +638,7 @@ Evaluator::snapshot_tag_all_arities(std::uint32_t tag, std::uint8_t trigger,
     const auto& map = skip_macro_introduced ? tag_arity_index_user_ : tag_arity_index_;
     if (skip_macro_introduced)
         tag_arity_hygiene_index_served_total_.fetch_add(1, std::memory_order_relaxed);
-    std::vector<aura::ast::NodeId> out;
-    const std::uint64_t tag_hi = static_cast<std::uint64_t>(tag) << 32;
-    for (const auto& [key, bucket] : map) {
-        if ((key & 0xFFFF'FFFF'0000'0000ull) != tag_hi)
-            continue;
-        out.insert(out.end(), bucket.begin(), bucket.end());
-    }
-    return out;
+    return collect(map);
 }
 
 void Evaluator::verify_pattern_result_hygiene(const aura::ast::FlatAST& flat, EvalValue result,

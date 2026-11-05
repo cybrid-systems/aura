@@ -1963,6 +1963,19 @@ export inline std::atomic<std::uint64_t> g_closure_view_invalid_access_total{0};
 export inline std::atomic<std::uint64_t> g_query_index_hit_total{0};
 export inline std::atomic<std::uint64_t> g_query_full_scan_fallback_total{0};
 
+// Issue #4932: warm query:pattern bucket serves that needed NO exclusive
+// tag_arity index lock and NO per-call bucket-sized copy — the synced index
+// was served from an immutable epoch-stamped snapshot under a shared_lock.
+// Regression test: tests/compiler/test_query_index_composite.cpp (#4932 AC1)
+// asserts this advances for every warm hit.
+export inline std::atomic<std::uint64_t> g_tag_arity_warm_shared_serve_total{0};
+
+// Issue #4932: immutable (tag,arity) bucket snapshot publications — one
+// bucket-sized vector copy per publish (cold / post-mutation probe only).
+// Warm hits must NOT advance this, which proves the warm path allocates no
+// per-call bucket copy.
+export inline std::atomic<std::uint64_t> g_tag_arity_bucket_snapshot_builds_total{0};
+
 // Legacy alias — kept for backward compatibility during the
 // P2 transition (Issue #127). New code should prefer
 // `aura::diag::Result<types::EvalValue>`. Both names refer
@@ -6998,6 +7011,46 @@ private:
     // the lock (should be impossible) — counted as race hit.
     mutable std::atomic<std::uint64_t> tag_arity_index_epoch_{0};
     mutable std::atomic<std::uint64_t> tag_arity_index_race_window_hits_{0};
+    // Issue #4932: immutable, epoch-stamped (tag,arity) bucket snapshots.
+    // A warm query:pattern probe (index already synced) serves one of these
+    // under the shared index lock instead of taking the exclusive lock and
+    // copying the whole bucket. Entries are published under the exclusive
+    // lock by the cold probe, and are immutable afterwards: any index
+    // mutation bumps tag_arity_index_epoch_, which makes the entry stale
+    // (never a use-after-free — the shared_ptr keeps the vector alive while
+    // a caller still holds it). Map keys are (tag,arity) pairs, so the
+    // stale-entry population stays bounded by the distinct-key count.
+    using TagArityBucketVec = std::vector<ast::NodeId>;
+    class TagArityBucketView {
+    public:
+        TagArityBucketView() noexcept = default;
+        explicit TagArityBucketView(std::shared_ptr<const TagArityBucketVec> bucket) noexcept
+            : bucket_(std::move(bucket)) {}
+
+        [[nodiscard]] const TagArityBucketVec& vec() const noexcept {
+            static const TagArityBucketVec kEmpty{};
+            return bucket_ ? *bucket_ : kEmpty;
+        }
+        [[nodiscard]] bool empty() const noexcept { return vec().empty(); }
+        [[nodiscard]] std::size_t size() const noexcept { return vec().size(); }
+        [[nodiscard]] TagArityBucketVec::const_iterator begin() const noexcept {
+            return vec().begin();
+        }
+        [[nodiscard]] TagArityBucketVec::const_iterator end() const noexcept { return vec().end(); }
+        [[nodiscard]] const TagArityBucketVec& operator*() const noexcept { return vec(); }
+        [[nodiscard]] explicit operator bool() const noexcept { return static_cast<bool>(bucket_); }
+
+    private:
+        std::shared_ptr<const TagArityBucketVec> bucket_;
+    };
+    struct TagArityBucketSnapshotEntry {
+        std::uint64_t epoch = 0;
+        std::shared_ptr<const TagArityBucketVec> bucket;
+    };
+    mutable std::unordered_map<std::uint64_t, TagArityBucketSnapshotEntry>
+        tag_arity_bucket_snapshots_;
+    mutable std::unordered_map<std::uint64_t, TagArityBucketSnapshotEntry>
+        tag_arity_bucket_snapshots_user_;
     // Build (or rebuild) the index for the current
     // workspace. Called by query:pattern (and other
     // future matchers) before walking.
@@ -7005,6 +7058,19 @@ private:
                                    PatternIndexRebuildTrigger::LazyQuery)) const;
     // Assumes tag_arity_index_mtx_ already held exclusively.
     void build_tag_arity_index_unlocked(std::uint8_t trigger) const;
+    // Issue #4932: read-only "index already matches the workspace flat"
+    // predicate (workspace anchor + size + generation). Caller MUST hold
+    // tag_arity_index_mtx_ (shared or exclusive); the values it reads are
+    // written only under the exclusive lock.
+    [[nodiscard]] bool tag_arity_index_synced_locked() const noexcept {
+        if (!workspace_flat_ || tag_arity_index_workspace_ != workspace_flat_)
+            return false;
+        if (tag_arity_index_.empty())
+            return false;
+        const auto& flat = *workspace_flat_;
+        return flat.size() == tag_arity_index_synced_size_ &&
+               flat.generation() == tag_arity_index_synced_gen_;
+    }
     void maybe_eager_rebuild_pattern_index_after_cow() const noexcept;
     void bump_pattern_index_rebuild_trigger(std::uint8_t trigger) const noexcept;
     void tag_arity_index_insert_node(const ast::FlatAST& flat, ast::NodeId id) const;
@@ -17932,10 +17998,13 @@ public:
     void force_build_tag_arity_index() const {
         build_tag_arity_index(static_cast<std::uint8_t>(PatternIndexRebuildTrigger::LazyQuery));
     }
-    // Issue #1372 / #1501: build (if needed) + copy bucket under a
-    // single unique_lock. When skip_macro_introduced is true, serve
-    // the user-only hygiene index (no MacroIntroduced roots).
-    [[nodiscard]] std::vector<ast::NodeId> snapshot_tag_arity_bucket(
+    // Issue #1372 / #1501 / #4932: build (if needed) + serve the bucket.
+    // When skip_macro_introduced is true, serve the user-only hygiene index
+    // (no MacroIntroduced roots). The warm (already synced) path takes only
+    // the shared index lock and returns an immutable snapshot view (no
+    // per-call bucket copy); the exclusive lock is taken only to build/sync
+    // or to publish the snapshot for a key that has no current one.
+    [[nodiscard]] TagArityBucketView snapshot_tag_arity_bucket(
         std::uint64_t key,
         std::uint8_t trigger = static_cast<std::uint8_t>(PatternIndexRebuildTrigger::LazyQuery),
         bool skip_macro_introduced = false) const;

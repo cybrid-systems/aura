@@ -21,14 +21,28 @@
 //        bucket, quiet sync path — serve-loop guard is the last line).
 //   AC3: rebuild_full / insert_node never re-adds free slots.
 //   AC4: source-cite — guards + #4163 cites present in both TUs.
+//
+// Issue #4932 — warm query:pattern bucket serve (perf):
+//   AC1: the warm (already synced) hit path serves under the shared index
+//        lock only — no exclusive lock, no per-call bucket-sized copy.
+//        Proven by g_tag_arity_warm_shared_serve_total advancing for every
+//        warm serve while g_tag_arity_bucket_snapshot_builds_total does not
+//        (one publish per mutation, never per call).
+//   AC2: warm hits concurrent with a writer re-syncing the index (epoch
+//        bumps) and with a real append: no spurious race-window hits and the
+//        served set equals the serial result.
 
 #include "test_harness.hpp"
 
+#include <atomic>
 #include <cstdint>
 #include <fstream>
+#include <mutex>
 #include <print>
+#include <shared_mutex>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 import std;
@@ -85,6 +99,30 @@ static std::uint64_t node_bucket_key_4163(aura::ast::FlatAST* flat, aura::ast::N
     const auto nd = flat->get(id);
     return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(nd.tag)) << 32) |
            static_cast<std::uint64_t>(nd.children.size());
+}
+
+// Issue #4932: the exact bucket the (tag,arity) index must hold for a key —
+// same membership rules as Evaluator::tag_arity_index_insert_node (free-slot
+// tombstones and unrooted orphans excluded; MacroIntroduced kept, because the
+// probe below serves the full map, not the user-only hygiene one).
+static std::vector<aura::ast::NodeId> serial_bucket_4932(aura::ast::FlatAST* flat,
+                                                         std::uint64_t key) {
+    std::vector<aura::ast::NodeId> out;
+    if (flat == nullptr)
+        return out;
+    const auto tag = static_cast<aura::ast::NodeTag>(key >> 32);
+    const auto arity = static_cast<std::size_t>(key & 0xFFFF'FFFFu);
+    for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+        if (flat->is_free_slot(id))
+            continue;
+        if (flat->root != aura::ast::NULL_NODE && id != flat->root &&
+            flat->parent_of(id) == aura::ast::NULL_NODE && !flat->is_macro_introduced(id))
+            continue;
+        const auto nd = flat->get(id);
+        if (nd.tag == tag && nd.children.size() == arity)
+            out.push_back(id);
+    }
+    return out;
 }
 
 // Issue #4163 fixture: (begin ...) wrapper — after eval-current the
@@ -371,6 +409,133 @@ int run_test_query_index_composite() {
             std::ifstream f(qic_src_root + "tests/compiler/test_issue_4163.cpp");
             CHECK(!f.good(), "AC4: no tests/compiler/test_issue_4163.cpp");
         }
+    }
+
+    // ── #4932: warm bucket serve — shared lock only, no per-call copy ──
+    {
+        std::println("\n--- #4932 AC1: warm serve takes no exclusive lock, copies nothing ---");
+        CompilerService cs;
+        CHECK(setup_ws4163(cs), "#4932 AC1: workspace setup");
+        auto& ev = cs.evaluator();
+        auto* flat = ev.workspace_flat();
+        CHECK(flat != nullptr, "#4932 AC1: workspace flat");
+        const auto call_id = find_call3_4163(flat);
+        CHECK(call_id != aura::ast::NULL_NODE, "#4932 AC1: (+ 1 2) call node present");
+        const auto key = node_bucket_key_4163(flat, call_id);
+        ev.force_build_tag_arity_index();
+        // Cold probe: publishes the immutable bucket snapshot for this key.
+        const auto b0 = ev.snapshot_tag_arity_bucket(key);
+        CHECK(!b0.empty(), "#4932 AC1: cold probe serves the bucket");
+        using aura::compiler::g_tag_arity_bucket_snapshot_builds_total;
+        using aura::compiler::g_tag_arity_warm_shared_serve_total;
+        const auto warm0 = g_tag_arity_warm_shared_serve_total.load(std::memory_order_relaxed);
+        const auto builds0 =
+            g_tag_arity_bucket_snapshot_builds_total.load(std::memory_order_relaxed);
+        constexpr int kIters = 128;
+        bool same = true;
+        for (int i = 0; i < kIters; ++i) {
+            const auto b = ev.snapshot_tag_arity_bucket(key);
+            if (b.vec() != b0.vec())
+                same = false;
+        }
+        CHECK(same, "#4932 AC1: warm serves return identical bucket contents");
+        CHECK(g_tag_arity_warm_shared_serve_total.load(std::memory_order_relaxed) - warm0 ==
+                  static_cast<std::uint64_t>(kIters),
+              "#4932 AC1: warm serves took the shared-lock-only path");
+        CHECK(g_tag_arity_bucket_snapshot_builds_total.load(std::memory_order_relaxed) == builds0,
+              "#4932 AC1: warm serves performed no bucket copy");
+        CHECK(ev.get_tag_arity_index_race_window_hits() == 0, "#4932 AC1: no race-window hits");
+
+        // A mutation bumps the epoch: exactly one re-publish, then warm again.
+        flat->bump_generation();
+        ev.force_build_tag_arity_index();
+        const auto b1 = ev.snapshot_tag_arity_bucket(key);
+        CHECK(b1.vec() == b0.vec(), "#4932 AC1: post-sync bucket unchanged");
+        CHECK(g_tag_arity_bucket_snapshot_builds_total.load(std::memory_order_relaxed) ==
+                  builds0 + 1,
+              "#4932 AC1: one publish after a sync (never per call)");
+        const auto warm1 = g_tag_arity_warm_shared_serve_total.load(std::memory_order_relaxed);
+        (void)ev.snapshot_tag_arity_bucket(key);
+        CHECK(g_tag_arity_warm_shared_serve_total.load(std::memory_order_relaxed) == warm1 + 1,
+              "#4932 AC1: re-published snapshot is served warm again");
+    }
+
+    // ── #4932 AC2: warm serve concurrent with a writer ──────────────
+    {
+        std::println("\n--- #4932 AC2: warm serve concurrent with an index writer ---");
+        CompilerService cs;
+        CHECK(setup_ws4163(cs), "#4932 AC2: workspace setup");
+        auto& ev = cs.evaluator();
+        auto* flat = ev.workspace_flat();
+        CHECK(flat != nullptr, "#4932 AC2: workspace flat");
+        const auto call_id = find_call3_4163(flat);
+        CHECK(call_id != aura::ast::NULL_NODE, "#4932 AC2: call node present");
+        const auto key = node_bucket_key_4163(flat, call_id);
+        ev.force_build_tag_arity_index();
+        const std::vector<aura::ast::NodeId> serial(ev.snapshot_tag_arity_bucket(key).vec());
+        CHECK(!serial.empty(), "#4932 AC2: serial bucket non-empty");
+        const auto race0 = ev.get_tag_arity_index_race_window_hits();
+
+        std::atomic<int> served{0};
+        std::atomic<int> mismatches{0};
+        std::atomic<int> syncs{0};
+        // Writers re-sync the index after a mutation (one epoch bump per
+        // sync) while readers warm-serve. The test-local gate mirrors the
+        // production workspace lock (query = shared, mutation = exclusive),
+        // so a reader is never inside the flat while the writer bumps it.
+        // Reader loops are bounded: an unbounded shared-lock spin would
+        // starve the writer forever on a reader-preferring rwlock.
+        constexpr int kReaderThreads = 4;
+        constexpr int kReaderIters = 200;
+        constexpr int kWriterSyncs = 48;
+        std::shared_mutex workspace_gate;
+        std::vector<std::thread> threads;
+        threads.reserve(kReaderThreads + 1);
+        for (int t = 0; t < kReaderThreads; ++t) {
+            threads.emplace_back([&]() {
+                for (int i = 0; i < kReaderIters; ++i) {
+                    std::shared_lock<std::shared_mutex> gate(workspace_gate);
+                    const auto b = ev.snapshot_tag_arity_bucket(key);
+                    if (b.vec() != serial)
+                        mismatches.fetch_add(1, std::memory_order_relaxed);
+                    served.fetch_add(1, std::memory_order_relaxed);
+                }
+            });
+        }
+        threads.emplace_back([&]() {
+            for (int i = 0; i < kWriterSyncs; ++i) {
+                {
+                    std::unique_lock<std::shared_mutex> gate(workspace_gate);
+                    flat->bump_generation(); // the append/sync trigger
+                }
+                ev.force_build_tag_arity_index();
+                syncs.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+        for (auto& th : threads)
+            th.join();
+        CHECK(mismatches.load() == 0, "#4932 AC2: concurrent serves equal the serial result");
+        CHECK(served.load() == kReaderThreads * kReaderIters, "#4932 AC2: readers actually served");
+        CHECK(syncs.load() == kWriterSyncs, "#4932 AC2: writer re-synced the index");
+        CHECK(ev.get_tag_arity_index_race_window_hits() == race0,
+              "#4932 AC2: no spurious race-window hits under a concurrent writer");
+
+        // A real append must invalidate the snapshot: the next serve rebuilds
+        // and equals a fresh serial scan of the flat.
+        const std::string more = "(begin (define root 0) (define w 1) (+ 1 2) (+ 9 8))";
+        CHECK(cs.eval("(set-code \"" + more + "\")").has_value(), "#4932 AC2: appended workspace");
+        (void)cs.eval("(eval-current)");
+        auto* flat2 = ev.workspace_flat();
+        CHECK(flat2 != nullptr, "#4932 AC2: workspace flat after append");
+        const auto call2 = find_call3_4163(flat2);
+        CHECK(call2 != aura::ast::NULL_NODE, "#4932 AC2: call node after append");
+        const auto key2 = node_bucket_key_4163(flat2, call2);
+        ev.force_build_tag_arity_index();
+        const auto appended = ev.snapshot_tag_arity_bucket(key2);
+        CHECK(appended.vec() == serial_bucket_4932(flat2, key2),
+              "#4932 AC2: post-append bucket equals the serial result");
+        CHECK(ev.get_tag_arity_index_race_window_hits() == race0,
+              "#4932 AC2: no race-window hits after append");
     }
 
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
