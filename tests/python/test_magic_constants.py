@@ -113,6 +113,21 @@ class MagicConstantsInvariant(unittest.TestCase):
                     offenders.append(f"{rel(path)}:{lineno}: {line.strip()}")
         self.assertEqual(offenders, [], "inline hash-slot fingerprint rule found")
 
+    def test_basis_point_helpers_split_by_consumer(self) -> None:
+        # Health/adaptive inputs use the vacuous 100% helper; informational
+        # rates use the 0-on-empty helper. Keep the split visible.
+        health = (SRC / "compiler" / "evaluator_primitives_query_lifecycle.cpp").read_text(
+            encoding="utf-8", errors="replace"
+        )
+        self.assertIn("basis_points_vacuous_full", health)
+        for rel in (
+            "compiler/evaluator_primitives_obs_jit.cpp",
+            "compiler/evaluator_primitives_mutate.cpp",
+            "compiler/evaluator_primitives_obs_eval.cpp",
+        ):
+            text = (SRC / rel).read_text(encoding="utf-8", errors="replace")
+            self.assertIn("::aura::compiler::basis_points(", text, rel)
+
     def test_no_full_basis_point_fallback(self) -> None:
         # Policy: an empty denominator means "no data" (0 bp). The only
         # sanctioned 100% is basis_points_vacuous_full(), which lives in
