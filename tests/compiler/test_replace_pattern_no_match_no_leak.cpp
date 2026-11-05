@@ -77,11 +77,12 @@ int run_test_replace_pattern_no_match_no_leak() {
         CHECK(lwin.find("replaced_count == 0") != std::string::npos, "AC1: zero-replace path");
 
         auto ppos = mut.find("add_mutate(\"mutate:replace-pattern\"");
-        if (ppos == std::string::npos)
-            ppos = mut.find("mutate:replace-pattern");
         CHECK(ppos != std::string::npos, "AC1: public replace-pattern");
-        // Public body is long (QueryMatcher + apply); #2798 near end.
-        auto pwin = mut.substr(ppos, 24000);
+        // Public body is long (QueryMatcher + apply); the fixed 24000 window
+        // stopped short of the orphan free once the handler grew, so take the
+        // whole brace-matched lambda body.
+        auto pwin = ppos == std::string::npos ? std::string{}
+                                              : aura::test::aura_source_block_after(mut, ppos);
         CHECK(pwin.find("Issue #2798") != std::string::npos, "AC1: public cites #2798");
         CHECK(pwin.find("free_orphan_nodes_from") != std::string::npos,
               "AC1: public free_orphan_nodes_from");
