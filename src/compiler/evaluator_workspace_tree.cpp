@@ -84,15 +84,13 @@ EvalValue Evaluator::build_policy_hash(const MemoryPolicy& p) {
         std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
         for (char c : k)
             h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-        auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-        if (fp == 0xFF)
-            fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
+        const auto fp = ::aura::compiler::hash::fingerprint(h);
         auto kidx = string_heap_.mint(k);
         EvalValue key_ev = make_string(kidx);
         bool inserted = false;
         for (std::size_t at = 0; at < cap; ++at) {
             auto idx = ((h >> 1) + at) & (cap - 1);
-            if (meta[idx] == 0xFF) {
+            if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                 meta[idx] = fp;
                 keys[idx] = key_ev.val;
                 vals[idx] = v.val;
@@ -131,15 +129,13 @@ Evaluator::build_ast_lifecycle_hash(std::span<const std::pair<std::string, EvalV
         std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
         for (char c : k)
             h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-        auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-        if (fp == 0xFF)
-            fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
+        const auto fp = ::aura::compiler::hash::fingerprint(h);
         auto kidx = string_heap_.mint(k);
         EvalValue key_ev = make_string(kidx);
         bool inserted = false;
         for (std::size_t at = 0; at < cap; ++at) {
             auto idx = ((h >> 1) + at) & (cap - 1);
-            if (meta[idx] == 0xFF) {
+            if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                 meta[idx] = fp;
                 keys[idx] = key_ev.val;
                 vals[idx] = v.val;

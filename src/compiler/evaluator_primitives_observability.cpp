@@ -1665,7 +1665,7 @@ EvalValue ObservabilityPrims::stats_drift_check(Evaluator& ev) {
         bool inserted = false;
         for (std::size_t at = 0; at < hcap; ++at) {
             auto idx = ((h >> 1) + at) & (hcap - 1);
-            if (meta[idx] == 0xFF) {
+            if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                 meta[idx] = fp;
                 keys[idx] = key_ev.val;
                 vals[idx] = v.val;
