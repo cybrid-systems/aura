@@ -121,6 +121,7 @@ class MagicConstantsInvariant(unittest.TestCase):
             "compiler/frame_budget.hh",
             "compiler/type_system_health.hh",
             "core/arena_auto_policy_stats.h",
+            "compiler/service.ixx",
         ):
             text = (SRC / rel).read_text(encoding="utf-8", errors="replace")
             self.assertIn("basis_points", text, rel)

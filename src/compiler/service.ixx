@@ -70,6 +70,7 @@ module;
 
 export module aura.compiler.service;
 import std;
+import aura.core.consts; // module-owned numeric constants (#901/#905)
 import aura.core;
 import aura.compiler.ir_cache_pure;
 import aura.compiler.ast_walkers;
@@ -14851,7 +14852,8 @@ public:
         s.should_relower_total = metrics_.should_relower_total.load(std::memory_order_relaxed);
         s.affected_subtree_total = metrics_.affected_subtree_total.load(std::memory_order_relaxed);
         if (s.affected_subtree_total > 0) {
-            s.dirty_trigger_rate_bp = (s.should_relower_total * 10000u) / s.affected_subtree_total;
+            s.dirty_trigger_rate_bp = static_cast<std::uint64_t>(::aura::core::consts::basis_points(
+                s.should_relower_total, s.affected_subtree_total));
         } else {
             s.dirty_trigger_rate_bp = 0;
         }
@@ -14870,7 +14872,7 @@ public:
                 metrics_.ir_soa_relower_blocks_saved_total.load(std::memory_order_relaxed);
             const std::uint64_t sum = hits + saved;
             s.dirty_block_ratio_bp =
-                sum > 0 ? static_cast<std::uint64_t>((hits * 10000u) / sum) : 0ull;
+                static_cast<std::uint64_t>(::aura::core::consts::basis_points(hits, sum));
         }
         // Issue #387: Type Dependency Graph observability.
         // Mirrors the 3 atomics; derives type_dep_graph_hit_rate_bp.
@@ -14879,7 +14881,8 @@ public:
         s.type_dep_graph_size = metrics_.type_dep_graph_size.load(std::memory_order_relaxed);
         if (s.type_dep_graph_lookups > 0) {
             s.type_dep_graph_hit_rate_bp =
-                (s.type_dep_graph_hits * 10000u) / s.type_dep_graph_lookups;
+                static_cast<std::uint64_t>(::aura::core::consts::basis_points(
+                    s.type_dep_graph_hits, s.type_dep_graph_lookups));
         } else {
             s.type_dep_graph_hit_rate_bp = 0;
         }
@@ -14947,14 +14950,16 @@ public:
         const std::uint64_t total = s.typecheck_cache_hits_total + s.typecheck_cache_misses_total +
                                     s.typecheck_stale_cache_total;
         if (total > 0) {
-            s.multi_mutation_recompute_ratio_bp = (s.typecheck_cache_misses_total * 10000u) / total;
+            s.multi_mutation_recompute_ratio_bp = static_cast<std::uint64_t>(
+                ::aura::core::consts::basis_points(s.typecheck_cache_misses_total, total));
         } else {
             s.multi_mutation_recompute_ratio_bp = 0;
         }
         // Issue #412: gen_saved_ratio_bp from the same snapshot.
         const std::uint64_t gen_total = s.typecheck_stale_cache_total + s.typecheck_gen_saved_total;
         if (gen_total > 0) {
-            s.typecheck_gen_saved_ratio_bp = (s.typecheck_gen_saved_total * 10000u) / gen_total;
+            s.typecheck_gen_saved_ratio_bp = static_cast<std::uint64_t>(
+                ::aura::core::consts::basis_points(s.typecheck_gen_saved_total, gen_total));
         } else {
             s.typecheck_gen_saved_ratio_bp = 0;
         }
@@ -14987,7 +14992,8 @@ public:
         s.per_binding_gen_bumps_total = per_binding_gen_bumps_acc_;
         const std::uint64_t pb_total = s.per_binding_gen_hits_total + s.typecheck_stale_cache_total;
         if (pb_total > 0) {
-            s.per_binding_gen_hit_ratio_bp = (s.per_binding_gen_hits_total * 10000u) / pb_total;
+            s.per_binding_gen_hit_ratio_bp = static_cast<std::uint64_t>(
+                ::aura::core::consts::basis_points(s.per_binding_gen_hits_total, pb_total));
         } else {
             s.per_binding_gen_hit_ratio_bp = 0;
         }
@@ -15039,7 +15045,8 @@ public:
             metrics_.schema_cache_hits_total.load(std::memory_order_relaxed);
         if (s.schema_cache_lookups_total > 0) {
             s.schema_cache_hit_rate_bp =
-                (s.schema_cache_hits_total * 10000u) / s.schema_cache_lookups_total;
+                static_cast<std::uint64_t>(::aura::core::consts::basis_points(
+                    s.schema_cache_hits_total, s.schema_cache_lookups_total));
         } else {
             s.schema_cache_hit_rate_bp = 0;
         }
@@ -15070,7 +15077,8 @@ public:
             metrics_.solve_delta_full_solve_fallback_total.load(std::memory_order_relaxed);
         if (s.delta_constraints_total > 0) {
             s.delta_solve_constraints_ratio_bp =
-                (s.delta_constraints_processed_total * 10000u) / s.delta_constraints_total;
+                static_cast<std::uint64_t>(::aura::core::consts::basis_points(
+                    s.delta_constraints_processed_total, s.delta_constraints_total));
         } else {
             s.delta_solve_constraints_ratio_bp = 0;
         }
@@ -15083,7 +15091,8 @@ public:
         s.match_subject_total = metrics_.match_subject_total.load(std::memory_order_relaxed);
         if (s.match_subject_total > 0) {
             s.match_narrowed_ratio_bp =
-                (s.match_subject_narrowed_total * 10000u) / s.match_subject_total;
+                static_cast<std::uint64_t>(::aura::core::consts::basis_points(
+                    s.match_subject_narrowed_total, s.match_subject_total));
         } else {
             s.match_narrowed_ratio_bp = 0;
         }
@@ -15169,13 +15178,15 @@ public:
         s.poly_dedup_hits_total = metrics_.poly_dedup_hits_total.load(std::memory_order_relaxed);
         s.poly_instantiate_total = metrics_.poly_instantiate_total.load(std::memory_order_relaxed);
         if (s.poly_register_total > 0) {
-            s.poly_dedup_ratio_bp = (s.poly_dedup_hits_total * 10000u) / s.poly_register_total;
+            s.poly_dedup_ratio_bp = static_cast<std::uint64_t>(
+                ::aura::core::consts::basis_points(s.poly_dedup_hits_total, s.poly_register_total));
         } else {
             s.poly_dedup_ratio_bp = 0;
         }
         const std::uint64_t narrow_total = s.narrowing_applied_total + s.narrowing_skipped_total;
         if (narrow_total > 0) {
-            s.narrowing_applied_ratio_bp = (s.narrowing_applied_total * 10000u) / narrow_total;
+            s.narrowing_applied_ratio_bp = static_cast<std::uint64_t>(
+                ::aura::core::consts::basis_points(s.narrowing_applied_total, narrow_total));
         } else {
             s.narrowing_applied_ratio_bp = 0;
         }
@@ -15187,7 +15198,8 @@ public:
             metrics_.ir_instructions_with_type_total.load(std::memory_order_relaxed);
         if (s.ir_instructions_total > 0) {
             s.type_propagation_coverage_bp =
-                (s.ir_instructions_with_type_total * 10000u) / s.ir_instructions_total;
+                static_cast<std::uint64_t>(::aura::core::consts::basis_points(
+                    s.ir_instructions_with_type_total, s.ir_instructions_total));
         } else {
             s.type_propagation_coverage_bp = 0;
         }
@@ -15207,8 +15219,9 @@ public:
                 s.mark_dirty_total_nodes / s.mark_dirty_upward_call_count;
             const std::uint64_t est_ancestor_uses =
                 avg_ancestor_depth * s.per_symbol_dirty_lookups_total;
-            s.per_symbol_dirty_reduction_bp = (s.per_symbol_dirty_uses_total * 10000u) /
-                                              (est_ancestor_uses > 0 ? est_ancestor_uses : 1);
+            s.per_symbol_dirty_reduction_bp =
+                static_cast<std::uint64_t>(::aura::core::consts::basis_points(
+                    s.per_symbol_dirty_uses_total, est_ancestor_uses));
         } else {
             s.per_symbol_dirty_reduction_bp = 0;
         }
@@ -15224,9 +15237,9 @@ public:
         s.incremental_typecheck_re_inferred_total =
             metrics_.incremental_typecheck_re_inferred_total.load(std::memory_order_relaxed);
         if (s.incremental_typecheck_auto_invocations_total > 0) {
-            s.incremental_typecheck_avg_re_inferred_bp =
-                (s.incremental_typecheck_re_inferred_total * 10000u) /
-                s.incremental_typecheck_auto_invocations_total;
+            s.incremental_typecheck_avg_re_inferred_bp = static_cast<std::uint64_t>(
+                ::aura::core::consts::basis_points(s.incremental_typecheck_re_inferred_total,
+                                                   s.incremental_typecheck_auto_invocations_total));
         } else {
             s.incremental_typecheck_avg_re_inferred_bp = 0;
         }
@@ -15245,7 +15258,8 @@ public:
             s.per_symbol_reinfer_visited_total + s.ancestor_reinfer_visited_total;
         if (total_visited > 0) {
             s.per_symbol_path_share_bp =
-                (s.per_symbol_reinfer_visited_total * 10000u) / total_visited;
+                static_cast<std::uint64_t>(::aura::core::consts::basis_points(
+                    s.per_symbol_reinfer_visited_total, total_visited));
         } else {
             s.per_symbol_path_share_bp = 0;
         }
@@ -15263,7 +15277,8 @@ public:
             metrics_.per_defuse_index_walk_fallback_total.load(std::memory_order_relaxed);
         if (s.per_defuse_index_used_total > 0) {
             s.per_defuse_index_visited_avg_bp =
-                (s.per_defuse_index_visited_total * 10000u) / s.per_defuse_index_used_total;
+                static_cast<std::uint64_t>(::aura::core::consts::basis_points(
+                    s.per_defuse_index_visited_total, s.per_defuse_index_used_total));
         } else {
             s.per_defuse_index_visited_avg_bp = 0;
         }
@@ -16955,7 +16970,8 @@ private:
             const auto emitted = static_cast<std::uint64_t>(ts.castop_emitted());
             const auto denom = emitted + eliminated;
             if (denom > 0) {
-                const auto bp = (eliminated * 10000ull) / denom;
+                const auto bp = static_cast<std::uint64_t>(
+                    ::aura::core::consts::basis_points(eliminated, denom));
                 metrics_.cast_elision_win_rate_bp.store(bp, std::memory_order_relaxed);
                 // Issue #1925: alias elision-rate-bp for narrow/mutation AC.
                 metrics_.dead_coercion_elision_rate_bp.store(bp, std::memory_order_relaxed);
