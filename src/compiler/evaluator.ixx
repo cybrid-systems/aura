@@ -83,6 +83,7 @@ module;
 export module aura.compiler.evaluator;
 import aura.compiler.macro_expansion;
 import std;
+import aura.core.consts; // module-owned numeric constants (#901/#905)
 import aura.core;
 import aura.compiler.ffi_primitives;
 import aura.compiler.adt_runtime; // Step 2.3 wiring (exact FFI pattern)
@@ -2043,12 +2044,10 @@ namespace primitives_detail {
                                   std::int64_t v) {
         if (!ht)
             return false;
-        std::uint64_t h = 0xcbf29ce484222325ull;
+        std::uint64_t h = ::aura::core::consts::kFnvOffsetBasis;
         for (unsigned char c : k)
-            h = (h ^ c) * 0x100000001b3ull;
-        auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-        if (fp == 0xFF)
-            fp = 0xFE;
+            h = (h ^ c) * ::aura::core::consts::kFnvPrime;
+        const auto fp = ::aura::core::consts::fingerprint(h);
         auto meta = ht->metadata();
         auto keys = ht->keys();
         auto vals = ht->values();
@@ -2058,7 +2057,7 @@ namespace primitives_detail {
         const auto val_ev = types::make_int(v);
         for (std::size_t at = 0; at < hcap; ++at) {
             const auto idx = ((h >> 1) + at) & (hcap - 1);
-            if (meta[idx] == 0xFF) {
+            if (meta[idx] == ::aura::core::consts::kEmptySlot) {
                 meta[idx] = fp;
                 keys[idx] = key_ev.val;
                 vals[idx] = val_ev.val;
@@ -2077,12 +2076,10 @@ namespace primitives_detail {
                                       std::string_view k, std::string_view v) {
         if (!ht)
             return false;
-        std::uint64_t h = 0xcbf29ce484222325ull;
+        std::uint64_t h = ::aura::core::consts::kFnvOffsetBasis;
         for (unsigned char c : k)
-            h = (h ^ c) * 0x100000001b3ull;
-        auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-        if (fp == 0xFF)
-            fp = 0xFE;
+            h = (h ^ c) * ::aura::core::consts::kFnvPrime;
+        const auto fp = ::aura::core::consts::fingerprint(h);
         auto meta = ht->metadata();
         auto keys = ht->keys();
         auto vals = ht->values();
@@ -2093,7 +2090,7 @@ namespace primitives_detail {
         const auto val_ev = types::make_string(static_cast<std::uint64_t>(vidx));
         for (std::size_t at = 0; at < hcap; ++at) {
             const auto idx = ((h >> 1) + at) & (hcap - 1);
-            if (meta[idx] == 0xFF) {
+            if (meta[idx] == ::aura::core::consts::kEmptySlot) {
                 meta[idx] = fp;
                 keys[idx] = key_ev.val;
                 vals[idx] = val_ev.val;
@@ -2113,17 +2110,15 @@ namespace primitives_detail {
         auto meta = ht->metadata();
         auto keys = ht->keys();
         auto vals = ht->values();
-        std::uint64_t h = 0xcbf29ce484222325ull;
+        std::uint64_t h = ::aura::core::consts::kFnvOffsetBasis;
         for (unsigned char c : std::string_view{"overflow"})
-            h = (h ^ c) * 0x100000001b3ull;
-        auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-        if (fp == 0xFF)
-            fp = 0xFE;
+            h = (h ^ c) * ::aura::core::consts::kFnvPrime;
+        const auto fp = ::aura::core::consts::fingerprint(h);
         const auto kidx = string_heap.mint("overflow");
         const auto key_ev = types::make_string(static_cast<std::uint64_t>(kidx));
         const auto val_ev = types::make_int(1);
         for (std::size_t i = 0; i < ht->capacity; ++i) {
-            if (meta[i] == 0xFF)
+            if (meta[i] == ::aura::core::consts::kEmptySlot)
                 continue;
             types::EvalValue ke{};
             ke.val = keys[i];
@@ -9607,9 +9602,9 @@ public:
     // FNV-1a 64-bit hash of a define/module name → region key.
     [[nodiscard]] static std::uint64_t
     workspace_region_key_from_name(std::string_view name) noexcept {
-        std::uint64_t h = 14695981039346656037ull;
+        std::uint64_t h = ::aura::core::consts::kFnvOffsetBasis;
         for (unsigned char c : name)
-            h = (h ^ c) * 1099511628211ull;
+            h = (h ^ c) * ::aura::core::consts::kFnvPrime;
         return h;
     }
 

@@ -12,6 +12,7 @@ module;
 export module aura.compiler.optimization_passes;
 
 import std;
+import aura.core.consts; // module-owned numeric constants (#901/#905)
 import aura.compiler.ir;
 import aura.compiler.ir_soa;          // Issue #2143: IRModuleV2 for run_dirty
 import aura.core.type;                // Issue #2025: TypeRegistry for DeadCoercion
@@ -1052,10 +1053,10 @@ public:
 
     // FNV-1a over function/block counts + opcode stream (structure, not values).
     [[nodiscard]] static std::uint64_t compute_module_shape(const aura::ir::IRModule& m) noexcept {
-        std::uint64_t h = 14695981039346656037ull;
+        std::uint64_t h = ::aura::core::consts::kFnvOffsetBasis;
         auto mix = [&](std::uint64_t v) {
             h ^= v;
-            h *= 1099511628211ull;
+            h *= ::aura::core::consts::kFnvPrime;
         };
         mix(m.functions.size());
         mix(m.entry_function_id);

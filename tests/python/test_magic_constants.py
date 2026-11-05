@@ -21,6 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 CANONICAL = SRC / "compiler" / "hash_meta.h"
+CONSTS_MODULE = SRC / "core" / "consts.ixx"
 EXTS = {".cpp", ".cc", ".cxx", ".hh", ".hpp", ".h", ".ixx"}
 SKIP_DIRS = {"linenoise", "__pycache__"}
 
@@ -34,13 +35,6 @@ FINGERPRINT_RULE = re.compile(r">>\s*57")
 # Decimal ASCII codes for the digit / upper / lower ranges. Character
 # literals make the intent visible and match the value type.
 ASCII_RANGE = re.compile(r">=\s*(?:48|65|97)\b[^;\n]*<=\s*(?:57|90|122)\b")
-
-MODULE_EXCEPTIONS = {
-    "src/core/ast.ixx",
-    "src/compiler/evaluator.ixx",
-    "src/compiler/type_checker.ixx",
-    "src/compiler/optimization_passes.ixx",
-}
 
 
 def code_lines(path: Path) -> list[str]:
@@ -106,7 +100,7 @@ class MagicConstantsInvariant(unittest.TestCase):
     def test_fingerprint_rule_only_in_hash_meta(self) -> None:
         offenders = []
         for path in source_files():
-            if path == CANONICAL or rel(path) in MODULE_EXCEPTIONS:
+            if path in (CANONICAL, CONSTS_MODULE):
                 continue
             for lineno, line in enumerate(code_lines(path), 1):
                 if FINGERPRINT_RULE.search(line):
@@ -130,6 +124,26 @@ class MagicConstantsInvariant(unittest.TestCase):
         ):
             text = (SRC / rel).read_text(encoding="utf-8", errors="replace")
             self.assertIn("basis_points", text, rel)
+
+    def test_module_constants_match_headers(self) -> None:
+        def value(text: str, name: str) -> int:
+            m = re.search(rf"\b{name}\s*=\s*([0-9a-fA-FxX]+)[uUlL]*;", text)
+            self.assertIsNotNone(m, name)
+            return int(m.group(1), 0)
+
+        header = (SRC / "compiler" / "hash_meta.h").read_text(encoding="utf-8")
+        module = (SRC / "core" / "consts.ixx").read_text(encoding="utf-8")
+        for name in (
+            "kFnvOffsetBasis",
+            "kFnvPrime",
+            "kEmptySlot",
+            "kFingerprintEmpty",
+            "kFingerprintHighBit",
+            "kTombstoneSlot",
+        ):
+            self.assertEqual(value(module, name), value(header, name), name)
+        bp = (SRC / "compiler" / "basis_points.h").read_text(encoding="utf-8")
+        self.assertEqual(value(module, "kBasisPointScale"), value(bp, "kBasisPointScale"))
 
     def test_no_full_basis_point_fallback(self) -> None:
         # Policy: an empty denominator means "no data" (0 bp). The only
@@ -155,7 +169,7 @@ class MagicConstantsInvariant(unittest.TestCase):
     def test_fnv_literals_only_in_hash_meta(self) -> None:
         offenders = []
         for path in source_files():
-            if path == CANONICAL or rel(path) in MODULE_EXCEPTIONS:
+            if path in (CANONICAL, CONSTS_MODULE):
                 continue
             for lineno, line in enumerate(code_lines(path), 1):
                 if any(rx.search(line) for rx in FNV_LITERALS):
