@@ -609,7 +609,9 @@ struct CapabilityRegistry {
     // Issue #2530: aligned with the SecurityEvent ring (#2225), single SSOT.
     // so deny-storm Agent in-memory query retains a full SE-scale window
     // (earlier events remain on WAL). Was 128.
-    static constexpr std::size_t kAuditRing = ::aura::core::security_event::kSecurityEventRingSize;
+    static constexpr std::size_t kAuditRing = 1024;
+    static_assert(kAuditRing == ::aura::core::security_event::kSecurityEventRingSize,
+                  "audit ring must stay aligned with the SecurityEvent ring (#2225/#2530)");
     // Issue #2425: published slots (data + atomic publish_seq).
     // audit_ring_mtx_: exclusive for slot write / clear; shared for
     // try_load_* so concurrent readers are TSAN-clean with writers.
