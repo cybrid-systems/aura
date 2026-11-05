@@ -69,6 +69,7 @@ class HeapMutateThrottle(unittest.TestCase):
                     self.assertEqual(r.returncode, 0, r.stderr)
                     self.assertIn("(n 1000 1000)", r.stdout)
                     self.assertNotIn("naked mutate", r.stderr)
+                    self.assertNotIn("mutation refused", r.stderr)  # #4909 label
 
 
 if __name__ == "__main__":

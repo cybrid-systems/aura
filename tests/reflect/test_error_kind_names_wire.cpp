@@ -75,6 +75,7 @@ enum class ErrorKind : std::uint8_t {
     UserError,
     ModuleError,
     IoError,
+    MutationRefused,
 };
 
 enum class BlameParty : std::uint8_t {
@@ -135,8 +136,8 @@ int main() {
     static_assert(enum_name(ErrorKind::Warning) == "Warning");
     static_assert(enum_name(ErrorKind::IRCorruption) == "IRCorruption");
 
-    check(enum_count<ErrorKind>() == 20,
-          "diag count"); // #4349 StaleWorkspace, #4909 +3, #4917 IoError
+    check(enum_count<ErrorKind>() == 21,
+          "diag count"); // #4349 StaleWorkspace, #4909 +3, #4917 IoError, #4909 MutationRefused
     for (std::size_t i = 0; i < kDiagErrorKindNameCount; ++i) {
         auto n = enum_name<ErrorKind>(static_cast<int>(i));
         if (n != kDiagErrorKindIdents[i]) {

@@ -946,11 +946,39 @@ static SourceLocation ir_call_arity_loc(const IRInstruction* instr, Evaluator* e
 // (#4855) — so an error that display consumes or that escapes a function body
 // names its own form, not the outermost call. Only a known source node is
 // recorded (never a 1:1 placeholder that would win over the real producer).
-static void ir_note_producer_4909(const IRInstruction* instr, Evaluator* ev, const EvalValue& v) {
+//
+// The instruction's node id belongs to the flat the function was LOWERED from.
+// A closure defined by an earlier top-level form (force-soa, a define bound via
+// IR, a required module) runs while the evaluator's current flat is the
+// caller's, so the id was out of range there and nothing was recorded: the
+// error was then located at the outermost call instead of the failing form.
+// Prefer the function's own bridge flat; fall back to the current flat.
+// The bridge's flat is a non-owning view of arena memory: only trust it while
+// its epoch is current (a reset arena bumps the epoch, #223).
+static const aura::ast::FlatAST* ir_fn_flat_4909(Evaluator* ev, const aura::ir::IRModule* mod,
+                                                 const aura::ir::IRFunction* fn,
+                                                 aura::ast::NodeId nid) noexcept {
+    if (!mod || !fn || fn->id >= mod->functions.size() || &mod->functions[fn->id] != fn ||
+        fn->id >= mod->closure_bridge.size())
+        return nullptr;
+    const auto& bd = mod->closure_bridge[fn->id];
+    if (bd.bridge_epoch != 0 && bd.bridge_epoch != ev->current_bridge_epoch())
+        return nullptr;
+    const auto* flat = bd.flat.get();
+    if (!flat || nid >= flat->size() || flat->get(nid).line == 0)
+        return nullptr;
+    return flat;
+}
+
+static void ir_note_producer_4909(const IRInstruction* instr, Evaluator* ev,
+                                  const aura::ir::IRModule* mod, const aura::ir::IRFunction* fn,
+                                  const EvalValue& v) {
     if (!is_error(v) || types::is_string(v) || !ev || !instr || instr->source_ast_node_id == 0)
         return;
-    auto* flat = ev->current_flat();
     const auto nid = static_cast<aura::ast::NodeId>(instr->source_ast_node_id);
+    const aura::ast::FlatAST* flat = ir_fn_flat_4909(ev, mod, fn, nid);
+    if (!flat)
+        flat = ev->current_flat();
     if (!flat || nid >= flat->size())
         return;
     const auto nv = flat->get(nid);
@@ -1342,7 +1370,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
         if (!context_.evaluator)
             return false;
         locals[slot] = context_.evaluator->make_arith_type_error(detail);
-        ir_note_producer_4909(at, context_.evaluator, locals[slot]); // #4909
+        ir_note_producer_4909(at, context_.evaluator, &module_, &func, locals[slot]); // #4909
         return true;
     };
     auto operand_is_number = [](const types::EvalValue& v) { return is_int(v) || is_float(v); };
@@ -2210,7 +2238,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto pfn = context_.primitives.lookup("car");
                     if (pfn) {
                         locals[ops[0]] = (*pfn)({locals[ops[1]]});
-                        ir_note_producer_4909(&instr, context_.evaluator, locals[ops[0]]);
+                        ir_note_producer_4909(&instr, context_.evaluator, &module_, &func,
+                                              locals[ops[0]]);
                     } else
                         locals[ops[0]] = make_void();
                     break;
@@ -2224,7 +2253,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto pfn = context_.primitives.lookup("cdr");
                     if (pfn) {
                         locals[ops[0]] = (*pfn)({locals[ops[1]]});
-                        ir_note_producer_4909(&instr, context_.evaluator, locals[ops[0]]);
+                        ir_note_producer_4909(&instr, context_.evaluator, &module_, &func,
+                                              locals[ops[0]]);
                     } else
                         locals[ops[0]] = make_void();
                     break;
@@ -2306,7 +2336,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         if (context_.evaluator) {
                             locals[ops[0]] = context_.evaluator->invoke_prim_with_telemetry(
                                 "hash-ref", [&]() { return (*pfn)({hash_val, key_val}); });
-                            ir_note_producer_4909(&instr, context_.evaluator, locals[ops[0]]);
+                            ir_note_producer_4909(&instr, context_.evaluator, &module_, &func,
+                                                  locals[ops[0]]);
                         } else {
                             locals[ops[0]] = (*pfn)({hash_val, key_val});
                         }
@@ -2437,7 +2468,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                 deny->location = ir_call_arity_loc(&instr, context_.evaluator);
                             return std::unexpected(std::move(*deny));
                         }
-                        ir_note_producer_4909(&instr, context_.evaluator, *presult); // #4909
+                        ir_note_producer_4909(&instr, context_.evaluator, &module_, &func,
+                                              *presult); // #4909
                         locals[result_slot] = *presult;
                     }
                     break;
@@ -2577,7 +2609,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                             ir_call_arity_loc(&instr, context_.evaluator);
                                     return std::unexpected(std::move(*deny));
                                 }
-                                ir_note_producer_4909(&instr, context_.evaluator,
+                                ir_note_producer_4909(&instr, context_.evaluator, &module_, &func,
                                                       locals[ops[3]]); // #4909
                             } else if (aura::compiler::typed_audit::production_defaults_active()) {
                                 // #3834 / #3798: production + null owner — void,
