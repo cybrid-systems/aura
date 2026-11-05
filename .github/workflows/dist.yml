@@ -1,9 +1,11 @@
 # Issue #4907: prebuilt aura for linux-x86_64 and linux-arm64 on every main push.
 #   build   — native runner per arch, inside the toolchain image: build, test, bundle
-#   verify  — bare runner per arch (no toolchain image) + ubuntu:22.04: install.sh,
-#             aura new evolve / run / test; build and push the per-arch runtime image
+#   verify  — bare Ubuntu 24.04 runner per arch (no toolchain image) + a clean
+#             ubuntu:24.04 container: install.sh, aura new evolve / run / test;
+#             build and push the per-arch runtime image
 #   publish — rolling `nightly` release (tarballs + sha256) and the multi-arch
-#             manifest ghcr.io/cybrid-systems/aura:<sha> and :nightly
+#             manifest ghcr.io/cybrid-systems/aura:<sha> and :nightly (no stable
+#             channel / :latest until the first vX.Y.Z tag)
 # A failure on either architecture stops the publish.
 name: dist
 
@@ -29,7 +31,7 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - { runner: ubuntu-latest, arch: x86_64 }
+          - { runner: ubuntu-24.04, arch: x86_64 }
           - { runner: ubuntu-24.04-arm, arch: arm64 }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
@@ -62,7 +64,7 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - { runner: ubuntu-latest, arch: x86_64 }
+          - { runner: ubuntu-24.04, arch: x86_64 }
           - { runner: ubuntu-24.04-arm, arch: arm64 }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -72,20 +74,23 @@ jobs:
         with:
           name: aura-linux-${{ matrix.arch }}
           path: dist
-      - name: Install and run on the bare runner (host glibc ${{ matrix.runner }})
+      - name: Install and run on the bare Ubuntu 24.04 runner (${{ matrix.runner }})
         run: |
+          . /etc/os-release && echo "host: $PRETTY_NAME $(uname -m), $(ldd --version | head -1)"
+          test "$VERSION_ID" = 24.04
           start=$(date +%s)
           AURA_DOWNLOAD_BASE=$PWD/dist sh install.sh
           export PATH=$HOME/.local/bin:$PATH
           cd "$RUNNER_TEMP" && aura new evolve demo && cd demo && aura run && aura test
           test -s out/report.html
           echo "install → report: $(( $(date +%s) - start )) s"
-      - name: Ubuntu 22.04 (glibc 2.35)
+      - name: Clean ubuntu:24.04 container (glibc 2.39)
         run: |
-          docker run --rm -v "$PWD:/src" ubuntu:22.04 sh -c '
-            AURA_DOWNLOAD_BASE=/src/dist sh /src/install.sh &&
-            cd /tmp && ~/.local/bin/aura new evolve demo && cd demo &&
-            ~/.local/bin/aura run && test -s out/report.html'
+          docker run --rm -v "$PWD:/src:ro" ubuntu:24.04 sh -c '
+            set -e; . /etc/os-release; test "$VERSION_ID" = 24.04
+            AURA_DOWNLOAD_BASE=/src/dist sh /src/install.sh
+            cd /tmp && ~/.local/bin/aura new evolve demo && cd demo
+            ~/.local/bin/aura run && ~/.local/bin/aura test && test -s out/report.html'
       - name: Runtime image
         run: |
           tag=$IMAGE:${GITHUB_SHA::9}-${{ matrix.arch }}
@@ -105,7 +110,7 @@ jobs:
   publish:
     needs: verify
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -120,8 +125,8 @@ jobs:
           notes="aura nightly @ ${GITHUB_SHA::9}
 
           - linux-x86_64 and linux-arm64 tarballs (+ .sha256). Each carries its own loader,
-            glibc 2.44 and libstdc++ (rt/), so the host glibc does not matter: Ubuntu 22.04
-            (glibc 2.35) and 24.04 (2.39) run it on both architectures. Needs Linux >= 3.2.
+            glibc 2.44 and libstdc++ (rt/), so the host glibc does not matter. Verified on
+            Ubuntu 24.04 (glibc 2.39), x86_64 and arm64. Needs Linux >= 3.2.
           - install: curl -fsSL https://raw.githubusercontent.com/cybrid-systems/aura/main/install.sh | sh
           - image: docker run --rm -v \$PWD:/w -w /w $IMAGE:nightly main.aura"
           gh release view nightly >/dev/null 2>&1 ||
@@ -132,4 +137,4 @@ jobs:
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           s=${GITHUB_SHA::9}
-          docker buildx imagetools create -t "$IMAGE:$s" -t "$IMAGE:nightly" -t "$IMAGE:latest" "$IMAGE:$s-x86_64" "$IMAGE:$s-arm64"
+          docker buildx imagetools create -t "$IMAGE:$s" -t "$IMAGE:nightly" "$IMAGE:$s-x86_64" "$IMAGE:$s-arm64"
