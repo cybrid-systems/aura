@@ -8,7 +8,7 @@
     "src/exec",
     "src/compiler"
   ],
-  "total": 42686,
+  "total": 42692,
   "counts": {
     "/usr/include/c++/16/bits/stl_algobase.h|misc-no-recursion": 1,
     "/usr/include/c++/16/bits/stl_construct.h|misc-no-recursion": 1,
@@ -94,7 +94,7 @@
     "src/compiler/evaluator.ixx|cppcoreguidelines-special-member-functions": 11,
     "src/compiler/evaluator.ixx|misc-const-correctness": 222,
     "src/compiler/evaluator.ixx|misc-explicit-constructor": 5,
-    "src/compiler/evaluator.ixx|misc-include-cleaner": 80,
+    "src/compiler/evaluator.ixx|misc-include-cleaner": 86,
     "src/compiler/evaluator.ixx|misc-no-recursion": 12,
     "src/compiler/evaluator.ixx|misc-non-private-member-variables-in-classes": 189,
     "src/compiler/evaluator.ixx|modernize-loop-convert": 1,

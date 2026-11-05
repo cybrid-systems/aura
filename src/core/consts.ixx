@@ -24,9 +24,10 @@ inline constexpr std::uint8_t kFingerprintEmpty = 0xFE;
 inline constexpr std::uint8_t kFingerprintHighBit = 0x80;
 inline constexpr std::uint8_t kTombstoneSlot = 0x7F;
 
-[[nodiscard]] constexpr std::uint8_t fingerprint(std::uint64_t h) noexcept {
-    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | kFingerprintHighBit;
-    return fp == kEmptySlot ? kFingerprintEmpty : fp;
+[[nodiscard]] constexpr std::uint8_t fingerprint(std::uint64_t hash) noexcept {
+    const auto print = static_cast<std::uint8_t>(static_cast<std::uint8_t>((hash >> 57U) & 0x7FU) |
+                                                 kFingerprintHighBit);
+    return print == kEmptySlot ? kFingerprintEmpty : print;
 }
 
 // ── Basis points (matches compiler/basis_points.h) ─────────────────
