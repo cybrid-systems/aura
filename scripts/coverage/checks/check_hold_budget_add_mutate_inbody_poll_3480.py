@@ -30,6 +30,88 @@ def _read(rel: str) -> str:
     return p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
 
 
+def _skip_literal(text: str, i: int) -> int:
+    n = len(text)
+    quote = text[i]
+    i += 1
+    while i < n:
+        if text[i] == "\\":
+            i += 2
+            continue
+        if text[i] == quote:
+            return i + 1
+        i += 1
+    return n
+
+
+def _lambda_body(text: str, after: int) -> str:
+    """Brace-matched body of the lambda at/after `after`.
+
+    Comments and string/char literals are skipped while the capture list and
+    the braced body are matched, so code growth cannot slide a byte window off
+    the anchors (the #4332/#4385/#4910 waves each did exactly that).
+    """
+    n = len(text)
+    i = after
+
+    def skip_trivia(j: int) -> int:
+        while j < n:
+            if text.startswith("//", j):
+                eol = text.find(chr(10), j)
+                j = n if eol < 0 else eol + 1
+                continue
+            if text.startswith("/*", j):
+                end = text.find("*/", j + 2)
+                return n if end < 0 else end + 2
+            if text[j] in "\"'":
+                j = _skip_literal(text, j)
+                continue
+            break
+        return j
+
+    while True:
+        i = skip_trivia(i)
+        if i >= n:
+            return ""
+        if text[i] == "[":
+            break
+        i += 1
+    depth = 0
+    while i < n:
+        i = skip_trivia(i)
+        if i >= n:
+            return ""
+        if text[i] == "[":
+            depth += 1
+        elif text[i] == "]":
+            depth -= 1
+            if depth == 0:
+                i += 1
+                break
+        i += 1
+    while True:
+        i = skip_trivia(i)
+        if i >= n:
+            return ""
+        if text[i] == "{":
+            break
+        i += 1
+    start = i
+    depth = 0
+    while i < n:
+        i = skip_trivia(i)
+        if i >= n:
+            return ""
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+        i += 1
+    return ""
+
+
 def main() -> int:
     fails: list[str] = []
 
@@ -51,20 +133,9 @@ def main() -> int:
         fails.append("AC6: add_mutate missing")
         win = ""
     else:
-        # #3975-#3988 wave (#3999 hold-budget/cancel work) grew the add_mutate
-        # lambda: the hold-budget anchors (fn(a) result, cancel peek, #3480
-        # cite) now sit at +14692..+15430 — past the old 14000 edge.
-        # #4332 wave (add_mutate wrapper-level lazy COW before fn(a)) grew it
-        # again: the hold-budget anchors (cancel peek, #3480 cite, forced
-        # unlock/fail-closed counters) now sit at +17986..+18531 — past the
-        # old 18000 edge.
-        # #4385 (session mid noted before require_effect) grew it again:
-        # hold-budget-cancel now sits at +21938 — past the old 21000 edge.
-        # #4910 (evolution-log step wrapper evo_call_4910 at the top of
-        # add_mutate) grew it: hold-budget-cancel now sits at +29270, past the
-        # old 25000 edge.
-        # Grow with the lambda, assertions unchanged.
-        win = mut[start : start + 31000]
+        # Brace-match the lambda body: #3975-#3988, #4332, #4385 and #4910
+        # each grew add_mutate and slid a fixed byte window off the anchors.
+        win = _lambda_body(mut, start)
         must("Issue #3480", "AC6 cite", win)
         must("auto result = fn(a);", "AC1 after fn(a)", win)
         fn = win.find("auto result = fn(a);")
