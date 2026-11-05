@@ -17,6 +17,7 @@ module;
 #include "core/densify_consistency_report.h"
 #include "core/gc_hooks.h" // Issue #2005: ffi_pin_defer_active + arm/release
 #include "core/moving_densify_health.hh"
+#include "core/ownership.hh" // #4936 c_alloc / c_free
 
 module aura.compiler.ffi_primitives;
 
@@ -310,7 +311,7 @@ void FFIRuntime::register_primitives(RegisterFn add,
         auto size = static_cast<std::size_t>(types::as_int(a[0]));
         if (size == 0)
             return make_int(0);
-        auto* ptr = std::calloc(1, size);
+        auto* ptr = ::aura::core::c_calloc(1, size);
         // Issue #980: track allocation size for bounds checks. Record it
         // before the slot is published.
         opaque_sizes_[ptr] = size;
@@ -380,7 +381,7 @@ void FFIRuntime::register_primitives(RegisterFn add,
             aura::ast::forget_struct_interior_slots_covering(ptr, it->second);
             opaque_sizes_.erase(it);
         }
-        std::free(ptr);
+        ::aura::core::c_free(ptr);
         // recycle drops the alias from the pointer still stored in the slot,
         // then nulls it and bumps the generation.
         recycle_opaque_slot(*oh, packed);

@@ -6,6 +6,7 @@
 #include "jit_typed_mutation_stats.h"
 #include "jit_assumptions.hh"     // Issue #4600: prologue word gate + deopt-storm policy
 #include "typed_mutation_audit.h" // Issue #1882: sample JIT hotpath into TypedMutationAudit
+#include "core/ownership.hh"      // #4936 unique_file / immortal<T>
 
 // Issue #4600 §5: stable slot address for direct defuse-word loads
 // (defined extern "C" in aura_jit_runtime.cpp; declared early because the
@@ -5231,7 +5232,8 @@ static bool emit_native_object_llvm(const FlatFunction& fn, const std::string& o
         builder.block_map[fn.blocks[i].id] = llvm::BasicBlock::Create(local_ctx, "", builder.func);
 
     // Alloc locals in entry
-    builder.irb = new llvm::IRBuilder<>(local_ctx);
+    auto irb_owner = std::make_unique<llvm::IRBuilder<>>(local_ctx);
+    builder.irb = irb_owner.get();
     builder.irb->SetInsertPoint(builder.block_map[fn.entry_block]);
     for (uint32_t i = 0; i < fn.local_count; ++i)
         builder.llvm_locals.push_back(builder.irb->CreateAlloca(llvm::Type::getInt64Ty(local_ctx)));
@@ -5263,14 +5265,14 @@ static bool emit_native_object_llvm(const FlatFunction& fn, const std::string& o
             builder.next_inst = ii + 1 < fb.num_instructions ? &fb.instructions[ii + 1] : nullptr;
             builder.consumed_next = false;
             if (!builder.lower(fb.instructions[ii], fb.id, fn)) {
-                delete builder.irb;
-                return false;
+                return false; // irb_owner frees the builder
             }
             if (builder.consumed_next)
                 ++ii; // #4570: fused compare+branch lowered both
         }
     }
-    delete builder.irb;
+    irb_owner.reset();
+    builder.irb = nullptr;
 
     // Run LLVM optimization passes
     {
@@ -5812,7 +5814,8 @@ struct AuraJIT::Impl {
             builder.block_map[fn.blocks[i].id] = llvm::BasicBlock::Create(ctx, "", builder.func);
 
         // Alloc locals in entry
-        builder.irb = new llvm::IRBuilder<>(ctx);
+        auto irb_owner = std::make_unique<llvm::IRBuilder<>>(ctx);
+        builder.irb = irb_owner.get();
         builder.irb->SetInsertPoint(builder.block_map[fn.entry_block]);
         for (uint32_t i = 0; i < fn.local_count; ++i)
             builder.llvm_locals.push_back(builder.irb->CreateAlloca(llvm::Type::getInt64Ty(ctx)));
@@ -6185,6 +6188,8 @@ struct AuraJIT::Impl {
                                                         : builder.block_map[fn.entry_block];
                 builder.irb->SetInsertPoint(insert_bb);
                 auto* arr = llvm::ConstantDataArray::get(ctx, codes);
+                // The Module constructor argument takes ownership (LLVM idiom).
+                // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
                 auto* gv = new llvm::GlobalVariable(*builder.mod, arr->getType(), true,
                                                     llvm::GlobalValue::PrivateLinkage, arr,
                                                     "shape_guard_map");
@@ -6243,14 +6248,14 @@ struct AuraJIT::Impl {
                     ii + 1 < fb.num_instructions ? &fb.instructions[ii + 1] : nullptr;
                 builder.consumed_next = false;
                 if (!builder.lower(fb.instructions[ii], fb.id, fn)) {
-                    delete builder.irb;
-                    return nullptr;
+                    return nullptr; // irb_owner frees the builder
                 }
                 if (builder.consumed_next)
                     ++ii; // #4570: fused compare+branch lowered both
             }
         }
-        delete builder.irb;
+        irb_owner.reset();
+        builder.irb = nullptr;
 
         // Run LLVM optimization passes
         if (optimize) {
@@ -7258,9 +7263,8 @@ bool emit_object(const std::string& ir_dump, const std::string& out_path) {
 
 bool emit_object_module(void* /*ir_module*/, const std::string& out_path) {
     // Deprecated: use emit_native_object instead.
-    if (auto* f = std::fopen((out_path + ".ir").c_str(), "w")) {
-        std::fprintf(f, "emit_object_module: deprecated placeholder\n");
-        std::fclose(f);
+    if (auto f = ::aura::core::open_file((out_path + ".ir").c_str(), "w")) {
+        std::fprintf(f.get(), "emit_object_module: deprecated placeholder\n");
         return true;
     }
     return false;
@@ -7447,9 +7451,8 @@ bool emit_object(const std::string& ir_dump, const std::string& out_path) {
 
 bool emit_object_module(void* /*ir_module*/, const std::string& out_path) {
     // Deprecated: use emit_native_object instead.
-    if (auto* f = std::fopen((out_path + ".ir").c_str(), "w")) {
-        std::fprintf(f, "emit_object_module: deprecated placeholder (no LLVM)\n");
-        std::fclose(f);
+    if (auto f = ::aura::core::open_file((out_path + ".ir").c_str(), "w")) {
+        std::fprintf(f.get(), "emit_object_module: deprecated placeholder (no LLVM)\n");
         return true;
     }
     return false;

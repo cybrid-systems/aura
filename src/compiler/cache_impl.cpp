@@ -14,6 +14,8 @@ import std;
 extern "C" {
 void aura_ir_serialize(const void* mod, const char** out_data, size_t* out_size);
 void aura_ir_deserialize(const char* data, size_t size, void* out_mod);
+// #4936: releases a buffer from aura_ir_serialize (same TU as the allocation).
+void aura_ir_buffer_free(const char* data) noexcept;
 }
 
 namespace aura::compiler::cache {
@@ -208,13 +210,17 @@ bool write_cache(const std::string& path, const FlatAST& flat, const StringPool&
     auto ir_start = f.tellp();
 
     if (ir_mod) {
+        struct IrBufferFree {
+            void operator()(const char* data) const noexcept { aura_ir_buffer_free(data); }
+        };
         const char* ir_buf_data = nullptr;
         size_t ir_buf_size = 0;
         aura_ir_serialize(ir_mod, &ir_buf_data, &ir_buf_size);
+        // #4936: owned until the end of this block, also if put_bytes throws.
+        const std::unique_ptr<const char[], IrBufferFree> ir_buf{ir_buf_data};
         auto ir_size = static_cast<std::uint32_t>(ir_buf_size);
         put_bytes(&ir_size, sizeof(ir_size));
-        put_bytes(ir_buf_data, ir_buf_size);
-        delete[] ir_buf_data;
+        put_bytes(ir_buf.get(), ir_buf_size);
     }
 
     // ── Type sig section (embedded .aura-type) ────────────────

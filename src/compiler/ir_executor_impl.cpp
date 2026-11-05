@@ -34,6 +34,7 @@ module;
 // (a global module fragment may only contain preprocessor inclusion).
 #define AURA_TYPE_FEEDBACK_DEFINE_TABLE
 #include "compiler/type_feedback.h" // Issue #4568: relaxed per-site feedback
+#include "core/ownership.hh"        // #4936 c_alloc / c_free
 
 module aura.compiler.ir_executor;
 import std;
@@ -534,6 +535,7 @@ EvalResult IRInterpreter::drain_call_stack(std::size_t base) {
             if (depth.fetch_sub(1, std::memory_order_acq_rel) == 1)
                 aura_ir_drain_end();
         }
+        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
     } drain_count_guard{drain_depth_};
     // Issue #4600 §3: publish this instance for the duration of the drain.
     // A JIT guard exit inside a native callee resumes the deopting frame;
@@ -1099,6 +1101,8 @@ EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const
             : flag(f) {
             flag = true;
         }
+        RuntimeCallScope(const RuntimeCallScope&) = delete;
+        RuntimeCallScope& operator=(const RuntimeCallScope&) = delete;
         ~RuntimeCallScope() { flag = false; }
     } runtime_call_scope(in_runtime_call_);
     if (auto blocked = ir_typed_entry_blocked_result(context_.metrics))
@@ -2198,7 +2202,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                 slot->cdr = locals[ops[2]].val;
                                 g_pair_slots.store(static_cast<std::size_t>(idx), slot);
                             } else {
-                                auto* slot = (PairSlot*)std::malloc(sizeof(PairSlot));
+                                auto* slot =
+                                    static_cast<PairSlot*>(::aura::core::c_alloc(sizeof(PairSlot)));
                                 slot->car = locals[ops[1]].val;
                                 slot->cdr = locals[ops[2]].val;
                                 g_pair_slots.store(static_cast<std::size_t>(idx), slot);
@@ -3533,6 +3538,8 @@ bool IRInterpreter::reclaim_unreachable_now() {
             : flag(f) {
             flag = true;
         }
+        Guard(const Guard&) = delete;
+        Guard& operator=(const Guard&) = delete;
         ~Guard() { flag = false; }
     } guard(reclaiming_);
 

@@ -112,6 +112,7 @@ public:
         requires std::is_constructible_v<Base, A>
     explicit TrackedColumn(A&& alloc)
         : Base(std::forward<A>(alloc)) {}
+    ~TrackedColumn() = default;
     TrackedColumn(const TrackedColumn& o)
         : Base(static_cast<const Base&>(o)) {}
     TrackedColumn(TrackedColumn&& o) noexcept
@@ -461,6 +462,7 @@ public:
         requires std::is_constructible_v<Map, A>
     explicit TrackedMap(A&& alloc)
         : Map(std::forward<A>(alloc)) {}
+    ~TrackedMap() = default;
     TrackedMap(const TrackedMap& o)
         : Map(static_cast<const Map&>(o)) {}
     TrackedMap(TrackedMap&& o) noexcept

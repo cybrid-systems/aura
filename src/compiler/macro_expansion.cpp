@@ -16,6 +16,7 @@ module;
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "observability_metrics.h" // Issue #2021: CompilerMetrics snapshot
 #include "typed_mutation_audit.h" // Issue #3278: production_defaults_active() gate for cross-pool schema homology
+#include "core/ownership.hh" // Issue #4936: NoCopy
 
 module aura.compiler.macro_expansion;
 
@@ -2460,6 +2461,8 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             for (const auto& kv : snap)
                 map->emplace(kv.first, kv.second);
         }
+        NameMapCheckpoint(const NameMapCheckpoint&) = delete;
+        NameMapCheckpoint& operator=(const NameMapCheckpoint&) = delete;
         ~NameMapCheckpoint() {
             if (!committed)
                 rollback();
@@ -2510,6 +2513,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             if (owned && !consumed)
                 aura_evaluator_commit_macro_expand_checkpoint();
         }
+        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
     } expand_ckpt;
     const bool production_surface = aura::core::sandbox::is_sandbox_active();
     if (hygiene_depth == 0 && production_surface)
@@ -4334,6 +4338,7 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
             if (owned && !consumed)
                 aura_evaluator_commit_macro_expand_checkpoint();
         }
+        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
     } expand_ckpt;
     // Issue #2019: track whether any pass expanded so we restamp
     // MacroIntroduced gens once before return (FlatAST consistency).

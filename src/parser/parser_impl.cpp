@@ -1,4 +1,5 @@
 module;
+#include "core/ownership.hh" // Issue #4936: NoCopy
 
 module aura.parser.parser;
 import std;
@@ -240,6 +241,7 @@ NodeId parse_expr(ParserState& s) {
     struct DepthGuard {
         std::size_t& d;
         ~DepthGuard() { --d; }
+        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
     } _dg{s.depth};
     auto tok = s.lex.peek();
     switch (tok.kind) {
@@ -471,6 +473,8 @@ namespace {
             t_qq_level_4760 = level;
             qd = qdepth_now;
         }
+        QqLevelScope4760(const QqLevelScope4760&) = delete;
+        QqLevelScope4760& operator=(const QqLevelScope4760&) = delete;
         ~QqLevelScope4760() {
             t_qq_level_4760 = saved_level;
             qdepth = saved_qdepth;

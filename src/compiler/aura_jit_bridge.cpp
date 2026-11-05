@@ -38,6 +38,7 @@
 #include <print>
 #include <unistd.h>                        // Issue #237 v4: readlink for /proc/self/exe lookup
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "core/ownership.hh" // #4936 unique_file / immortal<T>
 
 #include "hash_meta.h" // FNV constants (#901)
 // Defined in aura_jit_runtime.cpp (lock-hooks path for defuse version).
@@ -5776,21 +5777,21 @@ extern "C" std::uint64_t aura_jit_fallback_to_interpreter(int64_t* args, uint32_
 static bool generate_registration_c(const aura::jit::FlatFunction* functions,
                                     const uint32_t* func_ids, unsigned int num_functions,
                                     const std::string& reg_c_path) {
-    FILE* f = std::fopen(reg_c_path.c_str(), "w");
+    ::aura::core::unique_file f = ::aura::core::open_file(reg_c_path.c_str(), "w");
     if (!f)
         return false;
 
-    fprintf(f, "// Auto-generated closure registration for AOT binary\n");
-    fprintf(f, "#include <stdint.h>\n");
-    fprintf(f, "#include <stddef.h>\n");
-    fprintf(f, "\n");
-    fprintf(f, "// Runtime: register function by func_id for closure dispatch\n");
-    fprintf(f, "void aura_register_fn(int64_t func_id, int64_t fn_ptr);\n");
+    fprintf(f.get(), "// Auto-generated closure registration for AOT binary\n");
+    fprintf(f.get(), "#include <stdint.h>\n");
+    fprintf(f.get(), "#include <stddef.h>\n");
+    fprintf(f.get(), "\n");
+    fprintf(f.get(), "// Runtime: register function by func_id for closure dispatch\n");
+    fprintf(f.get(), "void aura_register_fn(int64_t func_id, int64_t fn_ptr);\n");
     // Issue #4405: 2-arg aura_register_fn does not take the define name.
     // The host strong symbol (weak no-op in runtime.c) binds this IR
     // func_id to the define so a later owner-scoped drop can retire it.
-    fprintf(f, "void aura_note_ir_func_define(int64_t func_id, const char* name);\n");
-    fprintf(f, "\n");
+    fprintf(f.get(), "void aura_note_ir_func_define(int64_t func_id, const char* name);\n");
+    fprintf(f.get(), "\n");
 
     // Compute mangled (identity) + link names once.
     //
@@ -5881,42 +5882,42 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
     // treated as stale). The symbol is a plain definition
     // (no `extern` initializer) to avoid the
     // "initialized and declared 'extern'" warning.
-    fprintf(f, "\n// Issue #243: AOT emit version (for staleness detection)\n");
-    fprintf(f, "const unsigned long long aot_emit_version = %llull;\n",
+    fprintf(f.get(), "\n// Issue #243: AOT emit version (for staleness detection)\n");
+    fprintf(f.get(), "const unsigned long long aot_emit_version = %llull;\n",
             static_cast<unsigned long long>(emit_version));
 
     // Issue #1369: per-function version probes (entry + table).
     // aot_top_fn_version always present so `__top__` has version
     // info even though its ELF link name stays unversioned.
-    fprintf(f, "\n// Issue #1369: per-function AOT versions\n");
-    fprintf(f, "const unsigned long long aot_top_fn_version = %llull;\n",
+    fprintf(f.get(), "\n// Issue #1369: per-function AOT versions\n");
+    fprintf(f.get(), "const unsigned long long aot_top_fn_version = %llull;\n",
             static_cast<unsigned long long>(emit_version));
-    fprintf(f, "const unsigned aot_fn_versions_len = %u;\n", num_functions);
-    fprintf(f, "const unsigned long long aot_fn_versions[] = {\n");
+    fprintf(f.get(), "const unsigned aot_fn_versions_len = %u;\n", num_functions);
+    fprintf(f.get(), "const unsigned long long aot_fn_versions[] = {\n");
     for (unsigned int i = 0; i < num_functions; ++i) {
-        fprintf(f, "    %llull%s\n", static_cast<unsigned long long>(emit_version),
+        fprintf(f.get(), "    %llull%s\n", static_cast<unsigned long long>(emit_version),
                 (i + 1 < num_functions) ? "," : "");
     }
-    fprintf(f, "};\n");
+    fprintf(f.get(), "};\n");
     // Parallel original names (NUL-terminated string table for probe).
-    fprintf(f, "const char* const aot_fn_version_names[] = {\n");
+    fprintf(f.get(), "const char* const aot_fn_version_names[] = {\n");
     for (unsigned int i = 0; i < num_functions; ++i) {
         // Escape is unnecessary for Aura fn names used in AOT (identifiers).
-        fprintf(f, "    \"%s\"%s\n", functions[i].name, (i + 1 < num_functions) ? "," : "");
+        fprintf(f.get(), "    \"%s\"%s\n", functions[i].name, (i + 1 < num_functions) ? "," : "");
     }
-    fprintf(f, "};\n");
+    fprintf(f.get(), "};\n");
 
     // Issue #708: region mask for multi-agent hot-reload isolation.
-    fprintf(f, "\n// Issue #708: AOT region mask (multi-agent isolation)\n");
-    fprintf(f, "const unsigned long long aot_region_mask = %llull;\n",
+    fprintf(f.get(), "\n// Issue #708: AOT region mask (multi-agent isolation)\n");
+    fprintf(f.get(), "const unsigned long long aot_region_mask = %llull;\n",
             static_cast<unsigned long long>(g_aot_emit_region_mask));
 
     // Issue #1640: AOT env_frame_version stamp (for captured-env
     // drift detection on reload). Defaults to 0 when the emit
     // did not capture a specific env_frame_version (paired with
     // the binary's mangle suffix `_e<N>_l<N>`).
-    fprintf(f, "\n// Issue #1640: AOT env_frame_version (captured-env drift)\n");
-    fprintf(f, "const unsigned long long aot_env_frame_version = %llull;\n",
+    fprintf(f.get(), "\n// Issue #1640: AOT env_frame_version (captured-env drift)\n");
+    fprintf(f.get(), "const unsigned long long aot_env_frame_version = %llull;\n",
             static_cast<unsigned long long>(emit_env_frame_version));
     // Issue #2015: module-level linear ownership stamp for probe/stale
     // (paired with mangle `_lN` and aura_aot_fn_version_is_stale_ex).
@@ -5930,8 +5931,8 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
             if (ls > max_lin)
                 max_lin = ls;
         }
-        fprintf(f, "// Issue #2015: AOT linear_state (ownership drift)\n");
-        fprintf(f, "const unsigned long long aot_linear_state = %llull;\n",
+        fprintf(f.get(), "// Issue #2015: AOT linear_state (ownership drift)\n");
+        fprintf(f.get(), "const unsigned long long aot_linear_state = %llull;\n",
                 static_cast<unsigned long long>(max_lin));
     }
 
@@ -5942,16 +5943,16 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
     // `aura_set_module_version(v)` so the runtime can track
     // which module is loaded (vs. which mutation epoch it
     // was built against, which is `aot_emit_version`).
-    fprintf(f, "\n// Issue #287: AOT module version (hot-reload / multi-agent)\n");
-    fprintf(f, "void aura_set_module_version(unsigned long long v);\n");
+    fprintf(f.get(), "\n// Issue #287: AOT module version (hot-reload / multi-agent)\n");
+    fprintf(f.get(), "void aura_set_module_version(unsigned long long v);\n");
 
     // Generate extern declarations (link names — __top__ unversioned)
     for (unsigned int i = 0; i < num_functions; ++i) {
-        fprintf(f, "extern int64_t %s(int64_t*, uint32_t);\n", link_names[i].c_str());
+        fprintf(f.get(), "extern int64_t %s(int64_t*, uint32_t);\n", link_names[i].c_str());
     }
 
-    fprintf(f, "\n// Constructor — runs before main()\n");
-    fprintf(f, "__attribute__((constructor)) void aura_aot_register_fns(void) {\n");
+    fprintf(f.get(), "\n// Constructor — runs before main()\n");
+    fprintf(f.get(), "__attribute__((constructor)) void aura_aot_register_fns(void) {\n");
 
     // Issue #287: announce the module version to the runtime
     // FIRST, before any aura_register_fn calls, so the runtime's
@@ -5959,16 +5960,17 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
     // each registration happens. The runtime can then refuse to
     // register a function for a stale module (defensive — the
     // check itself is a follow-up to #287).
-    fprintf(f, "    aura_set_module_version(%llull);\n",
+    fprintf(f.get(), "    aura_set_module_version(%llull);\n",
             static_cast<unsigned long long>(g_aot_module_version_default()));
 
     for (unsigned int i = 0; i < num_functions; ++i) {
-        fprintf(f, "    aura_register_fn(%u, (int64_t)%s);\n", func_ids[i], link_names[i].c_str());
-        fprintf(f, "    aura_note_ir_func_define(%u, \"%s\");\n", func_ids[i], functions[i].name);
+        fprintf(f.get(), "    aura_register_fn(%u, (int64_t)%s);\n", func_ids[i],
+                link_names[i].c_str());
+        fprintf(f.get(), "    aura_note_ir_func_define(%u, \"%s\");\n", func_ids[i],
+                functions[i].name);
     }
 
-    fprintf(f, "}\n");
-    fclose(f);
+    fprintf(f.get(), "}\n");
     return true;
 }
 
@@ -6018,8 +6020,7 @@ static std::string find_runtime_c() {
     // (1) AURA_RUNTIME_DIR env override
     if (auto* env = ::getenv("AURA_RUNTIME_DIR")) {
         std::string p = std::string(env) + "/runtime.c";
-        if (FILE* f = std::fopen(p.c_str(), "r")) {
-            std::fclose(f);
+        if (::aura::core::open_file(p.c_str(), "r")) {
             return p;
         }
     }
@@ -6044,8 +6045,7 @@ static std::string find_runtime_c() {
         // and source/repo layouts).
         for (int i = 0; i < 8; ++i) {
             std::string candidate = cur + "/lib/runtime.c";
-            if (FILE* f = std::fopen(candidate.c_str(), "r")) {
-                std::fclose(f);
+            if (::aura::core::open_file(candidate.c_str(), "r")) {
                 return candidate;
             }
             // Go up one level.
@@ -6058,8 +6058,7 @@ static std::string find_runtime_c() {
 
     // (3) Legacy CWD-relative fallbacks (dev-machine layout).
     for (const char* rel : {"lib/runtime.c", "../lib/runtime.c"}) {
-        if (FILE* f = std::fopen(rel, "r")) {
-            std::fclose(f);
+        if (::aura::core::open_file(rel, "r")) {
             return rel;
         }
     }
@@ -6071,8 +6070,7 @@ static std::string find_runtime_c() {
     //     or a source-tree layout.
     for (const char* rel : {"/usr/local/share/aura/runtime.c", "/usr/share/aura/runtime.c",
                             "/opt/aura/share/runtime.c"}) {
-        if (FILE* f = std::fopen(rel, "r")) {
-            std::fclose(f);
+        if (::aura::core::open_file(rel, "r")) {
             return rel;
         }
     }
@@ -6240,10 +6238,10 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
     if (!g_prim_reg_c_code.empty()) {
         std::string prim_reg_path = out_path + "._prim.c";
         std::string prim_reg_o = out_path + "._prim.o";
-        FILE* f = std::fopen(prim_reg_path.c_str(), "w");
+        ::aura::core::unique_file f = ::aura::core::open_file(prim_reg_path.c_str(), "w");
         if (f) {
-            std::fputs(g_prim_reg_c_code.c_str(), f);
-            std::fclose(f);
+            std::fputs(g_prim_reg_c_code.c_str(), f.get());
+            f.reset();
             std::string cmd =
                 cc + " -c " + pic_flag + " " + prim_reg_path + " -o " + prim_reg_o + " 2>&1";
             int rc = ::system(cmd.c_str());
@@ -6714,9 +6712,8 @@ extern "C" bool aura_emit_object_file(const void* mod, const char* path) {
         return false;
     std::string out_path(path);
     auto dump_path = out_path + ".ir";
-    if (auto* f = std::fopen(dump_path.c_str(), "w")) {
-        std::fprintf(f, "aura emit-object placeholder\n");
-        std::fclose(f);
+    if (auto f = ::aura::core::open_file(dump_path.c_str(), "w")) {
+        std::fprintf(f.get(), "aura emit-object placeholder\n");
         return true;
     }
     return false;
@@ -6854,15 +6851,13 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
     }
     std::string cmd = "echo '" + sh_src + "' | " + aura_exe + " 2>/dev/null | head -1";
     std::string result;
-    FILE* pipe = ::popen(cmd.c_str(), "r");
-    if (pipe) {
+    if (const ::aura::core::unique_pipe pipe{::popen(cmd.c_str(), "r")}) {
         char buf[4096];
         std::string line;
-        while (::fgets(buf, sizeof(buf), pipe))
+        while (::fgets(buf, sizeof(buf), pipe.get()))
             line += buf;
         if (!line.empty())
             result = line;
-        ::pclose(pipe);
     }
     // Trim whitespace
     while (!result.empty() && (result.back() == '\n' || result.back() == '\r' ||

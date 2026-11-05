@@ -1502,6 +1502,8 @@ public:
         : high_water_(high_water == 0 ? 1 : high_water)
         , credit_limit_(credit_limit) {}
 
+    MultiFiberMailbox(const MultiFiberMailbox&) = delete;
+    MultiFiberMailbox& operator=(const MultiFiberMailbox&) = delete;
     ~MultiFiberMailbox() { close(); }
 
     void set_high_water(std::size_t n) noexcept { high_water_ = n == 0 ? 1 : n; }

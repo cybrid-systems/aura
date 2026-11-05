@@ -319,9 +319,9 @@ bool QueryEngine::match(NodeId id, const QueryExpr& q, int depth) {
 void QueryEngine::ensure_sym_index() const {
     if (sym_index_built_)
         return;
-    auto* idx = new SymRefIndex(index_.ast, index_.pool);
+    auto idx = std::make_unique<SymRefIndex>(index_.ast, index_.pool);
     idx->build();
-    sym_index_ = idx;
+    sym_index_ = std::move(idx);
     sym_index_built_ = true;
     index_.set_sym_index(*sym_index_);
 }

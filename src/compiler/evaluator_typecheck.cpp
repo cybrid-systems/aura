@@ -16,6 +16,7 @@ module;
 #include "linear_occurrence_mutate_stats.h" // Issue #2144 / #747
 #include "ownership_escape_lowering_gate.h" // Issue #2309: aura_escape_move_gate_clear + rollback counter
 #include "match_scan_bound.h"
+#include "core/ownership.hh" // #4936 opaque_ptr
 
 module aura.compiler.evaluator;
 
@@ -1154,7 +1155,7 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
         try {
             ConstraintSystem* cs_ptr = nullptr;
             std::span<const aura::core::TypeId> occ_span{};
-            TypeChecker* scratch_tc = nullptr;
+            std::unique_ptr<TypeChecker> scratch_tc;
             // Issue #2180 / #2509: reuse when opaque TC exists and work is live
             // (or commit_cs_live_ from stash). has_work forces reuse so we never
             // greenfield-empty when the long-lived CS already holds marks.
@@ -1164,7 +1165,7 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                 cs_ptr = &ctc->constraint_system();
                 if (commit_occurrence_vars_opaque_) {
                     auto* occ = static_cast<std::vector<aura::core::TypeId>*>(
-                        commit_occurrence_vars_opaque_);
+                        commit_occurrence_vars_opaque_.get());
                     occ_span = *occ;
                 }
                 c.composite_commit_solve_reuse_hit_total.fetch_add(1, std::memory_order_relaxed);
@@ -1181,7 +1182,7 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
             } else if (type_registry_) {
                 // Greenfield only when no partial was stashed (tests / no typecheck).
                 auto& reg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
-                scratch_tc = new TypeChecker(reg);
+                scratch_tc = std::make_unique<TypeChecker>(reg);
                 if (compiler_metrics_)
                     scratch_tc->set_metrics(compiler_metrics_);
                 cs_ptr = &scratch_tc->constraint_system();
@@ -1472,7 +1473,7 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                     }
                 }
             }
-            delete scratch_tc;
+            scratch_tc.reset();
         } catch (...) {
             // [SILENCE-PRIM] solve path failure → treat as type fail.
             cr.solve_ok = false;
@@ -1540,8 +1541,8 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                     push_tid(aura::core::TypeId{idx, 0});
             }
             if (commit_occurrence_vars_opaque_) {
-                auto* occ =
-                    static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_);
+                auto* occ = static_cast<std::vector<aura::core::TypeId>*>(
+                    commit_occurrence_vars_opaque_.get());
                 for (const auto& t : *occ)
                     push_tid(t);
             }
@@ -1750,7 +1751,7 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                     std::span<const aura::core::TypeId> occ_span{};
                     if (commit_occurrence_vars_opaque_) {
                         auto* occ = static_cast<std::vector<aura::core::TypeId>*>(
-                            commit_occurrence_vars_opaque_);
+                            commit_occurrence_vars_opaque_.get());
                         occ_span = *occ;
                     }
                     auto sdo2 = aura::compiler::solve_delta_occurrence(cs, occ_span, nullptr,
@@ -2148,7 +2149,7 @@ bool Evaluator::boundary_solve_proof_gate(bool hard_gate, bool linear_ops_presen
         cs_ptr = &ctc->constraint_system();
         if (commit_occurrence_vars_opaque_) {
             auto* occ =
-                static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_);
+                static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_.get());
             occ_span = *occ;
         }
     }
@@ -2237,8 +2238,8 @@ bool Evaluator::boundary_solve_proof_gate(bool hard_gate, bool linear_ops_presen
             auto& cs2 = ctc->constraint_system();
             std::span<const aura::core::TypeId> occ2{};
             if (commit_occurrence_vars_opaque_) {
-                auto* occ =
-                    static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_);
+                auto* occ = static_cast<std::vector<aura::core::TypeId>*>(
+                    commit_occurrence_vars_opaque_.get());
                 occ2 = *occ;
             }
             auto sdo2 = run_sdo(cs2, occ2);
@@ -2296,18 +2297,18 @@ bool Evaluator::linear_synth_hard_fail_pending() const noexcept {
     if (linear_synth_hard_fail_pending_.load(std::memory_order_relaxed) != 0)
         return true;
     if (persistent_typechecker_opaque_) {
-        auto* tc = static_cast<const TypeChecker*>(persistent_typechecker_opaque_);
+        auto* tc = static_cast<const TypeChecker*>(persistent_typechecker_opaque_.get());
         if (tc->last_linear_synth_hard_fail())
             return true;
     }
     if (commit_type_checker_opaque_ &&
-        commit_type_checker_opaque_ != persistent_typechecker_opaque_) {
+        commit_type_checker_opaque_ != persistent_typechecker_opaque_.get()) {
         auto* tc = static_cast<const TypeChecker*>(commit_type_checker_opaque_);
         if (tc->last_linear_synth_hard_fail())
             return true;
     }
     if (guard_infer_engine_opaque_) {
-        auto* eng = static_cast<const InferenceEngine*>(guard_infer_engine_opaque_);
+        auto* eng = static_cast<const InferenceEngine*>(guard_infer_engine_opaque_.get());
         if (eng->linear_synth_hard_fail())
             return true;
     }
@@ -2321,15 +2322,16 @@ void Evaluator::note_linear_synth_hard_fail_pending() noexcept {
 void Evaluator::clear_linear_synth_hard_fail_pending() noexcept {
     linear_synth_hard_fail_pending_.store(0, std::memory_order_relaxed);
     if (persistent_typechecker_opaque_) {
-        static_cast<TypeChecker*>(persistent_typechecker_opaque_)
+        static_cast<TypeChecker*>(persistent_typechecker_opaque_.get())
             ->clear_last_linear_synth_hard_fail();
     }
     if (commit_type_checker_opaque_ &&
-        commit_type_checker_opaque_ != persistent_typechecker_opaque_) {
+        commit_type_checker_opaque_ != persistent_typechecker_opaque_.get()) {
         static_cast<TypeChecker*>(commit_type_checker_opaque_)->clear_last_linear_synth_hard_fail();
     }
     if (guard_infer_engine_opaque_) {
-        static_cast<InferenceEngine*>(guard_infer_engine_opaque_)->clear_linear_synth_hard_fail();
+        static_cast<InferenceEngine*>(guard_infer_engine_opaque_.get())
+            ->clear_linear_synth_hard_fail();
     }
 }
 
@@ -2817,14 +2819,9 @@ std::uint64_t Evaluator::current_cache_epoch() const noexcept {
 }
 
 void Evaluator::destroy_guard_infer_engine() noexcept {
-    if (guard_infer_engine_opaque_) {
-        delete static_cast<InferenceEngine*>(guard_infer_engine_opaque_);
-        guard_infer_engine_opaque_ = nullptr;
-    }
-    if (guard_infer_diag_opaque_) {
-        delete static_cast<aura::diag::DiagnosticCollector*>(guard_infer_diag_opaque_);
-        guard_infer_diag_opaque_ = nullptr;
-    }
+    // The engine holds a reference to the collector: drop it first.
+    guard_infer_engine_opaque_.reset();
+    guard_infer_diag_opaque_.reset();
     guard_infer_registry_gen_ = 0;
 }
 
@@ -2849,8 +2846,8 @@ void Evaluator::note_type_freshness_after_steal_or_densify() noexcept {
     };
     fence_one(commit_type_checker_opaque_);
     if (persistent_typechecker_opaque_ &&
-        persistent_typechecker_opaque_ != commit_type_checker_opaque_)
-        fence_one(persistent_typechecker_opaque_);
+        persistent_typechecker_opaque_.get() != commit_type_checker_opaque_)
+        fence_one(persistent_typechecker_opaque_.get());
 }
 
 // Issue #2609: pure hard-AND residual + linear force + type fence.
@@ -2872,17 +2869,10 @@ Evaluator::evaluate_linear_type_provenance_hard_and(bool residual_zero,
 void Evaluator::destroy_commit_type_checker() noexcept {
     // If commit TC is an alias of the #2220 persistent TC, only null the
     // commit pointer (persistent owns the heap object).
-    if (commit_type_checker_opaque_ &&
-        commit_type_checker_opaque_ == persistent_typechecker_opaque_) {
-        commit_type_checker_opaque_ = nullptr;
-    } else if (commit_type_checker_opaque_) {
-        delete static_cast<TypeChecker*>(commit_type_checker_opaque_);
-        commit_type_checker_opaque_ = nullptr;
-    }
-    if (commit_occurrence_vars_opaque_) {
-        delete static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_);
-        commit_occurrence_vars_opaque_ = nullptr;
-    }
+    // An alias owns nothing (commit_type_checker_owned_ is empty then).
+    commit_type_checker_opaque_ = nullptr;
+    commit_type_checker_owned_.reset();
+    commit_occurrence_vars_opaque_.reset();
     commit_tc_registry_gen_ = 0;
     commit_cs_live_ = false;
 }
@@ -2891,12 +2881,11 @@ void Evaluator::destroy_commit_type_checker() noexcept {
 void Evaluator::destroy_persistent_typechecker() noexcept {
     if (persistent_typechecker_opaque_) {
         // Drop commit alias first so we don't double-delete.
-        if (commit_type_checker_opaque_ == persistent_typechecker_opaque_) {
+        if (commit_type_checker_opaque_ == persistent_typechecker_opaque_.get()) {
             commit_type_checker_opaque_ = nullptr;
             commit_cs_live_ = false;
         }
-        delete static_cast<TypeChecker*>(persistent_typechecker_opaque_);
-        persistent_typechecker_opaque_ = nullptr;
+        persistent_typechecker_opaque_.reset();
     }
     persistent_tc_registry_gen_ = 0;
     persistent_tc_workspace_gen_ = 0;
@@ -2928,7 +2917,8 @@ void* Evaluator::ensure_typechecker() noexcept {
             invalidate_persistent_typechecker();
         }
         if (!persistent_typechecker_opaque_) {
-            auto* tc = new TypeChecker(*reg);
+            auto owned_tc = std::make_unique<TypeChecker>(*reg);
+            auto* tc = owned_tc.get();
             if (compiler_metrics_)
                 tc->set_metrics(compiler_metrics_);
             if (!declared_type_sigs_.empty()) {
@@ -2945,7 +2935,7 @@ void* Evaluator::ensure_typechecker() noexcept {
                 }
                 tc->inject_type_sigs(sig_map, mod_src_map);
             }
-            persistent_typechecker_opaque_ = tc;
+            persistent_typechecker_opaque_ = aura::core::adopt_opaque(std::move(owned_tc));
             persistent_tc_registry_gen_ = reg_gen;
             persistent_tc_workspace_gen_ = ws_gen;
             ++persistent_tc_create_total_;
@@ -2961,7 +2951,7 @@ void* Evaluator::ensure_typechecker() noexcept {
                 m->typecheck_persistent_reuse_total.fetch_add(1, std::memory_order_relaxed);
             }
         }
-        auto* tc = static_cast<TypeChecker*>(persistent_typechecker_opaque_);
+        auto* tc = static_cast<TypeChecker*>(persistent_typechecker_opaque_.get());
         if (compiler_metrics_)
             tc->set_metrics(compiler_metrics_);
         // Epoch for cs_cache_ / predicate memo invalidation (#168 / #2065).
@@ -2970,8 +2960,8 @@ void* Evaluator::ensure_typechecker() noexcept {
         tc->set_registered_prim_probe(&prim_name_registered, &primitives_);
         // Issue #4540: an open lightweight checkpoint copies this checker's
         // CS high-water before infer writes it (once per checker).
-        capture_lightweight_abort_cs(persistent_typechecker_opaque_);
-        return persistent_typechecker_opaque_;
+        capture_lightweight_abort_cs(persistent_typechecker_opaque_.get());
+        return persistent_typechecker_opaque_.get();
     } catch (...) {
         // [SILENCE-PRIM] ensure is best-effort; callers fall back to stack TC.
         return nullptr;
@@ -2988,9 +2978,11 @@ Evaluator::plant_commit_occurrence_preds_for_test(std::span<const std::uint32_t>
     if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
         destroy_commit_type_checker();
     if (!commit_type_checker_opaque_) {
-        auto* tc = new TypeChecker(*reg);
+        auto owned_tc = std::make_unique<TypeChecker>(*reg);
+        auto* tc = owned_tc.get();
         if (compiler_metrics_)
             tc->set_metrics(compiler_metrics_);
+        commit_type_checker_owned_ = aura::core::adopt_opaque(std::move(owned_tc));
         commit_type_checker_opaque_ = tc;
         commit_tc_registry_gen_ = reg_gen;
     }
@@ -3013,18 +3005,16 @@ void Evaluator::stash_partial_constraint_state(void* type_checker_opaque) noexce
         const auto reg_gen = type_registry_generation();
         // Issue #2220: when source is the persistent TypeChecker, alias it as
         // the commit TC so composite_txn_commit solves the same CS (not empty).
-        if (type_checker_opaque == persistent_typechecker_opaque_) {
+        if (type_checker_opaque == persistent_typechecker_opaque_.get()) {
             // Drop a non-aliased prior commit TC if any.
-            if (commit_type_checker_opaque_ &&
-                commit_type_checker_opaque_ != persistent_typechecker_opaque_) {
-                delete static_cast<TypeChecker*>(commit_type_checker_opaque_);
-            }
-            commit_type_checker_opaque_ = persistent_typechecker_opaque_;
+            commit_type_checker_owned_.reset();
+            commit_type_checker_opaque_ = persistent_typechecker_opaque_.get();
             commit_tc_registry_gen_ = reg_gen;
             if (!commit_occurrence_vars_opaque_)
-                commit_occurrence_vars_opaque_ = new std::vector<aura::core::TypeId>();
+                commit_occurrence_vars_opaque_ =
+                    aura::core::adopt_opaque(std::make_unique<std::vector<aura::core::TypeId>>());
             auto* occ =
-                static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_);
+                static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_.get());
             *occ = src->last_occurrence_vars();
             commit_cs_live_ = src->last_type_export_authoritative() &&
                               (src->commit_cs_has_work() || src->last_partial_cs_live() ||
@@ -3035,9 +3025,11 @@ void Evaluator::stash_partial_constraint_state(void* type_checker_opaque) noexce
         if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
             destroy_commit_type_checker();
         if (!commit_type_checker_opaque_) {
-            auto* tc = new TypeChecker(*reg);
+            auto owned_tc = std::make_unique<TypeChecker>(*reg);
+            auto* tc = owned_tc.get();
             if (compiler_metrics_)
                 tc->set_metrics(compiler_metrics_);
+            commit_type_checker_owned_ = aura::core::adopt_opaque(std::move(owned_tc));
             commit_type_checker_opaque_ = tc;
             commit_tc_registry_gen_ = reg_gen;
         }
@@ -3052,8 +3044,10 @@ void Evaluator::stash_partial_constraint_state(void* type_checker_opaque) noexce
         }
         // Stash occurrence span for solve_delta_occurrence call.
         if (!commit_occurrence_vars_opaque_)
-            commit_occurrence_vars_opaque_ = new std::vector<aura::core::TypeId>();
-        auto* occ = static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_);
+            commit_occurrence_vars_opaque_ =
+                aura::core::adopt_opaque(std::make_unique<std::vector<aura::core::TypeId>>());
+        auto* occ =
+            static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_.get());
         *occ = src->last_occurrence_vars();
         commit_cs_live_ = src->last_type_export_authoritative() &&
                           (src->commit_cs_has_work() || src->last_partial_cs_live() ||
@@ -3133,9 +3127,11 @@ void Evaluator::stage_composite_required_unbound_var_for_test() noexcept {
         if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
             destroy_commit_type_checker();
         if (!commit_type_checker_opaque_) {
-            auto* tc = new TypeChecker(*reg);
+            auto owned_tc = std::make_unique<TypeChecker>(*reg);
+            auto* tc = owned_tc.get();
             if (compiler_metrics_)
                 tc->set_metrics(compiler_metrics_);
+            commit_type_checker_owned_ = aura::core::adopt_opaque(std::move(owned_tc));
             commit_type_checker_opaque_ = tc;
             commit_tc_registry_gen_ = reg_gen;
         }
@@ -3163,9 +3159,11 @@ void Evaluator::stage_composite_touched_unbound_for_test() noexcept {
         if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
             destroy_commit_type_checker();
         if (!commit_type_checker_opaque_) {
-            auto* tc = new TypeChecker(*reg);
+            auto owned_tc = std::make_unique<TypeChecker>(*reg);
+            auto* tc = owned_tc.get();
             if (compiler_metrics_)
                 tc->set_metrics(compiler_metrics_);
+            commit_type_checker_owned_ = aura::core::adopt_opaque(std::move(owned_tc));
             commit_type_checker_opaque_ = tc;
             commit_tc_registry_gen_ = reg_gen;
         }
@@ -3176,8 +3174,10 @@ void Evaluator::stage_composite_touched_unbound_for_test() noexcept {
         typed_audit::clear_composite_required_solved();
         commit_cs_live_ = true;
         if (!commit_occurrence_vars_opaque_)
-            commit_occurrence_vars_opaque_ = new std::vector<aura::core::TypeId>();
-        auto* occ = static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_);
+            commit_occurrence_vars_opaque_ =
+                aura::core::adopt_opaque(std::make_unique<std::vector<aura::core::TypeId>>());
+        auto* occ =
+            static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_.get());
         occ->clear();
         occ->push_back(t);
     } catch (...) {
@@ -3196,9 +3196,11 @@ void Evaluator::stage_composite_touched_n_for_test(std::uint32_t n) noexcept {
         if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
             destroy_commit_type_checker();
         if (!commit_type_checker_opaque_) {
-            auto* tc = new TypeChecker(*reg);
+            auto owned_tc = std::make_unique<TypeChecker>(*reg);
+            auto* tc = owned_tc.get();
             if (compiler_metrics_)
                 tc->set_metrics(compiler_metrics_);
+            commit_type_checker_owned_ = aura::core::adopt_opaque(std::move(owned_tc));
             commit_type_checker_opaque_ = tc;
             commit_tc_registry_gen_ = reg_gen;
         }
@@ -3206,8 +3208,10 @@ void Evaluator::stage_composite_touched_n_for_test(std::uint32_t n) noexcept {
         auto& cs = tc->constraint_system();
         typed_audit::clear_composite_required_solved();
         if (!commit_occurrence_vars_opaque_)
-            commit_occurrence_vars_opaque_ = new std::vector<aura::core::TypeId>();
-        auto* occ = static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_);
+            commit_occurrence_vars_opaque_ =
+                aura::core::adopt_opaque(std::make_unique<std::vector<aura::core::TypeId>>());
+        auto* occ =
+            static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_.get());
         occ->clear();
         const auto want = n == 0 ? 0u : n;
         occ->reserve(want);
@@ -3233,9 +3237,11 @@ void Evaluator::stage_composite_required_bound_var_for_test() noexcept {
         if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
             destroy_commit_type_checker();
         if (!commit_type_checker_opaque_) {
-            auto* tc = new TypeChecker(*reg);
+            auto owned_tc = std::make_unique<TypeChecker>(*reg);
+            auto* tc = owned_tc.get();
             if (compiler_metrics_)
                 tc->set_metrics(compiler_metrics_);
+            commit_type_checker_owned_ = aura::core::adopt_opaque(std::move(owned_tc));
             commit_type_checker_opaque_ = tc;
             commit_tc_registry_gen_ = reg_gen;
         }
@@ -3272,9 +3278,11 @@ void Evaluator::inject_commit_occurrence_drift_for_test() noexcept {
         if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
             destroy_commit_type_checker();
         if (!commit_type_checker_opaque_) {
-            auto* tc = new TypeChecker(*reg);
+            auto owned_tc = std::make_unique<TypeChecker>(*reg);
+            auto* tc = owned_tc.get();
             if (compiler_metrics_)
                 tc->set_metrics(compiler_metrics_);
+            commit_type_checker_owned_ = aura::core::adopt_opaque(std::move(owned_tc));
             commit_type_checker_opaque_ = tc;
             commit_tc_registry_gen_ = reg_gen;
         }
@@ -3306,9 +3314,11 @@ void Evaluator::inject_commit_cs_type_conflict_for_test() noexcept {
         if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
             destroy_commit_type_checker();
         if (!commit_type_checker_opaque_) {
-            auto* tc = new TypeChecker(*reg);
+            auto owned_tc = std::make_unique<TypeChecker>(*reg);
+            auto* tc = owned_tc.get();
             if (compiler_metrics_)
                 tc->set_metrics(compiler_metrics_);
+            commit_type_checker_owned_ = aura::core::adopt_opaque(std::move(owned_tc));
             commit_type_checker_opaque_ = tc;
             commit_tc_registry_gen_ = reg_gen;
         }
@@ -3337,9 +3347,11 @@ void Evaluator::inject_commit_cs_truncated_reverify_for_test() noexcept {
         if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
             destroy_commit_type_checker();
         if (!commit_type_checker_opaque_) {
-            auto* tc = new TypeChecker(*reg);
+            auto owned_tc = std::make_unique<TypeChecker>(*reg);
+            auto* tc = owned_tc.get();
             if (compiler_metrics_)
                 tc->set_metrics(compiler_metrics_);
+            commit_type_checker_owned_ = aura::core::adopt_opaque(std::move(owned_tc));
             commit_type_checker_opaque_ = tc;
             commit_tc_registry_gen_ = reg_gen;
         }
@@ -3371,8 +3383,10 @@ void Evaluator::inject_commit_cs_truncated_reverify_for_test() noexcept {
         cs.mark_touched_on_delta(d2.lhs, false);
         commit_cs_live_ = true;
         if (!commit_occurrence_vars_opaque_)
-            commit_occurrence_vars_opaque_ = new std::vector<aura::core::TypeId>();
-        auto* occ = static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_);
+            commit_occurrence_vars_opaque_ =
+                aura::core::adopt_opaque(std::make_unique<std::vector<aura::core::TypeId>>());
+        auto* occ =
+            static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_.get());
         occ->clear();
         occ->push_back(shared);
     } catch (...) {
@@ -3391,9 +3405,11 @@ void Evaluator::inject_commit_cs_incomplete_blame_for_test() noexcept {
         if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
             destroy_commit_type_checker();
         if (!commit_type_checker_opaque_) {
-            auto* tc = new TypeChecker(*reg);
+            auto owned_tc = std::make_unique<TypeChecker>(*reg);
+            auto* tc = owned_tc.get();
             if (compiler_metrics_)
                 tc->set_metrics(compiler_metrics_);
+            commit_type_checker_owned_ = aura::core::adopt_opaque(std::move(owned_tc));
             commit_type_checker_opaque_ = tc;
             commit_tc_registry_gen_ = reg_gen;
         }
@@ -3415,9 +3431,11 @@ void Evaluator::inject_commit_cs_complete_blame_for_test() noexcept {
         if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
             destroy_commit_type_checker();
         if (!commit_type_checker_opaque_) {
-            auto* tc = new TypeChecker(*reg);
+            auto owned_tc = std::make_unique<TypeChecker>(*reg);
+            auto* tc = owned_tc.get();
             if (compiler_metrics_)
                 tc->set_metrics(compiler_metrics_);
+            commit_type_checker_owned_ = aura::core::adopt_opaque(std::move(owned_tc));
             commit_type_checker_opaque_ = tc;
             commit_tc_registry_gen_ = reg_gen;
         }
@@ -3445,9 +3463,11 @@ void Evaluator::inject_commit_cs_empty_blame_for_test(bool with_cs_work) noexcep
         if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
             destroy_commit_type_checker();
         if (!commit_type_checker_opaque_) {
-            auto* tc = new TypeChecker(*reg);
+            auto owned_tc = std::make_unique<TypeChecker>(*reg);
+            auto* tc = owned_tc.get();
             if (compiler_metrics_)
                 tc->set_metrics(compiler_metrics_);
+            commit_type_checker_owned_ = aura::core::adopt_opaque(std::move(owned_tc));
             commit_type_checker_opaque_ = tc;
             commit_tc_registry_gen_ = reg_gen;
         }
@@ -3583,13 +3603,13 @@ void Evaluator::refresh_occurrence_on_guard_exit(std::size_t mutation_log_begin,
         if (guard_infer_engine_opaque_ && guard_infer_registry_gen_ != reg_gen)
             destroy_guard_infer_engine();
         if (!guard_infer_engine_opaque_) {
-            auto* diag = new aura::diag::DiagnosticCollector();
-            auto* eng = new InferenceEngine(*reg, *diag);
-            guard_infer_diag_opaque_ = diag;
-            guard_infer_engine_opaque_ = eng;
+            auto diag = std::make_unique<aura::diag::DiagnosticCollector>();
+            auto eng = std::make_unique<InferenceEngine>(*reg, *diag);
+            guard_infer_diag_opaque_ = aura::core::adopt_opaque(std::move(diag));
+            guard_infer_engine_opaque_ = aura::core::adopt_opaque(std::move(eng));
             guard_infer_registry_gen_ = reg_gen;
         }
-        auto* eng = static_cast<InferenceEngine*>(guard_infer_engine_opaque_);
+        auto* eng = static_cast<InferenceEngine*>(guard_infer_engine_opaque_.get());
         // Issue #4397: occurrence reanalysis uses this engine, not TypeChecker.
         eng->set_registered_prim_probe(&prim_name_registered, &primitives_);
         eng->set_cache_epoch(current_cache_epoch());

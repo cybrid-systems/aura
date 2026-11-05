@@ -47,6 +47,7 @@ module;
 #include <unordered_map>
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "core/fiber_context.hh" // Issue #4842: per-execution-context body inheritance
+#include "core/ownership.hh" // Issue #4936: NoCopy
 
 // Default ON when the TU is compiled outside the CMake graph (tools/IDE).
 #ifndef AURA_ENABLE_SYNTHESIZE
@@ -473,6 +474,7 @@ namespace {
                 runner.join();
         }
         ~OrchSchedHolder() { stop_and_join(); }
+        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
     };
     // Issue #4847: construct the holder on the FIRST orch call, never at
     // static-init time. ~OrchSchedHolder stops the scheduler and destroys
@@ -625,6 +627,7 @@ namespace {
             Evaluator::push_agent_apply_hold();
             struct NestedHoldPop {
                 ~NestedHoldPop() { Evaluator::pop_agent_apply_hold(); }
+                [[no_unique_address]] ::aura::core::NoCopy no_copy{};
             } nested_pop;
             run();
         } else {
@@ -3245,6 +3248,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                             if (m != 0)
                                 Evaluator::note_parallel_task_cone_mask(m);
                         }
+                        RegionTls(const RegionTls&) = delete;
+                        RegionTls& operator=(const RegionTls&) = delete;
                         ~RegionTls() {
                             Evaluator::clear_parallel_task_region_key();
                             Evaluator::clear_parallel_task_cone_mask();
@@ -7324,6 +7329,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     if (k != 0)
                         Evaluator::note_parallel_task_region_key(k);
                 }
+                SuperviseRegionTls(const SuperviseRegionTls&) = delete;
+                SuperviseRegionTls& operator=(const SuperviseRegionTls&) = delete;
                 ~SuperviseRegionTls() { Evaluator::clear_parallel_task_region_key(); }
             };
             // Issue #4723: the watch arm's Phase A is empty by design

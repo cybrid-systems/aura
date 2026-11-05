@@ -105,6 +105,7 @@ public:
     operation_state() = default;
 
     // Non-copyable, movable
+    ~operation_state() = default;
     operation_state(const operation_state&) = delete;
     operation_state& operator=(const operation_state&) = delete;
     operation_state(operation_state&&) = default;

@@ -90,6 +90,7 @@ module;
 #include "orch/security_schedule_gate.h"           // Issue #2630: evaluate_security_schedule admit
 #include "compiler/mutation_concurrency_health.hh" // Issue #2985: health admit gate
 #include "compiler/castop_density_policy.hh" // Issue #3699: density streak gate reject pending
+#include "core/ownership.hh" // Issue #4936: NoCopy
 
 // Issue #3102: import aura.compiler.dirty_propagation. The 3 abort sites plus
 // boundary enter call aura::compiler::dirty::truncate_type_cone_to_size plus
@@ -1615,8 +1616,10 @@ Evaluator::HeapMutateGuardHandle Evaluator::maybe_auto_guard_heap_mutate(bool& o
         if (!stk.empty() && !stk.back().exit_fence)
             stk.back().heap_slot_only = true;
     }
-    return HeapMutateGuardHandle{
-        raw, [](void* p) noexcept { delete static_cast<MutationBoundaryGuard*>(p); }};
+    return HeapMutateGuardHandle{raw, [](void* p) noexcept {
+                                     const std::unique_ptr<MutationBoundaryGuard> owned{
+                                         static_cast<MutationBoundaryGuard*>(p)};
+                                 }};
 }
 
 // Issue #4678: opt-out for the nested-boundary re-lower deferral.
@@ -1702,6 +1705,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             if (outermost && ev)
                 ev->defuse_affected_syms_.clear();
         }
+        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
     } clear_staged_defuse{this, !nested_boundary};
     // Issue #3322: production/Full force-close the pre-proof observation
     // window (nested exit + outermost render-fast skip). Soft/Off: no-op.
@@ -1721,6 +1725,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             if (on)
                 aura::ast::pcv_checkpoint_live_exit();
         }
+        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
     } pcv_ckpt_exit{!cp.lightweight && !cp.heap_slot_only};
     // Issue #4432: BoundaryExit and phase-4 reemit run after this clear.
     // Capture the session audit mid first. join(0) would publish the
@@ -4756,6 +4761,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             if (fn && *fn)
                 (*fn)(false);
         }
+        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
     } boundary_prep_batch;
     if (ev_ && !inert_ && ev_->boundary_prep_batch_fn_) {
         boundary_prep_batch.fn = &ev_->boundary_prep_batch_fn_;
@@ -8574,7 +8580,8 @@ namespace {
     }
 
     void transaction_guard_release(void* /*ctx*/, void* handle) noexcept {
-        delete static_cast<Evaluator::MutationBoundaryGuard*>(handle);
+        const std::unique_ptr<Evaluator::MutationBoundaryGuard> owned{
+            static_cast<Evaluator::MutationBoundaryGuard*>(handle)};
     }
 
 } // namespace
@@ -8671,6 +8678,7 @@ std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
             if (ev)
                 ev->densify_reregister_inflight_.fetch_sub(1, std::memory_order_acq_rel);
         }
+        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
     } densify_hold;
     if (densify_fill == 2 &&
         densify_value_slot_owner_.load(std::memory_order_acquire) != std::this_thread::get_id() &&
@@ -9310,6 +9318,7 @@ bool Evaluator::commit_unstable_densify_root_remap(bool relocated) noexcept {
             ev->densify_value_slot_owner_.store(std::thread::id{}, std::memory_order_release);
             ev->densify_value_slot_mu_.unlock();
         }
+        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
     } release{this};
     try {
         if (relocated && arena_group_ && aura::ast::moving_compact_feature_enabled() != 0) {

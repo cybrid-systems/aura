@@ -20,6 +20,7 @@ module;
 
 #include <pthread.h>
 #include <unistd.h>
+#include "core/ownership.hh" // #4936 opaque_ptr
 
 module aura.compiler.evaluator;
 
@@ -912,21 +913,22 @@ namespace {
             return nullptr;
         if (s_tls_cli_body_lock() && s_tls_cli_body_lock()->owns_lock())
             return nullptr;
-        auto* lk = new std::unique_lock<std::mutex>(s_cli_commit_mtx, std::defer_lock);
+        auto lk = std::make_unique<std::unique_lock<std::mutex>>(s_cli_commit_mtx, std::defer_lock);
         // Issue #4699: tracked acquire (takeover publish).
         cli_body_lock_acquire(*lk);
-        s_tls_cli_body_lock() = lk;
-        return lk;
+        s_tls_cli_body_lock() = lk.get();
+        // The C hook hands ownership to cli_main_body_lock_release_impl.
+        return lk.release();
     }
 
     void cli_main_body_lock_release_impl(void* p) {
         if (!p)
             return;
-        auto* lk = static_cast<std::unique_lock<std::mutex>*>(p);
+        const std::unique_ptr<std::unique_lock<std::mutex>> lk{
+            static_cast<std::unique_lock<std::mutex>*>(p)};
         // #4054: clear TLS only when it still names this lock.
-        if (s_tls_cli_body_lock() == lk)
+        if (s_tls_cli_body_lock() == lk.get())
             s_tls_cli_body_lock() = nullptr;
-        delete lk;
     }
 
     void wire_denseness_body_lock_hooks() {
@@ -1901,6 +1903,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                 aura::core::fiber_ctx::Context& ctx;
                 bool prev;
                 ~RestoreInherited() { ctx.orch_body_inherited = prev; }
+                [[no_unique_address]] ::aura::core::NoCopy no_copy{};
             } restore{ctx, prev};
             complete_fiber();
         };
@@ -2226,6 +2229,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                 // Issue #4778: a joined body no longer drives a worldline.
                 workspace_driver_release_fiber_4778(fid);
             }
+            [[no_unique_address]] ::aura::core::NoCopy no_copy{};
         };
         const PendingBodyRootRelease pending_body_root_release{static_cast<void*>(&ev),
                                                                static_cast<std::uint64_t>(fid)};
@@ -2421,6 +2425,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                     aura::serve::Fiber* f;
                     bool prev;
                     ~JoinYieldAllowReset() { f->set_join_wait_yield_allowed(prev); }
+                    [[no_unique_address]] ::aura::core::NoCopy no_copy{};
                 } allow_reset{self, prev_join_allow};
                 while (true) {
                     {

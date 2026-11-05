@@ -44,7 +44,8 @@ module;
 #include <memory>   // Issue #1880: unique_ptr for soft-path sentinel
 #include <optional> // Issue #2555: optional TransactionGuard for orch agent body
 
-#include "hash_meta.h" // FNV constants (#901)
+#include "hash_meta.h"       // FNV constants (#901)
+#include "core/ownership.hh" // #4936 immortal<T>
 module aura.compiler.evaluator;
 
 import std;
@@ -116,7 +117,8 @@ namespace fiber_stack_pool_detail {
             {
                 std::lock_guard lock(mutex_);
                 if (!pool_.empty()) {
-                    T* v = pool_.back();
+                    // The caller owns the stack until release().
+                    T* v = pool_.back().release();
                     pool_.pop_back();
                     pool_stats().pool_hits.fetch_add(1, std::memory_order_relaxed);
                     pool_stats().churn_reductions.fetch_add(1, std::memory_order_relaxed);
@@ -126,23 +128,21 @@ namespace fiber_stack_pool_detail {
                 }
             }
             pool_stats().lazy_allocs.fetch_add(1, std::memory_order_relaxed);
-            auto* v = new T();
-            v->reserve(kInitialCapacity);
-            return v;
+            auto fresh = std::make_unique<T>();
+            fresh->reserve(kInitialCapacity);
+            return fresh.release();
         }
 
         void release(T* v) {
             if (!v)
                 return;
+            std::unique_ptr<T> owned{v};
             pool_stats().live_stacks.fetch_sub(1, std::memory_order_relaxed);
-            v->clear();
-            maybe_shrink(*v);
+            owned->clear();
+            maybe_shrink(*owned);
             std::lock_guard lock(mutex_);
-            if (pool_.size() < kMaxPooled) {
-                pool_.push_back(v);
-                return;
-            }
-            delete v;
+            if (pool_.size() < kMaxPooled)
+                pool_.push_back(std::move(owned));
         }
 
         void track_depth(std::size_t depth) {
@@ -166,7 +166,7 @@ namespace fiber_stack_pool_detail {
         }
 
         std::mutex mutex_;
-        std::vector<T*> pool_;
+        std::vector<std::unique_ptr<T>> pool_;
     };
 
     BoundedVectorPool<std::vector<MutationVec>> g_mutation_pool;
@@ -326,11 +326,12 @@ thread_local std::uint64_t aura::compiler::Evaluator::tls_fiber_mint_override_ =
 // on its own stack right after the body returns.
 namespace {
     std::mutex& fiber_slab_owner_mu() noexcept {
-        static auto* m = new std::mutex(); // leaked: fibers may exit during static teardown
+        static ::aura::core::immortal<std::mutex>
+            m; // never destroyed: fibers may exit during static teardown
         return *m;
     }
     std::unordered_set<const void*>& fiber_slab_owner_live() noexcept {
-        static auto* s = new std::unordered_set<const void*>();
+        static ::aura::core::immortal<std::unordered_set<const void*>> s;
         return *s;
     }
     void fiber_slab_body_exit_hook(void* ctx, std::uint64_t fiber_id) noexcept {
@@ -4021,8 +4022,9 @@ extern "C" void aura_fiber_install_tenant_scope_for_resume(void* fiber_ptr) noex
     // Install scope (release any prior scope first — defensive).
     // Issue #2839: re-bind principal to assigned even after mismatch
     // (steal / keepalive / mailbox deliver re-entry).
-    g_fiber_tenant_scope.reset(
-        new Evaluator::TenantScope(*ev, assigned, /*name=*/{}, /*allow_cross=*/false));
+    g_fiber_tenant_scope =
+        std::make_unique<Evaluator::TenantScope>(*ev, assigned, /*name=*/std::string_view{},
+                                                 /*allow_cross=*/false);
 }
 
 extern "C" void aura_fiber_release_tenant_scope_after_yield() noexcept {

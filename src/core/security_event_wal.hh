@@ -24,6 +24,7 @@
 #ifndef AURA_CORE_SECURITY_EVENT_WAL_HH
 #define AURA_CORE_SECURITY_EVENT_WAL_HH
 
+#include "core/ownership.hh"    // #4936 unique_file
 #include "core/parse_number.hh" // #4936 exception-free parse
 #include <algorithm>
 #include <atomic>
@@ -315,7 +316,7 @@ struct SecurityEventWal {
     bool enabled = false;
     std::string dir;
     std::string current_path;
-    std::FILE* fp = nullptr;
+    unique_file fp;
     std::uint64_t current_bytes = 0;
     std::uint64_t rotate_bytes = kDefaultRotateBytes;
     std::uint32_t segment_index = 0;
@@ -334,9 +335,8 @@ struct SecurityEventWal {
 
     void close_unlocked() noexcept {
         if (fp) {
-            std::fflush(fp);
-            std::fclose(fp);
-            fp = nullptr;
+            std::fflush(fp.get());
+            fp.reset();
         }
         unflushed = 0;
     }
@@ -353,29 +353,29 @@ struct SecurityEventWal {
         // Issue #4686: see security_event_segment_open_fail_for_test().
         if (security_event_segment_open_fail_for_test().load(std::memory_order_relaxed))
             return false;
-        fp = std::fopen(current_path.c_str(), "ab+");
+        fp = open_file(current_path.c_str(), "ab+");
         if (!fp)
             return false;
         static char sbuf[64 * 1024];
-        std::setvbuf(fp, sbuf, _IOFBF, sizeof(sbuf));
-        if (std::fseek(fp, 0, SEEK_END) != 0) {
+        std::setvbuf(fp.get(), sbuf, _IOFBF, sizeof(sbuf));
+        if (std::fseek(fp.get(), 0, SEEK_END) != 0) {
             close_unlocked();
             return false;
         }
-        const auto pos = std::ftell(fp);
+        const auto pos = std::ftell(fp.get());
         current_bytes = pos > 0 ? static_cast<std::uint64_t>(pos) : 0;
         if (current_bytes == 0) {
-            if (std::fwrite(kSecurityEventWalMagic, 1, 8, fp) != 8) {
+            if (std::fwrite(kSecurityEventWalMagic, 1, 8, fp.get()) != 8) {
                 close_unlocked();
                 return false;
             }
             const std::uint32_t ver = kSecurityEventWalVersion;
-            if (std::fwrite(&ver, sizeof(ver), 1, fp) != 1) {
+            if (std::fwrite(&ver, sizeof(ver), 1, fp.get()) != 1) {
                 close_unlocked();
                 return false;
             }
             current_bytes = 8 + sizeof(ver);
-            std::fflush(fp);
+            std::fflush(fp.get());
         }
         segment_index = seg;
         g_security_event_wal_metrics().security_event_wal_segments.store(seg + 1,
@@ -631,7 +631,7 @@ struct SecurityEventWal {
         if (!enabled || dir.empty())
             return std::nullopt;
         if (fp)
-            std::fflush(fp);
+            std::fflush(fp.get());
         namespace fs = std::filesystem;
         const std::uint32_t n = std::min(max_segments, segment_index + 1);
         for (std::uint32_t i = 0; i < n; ++i) {
@@ -707,7 +707,7 @@ struct SecurityEventWal {
             }
             return false;
         }
-        const auto n = std::fwrite(&rec, 1, sizeof(rec), fp);
+        const auto n = std::fwrite(&rec, 1, sizeof(rec), fp.get());
         if (n != sizeof(rec)) {
             g_security_event_wal_metrics().security_event_wal_append_fail_total.fetch_add(
                 1, std::memory_order_relaxed);
@@ -736,7 +736,7 @@ struct SecurityEventWal {
         last_seq_persisted = rec.seq;
         ++unflushed;
         if (unflushed >= kFlushEvery) {
-            std::fflush(fp);
+            std::fflush(fp.get());
             unflushed = 0;
         }
         g_security_event_wal_metrics().security_event_persisted_total.fetch_add(
@@ -748,24 +748,22 @@ struct SecurityEventWal {
 
     static std::vector<SecurityEventWalRecord> read_segment_file(const std::string& path) noexcept {
         std::vector<SecurityEventWalRecord> out;
-        std::FILE* f = std::fopen(path.c_str(), "rb");
+        const unique_file f = open_file(path.c_str(), "rb");
         if (!f)
             return out;
         char magic[8]{};
-        if (std::fread(magic, 1, 8, f) != 8 || std::memcmp(magic, kSecurityEventWalMagic, 8) != 0) {
-            std::fclose(f);
+        if (std::fread(magic, 1, 8, f.get()) != 8 ||
+            std::memcmp(magic, kSecurityEventWalMagic, 8) != 0) {
             return out;
         }
         std::uint32_t ver = 0;
-        if (std::fread(&ver, sizeof(ver), 1, f) != 1 || ver != kSecurityEventWalVersion) {
-            std::fclose(f);
+        if (std::fread(&ver, sizeof(ver), 1, f.get()) != 1 || ver != kSecurityEventWalVersion) {
             return out;
         }
         SecurityEventWalRecord rec{};
-        while (std::fread(&rec, 1, sizeof(rec), f) == sizeof(rec)) {
+        while (std::fread(&rec, 1, sizeof(rec), f.get()) == sizeof(rec)) {
             out.push_back(rec);
         }
-        std::fclose(f);
         return out;
     }
 
@@ -800,6 +798,7 @@ struct SecurityEventWal {
         rotate_bytes = kDefaultRotateBytes;
         pruned_upto_ = 0;
     }
+    [[no_unique_address]] ::aura::core::NoCopy no_copy{};
 };
 
 // Issue #2225: resolve the SecurityEventWAL directory. Falls through to
