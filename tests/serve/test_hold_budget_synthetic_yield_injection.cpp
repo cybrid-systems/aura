@@ -1544,14 +1544,11 @@ int run_test_hold_budget_add_mutate_inbody_poll_3480() {
         CHECK(depth_after.load() == 0, "3480 AC1: depth slot == 0");
         const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
         const auto addp = mut.find("auto add_mutate = ");
-        // #4332 wave: the wrapper-level lazy COW before fn(a) grew the lambda —
-        // the post-fn(a) anchors (force_release, forced unlock/fail-closed
-        // counters) now sit past the old 17000 edge. #4385's session-mid
-        // note pushed force_release to ~21500. #4910's evolution-log step
-        // wrapper (evo_call_4910 at the top of add_mutate) moved them again:
-        // fn(a) at ~27900 and force_release at ~28800. Same 31000 budget as
-        // check_hold_budget_add_mutate_inbody_poll_3480.py.
-        const auto aw = addp == std::string::npos ? std::string{} : mut.substr(addp, 31000);
+        // #4332/#4385/#4910 each grew the lambda and slid the old character
+        // budget off the post-fn(a) anchors; match the lambda braces instead
+        // of a byte count (same extraction as the python checker).
+        const auto aw = addp == std::string::npos ? std::string{}
+                                                  : aura::test::aura_lambda_body_after(mut, addp);
         const auto fnp = aw.find("auto result = fn(a);");
         const auto frp = aw.find("force_release_hold_budget_inbody");
         CHECK(fnp != std::string::npos && frp != std::string::npos && frp > fnp,
@@ -1577,10 +1574,9 @@ int run_test_hold_budget_add_mutate_inbody_poll_3480() {
         const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
         const auto add = mut.find("auto add_mutate = ");
         CHECK(add != std::string::npos, "3480 AC2: add_mutate present");
-        // #3480 AC2 window grown for #4332 lazy-COW, the #4385 note and the
-        // #4910 evo wrapper (force_release now sits past 28800; checker uses
-        // 31000).
-        const auto awin = mut.substr(add, 31000);
+        // #3480 AC2: same brace-matched body; no byte budget to outgrow.
+        const auto awin = aura::test::aura_lambda_body_after(mut, add);
+        CHECK(!awin.empty(), "3480 AC2: add_mutate body extracted");
         CHECK(awin.find("aura_fiber_request_hold_budget_cancel") == std::string::npos,
               "3480 AC2: wrapper does not unlock from thief thread");
         CHECK(awin.find("force_release_hold_budget_inbody") != std::string::npos,
@@ -2141,10 +2137,10 @@ int run_test_hold_budget_prebody_synthetic_yield_4257() {
           "4257: stamp in mutation_hold_budget.h");
     CHECK(mh.find("4257") != std::string::npos, "4257: issue cite");
     const auto addp = mut.find("auto add_mutate = ");
-    // #4385's session-mid note pushed fn(a) to ~20600 and force_release to
-    // ~21500; the #4910 evo wrapper moved them to ~27900 / ~28800, past this
-    // 20000 edge. Same 31000 budget as #3480.
-    const auto aw = addp == std::string::npos ? std::string{} : mut.substr(addp, 31000);
+    // #4257 reuses the #3480 brace-matched extraction: the wrapper grows
+    // (the #4910 evo step pushed fn(a) to ~27900) and a byte budget rots.
+    const auto aw =
+        addp == std::string::npos ? std::string{} : aura::test::aura_lambda_body_after(mut, addp);
     const auto syn = aw.find("inject_synthetic_mutation_boundary_yield");
     const auto fnp = aw.find("auto result = fn(a);");
     CHECK(syn != std::string::npos && fnp != std::string::npos && syn < fnp,

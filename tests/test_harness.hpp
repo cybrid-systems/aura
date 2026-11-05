@@ -49,9 +49,7 @@ namespace aura::test {
 // Constructor runs at TU init for every binary that includes this header
 // (custom main() included). Do not call apply_dev from CompilerService.
 struct DevAuditTestBootstrap {
-    DevAuditTestBootstrap() noexcept {
-        aura::compiler::typed_audit::apply_dev_audit_defaults();
-    }
+    DevAuditTestBootstrap() noexcept { aura::compiler::typed_audit::apply_dev_audit_defaults(); }
 };
 inline DevAuditTestBootstrap g_dev_audit_test_bootstrap{};
 
@@ -160,12 +158,14 @@ inline int aura_python_repo_script(std::string_view rel_script, std::string_view
 #ifdef AURA_SOURCE_DIR
     const std::string root = AURA_SOURCE_DIR;
 #else
-    const std::string root = aura_repo_path("build.py").ends_with("build.py")
-                                 ? std::filesystem::path(aura_repo_path("build.py")).parent_path().string()
-                                 : ".";
+    const std::string root =
+        aura_repo_path("build.py").ends_with("build.py")
+            ? std::filesystem::path(aura_repo_path("build.py")).parent_path().string()
+            : ".";
 #endif
-    const std::string cmd = std::string("cd \"") + root + "\" && python3 " + std::string(rel_script) +
-                            (args.empty() ? "" : " ") + std::string(args) + " > /dev/null 2>&1";
+    const std::string cmd = std::string("cd \"") + root + "\" && python3 " +
+                            std::string(rel_script) + (args.empty() ? "" : " ") +
+                            std::string(args) + " > /dev/null 2>&1";
     return std::system(cmd.c_str());
 }
 
@@ -330,6 +330,100 @@ template <typename FlatT, typename RefsT> RefStats validate_stable_refs(RefsT& r
     return default_value;
 }
 
+// Issue #3480: brace-matched body of the lambda that starts at/after `after`.
+//
+// Fixed character windows rot: #4910's evolution-log wrapper grew add_mutate
+// and slid the hold-budget anchors past a 25000-char budget, so the test
+// asserted on an empty window. Comments and string/char literals are skipped
+// while the capture list and the braced body are matched, so code growth
+// cannot slide the window and a brace inside a literal cannot end it early.
+[[nodiscard]] inline std::string aura_lambda_body_after(std::string_view src, std::size_t after) {
+    const std::size_t size = src.size();
+    std::size_t pos = after;
+    constexpr std::size_t kNone = std::string_view::npos;
+
+    auto skip_literal = [&](std::size_t at) -> std::size_t {
+        const char quote = src[at];
+        ++at;
+        while (at < size) {
+            if (src[at] == '\\') {
+                at += 2;
+                continue;
+            }
+            if (src[at] == quote)
+                return at + 1;
+            ++at;
+        }
+        return size;
+    };
+    auto skip_comment = [&](std::size_t at) -> std::size_t {
+        if (at + 1 >= size)
+            return at;
+        if (src[at + 1] == '/') {
+            const auto eol = src.find('\n', at + 2);
+            return eol == kNone ? size : eol + 1;
+        }
+        if (src[at + 1] == '*') {
+            const auto end = src.find("*/", at + 2);
+            return end == kNone ? size : end + 2;
+        }
+        return at;
+    };
+    auto skip_trivia = [&]() {
+        for (;;) {
+            if (pos + 1 < size && src[pos] == '/' && (src[pos + 1] == '/' || src[pos + 1] == '*')) {
+                pos = skip_comment(pos);
+                continue;
+            }
+            if (pos < size && (src[pos] == '"' || src[pos] == '\'')) {
+                pos = skip_literal(pos);
+                continue;
+            }
+            return;
+        }
+    };
+    auto find_open = [&](char want) -> std::size_t {
+        while (pos < size) {
+            skip_trivia();
+            if (pos >= size)
+                break;
+            if (src[pos] == want)
+                return pos;
+            ++pos;
+        }
+        return kNone;
+    };
+    auto match = [&](char open, char close) -> std::size_t {
+        int depth = 0;
+        while (pos < size) {
+            skip_trivia();
+            if (pos >= size)
+                break;
+            if (src[pos] == open) {
+                ++depth;
+            } else if (src[pos] == close) {
+                --depth;
+                if (depth == 0)
+                    return pos;
+            }
+            ++pos;
+        }
+        return kNone;
+    };
+
+    if (find_open('[') == kNone) // capture list
+        return {};
+    if (match('[', ']') == kNone)
+        return {};
+    ++pos;
+    if (find_open('{') == kNone) // braced body
+        return {};
+    const std::size_t begin = pos;
+    if (match('{', '}') == kNone)
+        return {};
+    return std::string(src.substr(begin, pos + 1 - begin));
+}
+
 } // namespace aura::test
 
 // ── CHECK / EXPECT macros ────────────────────────────────────
@@ -359,10 +453,9 @@ template <typename FlatT, typename RefsT> RefStats validate_stable_refs(RefsT& r
 
 // ── AURA_ISSUE_TEST — bundle entry-point helper ──
 // Prefer domain suites (tests/README.md). Macro at FILE SCOPE only.
-#define AURA_ISSUE_TEST(ISSUE_NUM, DESC, BODY)                                                    \
+#define AURA_ISSUE_TEST(ISSUE_NUM, DESC, BODY)                                                     \
     extern "C" int aura_issue_##ISSUE_NUM##_run() {                                                \
-        BODY                                                                                       \
-        return ::aura::test::g_failed > 0 ? 1 : 0;                                                 \
+        BODY return ::aura::test::g_failed > 0 ? 1 : 0;                                            \
     }
 
 // ── TEST() registration ──────────────────────────────────────
@@ -417,8 +510,8 @@ using ::aura::test::k_int_env;
 
 // Legacy namespace for StableNodeRef helpers (issue_test_harness callers).
 namespace aura_test_harness {
-using ::aura::test::RefStats;
 using ::aura::test::capture_stable_refs;
+using ::aura::test::RefStats;
 using ::aura::test::validate_stable_refs;
 } // namespace aura_test_harness
 
