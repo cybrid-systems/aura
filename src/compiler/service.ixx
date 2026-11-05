@@ -1386,6 +1386,13 @@ export enum class IncrementalTypecheckMode : std::uint8_t {
     Disabled = 2,
 };
 
+// Issue #4930: define-root consult observability. The parent-link fast path
+// answers the common "cur is a direct child of par" case in O(1); the
+// child-list scan stays as a torn-state fallback. The counters let the
+// regression test prove the warm hit path never re-scans root's children.
+export inline std::atomic<std::uint64_t> g_define_root_parent_link_hits{0};
+export inline std::atomic<std::uint64_t> g_define_root_child_list_scans{0};
+
 export class CompilerService {
 public:
     // Issue #531: closure / EnvFrame / bridge_epoch /
@@ -7902,6 +7909,16 @@ public:
     }
     static bool define_root_is_child_(const aura::ast::FlatAST& flat, aura::ast::NodeId par,
                                       aura::ast::NodeId cur) {
+        // Issue #4930: the maintained parent link answers the direct-child
+        // case in O(1). Without it every consult of a root-level define
+        // walked flat.root's whole child list (O(W)) on the cache-hit and
+        // tag-index paths alike; the list scan stays as a torn-state
+        // fallback for a parent link that disagrees with the child list.
+        if (flat.parent_of(cur) == par) {
+            g_define_root_parent_link_hits.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
+        g_define_root_child_list_scans.fetch_add(1, std::memory_order_relaxed);
         for (auto c : flat.children(par))
             if (c == cur)
                 return true;
