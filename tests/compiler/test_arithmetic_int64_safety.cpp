@@ -394,17 +394,19 @@ int main() {
                                  run.err);
                 CHECK(run.rc == 1, std::string(label) + " exits 1 (#4497 displayed error)");
                 CHECK(run.out == expect, std::string(label) + " does not coerce");
-                CHECK(run.err.find("error: type mismatch — expected Int, got String 'abc'") !=
+                // Issue #4909 located diagnostics put "<file>:<line>:<col>: "
+                // between "error: " and the message, so match the message
+                // body (the file-less arms like floor still match too).
+                CHECK(run.err.find("type mismatch — expected Int, got String 'abc'") !=
                           std::string::npos,
                       std::string(label) + " string 'abc'");
-                CHECK(run.err.find("error: type mismatch — expected Int, got String '2.5'") !=
+                CHECK(run.err.find("type mismatch — expected Int, got String '2.5'") !=
                           std::string::npos,
                       std::string(label) + " string '2.5'");
-                CHECK(run.err.find("error: type mismatch — expected Int, got String '-3'") !=
+                CHECK(run.err.find("type mismatch — expected Int, got String '-3'") !=
                           std::string::npos,
                       std::string(label) + " string '-3'");
-                CHECK(run.err.find("error: type mismatch — expected Int, got Bool") !=
-                          std::string::npos,
+                CHECK(run.err.find("type mismatch — expected Int, got Bool") != std::string::npos,
                       std::string(label) + " bool");
                 CHECK(run.err.find("AURA CRASH") == std::string::npos,
                       std::string(label) + " does not abort");
