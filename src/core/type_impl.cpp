@@ -184,9 +184,10 @@ TypeId TypeRegistry::register_func(std::vector<TypeId> args, TypeId ret, bool va
     // Issue #4557: candidates from the intern index, ascending.
     const auto key = func_key(args, ret);
     for (std::uint32_t i : intern_candidates(key)) {
-        if (entries_[i]->tag != TypeTag::FUNC || !entries_[i]->func)
+        const auto& func_opt = entries_[i]->func;
+        if (entries_[i]->tag != TypeTag::FUNC || !func_opt)
             continue;
-        const auto& f = *entries_[i]->func;
+        const auto& f = *func_opt;
         if (f.variadic != variadic)
             continue;
         if (f.args.size() != args.size())
@@ -209,19 +210,18 @@ TypeId TypeRegistry::register_func(std::vector<TypeId> args, TypeId ret, bool va
         .index = static_cast<std::uint32_t>(entries_.size()),
         .generation = current_generation(),
     };
-    auto ft = FuncType{std::move(args), ret, variadic};
-    auto tag = TypeTag::FUNC;
-    std::string tmp_name = "(" + std::to_string(ft.args.size()) + (variadic ? "+->" : "->") + ")";
-    entries_.push_back(arena_.allocate(Entry{tag, tmp_name, std::move(ft), std::nullopt,
-                                             std::nullopt, std::nullopt, std::nullopt, std::nullopt,
-                                             std::nullopt, std::nullopt, std::nullopt}));
+    // Issue #4936: build the display name from the arguments before they
+    // move into the Entry (no optional re-read through entries_.back()).
     std::string name = "(";
-    for (auto& a : entries_.back()->func->args)
+    for (const auto& a : args)
         name += std::string(name_of(a)) + " ";
     if (variadic)
         name += "... ";
     name += std::string("-> ") + std::string(name_of(ret)) + ")";
-    entries_.back()->name = name;
+    auto ft = FuncType{std::move(args), ret, variadic};
+    entries_.push_back(arena_.allocate(
+        Entry{TypeTag::FUNC, std::move(name), std::move(ft), std::nullopt, std::nullopt,
+              std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt}));
     intern_note(key, id.index);
     return id;
 }
@@ -247,9 +247,10 @@ TypeId TypeRegistry::register_linear(TypeId inner) {
     // Dedup: same inner returns the existing TypeId.
     const auto key = linear_key(inner);
     for (std::uint32_t i : intern_candidates(key)) {
-        if (entries_[i]->tag != TypeTag::LINEAR || !entries_[i]->linear)
+        const auto& linear_opt = entries_[i]->linear;
+        if (entries_[i]->tag != TypeTag::LINEAR || !linear_opt)
             continue;
-        const auto& l = *entries_[i]->linear;
+        const auto& l = *linear_opt;
         if (l.inner == inner || type_equals(l.inner, inner)) {
             return TypeId{i, current_generation()};
         }
@@ -273,9 +274,10 @@ TypeId TypeRegistry::register_module(ModuleType mt) {
     std::lock_guard lock(type_registry_mutex_);
     // Dedup: same member list (in order) returns the existing TypeId.
     for (std::uint32_t i = 0; i < entries_.size(); ++i) {
-        if (entries_[i]->tag != TypeTag::MODULE || !entries_[i]->module_type)
+        const auto& module_type_opt = entries_[i]->module_type;
+        if (entries_[i]->tag != TypeTag::MODULE || !module_type_opt)
             continue;
-        const auto& m = *entries_[i]->module_type;
+        const auto& m = *module_type_opt;
         if (m.members.size() != mt.members.size())
             continue;
         bool match = true;
@@ -316,9 +318,10 @@ TypeId TypeRegistry::register_variant(VariantType vt) {
     std::lock_guard lock(type_registry_mutex_);
     // Dedup: same constructor list (in order) returns the existing TypeId.
     for (std::uint32_t i = 0; i < entries_.size(); ++i) {
-        if (entries_[i]->tag != TypeTag::VARIANT || !entries_[i]->variant)
+        const auto& variant_opt = entries_[i]->variant;
+        if (entries_[i]->tag != TypeTag::VARIANT || !variant_opt)
             continue;
-        const auto& v = *entries_[i]->variant;
+        const auto& v = *variant_opt;
         if (v.variants.size() != vt.variants.size())
             continue;
         bool match = true;
@@ -370,9 +373,10 @@ TypeId TypeRegistry::register_record(RecordType rt) {
     std::lock_guard lock(type_registry_mutex_);
     // Dedup: same field list (in order) returns the existing TypeId.
     for (std::uint32_t i = 0; i < entries_.size(); ++i) {
-        if (entries_[i]->tag != TypeTag::RECORD || !entries_[i]->record)
+        const auto& record_opt = entries_[i]->record;
+        if (entries_[i]->tag != TypeTag::RECORD || !record_opt)
             continue;
-        const auto& r = *entries_[i]->record;
+        const auto& r = *record_opt;
         if (r.fields.size() != rt.fields.size())
             continue;
         bool match = true;
@@ -410,22 +414,28 @@ TypeId TypeRegistry::register_record(RecordType rt) {
 
 const VariantType* TypeRegistry::variant_of(TypeId id) const {
     std::shared_lock lock(type_registry_mutex_);
-    if (id_current(id) && entries_[id.index]->variant)
-        return &*entries_[id.index]->variant;
+    if (id_current(id)) {
+        if (const auto& opt = entries_[id.index]->variant)
+            return &*opt;
+    }
     return nullptr;
 }
 
 const RecordType* TypeRegistry::record_of(TypeId id) const {
     std::shared_lock lock(type_registry_mutex_);
-    if (id_current(id) && entries_[id.index]->record)
-        return &*entries_[id.index]->record;
+    if (id_current(id)) {
+        if (const auto& opt = entries_[id.index]->record)
+            return &*opt;
+    }
     return nullptr;
 }
 
 const ModuleType* TypeRegistry::module_of(TypeId id) const {
     std::shared_lock lock(type_registry_mutex_);
-    if (id_current(id) && entries_[id.index]->module_type)
-        return &*entries_[id.index]->module_type;
+    if (id_current(id)) {
+        if (const auto& opt = entries_[id.index]->module_type)
+            return &*opt;
+    }
     return nullptr;
 }
 
@@ -435,9 +445,10 @@ TypeId TypeRegistry::register_effect(std::string name, TypeId arg) {
     // Dedup: same name + same arg returns the existing TypeId.
     const auto key = effect_key(name);
     for (std::uint32_t i : intern_candidates(key)) {
-        if (entries_[i]->tag != TypeTag::EFFECT || !entries_[i]->effect)
+        const auto& effect_opt = entries_[i]->effect;
+        if (entries_[i]->tag != TypeTag::EFFECT || !effect_opt)
             continue;
-        const auto& e = *entries_[i]->effect;
+        const auto& e = *effect_opt;
         if (e.name != name)
             continue;
         if (e.arg == arg || type_equals(e.arg, arg)) {
@@ -463,9 +474,10 @@ TypeId TypeRegistry::register_capability(std::vector<std::string> effects, bool 
     // Dedup: same effect set (order-independent) + same unrestricted
     // returns the existing TypeId.
     for (std::uint32_t i = 0; i < entries_.size(); ++i) {
-        if (entries_[i]->tag != TypeTag::CAPABILITY || !entries_[i]->capability)
+        const auto& capability_opt = entries_[i]->capability;
+        if (entries_[i]->tag != TypeTag::CAPABILITY || !capability_opt)
             continue;
-        const auto& c = *entries_[i]->capability;
+        const auto& c = *capability_opt;
         if (c.is_unrestricted != unrestricted)
             continue;
         if (c.effects.size() != effects.size())
@@ -512,15 +524,19 @@ TypeId TypeRegistry::register_capability(std::vector<std::string> effects, bool 
 
 const CapabilityType* TypeRegistry::capability_of(TypeId id) const {
     std::shared_lock lock(type_registry_mutex_);
-    if (id_current(id) && entries_[id.index]->capability)
-        return &*entries_[id.index]->capability;
+    if (id_current(id)) {
+        if (const auto& opt = entries_[id.index]->capability)
+            return &*opt;
+    }
     return nullptr;
 }
 
 const EffectType* TypeRegistry::effect_of(TypeId id) const {
     std::shared_lock lock(type_registry_mutex_);
-    if (id_current(id) && entries_[id.index]->effect)
-        return &*entries_[id.index]->effect;
+    if (id_current(id)) {
+        if (const auto& opt = entries_[id.index]->effect)
+            return &*opt;
+    }
     return nullptr;
 }
 
@@ -542,8 +558,10 @@ void TypeRegistry::register_hw_bitvec(TypeId type_id, std::uint32_t width, bool 
 
 const BitVecType* TypeRegistry::hw_bitvec_of(TypeId id) const {
     std::shared_lock lock(type_registry_mutex_);
-    if (id_current(id) && entries_[id.index]->hw_bitvec)
-        return &*entries_[id.index]->hw_bitvec;
+    if (id_current(id)) {
+        if (const auto& opt = entries_[id.index]->hw_bitvec)
+            return &*opt;
+    }
     return nullptr;
 }
 
@@ -561,9 +579,10 @@ TypeId TypeRegistry::register_forall(TypeId var, TypeId body) {
     // structural-identity semantics.)
     const auto key = forall_key(var, body);
     for (std::uint32_t i : intern_candidates(key)) {
-        if (entries_[i]->tag != TypeTag::FORALL || !entries_[i]->forall)
+        const auto& forall_opt = entries_[i]->forall;
+        if (entries_[i]->tag != TypeTag::FORALL || !forall_opt)
             continue;
-        const auto& f = *entries_[i]->forall;
+        const auto& f = *forall_opt;
         if (f.var.index != var.index)
             continue;
         if (f.body == body || type_equals(f.body, body)) {
@@ -627,23 +646,29 @@ std::string_view TypeRegistry::name_of(TypeId id) const {
 
 const LinearType* TypeRegistry::linear_of(TypeId id) const {
     std::shared_lock lock(type_registry_mutex_);
-    if (id_current(id) && entries_[id.index]->linear)
-        return &*entries_[id.index]->linear;
+    if (id_current(id)) {
+        if (const auto& opt = entries_[id.index]->linear)
+            return &*opt;
+    }
     return nullptr;
 }
 
 const ForallType* TypeRegistry::forall_of(TypeId id) const {
     std::shared_lock lock(type_registry_mutex_);
-    if (id_current(id) && entries_[id.index]->forall)
-        return &*entries_[id.index]->forall;
+    if (id_current(id)) {
+        if (const auto& opt = entries_[id.index]->forall)
+            return &*opt;
+    }
     return nullptr;
 }
 
 const FuncType* TypeRegistry::func_of(TypeId id) const {
     // Issue #4404: stale generation returns nullptr, not the reused Entry.
     std::shared_lock lock(type_registry_mutex_);
-    if (id_current(id) && entries_[id.index]->func)
-        return &*entries_[id.index]->func;
+    if (id_current(id)) {
+        if (const auto& opt = entries_[id.index]->func)
+            return &*opt;
+    }
     return nullptr;
 }
 
@@ -1261,8 +1286,10 @@ void TypeRegistry::register_adt_constructors(TypeId type_id,
 
 const std::vector<std::string>* TypeRegistry::get_adt_constructors(TypeId type_id) const {
     std::shared_lock lock(type_registry_mutex_);
-    if (id_current(type_id) && entries_[type_id.index]->adt_constructors.has_value())
-        return &(*entries_[type_id.index]->adt_constructors);
+    if (id_current(type_id)) {
+        if (const auto& opt = entries_[type_id.index]->adt_constructors)
+            return &*opt;
+    }
     return nullptr;
 }
 

@@ -4350,8 +4350,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             if (!ok && quota_exceeded) {
                 // Issue #2155: invariant — this attempt did not put. A prior
                 // live agent may still occupy the same name; that is fine.
-                // Handle was never moved into the table on this path.
-                (void)handle; // not put; destructor releases any residual (none)
+                // Handle was never moved into the table on this path; its
+                // destructor releases any residual (none).
                 const auto nidx = ev.push_string_heap(out_name);
                 std::vector<std::pair<std::string, EvalValue>> qkv = {
                     {"ok", make_bool(false)},

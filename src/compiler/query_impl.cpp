@@ -56,11 +56,13 @@ static std::vector<std::string> tokenize(std::string_view s) {
         if (c == '(' || c == ')') {
             if (!cur.empty()) {
                 tokens.push_back(std::move(cur));
+                cur.clear(); // moved-from: valid but unspecified
             }
             tokens.emplace_back(1, c);
         } else if (c == ' ' || c == '\t' || c == '\n') {
             if (!cur.empty()) {
                 tokens.push_back(std::move(cur));
+                cur.clear(); // moved-from: valid but unspecified
             }
         } else if (c == '"') {
             // Capture string content between quotes, strip the quotes
@@ -73,6 +75,7 @@ static std::vector<std::string> tokenize(std::string_view s) {
             if (i < s.size())
                 i++; // skip closing quote
             tokens.push_back(std::move(cur));
+            cur.clear();
         } else {
             cur += c;
         }
