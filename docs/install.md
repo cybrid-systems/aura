@@ -22,9 +22,18 @@ under `~/.aura/<version>` and links `~/.local/bin/aura`. Settings:
 
 Each tarball carries its own dynamic loader, glibc and libstdc++ (`rt/`), and
 `bin/aura` is a small launcher that starts the real binary (`libexec/aura`) on
-them, so it does not depend on the host glibc. Every `main` push is verified on
-Ubuntu 24.04 (glibc 2.39), on both x86_64 and arm64; that is the supported
-host. It needs Linux 3.2 or newer. macOS and Windows are not supported; use the image.
+them, so it does not depend on the host glibc. Supported hosts, each on x86_64 and
+arm64, verified on every `main` push and every release tag (bare runner for
+Ubuntu, clean stock containers for all four):
+
+| distro | image |
+|---|---|
+| Ubuntu 24.04 | `ubuntu:24.04` |
+| Debian 12 | `debian:12` |
+| Rocky Linux 9 | `rockylinux/rockylinux:9` |
+| openEuler 24.03 LTS (SP4) | `openeuler/openeuler:24.03-lts-sp4` |
+
+`install.sh` needs only `sh`, `tar`/`gzip`, `sha256sum` and `curl` or `wget`. It needs Linux 3.2 or newer. macOS and Windows are not supported; use the image.
 
 ## Container image
 

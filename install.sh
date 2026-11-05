@@ -34,7 +34,10 @@ else got=$(shasum -a 256 "$tmp/$name" | cut -d' ' -f1); fi
 [ "$want" = "$got" ] || { echo "aura install: sha256 mismatch for $name (want $want, got $got)" >&2; exit 1; }
 mkdir -p "$prefix" "$bindir"
 tar -xzf "$tmp/$name" -C "$tmp"
-dir=$(find "$tmp" -mindepth 1 -maxdepth 1 -type d -name 'aura-*' | head -1)
+# the tarball's top directory is its own name (bundle.sh); no find(1) — minimal
+# images such as openEuler do not ship findutils (#4934)
+dir=$tmp/${name%.tar.gz}
+[ -d "$dir" ] || { echo "aura install: $name has no top directory ${name%.tar.gz}/" >&2; exit 1; }
 rm -rf "$prefix/current" && mv "$dir" "$prefix/current"
 ln -sf "$prefix/current/bin/aura" "$bindir/aura"
 echo "aura install: ok — $("$bindir/aura" -e '(display "aura runs")' 2>&1 | tail -1)"
