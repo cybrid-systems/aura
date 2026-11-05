@@ -5,6 +5,7 @@
 module;
 
 #include "aura_jit_bridge.h"
+#include "write_scope.hh" // #4912
 #include "hash_meta.h"
 #include "runtime_shared.h"
 #include "security_capabilities.h" // Issue #4400: format_deny_reason on the log rewrite
@@ -303,6 +304,12 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
         std::string resolved;
         if (!ev.check_tenant_host_path(path, resolved, "serialize-workspace"))
             return make_bool(false);
+        // Issue #4912: a write-scoped session (ci preset, write:out/) refuses
+        // a target outside its roots the same way: #f, zero host bytes.
+        if (!aura::compiler::security::path_in_write_scope(resolved)) {
+            ev.bump_capability_denial();
+            return make_bool(false);
+        }
 
         // Shared lock: pure read of workspace + mutation log (#1376 pattern).
         // Issue #2920 SSOT: authoritative source (live unparse preferred;

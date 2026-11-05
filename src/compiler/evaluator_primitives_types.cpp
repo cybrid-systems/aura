@@ -8,6 +8,7 @@ module;
 #include <sys/stat.h>
 #include <unistd.h>
 #include "runtime_shared.h"
+#include "write_scope.hh"                  // #4912
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 module aura.compiler.evaluator;
@@ -300,6 +301,11 @@ void register_type_primitives(PrimRegistrar add, Evaluator& ev) {
         std::string type_gated;
         if (!ev.check_tenant_host_path(type_sig_path, type_gated, "generate-type-sigs"))
             return make_bool(false);
+        // Issue #4912: write-scoped session → no sibling outside the roots.
+        if (!aura::compiler::security::path_in_write_scope(type_gated)) {
+            ev.bump_capability_denial();
+            return make_bool(false);
+        }
         if (!write_regular_nofollow(type_gated, body)) {
             std::println(std::cerr, "generate-type-sigs: cannot write '{}'", type_gated);
             return make_bool(false);

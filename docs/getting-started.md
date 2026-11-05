@@ -32,9 +32,10 @@ sandbox off:
 | scenario | run with |
 |---|---|
 | a self-evolving program on your machine (`set-code`, `mutate:rebind`, `ast:restore`, `write-file`) | `--preset dev` |
-| the same program in CI | `--preset ci` (same as dev today; write is not yet limited to `out/`) |
+| the same program in CI | `--preset ci` (like dev, but files may be written only under `out/`) |
 | a service / untrusted code | `--preset prod` (the Restricted default; takes no `--grant`) |
 | only one extra capability | `--grant write` (or `mutate`, `ffi`, `exec`, `network`) |
+| write only under some directories | `--grant write:out/` (repeatable: `--grant write:out/,write:data/`) |
 | dev minus something | `--preset dev --deny write` |
 
 The preset can also come from `AURA_PRESET=dev` or `preset = "dev"` in
@@ -42,6 +43,18 @@ The preset can also come from `AURA_PRESET=dev` or `preset = "dev"` in
 preset prints one line naming the effective capabilities, for example
 
     aura: preset=dev sandbox=restricted caps=mutate,read,write (tenant=0, ws=0)
+
+With `--preset ci` or `--grant write:DIR/`, `write-file`, `make-directory`,
+`file-copy` (destination), `file-delete`, `serialize-workspace` and
+`generate-type-sigs` must stay under the listed directories (for `ci`: the
+`out` key of `aura.toml`, default `out/`, relative to the directory the run
+starts in; `aura run` starts in the project root). The path is resolved first,
+so `out/../x` and a symlink inside `out/` that points elsewhere are refused:
+
+    effect-denied: write-path not granted for x.txt (writable: out/) op=write-file
+
+and the banner shows the scope, e.g. `caps=mutate,read,write:out/`. A bare
+`--grant write` (or `--preset dev`) lifts the scope.
 
 `--quiet` drops it. `macro-self-evo`, `tenant-admin` and `syscall` are never
 granted from the command line; they remain host-side grants (#4575).

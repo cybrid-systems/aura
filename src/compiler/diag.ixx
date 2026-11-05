@@ -284,6 +284,12 @@ export inline std::string effect_denied_hint(std::string_view effect) {
                            effect == "write" ? std::string_view(" (or --preset dev)")
                                              : std::string_view(""),
                            effect);
+    // Issue #4912: Write is scoped (ci preset / --grant write:<dir>/).
+    if (effect == "write-path")
+        return std::format("hint: this run writes only under the directories listed above; write "
+                           "there, add one with 'aura --grant write:<dir>/ {}', or use "
+                           "'--preset dev' to write anywhere",
+                           file);
     if (effect == "macro-self-evo")
         return {"hint: user macros need MacroSelfEvo; for local development "
                 "AURA_SANDBOX=off ('aura soft' does not grant it); in production "
