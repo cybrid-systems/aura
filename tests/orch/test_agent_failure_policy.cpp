@@ -707,16 +707,27 @@ int run_test_agent_failure_policy() {
             spec.attach_mailbox = true;
             spec.keepalive_interval_ms = 50; // enables liveness + helper_stop surface
             spec.bp_scope_id = "tenant-thr";
+            // The body may start on the scheduler worker before spawn()
+            // pushes its row, so handles_mut()[0] is not guaranteed to exist
+            // yet (x86 CI raced it into SIGSEGV). Publish the handle after
+            // spawn and let the body poll the published pointer.
+            std::atomic<AgentHandle*> self{nullptr};
             spec.body = [&] {
-                aura::orch::note_agent_progress(scope.handles_mut()[0]);
+                bool noted = false;
                 while (keep_running.load(std::memory_order_relaxed)) {
-                    if (scope.handles_mut()[0].fiber &&
-                        scope.handles_mut()[0].fiber->is_cancel_requested())
-                        return;
+                    if (auto* sh = self.load(std::memory_order_acquire)) {
+                        if (!noted) {
+                            aura::orch::note_agent_progress(*sh);
+                            noted = true;
+                        }
+                        if (sh->fiber && sh->fiber->is_cancel_requested())
+                            return;
+                    }
                     aura::orch::fiber_sleep_ms(20);
                 }
             };
             AgentHandle h = scope.spawn(spec);
+            self.store(&h, std::memory_order_release);
             CHECK(h.ok, "2887 AC3: throttle producer spawn ok");
             for (int i = 0; i < 6; ++i)
                 aura::orch::note_mailbox_bp_recent_event("tenant-thr");
