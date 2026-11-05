@@ -72,10 +72,9 @@ static void ac3257_1_last_look_source() {
     const auto ixx = read_file("src/compiler/service.ixx");
     auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
     CHECK(pos != std::string::npos, "3257 AC1: relower present");
-    auto block = ixx.substr(pos, 40000); // window covers relower growth through #3491; #3611 peer +
-                                         // reconsult pushed last-look past 30000; #4172 pre-JIT
-                                         // verify grew the body again — size_now > attr_seen_size
-                                         // now sits ~34.2KB from the signature
+    // Brace-matched relower body: #3491/#3611/#4172 kept growing it past the
+    // old 30000/34200-char windows; the body itself is the window.
+    auto block = aura::test::aura_source_block_after(ixx, pos);
     CHECK(block.find("Issue #3257") != std::string::npos, "3257 AC1: relower cites #3257");
     CHECK(block.find("post_attr_armed") != std::string::npos ||
               block.find("attr_seen_size") != std::string::npos,

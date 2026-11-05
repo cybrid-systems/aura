@@ -17,6 +17,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _source_scan import source_block_after  # noqa: E402  (sibling helper)
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -65,7 +68,7 @@ def main() -> int:
     if start < 0:
         fails.append("AC5: fixup_deltas definition not found")
     else:
-        body = impl[start : start + 2500]
+        body = source_block_after(impl, start)
         if "std::abort()" in body or "abort()" in body:
             fails.append("AC5: fixup_deltas still aborts")
 
