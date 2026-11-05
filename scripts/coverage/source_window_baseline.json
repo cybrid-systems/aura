@@ -308,7 +308,7 @@
     "tests/core/test_coverage_holes_workspace_lock.cpp": 1,
     "tests/core/test_flatast_soa_read_guard.cpp": 2,
     "tests/core/test_general_object_pin_coverage_gate.cpp": 1,
-    "tests/core/test_moving_densify_fail_closed.cpp": 26,
+    "tests/core/test_moving_densify_fail_closed.cpp": 17,
     "tests/core/test_tenant_isolation_enforcement.cpp": 9,
     "tests/orch/test_agent_apply_mutex.cpp": 1,
     "tests/orch/test_failure_policy_bridge.cpp": 2,
