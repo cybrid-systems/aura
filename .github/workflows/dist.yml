@@ -6,12 +6,17 @@
 #   publish — rolling `nightly` release (tarballs + sha256) and the multi-arch
 #             manifest ghcr.io/cybrid-systems/aura:<sha> and :nightly (no stable
 #             channel / :latest until the first vX.Y.Z tag)
+# Issue #4934: a `vX.Y.Z` tag push runs the same build + verify, then publishes the
+#   stable channel instead: GitHub release vX.Y.Z (tarballs aura-X.Y.Z-linux-<arch>,
+#   the names install.sh expects for AURA_VERSION=vX.Y.Z) and the image tags
+#   :X.Y.Z, :X.Y and :latest. :latest is only ever set from a tag.
 # A failure on either architecture stops the publish.
 name: dist
 
 on:
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -24,6 +29,8 @@ concurrency:
 
 env:
   IMAGE: ghcr.io/cybrid-systems/aura
+  # bundle version: `nightly` on main, `X.Y.Z` on a vX.Y.Z tag
+  VER: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'nightly' }}
 
 jobs:
   build:
@@ -52,7 +59,7 @@ jobs:
             python3 tests/python/test_issue_$t.py
           done
       - name: Bundle
-        run: scripts/tools/bundle.sh build nightly
+        run: scripts/tools/bundle.sh build "${VER#v}"
       - uses: actions/upload-artifact@v7
         with:
           name: aura-linux-${{ matrix.arch }}
@@ -79,14 +86,14 @@ jobs:
           . /etc/os-release && echo "host: $PRETTY_NAME $(uname -m), $(ldd --version | head -1)"
           test "$VERSION_ID" = 24.04
           start=$(date +%s)
-          AURA_DOWNLOAD_BASE=$PWD/dist sh install.sh
+          AURA_VERSION=$VER AURA_DOWNLOAD_BASE=$PWD/dist sh install.sh
           export PATH=$HOME/.local/bin:$PATH
           cd "$RUNNER_TEMP" && aura new evolve demo && cd demo && aura run && aura test
           test -s out/report.html
           echo "install → report: $(( $(date +%s) - start )) s"
       - name: Clean ubuntu:24.04 container (glibc 2.39)
         run: |
-          docker run --rm -v "$PWD:/src:ro" ubuntu:24.04 sh -c '
+          docker run --rm -e AURA_VERSION=$VER -v "$PWD:/src:ro" ubuntu:24.04 sh -c '
             set -e; . /etc/os-release; test "$VERSION_ID" = 24.04
             AURA_DOWNLOAD_BASE=/src/dist sh /src/install.sh
             cd /tmp && ~/.local/bin/aura new evolve demo && cd demo
@@ -94,7 +101,7 @@ jobs:
       - name: Runtime image
         run: |
           tag=$IMAGE:${GITHUB_SHA::9}-${{ matrix.arch }}
-          docker build -f scripts/docker/Dockerfile --build-arg BUNDLE=dist/aura-nightly-linux-${{ matrix.arch }}.tar.gz -t "$tag" .
+          docker build -f scripts/docker/Dockerfile --build-arg BUNDLE=dist/aura-${VER#v}-linux-${{ matrix.arch }}.tar.gz -t "$tag" .
           size=$(docker image inspect -f '{{.Size}}' "$tag")
           echo "image $tag: $((size / 1048576)) MB"
           test "$size" -lt 524288000
@@ -118,6 +125,7 @@ jobs:
           path: dist
           merge-multiple: true
       - name: nightly release
+        if: env.VER == 'nightly'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -133,8 +141,29 @@ jobs:
             gh release create nightly --prerelease --title "aura nightly" --notes "$notes"
           gh release edit nightly --notes "$notes"
           gh release upload nightly dist/*.tar.gz dist/*.sha256 --clobber
+      - name: stable release
+        if: env.VER != 'nightly'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          v=${VER#v}
+          notes="aura $VER
+
+          - linux-x86_64 and linux-arm64 tarballs (+ .sha256), verified on Ubuntu 24.04, x86_64 and arm64.
+          - install: curl -fsSL https://raw.githubusercontent.com/cybrid-systems/aura/main/install.sh | AURA_VERSION=$VER sh
+          - image: docker run --rm -v \$PWD:/w -w /w $IMAGE:$v main.aura"
+          gh release view "$VER" >/dev/null 2>&1 ||
+            gh release create "$VER" --verify-tag --title "aura $VER" --notes "$notes"
+          gh release upload "$VER" dist/*.tar.gz dist/*.sha256 --clobber
       - name: multi-arch manifest
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           s=${GITHUB_SHA::9}
-          docker buildx imagetools create -t "$IMAGE:$s" -t "$IMAGE:nightly" "$IMAGE:$s-x86_64" "$IMAGE:$s-arm64"
+          if [ "$VER" = nightly ]; then
+            tags="-t $IMAGE:$s -t $IMAGE:nightly"
+          else
+            v=${VER#v}
+            tags="-t $IMAGE:$s -t $IMAGE:$v -t $IMAGE:${v%.*} -t $IMAGE:latest"
+          fi
+          docker buildx imagetools create $tags "$IMAGE:$s-x86_64" "$IMAGE:$s-arm64"
