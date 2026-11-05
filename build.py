@@ -14616,6 +14616,15 @@ def cmd_test_binding():
         if r0.returncode != 0:
             fail("test_test_binding_gate unit tests failed")
             return 1
+    # Issue #901/#908: FNV-1a and the slot-fingerprint rule have exactly one
+    # owner (src/compiler/hash_meta.h). Run the source invariant here so the
+    # gate catches new copies even when the changed file is allowlisted.
+    mc = ROOT / "tests" / "python" / "test_magic_constants.py"
+    if mc.exists():
+        r_mc = subprocess.run([sys.executable, str(mc)], cwd=ROOT)
+        if r_mc.returncode != 0:
+            fail("magic-constant invariant failed — use hash_meta.h constants")
+            return 1
     # check_test_coverage.py umbrella removed per Anqi 2026-07-19 directive
     # (scripts/ audit wave 9). check_test_binding.py covers the same surface
     # (production primitive sources must have tests/).
