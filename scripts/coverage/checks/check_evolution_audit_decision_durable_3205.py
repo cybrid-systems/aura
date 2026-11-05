@@ -21,6 +21,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _source_scan import source_block_after  # noqa: E402  (sibling helper)
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -61,7 +64,7 @@ def main() -> int:
     # Default comment still forbids unsolicited WAL scan.
     must("no should_audit, no WAL scan, no mutate", "AC2 default no scan", sec)
     start = sec.find("query:evolution-audit-decision")
-    block = sec[start : start + 18000] if start >= 0 else ""
+    block = source_block_after(sec, start) if start >= 0 else ""
     if "fopen" in block:
         fails.append("AC2: fopen in evolution-audit-decision handler (I/O belongs in WAL helper)")
 

@@ -20,6 +20,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _source_scan import source_block_after  # noqa: E402  (sibling helper)
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -61,9 +64,12 @@ def main() -> int:
     if uni < 0:
         fails.append("AC2: unified impl missing")
     else:
-        # Full-triad path starts after the Soft skip return.
-        start = fm.find("if (ws) {", uni)
-        body = fm[start : start + 2800] if start > 0 else ""
+        # Full-triad path starts after the Soft skip return: take the whole
+        # brace-matched function body, then start at the if (a fixed window
+        # here would rot with the function).
+        fn_body = source_block_after(fm, uni)
+        start = fn_body.find("if (ws) {")
+        body = fn_body[start:] if start >= 0 else ""
         n = body.find("restamp_all_node_generations")
         s = body.find("auto_restamp_pinned_stable_refs_at")
         p = body.find("restamp_all_pins_for_arena")

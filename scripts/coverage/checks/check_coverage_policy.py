@@ -54,6 +54,11 @@ def classify(text: str) -> str:
         return "custom"
     if ".find(" in text and re.search(r"\[[^\]]+:[^\]]+\]", text):
         return "custom"
+    # A check that scopes its assertions with the brace-matched helpers is not a
+    # plain substring scan: it computes the enclosing body/region first (the
+    # fixed slice `[a:a+N]` this replaced is what made the old ones "custom").
+    if "_source_scan" in text or "source_block_after(" in text or "lambda_body_after(" in text:
+        return "custom"
     if text.count("must(") >= 2:
         return "simple"
     return "other"

@@ -424,6 +424,76 @@ template <typename FlatT, typename RefsT> RefStats validate_stable_refs(RefsT& r
     return std::string(src.substr(begin, pos + 1 - begin));
 }
 
+// Issue #3480 follow-up: text from `after` through the end of the first brace
+// block that opens at/after it. Function, struct/class and lambda bodies all
+// end at that matching brace, so a presence/order assertion needs no byte
+// budget and cannot rot when the body grows (#4332/#4385/#4910 did exactly
+// that to the fixed substr windows).
+[[nodiscard]] inline std::string aura_source_block_after(std::string_view src, std::size_t after) {
+    const std::size_t size = src.size();
+    std::size_t pos = after;
+    constexpr std::size_t kNone = std::string_view::npos;
+
+    auto skip_literal = [&](std::size_t at) -> std::size_t {
+        const char quote = src[at];
+        ++at;
+        while (at < size) {
+            if (src[at] == '\\') {
+                at += 2;
+                continue;
+            }
+            if (src[at] == quote)
+                return at + 1;
+            ++at;
+        }
+        return size;
+    };
+    auto skip_trivia = [&]() {
+        for (;;) {
+            if (pos + 1 < size && src[pos] == '/' && (src[pos + 1] == '/' || src[pos + 1] == '*')) {
+                if (src[pos + 1] == '/') {
+                    const auto eol = src.find('\n', pos + 2);
+                    pos = eol == kNone ? size : eol + 1;
+                } else {
+                    const auto end = src.find("*/", pos + 2);
+                    pos = end == kNone ? size : end + 2;
+                }
+                continue;
+            }
+            if (pos < size && (src[pos] == '"' || src[pos] == '\'')) {
+                pos = skip_literal(pos);
+                continue;
+            }
+            return;
+        }
+    };
+
+    while (pos < size) {
+        skip_trivia();
+        if (pos >= size)
+            return {};
+        if (src[pos] == '{')
+            break;
+        ++pos;
+    }
+    const std::size_t begin = after;
+    int depth = 0;
+    while (pos < size) {
+        skip_trivia();
+        if (pos >= size)
+            break;
+        if (src[pos] == '{') {
+            ++depth;
+        } else if (src[pos] == '}') {
+            --depth;
+            if (depth == 0)
+                return std::string(src.substr(begin, pos + 1 - begin));
+        }
+        ++pos;
+    }
+    return {};
+}
+
 } // namespace aura::test
 
 // ── CHECK / EXPECT macros ────────────────────────────────────

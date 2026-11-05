@@ -22,6 +22,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _source_scan import source_block_after  # noqa: E402  (sibling helper)
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -42,7 +45,7 @@ def main() -> int:
     build = _read("build.py")
 
     start = mut.find('add("query:as-stable-ref"')
-    win = mut[start : start + 9000] if start >= 0 else ""
+    win = source_block_after(mut, start) if start >= 0 else ""
     must("Issue #3425", "AC1 cite", win)
     must("raw node-id rejected under production", "AC1 reject", win)
     must("is_int(a[0])", "AC1 int gate", win)

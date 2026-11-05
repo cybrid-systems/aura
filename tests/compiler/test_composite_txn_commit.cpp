@@ -99,9 +99,10 @@ static void ac1_commit_order() {
     auto tc = read_file("src/compiler/evaluator_typecheck.cpp");
     auto pos_fn = tc.find("Evaluator::composite_txn_commit");
     CHECK(pos_fn != std::string::npos, "composite_txn_commit defined");
-    // Window covers #2180 CS-reuse + #2898 required-TypeId expansion of the
-    // commit body (body grew past the original 8k slice).
-    auto body = pos_fn != std::string::npos ? tc.substr(pos_fn, 48000) : std::string{};
+    // Brace-matched commit body: #2180/#2898 grew it past the original 8k
+    // slice; the body itself is the window.
+    auto body = pos_fn != std::string::npos ? aura::test::aura_source_block_after(tc, pos_fn)
+                                            : std::string{};
     auto pos_solve = body.find("solve_delta_occurrence");
     auto pos_lin = body.find("linear_post_mutate_enforce_all");
     auto pos_audit = body.find("run_typed_mutation_invariant_audit");

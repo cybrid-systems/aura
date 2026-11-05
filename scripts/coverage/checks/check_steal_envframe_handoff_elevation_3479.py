@@ -22,8 +22,12 @@ Exit 0 = all rows satisfied.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _source_scan import source_block_after  # noqa: E402  (sibling helper)
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -53,7 +57,12 @@ def main() -> int:
         fails.append("AC1: refresh_stale_frames_after_steal missing")
         win = ""
     else:
-        win = fm[start : start + 9000]
+        win = source_block_after(fm, start)
+        # AC1 order: the closure/cell walk must precede the handoff mint.
+        walk = re.search(r"is_closure|is_cell", win)
+        mint = re.search(r"handoff_ref\(make_stamped_ref", win)
+        if walk is None or mint is None or walk.start() > mint.start():
+            fails.append("AC1: handoff_ref(make_stamped_ref ...) must follow the closure/cell walk")
         must("Issue #3479", "AC1 cite", win)
         must("is_closure", "AC1 closure walk", win)
         must("is_cell", "AC1 cell walk", win)

@@ -20,6 +20,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _source_scan import source_block_after  # noqa: E402  (sibling helper)
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -62,7 +65,7 @@ def main() -> int:
     if start < 0:
         fails.append("AC3: decide definition missing")
     else:
-        body = cpp[start : start + 1600]
+        body = source_block_after(cpp, start)
         if "aura_reemit_aot_for_dirty" in body:
             fails.append("AC3: decide calls reemit")
         if "drain_pending_recovery" in body:

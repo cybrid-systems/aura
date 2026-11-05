@@ -12,8 +12,12 @@ Exit 0 = all rows satisfied.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _source_scan import source_block_after  # noqa: E402  (sibling helper)
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -66,8 +70,8 @@ def main() -> int:
         # Only fail if abort appears between validate_post_restore and next function.
         start = impl.find("PostRestoreReport FlatAST::validate_post_restore")
         if start >= 0:
-            body = impl[start : start + 4000]
-            if "std::abort()" in body:
+            body = source_block_after(impl, start)
+            if re.search(r"std::abort\s*\(", body):
                 fails.append("AC4: validate_post_restore still contains std::abort()")
 
     if fails:
