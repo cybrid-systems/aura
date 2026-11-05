@@ -91,13 +91,23 @@ jobs:
           cd "$RUNNER_TEMP" && aura new evolve demo && cd demo && aura run && aura test
           test -s out/report.html
           echo "install → report: $(( $(date +%s) - start )) s"
-      - name: Clean ubuntu:24.04 container (glibc 2.39)
+      - name: Clean containers (Ubuntu 24.04, Debian 12, Rocky 9, openEuler 24.03 LTS SP4)
+        # #4934: v0.1 supported distros. Stock images, nothing installed: install.sh
+        # needs only sh, tar+gzip, sha256sum (all in the base images), and the
+        # tarballs come from dist/, so no network is needed inside the container.
         run: |
-          docker run --rm -e AURA_VERSION=$VER -v "$PWD:/src:ro" ubuntu:24.04 sh -c '
-            set -e; . /etc/os-release; test "$VERSION_ID" = 24.04
-            AURA_DOWNLOAD_BASE=/src/dist sh /src/install.sh
-            cd /tmp && ~/.local/bin/aura new evolve demo && cd demo
-            ~/.local/bin/aura run && ~/.local/bin/aura test && test -s out/report.html'
+          printf '(display (+ 1 2))\n' > dist/smoke.aura
+          for img in ubuntu:24.04 debian:12 rockylinux/rockylinux:9 openeuler/openeuler:24.03-lts-sp4; do
+            echo "::group::$img"
+            docker run --rm -e AURA_VERSION="$VER" -v "$PWD:/src:ro" "$img" sh -c '
+              set -e; . /etc/os-release; echo "$PRETTY_NAME $(uname -m)"
+              AURA_DOWNLOAD_BASE=/src/dist sh /src/install.sh
+              a=$HOME/.local/bin/aura
+              test "$($a /src/dist/smoke.aura)" = 3
+              cd /tmp && $a new evolve demo && cd demo
+              $a run && $a test && test -s out/report.html'
+            echo "::endgroup::"
+          done
       - name: Runtime image
         run: |
           tag=$IMAGE:${GITHUB_SHA::9}-${{ matrix.arch }}
