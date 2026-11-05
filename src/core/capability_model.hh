@@ -606,10 +606,10 @@ struct CapabilityRegistry {
     // backwards compatibility with the 14 existing test files.
     AtomicEffectSandboxMode sandbox_mode{};
     AtomicTenantId default_tenant{};
-    // Issue #2530: 1024 slots — aligned with SecurityEvent ring (#2225)
+    // Issue #2530: aligned with the SecurityEvent ring (#2225), single SSOT.
     // so deny-storm Agent in-memory query retains a full SE-scale window
     // (earlier events remain on WAL). Was 128.
-    static constexpr std::size_t kAuditRing = 1024;
+    static constexpr std::size_t kAuditRing = ::aura::core::security_event::kSecurityEventRingSize;
     // Issue #2425: published slots (data + atomic publish_seq).
     // audit_ring_mtx_: exclusive for slot write / clear; shared for
     // try_load_* so concurrent readers are TSAN-clean with writers.
