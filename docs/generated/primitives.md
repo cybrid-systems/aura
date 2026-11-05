@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**501** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**503** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -11,7 +11,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 56 primitives (11%)
-- **core**: 410 primitives (82%)
+- **core**: 412 primitives (82%)
 - **internal-observable**: 34 primitives (7%)
 - **convenience**: 1 primitives (0%)
 
@@ -501,6 +501,11 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 - `evaluator:compact-env-frames` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 
+## Evo: (2)
+
+- `evo:log-path` *[core]* — `src/compiler/evaluator_primitives_json.cpp`
+- `evo:record!` *[core]* — `src/compiler/evaluator_primitives_json.cpp`
+
 ## Ffi: (2)
 
 - `ffi:pin-buffer` *[core]* — `src/compiler/ffi_primitives_impl.cpp`
@@ -711,7 +716,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (410)
+### Core builtins (must remain primitive) (412)
 
 - `%base64-decode` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` — `src/compiler/evaluator_primitives_char.cpp`
@@ -818,6 +823,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `eval-expr` — `src/compiler/evaluator_primitives_eval.cpp`
 - `eval:async` — `src/compiler/evaluator_primitives_eval.cpp`
 - `evaluator:compact-env-frames` — `src/compiler/evaluator_primitives_compile.cpp`
+- `evo:log-path` — `src/compiler/evaluator_primitives_json.cpp`
+- `evo:record!` — `src/compiler/evaluator_primitives_json.cpp`
 - `evolve-strategy` — `src/compiler/evaluator_primitives_agent.cpp`
 - `exact` — `src/compiler/evaluator_primitives_math.cpp`
 - `exact->inexact` — `src/compiler/evaluator_primitives_math.cpp`

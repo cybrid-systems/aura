@@ -824,6 +824,7 @@ static std::string slurp_4913(const std::filesystem::path& p) {
 }
 
 #include "cli_templates_4913.inc"
+#include "cli_evo_4910.inc"
 
 // `aura new [app|evolve|agent] <dir>`
 static int aura_new_4913(int argc, char** argv) {
@@ -998,6 +999,8 @@ static std::optional<int> front_door_4913(int& argc, char**& argv) {
     }
     if (sub == "new")
         return aura_new_4913(argc, argv);
+    if (sub == "evo")
+        return aura_evo_4910(argc, argv);
     namespace fs = std::filesystem;
     if (sub == "run" || sub == "test") {
         std::vector<std::string> opts, pos;
@@ -1045,6 +1048,10 @@ static std::optional<int> front_door_4913(int& argc, char**& argv) {
         const auto toml = *root / "aura.toml";
         if (sub == "test")
             return aura_test_4913(*root, opts, abs_pos, update);
+        // Issue #4910: a project run keeps its worldline in .aura/evo/log.jsonl
+        // (aura evo log / report read it). AURA_EVO_LOG= (empty) turns it off.
+        if (!std::getenv("AURA_EVO_LOG"))
+            ::setenv("AURA_EVO_LOG", (*root / ".aura" / "evo" / "log.jsonl").c_str(), 1);
         std::string entry = abs_pos.empty() ? read_toml_key_4913(toml, "entry") : abs_pos[0];
         if (entry.empty())
             entry = "main.aura";
@@ -4115,6 +4122,15 @@ int main(int argc, char* argv[]) {
                      prog);
         std::println(std::cerr,
                      "  (require \"lib/x\") in a project resolves from the project root.");
+        std::println(std::cerr, "Evolution (#4910):");
+        std::println(std::cerr,
+                     "  {} evo log [--json] [--run ID|last]  worldline: KEEP/ROLLBACK, reason, "
+                     "evidence, diff",
+                     prog);
+        std::println(std::cerr,
+                     "  {} evo report --html DIR             static HTML timeline, score curve, "
+                     "diffs",
+                     prog);
         std::println(std::cerr, "Options:");
         std::println(std::cerr, "  -e, --eval EXPR     evaluate EXPR (repeatable)");
         std::println(std::cerr, "  --load FILE         run FILE (same semantics as '{} FILE')",
