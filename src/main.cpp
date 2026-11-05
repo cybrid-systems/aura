@@ -844,7 +844,12 @@ static int aura_new_4913(int argc, char** argv) {
         tpl = argv[2];
         dir = argv[3];
     } else {
-        std::println(std::cerr, "usage: {} new [app|evolve|agent] <dir>", argv[0]);
+        std::println(std::cerr, "usage: aura new [app|evolve|agent] <dir>");
+        return 1;
+    }
+    if (dir.starts_with("-") || tpl.starts_with("-")) {
+        std::println(std::cerr, "error: unknown option '{}'", dir.starts_with("-") ? dir : tpl);
+        std::println(std::cerr, "usage: aura new [app|evolve|agent] <dir>");
         return 1;
     }
     if (!known(tpl)) {
@@ -983,6 +988,92 @@ static int aura_test_4913(const std::filesystem::path& root, const std::vector<s
 #define AURA_BUILD_GIT_SHA "unknown"
 #endif
 
+
+// Issue #4935: CLI help. Usage text names the program `aura` (never the
+// libexec path of the bundled binary); `--help` prints a short overview on
+// stdout, `aura help <cmd>` / `aura <cmd> --help` the command's own usage,
+// `aura help --all` the full reference.
+struct SubHelp4935 {
+    std::string_view name;
+    std::string_view summary;
+    std::string_view usage;
+};
+inline constexpr SubHelp4935 kSubHelp4935[] = {
+    {"new", "create a project (aura.toml, tests, CI, README)",
+     "usage: aura new [app|evolve|agent] <dir>\n"
+     "\n"
+     "Scaffold a project in <dir> (must not exist or be empty).\n"
+     "  app     modules + tests (default)\n"
+     "  evolve  self-evolving program + evo report\n"
+     "  agent   orchestrated workflow\n"},
+    {"run", "run the project entry with its aura.toml preset",
+     "usage: aura run [entry.aura] [options] [args…]\n"
+     "\n"
+     "Run the entry of the enclosing project (aura.toml `entry`, default main.aura).\n"
+     "  --preset dev|ci|prod, --grant CAPS, --deny CAPS, --quiet, --keep-going\n"},
+    {"test", "run tests/*.aura against tests/*.golden",
+     "usage: aura test [--update] [tests/x.aura …]\n"
+     "\n"
+     "  --update  rewrite the .golden files from the current output\n"},
+    {"repl", "interactive REPL with hot reload",
+     "usage: aura repl [--preset P] [file.aura]\n"
+     "\n"
+     "Commands inside: :load FILE, :reload FILE, :ws, :worldline, :snapshot,\n"
+     ":restore ID, :help\n"},
+    {"evo", "inspect a project's evolution worldline",
+     "usage: aura evo log [--json] [--all] [--run ID|last]\n"
+     "       aura evo report --html DIR\n"},
+    {"lsp", "language server on stdio (see docs/editor.md)", "usage: aura lsp\n"},
+    {"soft", "run a file with Restricted Mutate on its workspace",
+     "usage: aura soft [--allow ffi,write] [--load] file.aura\n"
+     "\n"
+     "  --allow CAPS  explicit opt-in; never implied\n"},
+    {"help", "show help for a command", "usage: aura help [command|--all]\n"},
+};
+
+static const SubHelp4935* find_sub_4935(std::string_view n) {
+    for (const auto& h : kSubHelp4935)
+        if (h.name == n)
+            return &h;
+    return nullptr;
+}
+
+static void print_top_help_4935() {
+    std::println("aura {} — an AI-native Lisp", AURA_BUILD_VERSION);
+    std::println("");
+    std::println("usage: aura <command> [args]     project commands");
+    std::println("       aura [options] file.aura   run one file (or stdin, or -e EXPR)");
+    std::println("");
+    std::println("Commands:");
+    for (const auto& h : kSubHelp4935)
+        std::println("  {:<6} {}", h.name, h.summary);
+    std::println("");
+    std::println("Common options:");
+    std::println("  -e, --eval EXPR    evaluate EXPR");
+    std::println("  --preset dev|ci|prod, --grant CAPS, --deny CAPS   capabilities");
+    std::println("  --fmt, --typecheck, --query Q, --inspect           tools");
+    std::println("  -V, --version      print version");
+    std::println("");
+    std::println("'aura help <command>' for details; 'aura help --all' for every option.");
+}
+
+static std::size_t edit_distance_4935(std::string_view a, std::string_view b) {
+    std::vector<std::size_t> row(b.size() + 1);
+    for (std::size_t j = 0; j <= b.size(); ++j)
+        row[j] = j;
+    for (std::size_t i = 1; i <= a.size(); ++i) {
+        std::size_t prev = row[0];
+        row[0] = i;
+        for (std::size_t j = 1; j <= b.size(); ++j) {
+            const std::size_t cur = row[j];
+            row[j] =
+                std::min({row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] != b[j - 1] ? 1U : 0U)});
+            prev = cur;
+        }
+    }
+    return row[b.size()];
+}
+
 // Issue #4913: project front door. Returns an exit code for the commands it
 // finishes itself (new, test); otherwise rewrites argv for the normal path
 // (run → `aura [opts] <entry>`, soft/caps + --load → the file face, which the
@@ -1011,9 +1102,57 @@ static std::optional<int> front_door_4913(int& argc, char**& argv) {
         std::println("aura {} ({})", AURA_BUILD_VERSION, AURA_BUILD_GIT_SHA);
         return 0;
     }
+    // Issue #4935: help never falls through to a command's side effects.
+    if (sub == "--help" || sub == "-h" || (sub == "help" && argc == 2)) {
+        print_top_help_4935();
+        return 0;
+    }
     if (sub == "help") {
-        rewrite({argv[0], "--help"});
-        return std::nullopt;
+        const std::string_view what(argv[2]);
+        if (what == "--all" || what == "-a") {
+            rewrite({argv[0], "--help-all"});
+            return std::nullopt;
+        }
+        if (what == "--help" || what == "-h") {
+            std::print("{}", find_sub_4935("help")->usage);
+            return 0;
+        }
+        if (const auto* h = find_sub_4935(what)) {
+            std::print("{}", h->usage);
+            return 0;
+        }
+        std::println(std::cerr, "error: unknown command '{}'", what);
+        std::println(std::cerr, "hint: 'aura --help' lists the commands");
+        return 1;
+    }
+    if (const auto* h = find_sub_4935(sub)) {
+        for (int i = 2; i < argc; ++i) {
+            const std::string_view a(argv[i]);
+            if (a == "--")
+                break;
+            if (a == "--help" || a == "-h") {
+                std::print("{}", h->usage);
+                return 0;
+            }
+        }
+    } else if (!sub.empty() && sub[0] != '-' && sub.find('/') == std::string_view::npos &&
+               sub.find('.') == std::string_view::npos) {
+        // A bare word that is no command and no file: say so instead of
+        // "cannot open program file".
+        std::error_code ec;
+        if (!std::filesystem::exists(std::string(sub), ec)) {
+            std::println(std::cerr, "error: unknown command '{}'", sub);
+            const SubHelp4935* best = nullptr;
+            std::size_t bd = 3;
+            for (const auto& h : kSubHelp4935)
+                if (const auto d = edit_distance_4935(sub, h.name); d < bd)
+                    bd = d, best = &h;
+            if (best)
+                std::println(std::cerr, "hint: did you mean 'aura {}'?", best->name);
+            std::println(std::cerr,
+                         "hint: 'aura --help' lists the commands; 'aura {}.aura' runs a file", sub);
+            return 1;
+        }
     }
     if (sub == "new")
         return aura_new_4913(argc, argv);
@@ -1073,7 +1212,7 @@ static std::optional<int> front_door_4913(int& argc, char**& argv) {
             std::println(std::cerr,
                          "hint: '{} new app <dir>' creates a project; '{} file.aura' "
                          "runs a single file",
-                         argv[0], argv[0]);
+                         "aura", "aura");
             return 1;
         }
         std::vector<std::string> abs_pos;
@@ -4277,104 +4416,95 @@ int main(int argc, char* argv[]) {
     // always honors SIGTERM promptly. --serve/--serve-async return from
     // earlier branches and manage their own lifecycle — untouched.
     ::signal(SIGTERM, SIG_DFL);
-    auto print_denseness_usage = [&](const char* prog) {
-        std::println(std::cerr, "usage: {} [options] [file.aura …]", prog);
-        std::println(std::cerr, "       {} -e '(+ 1 2)'", prog);
-        std::println(std::cerr, "       {} soft [--allow ffi,write] [--load] [file.aura …]", prog);
-        std::println(std::cerr, "       echo '(+ 1 2)' | {}", prog);
-        std::println(std::cerr, "       {} < file.aura", prog);
-        std::println(std::cerr, "");
-        std::println(std::cerr, "Projects (#4913):");
-        std::println(std::cerr,
+    auto print_denseness_usage = [&](const char*, std::ostream& out = std::cerr) {
+        const char* prog = "aura"; // #4935: never the libexec path
+        std::println(out, "usage: {} [options] [file.aura …]", prog);
+        std::println(out, "       {} -e '(+ 1 2)'", prog);
+        std::println(out, "       {} soft [--allow ffi,write] [--load] [file.aura …]", prog);
+        std::println(out, "       echo '(+ 1 2)' | {}", prog);
+        std::println(out, "       {} < file.aura", prog);
+        std::println(out, "");
+        std::println(out, "Projects (#4913):");
+        std::println(out,
                      "  {} new [app|evolve|agent] <dir>  scaffold aura.toml, tests/, CI, "
                      "README",
                      prog);
-        std::println(std::cerr,
+        std::println(out,
                      "  {} run [entry.aura] [options]    run the project entry with its "
                      "aura.toml preset",
                      prog);
-        std::println(std::cerr,
+        std::println(out,
                      "  {} test [--update] [tests/x.aura] run tests/*.aura against "
                      "tests/*.golden",
                      prog);
-        std::println(std::cerr,
-                     "  (require \"lib/x\") in a project resolves from the project root.");
-        std::println(std::cerr, "Evolution (#4910):");
-        std::println(std::cerr,
+        std::println(out, "  (require \"lib/x\") in a project resolves from the project root.");
+        std::println(out, "Evolution (#4910):");
+        std::println(out,
                      "  {} evo log [--json] [--run ID|last]  worldline: KEEP/ROLLBACK, reason, "
                      "evidence, diff",
                      prog);
-        std::println(std::cerr,
+        std::println(out,
                      "  {} evo report --html DIR             static HTML timeline, score curve, "
                      "diffs",
                      prog);
-        std::println(std::cerr, "REPL (#4911):");
-        std::println(std::cerr,
+        std::println(out, "REPL (#4911):");
+        std::println(out,
                      "  {} repl [file.aura]   REPL; :load/:reload FILE, :ws, :worldline, "
                      ":snapshot, :restore ID, :help",
                      prog);
-        std::println(std::cerr,
+        std::println(out,
                      "  {} lsp                stdio language server (diagnostics, "
                      "goto-definition); see docs/editor.md",
                      prog);
-        std::println(std::cerr, "Options:");
-        std::println(std::cerr, "  -e, --eval EXPR     evaluate EXPR (repeatable)");
-        std::println(std::cerr, "  --load FILE         run FILE (same semantics as '{} FILE')",
-                     prog);
-        std::println(std::cerr, "  --keep-going        keep running forms after a top-level error");
-        std::println(std::cerr, "  --preset P, --grant CAPS, --deny CAPS, --quiet   capabilities "
-                                "(below)");
-        std::println(std::cerr, "  --no-arena, --worker-threads N, --health-port N");
-        std::println(std::cerr, "Tools (read code from the argument or stdin):");
-        std::println(std::cerr, "  --fmt [--check] | --unparse   format; --check exits 1 when not "
-                                "formatted");
-        std::println(std::cerr,
-                     "  --typecheck | --auto-fix      type diagnostics / suggested fixes");
-        std::println(std::cerr, "  --query Q | --query-and-fix   structural queries over the code");
-        std::println(std::cerr,
-                     "  --evo-explain                 explain an evolution step (AURA_OBS=1)");
-        std::println(std::cerr, "  --inspect [ir|…], --ir, --jit, --jit-session   compiler views");
-        std::println(std::cerr, "  --env, --env-json             runtime environment report");
-        std::println(std::cerr, "  --freeze, --emit-binary, --cache, --cache-open, --write   "
-                                "artifacts");
-        std::println(std::cerr,
-                     "  --serve, --serve-async, --health-server, --strategy, --hot-swap  "
-                     "services");
-        std::println(std::cerr, "");
-        std::println(std::cerr, "Programs are read from stdin when no file/-e is given.");
-        std::println(std::cerr, "A program file stops at its first top-level error (rc=1);");
-        std::println(std::cerr,
-                     "  --keep-going (or AURA_KEEP_GOING=1) runs the remaining forms too.");
-        std::println(std::cerr, "Capability presets (#4912):");
-        std::println(std::cerr,
+        std::println(out, "Options:");
+        std::println(out, "  -e, --eval EXPR     evaluate EXPR (repeatable)");
+        std::println(out, "  --load FILE         run FILE (same semantics as '{} FILE')", prog);
+        std::println(out, "  --keep-going        keep running forms after a top-level error");
+        std::println(out, "  --preset P, --grant CAPS, --deny CAPS, --quiet   capabilities "
+                          "(below)");
+        std::println(out, "  --no-arena, --worker-threads N, --health-port N");
+        std::println(out, "Tools (read code from the argument or stdin):");
+        std::println(out, "  --fmt [--check] | --unparse   format; --check exits 1 when not "
+                          "formatted");
+        std::println(out, "  --typecheck | --auto-fix      type diagnostics / suggested fixes");
+        std::println(out, "  --query Q | --query-and-fix   structural queries over the code");
+        std::println(out, "  --evo-explain                 explain an evolution step (AURA_OBS=1)");
+        std::println(out, "  --inspect [ir|…], --ir, --jit, --jit-session   compiler views");
+        std::println(out, "  --env, --env-json             runtime environment report");
+        std::println(out, "  --freeze, --emit-binary, --cache, --cache-open, --write   "
+                          "artifacts");
+        std::println(out, "  --serve, --serve-async, --health-server, --strategy, --hot-swap  "
+                          "services");
+        std::println(out, "");
+        std::println(out, "Programs are read from stdin when no file/-e is given.");
+        std::println(out, "A program file stops at its first top-level error (rc=1);");
+        std::println(out, "  --keep-going (or AURA_KEEP_GOING=1) runs the remaining forms too.");
+        std::println(out, "Capability presets (#4912):");
+        std::println(out,
                      "  {} --preset dev file.aura   mutate + read + write (self-evolving "
                      "programs)",
                      prog);
-        std::println(std::cerr,
+        std::println(out,
                      "  {} --preset ci  file.aura   same as dev (write not yet "
                      "path-scoped)",
                      prog);
-        std::println(std::cerr, "  {} --preset prod file.aura  the Restricted default", prog);
-        std::println(std::cerr, "  --grant mutate,write,ffi,exec,network / --deny … adjust it; "
-                                "--quiet drops the caps line.");
-        std::println(std::cerr, "  Also AURA_PRESET=dev or preset = \"dev\" in aura.toml.");
-        std::println(std::cerr, "Soft experiments (#4575):");
-        std::println(std::cerr,
-                     "  {} soft file.aura              Restricted Mutate on this workspace", prog);
-        std::println(std::cerr, "  {} soft --allow ffi,write      explicit opt-in; never implied",
+        std::println(out, "  {} --preset prod file.aura  the Restricted default", prog);
+        std::println(out, "  --grant mutate,write,ffi,exec,network / --deny … adjust it; "
+                          "--quiet drops the caps line.");
+        std::println(out, "  Also AURA_PRESET=dev or preset = \"dev\" in aura.toml.");
+        std::println(out, "Soft experiments (#4575):");
+        std::println(out, "  {} soft file.aura              Restricted Mutate on this workspace",
                      prog);
-        std::println(std::cerr, "Denseness / span host env (soft multi-module probes):");
-        std::println(std::cerr,
-                     "  export AURA_BIN=…/build/aura   absolute path (#2772 multi-process)");
-        std::println(std::cerr, "  export AURA_PATH=…/lib[:extra] module search path");
-        std::println(std::cerr,
-                     "  export AURA_PIPELINE_STRICT=0  allow tree-walker fallback (#2213)");
-        std::println(std::cerr, "Multi-process: shell children inherit only exported vars.");
-        std::println(std::cerr, "  Prefer: (shell (string-append (getenv \"AURA_BIN\") \" …\"))");
-        std::println(std::cerr, "  Or:     (shell (string-append (aura-executable-path) \" …\"))");
-        std::println(std::cerr,
-                     "  (aura seeds AURA_BIN from self when unset — still export in runners)");
-        std::println(std::cerr, "Special modes: --serve, --serve-async, --ir, --jit, --help");
+        std::println(out, "  {} soft --allow ffi,write      explicit opt-in; never implied", prog);
+        std::println(out, "Denseness / span host env (soft multi-module probes):");
+        std::println(out, "  export AURA_BIN=…/build/aura   absolute path (#2772 multi-process)");
+        std::println(out, "  export AURA_PATH=…/lib[:extra] module search path");
+        std::println(out, "  export AURA_PIPELINE_STRICT=0  allow tree-walker fallback (#2213)");
+        std::println(out, "Multi-process: shell children inherit only exported vars.");
+        std::println(out, "  Prefer: (shell (string-append (getenv \"AURA_BIN\") \" …\"))");
+        std::println(out, "  Or:     (shell (string-append (aura-executable-path) \" …\"))");
+        std::println(out, "  (aura seeds AURA_BIN from self when unset — still export in runners)");
+        std::println(out, "Special modes: --serve, --serve-async, --ir, --jit, --help");
     };
 
     // Issue #2767: collect program source from -e / --eval / file args
@@ -4541,14 +4671,14 @@ int main(int argc, char* argv[]) {
                     break;
                 continue;
             }
-            if (a == "-h" || a == "--help") {
-                print_denseness_usage(argv[0]);
+            if (a == "-h" || a == "--help" || a == "--help-all") {
+                print_denseness_usage(argv[0], std::cout);
                 return 0;
             }
             if (a == "-e" || a == "--eval") {
                 if (i + 1 >= argc) {
                     std::println(std::cerr, "error: {} requires an expression argument", a);
-                    print_denseness_usage(argv[0]);
+                    std::println(std::cerr, "hint: 'aura --help' for usage");
                     return 1;
                 }
                 if (!all_input.empty())
@@ -4604,16 +4734,16 @@ int main(int argc, char* argv[]) {
             }
             if (!a.empty() && a[0] == '-') {
                 std::println(std::cerr, "error: unknown option '{}'", a);
-                print_denseness_usage(argv[0]);
+                std::println(std::cerr, "hint: 'aura --help' for usage");
                 return 1;
             }
             // Bare path: read file contents (denseness sugar for `./aura < file`).
             std::ifstream f(argv[i]);
             if (!f) {
                 std::println(std::cerr, "error: cannot open program file '{}'", argv[i]);
-                std::println(std::cerr, "hint: programs default to stdin — try: {} < {}", argv[0],
+                std::println(std::cerr, "hint: programs default to stdin — try: aura < {}",
                              argv[i]);
-                print_denseness_usage(argv[0]);
+                std::println(std::cerr, "hint: 'aura --help' for usage");
                 return 1;
             }
             if (!all_input.empty())
@@ -4647,7 +4777,7 @@ int main(int argc, char* argv[]) {
                          soft_allow_bad_tok);
         else
             std::println(std::cerr, "hint: mutate, read, write, ffi, exec|shell, network|net");
-        print_denseness_usage(argv[0]);
+        std::println(std::cerr, "hint: 'aura --help' for usage");
         return 1;
     }
     // Issue #4912: resolve the preset (flag > AURA_PRESET > ./aura.toml or
@@ -4790,7 +4920,7 @@ int main(int argc, char* argv[]) {
     if (all_input.empty()) {
         // Issue #2767: explicit stdin-only hint (was bare usage only).
         std::println(std::cerr, "error: no program source (stdin empty and no file/-e given)");
-        print_denseness_usage(argv[0]);
+        std::println(std::cerr, "hint: 'aura --help' for usage");
         return 1;
     }
 
@@ -5062,7 +5192,7 @@ int main(int argc, char* argv[]) {
     if (exprs.empty()) {
         // Issue #2767: no balanced S-expression after split.
         std::println(std::cerr, "error: no complete S-expression in program source");
-        print_denseness_usage(argv[0]);
+        std::println(std::cerr, "hint: 'aura --help' for usage");
         return 1;
     }
 

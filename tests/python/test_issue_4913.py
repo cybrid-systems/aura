@@ -111,7 +111,7 @@ class FrontDoor(unittest.TestCase):
         self.assertEqual(run(["test"], p).returncode, 0)
 
     def test_help_lists_commands(self) -> None:
-        r = run(["--help"], self.d)
+        r = run(["help", "--all"], self.d)  # #4935: --help is the short overview
         for w in (
             "new",
             "run",
@@ -125,8 +125,8 @@ class FrontDoor(unittest.TestCase):
             "--load",
             "--preset",
         ):
-            self.assertIn(w, r.stderr, w)
-        self.assertEqual(run(["help"], self.d).stderr, r.stderr)
+            self.assertIn(w, r.stdout, w)
+        self.assertEqual(run(["--help-all"], self.d).stdout, r.stdout)
 
     def test_soft_load(self) -> None:
         (self.d / "evo.aura").write_text(EVO)
