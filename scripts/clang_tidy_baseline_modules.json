@@ -8,7 +8,7 @@
     "src/exec",
     "src/compiler"
   ],
-  "total": 42714,
+  "total": 42686,
   "counts": {
     "/usr/include/c++/16/bits/stl_algobase.h|misc-no-recursion": 1,
     "/usr/include/c++/16/bits/stl_construct.h|misc-no-recursion": 1,
@@ -132,11 +132,6 @@
     "src/compiler/gc_coord_scope.h|readability-identifier-length": 6,
     "src/compiler/hardware_backend.ixx|misc-include-cleaner": 2,
     "src/compiler/hardware_backend.ixx|readability-identifier-length": 3,
-    "src/compiler/hash_meta.h|bugprone-signed-bitwise": 4,
-    "src/compiler/hash_meta.h|cppcoreguidelines-pro-bounds-pointer-arithmetic": 2,
-    "src/compiler/hash_meta.h|misc-const-correctness": 4,
-    "src/compiler/hash_meta.h|readability-identifier-length": 14,
-    "src/compiler/hash_meta.h|readability-implicit-bool-conversion": 4,
     "src/compiler/hot_update_registry.hh|bugprone-easily-swappable-parameters": 2,
     "src/compiler/hot_update_registry.hh|bugprone-signed-bitwise": 8,
     "src/compiler/hot_update_registry.hh|clang-analyzer-optin.performance.Padding": 2,
