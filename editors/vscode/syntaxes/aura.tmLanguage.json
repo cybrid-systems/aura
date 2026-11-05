@@ -1,0 +1,55 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Aura",
+  "scopeName": "source.aura",
+  "fileTypes": ["aura"],
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#string" },
+    { "include": "#define" },
+    { "include": "#keyword" },
+    { "include": "#constant" },
+    { "include": "#number" },
+    { "include": "#mutate" }
+  ],
+  "repository": {
+    "comment": {
+      "patterns": [
+        { "name": "comment.line.semicolon.aura", "match": ";.*$" },
+        { "name": "comment.block.aura", "begin": "#\\|", "end": "\\|#" }
+      ]
+    },
+    "string": {
+      "name": "string.quoted.double.aura",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [{ "name": "constant.character.escape.aura", "match": "\\\\." }]
+    },
+    "define": {
+      "match": "(?<=\\()(define|define-syntax|define-record-type)\\s+\\(?([^\\s()\\[\\]'\"`,;]+)",
+      "captures": {
+        "1": { "name": "keyword.control.define.aura" },
+        "2": { "name": "entity.name.function.aura" }
+      }
+    },
+    "keyword": {
+      "name": "keyword.control.aura",
+      "match": "(?<=\\()(lambda|let\\*?|letrec|if|cond|case|when|unless|begin|do|set!|quote|quasiquote|and|or|else|require|match|try|guard)(?=[\\s()])"
+    },
+    "mutate": {
+      "name": "support.function.mutate.aura",
+      "match": "(?<=\\()(mutate|ast|evo|workspace|mutation-log):[^\\s()\\[\\]'\"`,;]+"
+    },
+    "constant": {
+      "patterns": [
+        { "name": "constant.language.boolean.aura", "match": "#(t|f|true|false)\\b" },
+        { "name": "constant.character.aura", "match": "#\\\\(space|newline|tab|.)" },
+        { "name": "constant.other.keyword.aura", "match": "(?<![\\w-]):[A-Za-z][\\w-]*" }
+      ]
+    },
+    "number": {
+      "name": "constant.numeric.aura",
+      "match": "(?<![\\w-])-?\\d+(\\.\\d+)?([eE][+-]?\\d+)?(?![\\w-])"
+    }
+  }
+}
