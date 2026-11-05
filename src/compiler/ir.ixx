@@ -632,35 +632,42 @@ export struct ClosureBridgeData {
         std::uint32_t col = 1;
     };
     std::vector<NodeLoc> node_locs; // sorted by node id
-
-    // Capture line/column for every node of the body subtree.
-    void capture_node_locs() {
-        node_locs.clear();
-        if (!flat || body_id == ast::NULL_NODE || body_id >= flat->size())
-            return;
-        flat->walk_subtree(
-            body_id,
-            [&](ast::NodeId id) {
-                const auto nv = flat->get(id);
-                if (nv.line == 0)
-                    return;
-                node_locs.push_back(
-                    NodeLoc{static_cast<std::uint32_t>(id), nv.line, nv.col == 0 ? 1u : nv.col});
-            },
-            flat->size());
-        std::sort(node_locs.begin(), node_locs.end(),
-                  [](const NodeLoc& a, const NodeLoc& b) { return a.node < b.node; });
-    }
-
-    [[nodiscard]] const NodeLoc* find_node_loc(std::uint32_t id) const noexcept {
-        const auto it =
-            std::lower_bound(node_locs.begin(), node_locs.end(), id,
-                             [](const NodeLoc& l, std::uint32_t v) { return l.node < v; });
-        if (it == node_locs.end() || it->node != id)
-            return nullptr;
-        return &*it;
-    }
 };
+
+// Issue #4931: capture/lookup for the bridge's owned node locations. These
+// stay free functions so ClosureBridgeData remains a plain aggregate and its
+// public members stay the bridge's documented contract (a member function
+// would make clang-tidy classify every one of them as non-private).
+export inline void capture_bridge_node_locs(ClosureBridgeData& bridge) {
+    bridge.node_locs.clear();
+    if (!bridge.flat || bridge.body_id == ast::NULL_NODE || bridge.body_id >= bridge.flat->size())
+        return;
+    bridge.flat->walk_subtree(
+        bridge.body_id,
+        [&](ast::NodeId node_id) {
+            const auto node_view = bridge.flat->get(node_id);
+            if (node_view.line == 0)
+                return;
+            bridge.node_locs.push_back(
+                ClosureBridgeData::NodeLoc{static_cast<std::uint32_t>(node_id), node_view.line,
+                                           node_view.col == 0 ? 1u : node_view.col});
+        },
+        bridge.flat->size());
+    std::sort(bridge.node_locs.begin(), bridge.node_locs.end(),
+              [](const ClosureBridgeData::NodeLoc& lhs, const ClosureBridgeData::NodeLoc& rhs) {
+                  return lhs.node < rhs.node;
+              });
+}
+
+export [[nodiscard]] inline const ClosureBridgeData::NodeLoc*
+find_bridge_node_loc(const ClosureBridgeData& bridge, std::uint32_t node_id) noexcept {
+    const auto iter = std::lower_bound(bridge.node_locs.begin(), bridge.node_locs.end(), node_id,
+                                       [](const ClosureBridgeData::NodeLoc& loc,
+                                          std::uint32_t value) { return loc.node < value; });
+    if (iter == bridge.node_locs.end() || iter->node != node_id)
+        return nullptr;
+    return &*iter;
+}
 
 export struct IRModule {
 
@@ -710,7 +717,7 @@ export struct IRModule {
                 bd.source_marker = functions[func_id].marker;
             }
             closure_bridge[func_id] = std::move(bd);
-            closure_bridge[func_id].capture_node_locs();
+            capture_bridge_node_locs(closure_bridge[func_id]);
         }
     }
 
@@ -735,7 +742,7 @@ export struct IRModule {
                 bd.source_marker = functions[func_id].marker;
             }
             closure_bridge[func_id] = std::move(bd);
-            closure_bridge[func_id].capture_node_locs();
+            capture_bridge_node_locs(closure_bridge[func_id]);
         }
     }
 
