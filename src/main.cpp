@@ -26,6 +26,7 @@
 // Issue #2076 / #2053: production security defaults (must be before import std).
 #include "compiler/security_defaults.hh"
 #include "compiler/jit_assumptions.hh" // #4569 --jit-session stats
+#include "compiler/write_scope.hh"     // #4912 write:out/
 
 import std;
 import aura.core;
@@ -4556,6 +4557,10 @@ int main(int argc, char* argv[]) {
     std::string soft_allow_list;
     bool soft_allow_bad = false;
     std::string soft_allow_bad_tok;
+    // Issue #4912: `write:<dir>/` grants Write under <dir> only; a bare
+    // `write` (or the dev preset) is every path and wins over the scope.
+    std::vector<std::string> write_dirs_4912;
+    bool write_unscoped_4912 = false;
     auto take_allow = [&](std::string_view list) {
         using aura::core::capability::Effect;
         std::size_t p = 0;
@@ -4578,9 +4583,13 @@ int main(int argc, char* argv[]) {
             std::uint16_t bit = 0;
             if (tok == "ffi")
                 bit = static_cast<std::uint16_t>(Effect::Ffi);
-            else if (tok == "write")
+            else if (tok == "write") {
                 bit = static_cast<std::uint16_t>(Effect::Write);
-            else if (tok == "exec" || tok == "shell")
+                write_unscoped_4912 = true;
+            } else if (tok.starts_with("write:") && tok.size() > 6) {
+                bit = static_cast<std::uint16_t>(Effect::Write);
+                write_dirs_4912.emplace_back(tok.substr(6));
+            } else if (tok == "exec" || tok == "shell")
                 bit = static_cast<std::uint16_t>(Effect::Exec);
             else if (tok == "network" || tok == "net")
                 bit = static_cast<std::uint16_t>(Effect::Network);
@@ -4836,6 +4845,17 @@ int main(int argc, char* argv[]) {
         soft_extra = static_cast<std::uint16_t>(
             soft_extra | static_cast<std::uint16_t>(aura::core::capability::Effect::Write));
     }
+    // Issue #4912: ci = host paths read-only, Write only under the project's
+    // out directory (aura.toml `out`, default out/; `aura run` runs from the
+    // project root). dev / a bare `--grant write` keep Write on every path.
+    if (preset_4912 == "ci") {
+        auto out = read_toml_key_4913("aura.toml", "out");
+        write_dirs_4912.push_back(out.empty() ? std::string("out") : out);
+    }
+    if (preset_4912 == "dev")
+        write_unscoped_4912 = true;
+    if (!write_unscoped_4912 && !write_dirs_4912.empty())
+        aura::compiler::security::set_write_scope(write_dirs_4912);
     if (grant_seen_4912 && preset_4912 != "prod")
         soft_launch = true;
     soft_extra = static_cast<std::uint16_t>(soft_extra & ~deny_bits_4912);
@@ -4991,6 +5011,11 @@ int main(int argc, char* argv[]) {
                 if ((st.effects & static_cast<std::uint16_t>(e)) != 0) {
                     caps += ',';
                     caps += n;
+                    // Issue #4912: name the scope (write:out/).
+                    if (e == Effect::Write && aura::compiler::security::write_scope_active()) {
+                        caps += ':';
+                        caps += aura::compiler::security::write_scope_label();
+                    }
                 }
             line = std::format("aura: preset={} sandbox=restricted caps={} (tenant={}, ws={})",
                                preset_4912.empty() ? "custom" : preset_4912, caps, st.tenant,
