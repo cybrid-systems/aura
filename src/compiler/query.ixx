@@ -171,8 +171,12 @@ public:
         std::uint64_t jit_compilations() const { return 0; }
     };
 
-    QueryEngine(aura::ast::FlatAST& ast, aura::ast::StringPool& pool)
-        : index_{ast, pool} {}
+    // Issue #4936: defined after SymRefIndex, which sym_index_ must see
+    // complete to destroy.
+    QueryEngine(aura::ast::FlatAST& ast, aura::ast::StringPool& pool);
+    QueryEngine(const QueryEngine&) = delete;
+    QueryEngine& operator=(const QueryEngine&) = delete;
+    ~QueryEngine();
 
     // Parse a query S-expression into a QueryExpr tree
     QueryExpr parse(std::string_view sexpr);
@@ -270,6 +274,10 @@ private:
     aura::ast::StringPool& pool_;
     std::unordered_map<aura::ast::SymId, std::vector<aura::ast::NodeId>> refs_;
 };
+
+inline QueryEngine::QueryEngine(aura::ast::FlatAST& ast, aura::ast::StringPool& pool)
+    : index_{ast, pool} {}
+inline QueryEngine::~QueryEngine() = default;
 
 
 // ── TypeResolutionIndex — resolved type name per node ──────────
