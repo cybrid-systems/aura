@@ -110,24 +110,24 @@ void register_type_and_char_primitives(PrimRegistrar add) {
         if (a.empty() || !types::is_int(a[0]))
             return types::make_bool(false);
         auto c = types::as_int(a[0]);
-        return types::make_bool((c >= 65 && c <= 90) || (c >= 97 && c <= 122));
+        return types::make_bool((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'));
     });
     add("char-numeric?", [](const auto& a) {
         if (a.empty() || !types::is_int(a[0]))
             return types::make_bool(false);
-        return types::make_bool(types::as_int(a[0]) >= 48 && types::as_int(a[0]) <= 57);
+        return types::make_bool(types::as_int(a[0]) >= '0' && types::as_int(a[0]) <= '9');
     });
     add("char-whitespace?", [](const auto& a) {
         if (a.empty() || !types::is_int(a[0]))
             return types::make_bool(false);
         auto c = types::as_int(a[0]);
-        return types::make_bool(c == 32 || (c >= 9 && c <= 13));
+        return types::make_bool(c == ' ' || (c >= '\t' && c <= '\r'));
     });
     add("char-upcase", [](const auto& a) {
         if (a.empty() || !types::is_int(a[0]))
             return types::make_bool(false);
         auto c = types::as_int(a[0]);
-        if (c >= 97 && c <= 122)
+        if (c >= 'a' && c <= 'z')
             return types::make_int(c - 32);
         return types::make_int(c);
     });
@@ -135,7 +135,7 @@ void register_type_and_char_primitives(PrimRegistrar add) {
         if (a.empty() || !types::is_int(a[0]))
             return types::make_bool(false);
         auto c = types::as_int(a[0]);
-        if (c >= 65 && c <= 90)
+        if (c >= 'A' && c <= 'Z')
             return types::make_int(c + 32);
         return types::make_int(c);
     });

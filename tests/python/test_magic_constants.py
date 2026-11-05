@@ -31,6 +31,9 @@ FNV_LITERALS = (
     re.compile(r"(?<![\w.])14695981039346656037(?![\w.])"),
 )
 FINGERPRINT_RULE = re.compile(r">>\s*57")
+# Decimal ASCII codes for the digit / upper / lower ranges. Character
+# literals make the intent visible and match the value type.
+ASCII_RANGE = re.compile(r">=\s*(?:48|65|97)\b[^;\n]*<=\s*(?:57|90|122)\b")
 
 MODULE_EXCEPTIONS = {
     "src/core/ast.ixx",
@@ -109,6 +112,14 @@ class MagicConstantsInvariant(unittest.TestCase):
                 if FINGERPRINT_RULE.search(line):
                     offenders.append(f"{rel(path)}:{lineno}: {line.strip()}")
         self.assertEqual(offenders, [], "inline hash-slot fingerprint rule found")
+
+    def test_ascii_classification_uses_char_literals(self) -> None:
+        offenders = []
+        for path in source_files():
+            for lineno, line in enumerate(code_lines(path), 1):
+                if ASCII_RANGE.search(line):
+                    offenders.append(f"{rel(path)}:{lineno}: {line.strip()}")
+        self.assertEqual(offenders, [], "ASCII range compared as magic decimals")
 
     def test_fnv_literals_only_in_hash_meta(self) -> None:
         offenders = []
