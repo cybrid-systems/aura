@@ -5435,8 +5435,16 @@ def test_fiber_parallel_hash_set_env_4730():
         body.find("env_frame_shards_[ef_i].mu") < body.find("defuse_version_.fetch_add")
     ), "#4730: the defuse bump must be published after the all-shard barrier"
     mut = (REPO / "src/compiler/evaluator_mutation_boundary.cpp").read_text(encoding="utf-8")
-    assert mut.count("bump_defuse_and_restamp(cp.version, cp.mutation_log_size)") == 2, (
+    # #4936: enter captures the checkpoint values before std::move(cp), so it
+    # publishes entry_version/entry_mutation_log_size; exit still reads cp.
+    assert mut.count("(void)bump_defuse_and_restamp(") == 2, (
         "#4730: boundary enter AND exit must publish through the atomic helper"
+    )
+    assert "bump_defuse_and_restamp(entry_version, entry_mutation_log_size)" in mut, (
+        "#4730: the enter bump must publish the captured entry version/log size"
+    )
+    assert "bump_defuse_and_restamp(cp.version, cp.mutation_log_size)" in mut, (
+        "#4730: the exit bump must publish the live checkpoint version/log size"
     )
     print("  OK test_fiber_parallel_hash_set_env_4730 (parallel hash-set! keeps every lexical frame)")
 

@@ -9,6 +9,7 @@ Direct invocation of this script remains supported.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -124,6 +125,27 @@ def check_issues_fast(errors: list[str]) -> None:
             continue
         names.append(target)
     _check_unique_names(errors, "issues_fast.json", names)
+    # The list must name targets CMake still defines. This drifted for
+    # months after the bundle cleanup: each dead name made a PR shard's
+    # `ninja <targets>` fail with "unknown target" and the shard then
+    # rebuilt from source and blew the 300s fast-tier cap. Only check when
+    # a configured build exists (lint/gate also run on bare checkouts).
+    build_ninja = FIXTURES.parents[1] / "build" / "build.ninja"
+    if build_ninja.is_file():
+        live = set(
+            re.findall(
+                r"^build ([^:\s]+):",
+                build_ninja.read_text(errors="replace"),
+                re.M,
+            )
+        )
+        for target in names:
+            if target not in live:
+                _fail(
+                    errors,
+                    f"issues_fast.json: {target} is not defined in build/build.ninja "
+                    "(update the fast list when CMake removes a target)",
+                )
 
 
 def check_benchmark(errors: list[str]) -> set[str]:
