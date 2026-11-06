@@ -112,6 +112,9 @@ contracts, so `cmake/clang_contract_shim.h` expands `pre` / `post` / `contract_a
     (libstdc++ 16, `__cpp_lib_function_ref` 202603);
   - stored: `std::move_only_function`;
   - `std::function` only in cold registries.
+  - `PrimFn` is the owning small-buffer callable (`evaluator_pure`). Its converting
+    constructor requires `std::invocable` with `span<const EvalValue>`. FFI and ADT
+    registration take that type; they do not keep a `std::function` mirror.
   - Primitive registration follows that split: `Evaluator::prim_registrar()` returns an owning
     `std::function` (the lambda moves the name and `PrimFn` into the table). `register_*` parameters
     and `PrimRegistrar` / `RegisterFn` aliases are `std::function_ref` and are invoked only before

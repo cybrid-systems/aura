@@ -1671,6 +1671,8 @@ aura_add_issue_test(test_prim_registrar_ref)
 aura_add_issue_test(test_replace_subtree_capture)
 # Issue #4936: Evaluator boot and mutate:replace-subtree itself run.
 aura_add_issue_test(test_boot_replace_subtree)
+# Issue #4936: real PrimFn, constexpr arith names, fiber overlay scoped_lock.
+aura_add_issue_test(test_primfn_arith_overlay)
 target_include_directories(test_opcode_reflect PRIVATE src)
 target_compile_options(test_opcode_reflect PRIVATE ${AURA_REFLECTION_FLAG} -Wall
                        -Wno-sign-compare -Wno-unused-local-typedefs)

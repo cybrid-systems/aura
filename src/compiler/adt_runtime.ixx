@@ -30,11 +30,12 @@ export module aura.compiler.adt_runtime;
 
 import std;
 import aura.compiler.value;
+import aura.compiler.evaluator_pure;
 
 namespace aura::compiler {
 
-// Mirror of PrimFn (to break cycle).
-using PrimFn = std::function<types::EvalValue(std::span<const types::EvalValue>)>;
+// PrimFn is the owning SBO callable from evaluator_pure. A std::function
+// alias here re-erased every dynamic constructor registration.
 
 // Entry for one ADT constructor (name, arity, etc.).
 // (Adapted from the previous global AdtCtorEntry.)
