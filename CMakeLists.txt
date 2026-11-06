@@ -1663,6 +1663,8 @@ aura_add_issue_test(test_hygiene_metrics)
 aura_add_issue_test(test_chunk_io)
 # Issue #4936: handoff stash insert/take. No JIT.
 aura_add_issue_test(test_handoff_stash)
+# Issue #4936: linear walks and pre_scan quote hygiene actually run.
+aura_add_issue_test(test_walk_runtime)
 target_include_directories(test_opcode_reflect PRIVATE src)
 target_compile_options(test_opcode_reflect PRIVATE ${AURA_REFLECTION_FLAG} -Wall
                        -Wno-sign-compare -Wno-unused-local-typedefs)

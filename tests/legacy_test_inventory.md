@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 909 | Preferred destination suites |
-| **Total scanned** | **909** | |
+| `tests/core/test_*.cpp` | 910 | Preferred destination suites |
+| **Total scanned** | **910** | |
 
 ### Related artifacts
 
@@ -35,7 +35,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 96 | 96 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 277 | 277 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 110 | 110 | P1 — domain suite already collapses many obs gates |
-| `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 26 | 26 | P1 — small, already partially batched |
+| `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 27 | 27 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 62 | 62 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 88 | 88 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 54 | 54 | P2 — small-medium; soa_batch precedent |
@@ -1077,6 +1077,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_verification_dirty_bits_lock.cpp`
 - `tests/compiler/test_verify_parse_shared_helper.cpp`
 - `tests/compiler/test_walk_batch.cpp`
+- `tests/compiler/test_walk_runtime.cpp`
 - `tests/compiler/test_while_define_oneshot.cpp`
 - `tests/compiler/test_workload_adaptive_relower.cpp`
 - `tests/compiler/test_workspace_delete_child.cpp`
@@ -1638,13 +1639,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_swap_guard.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_swap_guard.cpp — Issue #1717: synthesize:optimize swap-guard test.
 - `tests/serve/test_yield_while_mutation_held.cpp` (—) [domain_suite, theme_serve] — AC1: Under live outermost Guard, yield() / yield(reason) do not
 
-### `linear_ownership` — Linear ownership / borrow / consume (26)
+### `linear_ownership` — Linear ownership / borrow / consume (27)
 
 **Target:** tests/compiler/test_linear_ownership_batch.cpp (R1 src/-aligned)
 
 **Priority:** P1 — small, already partially batched
 
-#### domain/ (26)
+#### domain/ (27)
 
 - `tests/core/test_capability_single_use_consume.cpp` (—) [large, domain_suite, theme_core] — tests/core/test_capability_single_use_consume.cpp
 - `tests/compiler/test_commit_readiness_score.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Clean SOLVED + linear + blame + !trunc → bp=10000, ok, allow
@@ -1672,6 +1673,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_linear_commit_health.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2897 — query:type-linear-evolution-snapshot single atomic
 - `tests/compiler/test_type_linear_lightweight_abort_clear.cpp` (—) [domain_suite, theme_compiler] — Fix contract (AC1–AC5 from the issue body):
 - `tests/core/test_type_registry_ownership.cpp` (—) [small, domain_suite, theme_core] — Issue #1835/#1837 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_walk_runtime.cpp` (—) [domain_suite, theme_compiler] — AC1: a Let whose value is Linear is discovered by name, including when
 
 ### `edsl_hygiene` — EDSL / macro hygiene / reflect (62)
 
