@@ -40,8 +40,7 @@ struct TempDir {
     TempDir() {
         path = std::filesystem::temp_directory_path() /
                ("aura-evo-4936-" + std::to_string(::getpid()) + "-" +
-                std::to_string(
-                    std::chrono::steady_clock::now().time_since_epoch().count()));
+                std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
         std::filesystem::create_directories(path);
     }
     ~TempDir() {
