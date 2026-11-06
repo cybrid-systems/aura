@@ -4182,6 +4182,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // Parses new code INTO the existing workspace FlatAST, then redirects the old
     // Define's value reference to the newly parsed nodes. All pre-existing mutations
     // on other nodes are preserved.
+    //
+    // Issue #4937: a name that is not a live top-level define is added, not
+    // rejected. The new define is linked onto the workspace root and the call
+    // returns #t (same as a successful replace). It does not return
+    // not-found / bad-arg. A missing workspace is still no-workspace (#4797):
+    // top-level defines from a file / -e / --load are not the live AST.
     // Issue #213 follow-up: migrate mutate:rebind to the
     // MutationBoundaryGuard. The guard handles the version
     // bump + lock + enter/exit_mutation_boundary.
