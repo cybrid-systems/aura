@@ -383,7 +383,8 @@ std::size_t collect_pending_overlay_roots(std::vector<std::int64_t>& out) {
     return out.size() - before;
 }
 
-void register_fiber_cow_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev) {
+void register_fiber_cow_primitives(std::function_ref<void(std::string, PrimFn)> add,
+                                   Evaluator& ev) {
     auto& reg = cow::registry<EvalValue>();
     const void* const owner = static_cast<const void*>(&ev);
     // Issue #4849: pending overlay writes are GC roots until commit (or

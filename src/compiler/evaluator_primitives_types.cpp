@@ -10,7 +10,7 @@ module;
 #include "runtime_shared.h"
 #include "write_scope.hh"                  // #4912
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
-#include "compiler/chunk_io.hh"            // #4936 std::array file chunks
+#include "compiler/chunk_io.hh" // #4936 std::array file chunks
 
 module aura.compiler.evaluator;
 

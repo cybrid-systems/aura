@@ -27,8 +27,8 @@ using aura::ast::NodeId;
 using aura::ast::StringPool;
 using aura::ast::SyntaxMarker;
 using aura::compiler::discover_linear_bindings_in_subtree;
-using aura::compiler::macro_exp::clone_macro_body;
 using aura::compiler::subtree_has_linear_ops;
+using aura::compiler::macro_exp::clone_macro_body;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -92,9 +92,8 @@ void test_quote_prescan() {
     FlatAST target_call;
     StringPool tp_call;
     NameMap call_names;
-    const auto cloned_call =
-        clone_macro_body(target_call, tp_call, src_call, sp_call, qcall, nullptr, &call_names,
-                         SyntaxMarker::MacroIntroduced);
+    const auto cloned_call = clone_macro_body(target_call, tp_call, src_call, sp_call, qcall,
+                                              nullptr, &call_names, SyntaxMarker::MacroIntroduced);
     CHECK(cloned_call != aura::ast::NULL_NODE, "Call-head quote clones");
     CHECK(call_names.find("x") == call_names.end(), "Call-head quote does not gensym x");
 

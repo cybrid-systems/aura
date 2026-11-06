@@ -7,7 +7,7 @@ module;
 #include "compiler/locked_string_heap.hh" // Issue #4717: StringPoolView
 #include "primitives_detail.h"
 #include "runtime_shared.h"
-#include "float_repr.hh" // Issue #4468
+#include "float_repr.hh"                   // Issue #4468
 #include "compiler/generic_error_words.hh" // #4936 B4 constexpr error tokens
 
 module aura.compiler.evaluator;

@@ -487,15 +487,12 @@ inline void aura_reflect_nested_struct_throw_count_v_bump(std::uint64_t delta) n
 //     element bytes. That is what the old vector<char> pun produced on
 //     libstdc++ (size() became a byte count). Do not switch the member
 //     prefix to an element count; cached member blobs use the byte count.
-inline bool reflect_ensure(const std::vector<char>& buf, std::size_t pos,
-                           std::size_t n) noexcept;
-template <typename T>
-consteval auto get_data_members();
+inline bool reflect_ensure(const std::vector<char>& buf, std::size_t pos, std::size_t n) noexcept;
+template <typename T> consteval auto get_data_members();
 
 namespace serialize_detail {
 
-    template <class T>
-    inline void append_pod(std::vector<char>& buf, const T& value) {
+    template <class T> inline void append_pod(std::vector<char>& buf, const T& value) {
         static_assert(std::is_trivially_copyable_v<T>);
         const auto at = buf.size();
         buf.resize(at + sizeof(T));
@@ -513,23 +510,19 @@ namespace serialize_detail {
         std::memcpy(buf.data() + at, data, nbytes);
     }
 
-    template <class T>
-    inline const char* object_bytes(const T& obj) noexcept {
+    template <class T> inline const char* object_bytes(const T& obj) noexcept {
         return static_cast<const char*>(static_cast<const void*>(std::addressof(obj)));
     }
 
-    template <class T>
-    inline char* object_bytes(T& obj) noexcept {
+    template <class T> inline char* object_bytes(T& obj) noexcept {
         return static_cast<char*>(static_cast<void*>(std::addressof(obj)));
     }
 
-    template <class T>
-    inline const T& member_at(const char* field) noexcept {
+    template <class T> inline const T& member_at(const char* field) noexcept {
         return *std::launder(reinterpret_cast<const T*>(field));
     }
 
-    template <class T>
-    inline T& member_at(char* field) noexcept {
+    template <class T> inline T& member_at(char* field) noexcept {
         return *std::launder(reinterpret_cast<T*>(field));
     }
 
@@ -545,8 +538,7 @@ namespace serialize_detail {
             append_objects(buf, vec.data(), vec.size());
     }
 
-    template <class Span>
-    inline void append_span_bytes(std::vector<char>& buf, const Span& span) {
+    template <class Span> inline void append_span_bytes(std::vector<char>& buf, const Span& span) {
         using Elem = std::remove_const_t<typename Span::element_type>;
         static_assert(std::is_trivially_copyable_v<Elem>);
         const auto nbytes = span.size() * sizeof(Elem);
@@ -560,15 +552,13 @@ namespace serialize_detail {
         }
     }
 
-    template <class T>
-    consteval bool is_std_vector_type(std::meta::info type) {
+    template <class T> consteval bool is_std_vector_type(std::meta::info type) {
         using namespace std::meta;
         return is_class_type(type) && has_template_arguments(type) &&
                template_of(type) == template_of(^^std::vector<int>);
     }
 
-    template <class T>
-    consteval bool is_std_span_type(std::meta::info type) {
+    template <class T> consteval bool is_std_span_type(std::meta::info type) {
         using namespace std::meta;
         return is_class_type(type) && has_template_arguments(type) &&
                template_of(type) == template_of(^^std::span<int>);
@@ -583,12 +573,12 @@ namespace serialize_detail {
             constexpr auto type = type_of(mem);
             if constexpr (is_std_vector_type<T>(type)) {
                 constexpr auto elem = template_arguments_of(type)[0];
-                if constexpr (!std::is_same_v<typename [:elem:], std::string> &&
-                              std::is_trivially_copyable_v<typename [:elem:]>) {
+                if constexpr (!std::is_same_v<typename[:elem:], std::string> &&
+                              std::is_trivially_copyable_v<typename[:elem:]>) {
                     if (seen == nth)
                         append_trivial_vector_bytes(buf, obj.[:mem:]);
                     ++seen;
-                } else if constexpr (!std::is_same_v<typename [:elem:], std::string>) {
+                } else if constexpr (!std::is_same_v<typename[:elem:], std::string>) {
                     if (seen == nth) {
                         // Not a trivially copyable element. Do not pun the
                         // vector. A zero-length prefix keeps the following
@@ -601,8 +591,7 @@ namespace serialize_detail {
         }
     }
 
-    template <class T>
-    void write_nth_span(std::vector<char>& buf, const T& obj, std::size_t nth) {
+    template <class T> void write_nth_span(std::vector<char>& buf, const T& obj, std::size_t nth) {
         using namespace std::meta;
         std::size_t seen = 0;
         static constexpr auto members = get_data_members<T>();
@@ -610,7 +599,7 @@ namespace serialize_detail {
             constexpr auto type = type_of(mem);
             if constexpr (is_std_span_type<T>(type)) {
                 constexpr auto elem = template_arguments_of(type)[0];
-                if constexpr (std::is_trivially_copyable_v<typename [:elem:]>) {
+                if constexpr (std::is_trivially_copyable_v<typename[:elem:]>) {
                     if (seen == nth)
                         append_span_bytes(buf, obj.[:mem:]);
                     ++seen;
@@ -629,8 +618,8 @@ namespace serialize_detail {
             constexpr auto type = type_of(mem);
             if constexpr (is_std_vector_type<T>(type)) {
                 constexpr auto elem = template_arguments_of(type)[0];
-                if constexpr (!std::is_same_v<typename [:elem:], std::string> &&
-                              std::is_trivially_copyable_v<typename [:elem:]>) {
+                if constexpr (!std::is_same_v<typename[:elem:], std::string> &&
+                              std::is_trivially_copyable_v<typename[:elem:]>) {
                     if (seen == nth) {
                         auto& vec = obj.[:mem:];
                         vec.clear();
@@ -650,7 +639,7 @@ namespace serialize_detail {
                         pos += nbytes;
                     }
                     ++seen;
-                } else if constexpr (!std::is_same_v<typename [:elem:], std::string>) {
+                } else if constexpr (!std::is_same_v<typename[:elem:], std::string>) {
                     if (seen == nth) {
                         if (!reflect_ensure(buf, pos, 4))
                             return;
@@ -662,8 +651,7 @@ namespace serialize_detail {
         }
     }
 
-    template <class T>
-    std::size_t trivial_vector_bytes(const T& obj, std::size_t nth) {
+    template <class T> std::size_t trivial_vector_bytes(const T& obj, std::size_t nth) {
         using namespace std::meta;
         std::size_t seen = 0;
         std::size_t measure = 0;
@@ -672,11 +660,11 @@ namespace serialize_detail {
             constexpr auto type = type_of(mem);
             if constexpr (is_std_vector_type<T>(type)) {
                 constexpr auto elem = template_arguments_of(type)[0];
-                if constexpr (std::is_trivially_copyable_v<typename [:elem:]>) {
+                if constexpr (std::is_trivially_copyable_v<typename[:elem:]>) {
                     if (seen == nth)
-                        measure = obj.[:mem:].size() * sizeof(typename [:elem:]);
+                        measure = obj.[:mem:].size() * sizeof(typename[:elem:]);
                     ++seen;
-                } else if constexpr (!std::is_same_v<typename [:elem:], std::string>) {
+                } else if constexpr (!std::is_same_v<typename[:elem:], std::string>) {
                     if (seen == nth)
                         measure = obj.[:mem:].size();
                     ++seen;
@@ -690,8 +678,7 @@ namespace serialize_detail {
         return measure;
     }
 
-    template <class T>
-    std::size_t span_element_count(const T& obj, std::size_t nth) {
+    template <class T> std::size_t span_element_count(const T& obj, std::size_t nth) {
         using namespace std::meta;
         std::size_t seen = 0;
         std::size_t measure = 0;
@@ -716,7 +703,7 @@ namespace serialize_detail {
             constexpr auto type = type_of(mem);
             if constexpr (is_std_span_type<T>(type)) {
                 constexpr auto elem = template_arguments_of(type)[0];
-                if constexpr (std::is_trivially_copyable_v<typename [:elem:]>) {
+                if constexpr (std::is_trivially_copyable_v<typename[:elem:]>) {
                     if (seen == nth) {
                         auto& span = obj.[:mem:];
                         span = {};

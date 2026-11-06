@@ -97,9 +97,7 @@ int main() {
         int pipefd[2] = {-1, -1};
         expect(::pipe(pipefd) == 0, "short-write pipe");
         std::string drained;
-        std::thread reader([&] {
-            (void)aura::compiler::io::append_fd(pipefd[0], drained);
-        });
+        std::thread reader([&] { (void)aura::compiler::io::append_fd(pipefd[0], drained); });
         ::lseek(in_fd, 0, SEEK_SET);
         // 5000 bytes is above PIPE_BUF, so the kernel may return a short write.
         // The assertion is the bytes, not a count of short writes.
@@ -107,12 +105,13 @@ int main() {
         ::close(pipefd[1]);
         reader.join();
         ::close(pipefd[0]);
-        expect(drained == body, "pipe copy matches, including a short write if the kernel split it");
+        expect(drained == body,
+               "pipe copy matches, including a short write if the kernel split it");
     }
 
     {
-        struct sigaction action {};
-        struct sigaction previous {};
+        struct sigaction action{};
+        struct sigaction previous{};
         action.sa_handler = [](int) {};
         sigemptyset(&action.sa_mask);
         action.sa_flags = 0; // no SA_RESTART
@@ -139,14 +138,14 @@ int main() {
     }
 
     {
-        struct sigaction action {};
-        struct sigaction previous {};
+        struct sigaction action{};
+        struct sigaction previous{};
         static volatile sig_atomic_t ticks = 0;
         action.sa_handler = [](int) { ticks = 1; };
         sigemptyset(&action.sa_mask);
         action.sa_flags = 0;
         sigaction(SIGALRM, &action, &previous);
-        itimerval timer {};
+        itimerval timer{};
         timer.it_value.tv_usec = 10000;
         timer.it_interval.tv_usec = 10000;
         setitimer(ITIMER_REAL, &timer, nullptr);
@@ -161,7 +160,7 @@ int main() {
         });
         const bool ok = aura::compiler::io::append_fd(pipefd[0], eintr_out);
         writer.join();
-        itimerval stop {};
+        itimerval stop{};
         setitimer(ITIMER_REAL, &stop, nullptr);
         sigaction(SIGALRM, &previous, nullptr);
         ::close(pipefd[0]);

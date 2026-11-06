@@ -3,7 +3,7 @@
 
 module;
 #include "compiler/locked_string_heap.hh" // Issue #4543
-#include "compiler/chunk_io.hh"            // #4936 std::array file chunks
+#include "compiler/chunk_io.hh"           // #4936 std::array file chunks
 
 #include "runtime_shared.h"
 #include "compiler/evaluator_primitives_query_shared.hh"

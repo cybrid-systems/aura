@@ -2304,16 +2304,18 @@ namespace primitives_detail {
     register_mutate_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev,
                                std::function<EvalValue(const std::string&, const std::string&)> mev,
                                std::function<void()> destroy_defuse_index);
-    void register_workspace_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev,
-                                       std::function<void()> destroy_defuse_index);
+    void register_workspace_primitives(std::function_ref<void(std::string, PrimFn)> add,
+                                       Evaluator& ev, std::function<void()> destroy_defuse_index);
     // Issue #1381: serialize-workspace / deserialize-workspace / workspace-persist-info
-    void register_persist_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_persist_primitives(std::function_ref<void(std::string, PrimFn)> add,
+                                     Evaluator& ev);
     void register_ast_primitives(
         std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev,
         std::function<void()> destroy_defuse_index,
         std::function<std::optional<std::tuple<std::uint64_t, std::uint64_t, std::uint64_t>>()>
             defuse_summary_stats);
-    void register_compile_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_compile_primitives(std::function_ref<void(std::string, PrimFn)> add,
+                                     Evaluator& ev);
     void register_eval_observability_primitives(std::function_ref<void(std::string, PrimFn)> add,
                                                 Evaluator& ev);
     // Issues #923–#940: stdlib production-review dashboard primitives.
@@ -2327,10 +2329,13 @@ namespace primitives_detail {
         std::function<aura::compiler::types::EvalValue(std::int64_t)> make_int,
         std::function<aura::compiler::types::EvalValue(const std::string&, const std::string&)>
             mev);
-    void register_jit_arena_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
-    void register_messaging_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_jit_arena_primitives(std::function_ref<void(std::string, PrimFn)> add,
+                                       Evaluator& ev);
+    void register_messaging_primitives(std::function_ref<void(std::string, PrimFn)> add,
+                                       Evaluator& ev);
     // Issue #4715: per-fiber COW overlay for env bindings (fiber:overlay-*).
-    void register_fiber_cow_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_fiber_cow_primitives(std::function_ref<void(std::string, PrimFn)> add,
+                                       Evaluator& ev);
     // ── Issue #4715 AC2: env-read / write interception ──────────────────
     // An open overlay must be observed by ORDINARY reads inside its fiber
     // body (not only by fiber:overlay-get), and the body's defines / set!s
@@ -2366,32 +2371,41 @@ namespace primitives_detail {
     export bool fiber_cow_overlay_capture_set(Evaluator& ev, std::string_view name,
                                               const types::EvalValue& value, const Env& env);
     void register_git_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
-    void register_network_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_network_primitives(std::function_ref<void(std::string, PrimFn)> add,
+                                     Evaluator& ev);
     void register_auto_evolve_primitives(std::function_ref<void(std::string, PrimFn)> add,
                                          Evaluator& ev);
-    void register_synthesize_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev,
-                                        std::function<void()> destroy_defuse_index);
-    void register_strategy_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_synthesize_primitives(std::function_ref<void(std::string, PrimFn)> add,
+                                        Evaluator& ev, std::function<void()> destroy_defuse_index);
+    void register_strategy_primitives(std::function_ref<void(std::string, PrimFn)> add,
+                                      Evaluator& ev);
     void register_memory_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev,
                                     std::function<void()> destroy_defuse_index);
-    void register_policy_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
-    void register_security_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_policy_primitives(std::function_ref<void(std::string, PrimFn)> add,
+                                    Evaluator& ev);
+    void register_security_primitives(std::function_ref<void(std::string, PrimFn)> add,
+                                      Evaluator& ev);
     void
     register_eval_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev,
                              std::function<EvalValue(const std::string&, const std::string&)> mev,
                              std::function<void()> destroy_defuse_index);
     void register_type_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
-    void register_hot_swap_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_hot_swap_primitives(std::function_ref<void(std::string, PrimFn)> add,
+                                      Evaluator& ev);
     void register_diagnostic_primitives(std::function_ref<void(std::string, PrimFn)> add,
                                         Evaluator& ev);
-    void register_module_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_module_primitives(std::function_ref<void(std::string, PrimFn)> add,
+                                    Evaluator& ev);
     void register_file_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
-    void register_runtime_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_runtime_primitives(std::function_ref<void(std::string, PrimFn)> add,
+                                     Evaluator& ev);
     void register_test_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
     void register_misc_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
-    void register_control_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_control_primitives(std::function_ref<void(std::string, PrimFn)> add,
+                                     Evaluator& ev);
     void register_char_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
-    void register_mutation_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_mutation_primitives(std::function_ref<void(std::string, PrimFn)> add,
+                                      Evaluator& ev);
 
     // Issue #909: friend structs holding peeled register parts (≤300 lines each).
 #include "compiler/observability_prims_decl.inc"
@@ -2515,10 +2529,9 @@ export class Evaluator {
         std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev,
         std::function<EvalValue(const std::string&, const std::string&)> mev,
         std::function<void()> destroy_defuse_index);
-    friend void
-    primitives_detail::register_workspace_primitives(std::function_ref<void(std::string, PrimFn)> add,
-                                                     Evaluator& ev,
-                                                     std::function<void()> destroy_defuse_index);
+    friend void primitives_detail::register_workspace_primitives(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev,
+        std::function<void()> destroy_defuse_index);
     friend void
     primitives_detail::register_persist_primitives(std::function_ref<void(std::string, PrimFn)> add,
                                                    Evaluator& ev);
@@ -2545,17 +2558,14 @@ export class Evaluator {
         std::function<aura::compiler::types::EvalValue(std::int64_t)> make_int,
         std::function<aura::compiler::types::EvalValue(const std::string&, const std::string&)>
             mev);
-    friend void
-    primitives_detail::register_jit_arena_primitives(std::function_ref<void(std::string, PrimFn)> add,
-                                                     Evaluator& ev);
-    friend void
-    primitives_detail::register_messaging_primitives(std::function_ref<void(std::string, PrimFn)> add,
-                                                     Evaluator& ev);
+    friend void primitives_detail::register_jit_arena_primitives(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_messaging_primitives(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
     // Issue #4715: overlay commit appends top-env bindings under the registry
     // lock, so the entry point owns the same friend access as messaging.
-    friend void
-    primitives_detail::register_fiber_cow_primitives(std::function_ref<void(std::string, PrimFn)> add,
-                                                     Evaluator& ev);
+    friend void primitives_detail::register_fiber_cow_primitives(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
 
     // Issue #4715 AC2: the interception hooks allocate the overlay's private
     // cell (alloc_cell) and publish it at commit, so they own the same
@@ -2579,16 +2589,13 @@ export class Evaluator {
     friend void
     primitives_detail::register_network_primitives(std::function_ref<void(std::string, PrimFn)> add,
                                                    Evaluator& ev);
-    friend void
-    primitives_detail::register_auto_evolve_primitives(std::function_ref<void(std::string, PrimFn)> add,
-                                                       Evaluator& ev);
-    friend void
-    primitives_detail::register_synthesize_primitives(std::function_ref<void(std::string, PrimFn)> add,
-                                                      Evaluator& ev,
-                                                      std::function<void()> destroy_defuse_index);
-    friend void
-    primitives_detail::register_strategy_primitives(std::function_ref<void(std::string, PrimFn)> add,
-                                                    Evaluator& ev);
+    friend void primitives_detail::register_auto_evolve_primitives(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_synthesize_primitives(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev,
+        std::function<void()> destroy_defuse_index);
+    friend void primitives_detail::register_strategy_primitives(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
     friend void
     primitives_detail::register_memory_primitives(std::function_ref<void(std::string, PrimFn)> add,
                                                   Evaluator& ev,
@@ -2596,9 +2603,8 @@ export class Evaluator {
     friend void
     primitives_detail::register_policy_primitives(std::function_ref<void(std::string, PrimFn)> add,
                                                   Evaluator& ev);
-    friend void
-    primitives_detail::register_security_primitives(std::function_ref<void(std::string, PrimFn)> add,
-                                                    Evaluator& ev);
+    friend void primitives_detail::register_security_primitives(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
     friend void primitives_detail::register_eval_primitives(
         std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev,
         std::function<EvalValue(const std::string&, const std::string&)> mev,
@@ -2606,12 +2612,10 @@ export class Evaluator {
     friend void
     primitives_detail::register_type_primitives(std::function_ref<void(std::string, PrimFn)> add,
                                                 Evaluator& ev);
-    friend void
-    primitives_detail::register_hot_swap_primitives(std::function_ref<void(std::string, PrimFn)> add,
-                                                    Evaluator& ev);
-    friend void
-    primitives_detail::register_diagnostic_primitives(std::function_ref<void(std::string, PrimFn)> add,
-                                                      Evaluator& ev);
+    friend void primitives_detail::register_hot_swap_primitives(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_diagnostic_primitives(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
     friend void
     primitives_detail::register_module_primitives(std::function_ref<void(std::string, PrimFn)> add,
                                                   Evaluator& ev);
@@ -2633,9 +2637,8 @@ export class Evaluator {
     friend void
     primitives_detail::register_char_primitives(std::function_ref<void(std::string, PrimFn)> add,
                                                 Evaluator& ev);
-    friend void
-    primitives_detail::register_mutation_primitives(std::function_ref<void(std::string, PrimFn)> add,
-                                                    Evaluator& ev);
+    friend void primitives_detail::register_mutation_primitives(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
     friend void primitives_detail::register_list_primitives(
         std::function_ref<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
         ::aura::compiler::LockedStringHeap& string_heap, std::vector<EvalValue>& error_values,

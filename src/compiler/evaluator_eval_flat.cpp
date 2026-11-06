@@ -1730,8 +1730,8 @@ void Evaluator::collect_tw_inflight_roots(std::vector<types::EvalValue>& out) {
 // the TCO `continue` below can still note while-edges on the callee.
 static void feedback_enter_call(std::uint64_t cid, std::string_view name, const EvalValue* args,
                                 std::uint32_t nargs) {
-    const auto* key = aura::core::pointer_from_address_bits<const void*>(
-        static_cast<std::uintptr_t>(cid) + 1u);
+    const auto* key =
+        aura::core::pointer_from_address_bits<const void*>(static_cast<std::uintptr_t>(cid) + 1u);
     feedback::note_call_current(static_cast<std::uint32_t>(cid));
     auto argc = nargs;
     if (argc > feedback::kMaxUserArgs)

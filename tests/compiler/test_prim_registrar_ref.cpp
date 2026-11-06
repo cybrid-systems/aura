@@ -28,7 +28,9 @@ void expect(bool ok, const char* label) {
 
 struct DummyEvaluator {};
 
-void call_once(std::function_ref<void(std::string, int)> add) { add(std::string("kept"), 1); }
+void call_once(std::function_ref<void(std::string, int)> add) {
+    add(std::string("kept"), 1);
+}
 
 } // namespace
 
