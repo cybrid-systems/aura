@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 906 | Preferred destination suites |
-| **Total scanned** | **906** | |
+| `tests/core/test_*.cpp` | 907 | Preferred destination suites |
+| **Total scanned** | **907** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 62 | 62 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 88 | 88 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 54 | 54 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 131 | 131 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 132 | 132 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 62 | 62 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -531,6 +531,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_hotpath_matrix_batch.cpp`
 - `tests/compiler/test_hygiene_checkpoint.cpp`
 - `tests/reflect/test_hygiene_diagnostic.cpp`
+- `tests/compiler/test_hygiene_metrics.cpp`
 - `tests/compiler/test_hygiene_mutate_closed_loop.cpp`
 - `tests/core/test_incoming_parent_dirty_atomic.cpp`
 - `tests/compiler/test_incremental_effectiveness_snapshot_fail.cpp`
@@ -1901,13 +1902,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path.cpp` (—) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (131)
+### `observability` — Observability / metrics / query:*-stats (132)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (131)
+#### domain/ (132)
 
 - `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — Issue #2939 — dep-closure reverify (BFS over var_to_constraints_) to
 - `tests/compiler/test_adt_exhaustiveness_production_hard.cpp` (—) [domain_suite, theme_compiler] — test_adt_exhaustiveness_production_hard.cpp -- source-cite AC for Issue #3559
@@ -1950,6 +1951,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_fine_dirty_relower.cpp` (—) [domain_suite, theme_compiler] — test_fine_dirty_relower.cpp — Issue #1657 (standalone; bump metrics ACs drift)
 - `tests/compiler/test_frame_budget_cascade_isolation.cpp` (—) [domain_suite, theme_compiler] — AC1: under FrameBudget / render hotpath, non-render cascade deferred
 - `tests/compiler/test_hash_table_grow.cpp` (—) [large, domain_suite, theme_compiler] — AC1: (hash) with 16 k/v pairs retains all keys
+- `tests/compiler/test_hygiene_metrics.cpp` (—) [small, domain_suite, theme_compiler] — AC1: the reserved-name table is sorted, has no duplicates, and matches
 - `tests/compiler/test_inline_typecheck_exception.cpp` (—) [domain_suite, theme_compiler] — Issue #1769 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_instance_constraint_depth_cap.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2643 — Agent-visible depth-cap repair surface
 - `tests/compiler/test_instr_impact_minimal_dirty.cpp` (—) [minimal, domain_suite, theme_compiler] — AC1: nested lambda free-var body-only → no mark_all_blocks_dirty;
