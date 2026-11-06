@@ -10,24 +10,33 @@
 namespace lsp_4911 {
 
 struct Json {
+    // #4936: named member type, not std::pair<std::string, Json> (Clang
+    // rejects the pair of an incomplete Json; see cli_evo_4910.inc J).
+    struct Member;
     enum class T { Null, Bool, Num, Str, Arr, Obj } t = T::Null;
     bool b = false;
     double n = 0;
     std::string s;
     std::vector<Json> a;
-    std::vector<std::pair<std::string, Json>> o;
-    const Json* get(std::string_view k) const {
-        for (auto& [kk, v] : o)
-            if (kk == k)
-                return &v;
-        return nullptr;
-    }
-    const Json& at(std::string_view k) const {
-        static const Json null;
-        auto* p = get(k);
-        return p ? *p : null;
-    }
+    std::vector<Member> o;
+    [[nodiscard]] const Json* get(std::string_view k) const;
+    [[nodiscard]] const Json& at(std::string_view k) const;
 };
+struct Json::Member {
+    std::string first;
+    Json second;
+};
+inline const Json* Json::get(std::string_view k) const {
+    for (const auto& [kk, v] : o)
+        if (kk == k)
+            return &v;
+    return nullptr;
+}
+inline const Json& Json::at(std::string_view k) const {
+    static const Json null;
+    const auto* p = get(k);
+    return p ? *p : null;
+}
 
 struct Parser {
     std::string_view s;
@@ -560,7 +569,8 @@ struct Server {
                         ++se;
                     if (t.compare(s, se - s, word) != 0 || se - s != word.size())
                         continue;
-                    const int dl = static_cast<int>(std::count(t.begin(), t.begin() + s, '\n'));
+                    const int dl = static_cast<int>(
+                        std::count(t.begin(), t.begin() + static_cast<std::ptrdiff_t>(s), '\n'));
                     const std::size_t ls = t.rfind('\n', s == 0 ? 0 : s - 1);
                     const int dc =
                         static_cast<int>(ls == std::string::npos || s == 0 ? s : s - ls - 1);

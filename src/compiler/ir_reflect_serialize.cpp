@@ -12,10 +12,12 @@
 #include <vector>
 #include <array>
 #include <cstring>
+#include <memory>
 
 #include "reflect/reflect.hh"
 #include "reflect/opcode_reflect.hh"
 #include "reflect/ir_pod_reflect.hh"
+#include "compiler/ir_buffer_abi.h" // #4936 aura_ir_buffer_free
 
 namespace aura::ir {
 
@@ -63,6 +65,25 @@ struct IRModule {
 
 } // namespace aura::ir
 
+// ── Buffer ownership for the C ABI below (#4936) ──────────────
+// Every buffer this file hands out is allocated by aura_ir_buffer_copy and
+// must be released with aura_ir_buffer_free (callers hold it in
+// aura::ir::IrBufferPtr). Allocation and release live in this TU only.
+
+extern "C" {
+
+char* aura_ir_buffer_copy(const char* src, size_t size) {
+    auto buf = std::make_unique_for_overwrite<char[]>(size);
+    std::memcpy(buf.get(), src, size);
+    return buf.release();
+}
+
+void aura_ir_buffer_free(const char* data) noexcept {
+    const std::unique_ptr<const char[]> owned{data};
+}
+
+} // extern "C"
+
 // ── Phase 4 POD C ABI (auto_serialize only) ───────────────────
 
 extern "C" {
@@ -71,9 +92,7 @@ void aura_ir_instr_serialize(const void* instr, const char** out_data, size_t* o
     const auto& i = *static_cast<const aura::ir_pod::IRInstruction*>(instr);
     auto vec = aura::ir_pod::pod_serialize(i);
     *out_size = vec.size();
-    char* data = new char[*out_size];
-    std::memcpy(data, vec.data(), *out_size);
-    *out_data = data;
+    *out_data = aura_ir_buffer_copy(vec.data(), vec.size());
 }
 
 int aura_ir_instr_deserialize(const char* data, size_t size, void* out_instr) {
@@ -92,9 +111,7 @@ void aura_ir_fn_header_serialize(const void* hdr, const char** out_data, size_t*
     const auto& h = *static_cast<const aura::ir_pod::IRFunctionHeader*>(hdr);
     auto vec = aura::ir_pod::pod_serialize(h);
     *out_size = vec.size();
-    char* data = new char[*out_size];
-    std::memcpy(data, vec.data(), *out_size);
-    *out_data = data;
+    *out_data = aura_ir_buffer_copy(vec.data(), vec.size());
 }
 
 int aura_ir_fn_header_deserialize(const char* data, size_t size, void* out_hdr) {
@@ -113,9 +130,7 @@ void aura_opcode_arity_serialize(const void* ar, const char** out_data, size_t* 
     const auto& a = *static_cast<const aura::ir_pod::OpcodeArity*>(ar);
     auto vec = aura::ir_pod::pod_serialize(a);
     *out_size = vec.size();
-    char* data = new char[*out_size];
-    std::memcpy(data, vec.data(), *out_size);
-    *out_data = data;
+    *out_data = aura_ir_buffer_copy(vec.data(), vec.size());
 }
 
 int aura_opcode_arity_deserialize(const char* data, size_t size, void* out_ar) {
@@ -142,9 +157,7 @@ void aura_ir_serialize(const void* mod, const char** out_data, size_t* out_size)
     aura::reflect::bin_write(buf, module);
     auto vec = buf.take();
     *out_size = vec.size();
-    char* data = new char[*out_size];
-    std::memcpy(data, vec.data(), *out_size);
-    *out_data = data;
+    *out_data = aura_ir_buffer_copy(vec.data(), vec.size());
 }
 
 void aura_ir_deserialize(const char* data, size_t size, void* out_mod) {
@@ -163,10 +176,8 @@ char* aura_inspect_ir_json(const void* mod, size_t* out_size) {
     const auto& module = *static_cast<const aura::ir::IRModule*>(mod);
     auto json = aura::reflect::to_json(module);
     *out_size = json.size();
-    char* out = new char[*out_size + 1];
-    std::memcpy(out, json.data(), *out_size);
-    out[*out_size] = '\0';
-    return out;
+    // +1 copies the terminating NUL std::string keeps after its data.
+    return aura_ir_buffer_copy(json.c_str(), json.size() + 1);
 }
 
 } // extern "C"

@@ -18,9 +18,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <memory>
 #include <new>
 #include <thread>
 #include <vector>
+#include "core/ownership.hh" // #4936 c_alloc / c_free
 
 // JIT runtime registers the real lock/top-cell clearer. Null when JIT
 // SOs are not loaded — ~CompilerService still resolves this symbol from
@@ -69,12 +71,11 @@ PairSegment* pair_segment(std::size_t id, bool create) {
         return existing;
     if (!create)
         return nullptr;
-    auto* fresh = new PairSegment();
+    auto fresh = std::make_unique<PairSegment>();
     PairSegment* expected = nullptr;
-    if (cell.compare_exchange_strong(expected, fresh, std::memory_order_release,
+    if (cell.compare_exchange_strong(expected, fresh.get(), std::memory_order_release,
                                      std::memory_order_acquire))
-        return fresh;
-    delete fresh;
+        return fresh.release(); // the directory owns it for the process lifetime
     return expected;
 }
 
@@ -519,7 +520,7 @@ PairTenantTable::Ref& PairTenantTable::Ref::operator=(std::uint64_t tenant) {
 
 extern "C" PairSlot* aura_pair_tls_bump() {
     if (!tls_pair_bump.slab || tls_pair_bump.used >= tls_pair_bump.slab->cap) {
-        auto* slab = static_cast<PairSlab*>(std::malloc(sizeof(PairSlab)));
+        auto* slab = static_cast<PairSlab*>(::aura::core::c_alloc(sizeof(PairSlab)));
         if (!slab)
             return nullptr;
         slab->cap = kPairSlabCap;
@@ -545,7 +546,7 @@ void free_pair_slabs() {
     PairSlab* slab = g_pair_slabs.exchange(nullptr, std::memory_order_acquire);
     while (slab) {
         PairSlab* next = slab->next;
-        std::free(slab);
+        ::aura::core::c_free(slab);
         slab = next;
     }
 }
@@ -585,7 +586,7 @@ void aura_hash_stamp_new_table_owner() {
 static constexpr std::uint8_t kHashEmptySlot = 0xFF; // hash_meta.h kEmptySlot
 
 FlatHashTable* FlatHashTable::create(uint64_t cap) {
-    auto* ht = static_cast<FlatHashTable*>(std::malloc(total_bytes(cap)));
+    auto* ht = static_cast<FlatHashTable*>(::aura::core::c_alloc(total_bytes(cap)));
     if (!ht)
         return nullptr;
     ht->capacity = cap;
@@ -604,7 +605,7 @@ FlatHashTable* FlatHashTable::create(uint64_t cap) {
 
 void FlatHashTable::destroy(FlatHashTable* ht) {
     if (ht)
-        std::free(ht);
+        ::aura::core::c_free(ht);
 }
 
 // ── Live AOT env / linear / table-epoch C ABI ──
@@ -924,13 +925,13 @@ extern "C" size_t aura_g_owned_pair_slots_size() {
 }
 
 namespace {
-struct PairSlotCleanup {
+struct PairSlotCleanup : ::aura::core::NoCopy {
     ~PairSlotCleanup() {
         // Issue #4755: walk and clear under the registry mutex so the
         // iteration cannot observe a concurrent push_back's realloc.
         std::lock_guard<std::mutex> owned(g_owned_pair_slots_mtx);
         for (auto* p : g_owned_pair_slots_) {
-            std::free(p);
+            ::aura::core::c_free(p);
         }
         g_owned_pair_slots_.clear();
         // Issue #898: JIT cons slabs are not on g_owned_pair_slots_.

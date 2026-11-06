@@ -21,6 +21,7 @@
 #ifndef AURA_ORCH_AGENT_SPAWN_H
 #define AURA_ORCH_AGENT_SPAWN_H
 
+#include "core/parse_number.hh" // #4936 exception-free parse
 #include "core/resource_quota.hh"
 #include "core/sandbox.hh"               // Issue #3434/#3494: is_sandbox_active() + MT spawn gate
 #include "orch/security_schedule_gate.h" // Issue #3777: schedule-gate-at-spawn preflight
@@ -63,6 +64,7 @@ class AgentScope;
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include "core/ownership.hh" // Issue #4936: NoCopy
 
 // Evaluator hooks (strong defs in evaluator_fiber_mutation.cpp; weak no-ops
 // in fiber_bridge.cpp for serve-only link units).
@@ -495,20 +497,14 @@ inline std::uint64_t resolve_mailbox_bp_decay_ms() noexcept {
     // Prefer #2398 WINDOW_MS; fall back to #2465 DECAY_MS; else default.
     const char* window = std::getenv("AURA_ORCH_BP_WINDOW_MS");
     if (window && *window) {
-        try {
-            return static_cast<std::uint64_t>(std::stoull(window));
-        } catch (...) {
-            // fall through to DECAY_MS / default
-        }
+        if (const auto v = aura::core::parse_leading_int<std::uint64_t>(window))
+            return *v;
+        // unparsable: fall through to DECAY_MS / default
     }
     const char* env = std::getenv("AURA_ORCH_BP_DECAY_MS");
     if (!env || !*env)
         return kMailboxBpWindowMsDefault;
-    try {
-        return static_cast<std::uint64_t>(std::stoull(env));
-    } catch (...) {
-        return kMailboxBpWindowMsDefault;
-    }
+    return aura::core::parse_leading_int<std::uint64_t>(env).value_or(kMailboxBpWindowMsDefault);
 }
 // Issue #2398: alias — window_ms is the public name for the quiet period.
 inline std::uint64_t resolve_mailbox_bp_window_ms() noexcept {
@@ -2747,7 +2743,7 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
     // Every early return below (quota / BP / tenant / schedule deny,
     // Scheduler::spawn nullptr) releases the pin here; the spawn-success
     // path hands it to the body guard instead.
-    struct OrchPendingBodyPinHold {
+    struct OrchPendingBodyPinHold : ::aura::core::NoCopy {
         void* ev;
         std::uint64_t token;
         bool handed_off = false;
@@ -2755,7 +2751,7 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
             if (!handed_off && ev != nullptr && token != 0)
                 aura_fiber_release_pending_body(ev, token);
         }
-    } pending_body_pin{pin_ev, pin_token, false};
+    } pending_body_pin{{}, pin_ev, pin_token, false};
     // Issue #4280: keep the admitted key on the handle. Name-table put
     // moves `h`; the Scope plane still reads AgentSpec::region_key.
     h.region_key = spec.region_key;
@@ -3127,14 +3123,14 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
             // applied -- also on the try_acquire skip path and when the
             // closure is no longer live. Declared first so it runs LAST: the
             // pin covers the whole body application, not just its entry.
-            struct OrchPendingBodyPinRelease {
+            struct OrchPendingBodyPinRelease : ::aura::core::NoCopy {
                 void* ev;
                 std::uint64_t token;
                 ~OrchPendingBodyPinRelease() {
                     if (ev != nullptr && token != 0)
                         aura_fiber_release_pending_body(ev, token);
                 }
-            } pin_release{pin_ev, pin_token};
+            } pin_release{{}, pin_ev, pin_token};
             // Issue #2540: register fiber-local coop state for agent_poll().
             struct CoopReg {
                 std::uint64_t fid = 0;
@@ -3145,6 +3141,8 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
                     register_agent_coop(fid, c);
                     c->last_coop_us.store(orch_now_us(), std::memory_order_relaxed);
                 }
+                CoopReg(const CoopReg&) = delete;
+                CoopReg& operator=(const CoopReg&) = delete;
                 ~CoopReg() { unregister_agent_coop(fid); }
             } coop_reg(coop);
 
@@ -3207,7 +3205,7 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
             if (attach && mb && serve::g_current_fiber)
                 mb->detach(serve::g_current_fiber);
         },
-        2 * 1024 * 1024, start_fifo);
+        2uz * 1024 * 1024, start_fifo);
 
     if (!f) {
         // Issue #1600 / #2155: Scheduler::spawn returns nullptr on fiber
@@ -5751,13 +5749,13 @@ agent_reply(AgentHandle& self, std::uint64_t corr_id, std::string_view body,
         g_pending_asks[corr_id] = PendingAskRoute{reply_mb, target.id};
     }
     // RAII unregister on every exit path (ok / timeout / malformed / early).
-    struct PendingAskGuard {
+    struct PendingAskGuard : ::aura::core::NoCopy {
         std::uint64_t id;
         ~PendingAskGuard() {
             std::lock_guard<std::mutex> lock(g_pending_ask_mu);
             g_pending_asks.erase(id);
         }
-    } pending_guard{corr_id};
+    } pending_guard{{}, corr_id};
 
     // Issue #4506: the per-ask reply mailbox is the mailbox this fiber
     // waits on for the whole ask window, but it is never attach()ed, so
@@ -5770,7 +5768,7 @@ agent_reply(AgentHandle& self, std::uint64_t corr_id, std::string_view body,
     // have no steal — no registration without a current fiber. Depth-
     // counted with the recv-park registration; this ask-window entry is
     // what keeps the reply mailbox visible between park/resume cycles.
-    struct ParkedReplyGuard {
+    struct ParkedReplyGuard : ::aura::core::NoCopy {
         std::uint64_t fid = 0;
         serve::mf_mailbox::MultiFiberMailbox* mb = nullptr;
         ~ParkedReplyGuard() {

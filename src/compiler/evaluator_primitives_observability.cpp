@@ -102,7 +102,8 @@ using types::make_void;
 // time, so AI agents can also call these primitives by name. When you add
 // a new entry here, also add a matching line to `lib/std/stats.aura` so the
 // EDSL discoverability surface stays in sync.
-const std::vector<std::string> kObservabilityStatsPrimitives = {
+// Issue #4936: constexpr table (no throwing static init, no heap at boot).
+constexpr auto kObservabilityStatsPrimitives = std::to_array<std::string_view>({
     // Issue #543 — EnvFrame dual-path
     "query:envframe-dualpath-stats",
     // Issue #547 — Pattern + MacroIntroduced hygiene
@@ -1311,7 +1312,7 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:aot-hotupdate-stats",
     "query:aot-incremental-reemit-stats",
     "query:arena-moving-densify-health",
-};
+});
 
 
 // Issue #909: shared helper (was local lambda in register_eval; used across peels).
@@ -1370,7 +1371,7 @@ namespace {
         c.seen.reserve((kObservabilityStatsPrimitives.size() + 4096) * 2);
         for (const auto& n : kObservabilityStatsPrimitives) {
             if (c.seen.emplace(n, 1).second)
-                c.names.push_back(n);
+                c.names.emplace_back(n);
         }
         c.seed_count = c.names.size();
         c.seeded = true;

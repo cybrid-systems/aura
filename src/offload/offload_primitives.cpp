@@ -155,7 +155,7 @@ namespace {
     }
 
     struct Registrar {
-        Registrar() {
+        Registrar() noexcept { // #4936: static init must not throw
             g_offload_submit = &submit_impl;
             g_offload_await = &await_impl;
             g_offload_poll = &poll_impl;

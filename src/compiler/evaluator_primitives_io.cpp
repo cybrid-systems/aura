@@ -58,6 +58,7 @@ module;
 #include "curl_stub.h"
 #endif
 #include "messaging_bridge.h"
+#include "core/ownership.hh" // Issue #4936: NoCopy
 
 module aura.compiler.evaluator;
 
@@ -108,7 +109,7 @@ using types::make_void;
 
 // ── Runtime-loaded libcurl via dlopen (avoids ld.bfd symbol issues) ──
 namespace {
-    struct CurlAPI {
+    struct CurlAPI : ::aura::core::NoCopy {
         void* handle = nullptr;
         CURL* (*easy_init)() = nullptr;
         CURLcode (*easy_setopt)(CURL*, CURLoption, ...) = nullptr;

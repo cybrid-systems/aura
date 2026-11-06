@@ -74,7 +74,7 @@ def main() -> int:
 
     # writer-gate vocabulary (token spellings come from the file itself)
     m = re.search(
-        r"const std::uint64_t (\w+) =\n +\((\w+) < ([\w:]+)\.size\(\)\) \? \3\[\2\] : 0;",
+        r"const std::uint64_t (\w+) =\s+\((\w+) < ([\w:]+)\.size\(\)\)\s+\? \3\[\2\]\s+: (?:std::uint64_t\{0\}|0);",
         pair,
     )
     if not m:

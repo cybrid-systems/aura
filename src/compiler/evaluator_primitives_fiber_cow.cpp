@@ -31,6 +31,7 @@ module;
 // would re-declare std entities inside this module (GCC error).
 #include "compiler/fiber_cow_overlay.hh"
 #include "compiler/fiber_overlay_roots.hh" // Issue #4849: pending writes as roots
+#include "core/ownership.hh"               // #4936 immortal<T>
 
 module aura.compiler.evaluator;
 
@@ -359,7 +360,8 @@ namespace {
     };
 
     AtomicCounters4761& atomic_counters_4761() {
-        static auto* c = new AtomicCounters4761(); // leaked: outlives fiber threads
+        static ::aura::core::immortal<AtomicCounters4761>
+            c; // never destroyed: outlives fiber threads
         return *c;
     }
 

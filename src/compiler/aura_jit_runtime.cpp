@@ -120,6 +120,7 @@ inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -141,6 +142,7 @@ inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
 #include "hash_meta.h"       // Issue #908: kEmptySlot
 #include "aura_jit_bridge.h" // Issue #1508: dual-check helpers
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "core/ownership.hh" // #4936 c_alloc / c_free
 
 // ── TL Arena (thread-local bump allocator) ────────────────────
 // Issue #1359: 1MB default (was 64MB), graceful OOM, env override.
@@ -176,7 +178,7 @@ bool tl_arena_init(TLarena* arena) {
         return false;
     arena->capacity = tl_arena_resolve_capacity(arena->capacity);
     if (!arena->base) {
-        arena->base = static_cast<uint8_t*>(std::malloc(arena->capacity));
+        arena->base = static_cast<uint8_t*>(::aura::core::c_alloc(arena->capacity));
         if (!arena->base) {
             std::fprintf(stderr, "tl_arena: alloc %zu failed\n", arena->capacity);
             ++g_tl_arena_oom_total;
@@ -192,7 +194,7 @@ bool tl_arena_init(TLarena* arena) {
 void tl_arena_destroy(TLarena* arena) {
     if (!arena)
         return;
-    std::free(arena->base);
+    ::aura::core::c_free(arena->base);
     arena->base = nullptr;
     arena->offset = 0;
     arena->mark_depth = 0;
@@ -233,7 +235,7 @@ void* tl_arena_alloc(TLarena* arena, size_t size, size_t align) {
             }
             new_cap *= 2;
         }
-        uint8_t* new_base = static_cast<uint8_t*>(std::realloc(arena->base, new_cap));
+        uint8_t* new_base = static_cast<uint8_t*>(::aura::core::c_realloc(arena->base, new_cap));
         if (!new_base) {
             std::fprintf(stderr, "tl_arena: overflow\n");
             ++g_tl_arena_oom_total;
@@ -659,8 +661,8 @@ extern "C" void aura_apply_require_stable_id_for_aot_env(void) noexcept {
     if (env != nullptr && env[0] != '\0') {
         const auto ieq = [](const char* a, const char* b) -> bool {
             for (; *a && *b; ++a, ++b) {
-                const char ca = (*a >= 'A' && *a <= 'Z') ? *a + 32 : *a;
-                const char cb = (*b >= 'A' && *b <= 'Z') ? *b + 32 : *b;
+                const char ca = (*a >= 'A' && *a <= 'Z') ? static_cast<char>(*a + ('a' - 'A')) : *a;
+                const char cb = (*b >= 'A' && *b <= 'Z') ? static_cast<char>(*b + ('a' - 'A')) : *b;
                 if (ca != cb)
                     return false;
             }
@@ -787,7 +789,7 @@ static void clear_evaluator_runtime_hooks_impl(void* user) {
 
 namespace {
 struct RegisterEvalHookClearer {
-    RegisterEvalHookClearer() {
+    RegisterEvalHookClearer() noexcept { // #4936
         aura_register_evaluator_runtime_hook_clearer(&clear_evaluator_runtime_hooks_impl);
     }
 };
@@ -1256,7 +1258,7 @@ static std::size_t epoch_invariant_must_deopt_stale_live_closures_impl(void) {
 extern "C" void aura_register_epoch_must_deopt_fn(std::size_t (*fn)(void));
 namespace {
     struct EpochMustDeoptReg {
-        EpochMustDeoptReg() {
+        EpochMustDeoptReg() noexcept { // #4936
             aura_register_epoch_must_deopt_fn(&epoch_invariant_must_deopt_stale_live_closures_impl);
         }
     };
@@ -1877,7 +1879,7 @@ static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena,
         g_closure_is_arena[cid] = is_arena;
         // Defensive: arena env should already be freed; free again if not.
         if (cid < g_arena_closure_envs.size() && g_arena_closure_envs[cid]) {
-            std::free(g_arena_closure_envs[cid]);
+            ::aura::core::c_free(g_arena_closure_envs[cid]);
             g_arena_closure_envs[cid] = nullptr;
         }
         if (cid < g_arena_closure_env_sizes.size())
@@ -2026,7 +2028,7 @@ int aura_free_closure_checked(int64_t closure_id, std::uint64_t caller_tenant, i
     }
     // Free arena-mode env buffer
     if (cid < g_arena_closure_envs.size() && g_arena_closure_envs[cid]) {
-        std::free(g_arena_closure_envs[cid]);
+        ::aura::core::c_free(g_arena_closure_envs[cid]);
         g_arena_closure_envs[cid] = nullptr;
         if (cid < g_arena_closure_env_sizes.size())
             g_arena_closure_env_sizes[cid] = 0;
@@ -2321,10 +2323,7 @@ static int remount_capture_cells_via_densify_(std::size_t cid) {
         cand_copy = densify_remap_detail::densify_candidates();
     }
     // Merge remap keys into candidates for fail-closed checks.
-    for (const auto& [old_ptr, neu] : remap_copy) {
-        (void)neu;
-        cand_copy.insert(old_ptr);
-    }
+    cand_copy.insert_range(remap_copy | std::views::keys); // #4936: set union, order-free
     // Caller holds exclusive g_closure_table_mtx, so the span stays stable
     // while cells are rewritten.
     const auto cells = closure_env_cells_for_densify_(cid);
@@ -4157,7 +4156,7 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
                       : 0;
                 if (cur_backfill >= cap_2638) {
                     aura_bump_live_closure_residual_cap_hit_total(1);
-                    aura_closure_set_must_deopt(cid, 1);
+                    aura_closure_set_must_deopt(static_cast<std::int64_t>(cid), 1);
                     continue;
                 }
             }
@@ -4495,7 +4494,8 @@ extern "C" void aura_closure_capture_checked(int64_t closure_id, int64_t idx, in
         // First capture: allocate freeable env (Issue #1310: malloc, not TL
         // bump arena — reset can free without leaking).
         size_t env_size = static_cast<size_t>(idx) + 4; // pad for future captures
-        int64_t* arena_env = static_cast<int64_t*>(std::malloc(env_size * sizeof(int64_t)));
+        int64_t* arena_env =
+            static_cast<int64_t*>(::aura::core::c_alloc(env_size * sizeof(int64_t)));
         if (arena_env) {
             for (size_t i = 0; i < env_size; ++i)
                 arena_env[i] = 0;
@@ -5596,6 +5596,8 @@ namespace {
             aura_note_temporary_moving_live_ptr(p); // #3857 entry-gate presence bit
             walk_env_cells_();
         }
+        NativeMovingCanary(const NativeMovingCanary&) = delete;
+        NativeMovingCanary& operator=(const NativeMovingCanary&) = delete;
         ~NativeMovingCanary() noexcept {
             aura_unnote_temporary_moving_live_ptr(p);
             // #4124: unnote the BOUND addresses the ctor stored, not the
@@ -6917,7 +6919,7 @@ static int64_t pair_field_locked(int64_t pair_val, bool want_car, const char* op
     // contract — the array is never read).
     if (jit_tenant_gate_armed(sandbox_mode)) {
         const std::uint64_t slot_tenant =
-            (id < g_pair_slot_tenants.size()) ? g_pair_slot_tenants[id] : 0;
+            (id < g_pair_slot_tenants.size()) ? g_pair_slot_tenants[id] : std::uint64_t{0};
         if (jit_tenant_gate(slot_tenant, caller_tenant, op))
             return 0;
     }
@@ -7965,7 +7967,7 @@ void aura_reset_runtime() {
     // TL bump allocator so clear() leaked permanently per thread).
     for (int64_t* p : g_arena_closure_envs) {
         if (p)
-            std::free(p);
+            ::aura::core::c_free(p);
     }
     g_arena_closure_envs.clear();
     g_arena_closure_env_sizes.clear(); // Issue #1302

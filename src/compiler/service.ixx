@@ -1,4 +1,5 @@
 module;
+#include "core/ownership.hh"                // Issue #4936: immortal<T>
 #include "rebind_phase_stats.h"             // per-phase rebind timing (opt-in)
 #include "compiler/security_capabilities.h" // Issue #4876: macro deny text
 #include <algorithm>
@@ -861,10 +862,10 @@ namespace {
         if (!fnp)
             return 0;
         std::vector<std::int64_t> osr_slots(slots, slots + nslots);
-        struct OsrBusyGuard {
+        struct OsrBusyGuard : ::aura::core::NoCopy {
             int& flag;
             ~OsrBusyGuard() { flag = 0; }
-        } osr_busy_guard{t_jit_osr_busy};
+        } osr_busy_guard{{}, t_jit_osr_busy};
         t_jit_osr_busy = 1;
         const std::int64_t v = reinterpret_cast<aura::jit::ScalarFn>(fnp)(
             osr_slots.data(), static_cast<std::int32_t>(argc));
@@ -896,6 +897,8 @@ namespace {
             // turn the escape into a sentinel protocol violation).
             aura_jit_set_osr_host(&jit_osr_enter_host_impl);
         }
+        JitDeoptHostArm(const JitDeoptHostArm&) = delete;
+        JitDeoptHostArm& operator=(const JitDeoptHostArm&) = delete;
         ~JitDeoptHostArm() {
             t_jit_deopt_host = prev;
             if (!prev.mod) {
@@ -2253,6 +2256,8 @@ public:
         // FlatAST, which requires a different hot-swap path (TODO).
         if (!last_ir_mod_ || last_ir_mod_->functions.empty())
             return false;
+        // Issue #4936: one checked deref after the guard above.
+        auto& live_ir_mod = *last_ir_mod_;
 
         // Issue #1262/#1264: acquire mutation epoch with fence before
         // hot-swap so concurrent invalidate_function / mutate cannot
@@ -2265,8 +2270,8 @@ public:
 
         // Find existing function by name
         std::uint32_t existing_id = 0xFFFFFFFF;
-        for (std::uint32_t i = 0; i < last_ir_mod_->functions.size(); ++i) {
-            if (last_ir_mod_->functions[i].name == name) {
+        for (std::uint32_t i = 0; i < live_ir_mod.functions.size(); ++i) {
+            if (live_ir_mod.functions[i].name == name) {
                 existing_id = i;
                 break;
             }
@@ -2331,7 +2336,7 @@ public:
         metrics_.hot_swap_versioned_mangle_enforced.fetch_add(1, std::memory_order_relaxed);
 
         // Hot-swap: replace in last_ir_mod_ at existing_id, preserving the id
-        return last_ir_mod_->hot_swap_function(existing_id, std::move(new_mod.functions[new_id]));
+        return live_ir_mod.hot_swap_function(existing_id, std::move(new_mod.functions[new_id]));
     }
 
     // ── Inter-agent messaging (P0) ──────────────────────────
@@ -2747,71 +2752,72 @@ public:
         // static set were observed freed mid-run by an OrchSchedHolder
         // worker thread (ASAN heap-use-after-free in the visitor count()
         // — obs_facade rc=139 CI red).
-        static const auto* const tree_walker_only = new std::unordered_set<std::string>{
-            // EDSL / AI agent primitives
-            "define-type",
-            "set-code",
-            "eval-current",
-            "apply",
-            "typecheck-current",
-            "typed-mutate",
-            "typed-mutate-atomic", // Issue #1442 / #1408 EDSL atomic multi-mutate
-            "rollback",
-            "mutation-log",
-            "query-mutation-log",
-            "ir-cache-v2:dirty?",
-            "ir-cache-v2:dependents",
-            // Mutation primitives (issue #165/#166): tree-walker so the
-            // returned bool/Int propagates correctly. The IR pipeline
-            // either silently drops unknown primitives or wraps them as
-            // ConstI64 0, breaking the success checks in
-            // test_issue_165/166 (e.g. "mutate > 0").
-            "mutate:rebind",
-            "mutate:set-body",
-            "mutate:remove-node",
-            "mutate:move-node",
-            "intend",
-            "fiber:spawn",
-            "fiber:join",
-            "define-strategy",
-            "register-strategy!",
-            "intend-history",
-            "intend-analytics",
-            "strategy-field",
-            "strategy-set-field!",
-            "strategy-inspect",
-            "coverage-report",
-            // C FFI — tree-walker needed to dispatch closure calls
-            "c-func",
-            "c-load",
-            // Messaging primitives (tree-walker for argument passing)
-            "send",
-            "recv",
-            "my-id",
-            "json-encode",
-            "json-get-string",
-            "json-parse",
-            // Scheduler metrics (Issue #32)
-            "orch:metrics",
-            "orch:reset-metrics",
-            // Special forms not in IR
-            "when",
-            "set!",
-            "load",
-            "equal?",
-            "unless",
-            "export",
-            "and",
-            "or",
-            "cond",
-            "case",
-            // Capability special forms
-            "with-capability",
-            "check-capability",
-            "capability-stack", // DEPRECATED — uses primitive path instead
-            // Module system (env side-effects)
-            // "import", "use", "require" — now in lowering_known
-        };
+        static const aura::core::immortal<std::unordered_set<std::string>> tree_walker_only{
+            std::unordered_set<std::string>{
+                // EDSL / AI agent primitives
+                "define-type",
+                "set-code",
+                "eval-current",
+                "apply",
+                "typecheck-current",
+                "typed-mutate",
+                "typed-mutate-atomic", // Issue #1442 / #1408 EDSL atomic multi-mutate
+                "rollback",
+                "mutation-log",
+                "query-mutation-log",
+                "ir-cache-v2:dirty?",
+                "ir-cache-v2:dependents",
+                // Mutation primitives (issue #165/#166): tree-walker so the
+                // returned bool/Int propagates correctly. The IR pipeline
+                // either silently drops unknown primitives or wraps them as
+                // ConstI64 0, breaking the success checks in
+                // test_issue_165/166 (e.g. "mutate > 0").
+                "mutate:rebind",
+                "mutate:set-body",
+                "mutate:remove-node",
+                "mutate:move-node",
+                "intend",
+                "fiber:spawn",
+                "fiber:join",
+                "define-strategy",
+                "register-strategy!",
+                "intend-history",
+                "intend-analytics",
+                "strategy-field",
+                "strategy-set-field!",
+                "strategy-inspect",
+                "coverage-report",
+                // C FFI — tree-walker needed to dispatch closure calls
+                "c-func",
+                "c-load",
+                // Messaging primitives (tree-walker for argument passing)
+                "send",
+                "recv",
+                "my-id",
+                "json-encode",
+                "json-get-string",
+                "json-parse",
+                // Scheduler metrics (Issue #32)
+                "orch:metrics",
+                "orch:reset-metrics",
+                // Special forms not in IR
+                "when",
+                "set!",
+                "load",
+                "equal?",
+                "unless",
+                "export",
+                "and",
+                "or",
+                "cond",
+                "case",
+                // Capability special forms
+                "with-capability",
+                "check-capability",
+                "capability-stack", // DEPRECATED — uses primitive path instead
+                // Module system (env side-effects)
+                // "import", "use", "require" — now in lowering_known
+            }};
 
         // Root-level bare variables (like `pi`, `sort`) may come from runtime imports.
         // The lowering doesn't know about them, so fallback to tree-walker.
@@ -2842,17 +2848,18 @@ public:
         // static set were observed freed mid-run by an OrchSchedHolder
         // worker thread (ASAN heap-use-after-free in the visitor count()
         // — obs_facade rc=139 CI red).
-        static const auto* const lowering_known = new std::unordered_set<std::string>{
-            "try",
-            "catch",
-            "raise",
-            "require",
-            "import",
-            "use",
-            "with-arena",
-            "performance-region",
-            "evolution-region",
-        };
+        static const aura::core::immortal<std::unordered_set<std::string>> lowering_known{
+            std::unordered_set<std::string>{
+                "try",
+                "catch",
+                "raise",
+                "require",
+                "import",
+                "use",
+                "with-arena",
+                "performance-region",
+                "evolution-region",
+            }};
 
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             auto nv = flat.get(id);
@@ -2966,74 +2973,76 @@ public:
         // static set were observed freed mid-run by an OrchSchedHolder
         // worker thread (ASAN heap-use-after-free in the visitor count()
         // — obs_facade rc=139 CI red).
-        static const auto* const tree_walker_only = new std::unordered_set<std::string>{
-            // EDSL / AI agent primitives
-            "define-type",
-            "set-code",
-            "eval-current",
-            "apply",
-            "typecheck-current",
-            "typed-mutate",
-            "typed-mutate-atomic", // Issue #1442
-            "rollback",
-            "mutation-log",
-            "query-mutation-log",
-            "ir-cache-v2:dirty?",
-            "ir-cache-v2:dependents",
-            "mutate:rebind",
-            "mutate:set-body",
-            "mutate:remove-node",
-            "mutate:move-node",
-            "intend",
-            "fiber:spawn",
-            "fiber:join",
-            "define-strategy",
-            "register-strategy!",
-            "intend-history",
-            "intend-analytics",
-            "strategy-field",
-            "strategy-set-field!",
-            "strategy-inspect",
-            "coverage-report",
-            "c-func",
-            "c-load",
-            "send",
-            "recv",
-            "my-id",
-            "json-encode",
-            "json-get-string",
-            "json-parse",
-            "orch:metrics",
-            "orch:reset-metrics",
-            "when",
-            "set!",
-            "load",
-            "equal?",
-            "unless",
-            "export",
-            "and",
-            "or",
-            "cond",
-            "case",
-            "with-capability",
-            "check-capability",
-            "capability-stack",
-        };
+        static const aura::core::immortal<std::unordered_set<std::string>> tree_walker_only{
+            std::unordered_set<std::string>{
+                // EDSL / AI agent primitives
+                "define-type",
+                "set-code",
+                "eval-current",
+                "apply",
+                "typecheck-current",
+                "typed-mutate",
+                "typed-mutate-atomic", // Issue #1442
+                "rollback",
+                "mutation-log",
+                "query-mutation-log",
+                "ir-cache-v2:dirty?",
+                "ir-cache-v2:dependents",
+                "mutate:rebind",
+                "mutate:set-body",
+                "mutate:remove-node",
+                "mutate:move-node",
+                "intend",
+                "fiber:spawn",
+                "fiber:join",
+                "define-strategy",
+                "register-strategy!",
+                "intend-history",
+                "intend-analytics",
+                "strategy-field",
+                "strategy-set-field!",
+                "strategy-inspect",
+                "coverage-report",
+                "c-func",
+                "c-load",
+                "send",
+                "recv",
+                "my-id",
+                "json-encode",
+                "json-get-string",
+                "json-parse",
+                "orch:metrics",
+                "orch:reset-metrics",
+                "when",
+                "set!",
+                "load",
+                "equal?",
+                "unless",
+                "export",
+                "and",
+                "or",
+                "cond",
+                "case",
+                "with-capability",
+                "check-capability",
+                "capability-stack",
+            }};
         // Intentionally leaked (no destructor): the buckets of a function-local
         // static set were observed freed mid-run by an OrchSchedHolder
         // worker thread (ASAN heap-use-after-free in the visitor count()
         // — obs_facade rc=139 CI red).
-        static const auto* const lowering_known = new std::unordered_set<std::string>{
-            "try",
-            "catch",
-            "raise",
-            "require",
-            "import",
-            "use",
-            "with-arena",
-            "performance-region",
-            "evolution-region",
-        };
+        static const aura::core::immortal<std::unordered_set<std::string>> lowering_known{
+            std::unordered_set<std::string>{
+                "try",
+                "catch",
+                "raise",
+                "require",
+                "import",
+                "use",
+                "with-arena",
+                "performance-region",
+                "evolution-region",
+            }};
 
         bool needs = false;
         const std::size_t visited = flat.walk_subtree(root, [&](aura::ast::NodeId id) {
@@ -3849,11 +3858,11 @@ public:
                         // Issue #4457: lower_to_ir starts at flat.root. The
                         // begin root would make bind-time execute() run every
                         // sibling form (display) before the real eval.
-                        struct RestoreRoot {
+                        struct RestoreRoot : ::aura::core::NoCopy {
                             aura::ast::FlatAST* flat;
                             aura::ast::NodeId root;
                             ~RestoreRoot() { flat->root = root; }
-                        } restore{flat_ptr, flat_ptr->root};
+                        } restore{{}, flat_ptr, flat_ptr->root};
                         flat_ptr->root = cid_reg;
                         (void)cache_define_prefer_partial(input, *flat_ptr, *pool_ptr, cid_reg,
                                                           std::string(n_reg), /*bind_in_env=*/true,
@@ -4548,14 +4557,15 @@ public:
         escape_pass.run(ir_mod);
 
         last_ir_mod_ = ir_mod;
-        last_ir_stats_ = aura::ir::compute_ir_stats(*last_ir_mod_);
+        const auto& live_ir_mod = *last_ir_mod_; // Issue #4936: engaged just above
+        last_ir_stats_ = aura::ir::compute_ir_stats(live_ir_mod);
         last_escape_maps_ = escape_pass.take_maps();
         // Issue #2100: accumulate MacroIntroduced IR attrs for deopt restore.
-        note_macro_ir_attrs_from_module(*last_ir_mod_);
+        note_macro_ir_attrs_from_module(live_ir_mod);
 
         aura::compiler::IRContext ctx(evaluator_.primitives(), &type_registry_, &metrics_,
                                       &evaluator_);
-        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, ctx);
+        aura::compiler::IRInterpreter ir_interp(live_ir_mod, ctx);
         seed_eval_interp_closure_cursor_4895_(ir_interp);
         ir_interp.set_strategy(strategy_);
         if (!last_escape_maps_.empty())
@@ -5885,7 +5895,7 @@ public:
 
     // Get or create a per-module arena.
     ast::ASTArena& module_arena(const std::string& name,
-                                std::size_t initial_size = 8 * 1024 * 1024) {
+                                std::size_t initial_size = 8uz * 1024 * 1024) {
         return arena_group_.module_arena(name, initial_size);
     }
 
@@ -9348,9 +9358,10 @@ public:
         std::vector<aura::ir::ClosureBridgeData> bridge_bundle;
         for (auto& func : ir_mod.functions) {
             if (func.id != ir_mod.entry_function_id) {
+                const auto fid = func.id; // read before the move below
                 bundle.push_back(std::move(func));
-                if (func.id < ir_mod.closure_bridge.size())
-                    bridge_bundle.push_back(ir_mod.closure_bridge[func.id]);
+                if (fid < ir_mod.closure_bridge.size())
+                    bridge_bundle.push_back(ir_mod.closure_bridge[fid]);
                 else
                     bridge_bundle.emplace_back();
             }
@@ -11785,6 +11796,8 @@ public:
             // No cache yet — seed it with a regular eval_ir first
             return eval_ir(new_code);
         }
+        // Issue #4936: one checked deref; the cache is seeded above.
+        auto& live_ir_mod = *last_ir_mod_;
 
         auto alloc = arena_.allocator();
         aura::ast::StringPool pool(alloc);
@@ -11801,14 +11814,14 @@ public:
         // Hot-swap each function from new_mod into the cached module
         for (auto& new_func : new_mod.functions) {
             auto func_id = new_func.id;
-            if (func_id < last_ir_mod_->functions.size()) {
+            if (func_id < live_ir_mod.functions.size()) {
                 new_func.id = func_id;
-                (*last_ir_mod_).functions[func_id] = std::move(new_func);
+                live_ir_mod.functions[func_id] = std::move(new_func);
             } else {
-                last_ir_mod_->functions.push_back(std::move(new_func));
+                live_ir_mod.functions.push_back(std::move(new_func));
             }
         }
-        last_ir_mod_->entry_function_id = new_mod.entry_function_id;
+        live_ir_mod.entry_function_id = new_mod.entry_function_id;
 
         // Re-run passes on the hot-swapped module
         TypeSpecializationWrap ts(&type_registry_);
@@ -11832,7 +11845,7 @@ public:
         // Issue #3329: production purity / SoA / DirtyPropagator gate.
         // Issue #4007: hot-swap still restamps the cached AoS module;
         // named factory stays the V2 PureWrap pack.
-        aura::compiler::run_production_pipeline(*last_ir_mod_, ts, tprop, ck, ar, cf, dce);
+        aura::compiler::run_production_pipeline(live_ir_mod, ts, tprop, ck, ar, cf, dce);
         accumulate_type_propagation_metrics(tprop);
         accumulate_coercion_pass_metrics(ts, dce);
 
@@ -11849,7 +11862,7 @@ public:
 
         aura::compiler::IRContext ctx(evaluator_.primitives(), &type_registry_, &metrics_,
                                       &evaluator_);
-        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, ctx);
+        aura::compiler::IRInterpreter ir_interp(live_ir_mod, ctx);
         ir_interp.set_strategy(strategy_);
         if (strict_mode_)
             ir_interp.set_strict_mode(true);
@@ -12044,10 +12057,11 @@ public:
                 if (func.name.empty() || func.name == "__lambda__") {
                     func.name = name + std::string("#") + std::to_string(own_pos++);
                 }
+                const auto fid = func.id; // read before the move below
                 bundle.push_back(std::move(func));
                 // Save bridge data
-                if (func.id < ir_mod.closure_bridge.size())
-                    bridge_bundle.push_back(ir_mod.closure_bridge[func.id]);
+                if (fid < ir_mod.closure_bridge.size())
+                    bridge_bundle.push_back(ir_mod.closure_bridge[fid]);
                 else
                     bridge_bundle.emplace_back();
             }
@@ -15309,10 +15323,10 @@ public:
         {
             auto& eval_mut = const_cast<Evaluator&>(evaluator_);
             if (eval_mut.try_lock_workspace_shared()) {
-                struct UnlockGuard {
+                struct UnlockGuard : ::aura::core::NoCopy {
                     Evaluator& e;
                     ~UnlockGuard() { e.unlock_workspace_shared(); }
-                } guard{eval_mut};
+                } guard{{}, eval_mut};
                 const auto* wf = eval_mut.workspace_flat();
                 if (wf) {
                     const auto& markers = wf->marker_column();
@@ -15859,6 +15873,7 @@ public:
         // Disallow copy
         MutationTransaction(const MutationTransaction&) = delete;
         MutationTransaction& operator=(const MutationTransaction&) = delete;
+        MutationTransaction& operator=(MutationTransaction&&) = delete;
         // Allow move
         MutationTransaction(MutationTransaction&& other) noexcept
             : ast(other.ast)
@@ -16010,6 +16025,7 @@ public:
         // Disallow copy
         TypedTransactionGuard(const TypedTransactionGuard&) = delete;
         TypedTransactionGuard& operator=(const TypedTransactionGuard&) = delete;
+        TypedTransactionGuard& operator=(TypedTransactionGuard&&) = delete;
         // Allow move
         TypedTransactionGuard(TypedTransactionGuard&& other) noexcept
             : svc(other.svc)
@@ -16216,6 +16232,8 @@ public:
                 : ev(e)
                 , scratch(s)
                 , saved_top(e.top_env().pool()) {}
+            DetachScratchPool(const DetachScratchPool&) = delete;
+            DetachScratchPool& operator=(const DetachScratchPool&) = delete;
             ~DetachScratchPool() {
                 if (!scratch)
                     return;
@@ -16585,10 +16603,10 @@ public:
         // (plain lock_shared).
         auto& eval_mut = const_cast<Evaluator&>(evaluator_);
         eval_mut.lock_workspace_shared();
-        struct UnlockGuard {
+        struct UnlockGuard : ::aura::core::NoCopy {
             Evaluator& e;
             ~UnlockGuard() { e.unlock_workspace_shared(); }
-        } guard{eval_mut};
+        } guard{{}, eval_mut};
         auto hist = (node == aura::ast::NULL_NODE) ? source->all_mutations()
                                                    : source->mutation_history(node);
         for (auto& rec : hist) {
@@ -17194,7 +17212,7 @@ private:
             // Parse as int64 (don't support hex/oct/bin here — full
             // eval handles them).
             try {
-                std::string ts(t);
+                const std::string ts(t);
                 std::size_t consumed = 0;
                 long long v = std::stoll(ts, &consumed);
                 if (consumed == ts.size())
@@ -17207,7 +17225,7 @@ private:
         // Float?
         if (t.find('.') != std::string_view::npos) {
             try {
-                std::string ts(t);
+                const std::string ts(t);
                 std::size_t consumed = 0;
                 double v = std::stod(ts, &consumed);
                 if (consumed == ts.size())
@@ -18651,7 +18669,7 @@ private:
         }
     };
     CountingMR arena_upstream_mr_{};
-    ast::ASTArena arena_{8 * 1024 * 1024, &arena_upstream_mr_};
+    ast::ASTArena arena_{8uz * 1024 * 1024, &arena_upstream_mr_};
     ast::ASTArena temp_arena_;
     ast::ArenaGroup arena_group_;
     Evaluator evaluator_;
@@ -18748,6 +18766,8 @@ public:
     // Issue #300 follow-up #1: drop per-fiber / main-thread
     // mutation checkpoints before arena teardown so PCV
     // children_snapshot copies do not race ~workspace_flat_.
+    CompilerService(const CompilerService&) = delete;
+    CompilerService& operator=(const CompilerService&) = delete;
     ~CompilerService() {
         evaluator_.set_tw_tier_hook_4682(nullptr, nullptr);
         evaluator_.set_exit_quiesce_hook(nullptr, nullptr);

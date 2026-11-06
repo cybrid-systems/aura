@@ -39,6 +39,8 @@ static_assert(sizeof(CacheHeader) == 72, "CacheHeader must be 72 bytes");
 export class MappedCache {
 public:
     MappedCache() = default;
+    MappedCache(const MappedCache&) = delete;
+    MappedCache& operator=(const MappedCache&) = delete;
     MappedCache(MappedCache&&) noexcept;
     MappedCache& operator=(MappedCache&&) noexcept;
     ~MappedCache();

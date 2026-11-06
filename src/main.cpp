@@ -22,6 +22,10 @@
 #include "serve/aura_platform.h"
 #include "serve/runtime_production_abi.h" // #2955 production ABI self-check
 #include "compiler/runtime_paths.h"       // #906
+#include "core/parse_number.hh"           // #4936 exception-free parse
+#include "core/diag_print.hh"             // #4936 eprintln_nothrow
+#include "core/ownership.hh"              // #4936 unique_file
+#include "compiler/ir_buffer_abi.h"       // #4936 IrBufferPtr
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 // Issue #2076 / #2053: production security defaults (must be before import std).
 #include "compiler/security_defaults.hh"
@@ -47,8 +51,9 @@ import aura.compiler.value;
 import aura.repl;
 
 // C-linkage bridge to reflection-based --inspect
-// (implemented in ir_reflect_serialize.cpp, compiled with -freflection)
-extern "C" char* aura_inspect_ir_json(const void* mod, std::size_t* out_size);
+// (implemented in ir_reflect_serialize.cpp, compiled with -freflection).
+// #4936: the returned buffer is held in aura::ir::IrBufferPtr
+// (compiler/ir_buffer_abi.h, included above import std).
 extern "C" bool aura_emit_object_file(const void* mod, const char* path);
 extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
                                       const void* functions, unsigned int num_functions);
@@ -669,10 +674,10 @@ static bool form_mentions_symbol_4893(std::string_view f, std::string_view name)
 // it resolve against its directory (not the cwd).
 static void register_entry_file_4916(const char* path, std::string content) {
     std::string p(path);
-    if (char* real = ::realpath(path, nullptr)) {
-        p = real;
-        ::free(real);
-    }
+    // #4936: canonical() is realpath(3) without the malloc'd buffer.
+    std::error_code ec;
+    if (auto real = std::filesystem::canonical(path, ec); !ec)
+        p = real.string();
     aura::diag::set_entry_source_file(
         aura::diag::register_source_file(std::move(p), std::move(content)));
 }
@@ -1512,7 +1517,7 @@ static std::vector<TopLevelForm4865> split_top_level_forms_4865(std::string_view
     return out;
 }
 
-int main(int argc, char* argv[]) {
+static int aura_main(int argc, char* argv[]) {
     // Issue #137: register an atexit handler that frees the
     // runtime's hash tables. The `hash` primitive in the
     // evaluator creates these via FlatHashTable::create; they
@@ -2477,10 +2482,8 @@ int main(int argc, char* argv[]) {
                         int timeout_sec = 30;
                         auto timeout_it = cmd.find("timeout");
                         if (timeout_it != cmd.end()) {
-                            try {
-                                timeout_sec = std::stoi(timeout_it->second);
-                            } catch (...) {
-                            }
+                            timeout_sec = aura::core::parse_leading_int<int>(timeout_it->second)
+                                              .value_or(timeout_sec);
                         }
                         auto future = std::async(std::launch::async, [&]() {
                             return aura::serve::detail::eval_top_level_forms(
@@ -2752,10 +2755,10 @@ int main(int argc, char* argv[]) {
                 (void)cf.folded_count();
 
                 std::size_t json_size = 0;
-                char* json_data = aura_inspect_ir_json(&cached_mod, &json_size);
-                std::string_view json_str(json_data, json_size);
+                const aura::ir::IrBufferPtr json_data{
+                    aura_inspect_ir_json(&cached_mod, &json_size)};
+                std::string_view json_str(json_data.get(), json_size);
                 std::println("{}", prettify_json(std::string(json_str)));
-                delete[] json_data;
             } else {
                 std::println("no IR cache in {}", argv[3]);
             }
@@ -2781,14 +2784,13 @@ int main(int argc, char* argv[]) {
             auto& last_mod = cs.last_ir_module();
             if (last_mod) {
                 std::size_t json_size = 0;
-                char* json_data = aura_inspect_ir_json(&*last_mod, &json_size);
-                std::string_view json_str(json_data, json_size);
+                const aura::ir::IrBufferPtr json_data{aura_inspect_ir_json(&*last_mod, &json_size)};
+                std::string_view json_str(json_data.get(), json_size);
                 if (mode == "pretty") {
                     std::println("{}", prettify_json(std::string(json_str)));
                 } else {
                     std::println("{}", json_str);
                 }
-                delete[] json_data;
             } else {
                 std::println(std::cerr, "inspect: no IR module available");
             }
@@ -3424,9 +3426,13 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         // Freeze: write source to snapshot file
-        if (auto* sf = std::fopen(argv[2], "w")) {
-            std::fprintf(sf, "%s", input.c_str());
-            std::fclose(sf);
+        if (auto sf = aura::core::open_file(argv[2], "w")) {
+            // #4936: a failed write or final flush used to report success.
+            const bool wrote = std::fputs(input.c_str(), sf.get()) >= 0;
+            if (!aura::core::close_file(sf) || !wrote) {
+                std::println(std::cerr, "error: cannot write to {}", argv[2]);
+                return 1;
+            }
             std::println("frozen to {}", argv[2]);
         } else {
             std::println(std::cerr, "error: cannot write to {}", argv[2]);
@@ -5678,4 +5684,18 @@ int main(int argc, char* argv[]) {
 
     // Issue #4497: an error consumed by display/write also fails the run.
     return (err || aura_displayed_error_count() > 0) ? 1 : 0;
+}
+
+// Issue #4936 (Core Guidelines E.12 / bugprone-exception-escape): an exception
+// that escapes main calls std::terminate with no message. Report it and exit
+// with EX_SOFTWARE (70) instead.
+int main(int argc, char* argv[]) {
+    try {
+        return aura_main(argc, argv);
+    } catch (const std::exception& e) {
+        ::aura::core::eprintln_nothrow("aura: fatal: uncaught exception: {}", e.what());
+    } catch (...) {
+        ::aura::core::eprintln_nothrow("aura: fatal: uncaught non-standard exception");
+    }
+    return 70;
 }

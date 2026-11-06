@@ -5,6 +5,8 @@
 #ifndef AURA_CORE_MUTATION_AUDIT_WAL_HH
 #define AURA_CORE_MUTATION_AUDIT_WAL_HH
 
+#include "core/ownership.hh"    // #4936 unique_file
+#include "core/parse_number.hh" // #4936 exception-free parse
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
@@ -13,6 +15,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <mutex>
 #include <new>
 #include <optional>
@@ -35,7 +38,7 @@ inline constexpr std::uint64_t kDefaultRotateBytes = 1ull << 20;
 // Issue #4641: stdio buffer size of one live segment. The enable swap
 // opens the new segment while the old one is still live, so each stream
 // needs its own buffer (two live FILE* must never share one).
-inline constexpr std::size_t kSegmentBufferBytes = 64 * 1024;
+inline constexpr std::size_t kSegmentBufferBytes = 64uz * 1024;
 
 // Issue #3465: v1 body (pre-reason tail). Readers of old segments
 // consume this many bytes and leave reason[] empty → wal-replay-legacy.
@@ -137,18 +140,20 @@ inline AuditWalMetrics& g_audit_wal_metrics() noexcept {
 }
 
 // Process-wide WAL controller (optional persist).
-struct MutationAuditWal {
+struct MutationAuditWal : ::aura::core::NoCopy {
     mutable std::mutex mtx;
     bool enabled = false;
     std::string dir;
     std::string current_path;
-    std::FILE* fp = nullptr;
     // Issue #4641: stdio buffer owned by `fp` when the segment was opened
     // by the enable swap (open_segment_at). The rotate / retry path keeps
     // the shared static buffer. Two live segments must never share one
     // stdio buffer (undefined behaviour) — the enable swap briefly has the
     // old segment and the new one open at the same time.
-    char* fp_buf_ = nullptr;
+    // #4936: declared before `fp` so the stream is closed before its buffer
+    // is freed, also on implicit destruction.
+    std::unique_ptr<char[]> fp_buf_;
+    unique_file fp;
     std::uint64_t current_bytes = 0;
     std::uint64_t rotate_bytes = kDefaultRotateBytes;
     std::uint32_t segment_index = 0;
@@ -162,7 +167,7 @@ struct MutationAuditWal {
     // this were already unlinked in this dir session (enable resets it).
     std::uint32_t pruned_upto_ = 0;
     // Issue #3242: typed-summary sidecar (paired segment index; own FILE*).
-    std::FILE* typed_fp = nullptr;
+    unique_file typed_fp;
     std::string typed_path;
     std::uint64_t typed_bytes = 0;
     std::uint32_t typed_unflushed = 0;
@@ -174,22 +179,19 @@ struct MutationAuditWal {
 
     void close_typed_unlocked() noexcept {
         if (typed_fp) {
-            std::fflush(typed_fp);
-            std::fclose(typed_fp);
-            typed_fp = nullptr;
+            std::fflush(typed_fp.get());
+            typed_fp.reset();
         }
         typed_unflushed = 0;
     }
 
     void close_unlocked() noexcept {
         if (fp) {
-            std::fflush(fp);
-            std::fclose(fp);
-            fp = nullptr;
+            std::fflush(fp.get());
+            fp.reset();
         }
         // Issue #4641: release the swap-owned stdio buffer with the stream.
-        delete[] fp_buf_;
-        fp_buf_ = nullptr;
+        fp_buf_.reset();
         unflushed = 0;
         close_typed_unlocked();
     }
@@ -203,32 +205,32 @@ struct MutationAuditWal {
             return false;
         current_path = (fs::path(dir) / ("audit-" + std::to_string(seg) + ".wal")).string();
         // Append mode for crash-safe continue; create if missing.
-        fp = std::fopen(current_path.c_str(), "ab+");
+        fp = open_file(current_path.c_str(), "ab+");
         if (!fp)
             return false;
         // Larger stdio buffer for hot-path append amortization (#1567 AC6).
         static char sbuf[kSegmentBufferBytes];
-        std::setvbuf(fp, sbuf, _IOFBF, sizeof(sbuf));
+        std::setvbuf(fp.get(), sbuf, _IOFBF, sizeof(sbuf));
         // Measure current size
-        if (std::fseek(fp, 0, SEEK_END) != 0) {
+        if (std::fseek(fp.get(), 0, SEEK_END) != 0) {
             close_unlocked();
             return false;
         }
-        const auto pos = std::ftell(fp);
+        const auto pos = std::ftell(fp.get());
         current_bytes = pos > 0 ? static_cast<std::uint64_t>(pos) : 0;
         // Write magic header on fresh file
         if (current_bytes == 0) {
-            if (std::fwrite(kAuditWalMagic, 1, 8, fp) != 8) {
+            if (std::fwrite(kAuditWalMagic, 1, 8, fp.get()) != 8) {
                 close_unlocked();
                 return false;
             }
             const std::uint32_t ver = kAuditWalVersion;
-            if (std::fwrite(&ver, sizeof(ver), 1, fp) != 1) {
+            if (std::fwrite(&ver, sizeof(ver), 1, fp.get()) != 1) {
                 close_unlocked();
                 return false;
             }
             current_bytes = 8 + sizeof(ver);
-            std::fflush(fp);
+            std::fflush(fp.get());
         }
         // Issue #3465: never append tail-bearing records into a v1 body.
         // Old segments keep reserved0==0; new writers stamp the marker.
@@ -236,9 +238,10 @@ struct MutationAuditWal {
             std::uint16_t marker = 0;
             const long off =
                 static_cast<long>(8 + sizeof(std::uint32_t) + kAuditWalReserved0Offset);
-            if (std::fseek(fp, off, SEEK_SET) == 0)
-                (void)!std::fread(&marker, sizeof(marker), 1, fp); // short read OK; marker stays 0
-            (void)std::fseek(fp, 0, SEEK_END);
+            if (std::fseek(fp.get(), off, SEEK_SET) == 0)
+                (void)!std::fread(&marker, sizeof(marker), 1,
+                                  fp.get()); // short read OK; marker stays 0
+            (void)std::fseek(fp.get(), 0, SEEK_END);
             if (marker != kAuditWalReasonTailMarker) {
                 close_unlocked();
                 return open_segment_unlocked(seg + 1);
@@ -260,8 +263,8 @@ struct MutationAuditWal {
     // briefly has the old segment and the new one live at the same time and
     // two live FILE* must never share one buffer.
     [[nodiscard]] bool open_segment_at(const std::string& dir_in, std::uint32_t seg,
-                                       std::FILE*& out_fp, char*& out_buf, std::string& out_path,
-                                       std::uint64_t& out_bytes,
+                                       unique_file& out_fp, std::unique_ptr<char[]>& out_buf,
+                                       std::string& out_path, std::uint64_t& out_bytes,
                                        std::uint32_t& out_index) noexcept {
         namespace fs = std::filesystem;
         std::error_code ec;
@@ -269,58 +272,52 @@ struct MutationAuditWal {
         if (ec)
             return false;
         const auto path = (fs::path(dir_in) / ("audit-" + std::to_string(seg) + ".wal")).string();
-        std::FILE* f = std::fopen(path.c_str(), "ab+");
+        // Larger stdio buffer for hot-path append amortization (#1567 AC6).
+        // #4936: `buf` is declared before `f`, so on every early return the
+        // stream is closed (and flushed) before its buffer is freed.
+        std::unique_ptr<char[]> buf{new (std::nothrow) char[kSegmentBufferBytes]};
+        if (!buf) {
+            return false;
+        }
+        unique_file f = open_file(path.c_str(), "ab+");
         if (!f)
             return false;
-        // Larger stdio buffer for hot-path append amortization (#1567 AC6).
-        char* buf = new (std::nothrow) char[kSegmentBufferBytes];
-        if (!buf) {
-            std::fclose(f);
-            return false;
-        }
-        std::setvbuf(f, buf, _IOFBF, kSegmentBufferBytes);
+        std::setvbuf(f.get(), buf.get(), _IOFBF, kSegmentBufferBytes);
         // Measure current size
         std::uint64_t bytes = 0;
-        if (std::fseek(f, 0, SEEK_END) != 0) {
-            std::fclose(f);
-            delete[] buf;
+        if (std::fseek(f.get(), 0, SEEK_END) != 0) {
             return false;
         }
-        const auto pos = std::ftell(f);
+        const auto pos = std::ftell(f.get());
         bytes = pos > 0 ? static_cast<std::uint64_t>(pos) : 0;
         // Write magic header on fresh file
         if (bytes == 0) {
-            if (std::fwrite(kAuditWalMagic, 1, 8, f) != 8) {
-                std::fclose(f);
-                delete[] buf;
+            if (std::fwrite(kAuditWalMagic, 1, 8, f.get()) != 8) {
                 return false;
             }
             const std::uint32_t ver = kAuditWalVersion;
-            if (std::fwrite(&ver, sizeof(ver), 1, f) != 1) {
-                std::fclose(f);
-                delete[] buf;
+            if (std::fwrite(&ver, sizeof(ver), 1, f.get()) != 1) {
                 return false;
             }
             bytes = 8 + sizeof(ver);
-            std::fflush(f);
+            std::fflush(f.get());
         }
         // Issue #3465: never append tail-bearing records into a v1 body.
         if (bytes > 8 + sizeof(std::uint32_t)) {
             std::uint16_t marker = 0;
             const long off =
                 static_cast<long>(8 + sizeof(std::uint32_t) + kAuditWalReserved0Offset);
-            if (std::fseek(f, off, SEEK_SET) == 0)
-                (void)!std::fread(&marker, sizeof(marker), 1, f); // short read OK
-            (void)std::fseek(f, 0, SEEK_END);
+            if (std::fseek(f.get(), off, SEEK_SET) == 0)
+                (void)!std::fread(&marker, sizeof(marker), 1, f.get()); // short read OK
+            (void)std::fseek(f.get(), 0, SEEK_END);
             if (marker != kAuditWalReasonTailMarker) {
-                std::fclose(f);
-                delete[] buf;
                 return open_segment_at(dir_in, seg + 1, out_fp, out_buf, out_path, out_bytes,
                                        out_index);
             }
         }
-        out_fp = f;
-        out_buf = buf;
+        // Buffer first: the stream that uses it must never outlive it.
+        out_buf = std::move(buf);
+        out_fp = std::move(f);
         out_path = path;
         out_bytes = bytes;
         out_index = seg;
@@ -337,29 +334,29 @@ struct MutationAuditWal {
         if (ec)
             return false;
         typed_path = (fs::path(dir) / ("typed-summary-" + std::to_string(seg) + ".wal")).string();
-        typed_fp = std::fopen(typed_path.c_str(), "ab+");
+        typed_fp = open_file(typed_path.c_str(), "ab+");
         if (!typed_fp)
             return false;
         static char tbuf[16 * 1024];
-        std::setvbuf(typed_fp, tbuf, _IOFBF, sizeof(tbuf));
-        if (std::fseek(typed_fp, 0, SEEK_END) != 0) {
+        std::setvbuf(typed_fp.get(), tbuf, _IOFBF, sizeof(tbuf));
+        if (std::fseek(typed_fp.get(), 0, SEEK_END) != 0) {
             close_typed_unlocked();
             return false;
         }
-        const auto pos = std::ftell(typed_fp);
+        const auto pos = std::ftell(typed_fp.get());
         typed_bytes = pos > 0 ? static_cast<std::uint64_t>(pos) : 0;
         if (typed_bytes == 0) {
-            if (std::fwrite(kTypedSummaryWalMagic, 1, 8, typed_fp) != 8) {
+            if (std::fwrite(kTypedSummaryWalMagic, 1, 8, typed_fp.get()) != 8) {
                 close_typed_unlocked();
                 return false;
             }
             const std::uint32_t ver = kTypedSummaryWalVersion;
-            if (std::fwrite(&ver, sizeof(ver), 1, typed_fp) != 1) {
+            if (std::fwrite(&ver, sizeof(ver), 1, typed_fp.get()) != 1) {
                 close_typed_unlocked();
                 return false;
             }
             typed_bytes = 8 + sizeof(ver);
-            std::fflush(typed_fp);
+            std::fflush(typed_fp.get());
         }
         return true;
     }
@@ -460,14 +457,13 @@ struct MutationAuditWal {
                 if (name.rfind("audit-", 0) != 0 || !name.ends_with(".wal"))
                     continue;
                 const auto mid = name.substr(6, name.size() - 6 - 4);
-                try {
-                    const auto seg_no = static_cast<std::uint32_t>(std::stoul(mid));
+                if (const auto parsed = aura::core::parse_leading_int<std::uint32_t>(mid)) {
+                    const auto seg_no = *parsed;
                     seg_indices.push_back(seg_no);
                     if (!any || seg_no > max_seg) {
                         max_seg = seg_no;
                         any = true;
                     }
-                } catch (...) {
                 }
             }
         }
@@ -475,7 +471,7 @@ struct MutationAuditWal {
         // replay so a re-enable of the same directory still sees the records
         // that are still buffered.
         if (fp) {
-            (void)std::fflush(fp);
+            (void)std::fflush(fp.get());
             unflushed = 0;
         }
         // Replay segments newest→oldest (#4520 bounded startup replay):
@@ -528,8 +524,8 @@ struct MutationAuditWal {
         // Issue #4641: open the NEW segment before the live one is closed.
         // A failed open leaves the previous WAL enabled, on its previous
         // directory and still writable.
-        std::FILE* new_fp = nullptr;
-        char* new_buf = nullptr;
+        unique_file new_fp;
+        std::unique_ptr<char[]> new_buf;
         std::string new_path;
         std::uint64_t new_bytes = 0;
         std::uint32_t new_index = 0;
@@ -542,8 +538,8 @@ struct MutationAuditWal {
         // Commit: close the live segment, install the new one.
         close_unlocked();
         dir = new_dir;
-        fp = new_fp;
-        fp_buf_ = new_buf;
+        fp_buf_ = std::move(new_buf);
+        fp = std::move(new_fp);
         current_path = new_path;
         current_bytes = new_bytes;
         segment_index = new_index;
@@ -643,7 +639,7 @@ struct MutationAuditWal {
         // even when callers zero-init AuditWalRecord and skip make_record.
         AuditWalRecord out = rec;
         out.reserved0 = kAuditWalReasonTailMarker;
-        const auto n = std::fwrite(&out, 1, sizeof(out), fp);
+        const auto n = std::fwrite(&out, 1, sizeof(out), fp.get());
         if (n != sizeof(out)) {
             g_audit_wal_metrics().audit_wal_append_fail_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
@@ -656,7 +652,7 @@ struct MutationAuditWal {
         ++unflushed;
         // Batched flush: amortize syscall cost; full flush on rotate/close.
         if (unflushed >= kFlushEvery) {
-            std::fflush(fp);
+            std::fflush(fp.get());
             unflushed = 0;
         }
         g_audit_wal_metrics().audit_record_persisted_total.fetch_add(1, std::memory_order_relaxed);
@@ -676,13 +672,13 @@ struct MutationAuditWal {
             return false;
         // Sidecar is additive: do not consume mutation-WAL inject fails
         // or the append-fail SLO (those stay mutation-record only).
-        const auto n = std::fwrite(&rec, 1, sizeof(rec), typed_fp);
+        const auto n = std::fwrite(&rec, 1, sizeof(rec), typed_fp.get());
         if (n != sizeof(rec))
             return false;
         typed_bytes += sizeof(rec);
         ++typed_unflushed;
         if (typed_unflushed >= kFlushEvery) {
-            std::fflush(typed_fp);
+            std::fflush(typed_fp.get());
             typed_unflushed = 0;
         }
         g_audit_wal_metrics().typed_summary_wal_persisted_total.fetch_add(
@@ -695,23 +691,21 @@ struct MutationAuditWal {
     static std::vector<TypedSummaryWalRecord>
     read_typed_segment_file(const std::string& path) noexcept {
         std::vector<TypedSummaryWalRecord> out;
-        std::FILE* f = std::fopen(path.c_str(), "rb");
+        const unique_file f = open_file(path.c_str(), "rb");
         if (!f)
             return out;
         char magic[8]{};
-        if (std::fread(magic, 1, 8, f) != 8 || std::memcmp(magic, kTypedSummaryWalMagic, 8) != 0) {
-            std::fclose(f);
+        if (std::fread(magic, 1, 8, f.get()) != 8 ||
+            std::memcmp(magic, kTypedSummaryWalMagic, 8) != 0) {
             return out;
         }
         std::uint32_t ver = 0;
-        if (std::fread(&ver, sizeof(ver), 1, f) != 1 || ver != kTypedSummaryWalVersion) {
-            std::fclose(f);
+        if (std::fread(&ver, sizeof(ver), 1, f.get()) != 1 || ver != kTypedSummaryWalVersion) {
             return out;
         }
         TypedSummaryWalRecord rec{};
-        while (std::fread(&rec, 1, sizeof(rec), f) == sizeof(rec))
+        while (std::fread(&rec, 1, sizeof(rec), f.get()) == sizeof(rec))
             out.push_back(rec);
-        std::fclose(f);
         return out;
     }
 
@@ -726,7 +720,7 @@ struct MutationAuditWal {
         if (!enabled || dir.empty())
             return std::nullopt;
         if (typed_fp)
-            std::fflush(typed_fp);
+            std::fflush(typed_fp.get());
         namespace fs = std::filesystem;
         const std::uint32_t n = std::min(max_segments, segment_index + 1);
         for (std::uint32_t i = 0; i < n; ++i) {
@@ -754,7 +748,7 @@ struct MutationAuditWal {
         if (!enabled || dir.empty())
             return std::nullopt;
         if (fp)
-            std::fflush(fp);
+            std::fflush(fp.get());
         namespace fs = std::filesystem;
         const std::uint32_t n = std::min(max_segments, segment_index + 1);
         for (std::uint32_t i = 0; i < n; ++i) {
@@ -787,40 +781,38 @@ struct MutationAuditWal {
 
     static std::vector<AuditWalRecord> read_segment_file(const std::string& path) noexcept {
         std::vector<AuditWalRecord> out;
-        std::FILE* f = std::fopen(path.c_str(), "rb");
+        const unique_file f = open_file(path.c_str(), "rb");
         if (!f)
             return out;
         char magic[8]{};
-        if (std::fread(magic, 1, 8, f) != 8 || std::memcmp(magic, kAuditWalMagic, 8) != 0) {
-            std::fclose(f);
+        if (std::fread(magic, 1, 8, f.get()) != 8 || std::memcmp(magic, kAuditWalMagic, 8) != 0) {
             return out;
         }
         std::uint32_t ver = 0;
-        if (std::fread(&ver, sizeof(ver), 1, f) != 1 || ver != kAuditWalVersion) {
-            std::fclose(f);
+        if (std::fread(&ver, sizeof(ver), 1, f.get()) != 1 || ver != kAuditWalVersion) {
             return out;
         }
         // Issue #3465: version stays 1. Size is selected from reserved0 of
         // the first record — marker means reason tail is present; missing
         // tail (old segments) is left empty → wal-replay-legacy.
         std::uint16_t marker = 0;
-        const auto data_start = std::ftell(f);
+        const auto data_start = std::ftell(f.get());
         if (data_start >= 0 &&
-            std::fseek(f, data_start + static_cast<long>(kAuditWalReserved0Offset), SEEK_SET) == 0)
-            (void)!std::fread(&marker, sizeof(marker), 1, f); // short read OK; marker stays 0
+            std::fseek(f.get(), data_start + static_cast<long>(kAuditWalReserved0Offset),
+                       SEEK_SET) == 0)
+            (void)!std::fread(&marker, sizeof(marker), 1, f.get()); // short read OK; marker stays 0
         if (data_start >= 0)
-            (void)std::fseek(f, data_start, SEEK_SET);
+            (void)std::fseek(f.get(), data_start, SEEK_SET);
         const bool has_reason_tail = marker == kAuditWalReasonTailMarker;
         const std::size_t rec_size =
             has_reason_tail ? sizeof(AuditWalRecord) : kAuditWalRecordV1Size;
         AuditWalRecord rec{};
-        while (std::fread(&rec, 1, rec_size, f) == rec_size) {
+        while (std::fread(&rec, 1, rec_size, f.get()) == rec_size) {
             if (!has_reason_tail)
                 rec.reason[0] = '\0';
             out.push_back(rec);
             rec = AuditWalRecord{};
         }
-        std::fclose(f);
         return out;
     }
 

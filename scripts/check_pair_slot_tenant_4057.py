@@ -162,7 +162,11 @@ def main() -> int:
     # condition must be the conjunction with prod_pair_face.
     if pair.count("prod_pair_face && slot_tenant != ev.capability_tenant_id()") != 2:
         fails.append("AC4: deny condition is not gated on the production face")
-    read_guard = pair.count("(idx < g_pair_slot_tenants.size()) ? g_pair_slot_tenants[idx] : 0")
+    # Issue #4936: the unstamped arm is std::uint64_t{0} (an int 0 made the
+    # whole ternary int and truncated tenant ids).
+    read_guard = " ".join(pair.split()).count(
+        "(idx < g_pair_slot_tenants.size()) ? g_pair_slot_tenants[idx] : std::uint64_t{0}"
+    )
     if read_guard != 2:
         fails.append("AC4: tenant read lacks the index guard (short array = unstamped)")
 

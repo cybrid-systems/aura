@@ -22,6 +22,7 @@ module;
 // not in evaluator.ixx's global fragment).
 #include "compiler/agent_name_table.h"
 #include "compiler/handoff_token_stash.hh"
+#include "core/ownership.hh" // #4936 opaque_ptr
 
 module aura.compiler.evaluator;
 
@@ -275,12 +276,11 @@ void Evaluator::set_type_registry(void* reg) {
     // (compile:hw-coercion-lossy? / hw-coercion-warning / typecheck).
     // Call only under eval quiescence (see evaluator.ixx contract).
     // Issue #1898: bump type_registry_gen_ so pin revalidation detects rebind.
-    if (owns_type_registry_ && type_registry_ && type_registry_ != reg) {
-        delete static_cast<aura::core::TypeRegistry*>(type_registry_);
-        owns_type_registry_ = false;
-    }
+    // Re-wiring our own registry keeps ownership (it used to be dropped and
+    // leaked).
+    if (type_registry_ != reg)
+        type_registry_owned_.reset();
     type_registry_ = reg;
-    owns_type_registry_ = false;
     type_registry_gen_.fetch_add(1, std::memory_order_release);
 }
 
@@ -288,8 +288,9 @@ void* Evaluator::ensure_type_registry() {
     // Issue #911/#912: single ownership path for TypeRegistry.
     // Issue #1898: bump gen when first allocating owned registry.
     if (!type_registry_) {
-        type_registry_ = new aura::core::TypeRegistry();
-        owns_type_registry_ = true;
+        auto owned = std::make_unique<aura::core::TypeRegistry>();
+        type_registry_ = owned.get();
+        type_registry_owned_ = aura::core::adopt_opaque(std::move(owned));
         type_registry_gen_.fetch_add(1, std::memory_order_release);
     }
     return type_registry_;
@@ -459,10 +460,9 @@ Evaluator::~Evaluator() {
         strategies_.clear();
     }
     // Issue #911: free Evaluator-owned TypeRegistry
-    if (owns_type_registry_ && type_registry_) {
-        delete static_cast<aura::core::TypeRegistry*>(type_registry_);
+    if (type_registry_owned_) {
+        type_registry_owned_.reset();
         type_registry_ = nullptr;
-        owns_type_registry_ = false;
     }
 }
 

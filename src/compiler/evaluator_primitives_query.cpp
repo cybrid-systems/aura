@@ -753,11 +753,11 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             std::int64_t ir_macro_introduced_inlined_skipped = 0;
             if (ev) {
                 if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
-                    lowering_marker_propagated =
-                        m->lowering_marker_propagated_total.load(std::memory_order_relaxed);
+                    lowering_marker_propagated = static_cast<std::int64_t>(
+                        m->lowering_marker_propagated_total.load(std::memory_order_relaxed));
                     ir_macro_introduced_inlined_skipped =
-                        m->ir_macro_introduced_inlined_skipped_total.load(
-                            std::memory_order_relaxed);
+                        static_cast<std::int64_t>(m->ir_macro_introduced_inlined_skipped_total.load(
+                            std::memory_order_relaxed));
                 }
             }
             const auto c_stamped = static_cast<std::int64_t>(aura_hygiene_ir_macro_marker_total());

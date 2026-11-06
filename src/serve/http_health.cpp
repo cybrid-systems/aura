@@ -54,7 +54,7 @@ namespace {
     void handle_client(int fd) {
         timeval io_tv{};
         io_tv.tv_sec = kClientIoTimeoutMs / 1000;
-        io_tv.tv_usec = (kClientIoTimeoutMs % 1000) * 1000;
+        io_tv.tv_usec = static_cast<suseconds_t>(kClientIoTimeoutMs % 1000) * 1000;
         ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &io_tv, sizeof(io_tv));
         ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &io_tv, sizeof(io_tv));
         char buf[2048];

@@ -1444,9 +1444,8 @@ static void ac4414_module_reader_host_path() {
               "4414: load-module fences the .aura-type sibling");
         CHECK(loader.find("O_RDONLY | O_NOFOLLOW | O_CLOEXEC") != std::string::npos,
               "4414: load-module reader is O_NOFOLLOW");
-        CHECK(loader.find(
-                  "host_path_policy_active() ? std::move(gated) : resolve_module_path(gated)") !=
-                  std::string::npos,
+        CHECK(loader.find("resolved.swap(gated);") != std::string::npos &&
+                  loader.find("resolved = resolve_module_path(gated);") != std::string::npos,
               "4414: active load still uses the gated path");
         CHECK(exempt.find("\"query:module-exports\"") == std::string::npos &&
                   exempt.find("\"check-module-signature\"") == std::string::npos &&
@@ -7188,9 +7187,24 @@ int main() {
                   "4233 AC3: missing jail mechanism is tenant-path-escape");
         }
         const auto filep = read_file("src/compiler/evaluator_primitives_file.cpp");
-        CHECK(filep.find("check_tenant_exec_jail(ev.string_heap_[idx], jail_root, \"shell\")") !=
-                  std::string::npos,
-              "4233 AC3: shell prim wires the jail fence");
+        // #4714 replaced the raw heap index with string_at (space 0 is still
+        // string_heap_[slot]). The fence has to run on that accessor, after
+        // the in-range check and before fork.
+        const auto shell_at = filep.find("defer_std_host_prim(\"shell\"");
+        const auto shell_end = filep.find("\"command-output\"", shell_at);
+        CHECK(shell_at != std::string::npos && shell_end != std::string::npos &&
+                  shell_at < shell_end,
+              "4233 AC3: shell prim located");
+        if (shell_at != std::string::npos && shell_end > shell_at) {
+            const auto body = filep.substr(shell_at, shell_end - shell_at);
+            const auto gate = body.find("inrange_string_tenant_allows");
+            const auto jail =
+                body.find("check_tenant_exec_jail(ev.string_at(idx), jail_root, \"shell\")");
+            const auto fork_at = body.find("::fork()");
+            CHECK(gate != std::string::npos && jail != std::string::npos &&
+                      fork_at != std::string::npos && gate < jail && jail < fork_at,
+                  "4233 AC3: shell prim wires the jail fence");
+        }
         CHECK(filep.find("check_tenant_exec_jail(cmd, jail_root, \"command-output\")") !=
                   std::string::npos,
               "4233 AC3: command-output prim wires the jail fence");
@@ -8241,9 +8255,8 @@ int main() {
         CHECK(loader.find("check_tenant_host_path(path, gated, \"load-module\")") !=
                   std::string::npos,
               "4399 AC3: load_module_file wires check_tenant_host_path");
-        CHECK(loader.find(
-                  "host_path_policy_active() ? std::move(gated) : resolve_module_path(gated)") !=
-                  std::string::npos,
+        CHECK(loader.find("resolved.swap(gated);") != std::string::npos &&
+                  loader.find("resolved = resolve_module_path(gated);") != std::string::npos,
               "4399 AC3: active load uses the gated path; passthrough keeps resolve_module_path");
         CHECK(exempt.find("\"serialize-workspace\"") == std::string::npos,
               "4399 AC3: serialize-workspace not added to EXEMPT_2ARG_OPS");
@@ -9333,7 +9346,12 @@ int main() {
         if (soft != std::string::npos && soft_end > soft) {
             const auto body = ixx.substr(soft, soft_end - soft);
             const auto gate = body.find("inrange_string_tenant_allows");
-            const auto copy = body.find("return string_heap_[sidx]");
+            // #4714: the bytes leave through string_at, which copies
+            // string_heap_[slot] for space 0. A direct heap return would
+            // skip that accessor; the gate still has to precede the copy.
+            const auto copy = body.find("return string_at(sidx)");
+            CHECK(body.find("return string_heap_") == std::string::npos,
+                  "4691: file-mode does not return the heap directly");
             CHECK(gate != std::string::npos && copy != std::string::npos && gate < copy,
                   "4691: file-mode cause fence is before the byte copy");
         }
@@ -9345,7 +9363,9 @@ int main() {
         if (extract != std::string::npos && extract_end > extract) {
             const auto body = diag.substr(extract, extract_end - extract);
             const auto gate = body.find("inrange_string_tenant_allows");
-            const auto copy = body.find("return ev.string_heap_[si]");
+            const auto copy = body.find("return ev.string_at(si)");
+            CHECK(body.find("return ev.string_heap_") == std::string::npos,
+                  "4691: recover does not return the heap directly");
             CHECK(gate != std::string::npos && copy != std::string::npos && gate < copy,
                   "4691: recover cause fence is before the byte copy");
         }
@@ -9640,8 +9660,19 @@ int main() {
             CHECK(win.find("fn_hash_get_flat_table") != std::string::npos,
                   "4693: OpHashRef calls aura_hash_get_flat_table");
             CHECK(win.find("{hash_val}") != std::string::npos, "4693: the IR call is one argument");
-            CHECK(win.find("fn_hash_ref") == std::string::npos,
-                  "4693: OpHashRef does not call aura_hash_ref");
+            // fn_hash_ref_miss_error (#4855) only mints the missing-key error.
+            // It is not the two-arg aura_hash_ref probe. Any other fn_hash_ref
+            // callee in this case would skip aura_hash_get_flat_table.
+            bool calls_hash_ref = false;
+            for (std::size_t scan = 0;
+                 (scan = win.find("fn_hash_ref", scan)) != std::string::npos;) {
+                constexpr std::string_view k_miss = "_miss_error";
+                const auto after = scan + std::string_view("fn_hash_ref").size();
+                if (win.compare(after, k_miss.size(), k_miss) != 0)
+                    calls_hash_ref = true;
+                scan = after;
+            }
+            CHECK(!calls_hash_ref, "4693: OpHashRef does not call aura_hash_ref");
             CHECK(win.find("c64(11)") != std::string::npos, "4693: null path stores void 11");
         }
         const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");

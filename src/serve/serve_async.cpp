@@ -333,6 +333,8 @@ auto capture_stdout_during(Fn&& fn)
                 try {
                     drain.join();
                 } catch (...) {
+                    // [SILENCE-PRIM-#4936] join failed (EDEADLK/EINVAL): the
+                    // drain thread is already gone; stdout is restored above.
                 }
             }
             if (read_fd >= 0) {
@@ -340,6 +342,8 @@ auto capture_stdout_during(Fn&& fn)
                 read_fd = -1;
             }
         }
+        Finish(const Finish&) = delete;
+        Finish& operator=(const Finish&) = delete;
         ~Finish() { finish(); }
     } finish(saved, fds[0], drain);
     R result = std::forward<Fn>(fn)();
@@ -668,29 +672,9 @@ void run_serve_async(int num_workers) {
         svc->evaluator().flush_gc_roots(root_set_out);
     };
 
-    // GC sweep — routes through the current session's Evaluator.
-    // Called by the GC collector (gc_coordinator.cpp) during the
-    // sweep phase. We call the active Evaluator's `compact_sweep`
-    // which actually erases unmarked closures (the main memory-
-    // reclamation path) and reports the dead-count for vector heaps
-    // (string_heap_/pairs_ compaction is a future refactor).
-    //
-    // Issue #1732: compact_sweep returns typed CompactSweepResult by
-    // value. Bridge edge still exposes void* GCSweepResultMsg* for
-    // messaging_bridge (heap-allocate a layout-compatible copy).
-    aura::messaging::g_gc_sweep = [&sched](void* sweep_buffers) -> void* {
-        auto* svc = static_cast<aura::compiler::CompilerService*>(
-            aura::messaging::g_current_compiler_service);
-        if (!svc || !sweep_buffers)
-            return nullptr;
-        auto r = svc->evaluator().compact_sweep(sweep_buffers);
-        auto* msg = new aura::messaging::GCSweepResultMsg{};
-        msg->strings_freed = r.strings_freed;
-        msg->pairs_freed = r.pairs_freed;
-        msg->closures_freed = r.closures_freed;
-        msg->fiber_results_freed = r.fiber_results_freed;
-        return msg;
-    };
+    // #4936: the void* aura::messaging::g_gc_sweep hook is gone. Nothing
+    // called it (the collector uses the typed register_sweep_fn below) and
+    // it handed out a heap-allocated GCSweepResultMsg nobody freed.
 
     // Register the sweep callback with the GC collector. The
     // collector invokes it during `collect()` after the mark phase.
