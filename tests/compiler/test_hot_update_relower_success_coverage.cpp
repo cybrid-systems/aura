@@ -127,21 +127,28 @@ int run_test_hot_update_relower_success_coverage() {
     {
         std::println("\n--- AC1: shared fnv1a_64 helper — no std::hash in the "
                      "relower_success_coverage path ---");
-        // 1a. The helper is declared in hot_update_registry.hh with the
-        //     standard FNV-1a 64-bit constants.
+        // 1a. The helper is declared in hot_update_registry.hh and uses the
+        //     shared FNV-1a 64-bit constants from hash_meta.h.
         CHECK(hur.find("relower_success_region_bit") != std::string::npos,
               "AC1: relower_success_region_bit declared in hot_update_registry.hh");
+        const auto hm = read_file("src/compiler/hash_meta.h");
         const auto helper_body =
             find_fn_body(hur, "relower_success_region_bit(std::string_view name)", 1500);
         CHECK(!helper_body.empty(), "AC1: relower_success_region_bit body found");
         if (!helper_body.empty()) {
-            CHECK(helper_body.find("0xcbf29ce484222325ULL") != std::string::npos,
-                  "AC1: helper uses standard FNV-1a 64-bit offset basis");
-            CHECK(helper_body.find("0x100000001b3ULL") != std::string::npos,
-                  "AC1: helper uses standard FNV-1a 64-bit prime");
+            // #901/#905 moved the literals to the shared hash constants; the
+            // helper must reference them rather than carry a second copy.
+            CHECK(helper_body.find("hash::kFnvOffsetBasis") != std::string::npos,
+                  "AC1: helper uses shared FNV-1a 64-bit offset basis");
+            CHECK(helper_body.find("hash::kFnvPrime") != std::string::npos,
+                  "AC1: helper uses shared FNV-1a 64-bit prime");
             CHECK(helper_body.find("1ULL << (h & 63)") != std::string::npos,
                   "AC1: helper returns 1ULL << (h & 63)");
         }
+        CHECK(hm.find("kFnvOffsetBasis = 0xcbf29ce484222325ull") != std::string::npos,
+              "AC1: shared offset basis is the standard FNV-1a 64-bit value");
+        CHECK(hm.find("kFnvPrime = 0x100000001b3ull") != std::string::npos,
+              "AC1: shared prime is the standard FNV-1a 64-bit value");
         // 1b. The cascade restamp sites in service_dirty.cpp use the
         //     helper, not std::hash<std::string_view>.
         const auto cascade_body =

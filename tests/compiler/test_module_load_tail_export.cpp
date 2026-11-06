@@ -449,9 +449,13 @@ static void ac4465_escaped_primitive_continues() {
         f << "(display \"after\")\n";
     }
     auto def_run = run_file_4460(bin, "/tmp/aura-4465-def.aura", face);
-    CHECK(def_run.rc == 0, "4465: define-group still exits 0");
+    // Issue #4909 supersedes the old "define-group is silent" contract: a
+    // head-define whose RHS yields an error value reports it once and exits 1;
+    // --keep-going (this harness) still runs the rest of the file.
+    CHECK(def_run.rc == 1, "4465: define-group reports the error (rc=1)");
     CHECK(def_run.out == "after", "4465: define-group binds the error and continues");
-    CHECK(def_run.err.find("vector-ref:") == std::string::npos, "4465: define-group is silent");
+    CHECK(count_sub(def_run.err, "vector-ref: index 5 out of range for vector of length 3") == 1,
+          "4465: define-group reports the cause once");
 
     {
         std::ofstream f("/tmp/aura-4465-disp.aura");
