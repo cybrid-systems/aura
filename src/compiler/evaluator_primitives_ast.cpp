@@ -733,7 +733,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         EvalValue result = make_void();
         // Walk in reverse so that pushes to the front of the list
         // produce the same order as the flat.
-        for (std::int64_t id = (std::int64_t)flat.size() - 1; id >= 0; --id) {
+        for (std::int64_t id = static_cast<std::int64_t>(flat.size()) - 1; id >= 0; --id) {
             auto v = flat.get(static_cast<aura::ast::NodeId>(id));
             if (v.tag != aura::ast::NodeTag::Define)
                 continue;
@@ -762,7 +762,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             return make_void();
         auto& flat = *ev.workspace_flat_;
         EvalValue result = make_void();
-        for (std::int64_t id = (std::int64_t)flat.size() - 1; id >= 0; --id) {
+        for (std::int64_t id = static_cast<std::int64_t>(flat.size()) - 1; id >= 0; --id) {
             auto pid = ev.pairs_.size();
             ev.pairs_.push_back({make_int(id), result});
             result = make_pair(pid);

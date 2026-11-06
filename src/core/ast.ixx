@@ -7530,19 +7530,33 @@ public:
     //   - region_by_sym_ / region_by_lambda_id_ (manual map)
     //   - root (NodeId scalar)
 
+    // #4936 B3: serialization bytes go through one helper. The copy is the
+    // object representation the matching memcpy readers already consume.
+    // nbytes stays explicit when the wire field is narrower than the object
+    // (next_mutation_id_ low 32 bits, generation_ as u16).
+    static void wire_append_bytes(std::vector<char>& buf, const void* data, std::size_t nbytes) {
+        const auto at = buf.size();
+        buf.resize(at + nbytes);
+        if (nbytes != 0)
+            std::memcpy(buf.data() + at, data, nbytes);
+    }
+
+    template <class T> static void wire_append_pod(std::vector<char>& buf, const T& value) {
+        static_assert(std::is_trivially_copyable_v<T>);
+        wire_append_bytes(buf, &value, sizeof(T));
+    }
+
     static void wire_write_string(std::vector<char>& buf, std::string_view s) {
-        std::uint32_t len = static_cast<std::uint32_t>(s.size());
-        buf.insert(buf.end(), reinterpret_cast<char*>(&len), reinterpret_cast<char*>(&len) + 4);
+        const auto len = static_cast<std::uint32_t>(s.size());
+        wire_append_pod(buf, len);
         buf.insert(buf.end(), s.begin(), s.end());
     }
 
     static void wire_write_vec_u32(std::vector<char>& buf, const std::vector<SymId>& v) {
-        std::uint32_t sz = static_cast<std::uint32_t>(v.size());
-        buf.insert(buf.end(), reinterpret_cast<char*>(&sz), reinterpret_cast<char*>(&sz) + 4);
-        if (!v.empty()) {
-            buf.insert(buf.end(), reinterpret_cast<const char*>(v.data()),
-                       reinterpret_cast<const char*>(v.data()) + v.size() * sizeof(SymId));
-        }
+        const auto sz = static_cast<std::uint32_t>(v.size());
+        wire_append_pod(buf, sz);
+        if (!v.empty())
+            wire_append_bytes(buf, v.data(), v.size() * sizeof(SymId));
     }
 
     static void wire_write_match_clause_info(std::vector<char>& buf, const MatchClauseInfo& m) {
@@ -7554,13 +7568,11 @@ public:
     static void
     wire_write_map_u32_u8(std::vector<char>& buf,
                           const std::pmr::unordered_map<std::uint32_t, std::uint8_t>& m) {
-        std::uint32_t count = static_cast<std::uint32_t>(m.size());
-        buf.insert(buf.end(), reinterpret_cast<char*>(&count), reinterpret_cast<char*>(&count) + 4);
+        const auto count = static_cast<std::uint32_t>(m.size());
+        wire_append_pod(buf, count);
         for (const auto& [k, v] : m) {
-            buf.insert(buf.end(), reinterpret_cast<const char*>(&k),
-                       reinterpret_cast<const char*>(&k) + 4);
-            buf.insert(buf.end(), reinterpret_cast<const char*>(&v),
-                       reinterpret_cast<const char*>(&v) + 1);
+            wire_append_pod(buf, k);
+            wire_append_pod(buf, v);
         }
     }
 
@@ -7613,26 +7625,19 @@ public:
 
     void serialize_soa(std::vector<char>& buf) const {
         // Format version (v2 includes side-data fields)
-        std::uint32_t version = 2;
-        buf.insert(buf.end(), reinterpret_cast<char*>(&version),
-                   reinterpret_cast<char*>(&version) + 4);
+        const std::uint32_t version = 2;
+        wire_append_pod(buf, version);
         // Num nodes (informational; per-node columns derive their size)
-        std::uint32_t num_nodes = static_cast<std::uint32_t>(tag_.size());
-        buf.insert(buf.end(), reinterpret_cast<char*>(&num_nodes),
-                   reinterpret_cast<char*>(&num_nodes) + 4);
+        const std::uint32_t num_nodes = static_cast<std::uint32_t>(tag_.size());
+        wire_append_pod(buf, num_nodes);
 
         // Helper: serialize a pmr::vector<T> as count + raw bytes
         auto write_column = [&buf](const auto& col) {
-            std::uint32_t count = static_cast<std::uint32_t>(col.size());
-            buf.insert(buf.end(), reinterpret_cast<char*>(&count),
-                       reinterpret_cast<char*>(&count) + 4);
+            const auto count = static_cast<std::uint32_t>(col.size());
+            wire_append_pod(buf, count);
             if (!col.empty()) {
-                buf.insert(
-                    buf.end(), reinterpret_cast<const char*>(col.data()),
-                    reinterpret_cast<const char*>(col.data()) +
-                        col.size() *
-                            sizeof(
-                                typename std::remove_reference<decltype(col)>::type::value_type));
+                using Value = typename std::remove_reference_t<decltype(col)>::value_type;
+                wire_append_bytes(buf, col.data(), col.size() * sizeof(Value));
             }
         };
         // 19 SoA columns + 2 children columns (per-node count +
@@ -7683,34 +7688,31 @@ public:
         write_column(node_first_mutation_);
         write_column(node_gen_);
         // Scalars
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&next_mutation_id_),
-                   reinterpret_cast<const char*>(&next_mutation_id_) + 4);
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&generation_),
-                   reinterpret_cast<const char*>(&generation_) + 2);
+        // Low 32 bits only, matching the 4-byte memcpy on read.
+        wire_append_bytes(buf, &next_mutation_id_, 4);
+        // u16 value, not the atomic object's full sizeof.
+        const auto gen_bits = generation_.load(std::memory_order_relaxed);
+        wire_append_pod(buf, gen_bits);
         // 2 bytes padding (v1 compat; v2 side-data follows)
-        std::uint16_t reserved = 0;
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&reserved),
-                   reinterpret_cast<const char*>(&reserved) + 2);
+        const std::uint16_t reserved = 0;
+        wire_append_pod(buf, reserved);
 
         // v2 side-data (Issue #269)
         {
-            std::uint32_t log_count = static_cast<std::uint32_t>(mutation_log_.size());
-            buf.insert(buf.end(), reinterpret_cast<char*>(&log_count),
-                       reinterpret_cast<char*>(&log_count) + 4);
+            const auto log_count = static_cast<std::uint32_t>(mutation_log_.size());
+            wire_append_pod(buf, log_count);
             for (const auto& rec : mutation_log_)
                 mutation::wire_write_mutation_record(buf, rec);
         }
         {
-            std::uint32_t mi_count = static_cast<std::uint32_t>(match_info_.size());
-            buf.insert(buf.end(), reinterpret_cast<char*>(&mi_count),
-                       reinterpret_cast<char*>(&mi_count) + 4);
+            const auto mi_count = static_cast<std::uint32_t>(match_info_.size());
+            wire_append_pod(buf, mi_count);
             for (const auto& mi : match_info_)
                 wire_write_match_clause_info(buf, mi);
         }
         wire_write_map_u32_u8(buf, region_by_sym_.view());
         wire_write_map_u32_u8(buf, region_by_lambda_id_.view());
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&root),
-                   reinterpret_cast<const char*>(&root) + 4);
+        wire_append_pod(buf, root);
         // Issue #277: optional v2 extension — PPA dirty column.
         write_column(ppa_dirty_);
         // Issue #290: optional v2 extension — macro_dirty_
