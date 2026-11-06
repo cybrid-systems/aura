@@ -138,7 +138,7 @@ static QueryExpr parse_list(PS& ps) {
         q.str_value = std::string(ps.next());
     } else if (op == "child") {
         q.kind = QueryExpr::Kind::Child;
-        q.child_index = (std::uint32_t)std::stoul(std::string(ps.next()));
+        q.child_index = static_cast<std::uint32_t>(std::stoul(std::string(ps.next())));
         q.children.push_back(parse_expr(ps));
     } else if (op == "has-child") {
         q.kind = QueryExpr::Kind::HasChild;
@@ -173,7 +173,7 @@ static QueryExpr parse_list(PS& ps) {
         q.str_value = std::string(ps.next());
     } else if (op == "argument-type?" || op == "argument-type") {
         q.kind = QueryExpr::Kind::ArgType;
-        q.child_index = (std::uint32_t)std::stoul(std::string(ps.next()));
+        q.child_index = static_cast<std::uint32_t>(std::stoul(std::string(ps.next())));
         q.str_value = std::string(ps.next());
     } else if (op == "ref-count") {
         q.kind = QueryExpr::Kind::RefCount;
@@ -251,11 +251,11 @@ bool QueryEngine::match(NodeId id, const QueryExpr& q, int depth) {
             if (q.field_name == "int_value")
                 return v.int_value == q.int_value;
             if (q.field_name == "child-count")
-                return v.children.size() == (std::size_t)q.int_value;
+                return v.children.size() == static_cast<std::size_t>(q.int_value);
             return false;
         case QueryExpr::Kind::Gt:
             if (q.field_name == "child-count")
-                return v.children.size() > (std::size_t)q.int_value;
+                return v.children.size() > static_cast<std::size_t>(q.int_value);
             if (q.field_name == "int_value")
                 return v.int_value > q.int_value;
             return false;
