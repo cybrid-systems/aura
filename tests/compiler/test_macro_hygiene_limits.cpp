@@ -1764,7 +1764,19 @@ static void ac4078_workspace_same_tree() {
         if (ws == &flat) {
             CHECK(tree_fp(*ws, ws->root) == fp0, "4078 AC1: workspace pointer is the caller tree");
         } else if (ws->root < ws->size()) {
-            CHECK(!walk_sees_macro_introduced(*ws, ws->root),
+            // The reinstall parses the saved source into a fresh flat and
+            // wraps the forms in a new Begin container at the tail. That
+            // synthetic root can carry the expansion stamp; the restored
+            // forms inside it must not. Check the container's children, not
+            // the container itself.
+            bool spliced_inside = false;
+            for (auto c : ws->get(ws->root).children) {
+                if (walk_sees_macro_introduced(*ws, c)) {
+                    spliced_inside = true;
+                    break;
+                }
+            }
+            CHECK(!spliced_inside,
                   "4078 AC1: refreshed workspace has no spliced MacroIntroduced clone");
         }
         ev.set_workspace_flat(nullptr);
