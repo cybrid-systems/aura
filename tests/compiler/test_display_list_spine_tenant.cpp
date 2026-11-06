@@ -211,8 +211,8 @@ void expect_deny_empty(Evaluator& ev, const Prim& fn, EvalValue arg, std::string
                        std::string_view label) {
     aura::core::bump_mutation_epoch(1);
     const auto epoch = aura::core::current_mutation_epoch();
-    const auto fiber = static_cast<std::int64_t>(
-        aura::core::capability::effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id())));
+    const auto fiber = static_cast<std::int64_t>(aura::core::capability::effect_fiber_id_or(
+        static_cast<std::uint32_t>(aura_fiber_current_id())));
     const auto base = g_security_event_ring().seq.load(std::memory_order_acquire);
     EvalValue shown = make_void();
     const auto cap = capture_stdout([&] { shown = apply1(fn, arg); });
@@ -283,7 +283,8 @@ int main() {
     const auto cons = ev.primitives().lookup("cons");
     const auto format = ev.primitives().lookup("format");
     const auto equal = ev.primitives().lookup("equal?");
-    CHECK(display && write && cons && format && equal, "4965: display/write/cons/format/equal? present");
+    CHECK(display && write && cons && format && equal,
+          "4965: display/write/cons/format/equal? present");
     if (!(display && write && cons && format && equal)) {
         std::println("\n=== #4965: {} passed, {} failed ===", g_passed, g_failed);
         return g_failed ? 1 : 0;
@@ -342,7 +343,8 @@ int main() {
             CHECK(!is_error(shown), "4965 wide owner display is not an error");
             CHECK(cap.out.size() > 65536, "4965 wide owner stdout exceeds a pipe buffer");
             CHECK(cap.out.find(kOwn) != std::string::npos, "4965 wide owner tail is printed");
-            CHECK(cap.out.find(kSecret) == std::string::npos, "4965 wide owner has no foreign secret");
+            CHECK(cap.out.find(kSecret) == std::string::npos,
+                  "4965 wide owner has no foreign secret");
         }
     }
     {
@@ -364,8 +366,7 @@ int main() {
                 if (!cap.ok)
                     return -1;
             }
-            return std::chrono::duration_cast<std::chrono::microseconds>(clock::now() - t0)
-                .count();
+            return std::chrono::duration_cast<std::chrono::microseconds>(clock::now() - t0).count();
         };
         const auto t2 = bench(2000);
         const auto t8 = bench(8000);
@@ -428,7 +429,8 @@ int main() {
         if (is_string(own_fmt)) {
             const auto text =
                 ev.copy_string_heap_at(static_cast<std::size_t>(as_string_idx(own_fmt)));
-            CHECK(text.find(kOwn) != std::string::npos, "4965 format result contains the owner tail");
+            CHECK(text.find(kOwn) != std::string::npos,
+                  "4965 format result contains the owner tail");
         }
     }
 

@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 915 | Preferred destination suites |
-| **Total scanned** | **915** | |
+| `tests/core/test_*.cpp` | 916 | Preferred destination suites |
+| **Total scanned** | **916** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 96 | 96 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 278 | 278 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 279 | 279 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 110 | 110 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 28 | 28 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 62 | 62 | P1 — domain hygiene suite exists |
@@ -409,6 +409,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_dirty_propagation_cost_closed_loop.cpp`
 - `tests/compiler/test_dirty_reason_verification_propagation.cpp`
 - `tests/compiler/test_dispatch_required_effects.cpp`
+- `tests/compiler/test_display_list_spine_tenant.cpp`
 - `tests/compiler/test_dotted_rest_builtin_rename.cpp`
 - `tests/compiler/test_dual_path_desync_hard_fail.cpp`
 - `tests/compiler/test_edsl_concurrent_fiber_boundary_task1.cpp`
@@ -1239,13 +1240,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (278)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (279)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (278)
+#### domain/ (279)
 
 - `tests/compiler/test_abort_ir_cache_fence_first.cpp` (—) [large, domain_suite, theme_compiler] — AC1: All 3 abort entry points in evaluator_mutation_boundary.cpp
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
@@ -1332,6 +1333,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_dirty_propagation_cost_closed_loop.cpp` (—) [small, domain_suite, theme_compiler] — Issue #398/#399/#408/#415 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_dirty_reason_verification_propagation.cpp` (—) [domain_suite, theme_compiler] — Issue #344/#415/#437/#469 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_dispatch_required_effects.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2583 — Hard path: every non-zero required_effects call goes
+- `tests/compiler/test_display_list_spine_tenant.cpp` (—) [domain_suite, theme_compiler] — car the printer will emit, including index >= 64.
 - `tests/compiler/test_edsl_core_stability_cow_atomic_query_mutate.cpp` (—) [domain_suite, theme_compiler] — test_edsl_core_stability_cow_atomic_query_mutate.cpp — Issue #655:
 - `tests/compiler/test_edsl_query_mutate_commercial_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #552/#619/#634/#635/#636 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_edsl_validate_or_refresh.cpp` (—) [domain_suite, theme_compiler] — AC1: query:children/node/parent/*-stable/node-marker/node-provenance

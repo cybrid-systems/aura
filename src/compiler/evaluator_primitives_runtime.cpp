@@ -121,7 +121,7 @@ namespace {
         return idx < pairs.size();
     }
     static std::optional<std::size_t> list_spine_cycle_index(const EvalValue& head,
-                                                            std::span<const Pair> pairs) noexcept {
+                                                             std::span<const Pair> pairs) noexcept {
         std::size_t head_idx = 0;
         if (!inrange_pair_index(head, pairs, head_idx))
             return std::nullopt;
@@ -551,8 +551,7 @@ namespace {
                 if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
                                                    /*required_effects=*/0, op))
                     return false;
-                if (!io_walk_tenant_allows(pairs[idx].car, ev, heap, pairs, vectors, op,
-                                           depth + 1))
+                if (!io_walk_tenant_allows(pairs[idx].car, ev, heap, pairs, vectors, op, depth + 1))
                     return false;
                 if (cycle_at && idx == *cycle_at)
                     lap = true;
