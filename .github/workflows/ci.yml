@@ -202,7 +202,7 @@ jobs:
   gate:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.1.1
+      image: ghcr.io/cybrid-systems/aura-ci:v0.1.0
     env:
       # Coverage sweep on GH runners: the 14-worker parallel burst SIGKILLs the
       # stdlib oneshot trio's freshly-forked interpreter children (guest-global
@@ -294,7 +294,7 @@ jobs:
     timeout-minutes: 75
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.1.1
+      image: ghcr.io/cybrid-systems/aura-ci:v0.1.0
     steps:
     - uses: actions/checkout@v7
       with:
@@ -418,7 +418,7 @@ jobs:
     timeout-minutes: 90
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.1.1
+      image: ghcr.io/cybrid-systems/aura-ci:v0.1.0
     strategy:
       fail-fast: false
       matrix:
@@ -521,7 +521,7 @@ jobs:
                           # trap. Still uses slim matrix (no issue targets)
                           # to avoid the disk-full failure mode.
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.1.1
+      image: ghcr.io/cybrid-systems/aura-ci:v0.1.0
     steps:
     - uses: actions/checkout@v7
 
@@ -670,7 +670,7 @@ jobs:
                           # recent header changes (#2632-#2635) trigger
                           # full rebuild of all arena.ixx dependents.
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.1.1
+      image: ghcr.io/cybrid-systems/aura-ci:v0.1.0
     steps:
     - uses: actions/checkout@v7
 
@@ -783,7 +783,7 @@ jobs:
                           # AURA_LINK_JOBS=1 serializes link to avoid
                           # arena.ixx.o deadlock (#2636).
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.1.1
+      image: ghcr.io/cybrid-systems/aura-ci:v0.1.0
     env:
       SOURCE_DATE_EPOCH: "1704067200"
       CCACHE_DISABLE: 1
@@ -820,7 +820,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.1.1
+      image: ghcr.io/cybrid-systems/aura-ci:v0.1.0
     steps:
     - name: Download aura
       uses: actions/download-artifact@v8
