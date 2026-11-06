@@ -53,6 +53,7 @@ import aura.compiler.macro_expansion; // Issue #3215: note_hygiene_last_limit_re
 import aura.core.ast_unparse;         // Issue #4910: rebind old/new define text
 
 // Issue #1950: after module + imports so Evaluator/EvalValue are in scope.
+#include "compiler/replace_subtree_capture.hh" // Issue #4936: capture walk + rollback printer
 #include "compiler/mutation_guard_helpers.hh"
 // Issue #1964 cycle 4: unified mutate dispatch metrics (header-only).
 #include "compiler/mutate_dispatch.hh"
@@ -2916,8 +2917,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 return make_bool(false);
 
             // Source reconstruction
-            std::function<std::string(aura::ast::NodeId)> node_to_source;
-            node_to_source = [&](aura::ast::NodeId id) -> std::string {
+            auto node_to_source = [&](this auto&& self, aura::ast::NodeId id) -> std::string {
                 if (id >= flat.size() || id == aura::ast::NULL_NODE)
                     return "";
                 auto v = flat.get(id);
@@ -2935,7 +2935,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
                             if (ci > 0)
                                 s += " ";
-                            s += node_to_source(v.child(ci));
+                            s += self(v.child(ci));
                         }
                         return s + ")";
                     }
@@ -2948,21 +2948,21 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         }
                         s += ")";
                         if (!v.children.empty())
-                            s += " " + node_to_source(v.child(0));
+                            s += " " + self(v.child(0));
                         return s + ")";
                     }
                     case aura::ast::NodeTag::IfExpr: {
                         std::string s = "(if";
                         for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
                             if (ci < 3)
-                                s += " " + node_to_source(v.child(ci));
+                                s += " " + self(v.child(ci));
                         }
                         return s + ")";
                     }
                     case aura::ast::NodeTag::Begin: {
                         std::string s = "(begin";
                         for (auto c : v.children)
-                            s += " " + node_to_source(c);
+                            s += " " + self(c);
                         return s + ")";
                     }
                     case aura::ast::NodeTag::Define: {
@@ -2978,10 +2978,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                 }
                                 s += ")";
                                 if (!val_node.children.empty())
-                                    s += " " + node_to_source(val_node.child(0));
+                                    s += " " + self(val_node.child(0));
                                 s += ")";
                             } else {
-                                s += " " + node_to_source(v.child(0));
+                                s += " " + self(v.child(0));
                             }
                         }
                         return s + ")";
@@ -3475,8 +3475,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             }
 
             // Source reconstruction helper (same shape as query-and-replace).
-            std::function<std::string(aura::ast::NodeId)> node_to_source;
-            node_to_source = [&](aura::ast::NodeId id) -> std::string {
+            auto node_to_source = [&](this auto&& self, aura::ast::NodeId id) -> std::string {
                 if (id >= flat.size() || id == aura::ast::NULL_NODE)
                     return "";
                 auto v = flat.get(id);
@@ -3494,7 +3493,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
                             if (ci > 0)
                                 s += " ";
-                            s += node_to_source(v.child(ci));
+                            s += self(v.child(ci));
                         }
                         return s + ")";
                     }
@@ -6016,8 +6015,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // ── Source-code reconstruction helper ─────────────────
         // Given a node ID in the workspace FlatAST, reconstruct its source
         // code as a string (same as current-source but for any node)
-        std::function<std::string(NodeId)> node_to_source;
-        node_to_source = [&](NodeId id) -> std::string {
+        auto node_to_source = [&](this auto&& self, NodeId id) -> std::string {
             if (id >= flat.size() || id == NULL_NODE)
                 return "";
             auto v = flat.get(id);
@@ -6035,7 +6033,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
                         if (ci > 0)
                             s += " ";
-                        s += node_to_source(v.child(ci));
+                        s += self(v.child(ci));
                     }
                     s += ")";
                     return s;
@@ -6049,25 +6047,25 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     }
                     s += ")";
                     if (!v.children.empty())
-                        s += " " + node_to_source(v.child(0));
+                        s += " " + self(v.child(0));
                     s += ")";
                     return s;
                 }
                 case NodeTag::IfExpr: {
                     std::string s = "(if";
                     if (v.children.size() > 0)
-                        s += " " + node_to_source(v.child(0));
+                        s += " " + self(v.child(0));
                     if (v.children.size() > 1)
-                        s += " " + node_to_source(v.child(1));
+                        s += " " + self(v.child(1));
                     if (v.children.size() > 2)
-                        s += " " + node_to_source(v.child(2));
+                        s += " " + self(v.child(2));
                     s += ")";
                     return s;
                 }
                 case NodeTag::Begin: {
                     std::string s = "(begin";
                     for (auto c : v.children)
-                        s += " " + node_to_source(c);
+                        s += " " + self(c);
                     s += ")";
                     return s;
                 }
@@ -6084,10 +6082,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                             }
                             s += ")";
                             if (!val_node.children.empty())
-                                s += " " + node_to_source(val_node.child(0));
+                                s += " " + self(val_node.child(0));
                             s += ")";
                         } else {
-                            s += " " + node_to_source(v.child(0));
+                            s += " " + self(v.child(0));
                         }
                     }
                     s += ")";
@@ -6102,7 +6100,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     // bindings: (var val) pairs
                     // Not implemented for now — just print children
                     for (auto c : v.children)
-                        s += " " + node_to_source(c);
+                        s += " " + self(c);
                     s += ")";
                     return s;
                 }
@@ -6178,8 +6176,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
 
         // Count wildcards in pattern
-        std::function<int(NodeId)> count_wildcards;
-        count_wildcards = [&](NodeId pat_id) -> int {
+        auto count_wildcards = [&](this auto&& self, NodeId pat_id) -> int {
             if (pat_id >= pat_flat->size() || pat_id == NULL_NODE)
                 return 0;
             auto pn = pat_flat->get(pat_id);
@@ -6187,7 +6184,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 return 1;
             int total = 0;
             for (auto c : pn.children)
-                total += count_wildcards(c);
+                total += self(c);
             return total;
         };
         int expected_captures = count_wildcards(pat_pr.root);
@@ -6541,80 +6538,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             }
 
             // ── Capture old subtree source (for rollback) ────────
-            std::string old_source;
-            {
-                auto v = flat.get(target);
-                // Build a tiny source printer using existing patterns.
-                // We only need a faithful representation of the old node
-                // for rollback; the unparse helper in mutate:replace-pattern
-                // is large, so we use a simpler one here.
-                std::function<std::string(NodeId)> src;
-                src = [&](NodeId id) -> std::string {
-                    if (id >= flat.size() || id == NULL_NODE)
-                        return "";
-                    auto n = flat.get(id);
-                    switch (n.tag) {
-                        case NodeTag::LiteralInt:
-                            return std::to_string(n.int_value);
-                        case NodeTag::LiteralFloat:
-                            return std::to_string(n.float_value);
-                        case NodeTag::LiteralString:
-                            return "\"" + std::string(ev.workspace_pool_->resolve(n.sym_id)) + "\"";
-                        case NodeTag::Variable:
-                            return std::string(ev.workspace_pool_->resolve(n.sym_id));
-                        case NodeTag::Call: {
-                            std::string s = "(";
-                            for (std::size_t ci = 0; ci < n.children.size(); ++ci) {
-                                if (ci > 0)
-                                    s += " ";
-                                s += src(n.child(ci));
-                            }
-                            s += ")";
-                            return s;
-                        }
-                        case NodeTag::Lambda: {
-                            std::string s = "(lambda (";
-                            for (std::size_t pi = 0; pi < n.params.size(); ++pi) {
-                                if (pi > 0)
-                                    s += " ";
-                                s += ev.workspace_pool_->resolve(n.params[pi]);
-                            }
-                            s += ")";
-                            if (!n.children.empty())
-                                s += " " + src(n.child(0));
-                            s += ")";
-                            return s;
-                        }
-                        case NodeTag::IfExpr: {
-                            std::string s = "(if";
-                            if (n.children.size() > 0)
-                                s += " " + src(n.child(0));
-                            if (n.children.size() > 1)
-                                s += " " + src(n.child(1));
-                            if (n.children.size() > 2)
-                                s += " " + src(n.child(2));
-                            return s + ")";
-                        }
-                        case NodeTag::Begin: {
-                            std::string s = "(begin";
-                            for (auto c : n.children)
-                                s += " " + src(c);
-                            return s + ")";
-                        }
-                        case NodeTag::Define: {
-                            std::string s =
-                                "(define " + std::string(ev.workspace_pool_->resolve(n.sym_id));
-                            if (!n.children.empty())
-                                s += " " + src(n.child(0));
-                            return s + ")";
-                        }
-                        default:
-                            return std::string("#<node-") +
-                                   std::to_string(static_cast<int>(n.tag)) + ">";
-                    }
-                };
-                old_source = src(target);
-            }
+            // Faithful representation of the old node for rollback. The
+            // unparse helper in mutate:replace-pattern is a different printer.
+            std::string old_source =
+                replace_subtree_old_source(flat, *ev.workspace_pool_, target);
 
             // ── Parse the new code into the workspace ─────────────
             // Issue #1697 / #1685: snapshot size; re-validate parent+slot
@@ -6714,74 +6641,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // the NEW subtree looking for Variable refs, then check each
             // against all bindings in the parent chain (lambda params,
             // let/letrec names) that lie OUTSIDE the new subtree.
+            // Free vars in the new subtree bound outside it. The helper's
+            // outer set is the flat scan; a recursive parent-chain walk was
+            // never called.
             std::vector<SymId> captured;
             {
-                // Collect variables bound INSIDE the new subtree
-                std::unordered_set<SymId> new_bindings;
-                std::function<void(NodeId)> collect_new_bindings;
-                collect_new_bindings = [&](NodeId id) {
-                    if (id >= flat.size() || id == NULL_NODE)
-                        return;
-                    auto n = flat.get(id);
-                    if (n.tag == NodeTag::Lambda) {
-                        for (auto p : n.params)
-                            new_bindings.insert(p);
-                    } else if ((n.tag == NodeTag::Let || n.tag == NodeTag::LetRec) &&
-                               n.has_name()) {
-                        new_bindings.insert(n.sym_id);
-                    }
-                    for (auto c : n.children)
-                        collect_new_bindings(c);
-                };
-                collect_new_bindings(pr.root);
-
-                // Collect all bindings in the parent chain (outside the slot)
-                std::unordered_set<SymId> outer_bindings;
-                std::function<void(NodeId)> collect_outer_bindings;
-                collect_outer_bindings = [&](NodeId id) {
-                    if (id >= flat.size() || id == NULL_NODE)
-                        return;
-                    auto n = flat.get(id);
-                    if (n.tag == NodeTag::Lambda) {
-                        for (auto p : n.params)
-                            outer_bindings.insert(p);
-                    } else if ((n.tag == NodeTag::Let || n.tag == NodeTag::LetRec) &&
-                               n.has_name()) {
-                        outer_bindings.insert(n.sym_id);
-                    }
-                    for (auto c : n.children)
-                        collect_outer_bindings(c);
-                };
-                // Walk every node in flat (cheap O(n) since n is the
-                // workspace size, not a new traversal). Exclude the new
-                // subtree's nodes by tracking an in-subtree set.
-                std::unordered_set<NodeId> in_new_subtree;
-                std::function<void(NodeId)> mark_new;
-                mark_new = [&](NodeId id) {
-                    if (id >= flat.size() || id == NULL_NODE)
-                        return;
-                    in_new_subtree.insert(id);
-                    auto n = flat.get(id);
-                    for (auto c : n.children)
-                        mark_new(c);
-                };
-                mark_new(pr.root);
-                for (NodeId id = 0; id < flat.size(); ++id) {
-                    if (in_new_subtree.count(id))
-                        continue;
-                    auto n = flat.get(id);
-                    if (n.tag == NodeTag::Lambda) {
-                        for (auto p : n.params)
-                            outer_bindings.insert(p);
-                    } else if ((n.tag == NodeTag::Let || n.tag == NodeTag::LetRec) &&
-                               n.has_name()) {
-                        outer_bindings.insert(n.sym_id);
-                    }
-                }
-
-                // Walk the new subtree, find Variable refs that are not
-                // bound by the new subtree itself, and check if they ARE
-                // bound by an outer scope.
                 static const char* builtins[] = {
                     "+",          "-",      "*",         "/",       "%",       "=",       "<",
                     ">",          "<=",     ">=",        "display", "newline", "print",   "read",
@@ -6795,27 +6659,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 std::unordered_set<SymId> builtin_syms;
                 for (auto b : builtins)
                     builtin_syms.insert(ev.workspace_pool_->intern(b));
-
-                std::function<void(NodeId)> find_captured;
-                find_captured = [&](NodeId id) {
-                    if (id >= flat.size() || id == NULL_NODE)
-                        return;
-                    auto n = flat.get(id);
-                    if (n.tag == NodeTag::Variable) {
-                        if (builtin_syms.count(n.sym_id))
-                            return;
-                        if (new_bindings.count(n.sym_id))
-                            return;
-                        if (outer_bindings.count(n.sym_id)) {
-                            if (std::find(captured.begin(), captured.end(), n.sym_id) ==
-                                captured.end())
-                                captured.push_back(n.sym_id);
-                        }
-                    }
-                    for (auto c : n.children)
-                        find_captured(c);
-                };
-                find_captured(pr.root);
+                captured = replace_subtree_captured_syms(flat, builtin_syms, pr.root);
             }
 
             // ── Replace target in parent's children list ──────────
