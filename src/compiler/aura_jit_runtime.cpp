@@ -1,6 +1,7 @@
 // aura_jit_runtime.cpp — JIT runtime functions for closure/cell/pair/prim ops
 // These are compiled as regular C++ and registered in the ORC JIT as symbols.
 
+#include "compiler/ffi_addr.hh" // #4936 named JIT/FFI addresses
 #include <atomic> // std::memory_order_relaxed — lifetime_pin.hh uses std::atomic but doesn't include <atomic> itself (relies on transitive include from consumer TUs like render_primitives.cpp; we explicitly include it here since aura_jit_runtime.cpp doesn't pull it transitively).
 #include "core/atomic_fence_port.h"
 
@@ -470,12 +471,12 @@ extern "C" void aura_jit_set_macro_deopt_restore_fn(std::uint64_t (*fn)() noexce
 // pair/cell/closure raw pointer handling.
 extern "C" void aura_jit_pin_linear_root(std::uint64_t obj_id) noexcept {
     aura::core::lifetime::pin_linear_root(
-        reinterpret_cast<void*>(static_cast<std::uintptr_t>(obj_id)));
+        aura::compiler::ptr_from_i64(obj_id));
 }
 
 extern "C" void aura_jit_unpin_linear_root(std::uint64_t obj_id) noexcept {
     aura::core::lifetime::unpin_linear_root(
-        reinterpret_cast<void*>(static_cast<std::uintptr_t>(obj_id)));
+        aura::compiler::ptr_from_i64(obj_id));
 }
 
 // Issue #2100: note deopt round-trip for a func_id side-table entry.
@@ -852,7 +853,7 @@ extern "C" void aura_jit_set_defuse_word(const std::atomic<std::uint64_t>* w) {
 // baked into car/cdr guards as a constant (same pattern as the #4571
 // pair segment directory base).
 extern "C" std::uintptr_t aura_jit_defuse_word_slot_addr(void) {
-    return reinterpret_cast<std::uintptr_t>(&g_jit_defuse_word);
+    return aura::compiler::bits_from_ptr(&g_jit_defuse_word);
 }
 
 // Issue #4600 §4: cold-path note from a JIT car/cdr guard slow path (the
@@ -2159,7 +2160,7 @@ namespace densify_remap_detail {
 static void* densify_cell_ptr_(int64_t cell) noexcept {
     if (cell == 0)
         return nullptr;
-    return reinterpret_cast<void*>(static_cast<std::uintptr_t>(cell));
+    return aura::compiler::ptr_from_i64(cell);
 }
 
 // Issue #4046: install this window's pairs without dropping a previous
@@ -2184,7 +2185,7 @@ static void publish_densify_mirror_(const std::unordered_map<void*, void*>& inco
             auto it = incoming.find(p);
             if (it == incoming.end() || it->second == nullptr)
                 return;
-            cell = static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(it->second));
+            cell = aura::compiler::i64_from_ptr(it->second);
             ++ok_n;
         };
         if (cid < g_closure_envs.size()) {
@@ -2332,10 +2333,10 @@ static int remount_capture_cells_via_densify_(std::size_t cid) {
         int64_t& cell = cells.data[i];
         if (cell == 0)
             continue;
-        void* as_ptr = reinterpret_cast<void*>(static_cast<std::uintptr_t>(cell));
+        void* as_ptr = aura::compiler::ptr_from_i64(cell);
         auto it = remap_copy.find(as_ptr);
         if (it != remap_copy.end()) {
-            cell = static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(it->second));
+            cell = aura::compiler::i64_from_ptr(it->second);
             ++ok_n;
             continue;
         }
@@ -2369,7 +2370,7 @@ static bool closure_env_cells_hit_any_arena_remap_(std::size_t cid) {
     auto hit = [](int64_t cell) {
         if (cell == 0)
             return false;
-        void* p = reinterpret_cast<void*>(static_cast<std::uintptr_t>(cell));
+        void* p = aura::compiler::ptr_from_i64(cell);
         return aura_any_live_arena_resolves_object(p) != 0;
     };
     if (cid < g_closure_envs.size()) {
@@ -2400,7 +2401,7 @@ static bool closure_env_cells_hit_window_remap_(std::size_t cid) {
         const auto cell = cells.data[i];
         if (cell == 0)
             continue;
-        if (remap.count(reinterpret_cast<void*>(static_cast<std::uintptr_t>(cell))) != 0)
+        if (remap.count(aura::compiler::ptr_from_i64(cell)) != 0)
             return true;
     }
     return false;
@@ -3389,7 +3390,7 @@ static ResidualRemountExitSlot g_residual_remount_exit_overflow{};
 static std::uintptr_t residual_remount_eval_key() noexcept {
     // Outermost MutationBoundary publishes readiness Evaluator* (#3379).
     if (auto* p = ::g_tls_audit_commit_readiness_evaluator)
-        return reinterpret_cast<std::uintptr_t>(p);
+        return aura::compiler::bits_from_ptr(p);
     return 0;
 }
 
@@ -4900,7 +4901,7 @@ void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t), int32_
 // hook. Forward into the strong 5-arg registrar (zero local/arg/env).
 void aura_note_aot_constructor_jit_fn(int64_t func_id, int64_t fn_ptr) {
     auto* fn =
-        reinterpret_cast<int64_t (*)(int64_t*, uint32_t)>(static_cast<std::uintptr_t>(fn_ptr));
+        aura::compiler::fn_from_bits<int64_t (*)(int64_t*, uint32_t)>(static_cast<std::uintptr_t>(fn_ptr));
     aura_register_fn(func_id, fn, 0, 0, 0);
 }
 
@@ -5166,7 +5167,7 @@ static bool jit_fn_in_dl_handle(const void* fn, void* handle) noexcept {
     }
     struct link_map* map = nullptr;
     if (::dlinfo(handle, RTLD_DI_LINKMAP, &map) == 0 && map != nullptr && map->l_addr != 0 &&
-        fn_info.dli_fbase == reinterpret_cast<void*>(map->l_addr))
+        fn_info.dli_fbase == aura::compiler::ptr_from_bits(map->l_addr))
         return true;
     return false;
 }
@@ -5180,7 +5181,7 @@ void aura_jit_drop_so_before_dlclose_unlocked(void* handle) {
             return false;
         if (jit_reload_replaced_holds(fn))
             return true;
-        return jit_fn_in_dl_handle(reinterpret_cast<const void*>(fn), handle);
+        return jit_fn_in_dl_handle(aura::compiler::void_from_fn(fn), handle);
     };
     for (int i = 0; i < CLOSURE_CACHE_SIZE; ++i) {
         if (drop_fn(g_closure_cache[i].fn))
@@ -5217,7 +5218,7 @@ void aura_jit_replaced_fns_clear_unlocked(void) {
 
 // Issue #4387: test reader. No query key.
 std::int64_t aura_jit_fn_ptr_for_test(std::int64_t func_id) {
-    return reinterpret_cast<std::int64_t>(jit_live_fn_for_id(func_id));
+    return aura::compiler::i64_from_fn(jit_live_fn_for_id(func_id));
 }
 
 // Issue #660 Option 1: runtime-side lookup by name (fallback when
@@ -5233,7 +5234,7 @@ int64_t aura_lookup_fn_by_name(const char* name, int64_t* out_local_count, int64
         aura_unlock_workspace_read();
         return 0;
     }
-    int64_t fn = reinterpret_cast<int64_t>(it->second.fn);
+    int64_t fn = aura::compiler::i64_from_fn(it->second.fn);
     if (out_local_count)
         *out_local_count = it->second.local_count;
     if (out_arg_count)
@@ -5611,7 +5612,7 @@ namespace {
             void* b = aura_bind_temporary_moving_live_ptr_any_arena(cell);
             if (!b)
                 return; // Soft / Off / null cell: bridge notes nothing
-            bound_by_cell.emplace(static_cast<int64_t>(reinterpret_cast<std::uintptr_t>(cell)), b);
+            bound_by_cell.emplace(aura::compiler::i64_from_ptr(cell), b);
             if (bound_n < kInlineBoundCap)
                 bound_inline[bound_n++] = b;
             else
@@ -5628,7 +5629,7 @@ namespace {
             const auto it = bound_by_cell.find(raw);
             if (it == bound_by_cell.end())
                 return raw;
-            return static_cast<int64_t>(reinterpret_cast<std::uintptr_t>(it->second));
+            return aura::compiler::i64_from_ptr(it->second);
         }
         // Issue #4124: note-only walk — the dtor unnotes the stored bound
         // addresses above (bind may have remapped, so the cells no longer
@@ -5643,7 +5644,7 @@ namespace {
                 for (size_t i = 0; i < asz; ++i) {
                     if (env[i] == 0)
                         continue;
-                    note_bound_(reinterpret_cast<void*>(static_cast<std::uintptr_t>(env[i])));
+                    note_bound_(aura::compiler::ptr_from_i64(env[i]));
                 }
                 return;
             }
@@ -5651,7 +5652,7 @@ namespace {
                 for (const int64_t cell : g_closure_envs[cid]) {
                     if (cell == 0)
                         continue;
-                    note_bound_(reinterpret_cast<void*>(static_cast<std::uintptr_t>(cell)));
+                    note_bound_(aura::compiler::ptr_from_i64(cell));
                 }
             }
         }

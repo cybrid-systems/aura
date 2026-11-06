@@ -7,6 +7,7 @@
 #ifndef AURA_COMPILER_FFI_ADDR_HH
 #define AURA_COMPILER_FFI_ADDR_HH
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
@@ -29,12 +30,38 @@ template <class Fn> [[nodiscard]] inline void* void_from_fn(Fn fn) noexcept {
     return reinterpret_cast<void*>(static_cast<std::uintptr_t>(cell));
 }
 
+[[nodiscard]] inline void* ptr_from_bits(std::uintptr_t bits) noexcept {
+    return reinterpret_cast<void*>(bits);
+}
+
 [[nodiscard]] inline std::int64_t i64_from_ptr(const void* p) noexcept {
     return static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(p));
 }
 
 [[nodiscard]] inline std::uintptr_t bits_from_ptr(const void* p) noexcept {
     return reinterpret_cast<std::uintptr_t>(p);
+}
+
+template <class Fn> [[nodiscard]] inline Fn fn_from_bits(std::uintptr_t bits) noexcept {
+    return fn_from_void<Fn>(ptr_from_bits(bits));
+}
+
+template <class Fn> [[nodiscard]] inline std::uintptr_t bits_from_fn(Fn fn) noexcept {
+    static_assert(std::is_pointer_v<Fn>);
+    static_assert(std::is_function_v<std::remove_pointer_t<Fn>>);
+    return reinterpret_cast<std::uintptr_t>(fn);
+}
+
+template <class Fn> [[nodiscard]] inline std::int64_t i64_from_fn(Fn fn) noexcept {
+    static_assert(std::is_pointer_v<Fn>);
+    static_assert(std::is_function_v<std::remove_pointer_t<Fn>>);
+    return static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(fn));
+}
+
+// The JIT loads an atomic version word as a plain uint64_t slot.
+// The address is the atomic object; the cast does not copy the value.
+[[nodiscard]] inline std::uint64_t* jit_atomic_u64_slot(std::atomic<std::uint64_t>* word) noexcept {
+    return reinterpret_cast<std::uint64_t*>(word);
 }
 
 // Pointer-sized word at a byte offset inside an FFI buffer. Densify
