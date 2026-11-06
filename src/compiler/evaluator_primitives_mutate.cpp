@@ -4794,9 +4794,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // already makes the IR cache dirty, so the next
         // (eval-current) will lazily re-lower once).
         // Issue #4357: eval-current already recorded called_by. A same-name
-        // one-line body adds no user callee, so rebuilding the graph is
-        // pure overhead on the timed rebind.
-        if (ev.repopulate_dep_graph_one_fn_4682_ && !ev.rebind_light_path())
+        // one-line body adds no user callee, so a full rebuild is pure
+        // overhead on the timed rebind. The one-define walk still runs on the
+        // light path: it is O(body), refreshes the focus's edges (a matching-
+        // arity call is eligible, #4362) and advances the dep-graph sync log.
+        // Without the advance, the next ast:restore sees synced_pre=false and
+        // falls back to the O(W) rebuild (#4793).
+        if (ev.repopulate_dep_graph_one_fn_4682_)
             ev.repopulate_dep_graph_one_fn_4682_(name, cone_log_before_4682);
         else if (ev.repopulate_workspace_dep_graph_fn_ && !ev.rebind_light_path())
             ev.repopulate_workspace_dep_graph_fn_();
