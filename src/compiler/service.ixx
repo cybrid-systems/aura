@@ -9963,7 +9963,8 @@ public:
                 // Issue #4717: snapshot the cell under the storage lock so a
                 // concurrent cell append cannot reallocate underneath.
                 {
-                    std::scoped_lock<std::recursive_mutex> cell_lk(evaluator_.cells_storage_mutex());
+                    std::scoped_lock<std::recursive_mutex> cell_lk(
+                        evaluator_.cells_storage_mutex());
                     if (ci >= evaluator_.cells().size())
                         return;
                     actual = evaluator_.cells()[ci];
