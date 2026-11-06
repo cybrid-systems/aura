@@ -1362,7 +1362,8 @@
 
 (test-suite "edsl:err-not-found"
   (set-code "(define (f x) (+ x 1))")
-  (check (pair? (mutate:rebind "nonexistent" "(lambda (y) y)")))
+  ;; Issue #4937: a name that is not a live define is added (#t), not an error.
+  (check (eq? (mutate:rebind "nonexistent" "(lambda (y) y)") #t))
   (check (pair? (mutate:set-body "nonexistent" "(+ 1 2)")))
   (check (pair? (mutate:rename-symbol "nonexistent" "newname"))))
 

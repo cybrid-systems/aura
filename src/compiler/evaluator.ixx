@@ -18241,6 +18241,11 @@ public:
     // (AbortRestore) after dual-topology restore so pins / node_gen
     // cannot stay at the post-mutate gen against the rolled-back tree.
     void restore_checkpoint_topology_for_persist_reject() noexcept;
+    // Issue #4937: after a wholesale flat replace (ast:restore
+    // assign_from_image) the open boundary's children_ snapshot still
+    // names the pre-replace nodes. Rebase it onto the live flat so a
+    // later exit-gate abort cannot splice those ids onto the new columns.
+    void rebase_open_mutation_checkpoint_after_flat_replace() noexcept;
     // Issue #4310: after dual-topology restore, put type columns and the
     // CS high-water back. Idempotent. Soft/Off (uncaptured) is a no-op.
     void restore_abort_type_face(MutationCheckpoint& cp) noexcept;

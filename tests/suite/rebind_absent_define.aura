@@ -1,0 +1,25 @@
+;; mutate:rebind of a name that is not a live workspace define adds it
+;; and returns #t (Issue #4937). A later snapshot / rebind / restore of
+;; another define must still eval the original body, including when the
+;; added define calls a general primitive (member).
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+
+(set-code "(define (params) (list 1 2))\n")
+(assert! (eq? (mutate:rebind "nope" "(lambda (xs r) (member r xs))" "add") #t)
+         "rebind of a missing name returns #t and adds the define")
+(define snap (ast:snapshot "s1"))
+(assert! (mutate:rebind "params" "(lambda () (list 3 4))" "step") "rebind params")
+(assert! (eq? (ast:restore snap) #t) "restore")
+(eval-current)
+(assert! (equal? (params) (list 1 2)) "restored params is (1 2)")
+(eval-current)
+(assert! (equal? (nope (list 1 2 3) 2) (list 2 3)) "added nope calls member")
+
+(if (= *fails* 0)
+    (begin (display "OK\n") 0)
+    (begin (display "FAILED\n") (error "rebind-absent-define")))
