@@ -1657,6 +1657,8 @@ target_link_libraries(issue_212_bench PRIVATE aura_test_objects pthread stdc++ s
 # Issue #2289: GCC 16.1 early-snapshot reflection workaround cleanup.
 # Header-only smoke (opcode_reflect + to_json); no module / aura_test_objects.
 add_executable(test_opcode_reflect tests/reflect/test_opcode_reflect.cpp)
+# Issue #4936: constexpr hygiene table + metrics std::print. No JIT.
+aura_add_issue_test(test_hygiene_metrics)
 target_include_directories(test_opcode_reflect PRIVATE src)
 target_compile_options(test_opcode_reflect PRIVATE ${AURA_REFLECTION_FLAG} -Wall
                        -Wno-sign-compare -Wno-unused-local-typedefs)

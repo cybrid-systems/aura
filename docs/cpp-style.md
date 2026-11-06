@@ -46,7 +46,22 @@ contracts, so `cmake/clang_contract_shim.h` expands `pre` / `post` / `contract_a
 - T1 **[hard]** No C-style casts (`cppcoreguidelines-pro-type-cstyle-cast`, `modernize-avoid-c-style-cast`).
 - T2 **[review]** `reinterpret_cast` only at the JIT/FFI boundary, serialized byte views and tagged-value encoding,
   wrapped in a named `inline` helper. Other byte reinterpretation uses `std::bit_cast`.
-- T3 **[hard]** No `const_cast` (`cppcoreguidelines-pro-type-const-cast`).
+  Audited homes, not a license to add more casts:
+  - `src/core/address_bits.hh` — `std::bit_cast` for pointer/integer identity, and
+    `moving_pointer_slot` for a raw pointer the moving collector rewrites. A direct
+    harness that writes through one pointer does **not** prove a Moving densify
+    window; that integrated run stays open.
+  - `src/reflect/reflect.hh` `serialize_detail` — trivially copyable bytes via
+    `memcpy`, and `member_at` for the member reflection already walked by offset.
+    `member_at<std::vector<char>>` on a `vector<T>` member keeps the historical
+    writer (element count, then that many bytes). It is not a new format.
+  Spellings pinned by an existing test stay written out (`#4144` `&fr.pool_`,
+  `#3647` closure slots, `#3180` cover slots). JIT/FFI casts not yet in a helper
+  are still open, not exempt.
+- T3 **[hard]** No `const_cast` (`cppcoreguidelines-pro-type-const-cast`). Existing
+  sites are not exempt because they are numerous. A cast that drops const and then
+  writes is still a defect unless the object is already mutable or a test pins the
+  spelling (the `#4144` pool slot). Do not wrap those in a helper that hides the write.
 - T4 **[hard]** Narrowing conversions are explicit (`bugprone-narrowing-conversions`): `static_cast` at the
   conversion, `static_cast<std::ptrdiff_t>` for iterator offsets, a typed literal (`std::uint64_t{0}`) in a
   `?:` whose other arm is a proxy or unsigned type. Size products use a `size_t` operand (`2uz * 1024 * 1024`,
@@ -138,6 +153,11 @@ contracts, so `cmake/clang_contract_shim.h` expands `pre` / `post` / `contract_a
 
 - **[hard]** No `goto` (`cppcoreguidelines-avoid-goto`).
 - **[review]** `printf`-family only on C ABI and signal-safe paths; elsewhere `std::format` / `std::print`.
+  Signal alt stacks, crash printers, and C ABI `FILE*` callbacks that must not
+  throw stay on `printf`. WAL magic and on-disk `char[N]` members stay C arrays
+  because the layout is the format. Local read buffers (`char buf[4096]` and
+  similar) are still open `std::array` work, not an exemption. Scheduler metrics
+  dumps are ordinary I/O and use `std::print`.
 - **[review]** Split functions longer than 300 lines.
 
 ## Gate

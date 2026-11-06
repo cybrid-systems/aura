@@ -19,6 +19,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <print>
 #include <string>
 #include <vector>
 #include <memory>
@@ -111,23 +112,22 @@ struct WorkerMetrics {
     }
 
     void dump(int id, FILE* out = stdout) const {
-        std::fprintf(out,
-                     "  [W-%d] fibers=%lu yields=%lu waits=%lu\n"
-                     "         steals=%lu/%lu (%.1f%%) pushes=%lu pops=%lu\n"
-                     "         util=%.1f%% busy=%ldms idle=%ldms\n"
-                     "         wakups=%lu avg_qd=%.1f max_qd=%lu\n",
-                     id, (unsigned long)fibers_executed.load(std::memory_order_acquire),
-                     (unsigned long)fibers_yielded.load(std::memory_order_acquire),
-                     (unsigned long)fibers_waiting.load(std::memory_order_acquire),
-                     (unsigned long)steal_successes.load(std::memory_order_acquire),
-                     (unsigned long)steal_attempts.load(std::memory_order_acquire),
-                     steal_success_rate(),
-                     (unsigned long)local_pushes.load(std::memory_order_acquire),
-                     (unsigned long)local_pops.load(std::memory_order_acquire), utilization(),
-                     (unsigned long)(busy_ns.load(std::memory_order_acquire) / 1000000),
-                     (unsigned long)(idle_ns.load(std::memory_order_acquire) / 1000000),
-                     (unsigned long)wake_events.load(std::memory_order_acquire), avg_qdepth(),
-                     (unsigned long)qdepth_max.load(std::memory_order_acquire));
+        std::print(out,
+                   "  [W-{}] fibers={} yields={} waits={}\n"
+                   "         steals={}/{} ({:.1f}%) pushes={} pops={}\n"
+                   "         util={:.1f}% busy={}ms idle={}ms\n"
+                   "         wakups={} avg_qd={:.1f} max_qd={}\n",
+                   id, fibers_executed.load(std::memory_order_acquire),
+                   fibers_yielded.load(std::memory_order_acquire),
+                   fibers_waiting.load(std::memory_order_acquire),
+                   steal_successes.load(std::memory_order_acquire),
+                   steal_attempts.load(std::memory_order_acquire), steal_success_rate(),
+                   local_pushes.load(std::memory_order_acquire),
+                   local_pops.load(std::memory_order_acquire), utilization(),
+                   busy_ns.load(std::memory_order_acquire) / 1000000,
+                   idle_ns.load(std::memory_order_acquire) / 1000000,
+                   wake_events.load(std::memory_order_acquire), avg_qdepth(),
+                   qdepth_max.load(std::memory_order_acquire));
     }
 };
 
@@ -196,18 +196,17 @@ struct GlobalMetrics {
             total_steal_successes += w->steal_successes.load(std::memory_order_acquire);
         }
 
-        std::fprintf(out,
-                     "\n═══ Scheduler Metrics ═══\n"
-                     "  fibers: %lu spawned, %lu completed\n"
-                     "  steal:  %lu/%lu (%.1f%% success)\n"
-                     "  IO:     %lu events (%lu stdin)\n"
-                     "  errors: %lu\n",
-                     (unsigned long)spawned, (unsigned long)completed,
-                     (unsigned long)total_steal_successes, (unsigned long)total_steal_attempts,
-                     total_steal_attempts ? static_cast<double>(total_steal_successes) * 100.0 /
-                                                static_cast<double>(total_steal_attempts)
-                                          : 0.0,
-                     (unsigned long)io_events, (unsigned long)io_stdin, (unsigned long)errors);
+        std::print(out,
+                   "\n═══ Scheduler Metrics ═══\n"
+                   "  fibers: {} spawned, {} completed\n"
+                   "  steal:  {}/{} ({:.1f}% success)\n"
+                   "  IO:     {} events ({} stdin)\n"
+                   "  errors: {}\n",
+                   spawned, completed, total_steal_successes, total_steal_attempts,
+                   total_steal_attempts ? static_cast<double>(total_steal_successes) * 100.0 /
+                                              static_cast<double>(total_steal_attempts)
+                                        : 0.0,
+                   io_events, io_stdin, errors);
 
         for (size_t i = 0; i < workers.size(); ++i) {
             workers[i]->dump(static_cast<int>(i), out);

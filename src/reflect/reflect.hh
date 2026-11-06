@@ -35,6 +35,8 @@
 #include <cstdint>
 #include <cstring>
 #include <concepts>
+#include <memory>
+#include <new>
 #include <type_traits>
 #include <stdexcept>
 
@@ -472,6 +474,59 @@ inline void aura_reflect_nested_struct_throw_count_v_bump(std::uint64_t delta) n
 }
 } // extern "C"
 
+// Issue #4936 T2. Serialized byte views and reflected members live here.
+// append_pod / append_objects copy the object representation of a
+// trivially copyable value (same bytes the writer used to insert through
+// char*). object_bytes is the address of an object walked by member
+// offset. member_at names the member reflection recorded at that offset
+// (bool, string, string_view, span, vector). It is not a pun of an
+// unrelated allocation. vector<char> at a vector<T> member keeps the
+// historical writer: size() is that vector's element count, and that
+// many bytes are copied — not elem_size * size. Do not "correct" it
+// inside this helper.
+namespace serialize_detail {
+
+    template <class T>
+    inline void append_pod(std::vector<char>& buf, const T& value) {
+        static_assert(std::is_trivially_copyable_v<T>);
+        const auto at = buf.size();
+        buf.resize(at + sizeof(T));
+        std::memcpy(buf.data() + at, std::addressof(value), sizeof(T));
+    }
+
+    template <class T>
+    inline void append_objects(std::vector<char>& buf, const T* data, std::size_t count) {
+        static_assert(std::is_trivially_copyable_v<T>);
+        if (count == 0)
+            return;
+        const auto nbytes = count * sizeof(T);
+        const auto at = buf.size();
+        buf.resize(at + nbytes);
+        std::memcpy(buf.data() + at, data, nbytes);
+    }
+
+    template <class T>
+    inline const char* object_bytes(const T& obj) noexcept {
+        return static_cast<const char*>(static_cast<const void*>(std::addressof(obj)));
+    }
+
+    template <class T>
+    inline char* object_bytes(T& obj) noexcept {
+        return static_cast<char*>(static_cast<void*>(std::addressof(obj)));
+    }
+
+    template <class T>
+    inline const T& member_at(const char* field) noexcept {
+        return *std::launder(reinterpret_cast<const T*>(field));
+    }
+
+    template <class T>
+    inline T& member_at(char* field) noexcept {
+        return *std::launder(reinterpret_cast<T*>(field));
+    }
+
+} // namespace serialize_detail
+
 // ── auto_serialize<T> ── binary serialization (for cache_module) ──
 
 // Issue #215: Top-level container overloads. These are
@@ -497,12 +552,10 @@ template <typename T> void auto_serialize(std::vector<char>& buf, const T& obj);
 // std::vector<T> overload (any T)
 template <typename T> void auto_serialize(std::vector<char>& buf, const std::vector<T>& vec) {
     auto sz = static_cast<std::uint32_t>(vec.size());
-    buf.insert(buf.end(), reinterpret_cast<char*>(&sz), reinterpret_cast<char*>(&sz) + 4);
+    serialize_detail::append_pod(buf, sz);
     if constexpr (std::is_trivially_copyable_v<T>) {
         // POD: write raw bytes (faster)
-        if (!vec.empty())
-            buf.insert(buf.end(), reinterpret_cast<const char*>(vec.data()),
-                       reinterpret_cast<const char*>(vec.data()) + vec.size() * sizeof(T));
+        serialize_detail::append_objects(buf, vec.data(), vec.size());
     } else {
         // Non-POD: recurse on each element
         for (const auto& e : vec)
@@ -513,7 +566,7 @@ template <typename T> void auto_serialize(std::vector<char>& buf, const std::vec
 // std::string overload (top-level + recursion target)
 inline void auto_serialize(std::vector<char>& buf, const std::string& s) {
     std::uint32_t len = static_cast<std::uint32_t>(s.size());
-    buf.insert(buf.end(), reinterpret_cast<char*>(&len), reinterpret_cast<char*>(&len) + 4);
+    serialize_detail::append_pod(buf, len);
     buf.insert(buf.end(), s.begin(), s.end());
 }
 
@@ -522,7 +575,7 @@ inline void auto_serialize(std::vector<char>& buf, const std::string& s) {
 // used for recursion targets (e.g. a vector<string_view>).
 inline void auto_serialize(std::vector<char>& buf, const std::string_view& sv) {
     std::uint32_t len = static_cast<std::uint32_t>(sv.size());
-    buf.insert(buf.end(), reinterpret_cast<char*>(&len), reinterpret_cast<char*>(&len) + 4);
+    serialize_detail::append_pod(buf, len);
     buf.insert(buf.end(), sv.data(), sv.data() + sv.size());
 }
 
@@ -533,8 +586,7 @@ template <typename T> void auto_serialize(std::vector<char>& buf, const std::opt
     if (opt.has_value()) {
         if constexpr (std::is_trivially_copyable_v<T> && !is_std_string_v<T>) {
             // POD: raw bytes
-            buf.insert(buf.end(), reinterpret_cast<const char*>(&*opt),
-                       reinterpret_cast<const char*>(&*opt) + sizeof(T));
+            serialize_detail::append_objects(buf, std::addressof(*opt), 1);
         } else {
             // Non-POD: recurse
             auto_serialize(buf, *opt);
@@ -546,13 +598,12 @@ template <typename T> void auto_serialize(std::vector<char>& buf, const std::opt
 template <typename... Ts>
 void auto_serialize(std::vector<char>& buf, const std::variant<Ts...>& v) {
     std::uint32_t idx = static_cast<std::uint32_t>(v.index());
-    buf.insert(buf.end(), reinterpret_cast<char*>(&idx), reinterpret_cast<char*>(&idx) + 4);
+    serialize_detail::append_pod(buf, idx);
     std::visit(
         [&buf](const auto& inner) {
             using InnerT = std::remove_cv_t<std::remove_reference_t<decltype(inner)>>;
             if constexpr (std::is_trivially_copyable_v<InnerT> && !is_std_string_v<InnerT>) {
-                buf.insert(buf.end(), reinterpret_cast<const char*>(&inner),
-                           reinterpret_cast<const char*>(&inner) + sizeof(InnerT));
+                serialize_detail::append_objects(buf, std::addressof(inner), 1);
             } else {
                 auto_serialize(buf, inner);
             }
@@ -566,8 +617,7 @@ void auto_serialize(std::vector<char>& buf, const std::array<T, N>& arr) {
     if constexpr (std::is_trivially_copyable_v<T>) {
         // POD: raw bytes
         if (N > 0)
-            buf.insert(buf.end(), reinterpret_cast<const char*>(arr.data()),
-                       reinterpret_cast<const char*>(arr.data()) + N * sizeof(T));
+            serialize_detail::append_objects(buf, arr.data(), N);
     } else {
         // Non-POD: recurse
         for (const auto& e : arr)
@@ -579,7 +629,7 @@ void auto_serialize(std::vector<char>& buf, const std::array<T, N>& arr) {
 
 template <typename T> void auto_serialize(std::vector<char>& buf, const T& obj) {
     constexpr auto members = reflect_members<T>();
-    const auto* base = reinterpret_cast<const char*>(&obj);
+    const auto* base = serialize_detail::object_bytes(obj);
     for (auto& m : members) {
         const auto* field = base + m.offset;
         switch (m.kind) {
@@ -594,7 +644,7 @@ template <typename T> void auto_serialize(std::vector<char>& buf, const T& obj) 
             case MemberKind::UInt16: {
                 short v;
                 std::memcpy(&v, field, 2);
-                buf.insert(buf.end(), reinterpret_cast<char*>(&v), reinterpret_cast<char*>(&v) + 2);
+                serialize_detail::append_pod(buf, v);
                 break;
             }
             case MemberKind::Int32:
@@ -610,14 +660,13 @@ template <typename T> void auto_serialize(std::vector<char>& buf, const T& obj) 
                 break;
             }
             case MemberKind::Bool: {
-                buf.push_back(*reinterpret_cast<const bool*>(field) ? 1 : 0);
+                buf.push_back(serialize_detail::member_at<bool>(field) ? 1 : 0);
                 break;
             }
             case MemberKind::String: {
-                auto& s = *reinterpret_cast<const std::string*>(field);
+                auto& s = serialize_detail::member_at<std::string>(field);
                 uint32_t len = s.size();
-                buf.insert(buf.end(), reinterpret_cast<char*>(&len),
-                           reinterpret_cast<char*>(&len) + 4);
+                serialize_detail::append_pod(buf, len);
                 buf.insert(buf.end(), s.begin(), s.end());
                 break;
             }
@@ -626,10 +675,9 @@ template <typename T> void auto_serialize(std::vector<char>& buf, const T& obj) 
                 // {const char* data, size_t size}. We
                 // extract both and write the same
                 // length-prefixed raw bytes as std::string.
-                auto& sv = *reinterpret_cast<const std::string_view*>(field);
+                auto& sv = serialize_detail::member_at<std::string_view>(field);
                 uint32_t len = static_cast<uint32_t>(sv.size());
-                buf.insert(buf.end(), reinterpret_cast<char*>(&len),
-                           reinterpret_cast<char*>(&len) + 4);
+                serialize_detail::append_pod(buf, len);
                 buf.insert(buf.end(), sv.data(), sv.data() + sv.size());
                 break;
             }
@@ -655,49 +703,45 @@ template <typename T> void auto_serialize(std::vector<char>& buf, const T& obj) 
                 // the byte count for non-char element
                 // types (e.g. std::span<const NodeId> in
                 // NodeView).
-                auto& sp = *reinterpret_cast<const std::span<const char>*>(field);
+                auto& sp = serialize_detail::member_at<std::span<const char>>(field);
                 uint32_t byte_count = static_cast<uint32_t>(sp.size() * m.elem_size);
-                buf.insert(buf.end(), reinterpret_cast<char*>(&byte_count),
-                           reinterpret_cast<char*>(&byte_count) + 4);
+                serialize_detail::append_pod(buf, byte_count);
                 if (byte_count > 0)
                     buf.insert(buf.end(), sp.data(), sp.data() + byte_count);
                 break;
             }
             case MemberKind::Vector: {
                 // Issue #217 Cycle 11: vector<string> special path.
-                // The POD-vector path below reinterpret_casts to
-                // vector<char>, which gives the byte count correctly
-                // for POD element types but produces garbage for
-                // std::string (each string is separately heap-allocated,
-                // so the vector's contiguous data is just the string
-                // objects' internal memory, not the string contents).
+                // The POD-vector path below reads the member as
+                // vector<char>. That keeps the historical writer: size()
+                // is the element count, and that many bytes are copied.
+                // Reading a vector<string> that way would copy the string
+                // objects' internal bytes, not the characters, so string
+                // elements take the length-prefixed path instead.
                 // Detect by elem_size == sizeof(std::string).
                 // Issue #1123: cap count/len to uint32 max; refuse silent wrap.
                 if (m.elem_size == sizeof(std::string)) {
-                    auto& vec = *reinterpret_cast<const std::vector<std::string>*>(field);
+                    auto& vec = serialize_detail::member_at<std::vector<std::string>>(field);
                     if (vec.size() > 0xFFFFFFFFull)
                         break; // refuse oversized vector
                     uint32_t count = static_cast<uint32_t>(vec.size());
-                    buf.insert(buf.end(), reinterpret_cast<char*>(&count),
-                               reinterpret_cast<char*>(&count) + 4);
+                    serialize_detail::append_pod(buf, count);
                     for (const auto& s : vec) {
                         if (s.size() > 0xFFFFFFFFull)
                             break;
                         uint32_t len = static_cast<uint32_t>(s.size());
-                        buf.insert(buf.end(), reinterpret_cast<char*>(&len),
-                                   reinterpret_cast<char*>(&len) + 4);
+                        serialize_detail::append_pod(buf, len);
                         if (!s.empty())
                             buf.insert(buf.end(), s.data(), s.data() + s.size());
                     }
                 } else {
                     // POD-vector path: reinterpret as vector<char>
                     // so vec.size() gives the byte count.
-                    auto& vec = *reinterpret_cast<const std::vector<char>*>(field);
+                    auto& vec = serialize_detail::member_at<std::vector<char>>(field);
                     if (vec.size() > 0xFFFFFFFFull)
                         break;
                     uint32_t sz = static_cast<uint32_t>(vec.size());
-                    buf.insert(buf.end(), reinterpret_cast<char*>(&sz),
-                               reinterpret_cast<char*>(&sz) + 4);
+                    serialize_detail::append_pod(buf, sz);
                     if (!vec.empty())
                         buf.insert(buf.end(), vec.data(), vec.data() + vec.size());
                 }
@@ -893,7 +937,7 @@ template <typename T> T auto_deserialize_inner(const std::vector<char>& buf, std
 template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, std::size_t& pos) {
     T obj{};
     constexpr auto members = reflect_members<T>();
-    auto* base = reinterpret_cast<char*>(&obj);
+    auto* base = serialize_detail::object_bytes(obj);
     for (auto& m : members) {
         auto* field = base + m.offset;
         switch (m.kind) {
@@ -932,7 +976,7 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
             case MemberKind::Bool:
                 if (!reflect_ensure(buf, pos, 1))
                     return T{};
-                *reinterpret_cast<bool*>(field) = buf[pos++] != 0;
+                serialize_detail::member_at<bool>(field) = buf[pos++] != 0;
                 break;
             case MemberKind::String: {
                 if (!reflect_ensure(buf, pos, 4))
@@ -942,7 +986,7 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
                 pos += 4;
                 if (!reflect_ensure(buf, pos, len))
                     return T{};
-                auto& s = *reinterpret_cast<std::string*>(field);
+                auto& s = serialize_detail::member_at<std::string>(field);
                 s.assign(buf.data() + pos, len);
                 pos += len;
                 break;
@@ -1010,7 +1054,7 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
                     uint32_t count = 0;
                     std::memcpy(&count, buf.data() + pos, 4);
                     pos += 4;
-                    auto& vec = *reinterpret_cast<std::vector<std::string>*>(field);
+                    auto& vec = serialize_detail::member_at<std::vector<std::string>>(field);
                     vec.clear();
                     if (count > 50'000'000u)
                         break;
@@ -1035,7 +1079,7 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
                     pos += 4;
                     if (!reflect_ensure(buf, pos, sz))
                         break;
-                    auto& vec = *reinterpret_cast<std::vector<char>*>(field);
+                    auto& vec = serialize_detail::member_at<std::vector<char>>(field);
                     vec.assign(buf.data() + pos, buf.data() + pos + sz);
                     pos += sz;
                 }
@@ -1146,14 +1190,14 @@ private:
 
 template <typename T> bool auto_validate(const T& obj, std::string* error = nullptr) {
     constexpr auto members = reflect_members<T>();
-    const auto* base = reinterpret_cast<const char*>(&obj);
+    const auto* base = serialize_detail::object_bytes(obj);
     bool ok = true;
 
     for (auto& m : members) {
         const auto* field = base + m.offset;
         switch (m.kind) {
             case MemberKind::Vector: {
-                auto& vec = *reinterpret_cast<const std::vector<char>*>(field);
+                auto& vec = serialize_detail::member_at<std::vector<char>>(field);
                 if (vec.size() > 100000000) {
                     if (error)
                         *error = std::string(m.name) + " too large: " + std::to_string(vec.size());
@@ -1162,7 +1206,7 @@ template <typename T> bool auto_validate(const T& obj, std::string* error = null
                 break;
             }
             case MemberKind::String: {
-                auto& s = *reinterpret_cast<const std::string*>(field);
+                auto& s = serialize_detail::member_at<std::string>(field);
                 if (s.size() > 100000000) {
                     if (error)
                         *error =
@@ -1175,7 +1219,7 @@ template <typename T> bool auto_validate(const T& obj, std::string* error = null
                 // Issue #217 Cycle 2: same size check for
                 // string_view (it's also a string-like type
                 // with a size() accessor).
-                auto& sv = *reinterpret_cast<const std::string_view*>(field);
+                auto& sv = serialize_detail::member_at<std::string_view>(field);
                 if (sv.size() > 100000000) {
                     if (error)
                         *error = std::string(m.name) +
@@ -1188,7 +1232,7 @@ template <typename T> bool auto_validate(const T& obj, std::string* error = null
                 // Issue #217 Cycle 6: size check for
                 // std::span (it's also a container-like
                 // type with a size() accessor).
-                auto& sp = *reinterpret_cast<const std::span<const char>*>(field);
+                auto& sp = serialize_detail::member_at<std::span<const char>>(field);
                 if (sp.size() > 100000000) {
                     if (error)
                         *error =
