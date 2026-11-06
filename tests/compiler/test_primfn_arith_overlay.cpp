@@ -48,8 +48,14 @@ template <std::size_t Pad, std::size_t Align> struct alignas(Align) Payload {
     int value = 0;
     int* budget = nullptr;
 
-    explicit Payload(int v, int* b = nullptr) : value(v), budget(b) { live.fetch_add(1); }
-    Payload(const Payload& other) : value(other.value), budget(other.budget) {
+    explicit Payload(int v, int* b = nullptr)
+        : value(v)
+        , budget(b) {
+        live.fetch_add(1);
+    }
+    Payload(const Payload& other)
+        : value(other.value)
+        , budget(other.budget) {
         if (budget != nullptr && *budget <= 0)
             throw std::runtime_error("payload-copy");
         if (budget != nullptr)
@@ -64,7 +70,8 @@ template <std::size_t Pad, std::size_t Align> struct alignas(Align) Payload {
             live.fetch_sub(1);
         cookie = 0;
     }
-    aura::compiler::types::EvalValue operator()(std::span<const aura::compiler::types::EvalValue>) const {
+    aura::compiler::types::EvalValue
+    operator()(std::span<const aura::compiler::types::EvalValue>) const {
         return aura::compiler::types::make_int(value);
     }
 };
@@ -143,7 +150,8 @@ int main() {
                   "SBO move copies the payload and is not noexcept");
     struct MutableCall {
         int x = 1;
-        aura::compiler::types::EvalValue operator()(std::span<const aura::compiler::types::EvalValue>) {
+        aura::compiler::types::EvalValue
+        operator()(std::span<const aura::compiler::types::EvalValue>) {
             return aura::compiler::types::make_int(x);
         }
     };
@@ -167,8 +175,12 @@ int main() {
     struct ThrowCopy {
         int value;
         int* left;
-        ThrowCopy(int v, int* budget) : value(v), left(budget) {}
-        ThrowCopy(const ThrowCopy& o) : value(o.value), left(o.left) {
+        ThrowCopy(int v, int* budget)
+            : value(v)
+            , left(budget) {}
+        ThrowCopy(const ThrowCopy& o)
+            : value(o.value)
+            , left(o.left) {
             if (*left <= 0)
                 throw std::runtime_error("copy");
             --*left;
@@ -210,8 +222,12 @@ int main() {
         int value;
         int* left;
         char pad[80]{};
-        HeapThrow(int v, int* budget) : value(v), left(budget) {}
-        HeapThrow(const HeapThrow& o) : value(o.value), left(o.left) {
+        HeapThrow(int v, int* budget)
+            : value(v)
+            , left(budget) {}
+        HeapThrow(const HeapThrow& o)
+            : value(o.value)
+            , left(o.left) {
             if (*left <= 0)
                 throw std::runtime_error("heap-copy");
             --*left;
@@ -240,7 +256,8 @@ int main() {
     struct alignas(64) Over {
         char pad[96]{};
         int value;
-        explicit Over(int v) : value(v) {}
+        explicit Over(int v)
+            : value(v) {}
         aura::compiler::types::EvalValue
         operator()(std::span<const aura::compiler::types::EvalValue>) const {
             const auto addr = reinterpret_cast<std::uintptr_t>(this);
@@ -254,7 +271,8 @@ int main() {
                "overaligned heap payload is 64-byte aligned");
         aura::compiler::PrimFn copy(wide);
         auto aligned_copy = copy({});
-        expect(aura::compiler::types::as_int(aligned_copy) == 5, "copied overaligned payload stays aligned");
+        expect(aura::compiler::types::as_int(aligned_copy) == 5,
+               "copied overaligned payload stays aligned");
     }
 
     // Callable assignment. Construction of the new payload happens before the
@@ -317,7 +335,8 @@ int main() {
             } catch (const std::runtime_error&) {
                 threw = true;
             }
-            expect(threw && aura::compiler::types::as_int(target({})) == 3 && Large::bad.load() == 0,
+            expect(threw && aura::compiler::types::as_int(target({})) == 3 &&
+                       Large::bad.load() == 0,
                    "throwing large assignment keeps the old value");
         }
         expect(Small::bad.load() == 0 && Large::live.load() == 1,
@@ -335,7 +354,8 @@ int main() {
             } catch (const std::runtime_error&) {
                 threw = true;
             }
-            expect(threw && aura::compiler::types::as_int(target({})) == 3 && Aligned::bad.load() == 0,
+            expect(threw && aura::compiler::types::as_int(target({})) == 3 &&
+                       Aligned::bad.load() == 0,
                    "throwing overaligned assignment keeps the old value");
         }
         expect(Aligned::live.load() == 1 && Aligned::bad.load() == 0,
@@ -460,7 +480,8 @@ int main() {
     }
 
     aura::compiler::typed_audit::apply_dev_audit_defaults();
-    aura::compiler::mutate_type_gate::set_mode(aura::compiler::mutate_type_gate::MutateTypeGate::Soft);
+    aura::compiler::mutate_type_gate::set_mode(
+        aura::compiler::mutate_type_gate::MutateTypeGate::Soft);
     {
         aura::core::TypeRegistry reg;
         aura::diag::DiagnosticCollector diag;
@@ -476,7 +497,8 @@ int main() {
         expect(ty.has_value() && diag.has_errors(), "arith string literal is a type error");
         bool said = false;
         for (const auto& d : diag.diagnostics())
-            said = said || d.message.find("expected a number, got String literal") != std::string::npos;
+            said = said ||
+                   d.message.find("expected a number, got String literal") != std::string::npos;
         expect(said, "arith diagnostic names the string literal");
         diag.clear();
         aura::ast::FlatAST flat_eq;
