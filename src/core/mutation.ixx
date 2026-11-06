@@ -440,17 +440,37 @@ namespace mutation {
 
     namespace detail {
 
+        // #4936 B3: one object-representation copy. Width is sizeof(T), which
+        // matches every field this writer used to spell with reinterpret_cast.
+        inline void wire_append_bytes(std::vector<char>& buf, const void* data,
+                                      std::size_t nbytes) {
+            const auto at = buf.size();
+            buf.resize(at + nbytes);
+            if (nbytes != 0)
+                std::memcpy(buf.data() + at, data, nbytes);
+        }
+
+        template <class T> inline void wire_append_pod(std::vector<char>& buf, const T& value) {
+            static_assert(std::is_trivially_copyable_v<T>);
+            wire_append_bytes(buf, &value, sizeof(T));
+        }
+
+        template <class T> inline T wire_read_pod(const std::vector<char>& buf, std::size_t& pos) {
+            static_assert(std::is_trivially_copyable_v<T>);
+            T value{};
+            std::memcpy(&value, buf.data() + pos, sizeof(T));
+            pos += sizeof(T);
+            return value;
+        }
+
         inline void wire_write_string(std::vector<char>& buf, std::string_view s) {
-            auto len = static_cast<std::uint32_t>(s.size());
-            buf.insert(buf.end(), reinterpret_cast<const char*>(&len),
-                       reinterpret_cast<const char*>(&len) + 4);
+            const auto len = static_cast<std::uint32_t>(s.size());
+            wire_append_pod(buf, len);
             buf.insert(buf.end(), s.begin(), s.end());
         }
 
         inline std::string wire_read_string(const std::vector<char>& buf, std::size_t& pos) {
-            std::uint32_t len;
-            std::memcpy(&len, &buf[pos], 4);
-            pos += 4;
+            const auto len = wire_read_pod<std::uint32_t>(buf, pos);
             std::string s(buf.data() + pos, buf.data() + pos + len);
             pos += len;
             return s;
@@ -460,80 +480,58 @@ namespace mutation {
 
     export void wire_write_mutation_record(std::vector<char>& buf, const MutationRecord& r,
                                            std::uint32_t wire_version = 1) {
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&r.mutation_id),
-                   reinterpret_cast<const char*>(&r.mutation_id) + 8);
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&r.timestamp_ms),
-                   reinterpret_cast<const char*>(&r.timestamp_ms) + 8);
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&r.target_node),
-                   reinterpret_cast<const char*>(&r.target_node) + 4);
+        detail::wire_append_pod(buf, r.mutation_id);
+        detail::wire_append_pod(buf, r.timestamp_ms);
+        detail::wire_append_pod(buf, r.target_node);
         detail::wire_write_string(buf, r.operator_name);
         detail::wire_write_string(buf, r.old_type_str);
         detail::wire_write_string(buf, r.new_type_str);
         detail::wire_write_string(buf, r.summary);
         auto status = static_cast<std::uint8_t>(r.status);
         buf.push_back(static_cast<char>(status));
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&r.field_offset),
-                   reinterpret_cast<const char*>(&r.field_offset) + 4);
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&r.old_value),
-                   reinterpret_cast<const char*>(&r.old_value) + 8);
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&r.new_value),
-                   reinterpret_cast<const char*>(&r.new_value) + 8);
+        detail::wire_append_pod(buf, r.field_offset);
+        detail::wire_append_pod(buf, r.old_value);
+        detail::wire_append_pod(buf, r.new_value);
         buf.push_back(r.has_rollback_data ? '\1' : '\0');
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&r.parent_id),
-                   reinterpret_cast<const char*>(&r.parent_id) + 4);
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&r.child_idx),
-                   reinterpret_cast<const char*>(&r.child_idx) + 4);
+        detail::wire_append_pod(buf, r.parent_id);
+        detail::wire_append_pod(buf, r.child_idx);
         detail::wire_write_string(buf, r.old_subtree_source);
         buf.push_back(r.has_subtree_rollback ? '\1' : '\0');
         auto inv = static_cast<std::uint8_t>(r.invariant_status);
         buf.push_back(static_cast<char>(inv));
         // Issue #4365: provenance tail. FlatAST SoA v2 keeps wire_version 1.
         if (wire_version >= kMutationRecordProvenanceWireVersion) {
-            buf.insert(buf.end(), reinterpret_cast<const char*>(&r.author_fingerprint),
-                       reinterpret_cast<const char*>(&r.author_fingerprint) + 8);
-            buf.insert(buf.end(), reinterpret_cast<const char*>(&r.parent_mutation_id),
-                       reinterpret_cast<const char*>(&r.parent_mutation_id) + 8);
-            buf.insert(buf.end(), reinterpret_cast<const char*>(&r.composite_transaction_id),
-                       reinterpret_cast<const char*>(&r.composite_transaction_id) + 8);
+            detail::wire_append_pod(buf, r.author_fingerprint);
+            detail::wire_append_pod(buf, r.parent_mutation_id);
+            detail::wire_append_pod(buf, r.composite_transaction_id);
         }
     }
 
     export MutationRecord wire_read_mutation_record(const std::vector<char>& buf, std::size_t& pos,
                                                     std::uint32_t wire_version = 1) {
         MutationRecord r;
-        std::memcpy(&r.mutation_id, &buf[pos], 8);
-        pos += 8;
-        std::memcpy(&r.timestamp_ms, &buf[pos], 8);
-        pos += 8;
-        std::memcpy(&r.target_node, &buf[pos], 4);
-        pos += 4;
+        r.mutation_id = detail::wire_read_pod<std::uint64_t>(buf, pos);
+        r.timestamp_ms = detail::wire_read_pod<std::uint64_t>(buf, pos);
+        r.target_node = detail::wire_read_pod<NodeId>(buf, pos);
         r.operator_name = detail::wire_read_string(buf, pos);
         r.old_type_str = detail::wire_read_string(buf, pos);
         r.new_type_str = detail::wire_read_string(buf, pos);
         r.summary = detail::wire_read_string(buf, pos);
         r.status = static_cast<MutationStatus>(static_cast<std::uint8_t>(buf[pos++]));
-        std::memcpy(&r.field_offset, &buf[pos], 4);
-        pos += 4;
-        std::memcpy(&r.old_value, &buf[pos], 8);
-        pos += 8;
-        std::memcpy(&r.new_value, &buf[pos], 8);
-        pos += 8;
+        r.field_offset = detail::wire_read_pod<std::uint32_t>(buf, pos);
+        r.old_value = detail::wire_read_pod<std::uint64_t>(buf, pos);
+        r.new_value = detail::wire_read_pod<std::uint64_t>(buf, pos);
         r.has_rollback_data = buf[pos++] != 0;
-        std::memcpy(&r.parent_id, &buf[pos], 4);
-        pos += 4;
-        std::memcpy(&r.child_idx, &buf[pos], 4);
-        pos += 4;
+        r.parent_id = detail::wire_read_pod<NodeId>(buf, pos);
+        r.child_idx = detail::wire_read_pod<std::uint32_t>(buf, pos);
         r.old_subtree_source = detail::wire_read_string(buf, pos);
         r.has_subtree_rollback = buf[pos++] != 0;
         r.invariant_status = static_cast<InvariantStatus>(static_cast<std::uint8_t>(buf[pos++]));
         // Issue #4365: missing tail on a short buffer leaves the defaults (0).
         if (wire_version >= kMutationRecordProvenanceWireVersion && pos + 24 <= buf.size()) {
-            std::memcpy(&r.author_fingerprint, &buf[pos], 8);
-            pos += 8;
-            std::memcpy(&r.parent_mutation_id, &buf[pos], 8);
-            pos += 8;
-            std::memcpy(&r.composite_transaction_id, &buf[pos], 8);
-            pos += 8;
+            r.author_fingerprint = detail::wire_read_pod<std::uint64_t>(buf, pos);
+            r.parent_mutation_id = detail::wire_read_pod<std::uint64_t>(buf, pos);
+            r.composite_transaction_id = detail::wire_read_pod<std::uint64_t>(buf, pos);
         }
         return r;
     }
