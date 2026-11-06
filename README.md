@@ -68,7 +68,7 @@ run is not a claim that every host or every program is safe.
 | Nightly bundles and images | [`.github/workflows/dist.yml`](.github/workflows/dist.yml) |
 | Install | [docs/install.md](docs/install.md) |
 | Projects and capabilities | [docs/getting-started.md](docs/getting-started.md) |
-| Editor / LSP | [docs/editor.md](docs/editor.md) |
+| Editor support and the REPL | [docs/editor.md](docs/editor.md) |
 | C++ style | [docs/cpp-style.md](docs/cpp-style.md) |
 | Contributing | [docs/contributing.md](docs/contributing.md) |
 | Starter kits | [cybrid-systems/aura-starter-kits](https://github.com/cybrid-systems/aura-starter-kits) |
