@@ -13478,6 +13478,27 @@ def cmd_build():
     return link
 
 
+def cmd_configure():
+    """CMake configure only. Leaves CMakeCache so a runtime gate can build its target.
+
+    release.sh writes the tarball from build_repro/. The chaos SOAK hard
+    gate reads the default build directory. Without this configure, that
+    gate stops on a missing CMakeCache after static coverage and never
+    builds or runs test_chaos_mutate_steal_gc_mailbox.
+    """
+    print(f"{B}═══ Configure ═══{N}")
+    BUILD.mkdir(parents=True, exist_ok=True)
+    r = run(_cmake_configure_args(), cwd=ROOT)
+    if r != 0:
+        fail("cmake configure failed")
+        return r
+    if not (BUILD / "CMakeCache.txt").exists():
+        fail(f"cmake configure left no {BUILD / 'CMakeCache.txt'}")
+        return 1
+    ok(f"configured {BUILD}")
+    return 0
+
+
 def cmd_clean():
     """清理构建产物"""
     print(f"{B}═══ Clean ═══{N}")
@@ -25169,15 +25190,21 @@ def cmd_chaos_soak_hard_gate_2722():
     bin_path = BUILD / "test_chaos_mutate_steal_gc_mailbox"
     if not bin_path.exists():
         if not (BUILD / "CMakeCache.txt").exists():
-            # Issue #4437: a missing soak binary is a release failure.
-            # Static coverage already ran; "no CMakeCache; static coverage
-            # only" must not return success.
-            fail(
-                "chaos SOAK hard gate missing test_chaos_mutate_steal_gc_mailbox "
-                "(no CMakeCache; static coverage only does not pass the release "
-                "hard gate)"
+            # Issue #4437: static coverage must not pass this gate. A missing
+            # cache means this command configures the default build, then
+            # builds and runs the soak. Configure failure stays a release
+            # failure; there is no static-only success.
+            info(
+                "chaos SOAK hard gate: no CMakeCache in the default build; "
+                "configuring so test_chaos_mutate_steal_gc_mailbox is built and run"
             )
-            return 1
+            rc = cmd_configure()
+            if rc != 0:
+                fail(
+                    "chaos SOAK hard gate configure failed "
+                    "(static coverage only does not pass the release hard gate)"
+                )
+                return rc
         info("building test_chaos_mutate_steal_gc_mailbox…")
         nproc = os.cpu_count() or 4
         r = run(
@@ -26994,6 +27021,7 @@ def main():
 
     commands = {
         "build": cmd_build,
+        "configure": cmd_configure,
         "clean": cmd_clean,
         "check": lambda: cmd_gate() or cmd_ci(),
         "gate": cmd_gate,
