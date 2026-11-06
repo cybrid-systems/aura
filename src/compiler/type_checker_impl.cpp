@@ -21,6 +21,7 @@ module;
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "compiler/typed_mutation_audit.h" // Issue #2277: typed_audit namespace + g_typed_mutation_audit_counters (C++20 modules do NOT transit .ixx purview includes to .cpp impl units, so include directly here).
 #include "compiler/mutate_type_gate.hh"    // Issue #4363: GMF so is_hard() shares the process gate
+#include "compiler/arith_prim_names.hh"    // Issue #4936: constexpr + - * / and comparisons
 
 #include "hash_meta.h" // FNV constants (#901)
 module aura.compiler.type_checker;
@@ -6725,21 +6726,13 @@ std::optional<TypeId> InferenceEngine::synthesize_flat_call_arith(FlatAST& flat,
     if (callee_of_func.tag != NodeTag::Variable || callee_of_func.sym_id == INVALID_SYM)
         return std::nullopt;
     auto fname = pool.resolve(callee_of_func.sym_id);
-    // Intentionally leaked (no destructor): the buckets of a function-local
-    // static set were observed freed mid-run by an OrchSchedHolder worker
-    // thread (ASAN heap-use-after-free in arith.count() — obs_facade
-    // rc=139 CI red; same class as the service.ixx tree_walker_only leak).
-    static const aura::core::immortal<std::unordered_set<std::string>> arith{
-        std::unordered_set<std::string>{"+", "-", "*", "/"}};
     // Issue #4762: a string LITERAL operand of a numeric primitive can never
     // succeed — the runtime raises "expected Int, got String" (#4735) — so it
     // is a type error in every face, not only the production hard face. Only
     // the literal node is inspected (no synthesis), so a comparison still
     // takes the generic call path below and nothing is reported twice. A
     // Dynamic / unknown operand keeps the gradual escape.
-    static const auto* const numeric_cmp =
-        new std::unordered_set<std::string>{"=", "<", ">", "<=", ">="};
-    const bool is_arith = arith->count(std::string(fname)) != 0;
+    const bool is_arith = is_arith_prim_name(fname);
     // The production hard face already rejects every ground non-numeric
     // arith operand below (#4107, "incompatible ground types"); keep that
     // report there and add the literal check for the soft face and for the
@@ -6747,7 +6740,7 @@ std::optional<TypeId> InferenceEngine::synthesize_flat_call_arith(FlatAST& flat,
     const bool hard_face_4762 = aura::compiler::mutate_type_gate::is_hard() ||
                                 aura::compiler::typed_audit::production_hard_face_active() ||
                                 aura::compiler::typed_audit::production_defaults_active();
-    if ((is_arith && !hard_face_4762) || numeric_cmp->count(std::string(fname))) {
+    if ((is_arith && !hard_face_4762) || is_numeric_cmp_prim_name(fname)) {
         for (std::size_t i = 1; i < v.children.size(); ++i) {
             const auto aid = v.child(i);
             if (aid == NULL_NODE || aid >= flat.size())
