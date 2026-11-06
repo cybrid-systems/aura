@@ -52,9 +52,11 @@ contracts, so `cmake/clang_contract_shim.h` expands `pre` / `post` / `contract_a
     harness that writes through one pointer does **not** prove a Moving densify
     window; that integrated run stays open.
   - `src/reflect/reflect.hh` `serialize_detail` — trivially copyable bytes via
-    `memcpy`, and `member_at` for the member reflection already walked by offset.
-    `member_at<std::vector<char>>` on a `vector<T>` member keeps the historical
-    writer (element count, then that many bytes). It is not a new format.
+    `memcpy`, and `member_at` only when the member's dynamic type is that `T`.
+    A `vector<T>` or `span<T>` member is visited as that type. Its on-disk
+    prefix stays the byte count (`size() * sizeof(element)`), which is what
+    the old `vector<char>` pun produced. Top-level `auto_serialize(vector<T>)`
+    still prefixes the element count. Do not collapse those two layouts.
   Spellings pinned by an existing test stay written out (`#4144` `&fr.pool_`,
   `#3647` closure slots, `#3180` cover slots). JIT/FFI casts not yet in a helper
   are still open, not exempt.

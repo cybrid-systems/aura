@@ -8,7 +8,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -96,6 +98,78 @@ struct Smoke {
     std::vector<int> tags;
 };
 
+struct VecHolder {
+    std::vector<std::uint32_t> xs;
+    std::vector<int> ys;
+    std::uint32_t tail = 0;
+};
+
+struct SpanHolder {
+    std::span<const std::uint32_t> xs;
+};
+
+std::uint32_t load_u32(const std::vector<char>& bytes, std::size_t at) {
+    std::uint32_t value = 0;
+    std::memcpy(&value, bytes.data() + at, 4);
+    return value;
+}
+
+void check_pod_vectors() {
+    VecHolder held;
+    held.xs = {0x01020304u, 0xA0B0C0D0u, 0xffffffffu};
+    held.ys = {-1, 0x7fffffff};
+    held.tail = 0xAABBCCDDu;
+    const auto bytes = aura::reflect::auto_serialize(held);
+    check(load_u32(bytes, 0) == 12, "member uint32 vector prefix is the byte count");
+    check(load_u32(bytes, 16) == 8, "member int vector prefix is the byte count");
+    const auto back = aura::reflect::auto_deserialize<VecHolder>(bytes);
+    check(back.xs == held.xs, "uint32 elements match, including high bytes");
+    check(back.ys == held.ys, "int elements match, including the high bit");
+    check(back.tail == held.tail, "tail after both vectors");
+
+    VecHolder empty;
+    const auto empty_bytes = aura::reflect::auto_serialize(empty);
+    check(load_u32(empty_bytes, 0) == 0 && load_u32(empty_bytes, 4) == 0, "empty vectors prefix 0");
+    const auto empty_back = aura::reflect::auto_deserialize<VecHolder>(empty_bytes);
+    check(empty_back.xs.empty() && empty_back.ys.empty() && empty_back.tail == 0,
+          "empty vectors roundtrip");
+
+    VecHolder one;
+    one.xs = {0xffffffffu};
+    one.tail = 7;
+    const auto one_back = aura::reflect::auto_deserialize<VecHolder>(aura::reflect::auto_serialize(one));
+    check(one_back.xs.size() == 1 && one_back.xs[0] == 0xffffffffu && one_back.ys.empty() &&
+              one_back.tail == 7,
+          "single high element and empty sibling");
+
+    const std::vector<std::uint32_t> top{0x01020304u, 0xA0B0C0D0u};
+    const auto top_bytes = aura::reflect::auto_serialize(top);
+    check(load_u32(top_bytes, 0) == 2, "top-level vector prefix stays the element count");
+    check(aura::reflect::auto_deserialize<std::vector<std::uint32_t>>(top_bytes) == top,
+          "top-level high bytes");
+
+    std::vector<char> odd(4);
+    const std::uint32_t two = 2;
+    std::memcpy(odd.data(), &two, 4);
+    const auto odd_back = aura::reflect::auto_deserialize<VecHolder>(odd);
+    check(odd_back.xs.empty(), "byte count not a multiple of the element leaves the vector empty");
+
+    std::vector<char> trunc(6, '\0');
+    const std::uint32_t eight = 8;
+    std::memcpy(trunc.data(), &eight, 4);
+    const auto trunc_back = aura::reflect::auto_deserialize<VecHolder>(trunc);
+    check(trunc_back.xs.empty(), "truncated payload leaves the vector empty");
+
+    const std::uint32_t raw[3] = {0x01020304u, 0xA0B0C0D0u, 0xffffffffu};
+    SpanHolder span_held{std::span<const std::uint32_t>(raw, 3)};
+    const auto span_bytes = aura::reflect::auto_serialize(span_held);
+    check(load_u32(span_bytes, 0) == 12, "span member prefix is the byte count");
+    const auto span_back = aura::reflect::auto_deserialize<SpanHolder>(span_bytes);
+    check(span_back.xs.size() == 3 && span_back.xs[0] == raw[0] && span_back.xs[1] == raw[1] &&
+              span_back.xs[2] == raw[2],
+          "span elements match, including high bytes");
+}
+
 } // namespace
 
 int run_test_opcode_reflect() {
@@ -163,6 +237,8 @@ int run_test_opcode_reflect() {
         !aura::reflect::auto_deserialize<std::optional<int>>(aura::reflect::auto_serialize(absent))
              .has_value(),
         "optional empty");
+
+    check_pod_vectors();
 
     const std::string json = to_json(s);
     check(json.find("\"id\":7") != std::string::npos, "json id");
