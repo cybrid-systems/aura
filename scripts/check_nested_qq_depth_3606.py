@@ -113,9 +113,12 @@ def run_checks() -> list[str]:
             failures.append(label)
 
     flat = body(ME)
+    # #4936 B4 renamed the local lambda's recursive call from pre_scan(...)
+    # to deducing-this self(...); accept either spelling.
+    depth_minus_one = re.compile(r"(?:pre_scan|self)\(nv\.child\(1\),\s*qq_depth - 1\);")
 
     # AC1: both unquote and unquote-splicing recurse with depth - 1.
-    if flat.count("pre_scan(nv.child(1), qq_depth - 1);") < 2:
+    if len(depth_minus_one.findall(flat)) < 2:
         failures.append("3606 AC1: expected >=2 depth-1 recursions (unquote + unquote-splicing)")
 
     # AC6: the splicing counter fires only under the depth <= 1 gate.
@@ -128,7 +131,7 @@ def run_checks() -> list[str]:
             failures.append("3606 AC6: counter not gated on depth <= 1")
         if "fetch_add" not in window:
             failures.append("3606 AC6: counter bump missing from the depth-1 branch")
-        if "pre_scan(nv.child(1), qq_depth - 1);" not in window:
+        if depth_minus_one.search(window) is None:
             failures.append("3606 AC1: depth > 1 splice body recursion missing")
 
     # AC1: per-child depth — quasiquote arg +1, unquote arg sentinel /
