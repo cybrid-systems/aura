@@ -511,6 +511,54 @@ bool test_force_soa_keyword_literal_4321() {
 // argument at/after a character literal was dropped — (equal? #\0 #\9)
 // matched zero-arg (equal?) → #t and (char->integer #\0) returned the
 // zero-arg 0 instead of 48.
+// Issue #4936 B3: ctype classification must see an unsigned char. A C-style
+// cast and static_cast are the same conversion; the unsigned cast is what
+// keeps isdigit/isalpha/isspace off a negative char (undefined). .5 / -.5
+// stay floats (#4498). A high byte is an error token, not a number.
+bool test_lexer_ctype_casts_4936() {
+    int passed = 0, failed = 0;
+    auto ac = [&](bool ok, const char* label) {
+        if (ok) {
+            ++passed;
+            std::println("--- #4936 lexer: {}", label);
+        } else {
+            ++failed;
+            std::println(std::cerr, "  FAIL: #4936 lexer: {}", label);
+        }
+    };
+    auto one = [](std::string_view src) {
+        aura::parser::Lexer lex(src);
+        auto t = lex.consume();
+        return std::tuple{t.kind, std::string(t.text), t.column};
+    };
+    {
+        auto [k, text, col] = one(".5");
+        ac(k == aura::parser::TokenKind::Float && text == ".5" && col == 1, ".5 is a float");
+    }
+    {
+        auto [k, text, col] = one("-.5");
+        ac(k == aura::parser::TokenKind::Float && text == "-.5" && col == 1, "-.5 is a float");
+    }
+    {
+        aura::parser::Lexer lex(".5)");
+        auto num = lex.consume();
+        auto rp = lex.consume();
+        ac(num.kind == aura::parser::TokenKind::Float &&
+               rp.kind == aura::parser::TokenKind::RParen && rp.column == 3,
+           "column advances by the token size");
+    }
+    {
+        std::string hi(1, static_cast<char>(0xE9));
+        auto [k, text, col] = one(hi);
+        ac(k == aura::parser::TokenKind::Error && k != aura::parser::TokenKind::Integer &&
+               k != aura::parser::TokenKind::Float && text.size() == 1 && col == 1,
+           "high byte is not a number");
+    }
+    if (failed != 0)
+        std::println(std::cerr, "#4936 lexer ctype: {} passed, {} failed", passed, failed);
+    return failed == 0;
+}
+
 bool test_character_literal_4129() {
     int passed = 0, failed = 0;
     auto ac = [&](bool ok, int n, const char* label) {
@@ -656,6 +704,8 @@ int main() {
     if (!test_force_soa_keyword_literal_4321())
         return 1;
     if (!test_character_literal_4129())
+        return 1;
+    if (!test_lexer_ctype_casts_4936())
         return 1;
 
     // Test cases: (input, expected_string)

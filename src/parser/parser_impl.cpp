@@ -48,7 +48,7 @@ FlatParseResult parse(ParserState& s, std::string_view src) {
                 case TokenKind::Error:
                     // Issue #4498: 1/2 lexes as one Error token.
                     if (!t.text.empty() && t.text.find('/') != std::string_view::npos &&
-                        (std::isdigit((unsigned char)t.text[0]) || t.text[0] == '-'))
+                        (std::isdigit(static_cast<unsigned char>(t.text[0])) || t.text[0] == '-'))
                         return "unsupported rational literal '" + std::string(t.text) +
                                "' (write a float such as 0.5, or (/ 1.0 2))";
                     return "invalid character";
@@ -138,7 +138,7 @@ FlatParseResult parse(ParserState& s, std::string_view src) {
             // Issue #4498: a trailing 1/2 must fail, not end the program.
             if (next.kind == TokenKind::Error && s.deferred_error.empty() &&
                 next.text.find('/') != std::string_view::npos && !next.text.empty() &&
-                (std::isdigit((unsigned char)next.text[0]) || next.text[0] == '-'))
+                (std::isdigit(static_cast<unsigned char>(next.text[0])) || next.text[0] == '-'))
                 s.deferred_error = "rational literal '" + std::string(next.text) +
                                    "' is not supported; write a float (0.5) or (/ 1.0 2)";
             flush_deferred_char_error();
@@ -407,7 +407,7 @@ NodeId parse_expr(ParserState& s) {
                 s.deferred_error = "malformed character literal '" + std::string(tok.text) + "'";
             // Issue #4498: 1/2 — exact rationals are not supported.
             if (tok.text.find('/') != std::string_view::npos && !tok.text.empty() &&
-                (std::isdigit((unsigned char)tok.text[0]) || tok.text[0] == '-') &&
+                (std::isdigit(static_cast<unsigned char>(tok.text[0])) || tok.text[0] == '-') &&
                 s.deferred_error.empty()) {
                 s.deferred_error = "rational literal '" + std::string(tok.text) +
                                    "' is not supported; write a float (0.5) or (/ 1.0 2)";
