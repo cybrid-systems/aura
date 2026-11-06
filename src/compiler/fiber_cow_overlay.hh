@@ -197,7 +197,7 @@ public:
     // owner+fiber replaces the stale one (a body that was cancelled or
     // unwound without committing cannot leak its writes into the next).
     std::uint64_t begin(const void* owner, std::uint64_t fiber, std::uint64_t base_epoch) {
-        std::lock_guard<std::mutex> lk(mu_);
+        std::scoped_lock lk(mu_);
         auto& st = owners_[owner];
         return begin_locked(st, fiber, base_epoch, st.seq);
     }
@@ -210,7 +210,7 @@ public:
     // base cannot be in the future). Returns the base epoch like begin().
     std::uint64_t begin_at(const void* owner, std::uint64_t fiber, std::uint64_t base_epoch,
                            std::uint64_t base_seq) {
-        std::lock_guard<std::mutex> lk(mu_);
+        std::scoped_lock lk(mu_);
         auto& st = owners_[owner];
         return begin_locked(st, fiber, base_epoch, std::min(base_seq, st.seq));
     }
@@ -218,14 +218,14 @@ public:
     // Issue #4771: the commit-log sequence right now. Record it with a
     // snapshot so a later begin_at() can use the snapshot as its base.
     std::uint64_t current_seq(const void* owner) const {
-        std::lock_guard<std::mutex> lk(mu_);
+        std::scoped_lock lk(mu_);
         auto oit = owners_.find(owner);
         return oit == owners_.end() ? 0 : oit->second.seq;
     }
 
     // Issue #4771: the overlay's commit-log base (0 when none is open).
     std::uint64_t base_seq(const void* owner, std::uint64_t fiber) const {
-        std::lock_guard<std::mutex> lk(mu_);
+        std::scoped_lock lk(mu_);
         auto oit = owners_.find(owner);
         if (oit == owners_.end())
             return 0;
@@ -238,7 +238,7 @@ public:
     // Private write. Auto-begins when the body never called begin().
     bool write(const void* owner, std::uint64_t fiber, std::string_view name, const V& value,
                std::uint64_t base_epoch) {
-        std::lock_guard<std::mutex> lk(mu_);
+        std::scoped_lock lk(mu_);
         auto& st = owners_[owner];
         auto& ov = st.overlays[fiber];
         if (!ov.active) {
@@ -267,7 +267,7 @@ public:
     // env switches from the old cell index to this one in one step.
     bool write_cell(const void* owner, std::uint64_t fiber, std::string_view name, const V& value,
                     std::uint64_t cell, std::uint64_t base_epoch) {
-        std::lock_guard<std::mutex> lk(mu_);
+        std::scoped_lock lk(mu_);
         auto& st = owners_[owner];
         auto& ov = st.overlays[fiber];
         if (!ov.active) {
@@ -290,7 +290,7 @@ public:
     // #4715 AC2: the private cell for a name the overlay captured, if any.
     std::optional<std::uint64_t> read_cell(const void* owner, std::uint64_t fiber,
                                            std::string_view name) const {
-        std::lock_guard<std::mutex> lk(mu_);
+        std::scoped_lock lk(mu_);
         auto oit = owners_.find(owner);
         if (oit == owners_.end())
             return std::nullopt;
@@ -310,7 +310,7 @@ public:
     // recorded in the read set for stale-read validation at commit. A hit
     // (our own private write) records nothing: the write-write arm owns it.
     bool read(const void* owner, std::uint64_t fiber, std::string_view name, V& out) {
-        std::lock_guard<std::mutex> lk(mu_);
+        std::scoped_lock lk(mu_);
         auto oit = owners_.find(owner);
         if (oit == owners_.end())
             return false;
@@ -331,7 +331,7 @@ public:
     // Side-effect-free twin of read(): overlay membership / value probe that
     // must NOT enter the read set (fiber:overlay-has, capture pre-checks).
     bool peek(const void* owner, std::uint64_t fiber, std::string_view name, V& out) const {
-        std::lock_guard<std::mutex> lk(mu_);
+        std::scoped_lock lk(mu_);
         auto oit = owners_.find(owner);
         if (oit == owners_.end())
             return false;
@@ -348,7 +348,7 @@ public:
     // Issue #4715 follow-up: the last structured conflict this fiber saw
     // (survives the overlay drop, cleared by the next begin()).
     std::optional<ConflictInfo> last_conflict(const void* owner, std::uint64_t fiber) const {
-        std::lock_guard<std::mutex> lk(mu_);
+        std::scoped_lock lk(mu_);
         auto oit = owners_.find(owner);
         if (oit == owners_.end())
             return std::nullopt;
@@ -359,7 +359,7 @@ public:
     }
 
     std::size_t pending(const void* owner, std::uint64_t fiber) const {
-        std::lock_guard<std::mutex> lk(mu_);
+        std::scoped_lock lk(mu_);
         auto oit = owners_.find(owner);
         if (oit == owners_.end())
             return 0;
@@ -370,7 +370,7 @@ public:
     }
 
     bool active(const void* owner, std::uint64_t fiber) const {
-        std::lock_guard<std::mutex> lk(mu_);
+        std::scoped_lock lk(mu_);
         auto oit = owners_.find(owner);
         if (oit == owners_.end())
             return false;
@@ -396,7 +396,7 @@ public:
     template <class ApplyFn, class NotifyFn = std::nullptr_t>
     CommitResult commit(const void* owner, std::uint64_t fiber, std::uint64_t current_epoch,
                         ApplyFn&& apply, NotifyFn&& notify = nullptr) {
-        std::lock_guard<std::mutex> lk(mu_);
+        std::scoped_lock lk(mu_);
         CommitResult res;
         auto oit = owners_.find(owner);
         if (oit == owners_.end())
@@ -426,7 +426,7 @@ public:
     template <class NotifyFn = std::nullptr_t>
     PrepareTicket prepare(const void* owner, std::uint64_t fiber, std::uint64_t current_epoch,
                           NotifyFn&& notify = nullptr) {
-        std::lock_guard<std::mutex> lk(mu_);
+        std::scoped_lock lk(mu_);
         PrepareTicket t;
         t.owner = owner;
         t.fiber = fiber;
@@ -470,7 +470,7 @@ public:
     template <class ApplyFn, class NotifyFn = std::nullptr_t>
     CommitResult finalize(const PrepareTicket& ticket, ApplyFn&& apply,
                           NotifyFn&& notify = nullptr) {
-        std::lock_guard<std::mutex> lk(mu_);
+        std::scoped_lock lk(mu_);
         CommitResult res;
         auto fit = ticket_overlay_locked(ticket);
         if (!fit)
@@ -489,7 +489,7 @@ public:
     // and no claim is logged, so later overlays never see a ghost commit.
     // Counted as a rollback. Returns false for a stale / unknown ticket.
     bool cancel(const PrepareTicket& ticket) {
-        std::lock_guard<std::mutex> lk(mu_);
+        std::scoped_lock lk(mu_);
         auto fit = ticket_overlay_locked(ticket);
         if (!fit)
             return false;
@@ -503,7 +503,7 @@ public:
 
     // Failure / cancel path: drop the overlay, leave the shared env alone.
     bool rollback(const void* owner, std::uint64_t fiber) {
-        std::lock_guard<std::mutex> lk(mu_);
+        std::scoped_lock lk(mu_);
         auto oit = owners_.find(owner);
         if (oit == owners_.end())
             return false;
@@ -517,7 +517,7 @@ public:
     }
 
     OverlayStats stats(const void* owner) const {
-        std::lock_guard<std::mutex> lk(mu_);
+        std::scoped_lock lk(mu_);
         auto oit = owners_.find(owner);
         if (oit == owners_.end())
             return OverlayStats{};
@@ -530,7 +530,7 @@ public:
 
     // Test/teardown hook: forget every overlay and claim for one owner.
     void purge(const void* owner) {
-        std::lock_guard<std::mutex> lk(mu_);
+        std::scoped_lock lk(mu_);
         owners_.erase(owner);
     }
 
@@ -726,7 +726,7 @@ public:
     // that lives only in an open overlay (define / set! before the commit)
     // is a GC root, exactly like a fiber:join result (#4710).
     void collect_pending(std::vector<V>& out) const {
-        std::lock_guard<std::mutex> lk(mu_);
+        std::scoped_lock lk(mu_);
         for (const auto& owner_entry : owners_) {
             for (const auto& overlay_entry : owner_entry.second.overlays) {
                 const auto& ov = overlay_entry.second;
