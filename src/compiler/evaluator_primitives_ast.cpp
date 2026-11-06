@@ -839,7 +839,11 @@ void register_ast_primitives(PrimRegistrar add_in, Evaluator& ev,
     // we fall through to the source path.
     // Issue #4910: temporarily route `add` through the evolution-log wrap so the
     // registration stays a literal add("ast:restore", …) for the surface scanners.
-    const PrimRegistrar add_plain_4910 = add;
+    // #4936 follow-up: this must be an OWNING copy. PrimRegistrar is a
+    // std::function_ref; copying it would point back at `add`, and after the
+    // reassignment below that reference resolves to the wrapper itself —
+    // infinite recursion at startup (ast:restore registration).
+    const std::function<void(std::string, PrimFn)> add_plain_4910 = add;
     add = [add_plain_4910](std::string n, PrimFn f) {
         add_plain_4910(std::move(n), PrimFn(evo_wrap_restore_4910(std::move(f))));
     };
