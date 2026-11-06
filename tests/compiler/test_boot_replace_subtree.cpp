@@ -4,7 +4,8 @@
 //
 //   AC1: constructing CompilerService runs register_all_primitives
 //   AC2: (+) is the registered primitive, not a stub
-//   AC3: replace-subtree replaces a user lambda and reports the captured SymId's name
+//   AC3: ast:restore is registered and a snapshot round-trip runs
+//   AC4: replace-subtree replaces a user lambda and reports the captured SymId's name
 //
 // The FlatAST helper test does not execute this primitive. This one does.
 
@@ -67,6 +68,38 @@ int main() {
     expect(sum.has_value() && aura::compiler::types::is_int(*sum) &&
                aura::compiler::types::as_int(*sum) == 3,
            "boot ran the registered +");
+
+    // Registration of ast:restore rebinds the owning registrar. A function_ref
+    // copy of that registrar calls the wrapper forever and blows the stack in
+    // this constructor. Lookup plus a snapshot round-trip is the registration
+    // proof: the primitive is present and the wrapped body runs.
+    const auto restore = cs.evaluator().primitives().lookup("ast:restore");
+    expect(restore.has_value(), "boot registered ast:restore");
+    auto marked = cs.eval("(set-code \"(define restore-boot 1)\")");
+    show_err(marked, "set-code restore-boot");
+    expect(marked.has_value(), "set-code installed restore-boot");
+    auto snap = cs.eval("(ast:snapshot \"restore-boot\")");
+    show_err(snap, "ast:snapshot");
+    expect(snap.has_value() && aura::compiler::types::is_int(*snap) &&
+               aura::compiler::types::as_int(*snap) >= 0,
+           "ast:snapshot returned an id");
+    if (snap.has_value() && aura::compiler::types::is_int(*snap)) {
+        auto replaced = cs.eval("(set-code \"(define restore-boot 2)\")");
+        show_err(replaced, "set-code overwrites the snapshot");
+        expect(replaced.has_value(), "workspace moved off the snapshot");
+        auto back = cs.eval(std::format("(ast:restore {})", aura::compiler::types::as_int(*snap)));
+        show_err(back, "ast:restore");
+        expect(back.has_value() && aura::compiler::types::is_bool(*back) &&
+                   aura::compiler::types::as_bool(*back),
+               "ast:restore returned true");
+        auto rebound = cs.eval("(eval-current)");
+        show_err(rebound, "eval-current after ast:restore");
+        auto got = cs.eval("restore-boot");
+        show_err(got, "restore-boot");
+        expect(got.has_value() && aura::compiler::types::is_int(*got) &&
+                   aura::compiler::types::as_int(*got) == 1,
+               "ast:restore put the snapshotted define back");
+    }
 
     auto set = cs.eval("(set-code \"(define (f a) (lambda (x) x))\")");
     show_err(set, "set-code");
