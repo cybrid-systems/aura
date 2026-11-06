@@ -276,7 +276,7 @@ inline std::size_t pin_registry_shard_index(std::uint64_t arena_id) noexcept {
 }
 
 // Process-level cumulative lock-wait microseconds. Bumped inside
-// each shard's lock_guard ctor (best-effort; the std::chrono
+// each shard's scoped_lock ctor (best-effort; the std::chrono
 // resolution is microseconds). Used by AC4 observability.
 inline std::atomic<std::uint64_t> g_pin_registry_lock_wait_us_total{0};
 // Issue #2496: process-wide counter for AURA_GENERAL_OBJECT_PIN=required
@@ -403,7 +403,7 @@ public:
         shard_index_ = pin_registry_shard_index(arena_id_);
         auto& shard = pin_registry_shards()[shard_index_];
         const auto wait_start = std::chrono::steady_clock::now();
-        std::lock_guard<std::mutex> lock(shard.mtx);
+        std::scoped_lock lock(shard.mtx);
         const auto wait_end = std::chrono::steady_clock::now();
         g_pin_registry_lock_wait_us_total.fetch_add(
             static_cast<std::uint64_t>(
@@ -422,7 +422,7 @@ public:
         if (shard_index_ >= kPinRegistryShardCount)
             return;
         auto& shard = pin_registry_shards()[shard_index_];
-        std::lock_guard<std::mutex> lock(shard.mtx);
+        std::scoped_lock lock(shard.mtx);
         auto& vec = shard.pins;
         auto it = std::find(vec.begin(), vec.end(), this);
         if (it != vec.end())
@@ -448,7 +448,7 @@ public:
         o.owner_ = PinOwner::None; // Issue #2270: moved-from resets to None.
         o.shard_index_ = 0;        // Issue #2342: source's shard_index_ is now stale.
         auto& shard = pin_registry_shards()[shard_index_];
-        std::lock_guard<std::mutex> lock(shard.mtx);
+        std::scoped_lock lock(shard.mtx);
         auto& vec = shard.pins;
         auto it = std::find(vec.begin(), vec.end(), &o);
         if (it != vec.end())
@@ -461,7 +461,7 @@ public:
             // Issue #2342: deregister this from current shard first.
             if (shard_index_ < kPinRegistryShardCount) {
                 auto& my_shard = pin_registry_shards()[shard_index_];
-                std::lock_guard<std::mutex> my_lock(my_shard.mtx);
+                std::scoped_lock my_lock(my_shard.mtx);
                 auto& my_vec = my_shard.pins;
                 auto my_it = std::find(my_vec.begin(), my_vec.end(), this);
                 if (my_it != my_vec.end())
@@ -481,7 +481,7 @@ public:
             o.shard_index_ = 0;
             // Register in destination shard.
             auto& new_shard = pin_registry_shards()[shard_index_];
-            std::lock_guard<std::mutex> new_lock(new_shard.mtx);
+            std::scoped_lock new_lock(new_shard.mtx);
             auto& new_vec = new_shard.pins;
             auto src_it = std::find(new_vec.begin(), new_vec.end(), &o);
             if (src_it != new_vec.end())
@@ -507,16 +507,16 @@ public:
             auto& old_shard = pin_registry_shards()[old_idx];
             auto& new_shard = pin_registry_shards()[new_idx];
             if (old_idx < new_idx) {
-                std::lock_guard<std::mutex> old_lock(old_shard.mtx);
-                std::lock_guard<std::mutex> new_lock(new_shard.mtx);
+                std::scoped_lock old_lock(old_shard.mtx);
+                std::scoped_lock new_lock(new_shard.mtx);
                 auto& old_vec = old_shard.pins;
                 auto old_it = std::find(old_vec.begin(), old_vec.end(), this);
                 if (old_it != old_vec.end())
                     old_vec.erase(old_it);
                 new_shard.pins.push_back(this);
             } else {
-                std::lock_guard<std::mutex> new_lock(new_shard.mtx);
-                std::lock_guard<std::mutex> old_lock(old_shard.mtx);
+                std::scoped_lock new_lock(new_shard.mtx);
+                std::scoped_lock old_lock(old_shard.mtx);
                 auto& old_vec = old_shard.pins;
                 auto old_it = std::find(old_vec.begin(), old_vec.end(), this);
                 if (old_it != old_vec.end())
@@ -684,7 +684,7 @@ inline std::size_t restamp_all_pins_for_arena(std::uint64_t arena_id,
         std::size_t total = 0;
         for (std::size_t i = 0; i < kPinRegistryShardCount; ++i) {
             auto& shard = pin_registry_shards()[i];
-            std::lock_guard<std::mutex> lock(shard.mtx);
+            std::scoped_lock lock(shard.mtx);
             for (auto* p : shard.pins) {
                 if (!p || !p->pinned())
                     continue;
@@ -698,7 +698,7 @@ inline std::size_t restamp_all_pins_for_arena(std::uint64_t arena_id,
     // Arena-specific: single shard only (LifetimePin routes by arena_id).
     const auto idx = pin_registry_shard_index(arena_id);
     auto& shard = pin_registry_shards()[idx];
-    std::lock_guard<std::mutex> lock(shard.mtx);
+    std::scoped_lock lock(shard.mtx);
     std::size_t n = 0;
     for (auto* p : shard.pins) {
         if (!p || !p->pinned())
@@ -719,7 +719,7 @@ inline std::size_t invalidate_all_pins_for_arena(std::uint64_t arena_id) noexcep
         std::size_t total = 0;
         for (std::size_t i = 0; i < kPinRegistryShardCount; ++i) {
             auto& shard = pin_registry_shards()[i];
-            std::lock_guard<std::mutex> lock(shard.mtx);
+            std::scoped_lock lock(shard.mtx);
             for (auto* p : shard.pins) {
                 if (!p || !p->pinned())
                     continue;
@@ -731,7 +731,7 @@ inline std::size_t invalidate_all_pins_for_arena(std::uint64_t arena_id) noexcep
     }
     const auto idx = pin_registry_shard_index(arena_id);
     auto& shard = pin_registry_shards()[idx];
-    std::lock_guard<std::mutex> lock(shard.mtx);
+    std::scoped_lock lock(shard.mtx);
     std::size_t n = 0;
     for (auto* p : shard.pins) {
         if (!p || !p->pinned())
@@ -762,7 +762,7 @@ invalidate_pins_not_in_new_addrs(std::uint64_t arena_id,
     std::size_t invalidated = 0;
     for (std::size_t i = 0; i < kPinRegistryShardCount; ++i) {
         auto& shard = pin_registry_shards()[i];
-        std::lock_guard<std::mutex> lock(shard.mtx);
+        std::scoped_lock lock(shard.mtx);
         for (auto* p : shard.pins) {
             if (!p || !p->pinned())
                 continue;
@@ -817,7 +817,7 @@ inline RemapResult remap_pins_pointing_to(void* old_ptr, void* new_ptr, std::uin
     // pins whose arena_id matches (filter inside loop body).
     for (std::size_t i = 0; i < kPinRegistryShardCount; ++i) {
         auto& shard = pin_registry_shards()[i];
-        std::lock_guard<std::mutex> lock(shard.mtx);
+        std::scoped_lock lock(shard.mtx);
         for (auto* p : shard.pins) {
             if (!p || !p->pinned())
                 continue;
@@ -903,7 +903,7 @@ inline std::size_t pin_registry_shard_pin_count(std::size_t shard_idx) noexcept 
     if (shard_idx >= kPinRegistryShardCount)
         return 0;
     auto& s = pin_registry_shards()[shard_idx];
-    std::lock_guard<std::mutex> lock(s.mtx);
+    std::scoped_lock lock(s.mtx);
     std::size_t n = 0;
     for (auto* p : s.pins)
         if (p && p->pinned())
@@ -925,7 +925,7 @@ inline std::size_t pin_registry_total_pinned_count() noexcept {
     std::size_t total = 0;
     for (std::size_t i = 0; i < kPinRegistryShardCount; ++i) {
         auto& s = pin_registry_shards()[i];
-        std::lock_guard<std::mutex> lock(s.mtx);
+        std::scoped_lock lock(s.mtx);
         for (auto* p : s.pins)
             if (p && p->pinned())
                 ++total;
@@ -946,7 +946,7 @@ inline std::size_t live_pin_count() noexcept {
 [[nodiscard]] inline bool any_pin_blocks_arena_reclaim() noexcept {
     for (std::size_t i = 0; i < kPinRegistryShardCount; ++i) {
         auto& s = pin_registry_shards()[i];
-        std::lock_guard<std::mutex> lock(s.mtx);
+        std::scoped_lock lock(s.mtx);
         for (auto* p : s.pins)
             if (p && p->pinned() && p->blocks_arena_reclaim())
                 return true;
@@ -1023,7 +1023,7 @@ inline void collect_pinned_ptrs_for_arena(std::uint64_t arena_id,
                                           std::unordered_set<void*>& out) noexcept {
     for (std::size_t i = 0; i < kPinRegistryShardCount; ++i) {
         auto& shard = pin_registry_shards()[i];
-        std::lock_guard<std::mutex> lock(shard.mtx);
+        std::scoped_lock lock(shard.mtx);
         for (auto* p : shard.pins) {
             if (!p || !p->pinned())
                 continue;
@@ -1048,7 +1048,7 @@ verify_pins_under_moving_compact(std::uint64_t arena_id,
     bool arena_ok = true;
     for (std::size_t i = 0; i < kPinRegistryShardCount; ++i) {
         auto& shard = pin_registry_shards()[i];
-        std::lock_guard<std::mutex> lock(shard.mtx);
+        std::scoped_lock lock(shard.mtx);
         for (auto* p : shard.pins) {
             if (!p || !p->pinned())
                 continue;
@@ -1198,7 +1198,7 @@ inline void pin_linear_root(void* obj) noexcept {
     if (auto fn = linear_root_current_owner_fn().load(std::memory_order_relaxed))
         owner = fn();
     {
-        std::lock_guard<std::mutex> lock(linear_roots_mtx());
+        std::scoped_lock lock(linear_roots_mtx());
         linear_roots().insert(obj);
         linear_root_owners()[obj] = owner;
     }
@@ -1214,7 +1214,7 @@ inline void pin_linear_root(void* obj) noexcept {
 inline void unpin_linear_root(void* obj) noexcept {
     if (!obj)
         return;
-    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    std::scoped_lock lock(linear_roots_mtx());
     linear_roots().erase(obj);
     linear_root_owners().erase(obj);
     g_linear_unpin_total.fetch_add(1, std::memory_order_relaxed);
@@ -1232,7 +1232,7 @@ inline LinearRootSnapshot linear_root_snapshot() noexcept {
     s.pin_total = g_linear_pin_total.load(std::memory_order_relaxed);
     s.unpin_total = g_linear_unpin_total.load(std::memory_order_relaxed);
     s.pin_miss_total = g_linear_pin_miss_total.load(std::memory_order_relaxed);
-    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    std::scoped_lock lock(linear_roots_mtx());
     s.live_count = linear_roots().size();
     return s;
 }
@@ -1262,7 +1262,7 @@ inline constexpr int kLinearRootOwnerScopedDrainIssue = 4031;
 // Reset for tests only. Production leaves linear_roots alone (the
 // live linear bindings are the source of truth).
 inline void reset_linear_roots_for_test() noexcept {
-    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    std::scoped_lock lock(linear_roots_mtx());
     linear_roots().clear();
     linear_root_owners().clear();
     g_linear_pin_total.store(0, std::memory_order_relaxed);
@@ -1278,7 +1278,7 @@ inline void reset_linear_roots_for_test() noexcept {
 // empty check; #3023 abort-release counter bumps only here / owned_by /
 // except (legacy soak + unit tests).
 inline std::size_t unpin_all_linear_roots() noexcept {
-    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    std::scoped_lock lock(linear_roots_mtx());
     auto& roots = linear_roots();
     const auto n = roots.size();
     if (n == 0)
@@ -1295,7 +1295,7 @@ inline std::size_t unpin_all_linear_roots() noexcept {
 // Empty registry: one lock + empty check (Soft quiet path). Never
 // clears sibling fibers' roots.
 inline std::size_t unpin_linear_roots_owned_by(void* owner) noexcept {
-    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    std::scoped_lock lock(linear_roots_mtx());
     auto& roots = linear_roots();
     auto& owners = linear_root_owners();
     if (roots.empty())
@@ -1324,7 +1324,7 @@ inline std::size_t unpin_linear_roots_owned_by(void* owner) noexcept {
 // nested enter) and drains extras pinned under the nested Guard.
 // Empty registry: one lock + empty check (Soft quiet path).
 inline void snapshot_linear_roots(std::unordered_set<void*>& out) noexcept {
-    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    std::scoped_lock lock(linear_roots_mtx());
     out = linear_roots();
 }
 
@@ -1332,7 +1332,7 @@ inline void snapshot_linear_roots(std::unordered_set<void*>& out) noexcept {
 // (nullptr when the pin had no current fiber). Used by scoped drain to
 // spare a sibling's remapped root without a second pin registry.
 inline void snapshot_linear_root_owner_pairs(std::vector<std::pair<void*, void*>>& out) noexcept {
-    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    std::scoped_lock lock(linear_roots_mtx());
     out.clear();
     const auto& roots = linear_roots();
     const auto& owners = linear_root_owners();
@@ -1344,7 +1344,7 @@ inline void snapshot_linear_root_owner_pairs(std::vector<std::pair<void*, void*>
 }
 
 inline std::size_t unpin_linear_roots_except(const std::unordered_set<void*>& keep) noexcept {
-    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    std::scoped_lock lock(linear_roots_mtx());
     auto& roots = linear_roots();
     auto& owners = linear_root_owners();
     if (roots.empty())
@@ -1385,7 +1385,7 @@ inline std::size_t unpin_linear_roots_except(const std::unordered_set<void*>& ke
 inline std::size_t
 remap_linear_roots_under_moving(const std::unordered_map<void*, void*>& last_object_remap,
                                 std::vector<void*>* covered_old_out = nullptr) noexcept {
-    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    std::scoped_lock lock(linear_roots_mtx());
     auto& roots = linear_roots();
     if (roots.empty() || last_object_remap.empty())
         return 0;
@@ -1625,7 +1625,7 @@ inline std::uint64_t general_object_pin_adopt_site_count() noexcept {
 // (remap_linear_roots_under_moving) immediately before this check.
 inline bool
 verify_linear_pins_under_moving_compact(const std::unordered_set<void*>& old_addresses) noexcept {
-    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    std::scoped_lock lock(linear_roots_mtx());
     auto& roots = linear_roots();
     if (roots.empty())
         return true; // AC3: no linear pins → no extra atomics
