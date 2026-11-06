@@ -57,7 +57,8 @@ def main() -> int:
     must("uses_sbo_trampoline", "AC1 SBO API", pure)
     must("kSboBytes", "AC1 SBO size", pure)
     must("bind_callable", "AC2 Soft bind", pure)
-    must("std::invocable<", "AC1 callable constraint", pure)
+    must("is_invocable_r_v<EvalValue, const std::decay_t<F>&", "AC1 const callable", pure)
+    must("std::align_val_t", "AC1 aligned heap box", pure)
 
     prim_pos = pure.find("export class PrimFn")
     if prim_pos < 0:
@@ -68,7 +69,7 @@ def main() -> int:
         body_code = re.sub(r"//[^\n]*", "", body)
         if "std::function<" in body_code:
             fails.append("AC1: PrimFn still has std::function member/usage")
-        if "fn_" in body_code and "std::function" in body:
+        if re.search(r"\bfn_\b", body_code) and "std::function" in body_code:
             fails.append("AC1: residual fn_ std::function field")
     if "using PrimFn = std::function" in _read("src/compiler/ffi_primitives.ixx") or "using PrimFn = std::function" in _read(
         "src/compiler/adt_runtime.ixx"
