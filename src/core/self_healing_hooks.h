@@ -120,7 +120,7 @@ inline PolicyResult default_self_heal_policy(const HealErrorView& err) noexcept 
 }
 
 inline void register_self_healing_hook(SelfHealingHook h) {
-    std::lock_guard lock(g_hooks_mu);
+    std::scoped_lock lock(g_hooks_mu);
     g_hooks.push_back(std::move(h));
 }
 
@@ -141,7 +141,7 @@ inline bool run_self_heal_engine(const HealErrorView& err) {
 
     std::vector<SelfHealingHook> copy;
     {
-        std::lock_guard lock(g_hooks_mu);
+        std::scoped_lock lock(g_hooks_mu);
         copy = g_hooks;
     }
     bool hooks_ok = false;
@@ -196,7 +196,7 @@ inline void trigger_self_healing(const HealErrorView& err) {
 }
 
 inline void reset_self_heal_state_for_test() {
-    std::lock_guard lock(g_hooks_mu);
+    std::scoped_lock lock(g_hooks_mu);
     g_hooks.clear();
     g_policy_fn.store(nullptr, std::memory_order_relaxed);
     g_triggers.store(0, std::memory_order_relaxed);

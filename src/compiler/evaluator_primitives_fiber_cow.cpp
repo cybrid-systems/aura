@@ -181,7 +181,7 @@ namespace {
         {
             // Issue #4860: unlocked size()+push_back raced a concurrent publish
             // (double free). Index read, push and stamp are one critical section.
-            std::lock_guard slock(ev.alloc_storage_lock_);
+            std::scoped_lock slock(ev.alloc_storage_lock_);
             hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             aura_hash_stamp_new_table_owner();
@@ -237,7 +237,7 @@ namespace {
     // so a concurrent commit can only be observed before or after the top-env
     // rebind, never as a half-written value (AC2 "old or new, never torn").
     bool overlay_cell_value(Evaluator& ev, std::uint64_t cell, EvalValue& out) {
-        std::lock_guard<std::recursive_mutex> lk(ev.cells_storage_mutex());
+        std::scoped_lock<std::recursive_mutex> lk(ev.cells_storage_mutex());
         if (cell >= ev.cells().size())
             return false;
         out = ev.cells()[static_cast<std::size_t>(cell)];
@@ -285,7 +285,7 @@ std::optional<std::size_t> fiber_cow_overlay_capture_define(Evaluator& ev, std::
     if (cell != 0) {
         // A second rebind of the same name inside one body keeps the fiber's
         // cell identity: still private, still one pointer swap at commit.
-        std::lock_guard<std::recursive_mutex> lk(ev.cells_storage_mutex());
+        std::scoped_lock<std::recursive_mutex> lk(ev.cells_storage_mutex());
         if (cell < ev.cells().size())
             ev.cells()[static_cast<std::size_t>(cell)] = value;
         else
@@ -557,7 +557,7 @@ void register_fiber_cow_primitives(std::function_ref<void(std::string, PrimFn)> 
                 if (auto existing = ev.top_env().lookup_binding(name);
                     existing && is_cell(*existing)) {
                     const auto old_ci = as_cell_id(*existing);
-                    std::lock_guard<std::recursive_mutex> lk(ev.cells_storage_mutex());
+                    std::scoped_lock<std::recursive_mutex> lk(ev.cells_storage_mutex());
                     if (old_ci < ev.cells().size()) {
                         ev.cells()[static_cast<std::size_t>(old_ci)] = value;
                         return;
@@ -659,7 +659,7 @@ void register_fiber_cow_primitives(std::function_ref<void(std::string, PrimFn)> 
                                         const EvalValue& v) -> std::optional<std::size_t> {
         if (!is_pair(v))
             return std::nullopt;
-        std::lock_guard slock(ev.alloc_storage_lock_);
+        std::scoped_lock slock(ev.alloc_storage_lock_);
         const auto pid = as_pair_idx(v);
         if (pid >= ev.pairs_.size())
             return std::nullopt;
@@ -691,7 +691,7 @@ void register_fiber_cow_primitives(std::function_ref<void(std::string, PrimFn)> 
             for (int attempt = 0; attempt < kAtomicMaxRetries4761; ++attempt) {
                 EvalValue old;
                 {
-                    std::lock_guard lk(atomic_rmw_mutex_4761());
+                    std::scoped_lock lk(atomic_rmw_mutex_4761());
                     old = ev.cells_[ci];
                 }
                 const EvalValue arg[1] = {old};
@@ -702,7 +702,7 @@ void register_fiber_cow_primitives(std::function_ref<void(std::string, PrimFn)> 
                 if (is_error(*nv))
                     return *nv;
                 {
-                    std::lock_guard lk(atomic_rmw_mutex_4761());
+                    std::scoped_lock lk(atomic_rmw_mutex_4761());
                     if (ev.cells_[ci] == old) {
                         ev.cells_[ci] = *nv;
                         return *nv;
@@ -732,7 +732,7 @@ void register_fiber_cow_primitives(std::function_ref<void(std::string, PrimFn)> 
                 EvalValue old;
                 bool present = false;
                 {
-                    std::lock_guard lk(atomic_rmw_mutex_4761());
+                    std::scoped_lock lk(atomic_rmw_mutex_4761());
                     old = read(present);
                 }
                 if (!present && !has_default)
@@ -745,7 +745,7 @@ void register_fiber_cow_primitives(std::function_ref<void(std::string, PrimFn)> 
                 if (is_error(*nv))
                     return *nv;
                 {
-                    std::lock_guard lk(atomic_rmw_mutex_4761());
+                    std::scoped_lock lk(atomic_rmw_mutex_4761());
                     bool now_present = false;
                     const EvalValue cur = read(now_present);
                     if (now_present == present && (!present || cur == old)) {
@@ -772,7 +772,7 @@ void register_fiber_cow_primitives(std::function_ref<void(std::string, PrimFn)> 
             idx = c.cells.size();
             c.cells.push_back(std::make_unique<std::atomic<std::int64_t>>(init));
         }
-        std::lock_guard slock(ev.alloc_storage_lock_);
+        std::scoped_lock slock(ev.alloc_storage_lock_);
         const auto tag = ev.string_heap_.mint(std::string(kAtomicCounterTag4761));
         const auto pid = ev.pairs_.size();
         ev.pairs_.push_back({make_string(tag), make_int(static_cast<std::int64_t>(idx))});

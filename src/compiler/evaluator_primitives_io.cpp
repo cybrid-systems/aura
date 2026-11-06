@@ -717,7 +717,7 @@ namespace {
         if (!fd_owner_face_active(ev) || fd < 0)
             return;
         auto& table = fd_tenant_table();
-        std::lock_guard<std::mutex> lock(table.mu);
+        std::scoped_lock<std::mutex> lock(table.mu);
         table.owner[fd] = MintedFd{ev.capability_tenant_id(), &ev};
         table.owned[&ev].insert(fd);
     }
@@ -726,7 +726,7 @@ namespace {
         if (!fd_owner_face_active(ev) || fd < 0)
             return;
         auto& table = fd_tenant_table();
-        std::lock_guard<std::mutex> lock(table.mu);
+        std::scoped_lock<std::mutex> lock(table.mu);
         table.owner.erase(fd);
         if (const auto it = table.owned.find(&ev); it != table.owned.end())
             it->second.erase(fd);
@@ -742,7 +742,7 @@ namespace {
         std::uint64_t owner = 0;
         {
             auto& table = fd_tenant_table();
-            std::lock_guard<std::mutex> lock(table.mu);
+            std::scoped_lock<std::mutex> lock(table.mu);
             const auto it = table.owner.find(fd);
             if (it != table.owner.end()) {
                 minted = true;
@@ -1476,7 +1476,7 @@ void release_minted_fds(const Evaluator& ev) noexcept {
         int fd = -1;
         bool owned_here = false;
         {
-            std::lock_guard<std::mutex> lock(table.mu);
+            std::scoped_lock<std::mutex> lock(table.mu);
             const auto it = table.owned.find(&ev);
             if (it == table.owned.end())
                 return;

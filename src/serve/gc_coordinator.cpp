@@ -64,12 +64,12 @@ bool GCCollector::request() {
 // ── register_root_source / unregister_root_source ──────
 
 void GCCollector::register_root_source(int worker_id, GCRootFlushFn fn) {
-    std::lock_guard<std::mutex> lock(root_sources_mutex_);
+    std::scoped_lock<std::mutex> lock(root_sources_mutex_);
     root_sources_[worker_id] = std::move(fn);
 }
 
 void GCCollector::unregister_root_source(int worker_id) {
-    std::lock_guard<std::mutex> lock(root_sources_mutex_);
+    std::scoped_lock<std::mutex> lock(root_sources_mutex_);
     root_sources_.erase(worker_id);
 }
 
@@ -83,7 +83,7 @@ void GCCollector::register_sweep_fn(GCSweepFn fn) {
 
 void GCCollector::collect_roots(GCRootSet& out) {
     out.clear();
-    std::lock_guard<std::mutex> lock(root_sources_mutex_);
+    std::scoped_lock<std::mutex> lock(root_sources_mutex_);
     for (auto& [wid, fn] : root_sources_) {
         if (fn)
             fn(out);

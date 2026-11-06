@@ -422,7 +422,7 @@ void CompilePrims::register_compile_p2(PrimRegistrar add, Evaluator& ev) {
             {
                 // Issue #4860: unlocked size()+push_back raced a concurrent publish
                 // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
+                std::scoped_lock slock(ev.alloc_storage_lock_);
                 hidx = g_hash_tables.size();
                 g_hash_tables.push_back(ht);
                 aura_hash_stamp_new_table_owner();
@@ -487,7 +487,7 @@ void CompilePrims::register_compile_p3(PrimRegistrar add, Evaluator& ev) {
                 {
                     // Issue #4860: unlocked size()+push_back raced a concurrent publish
                     // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
                     hidx = g_hash_tables.size();
                     g_hash_tables.push_back(ht);
                     aura_hash_stamp_new_table_owner();
@@ -586,7 +586,7 @@ void CompilePrims::register_compile_p4(PrimRegistrar add, Evaluator& ev) {
                 {
                     // Issue #4860: unlocked size()+push_back raced a concurrent publish
                     // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
                     hidx = g_hash_tables.size();
                     g_hash_tables.push_back(ht);
                     aura_hash_stamp_new_table_owner();
@@ -699,7 +699,7 @@ void CompilePrims::register_compile_p5(PrimRegistrar add, Evaluator& ev) {
                 {
                     // Issue #4860: unlocked size()+push_back raced a concurrent publish
                     // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
                     hidx = g_hash_tables.size();
                     g_hash_tables.push_back(ht);
                     aura_hash_stamp_new_table_owner();
@@ -818,7 +818,7 @@ void CompilePrims::register_compile_p6(PrimRegistrar add, Evaluator& ev) {
                 {
                     // Issue #4860: unlocked size()+push_back raced a concurrent publish
                     // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
                     hidx = g_hash_tables.size();
                     g_hash_tables.push_back(ht);
                     aura_hash_stamp_new_table_owner();
@@ -906,7 +906,7 @@ void CompilePrims::register_compile_p7(PrimRegistrar add, Evaluator& ev) {
                 {
                     // Issue #4860: unlocked size()+push_back raced a concurrent publish
                     // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
                     hidx = g_hash_tables.size();
                     g_hash_tables.push_back(ht);
                     aura_hash_stamp_new_table_owner();
@@ -984,7 +984,7 @@ void CompilePrims::register_compile_p8(PrimRegistrar add, Evaluator& ev) {
                 {
                     // Issue #4860: unlocked size()+push_back raced a concurrent publish
                     // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
                     hidx = g_hash_tables.size();
                     g_hash_tables.push_back(ht);
                     aura_hash_stamp_new_table_owner();
@@ -1068,7 +1068,7 @@ void CompilePrims::register_compile_p9(PrimRegistrar add, Evaluator& ev) {
                 {
                     // Issue #4860: unlocked size()+push_back raced a concurrent publish
                     // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
                     hidx = g_hash_tables.size();
                     g_hash_tables.push_back(ht);
                     aura_hash_stamp_new_table_owner();
@@ -1151,7 +1151,7 @@ void CompilePrims::register_compile_p10(PrimRegistrar add, Evaluator& ev) {
                 {
                     // Issue #4860: unlocked size()+push_back raced a concurrent publish
                     // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
                     hidx = g_hash_tables.size();
                     g_hash_tables.push_back(ht);
                     aura_hash_stamp_new_table_owner();
@@ -1237,7 +1237,7 @@ void CompilePrims::register_compile_p11(PrimRegistrar add, Evaluator& ev) {
                 {
                     // Issue #4860: unlocked size()+push_back raced a concurrent publish
                     // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
                     hidx = g_hash_tables.size();
                     g_hash_tables.push_back(ht);
                     aura_hash_stamp_new_table_owner();
@@ -1324,7 +1324,7 @@ void CompilePrims::register_compile_p12(PrimRegistrar add, Evaluator& ev) {
                 {
                     // Issue #4860: unlocked size()+push_back raced a concurrent publish
                     // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
                     hidx = g_hash_tables.size();
                     g_hash_tables.push_back(ht);
                     aura_hash_stamp_new_table_owner();
@@ -1415,7 +1415,7 @@ void CompilePrims::register_compile_p13(PrimRegistrar add, Evaluator& ev) {
                 {
                     // Issue #4860: unlocked size()+push_back raced a concurrent publish
                     // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
                     hidx = g_hash_tables.size();
                     g_hash_tables.push_back(ht);
                     aura_hash_stamp_new_table_owner();
@@ -1525,7 +1525,7 @@ void CompilePrims::register_compile_p14(PrimRegistrar add, Evaluator& ev) {
                 {
                     // Issue #4860: unlocked size()+push_back raced a concurrent publish
                     // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
                     hidx = g_hash_tables.size();
                     g_hash_tables.push_back(ht);
                     aura_hash_stamp_new_table_owner();
@@ -1616,7 +1616,7 @@ void CompilePrims::register_compile_p15(PrimRegistrar add, Evaluator& ev) {
                 {
                     // Issue #4860: unlocked size()+push_back raced a concurrent publish
                     // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
                     hidx = g_hash_tables.size();
                     g_hash_tables.push_back(ht);
                     aura_hash_stamp_new_table_owner();
@@ -1726,7 +1726,7 @@ void CompilePrims::register_compile_p16(PrimRegistrar add, Evaluator& ev) {
             {
                 // Issue #4860: unlocked size()+push_back raced a concurrent publish
                 // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
+                std::scoped_lock slock(ev.alloc_storage_lock_);
                 hidx = g_hash_tables.size();
                 g_hash_tables.push_back(ht);
                 aura_hash_stamp_new_table_owner();
@@ -1797,7 +1797,7 @@ void CompilePrims::register_compile_p17(PrimRegistrar add, Evaluator& ev) {
                 {
                     // Issue #4860: unlocked size()+push_back raced a concurrent publish
                     // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
                     hidx = g_hash_tables.size();
                     g_hash_tables.push_back(ht);
                     aura_hash_stamp_new_table_owner();
@@ -1878,7 +1878,7 @@ void CompilePrims::register_compile_p18(PrimRegistrar add, Evaluator& ev) {
                 {
                     // Issue #4860: unlocked size()+push_back raced a concurrent publish
                     // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
                     hidx = g_hash_tables.size();
                     g_hash_tables.push_back(ht);
                     aura_hash_stamp_new_table_owner();
@@ -1967,7 +1967,7 @@ void CompilePrims::register_compile_p19(PrimRegistrar add, Evaluator& ev) {
                 {
                     // Issue #4860: unlocked size()+push_back raced a concurrent publish
                     // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
                     hidx = g_hash_tables.size();
                     g_hash_tables.push_back(ht);
                     aura_hash_stamp_new_table_owner();
@@ -2103,7 +2103,7 @@ void CompilePrims::register_compile_p20(PrimRegistrar add, Evaluator& ev) {
             {
                 // Issue #4860: unlocked size()+push_back raced a concurrent publish
                 // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
+                std::scoped_lock slock(ev.alloc_storage_lock_);
                 hidx = g_hash_tables.size();
                 g_hash_tables.push_back(ht);
                 aura_hash_stamp_new_table_owner();
@@ -2758,7 +2758,7 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
             {
                 // Issue #4860: unlocked size()+push_back raced a concurrent publish
                 // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
+                std::scoped_lock slock(ev.alloc_storage_lock_);
                 hidx = g_hash_tables.size();
                 g_hash_tables.push_back(ht);
                 aura_hash_stamp_new_table_owner();
@@ -2877,7 +2877,7 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
             {
                 // Issue #4860: unlocked size()+push_back raced a concurrent publish
                 // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
+                std::scoped_lock slock(ev.alloc_storage_lock_);
                 hidx = g_hash_tables.size();
                 g_hash_tables.push_back(ht);
                 aura_hash_stamp_new_table_owner();
@@ -2950,7 +2950,7 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
             {
                 // Issue #4860: unlocked size()+push_back raced a concurrent publish
                 // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
+                std::scoped_lock slock(ev.alloc_storage_lock_);
                 hidx = g_hash_tables.size();
                 g_hash_tables.push_back(ht);
                 aura_hash_stamp_new_table_owner();
@@ -3900,7 +3900,7 @@ void CompilePrims::register_compile_p38(PrimRegistrar add, Evaluator& ev) {
             {
                 // Issue #4860: unlocked size()+push_back raced a concurrent publish
                 // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
+                std::scoped_lock slock(ev.alloc_storage_lock_);
                 hidx = g_hash_tables.size();
                 g_hash_tables.push_back(ht);
                 aura_hash_stamp_new_table_owner();
@@ -4025,7 +4025,7 @@ void CompilePrims::register_compile_p39(PrimRegistrar add, Evaluator& ev) {
     {
         // Issue #4860: unlocked size()+push_back raced a concurrent publish
         // (double free). Index read, push and stamp are one critical section.
-        std::lock_guard slock(ev.alloc_storage_lock_);
+        std::scoped_lock slock(ev.alloc_storage_lock_);
         hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         aura_hash_stamp_new_table_owner();
@@ -4687,7 +4687,7 @@ void CompilePrims::register_compile_p48(PrimRegistrar add, Evaluator& ev) {
                 {
                     // Issue #4860: unlocked size()+push_back raced a concurrent publish
                     // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
                     hidx = g_hash_tables.size();
                     g_hash_tables.push_back(ht);
                     aura_hash_stamp_new_table_owner();
@@ -4864,7 +4864,7 @@ void CompilePrims::register_compile_p49(PrimRegistrar add, Evaluator& ev) {
             {
                 // Issue #4860: unlocked size()+push_back raced a concurrent publish
                 // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
+                std::scoped_lock slock(ev.alloc_storage_lock_);
                 hidx = g_hash_tables.size();
                 g_hash_tables.push_back(ht);
                 aura_hash_stamp_new_table_owner();
@@ -4949,7 +4949,7 @@ void CompilePrims::register_compile_p50(PrimRegistrar add, Evaluator& ev) {
                 {
                     // Issue #4860: unlocked size()+push_back raced a concurrent publish
                     // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
                     hidx = g_hash_tables.size();
                     g_hash_tables.push_back(ht);
                     aura_hash_stamp_new_table_owner();
@@ -5026,7 +5026,7 @@ void CompilePrims::register_compile_p51(PrimRegistrar add, Evaluator& ev) {
                 {
                     // Issue #4860: unlocked size()+push_back raced a concurrent publish
                     // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
                     hidx = g_hash_tables.size();
                     g_hash_tables.push_back(ht);
                     aura_hash_stamp_new_table_owner();

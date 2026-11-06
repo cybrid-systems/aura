@@ -578,7 +578,7 @@ static void run_543_multi_thread_rebind() {
     std::atomic<int> completed{0};
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
-            std::lock_guard<std::mutex> lk(mtx);
+            std::scoped_lock<std::mutex> lk(mtx);
             std::string code = "(define v" + std::to_string(tid) + " " + std::to_string(i) + ")";
             (void)cs.eval(code);
             completed.fetch_add(1);

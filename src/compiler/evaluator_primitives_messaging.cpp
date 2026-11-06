@@ -143,7 +143,7 @@ namespace {
     void fiber_cancel_request(int64_t fid) {
         if (fid == 0)
             return;
-        std::lock_guard<std::mutex> lock(s_fiber_cancel_mtx);
+        std::scoped_lock<std::mutex> lock(s_fiber_cancel_mtx);
         s_fiber_cancel[fid] = FiberCancelState::kPending;
     }
 
@@ -152,7 +152,7 @@ namespace {
     bool fiber_cancel_take(int64_t fid) {
         if (fid == 0)
             return false;
-        std::lock_guard<std::mutex> lock(s_fiber_cancel_mtx);
+        std::scoped_lock<std::mutex> lock(s_fiber_cancel_mtx);
         auto it = s_fiber_cancel.find(fid);
         if (it == s_fiber_cancel.end() || it->second != FiberCancelState::kPending)
             return false;
@@ -162,7 +162,7 @@ namespace {
 
     // Drop all bookkeeping for a finished/joined fiber.
     void fiber_cancel_forget(int64_t fid) {
-        std::lock_guard<std::mutex> lock(s_fiber_cancel_mtx);
+        std::scoped_lock<std::mutex> lock(s_fiber_cancel_mtx);
         s_fiber_cancel.erase(fid);
     }
 
@@ -217,7 +217,7 @@ namespace {
     // an extra root only keeps a slot alive, it never frees one.
     std::size_t collect_fiber_result_roots(std::vector<std::int64_t>& out) {
         const auto before = out.size();
-        std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
+        std::scoped_lock<std::mutex> lock(s_fiber_results_mtx);
         for (const auto& entry : s_fiber_results) {
             const auto& slot = entry.second.value;
             if (!slot || !slot->has_value())
@@ -348,7 +348,7 @@ namespace {
     // wakes a yielding sibling that is waiting for its turn).
     void cli_body_lock_publish_takeover() {
         {
-            std::lock_guard<std::mutex> handoff_lock(s_cli_handoff_mtx);
+            std::scoped_lock<std::mutex> handoff_lock(s_cli_handoff_mtx);
             ++s_cli_handoff_epoch;
         }
         s_cli_handoff_cv.notify_all();
@@ -406,7 +406,7 @@ namespace {
             // missed and the yield would wait for the next one.
             std::uint64_t seen_epoch = 0;
             {
-                std::lock_guard<std::mutex> handoff_lock(s_cli_handoff_mtx);
+                std::scoped_lock<std::mutex> handoff_lock(s_cli_handoff_mtx);
                 seen_epoch = s_cli_handoff_epoch;
             }
             // Sample the spawn epoch too: a spawn that lands while this
@@ -631,13 +631,13 @@ namespace {
     // ch.mtx so a peer cannot slip between the predicate check and the
     // registration (the peer pushes under the same lock).
     void channel_register_waiter(const void* ch, aura::serve::Fiber* fiber, bool sender) {
-        std::lock_guard lk(s_channel_waiters_mtx);
+        std::scoped_lock lk(s_channel_waiters_mtx);
         s_channel_waiters[channel_waiter_key(ch)].push_back(ChannelWaiter{fiber, sender});
     }
 
     // Drop the registration made by channel_register_waiter. Idempotent.
     void channel_unregister_waiter(const void* ch, aura::serve::Fiber* fiber, bool sender) {
-        std::lock_guard lk(s_channel_waiters_mtx);
+        std::scoped_lock lk(s_channel_waiters_mtx);
         auto it = s_channel_waiters.find(channel_waiter_key(ch));
         if (it == s_channel_waiters.end())
             return;
@@ -658,7 +658,7 @@ namespace {
     void channel_wake_waiters(const void* ch, bool sender) {
         std::vector<aura::serve::Fiber*> to_wake;
         {
-            std::lock_guard lk(s_channel_waiters_mtx);
+            std::scoped_lock lk(s_channel_waiters_mtx);
             auto it = s_channel_waiters.find(channel_waiter_key(ch));
             if (it == s_channel_waiters.end())
                 return;
@@ -802,7 +802,7 @@ namespace {
             // Park the fiber — the worker thread stays free for peers.
             channel_park_fiber(fiber);
             {
-                std::lock_guard lk(ch.mtx);
+                std::scoped_lock lk(ch.mtx);
                 --ch.waiting_receivers;
             }
             channel_unregister_waiter(key, fiber, /*sender=*/false);
@@ -970,7 +970,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             out.append(b, 8);
         };
         auto pair_at = [&ev](const EvalValue& v, Pair& p) -> bool {
-            std::lock_guard slock(ev.alloc_storage_lock_);
+            std::scoped_lock slock(ev.alloc_storage_lock_);
             const auto idx = as_pair_idx(v);
             if (idx >= ev.pairs_.size())
                 return false;
@@ -1063,7 +1063,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             return x;
         };
         auto cons = [&ev](const EvalValue& car, const EvalValue& cdr) -> EvalValue {
-            std::lock_guard slock(ev.alloc_storage_lock_);
+            std::scoped_lock slock(ev.alloc_storage_lock_);
             const auto pid = ev.pairs_.size();
             ev.pairs_.push_back({car, cdr});
             return make_pair(pid);
@@ -1659,7 +1659,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             {
                 // Issue #4860: unlocked size()+push_back raced a concurrent publish
                 // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
+                std::scoped_lock slock(ev.alloc_storage_lock_);
                 hidx = g_hash_tables.size();
                 g_hash_tables.push_back(ht);
                 aura_hash_stamp_new_table_owner();
@@ -1742,7 +1742,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             {
                 // Issue #4860: unlocked size()+push_back raced a concurrent publish
                 // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
+                std::scoped_lock slock(ev.alloc_storage_lock_);
                 hidx = g_hash_tables.size();
                 g_hash_tables.push_back(ht);
                 aura_hash_stamp_new_table_owner();
@@ -1869,7 +1869,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                     arena_published = true;
                 }
                 if (fid != 0) {
-                    std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
+                    std::scoped_lock<std::mutex> lock(s_fiber_results_mtx);
                     auto it = s_fiber_results.find(fid);
                     if (it != s_fiber_results.end()) {
                         it->second.ready = true;
@@ -1958,7 +1958,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             aura_fiber_root_pending_body(static_cast<void*>(&ev), static_cast<std::uint64_t>(cid),
                                          static_cast<std::uint64_t>(fid));
             {
-                std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
+                std::scoped_lock<std::mutex> lock(s_fiber_results_mtx);
                 s_fiber_results[fid] = FiberResult{result_ptr, false};
             }
             // Issue #3394: joinable (NOT detached). Registered so
@@ -1966,7 +1966,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             // can join the worker before the Evaluator's workspace/arena
             // goes away.
             {
-                std::lock_guard<std::mutex> lock(s_thread_fiber_threads_mtx);
+                std::scoped_lock<std::mutex> lock(s_thread_fiber_threads_mtx);
                 // Issue #4768: the CLI std::thread backend is the one body
                 // class with NO certified tree-walker segment (the serve
                 // backend's Fiber attaches one on resume, so its frames are
@@ -1987,7 +1987,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             // Publish fid before registering so a fast worker still
             // sees the real id (complete_fiber loads with acquire).
             fid_holder->store(fid, std::memory_order_release);
-            std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
+            std::scoped_lock<std::mutex> lock(s_fiber_results_mtx);
             s_fiber_results[fid] = FiberResult{std::move(result_ptr), false};
             return make_int(fid);
         }
@@ -2064,7 +2064,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         // safepoint. notify_all wakes a joiner blocked on the cv so it can
         // re-check its own cancellation promptly.
         {
-            std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
+            std::scoped_lock<std::mutex> lock(s_fiber_results_mtx);
             auto it = s_fiber_results.find(fid);
             if (it == s_fiber_results.end() || it->second.ready)
                 return make_bool(false);
@@ -2197,7 +2197,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         {
             bool unknown = false;
             {
-                std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
+                std::scoped_lock<std::mutex> lock(s_fiber_results_mtx);
                 if (s_fiber_results.find(fid) == s_fiber_results.end()) {
                     auto oit = s_fiber_joined.find(static_cast<const void*>(&ev));
                     if (oit != s_fiber_joined.end()) {
@@ -2265,7 +2265,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                 // Target fiber not found. Fall through to the
                 // stdin-style result-fetch path: if a result
                 // exists, return it; otherwise return void.
-                std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
+                std::scoped_lock<std::mutex> lock(s_fiber_results_mtx);
                 auto it = s_fiber_results.find(fid);
                 if (it == s_fiber_results.end())
                     return make_void();
@@ -2426,7 +2426,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                 } allow_reset{{}, self, prev_join_allow};
                 while (true) {
                     {
-                        std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
+                        std::scoped_lock<std::mutex> lock(s_fiber_results_mtx);
                         if (is_ready())
                             break;
                     }
@@ -2456,7 +2456,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         // Result is ready (or timed out). Fetch and return.
         std::shared_ptr<std::optional<EvalValue>> result_ptr;
         {
-            std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
+            std::scoped_lock<std::mutex> lock(s_fiber_results_mtx);
             auto it = s_fiber_results.find(fid);
             if (it == s_fiber_results.end())
                 return make_void();
@@ -2492,7 +2492,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         {
             std::thread worker;
             {
-                std::lock_guard<std::mutex> lock(s_thread_fiber_threads_mtx);
+                std::scoped_lock<std::mutex> lock(s_thread_fiber_threads_mtx);
                 auto it = s_thread_fiber_threads.find(fid);
                 if (it != s_thread_fiber_threads.end()) {
                     worker = std::move(it->second.second);
@@ -2603,7 +2603,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         auto ch = std::make_shared<Evaluator::Channel>();
         ch->buffer_size = buf;
-        std::lock_guard lk(ev.channels_mtx_);
+        std::scoped_lock lk(ev.channels_mtx_);
         // Issue #4854: recycle a slot released by channel:close instead of
         // growing channels_ forever. LIFO keeps the hot create path O(1).
         std::size_t id = 0;
@@ -2666,7 +2666,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         // Evaluator (recv needs the global map lock to look up the channel).
         std::shared_ptr<Evaluator::Channel> ch_ptr;
         {
-            std::lock_guard lk(ev.channels_mtx_);
+            std::scoped_lock lk(ev.channels_mtx_);
             if (ch_id >= ev.channels_.size() || !ev.channels_[ch_id])
                 return make_bool(false);
             ch_ptr = ev.channels_[ch_id];
@@ -2717,7 +2717,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_string(0);
         std::shared_ptr<Evaluator::Channel> ch_ptr;
         {
-            std::lock_guard lk(ev.channels_mtx_);
+            std::scoped_lock lk(ev.channels_mtx_);
             if (ch_id >= ev.channels_.size() || !ev.channels_[ch_id])
                 return make_string(0);
             ch_ptr = ev.channels_[ch_id];
@@ -2784,7 +2784,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                 return make_string(0);
             std::shared_ptr<Evaluator::Channel> ch_ptr;
             {
-                std::lock_guard lk(ev.channels_mtx_);
+                std::scoped_lock lk(ev.channels_mtx_);
                 if (ch_id >= ev.channels_.size() || !ev.channels_[ch_id])
                     return make_string(0);
                 ch_ptr = ev.channels_[ch_id];
@@ -2813,7 +2813,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         std::shared_ptr<Evaluator::Channel> ch_ptr;
         {
-            std::lock_guard lk(ev.channels_mtx_);
+            std::scoped_lock lk(ev.channels_mtx_);
             if (ch_id >= ev.channels_.size())
                 return make_bool(false);
             // Issue #4854: a released slot is a closed id — closing it
@@ -2824,7 +2824,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         auto& ch = *ch_ptr;
         {
-            std::lock_guard ul(ch.mtx);
+            std::scoped_lock ul(ch.mtx);
             ch.closed = true;
         }
         ch.cv.notify_all();
@@ -2839,7 +2839,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         // (nullptr slot → #f / empty string). The id returns to the
         // recycle list for the next channel:create.
         {
-            std::lock_guard lk(ev.channels_mtx_);
+            std::scoped_lock lk(ev.channels_mtx_);
             if (ch_id < ev.channels_.size() && ev.channels_[ch_id] == ch_ptr) {
                 ev.channels_[ch_id].reset();
                 ev.channels_free_.push_back(ch_id);
@@ -2887,7 +2887,7 @@ void Evaluator::drain_thread_fibers() noexcept {
     try {
         std::vector<std::pair<std::int64_t, std::thread>> mine;
         {
-            std::lock_guard<std::mutex> lock(s_thread_fiber_threads_mtx);
+            std::scoped_lock<std::mutex> lock(s_thread_fiber_threads_mtx);
             for (auto it = s_thread_fiber_threads.begin(); it != s_thread_fiber_threads.end();) {
                 if (it->second.first == static_cast<const void*>(this)) {
                     mine.emplace_back(it->first, std::move(it->second.second));

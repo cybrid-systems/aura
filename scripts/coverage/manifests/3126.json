@@ -21,7 +21,7 @@
       "ac": "AC2",
       "path": "src/compiler/evaluator_security.cpp",
       "contains": [
-        "std::lock_guard<std::mutex> lock(reg.mtx)",
+        "std::scoped_lock<std::mutex> lock(reg.mtx)",
         "effects_for_locked(self_tenant)",
         "has_effect(held, Effect::TenantAdmin)",
         "reg.grant_locked("
@@ -31,7 +31,7 @@
       "ac": "AC3",
       "path": "src/compiler/evaluator_security.cpp",
       "contains": [
-        "std::lock_guard<std::mutex> lock(reg_durable.mtx)",
+        "std::scoped_lock<std::mutex> lock(reg_durable.mtx)",
         "effects_for_locked(self_tenant)",
         "has_effect(held_durable, Effect::TenantAdmin)",
         "reg_durable.grant_locked("
@@ -41,7 +41,7 @@
       "ac": "AC4",
       "path": "src/compiler/evaluator_security.cpp",
       "contains": [
-        "std::lock_guard<std::mutex> lock(reg_session.mtx)",
+        "std::scoped_lock<std::mutex> lock(reg_session.mtx)",
         "effects_for_locked(self_tenant)",
         "reg_session.grant_locked("
       ]
@@ -50,7 +50,7 @@
       "ac": "AC5",
       "path": "src/compiler/evaluator_security.cpp",
       "contains": [
-        "std::lock_guard<std::mutex> lock(reg_revoke.mtx)",
+        "std::scoped_lock<std::mutex> lock(reg_revoke.mtx)",
         "effects_for_locked(self_tenant)",
         "reg_revoke.revoke_locked("
       ]

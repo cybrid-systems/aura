@@ -280,7 +280,7 @@ int main() {
         for (int t = 0; t < kThreads; ++t) {
             threads.emplace_back([&]() {
                 for (int i = 0; i < kIters; ++i) {
-                    std::lock_guard<std::mutex> lock(eval_mtx);
+                    std::scoped_lock<std::mutex> lock(eval_mtx);
                     auto r = cs.eval("(query:pattern '(define _ _))");
                     if (!r.has_value())
                         fails.fetch_add(1, std::memory_order_relaxed);

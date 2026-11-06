@@ -269,7 +269,7 @@ void Evaluator::flush_gc_roots(void* root_set_out) {
     // constructed in its own TU.
     auto& out = *static_cast<aura::serve::GCRootSet*>(root_set_out);
 
-    std::lock_guard<std::mutex> lock(heap_mutex());
+    std::scoped_lock<std::mutex> lock(heap_mutex());
 
     // 1. string_heap_ — every slot is a root. The pool can be
     //    compacted in the sweep phase; until then, treat them all
@@ -615,7 +615,7 @@ bool Evaluator::run_linear_gc_root_audit(std::uint8_t path) noexcept {
     bool ok = true;
     // Serialize prev_* + ring publish across fibers sharing one Evaluator
     // (TSan: chaos soak concurrent run_linear_gc_root_audit).
-    std::lock_guard<std::mutex> audit_lock(linear_gc_root_audit_mu_);
+    std::scoped_lock<std::mutex> audit_lock(linear_gc_root_audit_mu_);
     // Monotonicity vs previous audit snapshot.
     if (reg < linear_gc_root_audit_prev_reg_ || stale < linear_gc_root_audit_prev_stale_ ||
         viol < linear_gc_root_audit_prev_viol_ || resync < linear_gc_root_audit_prev_resync_) {
@@ -654,7 +654,7 @@ void Evaluator::record_linear_violation_audit(std::uint8_t path, std::uint8_t re
         // entry_at snapshots with. Two writers land on the same slot when
         // the ring wraps, and a concurrent reader must never see fields
         // from different events (torn slot).
-        std::lock_guard<std::mutex> slot_lock(linear_violation_audit_mu_);
+        std::scoped_lock<std::mutex> slot_lock(linear_violation_audit_mu_);
         auto& slot = linear_violation_audit_ring_[seq % kLinearViolationAuditRingSize];
         slot.seq = seq;
         slot.path = path;
@@ -787,7 +787,7 @@ Evaluator::enforce_linear_boundary_consistency(std::uint8_t path, bool mark_all_
                 const auto seq =
                     linear_violation_audit_seq_.fetch_add(1, std::memory_order_relaxed);
                 {
-                    std::lock_guard<std::mutex> slot_lock(linear_violation_audit_mu_);
+                    std::scoped_lock<std::mutex> slot_lock(linear_violation_audit_mu_);
                     auto& slot = linear_violation_audit_ring_[seq % kLinearViolationAuditRingSize];
                     slot.seq = seq;
                     slot.path = path;
@@ -1485,7 +1485,7 @@ static std::size_t sweep_unreachable_channels_4854(ChannelVec& channels, FreeVec
                                                    std::unordered_set<std::int64_t> live) {
     std::vector<typename ChannelVec::value_type> dying;
     {
-        std::lock_guard<std::mutex> lk(mu);
+        std::scoped_lock<std::mutex> lk(mu);
         const std::size_t n = std::min(snapshot.size(), channels.size());
         bool changed = true;
         while (changed) {
@@ -1496,7 +1496,7 @@ static std::size_t sweep_unreachable_channels_4854(ChannelVec& channels, FreeVec
                 if (!live.contains(channel_id::encode(i)))
                     continue;
                 auto& ch = *channels[i];
-                std::lock_guard<std::mutex> qlk(ch.mtx);
+                std::scoped_lock<std::mutex> qlk(ch.mtx);
                 for (const auto& msg : ch.queue)
                     changed |= note_message_channel_ids_4854(msg, live);
             }
@@ -1508,7 +1508,7 @@ static std::size_t sweep_unreachable_channels_4854(ChannelVec& channels, FreeVec
             if (live.contains(channel_id::encode(i)))
                 continue;
             {
-                std::lock_guard<std::mutex> qlk(slot->mtx);
+                std::scoped_lock<std::mutex> qlk(slot->mtx);
                 if (!slot->queue.empty() || slot->waiting_receivers != 0)
                     continue; // still in use, not settled
             }
@@ -1658,7 +1658,7 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
     std::unordered_set<std::int64_t> live_channel_ids;
     std::vector<const void*> channels_at_mark;
     {
-        std::lock_guard lk(channels_mtx_);
+        std::scoped_lock lk(channels_mtx_);
         channels_at_mark.reserve(channels_.size());
         for (const auto& c : channels_)
             channels_at_mark.push_back(c.get());
@@ -1677,7 +1677,7 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
 
     std::vector<EvalValue> roots;
     {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         roots.reserve(cells_.size());
         for (const auto& c : cells_)
             roots.push_back(c);
@@ -1742,7 +1742,7 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
     // names, quote literals, keywords). They are roots: a cached
     // index must never be released under the cache.
     {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         for (const auto& entry : short_str_cache_)
             roots.push_back(entry.second);
         string_intern_by_sym_.for_each_live([&roots](const EvalValue& v) { roots.push_back(v); });
@@ -1810,7 +1810,7 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
     std::vector<std::uint8_t> seen_opaque;
     std::vector<std::uint32_t> opaque_gen;
     {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         const auto gens = ffi_runtime_.opaque_generations();
         opaque_gen.assign(gens.begin(), gens.end());
         seen_opaque.assign(opaque_heap_.size(), 0);
@@ -1823,7 +1823,7 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
     {
         // hash_tables_mutex is the outer lock car uses before alloc. Trace
         // holds it alone, then drops it before the closures / alloc locks.
-        std::lock_guard hash_lock(hash_tables_mtx_);
+        std::scoped_lock hash_lock(hash_tables_mtx_);
         seen_hash.assign(g_hash_tables.size(), 0);
         hash_at_mark.assign(g_hash_tables.begin(), g_hash_tables.end());
         for (std::size_t wi = 0; wi < work.size(); ++wi) {
@@ -1874,7 +1874,7 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
 
 
     {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         const auto voidv = types::make_void();
         if (pair_on_freelist_.size() < n_pairs)
             pair_on_freelist_.resize(n_pairs, 0);
@@ -1933,7 +1933,7 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
     // so a finalizer that re-enters Aura does not re-enter reclaim.
     std::vector<std::pair<void*, void*>> native_fins;
     {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         ffi_runtime_.mark_live_view_owners(seen_opaque);
         native_fins = ffi_runtime_.take_unreachable_handles(opaque_heap_, seen_opaque);
     }
@@ -2030,7 +2030,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     std::unordered_set<std::int64_t> live_channel_ids;
     std::vector<const void*> channels_at_mark;
     {
-        std::lock_guard lk(channels_mtx_);
+        std::scoped_lock lk(channels_mtx_);
         channels_at_mark.reserve(channels_.size());
         for (const auto& c : channels_)
             channels_at_mark.push_back(c.get());
@@ -2041,7 +2041,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     std::size_t n_cells = 0;
     std::size_t n_errs = 0;
     {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         n_pairs = pairs_.size();
         n_vecs = vector_heap_.size();
         n_cells = cells_.size();
@@ -2162,7 +2162,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     // names, quote literals, keywords). They are roots: a cached
     // index must never be released under the cache.
     {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         for (const auto& entry : short_str_cache_)
             work.push_back(entry.second);
         string_intern_by_sym_.for_each_live([&work](const EvalValue& v) { work.push_back(v); });
@@ -2240,7 +2240,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     std::vector<std::uint8_t> seen_opaque;
     std::vector<std::uint32_t> opaque_gen;
     {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         const auto gens = ffi_runtime_.opaque_generations();
         opaque_gen.assign(gens.begin(), gens.end());
         seen_opaque.assign(opaque_heap_.size(), 0);
@@ -2257,7 +2257,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     bool hash_snapshot_taken = false;
     for (int guard = 0; guard < 1000000; ++guard) {
         {
-            std::lock_guard hash_lock(hash_tables_mtx_);
+            std::scoped_lock hash_lock(hash_tables_mtx_);
             if (seen_hash.size() < g_hash_tables.size())
                 seen_hash.resize(g_hash_tables.size(), 0);
             if (!hash_snapshot_taken) {
@@ -2356,7 +2356,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         env_frame_reuse_ = std::move(rebuilt);
     }
     {
-        std::lock_guard<std::mutex> snap_lock(cap_snap_mtx_);
+        std::scoped_lock<std::mutex> snap_lock(cap_snap_mtx_);
         for (const EnvId id : dead_snaps)
             cap_snap_cache_.erase(id);
     }
@@ -2375,7 +2375,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     const auto live_hash_units = release_unreachable_hash_tables(seen_hash, hash_at_mark);
 
     {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         const auto voidv = types::make_void();
         if (cell_on_freelist_eval_.size() < n_cells)
             cell_on_freelist_eval_.resize(n_cells, 0);
@@ -2452,7 +2452,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     // tree walker hits this function, not reclaim_file_mode_unreachable.
     std::vector<std::pair<void*, void*>> native_fins;
     {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         ffi_runtime_.mark_live_view_owners(seen_opaque);
         native_fins = ffi_runtime_.take_unreachable_handles(opaque_heap_, seen_opaque);
     }
@@ -2465,7 +2465,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
 }
 
 void Evaluator::abandon_file_heap_freelists() {
-    std::lock_guard lock(alloc_storage_lock_);
+    std::scoped_lock lock(alloc_storage_lock_);
     pair_reuse_freelist_.clear();
     pair_on_freelist_.clear();
     vector_reuse_freelist_.clear();
@@ -2475,13 +2475,13 @@ void Evaluator::abandon_file_heap_freelists() {
 }
 
 void Evaluator::abandon_vector_reuse_freelist() {
-    std::lock_guard lock(alloc_storage_lock_);
+    std::scoped_lock lock(alloc_storage_lock_);
     vector_reuse_freelist_.clear();
     vector_on_freelist_.clear();
 }
 
 void Evaluator::note_file_heap_truncated(std::size_t pairs_n, std::size_t cells_n) {
-    std::lock_guard lock(alloc_storage_lock_);
+    std::scoped_lock lock(alloc_storage_lock_);
     if (pair_on_freelist_.size() > pairs_n)
         pair_on_freelist_.resize(pairs_n);
     std::erase_if(pair_reuse_freelist_, [pairs_n](std::size_t id) { return id >= pairs_n; });
@@ -2491,7 +2491,7 @@ void Evaluator::note_file_heap_truncated(std::size_t pairs_n, std::size_t cells_
 }
 
 std::size_t Evaluator::mint_pair(types::EvalValue car, types::EvalValue cdr, bool check_quota) {
-    std::lock_guard lock(alloc_storage_lock_);
+    std::scoped_lock lock(alloc_storage_lock_);
     ++file_heap_allocs_since_reclaim_;
     while (!pair_reuse_freelist_.empty()) {
         const auto id = pair_reuse_freelist_.back();
@@ -2520,7 +2520,7 @@ std::size_t Evaluator::mint_pair(types::EvalValue car, types::EvalValue cdr, boo
 }
 
 std::size_t Evaluator::mint_vector(std::vector<types::EvalValue> elems, bool check_quota) {
-    std::lock_guard lock(alloc_storage_lock_);
+    std::scoped_lock lock(alloc_storage_lock_);
     ++file_heap_allocs_since_reclaim_;
     while (!vector_reuse_freelist_.empty()) {
         const auto id = vector_reuse_freelist_.back();
@@ -2544,7 +2544,7 @@ std::size_t Evaluator::mint_vector(std::vector<types::EvalValue> elems, bool che
 }
 
 std::size_t Evaluator::mint_vector_fill(std::size_t n, types::EvalValue init, bool check_quota) {
-    std::lock_guard lock(alloc_storage_lock_);
+    std::scoped_lock lock(alloc_storage_lock_);
     ++file_heap_allocs_since_reclaim_;
     while (!vector_reuse_freelist_.empty()) {
         const auto id = vector_reuse_freelist_.back();

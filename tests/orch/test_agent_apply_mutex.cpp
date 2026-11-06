@@ -90,7 +90,7 @@ template <class F> bool finished_while_mutex_held(std::mutex& mu, int hold_ms, F
     std::atomic<int> done{0};
     std::atomic<int> finished_while_held{-1};
     std::thread holder([&] {
-        std::lock_guard<std::mutex> lock(mu);
+        std::scoped_lock<std::mutex> lock(mu);
         holding.store(1, std::memory_order_release);
         std::this_thread::sleep_for(std::chrono::milliseconds(hold_ms));
         finished_while_held.store(done.load(std::memory_order_acquire), std::memory_order_release);
@@ -145,7 +145,7 @@ bool finished_while_region_held(Ev& ev, std::uint64_t key, int hold_ms, F&& body
 // while the two sections still overlap.
 void hold_apply_mu(std::mutex& mu, int hold_ms, std::atomic<int>* inflight = nullptr,
                    std::atomic<int>* peak = nullptr) {
-    std::lock_guard lock(mu);
+    std::scoped_lock lock(mu);
     if (inflight != nullptr && peak != nullptr) {
         const int now = inflight->fetch_add(1, std::memory_order_acq_rel) + 1;
         int seen = peak->load(std::memory_order_relaxed);

@@ -73,7 +73,7 @@ def main() -> int:
     cap_pos = es.find("bool Evaluator::grant_effect_capability(")
     durable_pos = es.find("void Evaluator::grant_effect_durable(", cap_pos)
     cap_block = es[cap_pos:durable_pos] if durable_pos > cap_pos else es[cap_pos:]
-    must("std::lock_guard<std::mutex> lock(reg.mtx)", "AC2", cap_block)
+    must("std::scoped_lock<std::mutex> lock(reg.mtx)", "AC2", cap_block)
     # Issue #4440: the bit read is the retain-aware locked helper. The mtx
     # and grant_locked / revoke_locked TOCTOU contract is unchanged.
     must("effects_effective_for_locked(self_tenant", "AC2", cap_block)
@@ -86,7 +86,7 @@ def main() -> int:
     # AC3 — grant_effect_durable: foreign-tenant + high-risk share locked is_admin.
     sess_pos = es.find("void Evaluator::grant_effect_session(", durable_pos)
     dur_block = es[durable_pos:sess_pos] if sess_pos > durable_pos else es[durable_pos:]
-    must("std::lock_guard<std::mutex> lock(reg_durable.mtx)", "AC3", dur_block)
+    must("std::scoped_lock<std::mutex> lock(reg_durable.mtx)", "AC3", dur_block)
     must("effects_effective_for_locked(self_tenant", "AC3", dur_block)
     must("has_effect(held_durable, Effect::TenantAdmin)", "AC3", dur_block)
     must("reg_durable.grant_locked(", "AC3", dur_block)
@@ -96,7 +96,7 @@ def main() -> int:
     # AC4 — grant_effect_session fence locks + uses locked variants.
     rev_pos = es.find("void Evaluator::revoke_effect_capability(", sess_pos)
     sess_block = es[sess_pos:rev_pos] if rev_pos > sess_pos else es[sess_pos:]
-    must("std::lock_guard<std::mutex> lock(reg_session.mtx)", "AC4", sess_block)
+    must("std::scoped_lock<std::mutex> lock(reg_session.mtx)", "AC4", sess_block)
     must("effects_effective_for_locked(self_tenant", "AC4", sess_block)
     must("reg_session.grant_locked(", "AC4", sess_block)
     if "has_capability(kCapTenantAdmin) || has_capability(kCapCapability)" in sess_block:
@@ -107,7 +107,7 @@ def main() -> int:
     # set_tenant_principal) are not scored as the revoke fence.
     sandbox_pos = es.find("void Evaluator::set_effect_sandbox_mode(", rev_pos)
     rev_block = es[rev_pos:sandbox_pos] if sandbox_pos > rev_pos else es[rev_pos:]
-    must("std::lock_guard<std::mutex> lock(reg_revoke.mtx)", "AC5", rev_block)
+    must("std::scoped_lock<std::mutex> lock(reg_revoke.mtx)", "AC5", rev_block)
     must("effects_effective_for_locked(self_tenant", "AC5", rev_block)
     must("reg_revoke.revoke_locked(", "AC5", rev_block)
     if "has_capability(kCapTenantAdmin) || has_capability(kCapCapability)" in rev_block:

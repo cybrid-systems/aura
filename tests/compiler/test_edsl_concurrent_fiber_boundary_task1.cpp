@@ -108,7 +108,7 @@ bool test_eight_thread_concurrent_mutate_query() {
     std::atomic<int> errors{0};
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
-            std::lock_guard<std::mutex> lk(mtx);
+            std::scoped_lock<std::mutex> lk(mtx);
             std::string code = std::string("(mutate:replace-value (define ") + (i & 1 ? "a" : "b") +
                                " " + std::to_string(tid * 1000 + i) + ") (define " +
                                (i & 1 ? "a" : "b") + " " + std::to_string(tid * 1000 + i) + "))";
@@ -207,7 +207,7 @@ bool test_long_running_concurrent_stress() {
     std::atomic<int> completed{0};
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
-            std::lock_guard<std::mutex> lk(mtx);
+            std::scoped_lock<std::mutex> lk(mtx);
             std::string code = std::string("(mutate:replace-value (define v") +
                                std::to_string(tid) + " " + std::to_string(i) + ") (define v" +
                                std::to_string(tid) + " " + std::to_string(i) + "))";

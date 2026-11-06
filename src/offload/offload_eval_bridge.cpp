@@ -21,14 +21,14 @@ namespace {
     class EvalAdapter final : public OffloadEval {
     public:
         void set_source(std::string source) {
-            std::lock_guard lock(mu_);
+            std::scoped_lock lock(mu_);
             source_ = std::move(source);
         }
 
         [[nodiscard]] std::string eval_async(const std::string& code) override {
             std::string source;
             {
-                std::lock_guard lock(mu_);
+                std::scoped_lock lock(mu_);
                 source = source_;
             }
             auto input = std::make_shared<const SnapshotInput>(SnapshotInput{std::move(source), 0});

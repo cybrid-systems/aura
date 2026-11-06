@@ -465,7 +465,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     std::string gated;
     if (!check_tenant_host_path(path, gated, "load-module"))
         return types::make_void();
-    std::lock_guard interlock(compact_env_frames_lock_);
+    std::scoped_lock interlock(compact_env_frames_lock_);
     // Issue #3457-fix: string_intern_by_sym_ / keyword_intern_by_sym_ are
     // keyed by POOL-LOCAL SymIds. Each module load swaps in its own pool
     // (own SymId space), so entries cached under another module's pool
@@ -839,7 +839,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         std::unique_lock<std::shared_mutex> mod_lock(module_mtx_);
         // Issue #4386: rewrite a this-window moved Env* before it is published.
         if (aura::ast::moving_compact_feature_enabled()) {
-            std::lock_guard<std::mutex> rewrite_lock(densify_rewrite_mu_);
+            std::scoped_lock<std::mutex> rewrite_lock(densify_rewrite_mu_);
             mod_env = static_cast<Env*>(densify_rewrite_lookup_locked_(mod_env));
         }
         mod_idx = modules_.size();

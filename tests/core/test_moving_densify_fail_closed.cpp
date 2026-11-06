@@ -8793,7 +8793,7 @@ static void ac4416_source_cite() {
         CHECK(body.find("own_noted") != std::string::npos, "4416: hold adopts the canary note");
         CHECK(body.find("moving_compact_feature_enabled") != std::string::npos,
               "4416: unnoted Moving feature fail-closes");
-        const auto lock_at = body.find("std::lock_guard<std::recursive_mutex>");
+        const auto lock_at = body.find("std::scoped_lock<std::recursive_mutex>");
         const auto bind_at = body.find("bind_temporary_moving_live_ptr_any_arena");
         const auto own_at = body.find("own_noted");
         CHECK(lock_at != std::string::npos && bind_at != std::string::npos && lock_at < bind_at,

@@ -92,7 +92,7 @@ std::uint64_t worldline_foreign_driver_4778(const void* key, const void* tree,
                                             std::uint64_t caller) {
     if (caller == 0)
         return 0;
-    std::lock_guard lk(worldline_driver_mtx_4778());
+    std::scoped_lock lk(worldline_driver_mtx_4778());
     auto& m = worldline_drivers_4778();
     auto it = m.find(key);
     if (it == m.end() || it->second.tree != tree || it->second.fiber == 0 ||
@@ -106,7 +106,7 @@ void workspace_driver_release_fiber_4778(std::uint64_t fiber_id) noexcept {
     if (fiber_id == 0)
         return;
     try {
-        std::lock_guard lk(worldline_driver_mtx_4778());
+        std::scoped_lock lk(worldline_driver_mtx_4778());
         for (auto& [k, d] : worldline_drivers_4778())
             if (d.fiber == fiber_id)
                 d.fiber = 0;
@@ -608,7 +608,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         const auto caller_4778 = static_cast<std::uint64_t>(fiber_body_id_4778());
         WorldlineDriver4778 prev_claim_4778{};
         {
-            std::lock_guard lk(worldline_driver_mtx_4778());
+            std::scoped_lock lk(worldline_driver_mtx_4778());
             auto& d = worldline_drivers_4778()[&ev];
             if (d.tree != ev.workspace_tree_)
                 d = WorldlineDriver4778{ev.workspace_tree_, 0};
@@ -618,7 +618,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             d.fiber = (caller_4778 != 0 && idx != 0) ? caller_4778 : 0;
         }
         if (!wt->set_active(idx)) {
-            std::lock_guard lk(worldline_driver_mtx_4778());
+            std::scoped_lock lk(worldline_driver_mtx_4778());
             worldline_drivers_4778()[&ev] = prev_claim_4778;
             return make_bool(false);
         }

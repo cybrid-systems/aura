@@ -59,7 +59,7 @@ def main() -> int:
     must("Issue #2780", "AC2", spawn)
     must_not("snapshot.reserve", "AC2", spawn)
     # Zero under the same mutex (lock held across the for-loop).
-    must("std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx)", "AC2", spawn)
+    must("std::scoped_lock<std::mutex> lock(g_scope_bp_map_mtx)", "AC2", spawn)
     must("g->recent.store(0", "AC2", spawn)
 
     # AC3 — skip active by last_event_us

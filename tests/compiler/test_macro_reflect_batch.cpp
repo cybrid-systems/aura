@@ -285,7 +285,7 @@ static void run_597() {
         std::atomic<int> errors{0};
         auto worker = [&](int tid) {
             for (int i = 0; i < n_iters; ++i) {
-                std::lock_guard<std::mutex> lk(mtx);
+                std::scoped_lock<std::mutex> lk(mtx);
                 (void)cs.eval("(query:pattern \"user-val\")");
                 std::string code = "(mutate:replace-value (define user-val " +
                                    std::to_string(tid * 1000 + i) + ") (define user-val " +

@@ -327,7 +327,7 @@ static void ac8_task4_concurrent() {
             const int v = val_dist(rng);
             (void)inline_shape_of(make_string(static_cast<std::uint64_t>(v)).val);
             {
-                std::lock_guard lock(eval_mu);
+                std::scoped_lock lock(eval_mu);
                 (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(v) + "\")");
             }
         }
@@ -358,7 +358,7 @@ static void ac9_task4_fiber() {
             for (int i = 0; i < k_iters; ++i) {
                 (void)inline_shape_of(make_int(f + i).val);
                 {
-                    std::lock_guard lock(eval_mu);
+                    std::scoped_lock lock(eval_mu);
                     (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(f * 10 + i) + "\")");
                 }
                 Fiber::yield(YieldReason::MutationBoundary);

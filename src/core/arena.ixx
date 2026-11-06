@@ -979,7 +979,7 @@ export inline void note_temporary_moving_live_ptr(void* p) noexcept {
         return;
     auto& inv = moving_temp_canary_detail::g_inventory;
     {
-        std::lock_guard<std::mutex> lock(inv.mtx);
+        std::scoped_lock<std::mutex> lock(inv.mtx);
         inv.ptrs.push_back(p);
         inv.live.store(static_cast<std::uint32_t>(inv.ptrs.size()), std::memory_order_release);
     }
@@ -993,7 +993,7 @@ export inline void unnote_temporary_moving_live_ptr(void* p) noexcept {
     auto& inv = moving_temp_canary_detail::g_inventory;
     if (inv.live.load(std::memory_order_acquire) == 0)
         return;
-    std::lock_guard<std::mutex> lock(inv.mtx);
+    std::scoped_lock<std::mutex> lock(inv.mtx);
     auto it = std::find(inv.ptrs.begin(), inv.ptrs.end(), p);
     if (it != inv.ptrs.end()) {
         *it = inv.ptrs.back();
@@ -1008,7 +1008,7 @@ export inline std::size_t snapshot_temporary_moving_live_ptrs(std::vector<void*>
         out.clear();
         return 0;
     }
-    std::lock_guard<std::mutex> lock(inv.mtx);
+    std::scoped_lock<std::mutex> lock(inv.mtx);
     out.assign(inv.ptrs.begin(), inv.ptrs.end());
     return out.size();
 }
@@ -1037,7 +1037,7 @@ namespace moving_ffi_alias_slot_detail {
 
 export inline void reset_ffi_alias_slots_for_densify_for_test() noexcept {
     auto& inv = moving_ffi_alias_slot_detail::g_inventory;
-    std::lock_guard<std::mutex> lock(inv.mtx);
+    std::scoped_lock<std::mutex> lock(inv.mtx);
     inv.slots.clear();
     inv.durable.clear();
     inv.live.store(0, std::memory_order_release);
@@ -1049,7 +1049,7 @@ export inline std::size_t snapshot_ffi_alias_slots_for_densify(std::vector<void*
         out.clear();
         return 0;
     }
-    std::lock_guard<std::mutex> lock(inv.mtx);
+    std::scoped_lock<std::mutex> lock(inv.mtx);
     out.clear();
     out.reserve(inv.slots.size() + inv.durable.size());
     out.insert(out.end(), inv.slots.begin(), inv.slots.end());
@@ -1079,7 +1079,7 @@ consume_ffi_alias_slots_for_densify(const std::vector<void**>& consumed) noexcep
     auto& inv = moving_ffi_alias_slot_detail::g_inventory;
     std::size_t n = 0;
     {
-        std::lock_guard<std::mutex> lock(inv.mtx);
+        std::scoped_lock<std::mutex> lock(inv.mtx);
         if (!inv.slots.empty()) {
             const std::unordered_set<void**> drop(consumed.begin(), consumed.end());
             std::vector<void**> kept;
@@ -1113,7 +1113,7 @@ export inline void register_external_root_slot_for_densify(void** slot) noexcept
         return;
     auto& inv = moving_ffi_alias_slot_detail::g_inventory;
     {
-        std::lock_guard<std::mutex> lock(inv.mtx);
+        std::scoped_lock<std::mutex> lock(inv.mtx);
         inv.slots.push_back(slot);
         moving_ffi_alias_slot_detail::store_live(inv);
     }
@@ -1130,7 +1130,7 @@ export inline void register_struct_interior_slot_for_densify(void** slot) noexce
     if (slot == nullptr || *slot == nullptr || !moving_compact_enabled())
         return;
     auto& inv = moving_ffi_alias_slot_detail::g_inventory;
-    std::lock_guard<std::mutex> lock(inv.mtx);
+    std::scoped_lock<std::mutex> lock(inv.mtx);
     for (void** existing : inv.durable) {
         if (existing == slot)
             return;
@@ -1147,7 +1147,7 @@ export inline void forget_struct_interior_slots_covering(void* base, std::size_t
     const auto begin = reinterpret_cast<std::uintptr_t>(base);
     const auto end = begin + static_cast<std::uintptr_t>(nbytes);
     auto& inv = moving_ffi_alias_slot_detail::g_inventory;
-    std::lock_guard<std::mutex> lock(inv.mtx);
+    std::scoped_lock<std::mutex> lock(inv.mtx);
     if (inv.durable.empty())
         return;
     std::vector<void**> kept;
@@ -1166,7 +1166,7 @@ export inline void forget_struct_interior_slots_covering(void* base, std::size_t
 
 export inline void reset_temporary_moving_live_ptrs_for_test() noexcept {
     auto& inv = moving_temp_canary_detail::g_inventory;
-    std::lock_guard<std::mutex> lock(inv.mtx);
+    std::scoped_lock<std::mutex> lock(inv.mtx);
     inv.ptrs.clear();
     inv.live.store(0, std::memory_order_release);
     reset_ffi_alias_slots_for_densify_for_test();
@@ -1848,7 +1848,7 @@ public:
     // no-op if fn+ctx is already present). Full table replaces slot 0.
     // Production listeners install independently — no take+chain, no heap.
     void set_on_compact_hook(CompactHookFn fn, void* ctx = nullptr) noexcept {
-        std::lock_guard<std::mutex> lock(hook_mtx_);
+        std::scoped_lock<std::mutex> lock(hook_mtx_);
         if (!fn) {
             for (auto& slot : on_compact_hooks_) {
                 slot.fn = nullptr;
@@ -1872,7 +1872,7 @@ public:
     }
     // Move out the last occupied slot (leaves that slot empty).
     [[nodiscard]] CompactHook take_on_compact_hook() noexcept {
-        std::lock_guard<std::mutex> lock(hook_mtx_);
+        std::scoped_lock<std::mutex> lock(hook_mtx_);
         for (std::size_t i = kArenaCompactHookSlots; i-- > 0;) {
             if (on_compact_hooks_[i].fn != nullptr) {
                 CompactHook out = on_compact_hooks_[i];
@@ -1886,7 +1886,7 @@ public:
     [[nodiscard]] bool has_on_compact_hook() const noexcept {
         // Issue #2383 / #2382: observe under hook_mtx_ — same lock pattern as
         // has_on_layout_change / has_root_remap_callback (set/take/invoke copy).
-        std::lock_guard<std::mutex> lock(hook_mtx_);
+        std::scoped_lock<std::mutex> lock(hook_mtx_);
         for (const auto& slot : on_compact_hooks_) {
             if (slot.fn != nullptr)
                 return true;
@@ -1907,20 +1907,20 @@ public:
     // it so re-entrant set calls from inside the callback do not
     // deadlock (same pattern as #1989's on_compact_hook_).
     void set_on_layout_change(LayoutChangeHookFn fn, void* ctx = nullptr) noexcept {
-        std::lock_guard<std::mutex> lock(on_layout_change_mtx_);
+        std::scoped_lock<std::mutex> lock(on_layout_change_mtx_);
         on_layout_change_.fn = fn;
         on_layout_change_.ctx = ctx;
     }
     // Move out the current callback (leaves arena with no callback).
     [[nodiscard]] LayoutChangeHook take_on_layout_change() noexcept {
-        std::lock_guard<std::mutex> lock(on_layout_change_mtx_);
+        std::scoped_lock<std::mutex> lock(on_layout_change_mtx_);
         LayoutChangeHook out = on_layout_change_;
         on_layout_change_.fn = nullptr;
         on_layout_change_.ctx = nullptr;
         return out;
     }
     [[nodiscard]] bool has_on_layout_change() const noexcept {
-        std::lock_guard<std::mutex> lock(on_layout_change_mtx_);
+        std::scoped_lock<std::mutex> lock(on_layout_change_mtx_);
         return on_layout_change_.fn != nullptr;
     }
     // Issue #2267 / #3124: RootRemapPass install + invoke. The compiler
@@ -1928,19 +1928,19 @@ public:
     // Closure capture cells and rewrites them via the old→new object_remap.
     // Concurrent set/take is serialized via root_remap_mtx_.
     void set_root_remap_callback(RootRemapHookFn fn, void* ctx = nullptr) noexcept {
-        std::lock_guard<std::mutex> lock(root_remap_mtx_);
+        std::scoped_lock<std::mutex> lock(root_remap_mtx_);
         root_remap_.fn = fn;
         root_remap_.ctx = ctx;
     }
     [[nodiscard]] RootRemapHook take_root_remap_callback() noexcept {
-        std::lock_guard<std::mutex> lock(root_remap_mtx_);
+        std::scoped_lock<std::mutex> lock(root_remap_mtx_);
         RootRemapHook out = root_remap_;
         root_remap_.fn = nullptr;
         root_remap_.ctx = nullptr;
         return out;
     }
     [[nodiscard]] bool has_root_remap_callback() const noexcept {
-        std::lock_guard<std::mutex> lock(root_remap_mtx_);
+        std::scoped_lock<std::mutex> lock(root_remap_mtx_);
         return root_remap_.fn != nullptr;
     }
 
@@ -1955,19 +1955,19 @@ public:
     // safely relocate. Arena auto-arm refuses to call live_compact(Moving)
     // when this hook is null (Soft fallback) — see maybe_auto_compact_on_alloc.
     void set_known_roots_hook(KnownRootsHookFn fn, void* ctx = nullptr) noexcept {
-        std::lock_guard<std::mutex> lock(known_roots_mtx_);
+        std::scoped_lock<std::mutex> lock(known_roots_mtx_);
         known_roots_hook_.fn = fn;
         known_roots_hook_.ctx = ctx;
     }
     [[nodiscard]] KnownRootsHook take_known_roots_hook() noexcept {
-        std::lock_guard<std::mutex> lock(known_roots_mtx_);
+        std::scoped_lock<std::mutex> lock(known_roots_mtx_);
         KnownRootsHook out = known_roots_hook_;
         known_roots_hook_.fn = nullptr;
         known_roots_hook_.ctx = nullptr;
         return out;
     }
     [[nodiscard]] bool has_known_roots_hook() const noexcept {
-        std::lock_guard<std::mutex> lock(known_roots_mtx_);
+        std::scoped_lock<std::mutex> lock(known_roots_mtx_);
         return known_roots_hook_.fn != nullptr;
     }
     // Issue #3370: copy the hook under lock then invoke outside the lock
@@ -1976,7 +1976,7 @@ public:
     void invoke_known_roots_hook() noexcept {
         KnownRootsHook copy;
         {
-            std::lock_guard<std::mutex> lock(known_roots_mtx_);
+            std::scoped_lock<std::mutex> lock(known_roots_mtx_);
             if (!known_roots_hook_.fn)
                 return;
             copy = known_roots_hook_;
@@ -1987,19 +1987,19 @@ public:
     // Issue #4386: post-relocate container rewrite. Copied under the mutex
     // and invoked outside it. No hook → true (module arenas).
     void set_unstable_remap_commit_hook(UnstableRemapCommitFn fn, void* ctx = nullptr) noexcept {
-        std::lock_guard<std::mutex> lock(unstable_remap_commit_mtx_);
+        std::scoped_lock<std::mutex> lock(unstable_remap_commit_mtx_);
         unstable_remap_commit_fn_ = fn;
         unstable_remap_commit_ctx_ = ctx;
     }
     [[nodiscard]] bool has_unstable_remap_commit_hook() const noexcept {
-        std::lock_guard<std::mutex> lock(unstable_remap_commit_mtx_);
+        std::scoped_lock<std::mutex> lock(unstable_remap_commit_mtx_);
         return unstable_remap_commit_fn_ != nullptr;
     }
     [[nodiscard]] bool invoke_unstable_remap_commit(bool relocated) noexcept {
         UnstableRemapCommitFn fn = nullptr;
         void* ctx = nullptr;
         {
-            std::lock_guard<std::mutex> lock(unstable_remap_commit_mtx_);
+            std::scoped_lock<std::mutex> lock(unstable_remap_commit_mtx_);
             fn = unstable_remap_commit_fn_;
             ctx = unstable_remap_commit_ctx_;
         }
@@ -2015,7 +2015,7 @@ public:
     // instead of an unverifiable green: with no hook, the Evaluator-side
     // opaque_heap_ / modules_ / closure flat+pool were not rewritten.
     void set_live_container_rewrite_hook(LiveContainerRewriteFn fn, void* ctx = nullptr) noexcept {
-        std::lock_guard<std::mutex> lock(unstable_remap_commit_mtx_);
+        std::scoped_lock<std::mutex> lock(unstable_remap_commit_mtx_);
         live_container_rewrite_fn_ = fn;
         live_container_rewrite_ctx_ = ctx;
     }
@@ -2023,7 +2023,7 @@ public:
         LiveContainerRewriteFn fn = nullptr;
         void* ctx = nullptr;
         {
-            std::lock_guard<std::mutex> lock(unstable_remap_commit_mtx_);
+            std::scoped_lock<std::mutex> lock(unstable_remap_commit_mtx_);
             fn = live_container_rewrite_fn_;
             ctx = live_container_rewrite_ctx_;
         }
@@ -2209,7 +2209,7 @@ public:
             g_moving_canary_before_recycle_hook.load(std::memory_order_relaxed) != nullptr;
         if (watch)
             g_moving_canary_lock_waiters.fetch_add(1, std::memory_order_acq_rel);
-        std::lock_guard<std::mutex> lock(inv.mtx);
+        std::scoped_lock<std::mutex> lock(inv.mtx);
         if (watch)
             g_moving_canary_lock_waiters.fetch_sub(1, std::memory_order_acq_rel);
         // Issue #4242: guarded chase (live-key / dead-destination refusals).
@@ -2274,19 +2274,19 @@ public:
         // Lock release is a release barrier for observers of the cleared
         // slots. Contract: callers should not destroy an arena mid-live_compact.
         {
-            std::lock_guard<std::mutex> lock(hook_mtx_);
+            std::scoped_lock<std::mutex> lock(hook_mtx_);
             for (auto& slot : on_compact_hooks_) {
                 slot.fn = nullptr;
                 slot.ctx = nullptr;
             }
         }
         {
-            std::lock_guard<std::mutex> lock(on_layout_change_mtx_);
+            std::scoped_lock<std::mutex> lock(on_layout_change_mtx_);
             on_layout_change_.fn = nullptr;
             on_layout_change_.ctx = nullptr;
         }
         {
-            std::lock_guard<std::mutex> lock(root_remap_mtx_);
+            std::scoped_lock<std::mutex> lock(root_remap_mtx_);
             root_remap_.fn = nullptr;
             root_remap_.ctx = nullptr;
         }
@@ -2314,7 +2314,7 @@ public:
         if (!raw)
             return nullptr;
         {
-            std::lock_guard<std::mutex> lock(stats_mu_);
+            std::scoped_lock<std::mutex> lock(stats_mu_);
             ++stats_.allocation_count;
         }
         auto* result = std::construct_at(static_cast<T*>(raw), std::forward<Args>(args)...);
@@ -2343,7 +2343,7 @@ public:
         if (!raw)
             return nullptr;
         {
-            std::lock_guard<std::mutex> lock(stats_mu_);
+            std::scoped_lock<std::mutex> lock(stats_mu_);
             ++stats_.allocation_count;
         }
         auto* result = std::construct_at(static_cast<T*>(raw), std::forward<Args>(args)...);
@@ -2412,7 +2412,7 @@ public:
         resource_.release();
         used_bytes_.store(0, std::memory_order_relaxed);
         {
-            std::lock_guard<std::mutex> lock(stats_mu_);
+            std::scoped_lock<std::mutex> lock(stats_mu_);
             stats_.used = 0;
             stats_.allocation_count = 0;
             stats_.wasted = 0;
@@ -2432,7 +2432,7 @@ public:
         // call stats() while another fiber may compact the same arena.
         ArenaStats s;
         {
-            std::lock_guard<std::mutex> lock(stats_mu_);
+            std::scoped_lock<std::mutex> lock(stats_mu_);
             s = stats_;
         }
         s.capacity = buffer_.size() + small_pool_.capacity();
@@ -2523,7 +2523,7 @@ public:
             auto u_now = used_bytes_.load(std::memory_order_relaxed);
             if (u_now > buffer_.size()) {
                 used_bytes_.store(buffer_.size(), std::memory_order_relaxed);
-                std::lock_guard<std::mutex> lock(stats_mu_);
+                std::scoped_lock<std::mutex> lock(stats_mu_);
                 stats_.used = buffer_.size();
             }
         }
@@ -2534,7 +2534,7 @@ public:
         // the buffer with no chance for the collector to run.
         if (aura::gc_hooks::fiber_active()) {
             {
-                std::lock_guard<std::mutex> lock(stats_mu_);
+                std::scoped_lock<std::mutex> lock(stats_mu_);
                 stats_.compaction_yield_checks++;
             }
             aura::gc_hooks::safepoint_check();
@@ -2574,7 +2574,7 @@ public:
         contract_assert(after <= before);
         if (saved > 0) {
             {
-                std::lock_guard<std::mutex> lock(stats_mu_);
+                std::scoped_lock<std::mutex> lock(stats_mu_);
                 stats_.compaction_count++;
                 stats_.last_compaction_saved = saved;
                 stats_.total_compaction_saved += saved;
@@ -2623,7 +2623,7 @@ public:
         // Issue #604: same fiber-context coordination as compact().
         if (aura::gc_hooks::fiber_active()) {
             {
-                std::lock_guard<std::mutex> lock(stats_mu_);
+                std::scoped_lock<std::mutex> lock(stats_mu_);
                 stats_.compaction_yield_checks++;
             }
             aura::gc_hooks::safepoint_check();
@@ -3726,7 +3726,7 @@ public:
             small_pool_.rebind_tiers();
             std::size_t saved = before - initial_size_;
             {
-                std::lock_guard<std::mutex> lock(stats_mu_);
+                std::scoped_lock<std::mutex> lock(stats_mu_);
                 stats_.compaction_count++;
                 stats_.last_compaction_saved = saved;
                 stats_.total_compaction_saved += saved;
@@ -3948,7 +3948,7 @@ private:
                         neu = resource_.allocate(p.size, p.align);
                         used_bytes_.fetch_add(p.size, std::memory_order_relaxed);
                         {
-                            std::lock_guard<std::mutex> lock(stats_mu_);
+                            std::scoped_lock<std::mutex> lock(stats_mu_);
                             stats_.used += p.size;
                         }
                     } catch (...) {
@@ -4010,7 +4010,7 @@ private:
                                 fresh = resource_.allocate(p.size, p.align);
                                 used_bytes_.fetch_add(p.size, std::memory_order_relaxed);
                                 {
-                                    std::lock_guard<std::mutex> lock(stats_mu_);
+                                    std::scoped_lock<std::mutex> lock(stats_mu_);
                                     stats_.used += p.size;
                                 }
                             } catch (...) {
@@ -4463,7 +4463,7 @@ public:
         contract_assert(ptr != nullptr); // Issue #1519
         used_bytes_.fetch_add(size, std::memory_order_relaxed);
         {
-            std::lock_guard<std::mutex> lock(stats_mu_);
+            std::scoped_lock<std::mutex> lock(stats_mu_);
             stats_.used += size;
         }
         // Issue #3214: pmr / large / small-pool-fallback allocate joins
@@ -4534,7 +4534,7 @@ public:
 
         if (fiber) {
             {
-                std::lock_guard<std::mutex> lock(stats_mu_);
+                std::scoped_lock<std::mutex> lock(stats_mu_);
                 stats_.compaction_yield_checks++;
             }
             aura::gc_hooks::safepoint_check();
@@ -4542,7 +4542,7 @@ public:
             aura::gc_hooks::notify_fiber_safe_compact();
         } else {
             {
-                std::lock_guard<std::mutex> lock(stats_mu_);
+                std::scoped_lock<std::mutex> lock(stats_mu_);
                 stats_.compaction_yield_checks++;
             }
         }
@@ -4736,7 +4736,7 @@ public:
         const std::unordered_map<void*, void*>& rewrite_remap = {}) noexcept {
         RootRemapHook cb_copy;
         {
-            std::lock_guard<std::mutex> lock(root_remap_mtx_);
+            std::scoped_lock<std::mutex> lock(root_remap_mtx_);
             if (!root_remap_.fn)
                 return;
             cb_copy = root_remap_;
@@ -4786,7 +4786,7 @@ public:
             // Issue #1989 / #3124: copy fn/ctx under hook_mtx_, invoke
             // outside the lock so a hook that re-enters ASTArena doesn't
             // deadlock. set/take serialized against this copy. No heap.
-            std::lock_guard<std::mutex> lock(hook_mtx_);
+            std::scoped_lock<std::mutex> lock(hook_mtx_);
             for (const auto& slot : on_compact_hooks_) {
                 if (slot.fn)
                     copies[n++] = slot;
@@ -4831,7 +4831,7 @@ public:
     void invoke_layout_change_(std::uint64_t new_gen) noexcept {
         LayoutChangeHook cb_copy;
         {
-            std::lock_guard<std::mutex> lock(on_layout_change_mtx_);
+            std::scoped_lock<std::mutex> lock(on_layout_change_mtx_);
             if (!on_layout_change_.fn)
                 return;
             cb_copy = on_layout_change_;
@@ -4963,13 +4963,13 @@ namespace live_arena_remap_detail {
     inline void note(ASTArena* arena) noexcept {
         if (!arena)
             return;
-        std::lock_guard<std::mutex> lock(live().mtx);
+        std::scoped_lock<std::mutex> lock(live().mtx);
         live().arenas.push_back(arena);
     }
     inline void unnote(ASTArena* arena) noexcept {
         if (!arena)
             return;
-        std::lock_guard<std::mutex> lock(live().mtx);
+        std::scoped_lock<std::mutex> lock(live().mtx);
         std::erase(live().arenas, arena);
     }
     // Issue #4124: resolve through every live arena and return the remap
@@ -4978,7 +4978,7 @@ namespace live_arena_remap_detail {
     inline void* resolve_ptr(void* p) noexcept {
         if (!p)
             return nullptr;
-        std::lock_guard<std::mutex> lock(live().mtx);
+        std::scoped_lock<std::mutex> lock(live().mtx);
         for (ASTArena* arena : live().arenas) {
             if (!arena)
                 continue;
@@ -4996,7 +4996,7 @@ namespace live_arena_remap_detail {
     inline void* resolve_ptr_for_chase(void* p) noexcept {
         if (!p)
             return nullptr;
-        std::lock_guard<std::mutex> lock(live().mtx);
+        std::scoped_lock<std::mutex> lock(live().mtx);
         for (ASTArena* arena : live().arenas) {
             if (!arena)
                 continue;
@@ -5018,7 +5018,7 @@ namespace live_arena_remap_detail {
     inline bool live_tracked(void* p) noexcept {
         if (!p)
             return false;
-        std::lock_guard<std::mutex> lock(live().mtx);
+        std::scoped_lock<std::mutex> lock(live().mtx);
         for (ASTArena* arena : live().arenas) {
             if (!arena)
                 continue;
@@ -5092,7 +5092,7 @@ export inline void* bind_temporary_moving_live_ptr_any_arena(void* p, bool* note
         g_moving_canary_before_recycle_hook.load(std::memory_order_relaxed) != nullptr;
     if (watch)
         g_moving_canary_lock_waiters.fetch_add(1, std::memory_order_acq_rel);
-    std::lock_guard<std::mutex> lock(inv.mtx);
+    std::scoped_lock<std::mutex> lock(inv.mtx);
     if (watch)
         g_moving_canary_lock_waiters.fetch_sub(1, std::memory_order_acq_rel);
     // Issue #4242: guarded chase — live-key / dead-destination refusals.

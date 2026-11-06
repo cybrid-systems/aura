@@ -209,7 +209,7 @@ static void ac3142_2_steal_marks_no_double_consume() {
     // Verify stolen flag was set (consume loop skipped the entry).
     bool found_stolen = false;
     {
-        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        std::scoped_lock<std::mutex> lock(g_capability_registry().mtx);
         const auto it = g_capability_registry().by_tenant.find(tenant);
         if (it != g_capability_registry().by_tenant.end()) {
             for (const auto& g : it->second) {
@@ -2977,7 +2977,7 @@ static void ac3902_1_soft_epoch0_consume_honest_unset() {
     bool found = false;
     std::uint64_t revoke_epoch = 1;
     {
-        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        std::scoped_lock<std::mutex> lock(g_capability_registry().mtx);
         const auto it = g_capability_registry().by_tenant.find(tenant);
         if (it != g_capability_registry().by_tenant.end()) {
             for (const auto& g : it->second) {
@@ -3025,7 +3025,7 @@ static void ac3902_2_hard_face_invent_1() {
     bool found = false;
     std::uint64_t revoke_epoch = 0;
     {
-        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        std::scoped_lock<std::mutex> lock(g_capability_registry().mtx);
         const auto it = g_capability_registry().by_tenant.find(tenant);
         if (it != g_capability_registry().by_tenant.end()) {
             for (const auto& g : it->second) {
@@ -3067,7 +3067,7 @@ static void ac3902_3_real_epoch_passthrough() {
     bool found = false;
     std::uint64_t revoke_epoch = 0;
     {
-        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        std::scoped_lock<std::mutex> lock(g_capability_registry().mtx);
         const auto it = g_capability_registry().by_tenant.find(tenant);
         if (it != g_capability_registry().by_tenant.end()) {
             for (const auto& g : it->second) {
@@ -3114,7 +3114,7 @@ static void ac3902_4_soft_session_cascade_honest() {
     bool session_bound = true;
     std::uint64_t revoke_epoch = 1;
     {
-        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        std::scoped_lock<std::mutex> lock(g_capability_registry().mtx);
         const auto it = g_capability_registry().by_tenant.find(tenant);
         if (it != g_capability_registry().by_tenant.end()) {
             for (const auto& g : it->second) {
@@ -3176,7 +3176,7 @@ static void ac3992_1_soft_mid_revoke_honest_unset() {
     Effect effects = Effect::Mutate;
     std::uint64_t revoke_epoch = 1;
     {
-        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        std::scoped_lock<std::mutex> lock(g_capability_registry().mtx);
         const auto it = g_capability_registry().by_tenant.find(tenant);
         if (it != g_capability_registry().by_tenant.end()) {
             for (const auto& g : it->second) {
@@ -3223,7 +3223,7 @@ static void ac3992_2_hard_face_mid_revoke_invent_1() {
     bool found = false;
     std::uint64_t revoke_epoch = 0;
     {
-        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        std::scoped_lock<std::mutex> lock(g_capability_registry().mtx);
         const auto it = g_capability_registry().by_tenant.find(tenant);
         if (it != g_capability_registry().by_tenant.end()) {
             for (const auto& g : it->second) {
@@ -4506,7 +4506,7 @@ static void ac4135_1_session_grant_node_under_gate_boundary() {
     bool found = false;
     std::uint32_t bound_node = 1;
     {
-        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        std::scoped_lock<std::mutex> lock(g_capability_registry().mtx);
         const auto it = g_capability_registry().by_tenant.find(tenant);
         if (it != g_capability_registry().by_tenant.end()) {
             for (const auto& gr : it->second) {
@@ -4546,7 +4546,7 @@ static void ac4135_2_grant_without_node_context_stamps_zero() {
     bool found = false;
     std::uint32_t bound_node = 1;
     {
-        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        std::scoped_lock<std::mutex> lock(g_capability_registry().mtx);
         const auto it = g_capability_registry().by_tenant.find(tenant);
         if (it != g_capability_registry().by_tenant.end()) {
             for (const auto& gr : it->second) {
@@ -4607,7 +4607,7 @@ static void ac4135_4_soft_off_no_node_invent() {
     bool found = false;
     std::uint32_t bound_node = 1;
     {
-        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        std::scoped_lock<std::mutex> lock(g_capability_registry().mtx);
         const auto it = g_capability_registry().by_tenant.find(tenant);
         if (it != g_capability_registry().by_tenant.end()) {
             for (const auto& gr : it->second) {

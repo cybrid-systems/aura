@@ -2023,7 +2023,7 @@ namespace primitives_detail {
 
     inline std::uint64_t push_error_cause(std::vector<types::EvalValue>& error_values,
                                           types::EvalValue cause) {
-        std::lock_guard<std::mutex> lock(primitive_error_store_mutex());
+        std::scoped_lock<std::mutex> lock(primitive_error_store_mutex());
         if (error_values.capacity() < kPrimitiveErrorStoreReserve)
             error_values.reserve(kPrimitiveErrorStoreReserve);
         // Fixed-capacity store: overflowing returns the shared slot 0
@@ -2495,7 +2495,7 @@ public:
             (void)commit_unstable_densify_root_remap(false);
         // Issue #1663: serialize set_arena transitions (rare path).
         // ASTArena::owner_mtx_ separately atomicizes owner+fn vs allocate_raw.
-        std::lock_guard<std::mutex> lock(arena_set_mtx_);
+        std::scoped_lock<std::mutex> lock(arena_set_mtx_);
         // Issue #1546: drop owner link from previous arena if any.
         // Issue #1662: also clear compact hook (captures `this`).
         const bool switching = (arena_ != a);
@@ -2562,7 +2562,7 @@ public:
         // Issue #1554: wire temp_arena the same way as primary arena so
         // task-context / gc-temp allocations honor ResourceQuota.
         // Issue #1662 / #1663: clear previous owner under arena_set_mtx_.
-        std::lock_guard<std::mutex> lock(arena_set_mtx_);
+        std::scoped_lock<std::mutex> lock(arena_set_mtx_);
         if (temp_arena_ && temp_arena_ != a)
             temp_arena_->clear_arena_owner();
         temp_arena_ = a;
@@ -2587,7 +2587,7 @@ public:
     void set_flat_pool(ast::FlatAST* f, ast::StringPool* p) {
         // Serialize vs densify known-root registration (TSan: chaos soak
         // concurrent eval set_flat_pool vs register_known_moving_densify_root_slots).
-        std::lock_guard<std::mutex> lock(mutate_target_mu_);
+        std::scoped_lock<std::mutex> lock(mutate_target_mu_);
         mutate_target_flat_ = f;
         mutate_target_pool_ = p;
     }
@@ -2651,7 +2651,7 @@ public:
     // lookup keys on the text, never on a pool-local SymId. Thread-safe —
     // the tier's native code and fiber bodies both intern.
     [[nodiscard]] types::EvalValue intern_symbol(std::string_view name) {
-        std::lock_guard lock(symbol_table_mtx_);
+        std::scoped_lock lock(symbol_table_mtx_);
         if (auto it = symbol_index_.find(name); it != symbol_index_.end())
             return types::make_symbol(it->second);
         auto sidx = static_cast<std::uint64_t>(symbol_table_.size());
@@ -2672,7 +2672,7 @@ public:
     // corrupted the vector (realloc on two threads) and could hand out the
     // wrong index.
     std::uint64_t intern_keyword_slot(std::string_view name) {
-        std::lock_guard lock(keyword_table_mtx_);
+        std::scoped_lock lock(keyword_table_mtx_);
         for (std::size_t ki = 0; ki < keyword_table_.size(); ++ki) {
             if (keyword_table_[ki] == name)
                 return static_cast<std::uint64_t>(ki);
@@ -4685,11 +4685,11 @@ public:
     // script, before any user code runs. See dual-workspace design (archived:
     // docs-archive-pre-2026-06) for the dual-workspace rationale.
     void set_current_flat(ast::FlatAST* f) {
-        std::lock_guard<std::mutex> lock(mutate_target_mu_);
+        std::scoped_lock<std::mutex> lock(mutate_target_mu_);
         current_flat_.store(f, std::memory_order_relaxed);
     }
     void set_current_pool(ast::StringPool* p) {
-        std::lock_guard<std::mutex> lock(mutate_target_mu_);
+        std::scoped_lock<std::mutex> lock(mutate_target_mu_);
         current_pool_.store(p, std::memory_order_relaxed);
     }
     // Issue #4717: relaxed atomics. These are the service-set "per-eval
@@ -5554,7 +5554,7 @@ public:
         // slot fields under linear_gc_root_audit_mu_, so a concurrent reader
         // can never observe a torn slot. Callers binding `const auto&` still
         // get a stable copy (temporary lifetime extension).
-        std::lock_guard<std::mutex> lock(linear_gc_root_audit_mu_);
+        std::scoped_lock<std::mutex> lock(linear_gc_root_audit_mu_);
         return linear_gc_root_audit_ring_[seq % kLinearGcRootAuditRingSize];
     }
     [[nodiscard]] static std::string_view
@@ -5620,7 +5620,7 @@ public:
         // (record_linear_violation_audit + the enforce epoch fence) publish
         // under linear_violation_audit_mu_, so a concurrent reader can never
         // see a torn slot whose fields come from different events.
-        std::lock_guard<std::mutex> lock(linear_violation_audit_mu_);
+        std::scoped_lock<std::mutex> lock(linear_violation_audit_mu_);
         return linear_violation_audit_ring_[seq % kLinearViolationAuditRingSize];
     }
     // ── GC sweep / compaction (Issue #113 Phase 3) ──────────
@@ -6632,13 +6632,13 @@ private:
     [[nodiscard]] std::size_t alloc_cell(const types::EvalValue& v) {
         // Issue #1397: push_back + size read MUST be atomic so the
         // returned index is stable across concurrent `fiber:spawn`
-        // workers (which share the Evaluator). std::lock_guard RAII
+        // workers (which share the Evaluator). std::scoped_lock RAII
         // releases the mutex at scope exit; the duration here is
         // bounded to the vector reallocation + the size_t return.
         // Issue #4459: reuse a dead cell index. cells_ is monotonic,
         // so push_back never returns the buffer; the freelist stops
         // the vector (and its buffer) from tracking a file-mode loop.
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         file_heap_allocs_since_reclaim_.fetch_add(1, std::memory_order_relaxed);
         while (!cell_reuse_eval_.empty()) {
             const auto id = cell_reuse_eval_.back();
@@ -6674,7 +6674,7 @@ public:
     // returns '() for such a cell. Only void stores take the lock; a mark is
     // cleared when the id is re-minted (alloc_cell) or truncated.
     void note_cell_nil_assigned(std::size_t ci) {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         if (cell_nil_assigned_.size() <= ci)
             cell_nil_assigned_.resize(ci + 1, 0);
         cell_nil_assigned_[ci] = 1;
@@ -6687,11 +6687,11 @@ public:
             note_cell_nil_assigned(ci);
     }
     [[nodiscard]] bool cell_nil_assigned(std::size_t ci) const {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         return ci < cell_nil_assigned_.size() && cell_nil_assigned_[ci] != 0;
     }
     void truncate_cell_nil_marks(std::size_t n) {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         if (cell_nil_assigned_.size() > n)
             cell_nil_assigned_.resize(n);
     }
@@ -8720,7 +8720,7 @@ private:
         if (float_intern_flat_ctx() != f)
             clear_name_res_cache();
         if (float_intern_flat_shared_.load(std::memory_order_acquire) != f) {
-            std::lock_guard<std::mutex> lock(intern_cache_mtx_);
+            std::scoped_lock<std::mutex> lock(intern_cache_mtx_);
             if (float_intern_flat_shared_.load(std::memory_order_relaxed) != f) {
                 float_intern_by_node_.clear();
                 float_intern_flat_shared_.store(f, std::memory_order_release);
@@ -8740,7 +8740,7 @@ private:
         const bool same = sym_intern_pool_shared_.load(std::memory_order_acquire) == p &&
                           intern_pool_gen_shared_.load(std::memory_order_relaxed) == gen;
         if (!same) {
-            std::lock_guard<std::mutex> lock(intern_cache_mtx_);
+            std::scoped_lock<std::mutex> lock(intern_cache_mtx_);
             if (sym_intern_pool_shared_.load(std::memory_order_relaxed) != p ||
                 intern_pool_gen_shared_.load(std::memory_order_relaxed) != gen) {
                 string_intern_by_sym_.clear();
@@ -8753,7 +8753,7 @@ private:
         intern_pool_gen_ctx() = gen;
     }
     void clear_sym_intern() noexcept {
-        std::lock_guard<std::mutex> lock(intern_cache_mtx_);
+        std::scoped_lock<std::mutex> lock(intern_cache_mtx_);
         string_intern_by_sym_.clear();
         keyword_intern_by_sym_.clear();
         float_intern_by_node_.clear(); // Issue #4524: flat-scoped float literal intern
@@ -9142,7 +9142,7 @@ public:
     [[nodiscard]] bool pause_agent_apply_for_wait(std::uint64_t identity) noexcept {
         if (identity == 0)
             return false;
-        std::lock_guard<std::mutex> guard(agent_apply_pause_mu_);
+        std::scoped_lock<std::mutex> guard(agent_apply_pause_mu_);
         if (agent_apply_owner_identity_.load(std::memory_order_relaxed) != identity)
             return false;
         auto* lock = static_cast<std::unique_lock<std::mutex>*>(agent_apply_wait_lock_);
@@ -9156,7 +9156,7 @@ public:
     [[nodiscard]] bool try_resume_agent_apply_after_wait(std::uint64_t identity) noexcept {
         if (identity == 0)
             return true;
-        std::lock_guard<std::mutex> guard(agent_apply_pause_mu_);
+        std::scoped_lock<std::mutex> guard(agent_apply_pause_mu_);
         auto it = agent_apply_paused_.find(identity);
         if (it == agent_apply_paused_.end())
             return true;
@@ -9184,7 +9184,7 @@ public:
             ~Release() {
                 if (!armed || self == nullptr)
                     return;
-                std::lock_guard<std::mutex> lock(self->spawn_region_inflight_mu_);
+                std::scoped_lock<std::mutex> lock(self->spawn_region_inflight_mu_);
                 self->spawn_region_inflight_.erase(key);
                 self->spawn_region_inflight_cv_.notify_all();
             }
@@ -9201,7 +9201,7 @@ public:
         };
 
         if (region_fast) {
-            std::lock_guard<std::mutex> lock(spawn_region_inflight_mu_);
+            std::scoped_lock<std::mutex> lock(spawn_region_inflight_mu_);
             rel.armed = spawn_region_inflight_.insert(region_key).second;
         }
         if (rel.armed) {
@@ -9225,7 +9225,7 @@ public:
             Evaluator* self;
             void* lock;
             ~HoldClear() {
-                std::lock_guard<std::mutex> guard(self->agent_apply_pause_mu_);
+                std::scoped_lock<std::mutex> guard(self->agent_apply_pause_mu_);
                 if (self->agent_apply_wait_lock_ == lock) {
                     self->agent_apply_wait_lock_ = nullptr;
                     self->agent_apply_owner_identity_.store(0, std::memory_order_release);
@@ -9243,7 +9243,7 @@ public:
             }
         } hold_clear{{}, this, &apply};
         if (owner_identity != 0) {
-            std::lock_guard<std::mutex> guard(agent_apply_pause_mu_);
+            std::scoped_lock<std::mutex> guard(agent_apply_pause_mu_);
             agent_apply_wait_lock_ = &apply;
             agent_apply_owner_identity_.store(owner_identity, std::memory_order_release);
         }
@@ -9269,7 +9269,7 @@ private:
 
 public:
     [[nodiscard]] std::size_t spawn_region_inflight_size_for_test() const {
-        std::lock_guard<std::mutex> lock(spawn_region_inflight_mu_);
+        std::scoped_lock<std::mutex> lock(spawn_region_inflight_mu_);
         return spawn_region_inflight_.size();
     }
 
@@ -9916,7 +9916,7 @@ public:
     // owner's tenant. Returns the number of live string slots.
     std::size_t release_unreachable_string_slots(const std::vector<std::uint8_t>& seen_string,
                                                  const std::vector<std::uint8_t>& free_at_mark) {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         const auto live = string_heap_.release_unmarked(seen_string, free_at_mark);
         const auto n = std::min(string_slot_tenants_.size(), string_heap_.size());
         for (std::size_t i = 0; i < n; ++i) {
@@ -9928,17 +9928,17 @@ public:
     // Issue #4608: live string slots (heap size minus the free ones) —
     // the test door for the string reclaim.
     [[nodiscard]] std::size_t string_heap_live_size() const {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         return string_heap_.live_slot_count();
     }
     // Issue #4608: number of reusable string slots (the free list).
     [[nodiscard]] std::size_t string_heap_free_slots() const {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         return string_heap_.free_slot_count();
     }
     // Issue #4543: test read of the #4428 owner record (0 = never stamped).
     [[nodiscard]] std::uint64_t string_slot_tenant_record_for_test(std::size_t idx) const {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         return idx < string_slot_tenants_.size() ? string_slot_tenants_[idx] : 0;
     }
     // Issue #4613: publish a hash table into the evaluator's hash free
@@ -9953,7 +9953,7 @@ public:
     // primitive does); alloc_storage_lock_ is recursive, so the caller
     // may already hold it too.
     [[nodiscard]] std::size_t mint_hash_table(FlatHashTable* ht) {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         std::size_t hidx = 0;
         bool reused = false;
         while (!hash_reuse_freelist_.empty()) {
@@ -10011,8 +10011,8 @@ public:
     // is left alone. Returns the number of live hash tables.
     std::size_t release_unreachable_hash_tables(const std::vector<std::uint8_t>& seen_hash,
                                                 const std::vector<FlatHashTable*>& at_mark) {
-        std::lock_guard hlock(hash_tables_mtx_);
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock hlock(hash_tables_mtx_);
+        std::scoped_lock lock(alloc_storage_lock_);
         // The live hash tables count toward the reclaim trigger in WINDOW
         // UNITS, not in tables: a 32-slot table is 560 bytes = 35 units
         // of 16 bytes, so counting a table as one object would let the
@@ -10059,46 +10059,46 @@ public:
     }
     // Issue #4613: the hash free list (the runtime door).
     [[nodiscard]] std::size_t hash_table_free_slots() const {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         return hash_reuse_freelist_.size();
     }
     // Issue #4613: the number of hash tables the reclaim released (the
     // runtime door for the release itself: the free list holds at most
     // a couple of slots, so the release COUNT is the stable witness).
     [[nodiscard]] std::uint64_t hash_tables_minted_total() const {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         return hash_tables_minted_total_;
     }
     [[nodiscard]] std::uint64_t hash_tables_released_total() const {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         return hash_tables_released_;
     }
     // Issue #4613: the pair free list (the runtime door) and the
     // vector_heap_ high-water mark (companion to pairs_size) so the
     // reclaim ACs can bound the garbage a loop leaves between marks.
     [[nodiscard]] std::size_t pair_heap_free_slots() const {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         return pair_reuse_freelist_.size();
     }
     [[nodiscard]] std::size_t vector_heap_size() const {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         return vector_heap_.size();
     }
     [[nodiscard]] std::size_t vector_heap_free_slots() const {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         return vector_reuse_freelist_.size();
     }
     // Issue #4613: the number of hash table slots the process ever
     // published (the runtime door: it must stay flat across a
     // mint-and-drop loop).
     [[nodiscard]] std::size_t hash_table_slots() const {
-        std::lock_guard lock(hash_tables_mtx_);
+        std::scoped_lock lock(hash_tables_mtx_);
         return g_hash_tables.size();
     }
     // Issue #4891: live tree-walker closure owner stamps (gc-heap-stats).
     // Must stay flat across a mint-and-drop closure loop.
     [[nodiscard]] std::size_t closure_tenant_stamp_count() noexcept {
-        std::lock_guard<std::mutex> lk(closure_slot_tenants_mu_);
+        std::scoped_lock<std::mutex> lk(closure_slot_tenants_mu_);
         return closure_slot_tenants_.size();
     }
     // Issue #4428: stamp a tree-walker ClosureId before the map insert.
@@ -10108,7 +10108,7 @@ public:
     void note_tw_closure_owner(ClosureId id) noexcept {
         if (!tenant_stamps_observable())
             return;
-        std::lock_guard<std::mutex> lk(closure_slot_tenants_mu_);
+        std::scoped_lock<std::mutex> lk(closure_slot_tenants_mu_);
         try {
             closure_slot_tenants_[id] = capability_tenant_id_ + 1;
         } catch (...) {
@@ -10121,14 +10121,14 @@ public:
     void forget_tw_closure_owners(const std::vector<ClosureId>& ids) noexcept {
         if (ids.empty())
             return;
-        std::lock_guard<std::mutex> lk(closure_slot_tenants_mu_);
+        std::scoped_lock<std::mutex> lk(closure_slot_tenants_mu_);
         if (closure_slot_tenants_.empty())
             return;
         for (const auto id : ids)
             closure_slot_tenants_.erase(id);
     }
     void forget_tw_closure_owner(ClosureId id) noexcept {
-        std::lock_guard<std::mutex> lk(closure_slot_tenants_mu_);
+        std::scoped_lock<std::mutex> lk(closure_slot_tenants_mu_);
         closure_slot_tenants_.erase(id);
     }
     // Issue #4891: collects the ids a GC sweep erases and drops their owner
@@ -11016,7 +11016,7 @@ public:
     }
     struct ListCtorLockHold {
         Evaluator& ev;
-        std::lock_guard<std::recursive_mutex> lk;
+        std::scoped_lock<std::recursive_mutex> lk;
         std::chrono::steady_clock::time_point t0;
         explicit ListCtorLockHold(Evaluator& e) noexcept
             : ev(e)
@@ -11705,7 +11705,7 @@ public:
         return string_heap_[static_cast<std::size_t>(payload & AURA_STR_SLOT_MASK)];
     }
     void set_string_at(std::uint64_t payload, std::string v) {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         const auto slot = static_cast<std::size_t>(payload & AURA_STR_SLOT_MASK);
         string_heap_[slot] = std::move(v);
         string_heap_.note_write(slot);
@@ -11969,7 +11969,7 @@ public:
     // push_back cannot reallocate while display/hash/compare holds a ref.
     // OOB / empty heap → empty string (fail-closed for printing).
     [[nodiscard]] std::string copy_string_heap_at(std::size_t idx) const {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         if (idx >= string_heap_.size())
             return {};
         return string_at(idx);
@@ -11978,7 +11978,7 @@ public:
     // Copying the whole heap string made a multi-thousand-step walk
     // allocate a fresh std::string on every index. -1 is OOB / missing.
     [[nodiscard]] int string_heap_byte_at(std::size_t idx, std::size_t pos) const {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         if (idx >= string_heap_.size())
             return -1;
         const auto& s = string_at(idx);
@@ -11992,20 +11992,20 @@ public:
     // Issue #4548: long strings use the heap's cached code-point index
     // (ASCII: O(1); otherwise one stride walk), not a walk from byte 0.
     [[nodiscard]] int string_heap_code_point_at(std::size_t idx, std::size_t cp_index) const {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         return string_heap_.code_point_at(idx, cp_index);
     }
     // Issue #4548: code-point count (string-length) via the same index;
     // npos when idx is out of range.
     [[nodiscard]] std::size_t string_heap_code_point_count(std::size_t idx) const {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         return string_heap_.code_point_count(idx);
     }
     // Issue #4548: substring copies only [start, end) of the slot — the
     // whole source string used to be copied first. False when idx is OOB.
     bool string_heap_code_point_slice(std::size_t idx, std::size_t start, std::size_t end,
                                       std::string& out) const {
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         return string_heap_.code_point_slice(idx, start, end, out);
     }
     // Issue #2652: process-wide mutex for g_hash_tables mutation + string
@@ -12106,7 +12106,7 @@ public:
         // Issue #1987: signal "we are at a safepoint" so concurrent
         // wait_for_safepoint() callers can return.
         {
-            std::lock_guard<std::mutex> lk(safepoint_mtx_);
+            std::scoped_lock<std::mutex> lk(safepoint_mtx_);
             safepoint_active_.store(true, std::memory_order_release);
         }
         safepoint_cv_.notify_all();
@@ -12139,7 +12139,7 @@ public:
     // GC work is done and mutators have been released.
     void end_gc_safepoint() noexcept {
         {
-            std::lock_guard<std::mutex> lk(safepoint_mtx_);
+            std::scoped_lock<std::mutex> lk(safepoint_mtx_);
             safepoint_active_.store(false, std::memory_order_release);
         }
         safepoint_cv_.notify_all(); // wake timed-out waiters so they see the cleared flag
@@ -12284,7 +12284,7 @@ public:
     // arena and clears the cache, so a recycled address can never be served.
     [[nodiscard]] bool lookup_pattern_parse(const std::string& text,
                                             PatternParseCacheEntry& out) const {
-        const std::lock_guard<std::mutex> lock(pattern_parse_cache_mu_);
+        const std::scoped_lock<std::mutex> lock(pattern_parse_cache_mu_);
         const auto iter = pattern_parse_cache_.find(text);
         if (iter == pattern_parse_cache_.end() || iter->second.arena != temp_arena_) {
             pattern_parse_cache_misses_.fetch_add(1, std::memory_order_relaxed);
@@ -12295,13 +12295,13 @@ public:
         return true;
     }
     void store_pattern_parse(const std::string& text, const PatternParseCacheEntry& entry) {
-        const std::lock_guard<std::mutex> lock(pattern_parse_cache_mu_);
+        const std::scoped_lock<std::mutex> lock(pattern_parse_cache_mu_);
         if (pattern_parse_cache_.size() >= 128)
             pattern_parse_cache_.clear();
         pattern_parse_cache_[text] = entry;
     }
     void clear_pattern_parse_cache() {
-        const std::lock_guard<std::mutex> lock(pattern_parse_cache_mu_);
+        const std::scoped_lock<std::mutex> lock(pattern_parse_cache_mu_);
         pattern_parse_cache_.clear();
     }
     [[nodiscard]] std::uint64_t get_pattern_parse_cache_hits() const noexcept {
@@ -13156,7 +13156,7 @@ public:
     void register_render_critical_define(std::string_view name) const noexcept {
         if (name.empty())
             return;
-        std::lock_guard<std::mutex> lock(render_critical_defines_mtx_);
+        std::scoped_lock<std::mutex> lock(render_critical_defines_mtx_);
         if (render_critical_defines_.insert(std::string(name)).second) {
             if (compiler_metrics_) {
                 auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
@@ -13170,11 +13170,11 @@ public:
         // Prim names (terminal-present-batch, …) always count.
         if (primitives().is_render_critical_name(name))
             return true;
-        std::lock_guard<std::mutex> lock(render_critical_defines_mtx_);
+        std::scoped_lock<std::mutex> lock(render_critical_defines_mtx_);
         return render_critical_defines_.find(std::string(name)) != render_critical_defines_.end();
     }
     [[nodiscard]] std::size_t render_critical_define_count() const noexcept {
-        std::lock_guard<std::mutex> lock(render_critical_defines_mtx_);
+        std::scoped_lock<std::mutex> lock(render_critical_defines_mtx_);
         return render_critical_defines_.size();
     }
     // Issue #1316/#1563: render-stable deopt throttle (never more than once per window_ms).
@@ -17631,7 +17631,7 @@ public:
         if (!types::is_error(err) || types::is_string(err))
             return;
         const auto idx = types::as_error_idx(err);
-        std::lock_guard<std::mutex> lock(
+        std::scoped_lock<std::mutex> lock(
             ::aura::compiler::primitives_detail::primitive_error_store_mutex());
         if (error_locations_.capacity() <
             ::aura::compiler::primitives_detail::kPrimitiveErrorStoreReserve)
@@ -17647,7 +17647,7 @@ public:
         if (!types::is_error(err) || types::is_string(err))
             return std::nullopt;
         const auto idx = types::as_error_idx(err);
-        std::lock_guard<std::mutex> lock(
+        std::scoped_lock<std::mutex> lock(
             ::aura::compiler::primitives_detail::primitive_error_store_mutex());
         if (idx >= error_locations_.size())
             return std::nullopt;
@@ -17667,7 +17667,7 @@ public:
         const auto idx = types::as_error_idx(err);
         if (idx == 0)
             return; // shared overflow / default slot
-        const std::lock_guard<std::mutex> lock(
+        const std::scoped_lock<std::mutex> lock(
             ::aura::compiler::primitives_detail::primitive_error_store_mutex());
         if (user_error_marks_.capacity() <
             ::aura::compiler::primitives_detail::kPrimitiveErrorStoreReserve)
@@ -18710,7 +18710,7 @@ public:
     void pin_stable_ref_for_cow_boundary(aura::ast::FlatAST::StableNodeRef ref) noexcept {
         ref.pin_for_cow();
         {
-            std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
+            std::scoped_lock<std::mutex> lock(cow_boundary_pins_mtx_);
             for (const auto& existing : cow_boundary_pinned_refs_) {
                 if (existing.id == ref.id && existing.workspace_id == ref.workspace_id)
                     return;
@@ -18736,7 +18736,7 @@ public:
     // stack-held copies — only the registry entry.
     bool unpin_stable_ref_from_cow_boundary(aura::ast::NodeId id,
                                             std::uint32_t workspace_id = 0) noexcept {
-        std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
+        std::scoped_lock<std::mutex> lock(cow_boundary_pins_mtx_);
         auto it = std::remove_if(cow_boundary_pinned_refs_.begin(), cow_boundary_pinned_refs_.end(),
                                  [id, workspace_id](const aura::ast::FlatAST::StableNodeRef& r) {
                                      if (r.id != id)
@@ -18753,7 +18753,7 @@ public:
         return true;
     }
     [[nodiscard]] bool is_agent_pinned(aura::ast::NodeId id) const noexcept {
-        std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
+        std::scoped_lock<std::mutex> lock(cow_boundary_pins_mtx_);
         for (const auto& r : cow_boundary_pinned_refs_) {
             if (r.id == id)
                 return true;
@@ -18794,7 +18794,7 @@ public:
             std::vector<aura::ast::FlatAST::StableNodeRef> snapshot;
             const auto version_before = cow_boundary_pins_total_.load(std::memory_order_acquire);
             {
-                std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
+                std::scoped_lock<std::mutex> lock(cow_boundary_pins_mtx_);
                 snapshot = cow_boundary_pinned_refs_;
             }
             for (const auto& pinned : snapshot) {
@@ -18829,7 +18829,7 @@ public:
         return cow_boundary_pins_total_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::size_t cow_boundary_pinned_ref_count() const noexcept {
-        std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
+        std::scoped_lock<std::mutex> lock(cow_boundary_pins_mtx_);
         return cow_boundary_pinned_refs_.size();
     }
     // Issue #737: snapshot capture/restore without re-acquiring
@@ -20565,7 +20565,7 @@ namespace primitives_detail {
         }
         std::size_t hidx = 0;
         {
-            std::lock_guard slock(evaluator.alloc_storage_lock_);
+            std::scoped_lock slock(evaluator.alloc_storage_lock_);
             hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             // Issue #4110: stamp the owner parallel to the table (SSOT helper; runtime_ssot

@@ -422,7 +422,7 @@ struct MutationAuditWal : ::aura::core::NoCopy {
     // (last `max_replay` records, oldest→newest). Returns true if enabled.
     bool enable(std::string_view persist_dir, std::vector<AuditWalRecord>* out_replay = nullptr,
                 std::size_t max_replay = 64) noexcept {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         // Issue #4641: the live segment survives a failed enable. The new
         // segment is opened FIRST and only a successful open closes the live
         // segment and swaps the state in. The old close-first order returned
@@ -587,7 +587,7 @@ struct MutationAuditWal : ::aura::core::NoCopy {
     }
 
     void disable() noexcept {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         close_unlocked();
         enabled = false;
         rotate_open_fail_ = false;
@@ -601,18 +601,18 @@ struct MutationAuditWal : ::aura::core::NoCopy {
     // Issue #2150: path used by enable() so Evaluator attach / Agents can
     // re-open the same directory without re-parsing env.
     [[nodiscard]] std::string directory() const noexcept {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         return dir;
     }
 
     // Issue #3970: live retained files (segment_index + 1). 0 when disabled.
     [[nodiscard]] std::uint32_t retained_segment_count() const noexcept {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         return enabled ? (segment_index + 1) : 0;
     }
 
     bool append(const AuditWalRecord& rec) noexcept {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         // Issue #3056 AC1: WAL-off (`!enabled`) stays silent. Issue #4446:
         // enabled + null fp retries the segment once, then the same
         // append_fail + SLO accounting as fwrite-miss.
@@ -665,7 +665,7 @@ struct MutationAuditWal : ::aura::core::NoCopy {
     // fflush as mutation append (AC4). Soft / WAL-off never reaches a
     // live typed_fp (caller also gates production_defaults_active).
     bool append_typed_summary(const TypedSummaryWalRecord& rec) noexcept {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         if (!enabled || !typed_fp)
             return false;
         if (rec.mutation_id == 0)
@@ -716,7 +716,7 @@ struct MutationAuditWal : ::aura::core::NoCopy {
     find_recent_typed_summary_by_mid(std::uint64_t mid, std::uint32_t max_segments = 2) noexcept {
         if (mid == 0 || !enabled || max_segments == 0)
             return std::nullopt;
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         if (!enabled || dir.empty())
             return std::nullopt;
         if (typed_fp)
@@ -744,7 +744,7 @@ struct MutationAuditWal : ::aura::core::NoCopy {
                                           std::uint32_t max_segments = 2) noexcept {
         if (mid == 0 || !enabled || max_segments == 0)
             return std::nullopt;
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         if (!enabled || dir.empty())
             return std::nullopt;
         if (fp)
@@ -817,7 +817,7 @@ struct MutationAuditWal : ::aura::core::NoCopy {
     }
 
     void set_rotate_bytes(std::uint64_t n) noexcept {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         if (n >= sizeof(AuditWalRecord) * 4)
             rotate_bytes = n;
     }

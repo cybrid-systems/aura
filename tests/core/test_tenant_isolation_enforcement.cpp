@@ -251,7 +251,7 @@ static void ac3126_admin_fence_locked() {
         const std::string durable_block =
             es.substr(durable_pos, (next_func > durable_pos) ? next_func - durable_pos
                                                              : es.size() - durable_pos);
-        CHECK(durable_block.find("std::lock_guard<std::mutex> lock(reg_durable.mtx)") !=
+        CHECK(durable_block.find("std::scoped_lock<std::mutex> lock(reg_durable.mtx)") !=
                   std::string::npos,
               "AC3: grant_effect_durable takes registry mtx");
         CHECK(durable_block.find("effects_effective_for_locked(self_tenant") != std::string::npos,
@@ -277,7 +277,7 @@ static void ac3126_admin_fence_locked() {
         const std::string session_block =
             es.substr(session_pos, (next_func > session_pos) ? next_func - session_pos
                                                              : es.size() - session_pos);
-        CHECK(session_block.find("std::lock_guard<std::mutex> lock(reg_session.mtx)") !=
+        CHECK(session_block.find("std::scoped_lock<std::mutex> lock(reg_session.mtx)") !=
                   std::string::npos,
               "AC4: grant_effect_session takes registry mtx");
         CHECK(session_block.find("effects_effective_for_locked(self_tenant") != std::string::npos,
@@ -300,7 +300,7 @@ static void ac3126_admin_fence_locked() {
         const auto next_func = es.find("void Evaluator::set_effect_sandbox_mode(", revoke_pos);
         const std::string revoke_block = es.substr(
             revoke_pos, (next_func > revoke_pos) ? next_func - revoke_pos : es.size() - revoke_pos);
-        CHECK(revoke_block.find("std::lock_guard<std::mutex> lock(reg_revoke.mtx)") !=
+        CHECK(revoke_block.find("std::scoped_lock<std::mutex> lock(reg_revoke.mtx)") !=
                   std::string::npos,
               "AC5: revoke_effect_capability takes registry mtx");
         CHECK(revoke_block.find("effects_effective_for_locked(self_tenant") != std::string::npos,
@@ -556,7 +556,7 @@ static void ac4133_4_concurrent_ta_revoke_mint_deny_table_unchanged() {
     // target's live MSE row count unchanged (denied mint writes nothing).
     auto count_live_mse = []() -> int {
         int n = 0;
-        std::lock_guard<std::mutex> lock(aura::core::capability::g_capability_registry().mtx);
+        std::scoped_lock<std::mutex> lock(aura::core::capability::g_capability_registry().mtx);
         const auto it = aura::core::capability::g_capability_registry().by_tenant.find(42);
         if (it != aura::core::capability::g_capability_registry().by_tenant.end())
             for (const auto& gr : it->second)
@@ -5288,7 +5288,7 @@ int main() {
         CHECK(set_tp != std::string::npos, "3411 AC2: set_tenant_principal present");
         const auto priv_block = sec.substr(set_tp, 2800);
         CHECK(priv_block.find("effects_effective_for_locked") != std::string::npos &&
-                  priv_block.find("lock_guard") != std::string::npos,
+                  priv_block.find("scoped_lock") != std::string::npos,
               "3411 AC2: privileged = retain-aware locked TenantAdmin (#3995)");
         CHECK(priv_block.find("has_capability(kCapTenantAdmin)") == std::string::npos &&
                   priv_block.find("has_capability(kCapCapability)") == std::string::npos,
@@ -5364,7 +5364,7 @@ int main() {
         ev.set_effect_sandbox_mode(1);
         {
             auto& reg = aura::core::capability::g_capability_registry();
-            std::lock_guard<std::mutex> lock(reg.mtx);
+            std::scoped_lock<std::mutex> lock(reg.mtx);
             CHECK(reg.holds_wildcard_only_locked(7), "3492 AC1: tenant holds wildcard-only");
         }
         const auto deny_before = ev.capability_denial_count();
@@ -6332,7 +6332,7 @@ int main() {
         // typed trail joins the SE by epoch (mutation_id stays TypedMid).
         bool trail_found = false;
         {
-            std::lock_guard<std::mutex> lock(aura::compiler::typed_audit::g_trail().mu);
+            std::scoped_lock<std::mutex> lock(aura::compiler::typed_audit::g_trail().mu);
             for (const auto& te : aura::compiler::typed_audit::g_trail().ring) {
                 if (te.mutation_id != 777)
                     continue;
@@ -6466,7 +6466,7 @@ int main() {
         aura::compiler::typed_audit::apply_production_audit_defaults();
         {
             auto& reg = aura::core::capability::g_capability_registry();
-            std::lock_guard<std::mutex> lock(reg.mtx);
+            std::scoped_lock<std::mutex> lock(reg.mtx);
             CHECK(reg.holds_wildcard_only_locked(7), "3837 AC1 pre: wildcard-only holder");
         }
         aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 42);

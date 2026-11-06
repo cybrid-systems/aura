@@ -136,7 +136,7 @@ def main() -> int:
     )
     must(
         "Issue #4790"
-        in _between(env, "Issue #4717 step 2: allocation fast path", "std::lock_guard<std::mutex> alloc_lock"),
+        in _between(env, "Issue #4717 step 2: allocation fast path", "std::scoped_lock<std::mutex> alloc_lock"),
         "AC1: the allocation-site comment records why reuse takes the lock",
     )
 

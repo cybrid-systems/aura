@@ -127,7 +127,7 @@ static void ac4404_type_registry_compact_fence() {
           "4404 lookup_type generation");
     CHECK(window_has("TypeRegistry::tag_of", "std::shared_lock lock(type_registry_mutex_)"),
           "4404 shared reader");
-    CHECK(window_has("TypeRegistry::compact()", "std::lock_guard lock(type_registry_mutex_)"),
+    CHECK(window_has("TypeRegistry::compact()", "std::scoped_lock lock(type_registry_mutex_)"),
           "4404 exclusive compact");
     CHECK(timpl.find("next_generation_.fetch_add(1, std::memory_order_acq_rel)") !=
               std::string::npos,

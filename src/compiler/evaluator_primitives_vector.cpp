@@ -709,7 +709,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                                             primitive_error_counter);
             }
             // Issue #3235: lock symmetry with set-car! / hash-set! (#1397/#1399).
-            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::scoped_lock lock(ev.alloc_storage_lock_);
             auto idx = as_vector_idx(a[0]);
             auto pos = static_cast<std::size_t>(as_int(a[1]));
             if (idx >= vector_heap.size() || pos >= vector_heap[idx].size()) {
@@ -1005,7 +1005,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                                             primitive_error_counter);
             }
             // Issue #3235: lock symmetry with set-car! / hash-set!.
-            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::scoped_lock lock(ev.alloc_storage_lock_);
             auto idx = as_vector_idx(a[0]);
             if (idx >= vector_heap.size()) {
                 return make_primitive_error(string_heap, error_values,
@@ -1043,8 +1043,8 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                                             "hash: odd number of arguments (expects key/value "
                                             "pairs: (hash k1 v1 k2 v2 ...))",
                                             primitive_error_counter);
-            std::lock_guard hlock(ev.hash_tables_mutex());
-            std::lock_guard slock(ev.alloc_storage_lock_);
+            std::scoped_lock hlock(ev.hash_tables_mutex());
+            std::scoped_lock slock(ev.alloc_storage_lock_);
             const std::size_t npairs = a.size() / 2;
             // Min capacity 32 so sequential hash-set! of 16 keys (AC2 / denseness
             // stats) never needs an immediate grow under multi-fiber pressure.
@@ -1102,8 +1102,8 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             }
             // Issue #2652: table reads are serialized against the
             // process-wide g_hash_tables vector.
-            std::lock_guard hlock(ev.hash_tables_mutex());
-            std::lock_guard slock(ev.alloc_storage_lock_);
+            std::scoped_lock hlock(ev.hash_tables_mutex());
+            std::scoped_lock slock(ev.alloc_storage_lock_);
             auto hidx = as_hash_idx(a[0]);
             if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx]) {
                 return make_primitive_error(string_heap, error_values, "hash-copy: not a hash",
@@ -1153,8 +1153,8 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 return a.size() >= 3 ? a[2] : make_void();
             // Issue #2652: serialize hash probe + string key compare under multi-fiber
             // stats-bump (empty key / wrong counters when g_hash_tables races).
-            std::lock_guard hlock(ev.hash_tables_mutex());
-            std::lock_guard slock(ev.alloc_storage_lock_);
+            std::scoped_lock hlock(ev.hash_tables_mutex());
+            std::scoped_lock slock(ev.alloc_storage_lock_);
             auto hidx = as_hash_idx(a[0]);
             if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
                 return a.size() >= 3 ? a[2] : make_void();
@@ -1211,8 +1211,8 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         [&ev, &string_heap, &pairs, &vector_heap](std::span<const EvalValue> a) {
             if (a.size() < 2 || !is_hash(a[0]))
                 return make_bool(false);
-            std::lock_guard hlock(ev.hash_tables_mutex());
-            std::lock_guard slock(ev.alloc_storage_lock_);
+            std::scoped_lock hlock(ev.hash_tables_mutex());
+            std::scoped_lock slock(ev.alloc_storage_lock_);
             auto hidx = as_hash_idx(a[0]);
             if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
                 return make_bool(false);
@@ -1240,8 +1240,8 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             // key compare must not race g_hash_tables or string_heap_ (empty ""
             // keys / zero counters under overnight fanout).
             // Issue #2654: grow when full / load > 0.7 — never silent-drop keys.
-            std::lock_guard hlock(ev.hash_tables_mutex());
-            std::lock_guard slock(ev.alloc_storage_lock_);
+            std::scoped_lock hlock(ev.hash_tables_mutex());
+            std::scoped_lock slock(ev.alloc_storage_lock_);
             auto hidx = as_hash_idx(a[0]);
             if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
                 return make_void();
@@ -1293,7 +1293,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         [&ev](std::span<const EvalValue> a) {
             if (a.empty() || !is_hash(a[0]))
                 return make_int(0);
-            std::lock_guard hlock(ev.hash_tables_mutex());
+            std::scoped_lock hlock(ev.hash_tables_mutex());
             auto hidx = as_hash_idx(a[0]);
             if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
                 return make_int(0);
@@ -1311,8 +1311,8 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             if (a.empty() || !is_hash(a[0]))
                 return make_void();
             // Issue #2652: lock hash store + pairs_ growth.
-            std::lock_guard hlock(ev.hash_tables_mutex());
-            std::lock_guard slock(ev.alloc_storage_lock_);
+            std::scoped_lock hlock(ev.hash_tables_mutex());
+            std::scoped_lock slock(ev.alloc_storage_lock_);
             auto hidx = as_hash_idx(a[0]);
             if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
                 return make_void();
@@ -1349,8 +1349,8 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         [&ev, &pairs](std::span<const EvalValue> a) {
             if (a.empty() || !is_hash(a[0]))
                 return make_void();
-            std::lock_guard hlock(ev.hash_tables_mutex());
-            std::lock_guard slock(ev.alloc_storage_lock_);
+            std::scoped_lock hlock(ev.hash_tables_mutex());
+            std::scoped_lock slock(ev.alloc_storage_lock_);
             auto hidx = as_hash_idx(a[0]);
             if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
                 return make_void();
@@ -1392,7 +1392,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         add, ev, "immutable-hash",
         [](std::span<const EvalValue>) {
             auto& ar = imm_arena();
-            std::lock_guard lk(ar.mtx);
+            std::scoped_lock lk(ar.mtx);
             return make_imm_hash(ar.new_map(0));
         },
         pure_general(0, "() -> immutable-hash", "Empty persistent map."));
@@ -1408,7 +1408,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                                             "ihash-set: not an immutable hash",
                                             primitive_error_counter);
             auto& ar = imm_arena();
-            std::lock_guard lk(ar.mtx);
+            std::scoped_lock lk(ar.mtx);
             const auto mi = as_imm_hash_idx(a[0]);
             if (mi == 0 || mi >= ar.maps.size())
                 return make_primitive_error(string_heap, error_values,
@@ -1430,7 +1430,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                                             "ihash-remove: not an immutable hash",
                                             primitive_error_counter);
             auto& ar = imm_arena();
-            std::lock_guard lk(ar.mtx);
+            std::scoped_lock lk(ar.mtx);
             const auto mi = as_imm_hash_idx(a[0]);
             if (mi == 0 || mi >= ar.maps.size())
                 return make_primitive_error(string_heap, error_values,
@@ -1452,7 +1452,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             if (a.size() < 2 || !is_imm_hash(a[0]))
                 return a.size() >= 3 ? a[2] : make_void();
             auto& ar = imm_arena();
-            std::lock_guard lk(ar.mtx);
+            std::scoped_lock lk(ar.mtx);
             const auto mi = as_imm_hash_idx(a[0]);
             if (mi == 0 || mi >= ar.maps.size())
                 return a.size() >= 3 ? a[2] : make_void();
@@ -1470,7 +1470,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             if (a.size() < 2 || !is_imm_hash(a[0]))
                 return make_bool(false);
             auto& ar = imm_arena();
-            std::lock_guard lk(ar.mtx);
+            std::scoped_lock lk(ar.mtx);
             const auto mi = as_imm_hash_idx(a[0]);
             if (mi == 0 || mi >= ar.maps.size())
                 return make_bool(false);
@@ -1485,7 +1485,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             if (a.empty() || !is_imm_hash(a[0]))
                 return make_int(0);
             auto& ar = imm_arena();
-            std::lock_guard lk(ar.mtx);
+            std::scoped_lock lk(ar.mtx);
             const auto mi = as_imm_hash_idx(a[0]);
             if (mi == 0 || mi >= ar.maps.size())
                 return make_int(0);
@@ -1498,7 +1498,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             if (a.empty() || !is_imm_hash(a[0]))
                 return make_void();
             auto& ar = imm_arena();
-            std::lock_guard lk(ar.mtx);
+            std::scoped_lock lk(ar.mtx);
             const auto mi = as_imm_hash_idx(a[0]);
             if (mi == 0 || mi >= ar.maps.size())
                 return make_void();

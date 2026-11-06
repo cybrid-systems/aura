@@ -261,7 +261,7 @@ bool test_eight_thread_concurrent_mutate_gc() {
     std::atomic<int> errors{0};
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
-            std::lock_guard<std::mutex> lk(mtx);
+            std::scoped_lock<std::mutex> lk(mtx);
             if ((i & 3) == 0) {
                 (void)cs.eval("(gc-heap)");
             } else if ((i & 3) == 1) {

@@ -175,7 +175,7 @@ bool test_eight_thread_concurrent() {
     std::atomic<int> completed{0};
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
-            std::lock_guard<std::mutex> lk(mtx);
+            std::scoped_lock<std::mutex> lk(mtx);
             std::string code = "(mutate:replace-value (define a " + std::to_string(tid * 1000 + i) +
                                ") (define a " + std::to_string(tid * 1000 + i) + "))";
             (void)cs.eval(code);

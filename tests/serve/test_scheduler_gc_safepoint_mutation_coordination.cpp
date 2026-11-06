@@ -100,7 +100,7 @@ bool test_steal_deferred_accessor_reachable() {
                 Fiber::yield(YieldReason::MutationBoundary);
             }
             if (aura::serve::g_current_fiber) {
-                std::lock_guard<std::mutex> lk(mtx);
+                std::scoped_lock<std::mutex> lk(mtx);
                 deferred_counts.push_back(
                     aura::serve::g_current_fiber->steal_deferred_mutation_boundary_count());
             }
@@ -220,7 +220,7 @@ bool test_per_fiber_yield_and_gc_pause_metrics() {
             }
             if (aura::serve::g_current_fiber) {
                 auto f = aura::serve::g_current_fiber;
-                std::lock_guard<std::mutex> lk(mtx);
+                std::scoped_lock<std::mutex> lk(mtx);
                 mb_pause_counts.emplace_back(f->yield_mutation_boundary_count(),
                                              f->gc_pause_attributed_to_mutation_count());
             }

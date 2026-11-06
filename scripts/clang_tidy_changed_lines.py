@@ -50,6 +50,7 @@ HARD = (
     "modernize-use-nullptr",
     "modernize-use-override",
     "modernize-use-using",
+    "modernize-use-scoped-lock",  # P6: single-mutex lock_guard is scoped_lock
 )
 # Reported only; promoted to HARD batch by batch (#4936 B1-B8).
 SOFT = (
@@ -64,7 +65,6 @@ SOFT = (
     "performance-noexcept-move-constructor",
     "performance-noexcept-swap",
     "performance-inefficient-string-concatenation",
-    "modernize-use-scoped-lock",
 )
 SRC_EXT = (".cpp", ".ixx", ".cppm")
 HDR_EXT = (".h", ".hh", ".hpp", ".inc")

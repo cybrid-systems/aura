@@ -240,7 +240,7 @@ void ac4440_retain_expired_ta_cannot_mint() {
         bool blind = false;
         bool fence = false;
         {
-            std::lock_guard<std::mutex> lock(reg.mtx);
+            std::scoped_lock<std::mutex> lock(reg.mtx);
             blind = has_effect(reg.effects_for_locked(7), Effect::TenantAdmin);
             fence = has_effect(reg.effects_effective_for_locked(7, /*caller_mid=*/0),
                                Effect::TenantAdmin);
@@ -263,7 +263,7 @@ void ac4440_retain_expired_ta_cannot_mint() {
                 std::memory_order_relaxed);
         CHECK(ssot1 == ssot0 + 1, "4440: SSOT deny counter bumps");
         {
-            std::lock_guard<std::mutex> lock(reg.mtx);
+            std::scoped_lock<std::mutex> lock(reg.mtx);
             CHECK(!has_effect(reg.effects_for_locked(9), Effect::Mutate),
                   "4440: tenant 9 has no Mutate row");
         }
@@ -287,7 +287,7 @@ void ac4440_retain_expired_ta_cannot_mint() {
         reg.set_hard_fiber_isolation(true);
         reg.set_grant_epoch_retain_window(4);
         {
-            std::lock_guard<std::mutex> lock(reg.mtx);
+            std::scoped_lock<std::mutex> lock(reg.mtx);
             CHECK(has_effect(reg.effects_effective_for_locked(7, /*caller_mid=*/0),
                              Effect::TenantAdmin),
                   "4440: fresh sibling still contributes TenantAdmin");
@@ -315,7 +315,7 @@ void ac4440_retain_expired_ta_cannot_mint() {
         reg.set_grant_epoch_retain_window(4);
         bool allowed = true;
         {
-            std::lock_guard<std::mutex> lock(iso.mtx);
+            std::scoped_lock<std::mutex> lock(iso.mtx);
             allowed = iso.cross_grant_allows_locked(7, 42, kEffectMutate, /*production=*/true);
         }
         CHECK(!allowed, "4440: expired minter cross grant is refused");
@@ -333,7 +333,7 @@ void ac4440_retain_expired_ta_cannot_mint() {
         set_mode(SandboxMode::Restricted);
         reg.set_hard_fiber_isolation(true);
         reg.set_grant_min_valid_epoch(1);
-        std::lock_guard<std::mutex> lock(reg.mtx);
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         CHECK(has_effect(reg.effects_for_locked(8), Effect::TenantAdmin),
               "4440: retain-blind OR still sees epoch-0");
         CHECK(has_effect(reg.effects_effective_for_locked(8), Effect::TenantAdmin),
@@ -350,7 +350,7 @@ void ac4440_retain_expired_ta_cannot_mint() {
                         make_grant_provenance(5, true, 0, 0), false, /*session_bound=*/true),
               "4440: session TenantAdmin seed lands");
         set_mode(SandboxMode::Restricted);
-        std::lock_guard<std::mutex> lock(reg.mtx);
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         CHECK(
             has_effect(reg.effects_effective_for_locked(7, /*caller_mid=*/5), Effect::TenantAdmin),
             "4440: matching session mid still contributes");
@@ -373,14 +373,14 @@ void ac4440_retain_expired_ta_cannot_mint() {
         reg.set_hard_fiber_isolation(true);
         set_effect_fiber_id_override(22);
         {
-            std::lock_guard<std::mutex> lock(reg.mtx);
+            std::scoped_lock<std::mutex> lock(reg.mtx);
             CHECK(!has_effect(reg.effects_effective_for_locked(7, /*caller_mid=*/0),
                               Effect::TenantAdmin),
                   "4440: hard-fiber mismatch does not contribute");
         }
         reg.set_hard_fiber_isolation(false);
         {
-            std::lock_guard<std::mutex> lock(reg.mtx);
+            std::scoped_lock<std::mutex> lock(reg.mtx);
             CHECK(has_effect(reg.effects_effective_for_locked(7, /*caller_mid=*/0),
                              Effect::TenantAdmin),
                   "4440: soft fiber share still contributes");
@@ -395,7 +395,7 @@ void ac4440_retain_expired_ta_cannot_mint() {
             reg.grant(7, "tenant-admin", Effect::TenantAdmin, make_grant_provenance(1, true, 0, 0)),
             "4440: Off TenantAdmin seed lands");
         reg.set_grant_min_valid_epoch(current_mutation_epoch() + 1000);
-        std::lock_guard<std::mutex> lock(reg.mtx);
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         const auto blind = reg.effects_for_locked(7);
         const auto fence = reg.effects_effective_for_locked(7, /*caller_mid=*/0);
         CHECK(has_effect(blind, Effect::TenantAdmin) && has_effect(fence, Effect::TenantAdmin),

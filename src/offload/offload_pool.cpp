@@ -103,7 +103,7 @@ SubmitStatus OffloadPool::try_submit(Job job, std::shared_ptr<const SnapshotInpu
         klass = OffloadClass::Compile;
     const auto ci = class_index(klass);
     const auto tenant = core::resource_quota::current_quota_tenant();
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::scoped_lock<std::mutex> lock(mutex_);
     ticket->klass = klass;
     ticket->tenant = tenant;
     if (!accepting_) {
@@ -162,7 +162,7 @@ void OffloadPool::finish(const Task& task, Status status, std::string error) {
     }
     std::chrono::steady_clock::time_point completed_at;
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::scoped_lock<std::mutex> lock(mutex_);
         if (status != Status::Done) {
             task.ticket->out = Error{error.empty() ? std::string("cancelled") : std::move(error)};
         }
@@ -322,7 +322,7 @@ void OffloadPool::worker_loop(std::stop_token st) {
 void OffloadPool::shutdown() {
     std::array<std::deque<Task>, kOffloadClassCount> pending;
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::scoped_lock<std::mutex> lock(mutex_);
         if (stopping_)
             return;
         stopping_ = true;
@@ -357,7 +357,7 @@ void OffloadPool::shutdown() {
 
 Stats OffloadPool::stats() const {
     Stats out;
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::scoped_lock<std::mutex> lock(mutex_);
     out.submitted = submitted_.load(std::memory_order_relaxed);
     out.rejected = rejected_.load(std::memory_order_relaxed);
     out.rejected_queue_full = rejected_queue_full_.load(std::memory_order_relaxed);

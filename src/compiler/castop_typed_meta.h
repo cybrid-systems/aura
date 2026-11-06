@@ -153,7 +153,7 @@ inline void stamp_castop_typed_meta(std::uint64_t site_key, std::uint32_t src_ty
     if (src_type_id == 0 && dst_type_id == 0 && narrow_evidence == 0 && type_tag == 0)
         return;
     {
-        std::lock_guard<std::mutex> lock(detail::g_meta_mu);
+        std::scoped_lock<std::mutex> lock(detail::g_meta_mu);
         detail::g_meta_ring[detail::g_meta_head] = CastOpTypedMeta{
             site_key, src_type_id, dst_type_id, narrow_evidence, type_tag, epoch_or_mid};
         detail::g_meta_head = (detail::g_meta_head + 1) % kCastOpTypedMetaCap;
@@ -176,7 +176,7 @@ inline void stamp_castop_typed_meta(std::uint64_t site_key, std::uint32_t src_ty
 // AC3: missing on old IR is non-fatal
 [[nodiscard]] inline std::optional<CastOpTypedMeta>
 lookup_castop_typed_meta(std::uint64_t site_key) noexcept {
-    std::lock_guard<std::mutex> lock(detail::g_meta_mu);
+    std::scoped_lock<std::mutex> lock(detail::g_meta_mu);
     if (detail::g_meta_count == 0) {
         castop_typed_meta_missing_total.fetch_add(1, std::memory_order_relaxed);
         return std::nullopt;
@@ -195,7 +195,7 @@ lookup_castop_typed_meta(std::uint64_t site_key) noexcept {
 
 // Purpose: test isolation — clear ring (not lifetime stamped_total)
 inline void clear_castop_typed_meta_for_test() noexcept {
-    std::lock_guard<std::mutex> lock(detail::g_meta_mu);
+    std::scoped_lock<std::mutex> lock(detail::g_meta_mu);
     detail::g_meta_ring.fill(CastOpTypedMeta{});
     detail::g_meta_head = 0;
     detail::g_meta_count = 0;
@@ -224,7 +224,7 @@ inline void clear_castop_typed_meta_for_test() noexcept {
 //   AC2: Soft path never calls this (caller gates on production_override)
 [[nodiscard]] inline bool castop_typed_meta_phase_c_lags(std::uint64_t site_key,
                                                          std::uint64_t current_stamp) noexcept {
-    std::lock_guard<std::mutex> lock(detail::g_meta_mu);
+    std::scoped_lock<std::mutex> lock(detail::g_meta_mu);
     if (detail::g_meta_count == 0)
         return true; // AC1: empty ring → all sites lag
     const CastOpTypedMeta* hit = nullptr;

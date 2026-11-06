@@ -39,7 +39,7 @@ QUERY_PRIMS = [
 ]
 HARD_SUITE = "tests/serve/test_mailbox_hold_starvation_hard.cpp"
 SRC_SUFFIXES = {".h", ".hpp", ".cpp", ".ixx"}
-LOCK_NEEDLES = ("std::lock_guard lock(mu_)", "std::unique_lock<std::mutex> lock(mu_)")
+LOCK_NEEDLES = ("std::scoped_lock lock(mu_)", "std::unique_lock<std::mutex> lock(mu_)")
 
 
 def fail(msg: str) -> int:
@@ -131,17 +131,17 @@ def check_lock_order_machinery(text: str) -> list[str]:
 
 
 def self_test() -> int:
-    unpaired = "void f() { std::lock_guard lock(mu_); }"
+    unpaired = "void f() { std::scoped_lock lock(mu_); }"
     if not check_mu_audit_pairing(unpaired):
         return fail("self-test: unpaired mu_ lock not detected")
-    paired = "AuditScope s(Level::Mailbox);\n    std::lock_guard lock(mu_);"
+    paired = "AuditScope s(Level::Mailbox);\n    std::scoped_lock lock(mu_);"
     if check_mu_audit_pairing(paired):
         return fail("self-test: paired mu_ lock flagged")
     recv_bad = (
         "std::optional<MailMessage> recv(bool wait, int timeout_ms,\n"
         "                                std::uint64_t for_fiber, bool* stale) {\n"
         "    for (;;) {\n"
-        "        { AuditScope rank(Level::Mailbox); std::lock_guard lock(mu_); }\n"
+        "        { AuditScope rank(Level::Mailbox); std::scoped_lock lock(mu_); }\n"
         "        const bool this_fiber_holds = depth() > 0;\n"
         "    }\n"
         "}"
@@ -152,7 +152,7 @@ def self_test() -> int:
         "std::optional<MailMessage> recv(bool wait, int timeout_ms,\n"
         "                                std::uint64_t for_fiber, bool* stale) {\n"
         "    const bool this_fiber_holds = depth() > 0;\n"
-        "    { AuditScope rank(Level::Mailbox); std::lock_guard lock(mu_); }\n"
+        "    { AuditScope rank(Level::Mailbox); std::scoped_lock lock(mu_); }\n"
         "}"
     )
     if recv_ordering_errors(recv_good):

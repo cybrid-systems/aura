@@ -3626,9 +3626,9 @@ static void ac4519_source_cite() {
         // indexing, so no bounds row). The #4519 invariant that survived:
         // every panic_safe_source_ write AND its heap-size snapshot sit
         // inside alloc_storage_lock_ — on both paths.
-        const auto lock1 = win.find("std::lock_guard alloc_lock(alloc_storage_lock_");
+        const auto lock1 = win.find("std::scoped_lock alloc_lock(alloc_storage_lock_");
         const auto copy1 = win.find("panic_safe_source_ = workspace_source_text_;");
-        const auto lock2 = win.find("std::lock_guard alloc_lock(alloc_storage_lock_", lock1 + 1);
+        const auto lock2 = win.find("std::scoped_lock alloc_lock(alloc_storage_lock_", lock1 + 1);
         const auto copy2 = win.find("panic_safe_source_ = std::move(src);");
         const auto snap1 = win.find("panic_safe_string_heap_size_ = string_heap_.size();");
         const auto snap2 =
@@ -3643,7 +3643,7 @@ static void ac4519_source_cite() {
     }
     if (restore_fn != std::string::npos) {
         const auto win = wt.substr(restore_fn, 9000);
-        const auto lockp = win.find("std::lock_guard alloc_lock(alloc_storage_lock_");
+        const auto lockp = win.find("std::scoped_lock alloc_lock(alloc_storage_lock_");
         // Issue #4543: the restore mint is LockedStringHeap::mint (locked
         // size-read + append in one call); the outer lock is retained.
         const auto push = win.find("string_heap_.mint(panic_safe_source_)");
@@ -3651,7 +3651,7 @@ static void ac4519_source_cite() {
         CHECK(push != std::string::npos && lockp != std::string::npos &&
                   setcall != std::string::npos && lockp < push && push < setcall,
               "4519 cite: restore size-read + push_back atomic under the lock");
-        const auto lockr = win.find("std::lock_guard alloc_lock_resize(alloc_storage_lock_");
+        const auto lockr = win.find("std::scoped_lock alloc_lock_resize(alloc_storage_lock_");
         const auto rsz = win.find("string_heap_.resize(new_string_heap_size)");
         CHECK(rsz != std::string::npos && lockr != std::string::npos && lockr < rsz,
               "4519 cite: restore resize holds alloc_storage_lock_");
@@ -3671,7 +3671,7 @@ static void ac4519_source_cite() {
     CHECK(sp != std::string::npos, "4519 cite: f64vector-set! body located");
     if (sp != std::string::npos) {
         const auto win = pc.substr(sp, 2400);
-        const auto lock2 = win.find("std::lock_guard lock(ev.alloc_storage_lock_)");
+        const auto lock2 = win.find("std::scoped_lock lock(ev.alloc_storage_lock_)");
         const auto bounds2 = win.find("idx >= ev.string_heap_.size()");
         // Issue #4714 follow-up: the in-place slot write goes through
         // mutable_string_at(); the bounds check + lock order are unchanged.

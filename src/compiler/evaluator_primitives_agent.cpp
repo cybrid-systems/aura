@@ -409,7 +409,7 @@ namespace {
     std::mutex g_scope_body_tally_mu;
     std::unordered_map<const void*, std::shared_ptr<ScopeBodyTally>> g_scope_body_tallies;
     std::shared_ptr<ScopeBodyTally> scope_body_tally(const void* scope) {
-        std::lock_guard<std::mutex> lk(g_scope_body_tally_mu);
+        std::scoped_lock<std::mutex> lk(g_scope_body_tally_mu);
         auto& slot = g_scope_body_tallies[scope];
         if (!slot)
             slot = std::make_shared<ScopeBodyTally>();
@@ -434,7 +434,7 @@ namespace {
         std::thread runner;
         std::mutex mu;
         void ensure(int workers = 2) {
-            std::lock_guard lock(mu);
+            std::scoped_lock lock(mu);
             if (sched)
                 return;
             sched = std::make_unique<aura::serve::Scheduler>(workers);
@@ -1000,7 +1000,7 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {
                     // Issue #4860: unlocked size()+push_back raced a concurrent publish
                     // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
                     hidx = g_hash_tables.size();
                     g_hash_tables.push_back(ht);
                     if (g_hash_tenants.size() < g_hash_tables.size())
@@ -1664,7 +1664,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                     {
                         // #2651: size check + write share alloc_storage_lock_
                         // with every other fiber using this Evaluator's heap.
-                        std::lock_guard lock(ev.alloc_storage_lock_);
+                        std::scoped_lock lock(ev.alloc_storage_lock_);
                         if (probe_slot >= ev.string_heap_.size()) {
                             probe_slot = ev.string_heap_.mint(call_src);
                         } else {
@@ -2138,7 +2138,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 // #2651: reuse-or-append under the heap lock. A bare
                 // size()+push_back races a fiber apply on the same
                 // monotonic resource.
-                std::lock_guard lock(ev.alloc_storage_lock_);
+                std::scoped_lock lock(ev.alloc_storage_lock_);
                 if (slot >= ev.string_heap_.size()) {
                     slot = ev.string_heap_.mint(s);
                 } else {
@@ -2888,7 +2888,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             {
                 // Issue #4860: unlocked size()+push_back raced a concurrent publish
                 // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
+                std::scoped_lock slock(ev.alloc_storage_lock_);
                 hidx = g_hash_tables.size();
                 g_hash_tables.push_back(ht);
                 if (g_hash_tenants.size() < g_hash_tables.size())
@@ -3783,8 +3783,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         // result hashes. Same locks the (hash) prim holds: the registry
         // mutex first (the sweep's mark phase copies the registry under
         // it), then the recursive storage lock inside the mint.
-        std::lock_guard hlock(ev.hash_tables_mutex());
-        std::lock_guard slock(ev.alloc_storage_lock_);
+        std::scoped_lock hlock(ev.hash_tables_mutex());
+        std::scoped_lock slock(ev.alloc_storage_lock_);
         const std::size_t hidx = ev.mint_hash_table(ht);
         // Issue #4110 / #4296: the published slot's owner is the EXECUTING
         // evaluator. mint_hash_table stamps the same principal; the inline
@@ -4244,7 +4244,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 if (!cid)
                     return;
                 auto note_failure = [&body_outcome](std::string msg) {
-                    std::lock_guard<std::mutex> lk(body_outcome->mu);
+                    std::scoped_lock<std::mutex> lk(body_outcome->mu);
                     body_outcome->failed = true;
                     body_outcome->error = std::move(msg);
                 };
@@ -5039,7 +5039,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 // Issue #4783: a non-Ok join already reclaimed this task
                 // before it started — never run it late; report cancelled.
                 if (tally->reclaim_epoch.load(std::memory_order_acquire) != spawn_epoch) {
-                    std::lock_guard<std::mutex> lk(tally->mu);
+                    std::scoped_lock<std::mutex> lk(tally->mu);
                     ++tally->cancelled;
                     return;
                 }
@@ -5054,7 +5054,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     const bool cancelled = self != nullptr && self->is_cancel_requested();
                     bool fail_fast = false;
                     {
-                        std::lock_guard<std::mutex> lk(tally->mu);
+                        std::scoped_lock<std::mutex> lk(tally->mu);
                         if (cancelled) {
                             ++tally->cancelled;
                         } else {
@@ -5091,7 +5091,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                             apply_spawn_closure_maybe_locked(ev, *cid, region_key, nested_body)) {
                         record_failure(std::move(*fail));
                     } else {
-                        std::lock_guard<std::mutex> lk(tally->mu);
+                        std::scoped_lock<std::mutex> lk(tally->mu);
                         ++tally->ok;
                         // Issue #4861: the child recovered - drop its failure
                         // from the final-failure set (the attempt log keeps it).
@@ -5781,7 +5781,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             std::uint64_t body_cancelled_n = 0;
             std::uint64_t attempt_errors = 0;
             {
-                std::lock_guard<std::mutex> lk(body_tally->mu);
+                std::scoped_lock<std::mutex> lk(body_tally->mu);
                 // Issue #4861: err-count / errors / status partial are driven
                 // by the FINAL failures only; the attempt log (recovered
                 // attempts included) is reported separately as attempt-errors.
@@ -5893,7 +5893,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     aura::orch::drop_agent_scope(static_cast<void*>(&ev));
                     // Issue #4783: the scope is gone; live bodies keep their
                     // own shared_ptr, the table entry must not outlive it.
-                    std::lock_guard<std::mutex> lk(g_scope_body_tally_mu);
+                    std::scoped_lock<std::mutex> lk(g_scope_body_tally_mu);
                     g_scope_body_tallies.erase(body_tally_key);
                 }
             }

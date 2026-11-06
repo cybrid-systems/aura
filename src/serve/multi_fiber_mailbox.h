@@ -385,7 +385,7 @@ inline std::unordered_map<std::uint64_t, FiberParkedMailboxEntry> g_fiber_parked
 inline void note_fiber_parked_mailbox(std::uint64_t fiber_id, MultiFiberMailbox* mb) noexcept {
     if (fiber_id == 0 || mb == nullptr)
         return;
-    std::lock_guard lock(g_fiber_parked_mailbox_mu);
+    std::scoped_lock lock(g_fiber_parked_mailbox_mu);
     auto& e = g_fiber_parked_mailbox[fiber_id];
     e.mb = mb;
     ++e.depth;
@@ -397,7 +397,7 @@ inline void note_fiber_parked_mailbox(std::uint64_t fiber_id, MultiFiberMailbox*
 inline void clear_fiber_parked_mailbox(std::uint64_t fiber_id, MultiFiberMailbox* mb) noexcept {
     if (fiber_id == 0 || mb == nullptr)
         return;
-    std::lock_guard lock(g_fiber_parked_mailbox_mu);
+    std::scoped_lock lock(g_fiber_parked_mailbox_mu);
     auto it = g_fiber_parked_mailbox.find(fiber_id);
     if (it == g_fiber_parked_mailbox.end() || it->second.mb != mb)
         return;
@@ -411,7 +411,7 @@ inline void clear_fiber_parked_mailbox(std::uint64_t fiber_id, MultiFiberMailbox
 [[nodiscard]] inline MultiFiberMailbox* fiber_parked_mailbox(std::uint64_t fiber_id) noexcept {
     if (fiber_id == 0)
         return nullptr;
-    std::lock_guard lock(g_fiber_parked_mailbox_mu);
+    std::scoped_lock lock(g_fiber_parked_mailbox_mu);
     auto it = g_fiber_parked_mailbox.find(fiber_id);
     return it == g_fiber_parked_mailbox.end() ? nullptr : it->second.mb;
 }
@@ -516,7 +516,7 @@ ensure_scope_starve_state(std::string_view scope_id) noexcept {
     scope_id = normalize_starve_scope_id(scope_id);
     if (scope_id.empty())
         return nullptr;
-    std::lock_guard<std::mutex> lock(g_scope_starve_map_mtx);
+    std::scoped_lock<std::mutex> lock(g_scope_starve_map_mtx);
     auto it = g_scope_starve_map.find(std::string{scope_id});
     if (it != g_scope_starve_map.end())
         return it->second;
@@ -543,7 +543,7 @@ lookup_scope_starve_state(std::string_view scope_id) noexcept {
     scope_id = normalize_starve_scope_id(scope_id);
     if (scope_id.empty())
         return nullptr;
-    std::lock_guard<std::mutex> lock(g_scope_starve_map_mtx);
+    std::scoped_lock<std::mutex> lock(g_scope_starve_map_mtx);
     auto it = g_scope_starve_map.find(std::string{scope_id});
     if (it == g_scope_starve_map.end()) {
         // Overflow participants share the overflow gauge when map was full
@@ -615,7 +615,7 @@ inline std::unordered_map<std::uint64_t, bool> g_mailbox_defer_pending;
     if (g_current_fiber == nullptr)
         return false;
     const auto fid = static_cast<std::uint64_t>(g_current_fiber->id());
-    std::lock_guard<std::mutex> lk(g_mailbox_defer_pending_mtx);
+    std::scoped_lock<std::mutex> lk(g_mailbox_defer_pending_mtx);
     if (g_mailbox_defer_pending.size() > 65536)
         g_mailbox_defer_pending.clear(); // bound: degrade to per-event count
     return !g_mailbox_defer_pending.emplace(fid, true).second;
@@ -625,11 +625,11 @@ inline bool mailbox_defer_sender_resolved() noexcept {
     if (g_current_fiber == nullptr)
         return false;
     const auto fid = static_cast<std::uint64_t>(g_current_fiber->id());
-    std::lock_guard<std::mutex> lk(g_mailbox_defer_pending_mtx);
+    std::scoped_lock<std::mutex> lk(g_mailbox_defer_pending_mtx);
     return g_mailbox_defer_pending.erase(fid) != 0;
 }
 inline void mailbox_defer_pending_clear() noexcept {
-    std::lock_guard<std::mutex> lk(g_mailbox_defer_pending_mtx);
+    std::scoped_lock<std::mutex> lk(g_mailbox_defer_pending_mtx);
     g_mailbox_defer_pending.clear();
 }
 
@@ -673,7 +673,7 @@ inline void clear_agent_throttle_for_mailbox_starvation(std::string_view scope_i
     }
     if (auto* s = lookup_scope_starve_state(scope_id))
         s->throttle.store(0, std::memory_order_relaxed);
-    std::lock_guard<std::mutex> lock(g_scope_starve_map_mtx);
+    std::scoped_lock<std::mutex> lock(g_scope_starve_map_mtx);
     if (!any_scope_starve_throttled_unlocked()) {
         g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(0,
                                                                        std::memory_order_relaxed);
@@ -720,13 +720,13 @@ load_scope_mailbox_deferred_depth(std::string_view scope_id) noexcept {
     return 0;
 }
 inline void reset_scope_starve_map_for_test() noexcept {
-    std::lock_guard<std::mutex> lock(g_scope_starve_map_mtx);
+    std::scoped_lock<std::mutex> lock(g_scope_starve_map_mtx);
     g_scope_starve_map.clear();
     g_scope_starve_overflow.deferred_depth.store(0, std::memory_order_relaxed);
     g_scope_starve_overflow.throttle.store(0, std::memory_order_relaxed);
 }
 [[nodiscard]] inline std::size_t scope_starve_map_size_for_test() noexcept {
-    std::lock_guard<std::mutex> lock(g_scope_starve_map_mtx);
+    std::scoped_lock<std::mutex> lock(g_scope_starve_map_mtx);
     return g_scope_starve_map.size();
 }
 
@@ -1190,7 +1190,7 @@ drain_deferred_under_budget(std::uint64_t budget_us = 0, std::string_view scope_
                 // was just CAS-closed). Throttle arms only for holder scope
                 // — other scopes' mutate admits stay open (#3775 AC1).
                 if (mailbox_starve_scoped_active()) {
-                    std::lock_guard<std::mutex> lock(g_scope_starve_map_mtx);
+                    std::scoped_lock<std::mutex> lock(g_scope_starve_map_mtx);
                     for (auto& kv : g_scope_starve_map) {
                         if (kv.second)
                             kv.second->deferred_depth.store(0, std::memory_order_relaxed);
@@ -1556,7 +1556,7 @@ public:
     void on_scheduler_invalidated() noexcept {
         ::aura::compiler::lock_order::AuditScope mailbox_rank(
             ::aura::compiler::lock_order::Level::Mailbox);
-        std::lock_guard lock(mu_);
+        std::scoped_lock lock(mu_);
         scheduler_gone_.store(true, std::memory_order_relaxed);
         attachers_.clear();
     }
@@ -1580,7 +1580,7 @@ public:
         }
         ::aura::compiler::lock_order::AuditScope mailbox_rank(
             ::aura::compiler::lock_order::Level::Mailbox);
-        std::lock_guard lock(mu_);
+        std::scoped_lock lock(mu_);
         drop_queued_unlocked_();
         notify_all_unlocked(); // walks attachers_ — before production detach
         // Issue #4002: production close with live attachers detaches so
@@ -1606,7 +1606,7 @@ public:
         // Issue #2316: wire mu_ acquire to lock_order audit.
         ::aura::compiler::lock_order::AuditScope mailbox_rank(
             ::aura::compiler::lock_order::Level::Mailbox);
-        std::lock_guard lock(mu_);
+        std::scoped_lock lock(mu_);
         for (auto* a : attachers_) {
             if (a == f)
                 return;
@@ -1628,7 +1628,7 @@ public:
             return;
         ::aura::compiler::lock_order::AuditScope mailbox_rank(
             ::aura::compiler::lock_order::Level::Mailbox);
-        std::lock_guard lock(mu_);
+        std::scoped_lock lock(mu_);
         attachers_.erase(std::remove(attachers_.begin(), attachers_.end(), f), attachers_.end());
         // Issue #3369: clear the back-pointer iff this mailbox was the
         // primary (avoid clobbering a different mailbox's pointer when a
@@ -1640,7 +1640,7 @@ public:
     [[nodiscard]] std::size_t attacher_count() const {
         ::aura::compiler::lock_order::AuditScope mailbox_rank(
             ::aura::compiler::lock_order::Level::Mailbox);
-        std::lock_guard lock(mu_);
+        std::scoped_lock lock(mu_);
         return attachers_.size();
     }
 
@@ -1661,7 +1661,7 @@ public:
             return;
         ::aura::compiler::lock_order::AuditScope mailbox_rank(
             ::aura::compiler::lock_order::Level::Mailbox);
-        std::lock_guard lock(mu_);
+        std::scoped_lock lock(mu_);
         const auto fid = fiber->id();
         for (auto& msg : queue_) {
             if (!msg.held_ref_token.has_value())
@@ -1675,7 +1675,7 @@ public:
     [[nodiscard]] std::size_t size() const {
         ::aura::compiler::lock_order::AuditScope mailbox_rank(
             ::aura::compiler::lock_order::Level::Mailbox);
-        std::lock_guard lock(mu_);
+        std::scoped_lock lock(mu_);
         return queue_.size();
     }
 
@@ -1684,7 +1684,7 @@ public:
     [[nodiscard]] bool has_pending_for(std::uint64_t fiber_id) const {
         ::aura::compiler::lock_order::AuditScope mailbox_rank(
             ::aura::compiler::lock_order::Level::Mailbox);
-        std::lock_guard lock(mu_);
+        std::scoped_lock lock(mu_);
         for (const auto& msg : queue_) {
             if (msg.to_fiber == 0 || msg.to_fiber == fiber_id)
                 return true;
@@ -1694,7 +1694,7 @@ public:
     [[nodiscard]] bool empty() const {
         ::aura::compiler::lock_order::AuditScope mailbox_rank(
             ::aura::compiler::lock_order::Level::Mailbox);
-        std::lock_guard lock(mu_);
+        std::scoped_lock lock(mu_);
         return queue_.empty();
     }
 
@@ -1706,7 +1706,7 @@ public:
     [[nodiscard]] std::vector<MailMessage> take_all_for_handover() {
         ::aura::compiler::lock_order::AuditScope mailbox_rank(
             ::aura::compiler::lock_order::Level::Mailbox);
-        std::lock_guard lock(mu_);
+        std::scoped_lock lock(mu_);
         std::vector<MailMessage> out;
         out.reserve(queue_.size());
         for (auto& m : queue_) {
@@ -1749,7 +1749,7 @@ public:
         // with on_release (sticky TLS depth was blinding Workspace→Mailbox canary).
         ::aura::compiler::lock_order::AuditScope mailbox_rank(
             ::aura::compiler::lock_order::Level::Mailbox);
-        std::lock_guard lock(mu_);
+        std::scoped_lock lock(mu_);
         if (closed_.load(std::memory_order_relaxed))
             return PushStatus::Closed;
         // Issue #2312: delivery gate — when msg.to_fiber resolves to an
@@ -1865,7 +1865,7 @@ public:
         }
         ::aura::compiler::lock_order::AuditScope mailbox_rank(
             ::aura::compiler::lock_order::Level::Mailbox);
-        std::lock_guard lock(mu_);
+        std::scoped_lock lock(mu_);
         if (closed_.load(std::memory_order_relaxed))
             return PushStatus::Closed;
         // Issue #2680 / #2849 (fanout variant): moved BEFORE mu_ (#3613).
@@ -1951,7 +1951,7 @@ public:
             return false;
         ::aura::compiler::lock_order::AuditScope mailbox_rank(
             ::aura::compiler::lock_order::Level::Mailbox);
-        std::lock_guard lock(mu_);
+        std::scoped_lock lock(mu_);
         if (!try_pop_unlocked(out, /*for_fiber=*/0))
             return false;
         // Issue #3642: stale held_ref is not a successful pop — queue already
@@ -2048,7 +2048,7 @@ public:
             {
                 ::aura::compiler::lock_order::AuditScope mailbox_rank(
                     ::aura::compiler::lock_order::Level::Mailbox);
-                std::lock_guard lock(mu_);
+                std::scoped_lock lock(mu_);
                 MailMessage out;
                 if (try_pop_unlocked(out, for_fiber)) {
                     // Issue #2592: deliver-side principal verify (see try_pop
@@ -2286,7 +2286,7 @@ private:
     void notify_all_locked() {
         ::aura::compiler::lock_order::AuditScope mailbox_rank(
             ::aura::compiler::lock_order::Level::Mailbox);
-        std::lock_guard lock(mu_);
+        std::scoped_lock lock(mu_);
         notify_all_unlocked();
     }
 
@@ -2349,7 +2349,7 @@ inline void register_caller_scope(std::uint64_t fiber_id,
                                   const std::shared_ptr<MultiFiberMailbox>& mb) noexcept {
     if (fiber_id == 0 || !mb)
         return;
-    std::lock_guard<std::mutex> lock(g_caller_scope_mtx);
+    std::scoped_lock<std::mutex> lock(g_caller_scope_mtx);
     if (g_caller_scope_map.size() >= 4096) {
         for (auto it = g_caller_scope_map.begin(); it != g_caller_scope_map.end();) {
             if (it->second.expired())
@@ -2365,7 +2365,7 @@ inline void register_caller_scope(std::uint64_t fiber_id,
 inline void unregister_caller_scope(std::uint64_t fiber_id) noexcept {
     if (fiber_id == 0)
         return;
-    std::lock_guard<std::mutex> lock(g_caller_scope_mtx);
+    std::scoped_lock<std::mutex> lock(g_caller_scope_mtx);
     g_caller_scope_map.erase(fiber_id);
 }
 
@@ -2375,7 +2375,7 @@ inline void unregister_caller_scope(std::uint64_t fiber_id) noexcept {
 [[nodiscard]] inline std::string lookup_caller_scope(std::uint64_t fiber_id) noexcept {
     if (fiber_id == 0)
         return {};
-    std::lock_guard<std::mutex> lock(g_caller_scope_mtx);
+    std::scoped_lock<std::mutex> lock(g_caller_scope_mtx);
     auto it = g_caller_scope_map.find(fiber_id);
     if (it == g_caller_scope_map.end())
         return {};

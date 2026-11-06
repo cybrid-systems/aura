@@ -93,7 +93,7 @@ using types::make_void;
         return true;
     const auto requester = ev.capability_tenant_id();
     auto& reg = aura::core::capability::g_capability_registry();
-    std::lock_guard<std::mutex> lock(reg.mtx);
+    std::scoped_lock<std::mutex> lock(reg.mtx);
     using aura::compiler::security::kEffectTenantAdmin;
     const bool is_ta = !reg.holds_wildcard_only_locked(requester) &&
                        (static_cast<std::uint16_t>(reg.effects_for_locked(requester)) &
@@ -132,7 +132,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #4012: SE reason is sandbox-downgrade-specific (not
             // grant-effect reuse) so audit replay distinguishes the gate.
             auto& reg = aura::core::capability::g_capability_registry();
-            std::lock_guard<std::mutex> lock(reg.mtx);
+            std::scoped_lock<std::mutex> lock(reg.mtx);
             using aura::compiler::security::kEffectTenantAdmin;
             if (reg.holds_wildcard_only_locked(ev.capability_tenant_id()) ||
                 (static_cast<std::uint16_t>(reg.effects_effective_for_locked(
@@ -184,7 +184,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // same pattern as security:grant-effect! (#3362). Upgrade arm
             // stays unprivileged. Soft/Off short-circuit unchanged.
             auto& reg = aura::core::capability::g_capability_registry();
-            std::lock_guard<std::mutex> lock(reg.mtx);
+            std::scoped_lock<std::mutex> lock(reg.mtx);
             using aura::compiler::security::kEffectTenantAdmin;
             if (reg.holds_wildcard_only_locked(ev.capability_tenant_id()) ||
                 (static_cast<std::uint16_t>(reg.effects_effective_for_locked(
@@ -227,7 +227,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         // holders (no explicit TA) now deny + SE.
         if (ev.sandbox_mode() || ev.effect_sandbox_mode() != 0) {
             auto& reg = aura::core::capability::g_capability_registry();
-            std::lock_guard<std::mutex> lock(reg.mtx);
+            std::scoped_lock<std::mutex> lock(reg.mtx);
             using aura::compiler::security::kEffectTenantAdmin;
             if (reg.holds_wildcard_only_locked(ev.capability_tenant_id()) ||
                 (static_cast<std::uint16_t>(reg.effects_effective_for_locked(
@@ -332,7 +332,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         // (under mtx) — closes the wildcard-only privilege-escalation path.
         if (ev.sandbox_mode() || ev.effect_sandbox_mode() != 0) {
             auto& reg = aura::core::capability::g_capability_registry();
-            std::lock_guard<std::mutex> lock(reg.mtx);
+            std::scoped_lock<std::mutex> lock(reg.mtx);
             using aura::compiler::security::kEffectTenantAdmin;
             if (reg.holds_wildcard_only_locked(ev.capability_tenant_id()) ||
                 (static_cast<std::uint16_t>(reg.effects_effective_for_locked(
@@ -1302,7 +1302,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             {
                 using ::aura::core::capability::g_capability_registry;
                 auto& reg = g_capability_registry();
-                std::lock_guard<std::mutex> lock(reg.mtx);
+                std::scoped_lock<std::mutex> lock(reg.mtx);
                 insert_kv("soft-auto-grant", reg.soft_session_active_ ? 1 : 0);
                 insert_kv("soft-auto-grant-workspace",
                           static_cast<std::int64_t>(reg.soft_session_workspace_));
@@ -1333,7 +1333,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         const bool force_bind = ev.sandbox_mode() || ev.effect_sandbox_mode() != 0;
         if (force_bind) {
             auto& reg = aura::core::capability::g_capability_registry();
-            std::lock_guard<std::mutex> lock(reg.mtx);
+            std::scoped_lock<std::mutex> lock(reg.mtx);
             using aura::compiler::security::kEffectTenantAdmin;
             const bool wildcard_only = reg.holds_wildcard_only_locked(ev.capability_tenant_id());
             const bool has_ta =
@@ -1382,7 +1382,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         // (under mtx) — closes the wildcard-only privilege-escalation path.
         if (ev.sandbox_mode() || ev.effect_sandbox_mode() != 0) {
             auto& reg = aura::core::capability::g_capability_registry();
-            std::lock_guard<std::mutex> lock(reg.mtx);
+            std::scoped_lock<std::mutex> lock(reg.mtx);
             using aura::compiler::security::kEffectTenantAdmin;
             if (reg.holds_wildcard_only_locked(ev.capability_tenant_id()) ||
                 (static_cast<std::uint16_t>(reg.effects_effective_for_locked(
@@ -4670,7 +4670,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             bool is_tenant_admin = false;
             {
                 auto& reg = aura::core::capability::g_capability_registry();
-                std::lock_guard<std::mutex> lock(reg.mtx);
+                std::scoped_lock<std::mutex> lock(reg.mtx);
                 using aura::compiler::security::kEffectTenantAdmin;
                 is_tenant_admin =
                     !reg.holds_wildcard_only_locked(ev.capability_tenant_id()) &&
@@ -5986,7 +5986,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             {
                 using ::aura::core::capability::g_capability_registry;
                 auto& reg = g_capability_registry();
-                std::lock_guard<std::mutex> lock(reg.mtx);
+                std::scoped_lock<std::mutex> lock(reg.mtx);
                 insert_kv("soft-auto-grant", reg.soft_session_active_ ? 1 : 0);
                 insert_kv("soft-auto-grant-workspace",
                           static_cast<std::int64_t>(reg.soft_session_workspace_));
