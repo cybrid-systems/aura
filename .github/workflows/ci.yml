@@ -218,6 +218,8 @@ jobs:
 
     - uses: ./.github/actions/ci-krb5
 
+    - uses: ./.github/actions/clang-scan-deps
+
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
@@ -251,6 +253,7 @@ jobs:
       run: >
         cmake -S . -B build_clang -G Ninja -Wno-author
         -DCMAKE_CXX_COMPILER=clang++
+        -DCMAKE_CXX_COMPILER_CLANG_SCAN_DEPS=/usr/local/bin/clang-scan-deps
         -DCMAKE_BUILD_TYPE=RelWithDebInfo
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
@@ -482,19 +485,53 @@ jobs:
   # Single green check for branch protection when gate ‖ build-test.
   # Succeeds only if gate is green and build-test is green or skipped
   # (docs-only PR: build-test skipped, gate still required).
+  # Same Clang module BMI build as gate, on the arm64 toolchain image.
+  # Recorded separately from the amd64 gate. Not a manifest check.
+  clang-module-arm64:
+    needs: [changes]
+    if: >-
+      github.event_name == 'push' ||
+      needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    container:
+      image: ghcr.io/cybrid-systems/aura-ci:v0.1.0
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 2
+
+    - uses: ./.github/actions/ci-krb5
+
+    - uses: ./.github/actions/clang-scan-deps
+
+    - name: Configure Clang module build (#4837)
+      run: >
+        cmake -S . -B build_clang -G Ninja -Wno-author
+        -DCMAKE_CXX_COMPILER=clang++
+        -DCMAKE_CXX_COMPILER_CLANG_SCAN_DEPS=/usr/local/bin/clang-scan-deps
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+    - name: Build Clang module BMIs (#4837)
+      run: |
+        targets=$(python3 scripts/clang_module_targets.py build_clang)
+        ninja -C build_clang $targets
+
   ci-ok:
     name: ci-ok
     runs-on: ubuntu-latest
-    needs: [gate, build-test, issue-farm]
+    needs: [gate, build-test, issue-farm, clang-module-arm64]
     if: always()
     steps:
-    - name: Aggregate gate + build-test + issue-farm
+    - name: Aggregate gate + build-test + issue-farm + arm64 modules
       run: |
         set -e
         gate="${{ needs.gate.result }}"
         bt="${{ needs.build-test.result }}"
         farm="${{ needs.issue-farm.result }}"
-        echo "gate=$gate build-test=$bt issue-farm=$farm"
+        arm="${{ needs.clang-module-arm64.result }}"
+        echo "gate=$gate build-test=$bt issue-farm=$farm clang-module-arm64=$arm"
         if [ "$gate" != "success" ]; then
           echo "❌ gate did not succeed ($gate)"
           exit 1
@@ -507,7 +544,11 @@ jobs:
           echo "❌ issue-farm did not succeed ($farm)"
           exit 1
         fi
-        echo "✓ ci-ok (gate=$gate, build-test=$bt, issue-farm=$farm)"
+        if [ "$arm" != "success" ] && [ "$arm" != "skipped" ]; then
+          echo "❌ clang-module-arm64 did not succeed ($arm)"
+          exit 1
+        fi
+        echo "✓ ci-ok (gate=$gate, build-test=$bt, issue-farm=$farm, clang-module-arm64=$arm)"
 
   # ASAN track — main only (saves ~8–10m on PRs; PR gate is build-test).
   # Build + verify share one job/container: the old asan-verify job
