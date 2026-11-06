@@ -72,7 +72,7 @@ inline bool log_enabled() noexcept {
     if (f >= 0) [[likely]]
         return f == 1;
     auto& s = log_state();
-    std::lock_guard lk(s.mu);
+    std::scoped_lock lk(s.mu);
     f = log_flag().load(std::memory_order_relaxed);
     if (f < 0) {
         const char* p = std::getenv("AURA_EVO_LOG");
@@ -89,7 +89,7 @@ inline std::string log_path() {
     if (!log_enabled())
         return {};
     auto& s = log_state();
-    std::lock_guard lk(s.mu);
+    std::scoped_lock lk(s.mu);
     return s.path;
 }
 
@@ -142,7 +142,7 @@ inline std::string log_append(const Entry& e) {
     if (!log_enabled())
         return {};
     auto& s = log_state();
-    std::lock_guard lk(s.mu);
+    std::scoped_lock lk(s.mu);
     const std::uint64_t seq = ++s.seq;
     std::string id = s.run + "#" + std::to_string(seq);
     const std::string parent = e.parent.empty() ? s.tip : std::string(e.parent);
@@ -203,7 +203,7 @@ inline std::string log_append(const Entry& e) {
 // Tests only: re-read AURA_EVO_LOG on next use.
 inline void log_reset_for_test() noexcept {
     auto& s = log_state();
-    std::lock_guard lk(s.mu);
+    std::scoped_lock lk(s.mu);
     s.path.clear();
     s.run.clear();
     s.seq = 0;

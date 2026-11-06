@@ -10,6 +10,7 @@ module;
 #include "runtime_shared.h"
 #include "write_scope.hh"                  // #4912
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "compiler/chunk_io.hh"            // #4936 std::array file chunks
 
 module aura.compiler.evaluator;
 
@@ -37,18 +38,9 @@ namespace {
         ::close(fd);
         return false;
     }
-    char buf[4096];
-    while (true) {
-        const auto n = ::read(fd, buf, sizeof(buf));
-        if (n < 0) {
-            if (errno == EINTR)
-                continue;
-            ::close(fd);
-            return false;
-        }
-        if (n == 0)
-            break;
-        out.append(buf, static_cast<std::size_t>(n));
+    if (!aura::compiler::io::append_fd(fd, out)) {
+        ::close(fd);
+        return false;
     }
     ::close(fd);
     return true;

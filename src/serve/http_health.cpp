@@ -9,6 +9,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+#include <array>
 #include <cerrno>
 #include <cstring>
 #include <string>
@@ -57,17 +58,17 @@ namespace {
         io_tv.tv_usec = static_cast<suseconds_t>(kClientIoTimeoutMs % 1000) * 1000;
         ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &io_tv, sizeof(io_tv));
         ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &io_tv, sizeof(io_tv));
-        char buf[2048];
+        std::array<char, 2048> buf{};
         ssize_t n = -1;
         do {
-            n = ::recv(fd, buf, sizeof(buf) - 1, 0);
+            n = ::recv(fd, buf.data(), buf.size() - 1, 0);
         } while (n < 0 && errno == EINTR);
         if (n <= 0) {
             ::close(fd);
             return;
         }
-        buf[n] = '\0';
-        std::string req(buf);
+        buf[static_cast<std::size_t>(n)] = '\0';
+        std::string req(buf.data());
         const auto line_end = req.find("\r\n");
         const std::string line = line_end == std::string::npos ? req : req.substr(0, line_end);
         const auto sp1 = line.find(' ');

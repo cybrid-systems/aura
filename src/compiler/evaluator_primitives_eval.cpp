@@ -17,6 +17,7 @@ module;
 #include "typed_mutation_audit.h"           // Issue #4315: production_defaults_active on set-code
 #include "compiler/mark_all_owner_clear.hh" // Issue #4360: set-code clears IR owners
 #include "float_repr.hh"                    // Issue #4746: one decimal spelling (#4468)
+#include "compiler/chunk_io.hh"             // #4936 std::array file chunks
 
 module aura.compiler.evaluator;
 
@@ -1553,10 +1554,10 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         ::close(old_fd);
         std::rewind(tmp.get());
         std::string captured;
-        char buf[4096];
-        std::size_t n;
-        while ((n = std::fread(buf, 1, sizeof(buf), tmp.get())) > 0)
-            captured.append(buf, n);
+        std::array<char, aura::compiler::io::kReadChunk> buf{};
+        std::size_t n = 0;
+        while ((n = std::fread(buf.data(), 1, buf.size(), tmp.get())) > 0)
+            captured.append(buf.data(), n);
         if (!result) {
             auto& diag = result.error();
             auto kind = std::string(kind_name(diag.kind));

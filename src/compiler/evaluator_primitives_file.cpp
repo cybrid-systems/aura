@@ -17,6 +17,7 @@ module;
 #include "tenant_exec_fs_jail.hh"  // #4413 landlock + stat emulation
 #include "write_scope.hh"          // #4912 write:out/
 #include "core/ownership.hh"       // #4936 unique_file / immortal<T>
+#include "compiler/chunk_io.hh"    // #4936 std::array read/copy chunks
 
 module aura.compiler.evaluator;
 
@@ -149,9 +150,9 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_void();
         }
         std::string content;
-        char buf[4096];
-        while (std::size_t n = ::fread(buf, 1, sizeof(buf), fp.get()))
-            content.append(buf, n);
+        std::array<char, aura::compiler::io::kReadChunk> buf{};
+        while (std::size_t n = ::fread(buf.data(), 1, buf.size(), fp.get()))
+            content.append(buf.data(), n);
         auto id = ev.string_heap_.mint(std::move(content));
         return make_string(id);
     });
@@ -429,28 +430,10 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
             ::close(sfd);
             return make_void();
         }
-        char buf[8192];
-        while (true) {
-            auto n = ::read(sfd, buf, sizeof(buf));
-            if (n < 0) {
-                ::close(sfd);
-                ::close(dfd);
-                return make_void();
-            }
-            if (n == 0)
-                break;
-            auto left = static_cast<std::size_t>(n);
-            const char* p = buf;
-            while (left > 0) {
-                auto w = ::write(dfd, p, left);
-                if (w <= 0) {
-                    ::close(sfd);
-                    ::close(dfd);
-                    return make_void();
-                }
-                p += w;
-                left -= static_cast<std::size_t>(w);
-            }
+        if (aura::compiler::io::copy_fd(sfd, dfd) != 0) {
+            ::close(sfd);
+            ::close(dfd);
+            return make_void();
         }
         ::close(sfd);
         ::close(dfd);
