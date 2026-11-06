@@ -95,7 +95,7 @@ namespace {
                 where = loc->format() + ": ";
         }
         std::fflush(stdout);
-        std::fprintf(stderr, "error: %s%s\n", where.c_str(), msg.c_str());
+        std::print(stderr, "error: {}{}\n", where, msg);
         std::fflush(stderr);
         g_displayed_errors.fetch_add(1, std::memory_order_relaxed);
         return true;
@@ -249,19 +249,19 @@ namespace {
                              std::span<const std::vector<EvalValue>> vectors,
                              std::span<const std::string> symbols) {
         if (depth > 64) {
-            std::fprintf(stdout, "...");
+            std::print(stdout, "...");
             return;
         }
         if (is_void(v)) {
-            std::fprintf(stdout, "()");
+            std::print(stdout, "()");
             return;
         }
         if (types::is_unspecified(v)) {
-            std::fprintf(stdout, "#<unspecified>");
+            std::print(stdout, "#<unspecified>");
             return;
         }
         if (is_bool(v)) {
-            std::fprintf(stdout, "%s", as_bool(v) ? "#t" : "#f");
+            std::print(stdout, "{}", as_bool(v) ? "#t" : "#f");
             return;
         }
         // IMPORTANT: Check is_string BEFORE is_keyword (Issue #96 bug fix;
@@ -298,7 +298,7 @@ namespace {
                                 break;
                             default:
                                 if (c < 0x20 || c == 0x7f)
-                                    std::fprintf(stdout, "\\x%02X;", static_cast<unsigned>(c));
+                                    std::print(stdout, "\\x{:02X};", static_cast<unsigned>(c));
                                 else
                                     std::fputc(static_cast<int>(c), stdout);
                                 break;
@@ -306,7 +306,7 @@ namespace {
                     }
                     std::fputc('"', stdout);
                 } else {
-                    std::fprintf(stdout, "%s", heap[idx].c_str());
+                    std::print(stdout, "{}", heap[idx]);
                 }
                 return;
             }
@@ -316,18 +316,18 @@ namespace {
         if (is_symbol(v)) {
             const auto sidx = as_symbol_idx(v);
             if (sidx < symbols.size())
-                std::fprintf(stdout, "%s", symbols[static_cast<std::size_t>(sidx)].c_str());
+                std::print(stdout, "{}", symbols[static_cast<std::size_t>(sidx)]);
             else
-                std::fprintf(stdout, "<symbol[%zu]>", static_cast<size_t>(sidx));
+                std::print(stdout, "<symbol[{}]>", static_cast<std::size_t>(sidx));
             return;
         }
         if (is_keyword(v)) {
             auto kidx = as_keyword_idx(v);
             if (!keywords.empty() && kidx < keywords.size()) {
                 auto kname = keywords[kidx];
-                std::fprintf(stdout, "%s", kname.c_str());
+                std::print(stdout, "{}", kname);
             } else {
-                std::fprintf(stdout, ":%zu", static_cast<size_t>(kidx));
+                std::print(stdout, ":{}", static_cast<std::size_t>(kidx));
             }
             return;
         }
@@ -338,23 +338,23 @@ namespace {
             return;
         }
         if (is_int(v)) {
-            std::fprintf(stdout, "%ld", static_cast<long>(as_int(v)));
+            std::print(stdout, "{}", static_cast<long>(as_int(v)));
             return;
         }
         if (is_pair(v) && !pairs.empty()) {
             auto idx = as_pair_idx(v);
             if (idx >= pairs.size()) {
-                std::fprintf(stdout, "<pair[%zu]>", static_cast<size_t>(idx));
+                std::print(stdout, "<pair[{}]>", static_cast<std::size_t>(idx));
                 return;
             }
             // Check if it's a proper list (cdr chain ends in void)
             auto cdr = pairs[idx].cdr;
             if (is_end_of_list(cdr) && !quote) {
                 // Single-element list: (x)
-                std::fprintf(stdout, "(");
+                std::print(stdout, "(");
                 io_print_val(pairs[idx].car, heap, pairs, quote, depth + 1, keywords, vectors,
                              symbols);
-                std::fprintf(stdout, ")");
+                std::print(stdout, ")");
                 return;
             }
             // Walk the chain to see if it's a proper list
@@ -375,18 +375,18 @@ namespace {
                 elements.push_back(pairs[nidx].car);
                 next = pairs[nidx].cdr;
             }
-            std::fprintf(stdout, "(");
+            std::print(stdout, "(");
             for (std::size_t i = 0; i < elements.size(); ++i) {
                 if (i > 0)
-                    std::fprintf(stdout, " ");
+                    std::print(stdout, " ");
                 io_print_val(elements[i], heap, pairs, quote, depth + 1, keywords, vectors,
                              symbols);
             }
             if (!is_end_of_list(next)) {
-                std::fprintf(stdout, " . ");
+                std::print(stdout, " . ");
                 io_print_val(next, heap, pairs, quote, depth + 1, keywords, vectors, symbols);
             }
-            std::fprintf(stdout, ")");
+            std::print(stdout, ")");
             return;
         }
         if (is_vector(v)) {
@@ -411,19 +411,19 @@ namespace {
             std::size_t n = 0;
             if (idx < g_hash_tables.size() && g_hash_tables[idx])
                 n = static_cast<std::size_t>(g_hash_tables[idx]->size);
-            std::fprintf(stdout, "<hash[%zu]>", n);
+            std::print(stdout, "<hash[{}]>", n);
             return;
         }
         if (is_closure(v)) {
-            std::fprintf(stdout, "#<procedure>");
-            std::fprintf(stderr, "⚠ program returned an uncalled function\n");
+            std::print(stdout, "#<procedure>");
+            std::print(stderr, "⚠ program returned an uncalled function\n");
             return;
         }
         if (is_cell(v)) {
-            std::fprintf(stdout, "<cell[%zu]>", static_cast<size_t>(as_cell_id(v)));
+            std::print(stdout, "<cell[{}]>", static_cast<std::size_t>(as_cell_id(v)));
             return;
         }
-        std::fprintf(stdout, "<unknown>");
+        std::print(stdout, "<unknown>");
     }
 
     // Issue #4505: fail-closed pre-walk for display / write. Returns false
@@ -867,7 +867,7 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     default:
                         if (c < 0x20 || c == 0x7f)
-                            std::fprintf(stdout, "\\x%02X;", static_cast<unsigned>(c));
+                            std::print(stdout, "\\x{:02X};", static_cast<unsigned>(c));
                         else
                             std::fputc(static_cast<int>(c), stdout);
                         break;
@@ -884,7 +884,7 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 
     add("newline", [](const auto&) -> EvalValue {
-        std::fprintf(stdout, "\n");
+        std::print(stdout, "\n");
         std::fflush(stdout);
         return make_void();
     });
@@ -1183,8 +1183,8 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
             // the foreign cause bytes, and still mark the run failed.
             if (!note_displayed_error(*evp, EvalValue{val}, "display")) {
                 std::fflush(stdout);
-                std::fprintf(stderr,
-                             "error: display: cross-tenant string slot read denied (#4505)\n");
+                std::print(stderr,
+                           "error: display: cross-tenant string slot read denied (#4505)\n");
                 std::fflush(stderr);
                 g_displayed_errors.fetch_add(1, std::memory_order_relaxed);
             }
