@@ -72,34 +72,6 @@ using types::make_void;
 
 namespace {
 
-    // Issue #4472: lowercase digits, radix 2..36. Radix 10 stays std::to_string.
-    std::string format_int_radix(std::int64_t n, int radix) {
-        if (radix == 10)
-            return std::to_string(n);
-        const bool neg = n < 0;
-        std::uint64_t mag = 0;
-        if (neg)
-            mag = static_cast<std::uint64_t>(-(n + 1)) + 1u;
-        else
-            mag = static_cast<std::uint64_t>(n);
-        if (mag == 0)
-            return "0";
-        char buf[72];
-        int i = 0;
-        while (mag > 0 && i < static_cast<int>(sizeof(buf))) {
-            const auto d = static_cast<unsigned>(mag % static_cast<unsigned>(radix));
-            buf[i++] = static_cast<char>(d < 10 ? '0' + d : 'a' + (d - 10));
-            mag /= static_cast<unsigned>(radix);
-        }
-        std::string s;
-        s.reserve(static_cast<std::size_t>(i) + (neg ? 1 : 0));
-        if (neg)
-            s.push_back('-');
-        while (i > 0)
-            s.push_back(buf[--i]);
-        return s;
-    }
-
     EvalValue radix_out_of_range(Evaluator& ev, std::vector<EvalValue>& error_values,
                                  const char* who) {
         auto idx = static_cast<std::uint64_t>(
