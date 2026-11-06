@@ -65,7 +65,20 @@ Current entries:
 
 Sandbox denials are not part of this gate, because the corpus runs with
 the sandbox off. The sandbox faces (off / default Restricted / soft) are
-compared by the starter kits' `scripts/mode-matrix.sh`.
+compared by the starter kits' `scripts/mode-matrix.sh` (15 cells; `aura
+soft` has no `--load`). On the published image
+`ghcr.io/cybrid-systems/aura:7002d30ab` (main `7002d30ab`, which contains
+the #4928 fix and does not yet contain the later #4937 restores), that
+matrix matched the sandbox-off / default-pipeline summary in every cell,
+including `unset-force-soa-direct`, `unset-force-soa-load`, and
+`soft-force-soa-direct`. The published kits workflow still sets
+`MATRIX_KNOWN_RED` to those three cells. A local starter-kits commit
+(`2d2eb7ff`, pin `7002d30ab64234738ab88ebe7822e83279c53e99`, allowlist
+removed) was not pushed: this bot gets 403 on
+`cybrid-systems/aura-starter-kits`. `continue-on-error` is already absent
+from that workflow. The same image still aborts the #4937
+rebind/snapshot/`member` repro under `preset=dev`. Current main has those
+restores; no newer runtime image tag was published at the time of this note.
 
 To add an entry, give the reason and the issue that will remove it. A
 new difference with no entry fails CI.
