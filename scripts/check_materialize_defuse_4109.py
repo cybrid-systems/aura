@@ -43,6 +43,7 @@
 #   python3 scripts/check_materialize_defuse_4109.py
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -107,7 +108,9 @@ def main() -> int:
     # Issue #4730: enter and exit publish the bump AND the #4109 ride in ONE
     # shard-barrier critical section (bump_defuse_and_restamp), so the ride
     # no longer appears as a bare restamp call at the boundary sites.
-    calls = boundary_code.count("bump_defuse_and_restamp(cp.version")
+    # Issue #4936: the enter site passes entry_version (captured before cp
+    # is moved into the checkpoint stack).
+    calls = len(re.findall(r"bump_defuse_and_restamp\((?:cp\.version|entry_version)", boundary_code))
     check(calls >= 2, "AC3: restamp must ride at BOTH enter and exit boundary bumps")
     check("Issue #4109" in boundary_src, "AC3: boundary ride-up call sites must cite #4109")
 

@@ -47,6 +47,7 @@ module;
 #include <unordered_map>
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "core/fiber_context.hh" // Issue #4842: per-execution-context body inheritance
+#include "core/ownership.hh"     // Issue #4936: NoCopy
 
 // Default ON when the TU is compiled outside the CMake graph (tools/IDE).
 #ifndef AURA_ENABLE_SYNTHESIZE
@@ -428,7 +429,7 @@ namespace {
     // own atexit handler AFTER main's: LIFO makes it run first, quiescing
     // the workers before the runtime teardown.
     void orch_sched_stop_at_exit();
-    struct OrchSchedHolder {
+    struct OrchSchedHolder : ::aura::core::NoCopy {
         std::unique_ptr<aura::serve::Scheduler> sched;
         std::thread runner;
         std::mutex mu;
@@ -623,7 +624,7 @@ namespace {
             // agent apply window. Mark the depth so this body's own nested
             // spawns inherit the waiver, and run without taking the mutex.
             Evaluator::push_agent_apply_hold();
-            struct NestedHoldPop {
+            struct NestedHoldPop : ::aura::core::NoCopy {
                 ~NestedHoldPop() { Evaluator::pop_agent_apply_hold(); }
             } nested_pop;
             run();
@@ -1341,7 +1342,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
             // hash-ref structure walk (replaces prior substring content scan).
             // Handles pretty-print whitespace, embedded quotes, null content;
             // size-capped. Unicode \uXXXX is decoded by json-parse.
-            constexpr std::size_t kMaxSynthCodeBytes = 256 * 1024;
+            constexpr std::size_t kMaxSynthCodeBytes = 256uz * 1024;
             std::string code;
             auto parse_fn = ev.primitives_.lookup("json-parse");
             auto href_fn = ev.primitives_.lookup("hash-ref");
@@ -3245,6 +3246,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                             if (m != 0)
                                 Evaluator::note_parallel_task_cone_mask(m);
                         }
+                        RegionTls(const RegionTls&) = delete;
+                        RegionTls& operator=(const RegionTls&) = delete;
                         ~RegionTls() {
                             Evaluator::clear_parallel_task_region_key();
                             Evaluator::clear_parallel_task_cone_mask();
@@ -4350,8 +4353,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             if (!ok && quota_exceeded) {
                 // Issue #2155: invariant — this attempt did not put. A prior
                 // live agent may still occupy the same name; that is fine.
-                // Handle was never moved into the table on this path.
-                (void)handle; // not put; destructor releases any residual (none)
+                // Handle was never moved into the table on this path; its
+                // destructor releases any residual (none).
                 const auto nidx = ev.push_string_heap(out_name);
                 std::vector<std::pair<std::string, EvalValue>> qkv = {
                     {"ok", make_bool(false)},
@@ -7324,6 +7327,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     if (k != 0)
                         Evaluator::note_parallel_task_region_key(k);
                 }
+                SuperviseRegionTls(const SuperviseRegionTls&) = delete;
+                SuperviseRegionTls& operator=(const SuperviseRegionTls&) = delete;
                 ~SuperviseRegionTls() { Evaluator::clear_parallel_task_region_key(); }
             };
             // Issue #4723: the watch arm's Phase A is empty by design

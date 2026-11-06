@@ -56,11 +56,13 @@ static std::vector<std::string> tokenize(std::string_view s) {
         if (c == '(' || c == ')') {
             if (!cur.empty()) {
                 tokens.push_back(std::move(cur));
+                cur.clear(); // moved-from: valid but unspecified
             }
             tokens.emplace_back(1, c);
         } else if (c == ' ' || c == '\t' || c == '\n') {
             if (!cur.empty()) {
                 tokens.push_back(std::move(cur));
+                cur.clear(); // moved-from: valid but unspecified
             }
         } else if (c == '"') {
             // Capture string content between quotes, strip the quotes
@@ -70,9 +72,11 @@ static std::vector<std::string> tokenize(std::string_view s) {
                 cur += s[i];
                 i++;
             }
-            if (i < s.size())
-                i++; // skip closing quote
+            // Issue #4936: i is on the closing quote; the loop's ++i steps
+            // past it. Stepping here too dropped the next character, so
+            // `(callee "f")` lost its ')' and nested queries parsed wrong.
             tokens.push_back(std::move(cur));
+            cur.clear();
         } else {
             cur += c;
         }
@@ -315,9 +319,9 @@ bool QueryEngine::match(NodeId id, const QueryExpr& q, int depth) {
 void QueryEngine::ensure_sym_index() const {
     if (sym_index_built_)
         return;
-    auto* idx = new SymRefIndex(index_.ast, index_.pool);
+    auto idx = std::make_unique<SymRefIndex>(index_.ast, index_.pool);
     idx->build();
-    sym_index_ = idx;
+    sym_index_ = std::move(idx);
     sym_index_built_ = true;
     index_.set_sym_index(*sym_index_);
 }

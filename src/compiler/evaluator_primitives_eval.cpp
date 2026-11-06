@@ -12,6 +12,7 @@ module;
 #include "prim_names.h"            // #904
 #include "security_capabilities.h" // Issue #2485: kCapIoRead for load
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "core/ownership.hh"                // #4936 unique_file / immortal<T>
 #include "core/workspace_epoch.hh"          // Issue #3691: bump_mutation_epoch on set-code
 #include "typed_mutation_audit.h"           // Issue #4315: production_defaults_active on set-code
 #include "compiler/mark_all_owner_clear.hh" // Issue #4360: set-code clears IR owners
@@ -291,6 +292,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 explicit RestoreTopPool(Env& t)
                     : top(t)
                     , saved(t.pool()) {}
+                RestoreTopPool(const RestoreTopPool&) = delete;
+                RestoreTopPool& operator=(const RestoreTopPool&) = delete;
                 ~RestoreTopPool() {
                     if (saved && saved != top.pool())
                         top.set_pool(saved);
@@ -834,6 +837,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 , saved(t.pool())
                 , binds(t.bindings().size())
                 , keep(k) {}
+            RestoreTopPool(const RestoreTopPool&) = delete;
+            RestoreTopPool& operator=(const RestoreTopPool&) = delete;
             ~RestoreTopPool() {
                 std::vector<std::pair<std::string, EvalValue>> kept;
                 if (top.bindings().size() > binds) {
@@ -1044,6 +1049,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             explicit RestoreTopPool(Env& t)
                 : top(t)
                 , saved(t.pool()) {}
+            RestoreTopPool(const RestoreTopPool&) = delete;
+            RestoreTopPool& operator=(const RestoreTopPool&) = delete;
             ~RestoreTopPool() {
                 if (saved && saved != top.pool())
                     top.set_pool(saved);
@@ -1237,6 +1244,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 if (owns)
                     Evaluator::note_eval_current_shared_enter();
             }
+            EvalCurrentExclusiveTls(const EvalCurrentExclusiveTls&) = delete;
+            EvalCurrentExclusiveTls& operator=(const EvalCurrentExclusiveTls&) = delete;
             ~EvalCurrentExclusiveTls() {
                 if (owns)
                     Evaluator::note_eval_current_shared_exit();
@@ -1327,6 +1336,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             explicit RestoreTopPool(Env& t)
                 : top(t)
                 , saved(t.pool()) {}
+            RestoreTopPool(const RestoreTopPool&) = delete;
+            RestoreTopPool& operator=(const RestoreTopPool&) = delete;
             ~RestoreTopPool() {
                 if (saved && saved != top.pool())
                     top.set_pool(saved);
@@ -1512,7 +1523,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             return mev(why, why);
         // Redirect stdout to a temp file (fd-level, catches fprintf too)
         std::fflush(stdout);
-        auto* tmp = std::tmpfile();
+        // #4936: owned, so an eval that throws no longer leaks the stream.
+        const ::aura::core::unique_file tmp{std::tmpfile()};
         if (!tmp) {
             auto result = ev.eval_flat(*flat, *pool, expanded, ev.top_);
             {
@@ -1527,7 +1539,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             }
             return *result;
         }
-        int new_fd = ::fileno(tmp);
+        int new_fd = ::fileno(tmp.get());
         int old_fd = ::dup(STDOUT_FILENO);
         ::dup2(new_fd, STDOUT_FILENO);
         auto result = ev.eval_flat(*flat, *pool, expanded, ev.top_);
@@ -1539,13 +1551,12 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         std::fflush(stdout);
         ::dup2(old_fd, STDOUT_FILENO);
         ::close(old_fd);
-        std::rewind(tmp);
+        std::rewind(tmp.get());
         std::string captured;
         char buf[4096];
         std::size_t n;
-        while ((n = std::fread(buf, 1, sizeof(buf), tmp)) > 0)
+        while ((n = std::fread(buf, 1, sizeof(buf), tmp.get())) > 0)
             captured.append(buf, n);
-        std::fclose(tmp);
         if (!result) {
             auto& diag = result.error();
             auto kind = std::string(kind_name(diag.kind));

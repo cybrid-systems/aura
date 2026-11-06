@@ -850,6 +850,26 @@ int main() {
             std::println(std::cerr, "QE PARSE FAIL: kind={}", static_cast<int>(parsed.kind));
         }
 
+        // Issue #4936: a quoted argument must not swallow the ')' after it.
+        {
+            auto nested = engine.parse("(and (callee \"+\") (node-type LiteralInt))");
+            const bool ok = nested.kind == aura::compiler::QueryExpr::Kind::And &&
+                            nested.children.size() == 2 &&
+                            nested.children[0].kind == aura::compiler::QueryExpr::Kind::Callee &&
+                            nested.children[0].str_value == "+" &&
+                            nested.children[1].kind == aura::compiler::QueryExpr::Kind::NodeType;
+            if (ok) {
+                std::println("QE OK: quoted arg keeps its closing paren (#4936)");
+                ++q_passed;
+            } else {
+                std::println(std::cerr,
+                             "QE FAIL: quoted arg swallowed ')' (#4936): kind={} children={}",
+                             static_cast<int>(nested.kind), nested.children.size());
+                ++q_failed_local;
+                ++failed; // counts toward the exit status
+            }
+        }
+
         // Use manually-built queries to verify execute()/match() work
         auto test_mq = [&](aura::compiler::QueryExpr q, std::size_t expected_count,
                            std::string_view desc) {

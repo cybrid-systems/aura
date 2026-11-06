@@ -4,6 +4,7 @@
 module;
 
 #include "runtime_shared.h"
+#include "core/diag_print.hh" // #4936 eprintln_nothrow
 #include "messaging_bridge.h"
 
 #include "security_capabilities.h"
@@ -19,6 +20,7 @@ module;
 
 #include <pthread.h>
 #include <unistd.h>
+#include "core/ownership.hh" // #4936 opaque_ptr
 
 module aura.compiler.evaluator;
 
@@ -223,8 +225,9 @@ namespace {
             out.push_back(slot->value().val);
         }
         // Issue #4839: a joined result stays reachable for repeated joins.
-        for (const auto& owner_entry : s_fiber_joined)
-            for (const auto& joined : owner_entry.second)
+        // #4936: GC roots; the order they are pushed in does not matter.
+        for (const auto& joined_by_owner : s_fiber_joined | std::views::values)
+            for (const auto& joined : joined_by_owner)
                 out.push_back(joined.second.val);
         return out.size() - before;
     }
@@ -910,21 +913,22 @@ namespace {
             return nullptr;
         if (s_tls_cli_body_lock() && s_tls_cli_body_lock()->owns_lock())
             return nullptr;
-        auto* lk = new std::unique_lock<std::mutex>(s_cli_commit_mtx, std::defer_lock);
+        auto lk = std::make_unique<std::unique_lock<std::mutex>>(s_cli_commit_mtx, std::defer_lock);
         // Issue #4699: tracked acquire (takeover publish).
         cli_body_lock_acquire(*lk);
-        s_tls_cli_body_lock() = lk;
-        return lk;
+        s_tls_cli_body_lock() = lk.get();
+        // The C hook hands ownership to cli_main_body_lock_release_impl.
+        return lk.release();
     }
 
     void cli_main_body_lock_release_impl(void* p) {
         if (!p)
             return;
-        auto* lk = static_cast<std::unique_lock<std::mutex>*>(p);
+        const std::unique_ptr<std::unique_lock<std::mutex>> lk{
+            static_cast<std::unique_lock<std::mutex>*>(p)};
         // #4054: clear TLS only when it still names this lock.
-        if (s_tls_cli_body_lock() == lk)
+        if (s_tls_cli_body_lock() == lk.get())
             s_tls_cli_body_lock() = nullptr;
-        delete lk;
     }
 
     void wire_denseness_body_lock_hooks() {
@@ -1895,11 +1899,11 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             auto& ctx = ev.eval_ctx();
             const bool prev = ctx.orch_body_inherited;
             ctx.orch_body_inherited = prev || inherited_body_ctx;
-            struct RestoreInherited {
+            struct RestoreInherited : ::aura::core::NoCopy {
                 aura::core::fiber_ctx::Context& ctx;
                 bool prev;
                 ~RestoreInherited() { ctx.orch_body_inherited = prev; }
-            } restore{ctx, prev};
+            } restore{{}, ctx, prev};
             complete_fiber();
         };
         int64_t fid = 0;
@@ -2216,7 +2220,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         // evaluator's pinned-closure watermark, so the release is safe
         // from any thread: the watermark is restored only when the last
         // pending fiber is done.
-        struct PendingBodyRootRelease {
+        struct PendingBodyRootRelease : ::aura::core::NoCopy {
             void* ev;
             std::uint64_t fid;
             ~PendingBodyRootRelease() {
@@ -2225,8 +2229,8 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                 workspace_driver_release_fiber_4778(fid);
             }
         };
-        const PendingBodyRootRelease pending_body_root_release{static_cast<void*>(&ev),
-                                                               static_cast<std::uint64_t>(fid)};
+        const PendingBodyRootRelease pending_body_root_release{
+            {}, static_cast<void*>(&ev), static_cast<std::uint64_t>(fid)};
 
         auto is_ready = [fid] {
             auto it = s_fiber_results.find(fid);
@@ -2415,11 +2419,11 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto* self = aura::serve::g_current_fiber;
                 const bool prev_join_allow = self->join_wait_yield_allowed();
                 self->set_join_wait_yield_allowed(true);
-                struct JoinYieldAllowReset {
+                struct JoinYieldAllowReset : ::aura::core::NoCopy {
                     aura::serve::Fiber* f;
                     bool prev;
                     ~JoinYieldAllowReset() { f->set_join_wait_yield_allowed(prev); }
-                } allow_reset{self, prev_join_allow};
+                } allow_reset{{}, self, prev_join_allow};
                 while (true) {
                     {
                         std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
@@ -2911,18 +2915,19 @@ void Evaluator::drain_thread_fibers() noexcept {
                 // teardown stays bounded. Residual risk limited to this
                 // path, surfaced via WARN + abandon counter.
                 g_thread_fiber_dtor_abandon_total.fetch_add(1, std::memory_order_relaxed);
-                std::println(std::cerr,
-                             "[fiber:drain] WARN: thread-fiber {} not ready after "
-                             "2000ms at ~Evaluator; detaching (stuck body?)",
-                             fid);
+                ::aura::core::eprintln_nothrow(
+                    "[fiber:drain] WARN: thread-fiber {} not ready after "
+                    "2000ms at ~Evaluator; detaching (stuck body?)",
+                    fid);
                 worker.detach();
             }
         }
     } catch (const std::system_error&) {
-        // Best-effort: thread join/detach or cv wait failed — never
-        // propagate out of ~Evaluator (noexcept).
+        // [SILENCE-PRIM-#4936] Best-effort: thread join/detach or cv wait
+        // failed — never propagate out of ~Evaluator (noexcept).
     } catch (const std::bad_alloc&) {
-        // Best-effort: registry growth failed — never propagate (noexcept).
+        // [SILENCE-PRIM-#4936] Best-effort: registry growth failed — never
+        // propagate (noexcept).
     }
 }
 

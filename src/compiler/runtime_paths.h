@@ -4,6 +4,8 @@
 
 #include <cstdlib>
 #include <cstddef>
+#include <filesystem>
+#include <system_error>
 #include <string>
 #include <unistd.h>
 
@@ -69,11 +71,11 @@ inline constexpr const char* kEnvStdlibDir = "AURA_STDLIB_DIR";
     }
 #endif
     if (argv0 && argv0[0] != '\0') {
-        if (char* rp = ::realpath(argv0, nullptr)) {
-            std::string out(rp);
-            std::free(rp);
-            return out;
-        }
+        // #4936: std::filesystem::canonical is realpath(3) without the
+        // malloc'd result buffer.
+        std::error_code ec;
+        if (const auto rp = std::filesystem::canonical(argv0, ec); !ec)
+            return rp.string();
         return std::string(argv0);
     }
     if (const char* e = std::getenv("AURA_BIN"); e && e[0] != '\0')

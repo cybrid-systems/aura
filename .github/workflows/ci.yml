@@ -212,6 +212,9 @@ jobs:
       AURA_GATE_JOBS: "6"
     steps:
     - uses: actions/checkout@v7
+      with:
+        # Issue #4936: the changed-lines clang-tidy gate diffs HEAD~1..HEAD.
+        fetch-depth: 2
 
     - uses: actions/cache@v6
       with:
@@ -259,6 +262,12 @@ jobs:
       # gate's 300 s default (GCC build + clang-tidy), so give the module
       # run a longer per-TU bound instead of recording a parse-error.
       run: python3 scripts/clang_tidy_gate.py --module --db build_clang/compile_commands.json --jobs 4 --timeout 900
+
+    # Issue #4936: C++ Core Guidelines rules (docs/cpp-style.md) on the lines
+    # this commit changes. HARD checks fail, SOFT checks are notes until their
+    # remediation batch lands. The baseline gates above stay the debt ratchet.
+    - name: clang-tidy changed-lines gate (#4936)
+      run: python3 scripts/clang_tidy_changed_lines.py --db build_clang/compile_commands.json --jobs 4 --build-bmis
 
     # Aura philosophy guard: no per-issue plan docs in docs/design/
     - name: "Aura philosophy guard: no docs/design/"

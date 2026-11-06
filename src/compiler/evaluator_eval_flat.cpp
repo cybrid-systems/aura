@@ -26,6 +26,7 @@ module;
 #include "compiler/user_arity.hh"             // Issue #4467: call-site procedure arity
 #include "compiler/type_feedback.h"           // Issue #4568: tree-walker lattices
 #include "compiler/ir_inflight_roots.hh"      // Issue #4617: IR in-flight roots for the TW sweep
+#include "core/ownership.hh"                  // #4936 immortal<T>
 
 
 module aura.compiler.evaluator;
@@ -1017,7 +1018,7 @@ namespace {
     // Issue #4713: this thread's plain segment. Registered lazily on the
     // first walk and dropped at thread exit so the registry never keeps a
     // pointer into a dead thread's storage.
-    struct TwThreadDefaultSeg {
+    struct TwThreadDefaultSeg : ::aura::core::NoCopy {
         TwRootSet* seg = nullptr;
         bool walking = false;
         ~TwThreadDefaultSeg() {
@@ -1087,6 +1088,7 @@ struct TwPinResult {
             tw_results().pop_back();
     }
     TwPinResult(const TwPinResult&) = delete;
+    TwPinResult& operator=(const TwPinResult&) = delete;
 };
 
 struct TwPinMany {
@@ -1096,6 +1098,7 @@ struct TwPinMany {
             tw_vecs().pop_back();
     }
     TwPinMany(const TwPinMany&) = delete;
+    TwPinMany& operator=(const TwPinMany&) = delete;
 };
 // Issue #4599: a stack argument buffer is not a std::vector, so the
 // reclaim mark would miss it. Pin the span for the duration of the prim.
@@ -1115,6 +1118,7 @@ struct TwPinSpan {
             tw_spans().pop_back();
     }
     TwPinSpan(const TwPinSpan&) = delete;
+    TwPinSpan& operator=(const TwPinSpan&) = delete;
 };
 // Issue #4599 follow-up: tree-walker call arguments used to go through
 // three std::vector<EvalValue> allocations per call (provided / cargs /
@@ -1133,6 +1137,7 @@ struct TwSmallArgs {
     std::optional<TwPinMany> pin_over;
 
     TwSmallArgs() = default;
+    ~TwSmallArgs() = default;
     TwSmallArgs(const TwSmallArgs&) = delete;
     TwSmallArgs& operator=(const TwSmallArgs&) = delete;
 
@@ -1253,8 +1258,10 @@ namespace {
         for (const auto& fr : frames) {
             if (fr.current && *fr.current)
                 envs.push_back(*fr.current);
-            if (fr.tail && fr.tail->has_value())
-                envs.push_back(&**fr.tail);
+            if (fr.tail) {
+                if (const auto& tail = *fr.tail) // #4936: checked optional
+                    envs.push_back(&*tail);
+            }
             if (!fr.pinned)
                 continue;
             for (const auto& p : *fr.pinned) {
@@ -1296,8 +1303,10 @@ namespace {
         for (const auto& fr : frames) {
             if (fr.current && *fr.current)
                 add_env(*fr.current);
-            if (fr.tail && fr.tail->has_value())
-                add_env(&**fr.tail);
+            if (fr.tail) {
+                if (const auto& tail = *fr.tail) // #4936: checked optional
+                    add_env(&*tail);
+            }
             if (!fr.pinned)
                 continue;
             for (const auto& p : *fr.pinned)
@@ -1656,11 +1665,13 @@ void Evaluator::collect_tw_inflight_roots(std::vector<types::EvalValue>& out) {
             for (const auto& b : (*fr.current)->bindings_symid())
                 out.push_back(b.second);
         }
-        if (fr.tail && fr.tail->has_value()) {
-            for (const auto& b : (**fr.tail).bindings())
-                out.push_back(b.second);
-            for (const auto& b : (**fr.tail).bindings_symid())
-                out.push_back(b.second);
+        if (fr.tail) {
+            if (const auto& tail = *fr.tail) { // #4936: checked optional
+                for (const auto& b : tail->bindings())
+                    out.push_back(b.second);
+                for (const auto& b : tail->bindings_symid())
+                    out.push_back(b.second);
+            }
         }
         if (!fr.pinned)
             continue;
@@ -3287,7 +3298,7 @@ namespace {
         return m;
     }
     std::unordered_map<std::string, LegacyMacroSite4759>& legacy_macro_sites_4759() {
-        static auto* m = new std::unordered_map<std::string, LegacyMacroSite4759>();
+        static ::aura::core::immortal<std::unordered_map<std::string, LegacyMacroSite4759>> m;
         return *m;
     }
     [[maybe_unused]] static std::optional<LegacyMacroSite4759>
@@ -4372,6 +4383,8 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
             explicit RestoreTopPool(Env& t)
                 : top(t)
                 , saved(t.pool()) {}
+            RestoreTopPool(const RestoreTopPool&) = delete;
+            RestoreTopPool& operator=(const RestoreTopPool&) = delete;
             ~RestoreTopPool() {
                 if (saved && saved != top.pool())
                     top.set_pool(saved);
@@ -5064,7 +5077,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
     // Issue #2802: local arena isolates pattern flat/pool from shared
     // temp_arena_ (and from sibling sub-ops in the same atomic-batch).
     // 256 KiB is ample for a pattern AST; heap-backed, not stack.
-    aura::ast::ASTArena pat_arena(/*initial_size=*/256 * 1024);
+    aura::ast::ASTArena pat_arena(/*initial_size=*/256uz * 1024);
     auto alloc = pat_arena.allocator();
     aura::ast::StringPool* pat_pool = nullptr;
     aura::ast::FlatAST* pat_flat = nullptr;
@@ -5878,10 +5891,10 @@ EvalResult Evaluator::eval_flat_apply_mutate_rename_symbol(std::span<const types
     }
     for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
         if (flat.tag(id) == aura::ast::NodeTag::Lambda) {
-            const int n = flat.rename_param(id, old_sym, new_sym, nullptr);
+            const std::size_t n = flat.rename_param(id, old_sym, new_sym, nullptr);
             if (n > 0) {
                 flat.mark_dirty_upward(id);
-                count += n;
+                count += static_cast<int>(n);
             }
         }
     }
@@ -6863,10 +6876,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
             std::format("recursion depth exceeded (>{}) fiber={}", MAX_C_STACK_DEPTH, fid)});
     }
     ++c_stack_depth;
-    struct DepthGuard {
+    struct DepthGuard : ::aura::core::NoCopy {
         std::size_t& d;
         ~DepthGuard() { --d; }
-    } guard{c_stack_depth};
+    } guard{{}, c_stack_depth};
     // Issue #4465: arm only the outermost eval. Nested module eval keeps
     // its error value so load_module_file still fail-closes (#2570).
     // Issue #4717: per-body (fiber Context) — two bodies each arm their own
@@ -6882,7 +6895,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
         set_file_diag_root_id(id);
         set_file_resume_form({});
     }
-    struct FileDiagGuard {
+    struct FileDiagGuard : ::aura::core::NoCopy {
         Evaluator* ev;
         bool armed;
         ~FileDiagGuard() {
@@ -6891,7 +6904,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
             ev->set_file_diag_root_flat(nullptr);
             ev->set_file_diag_root_id(ast::NULL_NODE);
         }
-    } file_diag_guard{this, arm_file_diag};
+    } file_diag_guard{{}, this, arm_file_diag};
     auto result = eval_flat_body(flat, pool, id, env);
     if (arm_file_diag && result && is_error(*result) && !is_string(*result))
         return file_mode_escaped_primitive(*this, *result, flat, id);
@@ -6980,8 +6993,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
             double total_used = 0.0, total_cap = 0.0;
             if (arena_) {
                 auto s = arena_->stats();
-                double u = s.used / 1048576.0;
-                double c = s.capacity / 1048576.0;
+                double u = static_cast<double>(s.used) / 1048576.0;
+                double c = static_cast<double>(s.capacity) / 1048576.0;
                 snaps.push_back({"main", u, c, c > 0 ? static_cast<int>(u / c * 100.0) : 0});
                 total_used += u;
                 total_cap += c;
@@ -6991,8 +7004,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     auto slash = full_name.rfind('/');
                     auto short_name =
                         slash == std::string::npos ? full_name : full_name.substr(slash + 1);
-                    double u = stats.used / 1048576.0;
-                    double c = stats.capacity / 1048576.0;
+                    double u = static_cast<double>(stats.used) / 1048576.0;
+                    double c = static_cast<double>(stats.capacity) / 1048576.0;
                     snaps.push_back(
                         {short_name, u, c, c > 0 ? static_cast<int>(u / c * 100.0) : 0});
                     total_used += u;
@@ -7062,6 +7075,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                 }
             }
             TwFrameReg(const TwFrameReg&) = delete;
+            TwFrameReg& operator=(const TwFrameReg&) = delete;
         } tw_frame_reg(&current_env, &tail_env, &tco_pinned);
 
         // Issue #4599 phase 3: same-pool SymId chain read for a Variable
@@ -8138,8 +8152,9 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                         // flat for this call; closures it makes are
                                         // kept alive by an intentional leak below.
                                         if (!legacy_macro_site_store_4759(site_key_4759, site)) {
-                                            static auto* overflow_4759 =
-                                                new std::vector<LegacyMacroSite4759>();
+                                            static ::aura::core::immortal<
+                                                std::vector<LegacyMacroSite4759>>
+                                                overflow_4759;
                                             static std::mutex overflow_mtx_4759;
                                             std::lock_guard lk(overflow_mtx_4759);
                                             overflow_4759->push_back(site);
@@ -8279,6 +8294,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                     }
                                     ~RequireSymReset() noexcept { ev->clear_sym_intern(); }
                                     RequireSymReset(const RequireSymReset&) = delete;
+                                    RequireSymReset& operator=(const RequireSymReset&) = delete;
                                 } require_sym_reset(this);
                                 last = eval_flat(*iflat, *ipool, expanded_root, eval_env);
                                 if (!last) {
@@ -8628,10 +8644,10 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             // so display's arg-error consumption is suspended
                             // here — the error must reach this try's catch.
                             ++try_body_depth_ctx();
-                            struct TryBodyScope {
+                            struct TryBodyScope : ::aura::core::NoCopy {
                                 int& d;
                                 ~TryBodyScope() { --d; }
-                            } try_body_scope{try_body_depth_ctx()};
+                            } try_body_scope{{}, try_body_depth_ctx()};
                             // Issue #4838: the try body must NOT arm the
                             // file-diag rewrite. Under a closure/fiber body
                             // no outer eval has armed a root, so the first
@@ -11944,6 +11960,8 @@ void Evaluator::rebind_workspace_defines_after_rollback() noexcept {
             explicit RestoreTopPool(Env& t)
                 : top(t)
                 , saved(t.pool()) {}
+            RestoreTopPool(const RestoreTopPool&) = delete;
+            RestoreTopPool& operator=(const RestoreTopPool&) = delete;
             ~RestoreTopPool() {
                 if (saved && saved != top.pool())
                     top.set_pool(saved);
@@ -12106,6 +12124,8 @@ void Evaluator::rebind_workspace_defines_on_switch() noexcept {
             explicit RestoreTopPool(Env& t)
                 : top(t)
                 , saved(t.pool()) {}
+            RestoreTopPool(const RestoreTopPool&) = delete;
+            RestoreTopPool& operator=(const RestoreTopPool&) = delete;
             ~RestoreTopPool() {
                 if (saved && saved != top.pool())
                     top.set_pool(saved);
@@ -12153,15 +12173,11 @@ void Evaluator::rebind_workspace_defines_on_switch() noexcept {
             snap.mutation_count = static_cast<std::uint64_t>(flat->mutation_log_size());
             snap.define_gen_fp = fp;
             snap.entries = std::move(captured);
-            bool replaced = false;
-            for (auto& s : switch_define_snaps_) {
-                if (s.flat == flat) {
-                    s = std::move(snap);
-                    replaced = true;
-                    break;
-                }
-            }
-            if (!replaced)
+            // Issue #4936: one move of snap (replace-or-append).
+            const auto it = std::ranges::find(switch_define_snaps_, flat, &SwitchDefineSnap::flat);
+            if (it != switch_define_snaps_.end())
+                *it = std::move(snap);
+            else
                 switch_define_snaps_.push_back(std::move(snap));
         }
     } catch (...) {

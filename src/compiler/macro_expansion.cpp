@@ -16,6 +16,7 @@ module;
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "observability_metrics.h" // Issue #2021: CompilerMetrics snapshot
 #include "typed_mutation_audit.h" // Issue #3278: production_defaults_active() gate for cross-pool schema homology
+#include "core/ownership.hh" // Issue #4936: NoCopy
 
 module aura.compiler.macro_expansion;
 
@@ -2460,6 +2461,8 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             for (const auto& kv : snap)
                 map->emplace(kv.first, kv.second);
         }
+        NameMapCheckpoint(const NameMapCheckpoint&) = delete;
+        NameMapCheckpoint& operator=(const NameMapCheckpoint&) = delete;
         ~NameMapCheckpoint() {
             if (!committed)
                 rollback();
@@ -2477,9 +2480,15 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     // itself is a no-op when a MutationBoundary is already active, so
     // existing boundary callers continue to roll back via the boundary
     // itself (no double-rollback).
+    // #3157 pins `struct ExpandCheckpointGuard {`. Copy is deleted here
+    // instead of a NoCopy base so that spelling, and the install/restore
+    // calls below, stay the rollback contract.
     struct ExpandCheckpointGuard {
         bool owned = false;
         bool consumed = false;
+        ExpandCheckpointGuard() = default;
+        ExpandCheckpointGuard(const ExpandCheckpointGuard&) = delete;
+        ExpandCheckpointGuard& operator=(const ExpandCheckpointGuard&) = delete;
         // Issue #3608: production no-Evaluator local rollback. The C-ABI save
         // cannot snapshot anything without a current Evaluator (weak stub /
         // null strong def), so the guard falls back to the #3608 FlatAST
@@ -4299,6 +4308,9 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
     struct ExpandCheckpointGuard {
         bool owned = false;
         bool consumed = false;
+        ExpandCheckpointGuard() = default;
+        ExpandCheckpointGuard(const ExpandCheckpointGuard&) = delete;
+        ExpandCheckpointGuard& operator=(const ExpandCheckpointGuard&) = delete;
         // Issue #3608: local no-Evaluator rollback — mirrors the clone walk
         // guard (see clone_macro_body_at_depth): snapshot the bare flat's
         // node count when the C-ABI save cannot own a checkpoint, and

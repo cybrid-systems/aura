@@ -683,12 +683,13 @@ export struct IRModule {
     std::uint32_t entry_function_id = 0;
 
     std::uint32_t add_function(IRFunction func) {
-        func.id = static_cast<std::uint32_t>(functions.size());
+        const auto id = static_cast<std::uint32_t>(functions.size());
+        func.id = id;
         functions.push_back(std::move(func));
         // Ensure closure_bridge is in sync
         if (closure_bridge.size() < functions.size())
             closure_bridge.resize(functions.size());
-        return func.id;
+        return id;
     }
 
     // Set bridge data for a function (for cross-evaluator lambda calls)

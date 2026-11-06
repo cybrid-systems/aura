@@ -143,6 +143,7 @@ class MarkBitVector {
 public:
     explicit MarkBitVector(size_t size = 0) { resize(size); }
 
+    ~MarkBitVector() = default;
     MarkBitVector(const MarkBitVector&) = delete;
     MarkBitVector& operator=(const MarkBitVector&) = delete;
 

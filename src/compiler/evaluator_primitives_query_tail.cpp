@@ -1085,7 +1085,7 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
         ev.primitives().set_meta_for_name("mutate:validate-reflected", std::move(ex));
     }
 
-    add("query:schema", [&string_heap, &type_registry](std::span<const EvalValue> a) -> EvalValue {
+    add("query:schema", [&string_heap, &ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         auto idx = as_string_idx(a[0]);
@@ -1096,10 +1096,9 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
         if (idx >= string_heap.size())
             return make_bool(false);
         std::string name = string_heap[idx];
-        if (!type_registry) {
-            type_registry = new aura::core::TypeRegistry();
-        }
-        auto* treg = static_cast<aura::core::TypeRegistry*>(type_registry);
+        // Issue #4936: the Evaluator owns the registry (this used to allocate an
+        // unowned one that leaked and never bumped type_registry_gen_).
+        auto* treg = static_cast<aura::core::TypeRegistry*>(ev.ensure_type_registry());
         if (!treg)
             return make_bool(false);
         auto ty = treg->lookup_type(name);
@@ -1141,7 +1140,7 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
     // Issue #2628: private for (mutate :validate).
     ObservabilityPrims::register_stats_impl(
         "mutate:validate-against-schema",
-        [&string_heap, &type_registry](std::span<const EvalValue> a) -> EvalValue {
+        [&string_heap, &ev](std::span<const EvalValue> a) -> EvalValue {
             if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
                 return make_bool(false);
             auto code_idx = as_string_idx(a[0]);
@@ -1150,10 +1149,9 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
                 return make_bool(false);
             std::string code = string_heap[code_idx];
             std::string type_name = string_heap[type_idx];
-            if (!type_registry) {
-                type_registry = new aura::core::TypeRegistry();
-            }
-            auto* treg = static_cast<aura::core::TypeRegistry*>(type_registry);
+            // Issue #4936: the Evaluator owns the registry (this used to allocate an
+            // unowned one that leaked and never bumped type_registry_gen_).
+            auto* treg = static_cast<aura::core::TypeRegistry*>(ev.ensure_type_registry());
             if (!treg)
                 return make_bool(false);
             auto ty = treg->lookup_type(type_name);

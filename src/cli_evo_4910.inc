@@ -6,19 +6,19 @@ namespace evo_cli_4910 {
 
 // ── minimal JSON (records are our own output; tolerate anything) ──
 struct J {
+    // #4936: a named member type instead of std::pair<std::string, J>.
+    // Clang instantiates the pair while J is still incomplete and rejects the
+    // vector; a forward-declared struct completed after J is fine for both
+    // compilers. Field names stay first/second so the code reads as before.
+    struct Member;
     enum class T { Null, Bool, Num, Str, Arr, Obj } t = T::Null;
     bool b = false;
     double n = 0;
     std::string s;
     std::vector<J> arr;
-    std::vector<std::pair<std::string, J>> obj;
+    std::vector<Member> obj;
     std::string raw; // source text of this value
-    [[nodiscard]] const J* get(std::string_view k) const {
-        for (const auto& [key, v] : obj)
-            if (key == k)
-                return &v;
-        return nullptr;
-    }
+    [[nodiscard]] const J* get(std::string_view k) const;
     [[nodiscard]] std::string str(std::string_view k) const {
         const J* v = get(k);
         return v && v->t == T::Str ? v->s : std::string();
@@ -28,6 +28,16 @@ struct J {
         return v && v->t == T::Num ? v->n : 0.0;
     }
 };
+struct J::Member {
+    std::string first;
+    J second;
+};
+inline const J* J::get(std::string_view k) const {
+    for (const auto& [key, v] : obj)
+        if (key == k)
+            return &v;
+    return nullptr;
+}
 
 struct Parser {
     std::string_view in;
@@ -346,7 +356,7 @@ static std::string evidence_text(const J* e) {
     if (e->t != J::T::Obj)
         return e->t == J::T::Str ? e->s : e->raw;
     // Keys sorted: a hash's field order is not the order the program wrote.
-    std::vector<const std::pair<std::string, J>*> kv;
+    std::vector<const J::Member*> kv;
     for (const auto& p : e->obj)
         kv.push_back(&p);
     std::ranges::sort(kv, {}, [](const auto* p) { return std::string_view(p->first); });

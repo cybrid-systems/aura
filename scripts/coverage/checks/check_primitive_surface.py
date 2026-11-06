@@ -50,7 +50,8 @@ ADD_RE = re.compile(r'add\(\s*"([^"]+)"')
 # Issue #2915: register_prim(add, ev, "name", ...) scaffold registrations.
 REGISTER_PRIM_RE = re.compile(r'register_prim\s*\(\s*add\s*,\s*\w+\s*,\s*"([^"]+)"')
 STATS_LIST_RE = re.compile(
-    r"kObservabilityStatsPrimitives\s*=\s*\{(.*?)\n\};",
+    # Issue #4936: constexpr std::to_array<std::string_view>({...}) form.
+    r"kObservabilityStatsPrimitives\s*=\s*(?:std::to_array<std::string_view>\(\s*)?\{(.*?)\n\}\)?;",
     re.DOTALL,
 )
 

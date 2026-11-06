@@ -1105,7 +1105,7 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         // Detect if output looks like an error message
         auto lower = norm_out;
         for (auto& c : lower)
-            c = std::tolower(static_cast<unsigned char>(c));
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         bool is_error_like = lower.find("error:") != std::string::npos ||
                              lower.find("parse error") != std::string::npos ||
                              lower.find("unbound variable") != std::string::npos ||

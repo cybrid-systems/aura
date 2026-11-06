@@ -160,6 +160,8 @@ export struct BitVecType {
 export class TypeRegistry {
 public:
     TypeRegistry();
+    TypeRegistry(const TypeRegistry&) = delete;
+    TypeRegistry& operator=(const TypeRegistry&) = delete;
     ~TypeRegistry();
 
     // ── 注册 ──
@@ -446,6 +448,7 @@ private:
         TypeRegistryLock() = default;
         TypeRegistryLock(const TypeRegistryLock&) = delete;
         TypeRegistryLock& operator=(const TypeRegistryLock&) = delete;
+        ~TypeRegistryLock() = default;
         void lock();
         void unlock();
         void lock_shared();

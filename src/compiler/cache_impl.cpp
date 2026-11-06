@@ -14,6 +14,8 @@ import std;
 extern "C" {
 void aura_ir_serialize(const void* mod, const char** out_data, size_t* out_size);
 void aura_ir_deserialize(const char* data, size_t size, void* out_mod);
+// #4936: releases a buffer from aura_ir_serialize (same TU as the allocation).
+void aura_ir_buffer_free(const char* data) noexcept;
 }
 
 namespace aura::compiler::cache {
@@ -169,56 +171,56 @@ bool write_cache(const std::string& path, const FlatAST& flat, const StringPool&
     unsigned char hdr_buf[128];
     size_t hdr_size = 0;
     cache_serialize_header(&header, hdr_buf, &hdr_size);
-    f.seekp(0);
-    f.write(reinterpret_cast<const char*>(hdr_buf), hdr_size);
+    // Issue #4936: one checked place converts sizes/offsets to the signed
+    // stream types (no narrowing, no C-style casts).
+    const auto put_bytes = [&f](const void* p, std::size_t bytes) {
+        f.write(static_cast<const char*>(p), static_cast<std::streamsize>(bytes));
+    };
+    const auto put_at = [&f, &put_bytes](std::uint64_t off, const void* p, std::size_t bytes) {
+        f.seekp(static_cast<std::streamoff>(off));
+        put_bytes(p, bytes);
+    };
+    put_at(0, hdr_buf, hdr_size);
 
     // ── Write columns ────────────────────────────────────────
-    f.seekp(tags_off);
-    f.write((const char*)tags.data(), n);
-    f.seekp(ints_off);
-    f.write((const char*)int_vals.data(), n * 8);
-    f.seekp(syms_off);
-    f.write((const char*)sym_ids.data(), n * 4);
-    f.seekp(ccpn_off);
-    f.write((const char*)child_count_per_node.data(), n * 4);
-    f.seekp(cd_off);
-    f.write((const char*)child_data.data(), child_data.size() * 4);
-    f.seekp(pb_off);
-    f.write((const char*)param_begins.data(), n * 4);
-    f.seekp(pc_off);
-    f.write((const char*)param_counts.data(), n * 4);
-    f.seekp(pd_off);
-    f.write((const char*)param_data.data(), param_data.size() * 4);
-    f.seekp(li_off);
-    f.write((const char*)lines.data(), n * 4);
-    f.seekp(co_off);
-    f.write((const char*)cols.data(), n * 4);
+    put_at(tags_off, tags.data(), n);
+    put_at(ints_off, int_vals.data(), n * 8);
+    put_at(syms_off, sym_ids.data(), n * 4);
+    put_at(ccpn_off, child_count_per_node.data(), n * 4);
+    put_at(cd_off, child_data.data(), child_data.size() * 4);
+    put_at(pb_off, param_begins.data(), n * 4);
+    put_at(pc_off, param_counts.data(), n * 4);
+    put_at(pd_off, param_data.data(), param_data.size() * 4);
+    put_at(li_off, lines.data(), n * 4);
+    put_at(co_off, cols.data(), n * 4);
     // Issue #73 Phase 2: write type_ids column.
-    f.seekp(ti_off);
-    f.write((const char*)type_ids.data(), n * 4);
+    put_at(ti_off, type_ids.data(), n * 4);
 
     // ── Write string table (v3: num_strings + offsets + data) ──
-    f.seekp(str_off);
     std::uint32_t num_strs = static_cast<std::uint32_t>(stbl.strings.size());
-    f.write(reinterpret_cast<const char*>(&num_strs), 4);
-    f.write(reinterpret_cast<const char*>(str_offsets.data()), offsets_size);
+    put_at(str_off, &num_strs, 4);
+    put_bytes(str_offsets.data(), offsets_size);
     for (auto& s : stbl.strings) {
         std::uint32_t len = static_cast<std::uint32_t>(s.size());
-        f.write(reinterpret_cast<const char*>(&len), 4);
-        f.write(s.data(), len);
+        put_bytes(&len, 4);
+        put_bytes(s.data(), len);
     }
 
     // ── IR data section — auto-serialized via P2996 reflection ─────────
     auto ir_start = f.tellp();
 
     if (ir_mod) {
+        struct IrBufferFree {
+            void operator()(const char* data) const noexcept { aura_ir_buffer_free(data); }
+        };
         const char* ir_buf_data = nullptr;
         size_t ir_buf_size = 0;
         aura_ir_serialize(ir_mod, &ir_buf_data, &ir_buf_size);
+        // #4936: owned until the end of this block, also if put_bytes throws.
+        const std::unique_ptr<const char[], IrBufferFree> ir_buf{ir_buf_data};
         auto ir_size = static_cast<std::uint32_t>(ir_buf_size);
-        f.write(reinterpret_cast<const char*>(&ir_size), sizeof(ir_size));
-        f.write(ir_buf_data, ir_buf_size);
-        delete[] ir_buf_data;
+        put_bytes(&ir_size, sizeof(ir_size));
+        put_bytes(ir_buf.get(), ir_buf_size);
     }
 
     // ── Type sig section (embedded .aura-type) ────────────────
@@ -227,8 +229,8 @@ bool write_cache(const std::string& path, const FlatAST& flat, const StringPool&
     if (sig_data && !sig_data->empty()) {
         auto sig_start = f.tellp();
         auto sig_len = static_cast<std::uint32_t>(sig_data->size());
-        f.write(reinterpret_cast<const char*>(&sig_len), sizeof(sig_len));
-        f.write(sig_data->data(), sig_data->size());
+        put_bytes(&sig_len, sizeof(sig_len));
+        put_bytes(sig_data->data(), sig_data->size());
         header.sig_offset = static_cast<std::uint64_t>(sig_start);
         header.sig_size = sig_len;
     }
@@ -236,8 +238,7 @@ bool write_cache(const std::string& path, const FlatAST& flat, const StringPool&
     // ── Rewrite header with IR + sig offsets ───────────────────
     header.ir_offset = static_cast<std::uint64_t>(ir_start);
     header.num_functions = ir_mod ? 1 : 0; // signal: 1 = has IR section, 0 = no IR
-    f.seekp(0);
-    f.write(reinterpret_cast<const char*>(&header), sizeof(header));
+    put_at(0, &header, sizeof(header));
 
     f.close();
     return true;
@@ -303,15 +304,25 @@ void setup_pointers(MappedCache& cache) {
         }
         total_children += c;
     }
-    cache.child_data_ = reinterpret_cast<const NodeId*>(nd + next_pad(total_children * 4));
+    cache.child_data_ =
+        reinterpret_cast<const NodeId*>(nd + next_pad(std::size_t{total_children} * 4));
 
     cache.param_begins_ = reinterpret_cast<const std::uint32_t*>(nd + next_pad(n * 4));
     cache.param_counts_ = reinterpret_cast<const std::uint32_t*>(nd + next_pad(n * 4));
 
+    // Issue #4936: saturate like total_children; a wrapped uint32 sum from a
+    // corrupt cache file would misplace every later column.
     std::uint32_t total_params = 0;
-    for (std::size_t i = 0; i < n; ++i)
-        total_params += cache.param_counts_[i];
-    cache.param_data_ = reinterpret_cast<const SymId*>(nd + next_pad(total_params * 4));
+    for (std::size_t i = 0; i < n; ++i) {
+        const auto c = cache.param_counts_[i];
+        if (total_params > 100000000u - c) {
+            total_params = 100000000u;
+            break;
+        }
+        total_params += c;
+    }
+    cache.param_data_ =
+        reinterpret_cast<const SymId*>(nd + next_pad(std::size_t{total_params} * 4));
 
     cache.lines_ = reinterpret_cast<const std::uint32_t*>(nd + next_pad(n * 4));
     cache.cols_ = reinterpret_cast<const std::uint32_t*>(nd + next_pad(n * 4));

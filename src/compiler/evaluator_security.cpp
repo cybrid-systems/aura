@@ -1003,6 +1003,8 @@ bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast:
                     : flag(f) {
                     flag = true;
                 }
+                RedirectGuard(const RedirectGuard&) = delete;
+                RedirectGuard& operator=(const RedirectGuard&) = delete;
                 ~RedirectGuard() { flag = false; }
             } guard{redirecting};
             return require_effect_for_node_id(req_bits, op, target_node);

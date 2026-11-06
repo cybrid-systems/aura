@@ -136,7 +136,7 @@ private:
     struct Ring {
         explicit Ring(int64_t cap)
             : mask(cap - 1)
-            , slots(new std::atomic<T>[static_cast<size_t>(cap)]) {
+            , slots(std::make_unique<std::atomic<T>[]>(static_cast<size_t>(cap))) {
             for (int64_t i = 0; i < cap; ++i)
                 slots[static_cast<size_t>(i)].store(nullptr, std::memory_order_relaxed);
         }

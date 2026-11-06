@@ -139,6 +139,10 @@ private:
 // registry, not AgentRegistry). Bounded by per-Evaluator cap. Identifier
 // retained for #3148/#3273 linters.
 struct HandoffRouteTable {
+    // Issue #4936: the process-wide instance is a static; its init must not
+    // throw (std::deque's default ctor may allocate: terminate on boot OOM).
+    HandoffRouteTable() noexcept = default;
+
     std::mutex mu;
     std::unordered_map<std::string, void*> by_hash; // Evaluator*
     std::deque<std::string> fifo;

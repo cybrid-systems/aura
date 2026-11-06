@@ -21,6 +21,7 @@ public:
     explicit OffloadQuota(core::resource_quota::ResourceQuota* quota = nullptr) noexcept
         : quota_(quota) {}
 
+    ~OffloadQuota() = default;
     OffloadQuota(const OffloadQuota&) = delete;
     OffloadQuota& operator=(const OffloadQuota&) = delete;
     OffloadQuota(OffloadQuota&&) = delete;

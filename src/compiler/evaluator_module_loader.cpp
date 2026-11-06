@@ -12,6 +12,7 @@ module;
 #include "lock_order_audit.h" // Issue #2354: Module rank
 #include "primitives_detail.h"
 #include "security_capabilities.h"
+#include "core/ownership.hh" // #4936 unique_c_ptr
 
 module aura.compiler.evaluator;
 
@@ -76,11 +77,10 @@ std::string Evaluator::resolve_module_path(const std::string& path) const {
             // TOCTOU). Then lstat the canonical path — reject if it is
             // not a regular file. Missing candidates: realpath returns
             // null (zero extra).
-            char* real = ::realpath(candidate.c_str(), nullptr);
+            const ::aura::core::unique_c_ptr<char> real{::realpath(candidate.c_str(), nullptr)};
             if (!real)
                 continue;
-            std::string out(real);
-            ::free(real);
+            std::string out(real.get());
             struct stat lst;
             if (::lstat(out.c_str(), &lst) != 0 || !S_ISREG(lst.st_mode))
                 continue;
@@ -109,9 +109,8 @@ std::string Evaluator::resolve_module_path(const std::string& path) const {
 
     // Search CWD first
     {
-        if (char* cwd = ::getcwd(nullptr, 0)) {
-            auto hit = try_load(std::string(cwd) + "/" + path);
-            ::free(cwd);
+        if (const ::aura::core::unique_c_ptr<char> cwd{::getcwd(nullptr, 0)}) {
+            auto hit = try_load(std::string(cwd.get()) + "/" + path);
             if (hit)
                 return *hit;
         }
@@ -217,10 +216,8 @@ std::vector<std::string> Evaluator::module_search_candidates(const std::string& 
         if (const auto base = module_base_dir(); !base.empty())
             add(base + "/" + rel);
     }
-    if (char* cwd = ::getcwd(nullptr, 0)) {
-        add(std::string(cwd) + "/" + rel);
-        ::free(cwd);
-    }
+    if (const ::aura::core::unique_c_ptr<char> cwd{::getcwd(nullptr, 0)})
+        add(std::string(cwd.get()) + "/" + rel);
     if (const char* env = ::getenv("AURA_PATH")) {
         std::string_view ap(env);
         while (!ap.empty()) {
@@ -499,12 +496,19 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     } sym_intern_pool_reset(*this);
     // 1. Resolve path. Active policy already produced the only path
     // the rest of this load may touch (Issue #4399).
-    auto resolved = host_path_policy_active() ? std::move(gated) : resolve_module_path(gated);
+    // Issue #4936: read the policy once; `gated` is handed over only on the
+    // policy path, and the not-found branch below must take the same path.
+    const bool host_policy = host_path_policy_active();
+    std::string resolved;
+    if (host_policy)
+        resolved.swap(gated);
+    else
+        resolved = resolve_module_path(gated);
     if (resolved.empty()) {
         const auto shown = truncate_path_for_log(path);
         last_module_load_failure_ = std::string("cannot resolve '") + std::string(shown) + "'";
         // Issue #4918: say where we looked.
-        if (!host_path_policy_active()) {
+        if (!host_policy) {
             const auto searched = module_search_candidates(gated);
             if (!searched.empty()) {
                 last_module_load_failure_ += " (searched: ";

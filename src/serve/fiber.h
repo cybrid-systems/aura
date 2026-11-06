@@ -309,7 +309,7 @@ class Fiber {
 public:
     using Func = std::function<void()>;
 
-    Fiber(Func func, size_t stack_size = 2 * 1024 * 1024);
+    Fiber(Func func, size_t stack_size = 2uz * 1024 * 1024);
     ~Fiber();
 
     // Non-copyable, movable

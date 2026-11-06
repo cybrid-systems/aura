@@ -13,6 +13,7 @@ module;
 #include "typed_mutation_audit.h"     // Issue #1892: hygiene skip audit trail
 #include <array>
 #include "reflect/node_tag_names.hh" // Issue #4345: shared NodeTag names
+#include "core/ownership.hh"         // Issue #4936: NoCopy
 
 module aura.compiler.evaluator;
 
@@ -2898,7 +2899,7 @@ void register_workspace_query_primitives(
             // Issue #2403: time shared_lock hold; composite index when :where tag set.
             const auto lock_t0 = std::chrono::steady_clock::now();
             std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-            struct QuerySharedLockTimer {
+            struct QuerySharedLockTimer : ::aura::core::NoCopy {
                 Evaluator& ev;
                 std::chrono::steady_clock::time_point t0;
                 ~QuerySharedLockTimer() {
@@ -2908,7 +2909,7 @@ void register_workspace_query_primitives(
                             .count());
                     ev.note_query_shared_lock_us(us);
                 }
-            } lock_timer{ev, lock_t0};
+            } lock_timer{{}, ev, lock_t0};
             if (a.empty() || !is_string(a[0]))
                 return mev("bad-arg", "usage: (query:by-marker marker-name [limit-int] "
                                       "[:where|:tag tag-name] [:limit N] [:as-query-result])");
@@ -3572,7 +3573,7 @@ void register_workspace_query_primitives(
             // bucket, not O(N). Lock hold is timed for Agent SLO (RAII).
             const auto lock_t0 = std::chrono::steady_clock::now();
             std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-            struct QuerySharedLockTimer {
+            struct QuerySharedLockTimer : ::aura::core::NoCopy {
                 Evaluator& ev;
                 std::chrono::steady_clock::time_point t0;
                 ~QuerySharedLockTimer() {
@@ -3582,7 +3583,7 @@ void register_workspace_query_primitives(
                             .count());
                     ev.note_query_shared_lock_us(us);
                 }
-            } lock_timer{ev, lock_t0};
+            } lock_timer{{}, ev, lock_t0};
             if (a.empty())
                 return mev("bad-arg",
                            "usage: (query:pattern expr [:include-macro-introduced [#t]]"

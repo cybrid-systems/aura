@@ -19,6 +19,7 @@
 #include "core/gc_hooks.h"       // Issue #1364
 #include "core/lifetime_pin.hh"  // Issue #3023: post-join linear_roots unpin
 #include "core/fiber_context.hh" // Issue #4716: per-fiber evaluator execution context
+#include "core/ownership.hh"     // Issue #4936: immortal<T>
 #include <unordered_map> // Issue #2726: process-wide Fiber* registry for cross-fiber cancel lookup
 
 #include <sys/mman.h>
@@ -262,7 +263,7 @@ namespace {
         std::unordered_map<std::uint64_t, Fiber*> fibers;
     };
     FiberRegistry& fiber_registry() noexcept {
-        static FiberRegistry* registry = new FiberRegistry();
+        static aura::core::immortal<FiberRegistry> registry;
         return *registry;
     }
     // Issue #2726 pins these names (check_cross_fiber_hold_budget_cancel_2726
@@ -1102,7 +1103,11 @@ bool Fiber::check_and_enforce_resume_snapshot_invariant() noexcept {
 // aura_jit_runtime.cpp).
 extern "C" void aura_set_current_fiber_id_fn(std::uint64_t (*)());
 // One-time hook installer via a static initializer.
-static int s_fiber_hook_init = (aura_set_current_fiber_id_fn(&aura_fiber_current_id), 0);
+// Issue #4936: noexcept initializer (static init must not throw).
+[[maybe_unused]] static const int s_fiber_hook_init = []() noexcept {
+    aura_set_current_fiber_id_fn(&aura_fiber_current_id);
+    return 0;
+}();
 
 Scheduler* g_scheduler = nullptr;
 
@@ -2199,7 +2204,8 @@ void Fiber::add_body_exit_hook(BodyExitHook fn, void* ctx) noexcept {
     try {
         body_exit_hooks_.emplace_back(fn, ctx);
     } catch (...) {
-        // OOM: the hook's owner still reclaims its state on teardown.
+        // [SILENCE-PRIM-#4936] OOM: the hook's owner still reclaims its
+        // state on teardown.
     }
 }
 
@@ -2566,11 +2572,11 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
         // window (the park path stays blocked).
         const bool prev_join_wait = self->join_wait_yield_allowed();
         self->set_join_wait_yield_allowed(true);
-        struct JoinWaitYieldFlag {
+        struct JoinWaitYieldFlag : ::aura::core::NoCopy {
             Fiber* f;
             bool prev;
             ~JoinWaitYieldFlag() { f->set_join_wait_yield_allowed(prev); }
-        } join_wait_flag{self, prev_join_wait};
+        } join_wait_flag{{}, self, prev_join_wait};
 
         // Wait loop: BlockingIO yield parks until target Done wakes us
         // (or we poll for timeout/cancel via Explicit yields when deadline).

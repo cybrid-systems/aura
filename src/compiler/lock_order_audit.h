@@ -486,6 +486,7 @@ public:
     ~AuditedMutexLock() { release(); }
     AuditedMutexLock(const AuditedMutexLock&) = delete;
     AuditedMutexLock& operator=(const AuditedMutexLock&) = delete;
+    AuditedMutexLock& operator=(AuditedMutexLock&&) = delete;
     AuditedMutexLock(AuditedMutexLock&& o) noexcept
         : lock_(std::move(o.lock_))
         , level_(o.level_)

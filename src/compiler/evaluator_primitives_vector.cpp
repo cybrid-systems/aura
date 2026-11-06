@@ -549,7 +549,10 @@ namespace {
                 return 0;
             if (kids.size() == 1)
                 return kids[0];
-            return ar.collision(h, std::move(kids), static_cast<std::uint32_t>(kids.size()));
+            // Issue #4936: size first; argument evaluation order is unspecified
+            // and `kids` is moved into the by-value parameter.
+            const auto kid_count = static_cast<std::uint32_t>(kids.size());
+            return ar.collision(h, std::move(kids), kid_count);
         }
         const auto idx = static_cast<unsigned>((h >> shift) & kImmMask);
         const auto bit = static_cast<std::uint32_t>(1u << idx);

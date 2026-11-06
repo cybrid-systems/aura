@@ -77,5 +77,19 @@ ExcludeHeaderFilterRegex: '.*/(build|build_asan|build_dbg|build_debug|build_rele
 
 WarningsAsErrors: ''
 
+# Issue #4936: an intentional swallow is documented with the #1669
+# [SILENCE-PRIM-#N] marker (docs/cpp-style.md F); an unmarked empty catch fails.
+CheckOptions:
+  bugprone-empty-catch.IgnoreCatchWithKeywords: '@TODO;@FIXME;SILENCE-PRIM'
+  # #4936: format strings are std::format_string (checked at compile time),
+  # so libstdc++'s runtime std::format_error path is unreachable. Counting it
+  # flags every std::format in noexcept code. Other exception types still
+  # count; stderr prints in noexcept code use aura::core::eprintln_nothrow.
+  bugprone-exception-escape.IgnoredExceptions: 'format_error'
+  # #4936 (R4): a deleted copy already suppresses the implicit moves, and a
+  # NoCopy member implicitly deletes all four; neither needs more spelling.
+  cppcoreguidelines-special-member-functions.AllowMissingMoveFunctionsWhenCopyIsDeleted: true
+  cppcoreguidelines-special-member-functions.AllowImplicitlyDeletedCopyOrMove: true
+
 # Keep this file under 200 lines for reviewer ergonomics.
 # If you need to add a check, document the WHY in a comment.

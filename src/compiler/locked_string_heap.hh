@@ -43,6 +43,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <memory_resource>
 #include <mutex>
 #include <new>
@@ -248,17 +249,16 @@ private:
             return nullptr;
         Page* page = root_[pg].load(std::memory_order_relaxed);
         if (page == nullptr) {
-            page = new Page();
+            // #4936: pages always come from the default heap resource.
+            page = std::construct_at(static_cast<Page*>(
+                std::pmr::new_delete_resource()->allocate(sizeof(Page), alignof(Page))));
             root_[pg].store(page, std::memory_order_release);
         }
         Block* b = page->blocks[blk & kPageBlockMask].load(std::memory_order_relaxed);
         if (b == nullptr) {
-            if (res_ != nullptr) {
-                void* mem = res_->allocate(sizeof(Block), alignof(Block));
-                b = new (mem) Block();
-            } else {
-                b = new Block();
-            }
+            std::pmr::memory_resource* const res = block_resource();
+            b = std::construct_at(
+                static_cast<Block*>(res->allocate(sizeof(Block), alignof(Block))));
             page->blocks[blk & kPageBlockMask].store(b, std::memory_order_release);
         }
         return b;
@@ -280,18 +280,23 @@ private:
                 // block twice (glibc "double free or corruption (!prev)"
                 // for any block holding a string past SSO, which is every
                 // heap used without a memory resource).
-                if (res_ != nullptr) {
-                    b->~Block();
-                    res_->deallocate(b, sizeof(Block), alignof(Block));
-                } else {
-                    delete b;
-                }
+                // #4936: both paths now go through one memory resource, so
+                // destroy + deallocate is the single release path.
+                std::destroy_at(b);
+                block_resource()->deallocate(b, sizeof(Block), alignof(Block));
                 page->blocks[k].store(nullptr, std::memory_order_relaxed);
             }
-            delete page;
+            std::destroy_at(page);
+            std::pmr::new_delete_resource()->deallocate(page, sizeof(Page), alignof(Page));
             root_[p].store(nullptr, std::memory_order_relaxed);
         }
         size_.store(0, std::memory_order_release);
+    }
+
+    // Blocks come from res_ when one was supplied, else from the default
+    // heap resource (what plain new/delete used to do).
+    [[nodiscard]] std::pmr::memory_resource* block_resource() const noexcept {
+        return res_ != nullptr ? res_ : std::pmr::new_delete_resource();
     }
 
     std::pmr::memory_resource* res_ = nullptr;
@@ -337,6 +342,7 @@ public:
         , mu_(m) {}
     LockedStringHeap(const LockedStringHeap&) = delete;
     LockedStringHeap& operator=(const LockedStringHeap&) = delete;
+    ~LockedStringHeap() = default;
 
     // Issue #4428: called under the lock with the minted index.
     void set_mint_hook(MintHook fn, void* ctx) noexcept {

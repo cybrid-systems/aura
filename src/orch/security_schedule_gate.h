@@ -40,6 +40,7 @@
 
 #pragma once
 
+#include "core/parse_number.hh"                    // #4936 exception-free parse
 #include "core/audit_wal_metrics.h"                // #2076 wal_off posture gauge
 #include "core/capability_model.hh"                // #2534 capability deny storm window
 #include "core/mutation_audit_wal.hh"              // audit_wal_enabled (#2076)
@@ -411,10 +412,8 @@ inline void reset_capability_deny_storm_window_for_test() noexcept {
 inline std::uint64_t resolve_capability_deny_storm_threshold() noexcept {
     const char* env = std::getenv("AURA_DENY_STORM_THRESHOLD");
     if (env && *env) {
-        try {
-            return static_cast<std::uint64_t>(std::stoull(env));
-        } catch (...) {
-        }
+        if (const auto v = aura::core::parse_leading_int<std::uint64_t>(env))
+            return *v;
     }
     return g_capability_deny_storm_threshold().load(std::memory_order_relaxed);
 }
