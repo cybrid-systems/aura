@@ -178,6 +178,7 @@ export class PrimFn {
             try {
                 ::new (static_cast<void*>(sbo_)) Decayed(*reinterpret_cast<const Decayed*>(side));
             } catch (...) {
+                // [SILENCE-PRIM-#4936] cleanup then rethrow; not a swallow.
                 reinterpret_cast<Decayed*>(side)->~Decayed();
                 throw;
             }
@@ -188,6 +189,7 @@ export class PrimFn {
             try {
                 ::new (mem) Decayed(std::forward<F>(callable));
             } catch (...) {
+                // [SILENCE-PRIM-#4936] cleanup then rethrow; not a swallow.
                 free_box(mem, alignof(Decayed));
                 throw;
             }
@@ -222,6 +224,7 @@ public:
             try {
                 other.cloner_(mem, other.heap_);
             } catch (...) {
+                // [SILENCE-PRIM-#4936] cleanup then rethrow; not a swallow.
                 free_box(mem, other.storage_align_);
                 throw;
             }
@@ -286,6 +289,7 @@ public:
             try {
                 other.cloner_(static_cast<void*>(sbo_), tmp);
             } catch (...) {
+                // [SILENCE-PRIM-#4936] cleanup then rethrow; not a swallow.
                 other.destroyer_(tmp);
                 throw;
             }
