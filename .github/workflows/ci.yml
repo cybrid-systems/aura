@@ -363,7 +363,7 @@ jobs:
       run: python3 build.py s0-metrics
 
     # Issue #4908: cross-mode consistency gate + the DX contract tests
-    # (#4899-#4919). The corpus runs under {default, STRICT=0, force-soa} x
+    # (#4899-#4919, #4937). The corpus runs under {default, STRICT=0, force-soa} x
     # {direct, --load} and fails with a diff on any stdout / rc / first-error
     # line:col split not in tests/cross_mode/allowlist.txt. The kit leg runs
     # aura-starter-kits evolve-strategy (latest main, 20 steps) on the same
