@@ -134,6 +134,9 @@ struct Entry {
 
 // Appends one line; returns the new record id ("" when off or on I/O error).
 // Cold audit write. A non-empty id is always run + '#' + sequence.
+// GCC 16 evaluates the trailing post. The Clang tidy shim
+// (cmake/clang_contract_shim.h) defines post(...) to nothing, so this
+// declarator stays a plain function there. That shim is not the GCC check.
 inline std::string log_append(const Entry& e)
     post(r : r.empty() || r.find('#') != std::string::npos) {
     if (!log_enabled())

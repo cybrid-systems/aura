@@ -35,6 +35,12 @@ inline constexpr int kQuotaPerTenantIssue = 3049;
 
 using TenantId = std::uint64_t;
 
+// bool is std::integral. On this libstdc++, std::unsigned_integral<bool> is
+// also true, while std::make_unsigned_t<bool> is undefined. Exclude bool by name.
+template <class I>
+concept DimensionIndex = (std::signed_integral<I> || std::unsigned_integral<I>) &&
+                         (!std::same_as<std::remove_cv_t<I>, bool>);
+
 // Issue #3049: admission tenant (0 = unkeyed / process-global).
 // Scheduler / orch read this (or Fiber::assigned_tenant_id) at reserve.
 // Tests set it explicitly. Soft / off never consults the map.
@@ -467,9 +473,9 @@ struct ResourceQuota {
     static constexpr std::array<std::string_view, 5> kDimensionNames{
         "memory", "fibers", "time_us", "mutations", "offload_inflight"};
 
-    template <std::integral I>
+    template <aura::core::resource_quota::DimensionIndex I>
     [[nodiscard]] static constexpr std::string_view dimension_name_at(I index) noexcept {
-        if constexpr (std::is_signed_v<I>) {
+        if constexpr (std::signed_integral<I>) {
             if (index < 0)
                 return "unknown";
         }
@@ -478,6 +484,8 @@ struct ResourceQuota {
         return kDimensionNames[static_cast<std::size_t>(index)];
     }
 
+    // Returns a view of a constexpr literal. Callers that need an owning
+    // string copy it (std::string(dim_name(d)) or string::operator+=).
     [[nodiscard]] static constexpr std::string_view dim_name(Dimension d) noexcept {
         return dimension_name_at(static_cast<std::uint8_t>(d));
     }
