@@ -24,6 +24,18 @@ is reported as an error, not worked around. `aura repl` also works
 on a pipe (one response line per input line), which is what editor/agent
 drivers use.
 
+### `mutate:rebind` when the name is not in the workspace
+
+`(mutate:rebind name code [summary])` replaces the value of a live top-level
+define. If the workspace has no define with that name, the call still returns
+`#t`: it parses `code`, adds a new top-level define, and links that define onto
+the workspace root (the same success value as a replacement). The new define is
+part of the live AST, so a later `ast:snapshot` / `ast:restore` keeps it and
+`eval-current` runs it. This is the add path (issue #165), distinct from
+`no-workspace`: defines that arrived only from a file, `-e`, or `--load` are
+not in the live AST, and rebind reports `no-workspace` until they are installed
+with `set-code` and `eval-current`.
+
 Typical loop with the evolve-strategy kit: `KIT_STEPS=1 aura repl main.aura`
 (runs one step; `train` / `val` prices stay bound), edit a function in
 `backtest.aura`, `:reload backtest.aura`, then `(evolve! 1 2 train val)` runs
