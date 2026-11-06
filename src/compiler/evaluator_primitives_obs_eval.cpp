@@ -131,7 +131,7 @@ extern "C" std::uint64_t aura_epoch_invariant_soft_fuse_heal_no_owner_total_v_re
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 // Issue #3175: diagnostic / low-frequency query: names stay compiled
 // but are not registered. SlimSurface scans add() only.
@@ -186,7 +186,7 @@ using types::make_void;
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -1108,7 +1108,7 @@ void ObservabilityPrims::register_eval_p7(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -2491,7 +2491,7 @@ void ObservabilityPrims::register_eval_p15(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -3720,7 +3720,7 @@ void ObservabilityPrims::register_eval_p23(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -4824,7 +4824,7 @@ void ObservabilityPrims::register_eval_p31(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -5621,7 +5621,7 @@ void ObservabilityPrims::register_eval_p39(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -9053,7 +9053,7 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -9951,7 +9951,7 @@ void ObservabilityPrims::register_eval_p55(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -10783,7 +10783,7 @@ void ObservabilityPrims::register_eval_p63(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -12511,7 +12511,7 @@ void ObservabilityPrims::register_eval_p71(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -13514,7 +13514,7 @@ void ObservabilityPrims::register_eval_p79(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -14096,7 +14096,7 @@ void ObservabilityPrims::register_eval_p87(PrimRegistrar add, Evaluator& ev) {}
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -16217,7 +16217,7 @@ void ObservabilityPrims::register_eval_p95(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -17407,7 +17407,7 @@ void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;

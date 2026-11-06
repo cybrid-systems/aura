@@ -111,7 +111,7 @@ extern "C" void aura_macro_hygiene_snapshot_metrics(void* metrics_ptr) noexcept;
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 using ModulePathResolver = std::function<std::string(const std::string&)>;
 
 using types::as_bool;

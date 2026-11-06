@@ -31,7 +31,7 @@ import aura.core.envframe_lifetime;
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 // Issue #3175: diagnostic / low-frequency query: names stay compiled
 // but are not registered. SlimSurface scans add() only.
