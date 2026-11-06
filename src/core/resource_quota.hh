@@ -17,7 +17,9 @@
 
 #include "core/fiber_context.hh"      // Issue #4716: fiber-local execution context
 #include "core/provenance_tracker.hh" // Issue #3630: multi_tenant_env_active arm consult
+#include <concepts>
 #include <mutex>
+#include <type_traits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -241,7 +243,7 @@ struct ResourceQuota {
         }
         if (sum > lim) {
             rejects_total.fetch_add(1, std::memory_order_relaxed);
-            return QuotaError{d, dim_name(d) + std::string(" quota exceeded"), amount, lim, u};
+            return QuotaError{d, std::string(dim_name(d)) + " quota exceeded", amount, lim, u};
         }
         return std::nullopt;
     }
@@ -308,7 +310,7 @@ struct ResourceQuota {
             }
             if (next > lim) {
                 rejects_total.fetch_add(1, std::memory_order_relaxed);
-                return QuotaError{d, dim_name(d) + std::string(" quota exceeded"), amount, lim,
+                return QuotaError{d, std::string(dim_name(d)) + " quota exceeded", amount, lim,
                                   cur};
             }
             if (counter.compare_exchange_weak(cur, next, std::memory_order_acq_rel,
@@ -404,7 +406,7 @@ struct ResourceQuota {
         time_us_used.store(0, std::memory_order_relaxed);
         mutation_used.store(0, std::memory_order_relaxed);
         offload_inflight_used.store(0, std::memory_order_relaxed);
-        std::lock_guard<std::mutex> lock(tenant_mtx_);
+        std::scoped_lock lock(tenant_mtx_);
         for (auto& [id, slot] : tenant_slots_) {
             (void)id;
             if (!slot)
@@ -461,22 +463,25 @@ struct ResourceQuota {
         agent_arena_release_total.fetch_add(1, std::memory_order_relaxed);
     }
 
-    [[nodiscard]] static std::string dim_name(Dimension d) {
-        switch (d) {
-            case Dimension::Memory:
-                return "memory";
-            case Dimension::Fibers:
-                return "fibers";
-            case Dimension::TimeUs:
-                return "time_us";
-            case Dimension::Mutations:
-                return "mutations";
-            case Dimension::OffloadInflight:
-                return "offload_inflight";
-            default:
+    // Compile-time names. Index matches Dimension. Count is "unknown".
+    static constexpr std::array<std::string_view, 5> kDimensionNames{
+        "memory", "fibers", "time_us", "mutations", "offload_inflight"};
+
+    template <std::integral I>
+    [[nodiscard]] static constexpr std::string_view dimension_name_at(I index) noexcept {
+        if constexpr (std::is_signed_v<I>) {
+            if (index < 0)
                 return "unknown";
         }
+        if (static_cast<std::make_unsigned_t<I>>(index) >= kDimensionNames.size())
+            return "unknown";
+        return kDimensionNames[static_cast<std::size_t>(index)];
     }
+
+    [[nodiscard]] static constexpr std::string_view dim_name(Dimension d) noexcept {
+        return dimension_name_at(static_cast<std::uint8_t>(d));
+    }
+    static_assert(kDimensionNames.size() == static_cast<std::size_t>(Dimension::Count));
 
     // Issue #3049: per-tenant budget. 0 = inherit process limit for that dim.
     void set_tenant_limit(TenantId tenant, Dimension d, std::uint64_t lim) noexcept {
@@ -512,7 +517,7 @@ struct ResourceQuota {
     }
 
     void clear_tenant_quotas() noexcept {
-        std::lock_guard<std::mutex> lock(tenant_mtx_);
+        std::scoped_lock lock(tenant_mtx_);
         tenant_slots_.clear();
     }
 
@@ -545,7 +550,7 @@ private:
     [[nodiscard]] TenantSlot* tenant_slot(TenantId tenant, bool create) const noexcept {
         if (tenant == 0)
             return nullptr;
-        std::lock_guard<std::mutex> lock(tenant_mtx_);
+        std::scoped_lock lock(tenant_mtx_);
         auto it = tenant_slots_.find(tenant);
         if (it != tenant_slots_.end())
             return it->second.get();
@@ -580,7 +585,7 @@ private:
             std::uint64_t sum = 0;
             if (!saturating_add(pu, amount, sum) || sum > plim) {
                 rejects_total.fetch_add(1, std::memory_order_relaxed);
-                return QuotaError{d, dim_name(d) + std::string(" quota exceeded"), amount, plim,
+                return QuotaError{d, std::string(dim_name(d)) + " quota exceeded", amount, plim,
                                   pu};
             }
         }
@@ -633,7 +638,7 @@ private:
                 if (!saturating_add(pcur, amount, pnext))
                     overflow_guards_total.fetch_add(1, std::memory_order_relaxed);
                 rejects_total.fetch_add(1, std::memory_order_relaxed);
-                return QuotaError{d, dim_name(d) + std::string(" quota exceeded"), amount, plim,
+                return QuotaError{d, std::string(dim_name(d)) + " quota exceeded", amount, plim,
                                   pcur};
             }
             if (pcounter.compare_exchange_weak(pcur, pnext, std::memory_order_acq_rel,
@@ -719,7 +724,8 @@ struct ResourceQuotaManager {
     // Format machine-readable reason for AuraError messages / agents.
     [[nodiscard]] static std::string format_reason(const QuotaError& e,
                                                    std::uint64_t mutation_id = 0) {
-        std::string msg = e.message.empty() ? (dim_name(e.dim) + " quota exceeded") : e.message;
+        std::string msg =
+            e.message.empty() ? std::string(dim_name(e.dim)) + " quota exceeded" : e.message;
         msg += " [dim=";
         msg += dim_name(e.dim);
         msg += " requested=";
@@ -736,7 +742,9 @@ struct ResourceQuotaManager {
         return msg;
     }
 
-    [[nodiscard]] static std::string dim_name(Dimension d) { return ResourceQuota::dim_name(d); }
+    [[nodiscard]] static constexpr std::string_view dim_name(Dimension d) noexcept {
+        return ResourceQuota::dim_name(d);
+    }
 
     // Check + consume; nullopt = OK. On reject, message includes provenance.
     // Issue #3049: optional tenant key (0 = process-global).
