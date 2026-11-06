@@ -6540,8 +6540,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // ── Capture old subtree source (for rollback) ────────
             // Faithful representation of the old node for rollback. The
             // unparse helper in mutate:replace-pattern is a different printer.
-            std::string old_source =
-                replace_subtree_old_source(flat, *ev.workspace_pool_, target);
+            std::string old_source = replace_subtree_old_source(flat, *ev.workspace_pool_, target);
 
             // ── Parse the new code into the workspace ─────────────
             // Issue #1697 / #1685: snapshot size; re-validate parent+slot
