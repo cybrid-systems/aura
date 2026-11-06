@@ -27,7 +27,7 @@ import aura.compiler.value;
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 using types::as_int;
 using types::as_pair_idx;
 using types::as_string_idx;

@@ -27,7 +27,7 @@ namespace aura::compiler::primitives_detail {
 
 using WorkspaceTree = aura::compiler::WorkspaceTree;
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 using DefUseSummaryStats = std::optional<std::tuple<std::uint64_t, std::uint64_t, std::uint64_t>>;
 
 // Issue #4598: reachable Define unparses, same walk ast:restore used to
@@ -283,9 +283,17 @@ template <class F> auto evo_wrap_restore_4910(F body) {
     };
 }
 
-void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
+void register_ast_primitives(PrimRegistrar add_in, Evaluator& ev,
                              std::function<void()> destroy_defuse_index,
                              std::function<DefUseSummaryStats()> defuse_summary_stats) {
+    // Issue #4936: this function rebinds the registrar around ast:restore
+    // (#4910) and then restores it. std::function_ref assignment from a
+    // lambda is deleted, and a rebound reference would not own the wrapper.
+    // `add` is therefore an owning std::function for this body only. It
+    // type-erases a copy of add_in; that copy is used before this function
+    // returns and is not stored on Evaluator. The caller's registrar still
+    // owns the original callback.
+    std::function<void(std::string, PrimFn)> add(add_in);
 
     // Issue #2918 / #2922: unparse workspace_flat_ via library (no primitive
     // re-entry). Dual-workspace: bare (current-source) is current_flat_;

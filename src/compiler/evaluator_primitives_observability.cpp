@@ -52,7 +52,7 @@ extern "C" std::uint64_t aura_scheduler_init_aura_result_err_total();
 extern "C" std::uint64_t aura_jit_guest_exception_bridge_total();
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 // Issue #918 Phase 1: explicit using-declarations (no `using namespace`).
 using types::as_bool;

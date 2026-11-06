@@ -17,7 +17,7 @@ import aura.compiler.value;
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 void register_type_and_char_primitives(PrimRegistrar add) {
     // ── Type predicates ──────────────────────────────────────────

@@ -1,7 +1,7 @@
 // Issue #909: CompilePrims — friend of Evaluator for peeled compile registration.
 struct CompilePrims {
     static aura::ast::FlatAST* pick_macro_flat(Evaluator& ev);
-    using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+    using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
     static void register_compile_p0(PrimRegistrar add, Evaluator& ev);
     static void register_compile_p1(PrimRegistrar add, Evaluator& ev);
     static void register_compile_p2(PrimRegistrar add, Evaluator& ev);
