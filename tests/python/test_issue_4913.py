@@ -9,6 +9,7 @@ and `aura soft --load f` was "unknown option '--load'".
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -22,6 +23,26 @@ sys.path.insert(0, str(ROOT / "tests" / "python"))
 from _aura_harness import AURA_BIN  # noqa: E402
 
 EVO = '(set-code "(define p 1)")\n(eval-current)\n(display (mutate:rebind "p" "2" "x"))\n(newline)\n'
+_VERSION_LINE = re.compile(r"^aura (\S+) \(([0-9a-f]{9}|unknown)\)$")
+
+
+def published_channel(build_version: str) -> str:
+    """Same rule as project_channel_4913() in src/main.cpp.
+
+    A release build version is exactly X.Y.Z (digits and two dots). That
+    string is the image tag and the aura.toml pin. dev, nightly, latest,
+    v0.1.0, and any other spelling are not a release channel and become
+    nightly. :latest is never written.
+    """
+    if (
+        build_version
+        and build_version.count(".") == 2
+        and not build_version.startswith(".")
+        and not build_version.endswith(".")
+        and all(c == "." or c.isdigit() for c in build_version)
+    ):
+        return build_version
+    return "nightly"
 
 
 def run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -68,17 +89,46 @@ class FrontDoor(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("1 passed, 0 failed", r.stdout)
 
+    def test_channel_rule_rejects_unpublished_spellings(self) -> None:
+        for bad in (
+            "",
+            "dev",
+            "nightly",
+            "latest",
+            "v0.1.0",
+            "0.1",
+            "0.1.0.0",
+            ".1.2",
+            "1.2.",
+            "0.1.0-rc1",
+            "1.2.a",
+        ):
+            self.assertEqual(published_channel(bad), "nightly", bad)
+        self.assertEqual(published_channel("0.1.0"), "0.1.0")
+        self.assertEqual(published_channel("1.2.3"), "1.2.3")
+
     def test_ci_image_is_a_published_channel(self) -> None:
-        # `:latest` exists only after a release; a dev/nightly build pins
-        # `:nightly` (pushed on every main build) in both ci.yml and aura.toml.
+        # The tag is this binary's own release channel, not a hardcoded
+        # nightly and not :latest. A 0.1.0 build writes :0.1.0; dev/nightly
+        # writes :nightly. The registry is not queried: dist runs this test
+        # before that tag is published.
+        ver = run(["--version"], self.d)
+        self.assertEqual(ver.returncode, 0, ver.stderr)
+        line = ver.stdout.strip().splitlines()[-1]
+        matched = _VERSION_LINE.fullmatch(line)
+        self.assertIsNotNone(matched, line)
+        channel = published_channel(matched.group(1))
+        self.assertRegex(channel, r"^(nightly|\d+\.\d+\.\d+)$")
+        other = "0.1.0" if channel == "nightly" else "nightly"
         for tpl in ("app", "evolve", "agent"):
             p = self.new(tpl, f"c-{tpl}")
             ci = (p / ".github/workflows/ci.yml").read_text()
             toml = (p / "aura.toml").read_text()
             self.assertNotIn("{{", ci + toml)
             self.assertNotIn(":latest", ci)
-            self.assertIn("image: ghcr.io/cybrid-systems/aura:nightly\n", ci)
-            self.assertIn('[dependencies]\naura = "nightly"\n', toml)
+            self.assertNotIn(f"ghcr.io/cybrid-systems/aura:{other}\n", ci)
+            self.assertIn(f"image: ghcr.io/cybrid-systems/aura:{channel}\n", ci)
+            self.assertIn(f'[dependencies]\naura = "{channel}"\n', toml)
             r = run(["run", "--quiet"], p)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
