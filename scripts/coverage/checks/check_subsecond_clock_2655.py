@@ -35,7 +35,9 @@ def main() -> int:
 
     misc = _read("src/compiler/evaluator_primitives_misc.cpp")
     builtins = _read("src/compiler/evaluator_primitives_builtins.cpp")
-    macro = _read("src/compiler/macro_expansion.cpp")
+    # #4959 moved the hygienic builtins list out of macro_expansion.cpp into
+    # hygiene_builtins.hh; accept either home so the row follows the code.
+    macro = _read("src/compiler/macro_expansion.cpp") + _read("src/compiler/hygiene_builtins.hh")
     dt = _read("lib/std/datetime.aura")
     test = _read("tests/compiler/test_subsecond_clock.cpp")
     cmake = _read("CMakeLists.txt")
