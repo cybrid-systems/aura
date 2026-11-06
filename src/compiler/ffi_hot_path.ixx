@@ -2,6 +2,7 @@
 // Real batch dispatch: see ffi_hot_path.hh (header form used by TUs / tests).
 
 module;
+#include "compiler/ffi_addr.hh"
 
 export module aura.compiler.ffi_hot_path;
 
@@ -57,11 +58,11 @@ struct FFIBatchHotPath {
                 return -1;
             if (cached_abi == RenderFfiAbi::BatchArgs) {
                 ++g_ffi_hot_path_stats.invoke_total;
-                return reinterpret_cast<BatchRenderFn>(cached_func_ptr)(args.data(), args.size());
+                return aura::compiler::fn_from_void<BatchRenderFn>(cached_func_ptr)(args.data(), args.size());
             }
             if (cached_abi == RenderFfiAbi::Nullary) {
                 ++g_ffi_hot_path_stats.invoke_total;
-                reinterpret_cast<NullaryFn>(cached_func_ptr)();
+                aura::compiler::fn_from_void<NullaryFn>(cached_func_ptr)();
                 return 0;
             }
             ++g_ffi_hot_path_stats.invoke_skip_total;
@@ -76,11 +77,11 @@ struct FFIBatchHotPath {
             return -1;
         if (abi == RenderFfiAbi::BatchArgs) {
             ++g_ffi_hot_path_stats.invoke_total;
-            return reinterpret_cast<BatchRenderFn>(resolved_fn)(args.data(), args.size());
+            return aura::compiler::fn_from_void<BatchRenderFn>(resolved_fn)(args.data(), args.size());
         }
         if (abi == RenderFfiAbi::Nullary) {
             ++g_ffi_hot_path_stats.invoke_total;
-            reinterpret_cast<NullaryFn>(resolved_fn)();
+            aura::compiler::fn_from_void<NullaryFn>(resolved_fn)();
             return 0;
         }
         ++g_ffi_hot_path_stats.invoke_skip_total;
