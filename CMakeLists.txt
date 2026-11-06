@@ -1669,6 +1669,8 @@ aura_add_issue_test(test_walk_runtime)
 aura_add_issue_test(test_prim_registrar_ref)
 # Issue #4936: replace-subtree capture walk and rollback printer actually run.
 aura_add_issue_test(test_replace_subtree_capture)
+# Issue #4936: Evaluator boot and mutate:replace-subtree itself run.
+aura_add_issue_test(test_boot_replace_subtree)
 target_include_directories(test_opcode_reflect PRIVATE src)
 target_compile_options(test_opcode_reflect PRIVATE ${AURA_REFLECTION_FLAG} -Wall
                        -Wno-sign-compare -Wno-unused-local-typedefs)
