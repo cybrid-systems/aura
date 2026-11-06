@@ -1370,7 +1370,7 @@ static void run_604_arena_auto_compact_defrag_fiber_safepoint() {
         constexpr int k_iters = 40;
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
-                std::lock_guard<std::mutex> lk(eval_mtx);
+                std::scoped_lock<std::mutex> lk(eval_mtx);
                 (void)cs.eval("(mutate:request-gc-safepoint)");
                 auto r = cs.eval("(fib 6)");
                 if (r && aura::compiler::types::is_int(*r) &&
@@ -1465,7 +1465,7 @@ static void run_642_arena_auto_compaction_stats_companion() {
         constexpr int k_iters = 4;
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
-                std::lock_guard<std::mutex> lk(eval_mtx);
+                std::scoped_lock<std::mutex> lk(eval_mtx);
                 auto r = cs.eval("(engine:metrics \"query:arena-auto-compaction-stats\")");
                 if (r.has_value())
                     ok_count.fetch_add(1, std::memory_order_relaxed);
@@ -1552,7 +1552,7 @@ static void run_685_arena_auto_compact_defrag_shape_synergy() {
         constexpr int k_iters = 25;
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
-                std::lock_guard<std::mutex> lk(eval_mtx);
+                std::scoped_lock<std::mutex> lk(eval_mtx);
                 (void)cs.eval("(mutate:request-gc-safepoint)");
                 auto r = cs.eval("(fact 3)");
                 if (r && aura::compiler::types::is_int(*r) &&

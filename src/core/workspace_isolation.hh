@@ -179,7 +179,7 @@ struct WorkspaceIsolationPolicy {
 
     void set_current_tenant(TenantId id, std::string_view name = {},
                             bool allow_cross = false) noexcept {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         current.id = id;
         current.allow_cross_tenant = allow_cross;
         if (!name.empty()) {
@@ -201,12 +201,12 @@ struct WorkspaceIsolationPolicy {
     }
 
     void set_allow_cross_tenant(bool v) noexcept {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         current.allow_cross_tenant = v;
     }
 
     void set_strict_sandbox_linked(bool v) noexcept {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         strict_sandbox_linked = v;
     }
 
@@ -253,7 +253,7 @@ struct WorkspaceIsolationPolicy {
         // check; mint_principal stays 0 on Soft rows.
         install_cross_grant_ta_lost_hook();
         if (reg.sandbox_mode.load(std::memory_order_acquire) == EffectSandboxMode::Off) {
-            std::lock_guard<std::mutex> lock(mtx);
+            std::scoped_lock<std::mutex> lock(mtx);
             CrossTenantKey key{from, to};
             auto& row = cross_grants[key];
             row.effect_bits = static_cast<std::uint16_t>(row.effect_bits | effect_bits);
@@ -262,8 +262,8 @@ struct WorkspaceIsolationPolicy {
                 1, std::memory_order_relaxed);
             return;
         }
-        std::lock_guard<std::mutex> isolation_lock(mtx);
-        std::lock_guard<std::mutex> registry_lock(reg.mtx);
+        std::scoped_lock<std::mutex> isolation_lock(mtx);
+        std::scoped_lock<std::mutex> registry_lock(reg.mtx);
         TenantId mint_principal = 0;
         if (!try_grant_cross_tenant_privileged(to, effect_bits, caller_principal, reg,
                                                &mint_principal))
@@ -352,7 +352,7 @@ struct WorkspaceIsolationPolicy {
     }
 
     void revoke_cross_tenant(TenantId from, TenantId to) noexcept {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         cross_grants.erase(CrossTenantKey{from, to});
     }
 
@@ -368,7 +368,7 @@ struct WorkspaceIsolationPolicy {
         // (AC2: TA-revoke SSOT literally calls revoke_cross_tenant).
         std::vector<CrossTenantKey> doomed;
         {
-            std::lock_guard<std::mutex> lock(mtx);
+            std::scoped_lock<std::mutex> lock(mtx);
             doomed.reserve(cross_grants.size());
             for (const auto& kv : cross_grants) {
                 if (kv.second.mint_principal == mint)
@@ -425,7 +425,7 @@ struct WorkspaceIsolationPolicy {
         using ::aura::core::capability::g_capability_registry;
         using ::aura::core::capability::has_effect;
         auto& reg = g_capability_registry();
-        std::lock_guard<std::mutex> registry_lock(reg.mtx);
+        std::scoped_lock<std::mutex> registry_lock(reg.mtx);
         // Issue #4440: a retain-expired minter no longer holds TenantAdmin.
         // Same predicate as the mint fence. Erase on a miss (existing path).
         if (has_effect(reg.effects_effective_for_locked(mint, /*caller_mid=*/0),
@@ -443,7 +443,7 @@ struct WorkspaceIsolationPolicy {
     void sweep_soft_era_cross_grants() noexcept {
         std::vector<CrossTenantKey> doomed;
         {
-            std::lock_guard<std::mutex> lock(mtx);
+            std::scoped_lock<std::mutex> lock(mtx);
             doomed.reserve(cross_grants.size());
             for (const auto& kv : cross_grants) {
                 if (kv.second.mint_principal == 0)
@@ -665,7 +665,7 @@ struct WorkspaceIsolationPolicy {
         bool cap_deny = false;
 
         {
-            std::lock_guard<std::mutex> lock(mtx);
+            std::scoped_lock<std::mutex> lock(mtx);
             ++boundary_checks;
 
             const bool strict = sandbox_strict || strict_sandbox_linked;
@@ -775,7 +775,7 @@ struct WorkspaceIsolationPolicy {
     }
 
     void clear_for_test() noexcept {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         current = {};
         current_name_owned.clear();
         cross_grants.clear();

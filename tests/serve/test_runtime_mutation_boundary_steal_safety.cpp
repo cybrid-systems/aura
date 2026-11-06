@@ -98,7 +98,7 @@ bool test_inner_guard_yield_steal_deferred() {
                     aura_evaluator_test_pop_mutation_checkpoint();
                 }
                 if (aura::serve::g_current_fiber) {
-                    std::lock_guard lock(mtx);
+                    std::scoped_lock lock(mtx);
                     deferred_total.fetch_add(
                         aura::serve::g_current_fiber->steal_deferred_mutation_boundary_count());
                 }
@@ -145,7 +145,7 @@ bool test_outermost_mutation_boundary_steal_allowed() {
                     Fiber::yield(YieldReason::MutationBoundary);
                 }
                 if (aura::serve::g_current_fiber) {
-                    std::lock_guard lock(mtx);
+                    std::scoped_lock lock(mtx);
                     steal_success_total.fetch_add(
                         aura::serve::g_current_fiber->steal_success_count());
                 }

@@ -32,6 +32,7 @@
 #ifndef AURA_COMPILER_TENANT_EXEC_FS_JAIL_HH
 #define AURA_COMPILER_TENANT_EXEC_FS_JAIL_HH
 
+#include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
@@ -176,13 +177,13 @@ namespace tenant_exec_detail {
     }
 
     [[nodiscard]] inline std::string readlink_fd(int fd) {
-        char buf[4096];
+        std::array<char, 4096> buf{};
         const std::string link = "/proc/self/fd/" + std::to_string(fd);
-        const ssize_t n = ::readlink(link.c_str(), buf, sizeof buf - 1);
-        if (n < 0 || n >= static_cast<ssize_t>(sizeof buf - 1))
+        const ssize_t n = ::readlink(link.c_str(), buf.data(), buf.size() - 1);
+        if (n < 0 || n >= static_cast<ssize_t>(buf.size() - 1))
             return {};
-        buf[n] = '\0';
-        std::string s(buf, static_cast<std::size_t>(n));
+        buf[static_cast<std::size_t>(n)] = '\0';
+        std::string s(buf.data(), static_cast<std::size_t>(n));
         const std::string deleted = " (deleted)";
         if (s.size() > deleted.size() &&
             s.compare(s.size() - deleted.size(), deleted.size(), deleted) == 0)
@@ -205,22 +206,22 @@ namespace tenant_exec_detail {
         out.clear();
         if (addr == 0)
             return false;
-        char buf[256];
-        for (int off = 0; off < 4096; off += static_cast<int>(sizeof buf)) {
+        std::array<char, 256> buf{};
+        for (int off = 0; off < 4096; off += static_cast<int>(buf.size())) {
             iovec local{};
-            local.iov_base = buf;
-            local.iov_len = sizeof buf;
+            local.iov_base = buf.data();
+            local.iov_len = buf.size();
             iovec remote{};
             remote.iov_base = reinterpret_cast<void*>(static_cast<std::uintptr_t>(addr) +
                                                       static_cast<std::uintptr_t>(off));
-            remote.iov_len = sizeof buf;
+            remote.iov_len = buf.size();
             const ssize_t n = ::process_vm_readv(pid, &local, 1, &remote, 1, 0);
             if (n <= 0)
                 return false;
             for (ssize_t i = 0; i < n; ++i) {
-                if (buf[i] == '\0')
+                if (buf[static_cast<std::size_t>(i)] == '\0')
                     return true;
-                out.push_back(buf[i]);
+                out.push_back(buf[static_cast<std::size_t>(i)]);
             }
         }
         return false;
@@ -802,11 +803,11 @@ inline int tenant_exec_jail_reap(pid_t pid, int sock, int stdout_fd, std::string
                 handle_stat(notify, req, jail_a, jail_b);
         }
         if (out_i >= 0 && (pf[out_i].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
-            char buf[4096];
-            const ssize_t n = ::read(stdout_fd, buf, sizeof buf);
+            std::array<char, 4096> buf{};
+            const ssize_t n = ::read(stdout_fd, buf.data(), buf.size());
             if (n > 0) {
                 if (out != nullptr)
-                    out->append(buf, static_cast<std::size_t>(n));
+                    out->append(buf.data(), static_cast<std::size_t>(n));
             } else if (n < 0 && errno == EINTR) {
                 // keep reading
             } else {
@@ -827,11 +828,11 @@ inline int tenant_exec_jail_reap(pid_t pid, int sock, int stdout_fd, std::string
             break;
     }
     if (stdout_fd >= 0) {
-        char buf[4096];
+        std::array<char, 4096> buf{};
         ssize_t n = 0;
-        while (stdout_open && (n = ::read(stdout_fd, buf, sizeof buf)) > 0) {
+        while (stdout_open && (n = ::read(stdout_fd, buf.data(), buf.size())) > 0) {
             if (out != nullptr)
-                out->append(buf, static_cast<std::size_t>(n));
+                out->append(buf.data(), static_cast<std::size_t>(n));
         }
         ::close(stdout_fd);
     }

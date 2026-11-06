@@ -623,7 +623,7 @@ static AotState g_aot_default_state; // key = nullptr (backward-compat global)
 static AotState& aot_state_for(void* eval_ptr) {
     if (!eval_ptr)
         return g_aot_default_state;
-    std::lock_guard<std::mutex> lock(g_aot_state_mtx);
+    std::scoped_lock<std::mutex> lock(g_aot_state_mtx);
     auto& slot = g_aot_state_map[eval_ptr];
     if (!slot) {
         slot = std::make_unique<AotState>();
@@ -864,13 +864,13 @@ extern "C" void aura_cleanup_aot_state(void* eval_ptr) {
     // before they can observe the dropped AotState entry (the
     // AotState pointer itself is just a thin handle; the live
     // data is in the map + slots which are already gone).
-    std::lock_guard<std::mutex> lock(g_aot_state_mtx);
+    std::scoped_lock<std::mutex> lock(g_aot_state_mtx);
     if (g_aot_state_map.erase(eval_ptr) > 0 && aot_metrics())
         aot_metrics()->aot_per_eval_state_clears.fetch_add(1, std::memory_order_relaxed);
 }
 
 static std::uint64_t aot_state_map_size_impl(void) {
-    std::lock_guard<std::mutex> lock(g_aot_state_mtx);
+    std::scoped_lock<std::mutex> lock(g_aot_state_mtx);
     return static_cast<std::uint64_t>(g_aot_state_map.size());
 }
 
@@ -1216,7 +1216,7 @@ std::atomic<std::uint64_t> g_production_dirty_ring_popped_total{0};
 
 bool production_dirty_candidate_iter(void* /*userdata*/, const char** out_name,
                                      std::uint64_t* out_region, bool* out_from_closure_capture) {
-    std::lock_guard<std::mutex> lock(g_production_dirty_ring_mtx);
+    std::scoped_lock<std::mutex> lock(g_production_dirty_ring_mtx);
     if (g_production_dirty_ring_head == g_production_dirty_ring_tail)
         return false;
     const auto& e = g_production_dirty_ring[g_production_dirty_ring_head];
@@ -1233,7 +1233,7 @@ extern "C" int aura_production_dirty_ring_push(const char* name, std::uint64_t r
                                                int from_closure_capture) {
     if (!name || !*name)
         return 0;
-    std::lock_guard<std::mutex> lock(g_production_dirty_ring_mtx);
+    std::scoped_lock<std::mutex> lock(g_production_dirty_ring_mtx);
     const auto next_tail = (g_production_dirty_ring_tail + 1) % kProductionDirtyRingCap;
     if (next_tail == g_production_dirty_ring_head) {
         // Full — drop oldest to keep freshest candidates.
@@ -1252,7 +1252,7 @@ extern "C" int aura_production_dirty_ring_push(const char* name, std::uint64_t r
 }
 
 extern "C" void aura_production_dirty_ring_reset_for_test(void) {
-    std::lock_guard<std::mutex> lock(g_production_dirty_ring_mtx);
+    std::scoped_lock<std::mutex> lock(g_production_dirty_ring_mtx);
     g_production_dirty_ring_head = 0;
     g_production_dirty_ring_tail = 0;
     g_production_dirty_ring_pushed_total.store(0, std::memory_order_relaxed);
@@ -1270,7 +1270,7 @@ extern "C" std::uint64_t aura_production_dirty_ring_popped_total(void) {
     return g_production_dirty_ring_popped_total.load(std::memory_order_relaxed);
 }
 extern "C" std::uint64_t aura_production_dirty_ring_depth(void) {
-    std::lock_guard<std::mutex> lock(g_production_dirty_ring_mtx);
+    std::scoped_lock<std::mutex> lock(g_production_dirty_ring_mtx);
     if (g_production_dirty_ring_tail >= g_production_dirty_ring_head)
         return g_production_dirty_ring_tail - g_production_dirty_ring_head;
     return kProductionDirtyRingCap - (g_production_dirty_ring_head - g_production_dirty_ring_tail);
@@ -1280,7 +1280,7 @@ extern "C" std::uint64_t aura_production_dirty_ring_depth(void) {
 // (dropped_total, not popped_total) so Agents can tell trim from reemit
 // consume. keep==0 empties the ring. Soft callers see an empty ring.
 extern "C" void aura_production_dirty_ring_trim_to(std::uint64_t keep) {
-    std::lock_guard<std::mutex> lock(g_production_dirty_ring_mtx);
+    std::scoped_lock<std::mutex> lock(g_production_dirty_ring_mtx);
     auto depth = [&]() -> std::uint64_t {
         if (g_production_dirty_ring_tail >= g_production_dirty_ring_head)
             return g_production_dirty_ring_tail - g_production_dirty_ring_head;
@@ -1320,7 +1320,7 @@ extern "C" void aura_set_aot_emit_fn(aura_aot_emit_fn_t fn, void* userdata) {
 // declaration-before-use under -Werror).
 extern "C" std::uint32_t
 aura_get_or_preserve_stable_func_id_for_eval(void* eval_ptr, const char* name, int* out_preserved) {
-    std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+    std::scoped_lock<std::mutex> lock(g_stable_func_id_mtx);
     int preserved = 0;
     const auto id = preserve_stable_func_id_for_eval_locked(eval_ptr, name, &preserved);
     aura::compiler::hot_update_registry().on_stable_func_id_preserve(preserved != 0);
@@ -1342,7 +1342,7 @@ extern "C" std::uint32_t aura_lookup_stable_func_id(const char* name) {
     void* eval_owner = aura_aot_get_reemit_owner_eval();
     if (!eval_owner)
         eval_owner = aura_aot_get_register_owner_eval();
-    std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+    std::scoped_lock<std::mutex> lock(g_stable_func_id_mtx);
     return lookup_stable_func_id_for_eval_locked(eval_owner, name);
 }
 
@@ -1353,7 +1353,7 @@ extern "C" std::uint64_t aura_lookup_stable_func_id_epoch(const char* name) {
     void* eval_owner = aura_aot_get_reemit_owner_eval();
     if (!eval_owner)
         eval_owner = aura_aot_get_register_owner_eval();
-    std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+    std::scoped_lock<std::mutex> lock(g_stable_func_id_mtx);
     return lookup_stable_func_id_epoch_for_eval_locked(eval_owner, name);
 }
 
@@ -1366,27 +1366,27 @@ extern "C" std::uint64_t aura_lookup_stable_func_id_recycle_serial(const char* n
     void* eval_owner = aura_aot_get_reemit_owner_eval();
     if (!eval_owner)
         eval_owner = aura_aot_get_register_owner_eval();
-    std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+    std::scoped_lock<std::mutex> lock(g_stable_func_id_mtx);
     return lookup_stable_func_id_recycle_serial_for_eval_locked(eval_owner, name);
 }
 
 extern "C" std::uint32_t aura_lookup_stable_func_id_for_eval(void* eval_ptr, const char* name) {
-    std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+    std::scoped_lock<std::mutex> lock(g_stable_func_id_mtx);
     return lookup_stable_func_id_for_eval_locked(eval_ptr, name);
 }
 
 extern "C" std::uint64_t aura_stable_func_id_map_size(void) {
-    std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+    std::scoped_lock<std::mutex> lock(g_stable_func_id_mtx);
     return stable_func_id_map_size_locked();
 }
 
 extern "C" void aura_clear_stable_func_id_map(void) {
-    std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+    std::scoped_lock<std::mutex> lock(g_stable_func_id_mtx);
     clear_stable_func_id_map_all_locked();
 }
 
 extern "C" void aura_clear_stable_func_id_map_for_eval(void* eval_ptr) {
-    std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+    std::scoped_lock<std::mutex> lock(g_stable_func_id_mtx);
     clear_stable_func_id_map_for_eval_locked(eval_ptr);
 }
 
@@ -1590,7 +1590,7 @@ void commit_func_table_swap() {
         // the process table epoch.
         std::vector<std::string> staged_names;
         {
-            std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+            std::scoped_lock<std::mutex> lock(g_stable_func_id_mtx);
             for (unsigned i = 0; i <= g_aot_staging_hi && i < kMaxAotFuncs; ++i) {
                 if (!g_aot_staging[i].written)
                     continue;
@@ -1698,7 +1698,7 @@ static std::vector<void*> g_aot_staged_old_handles;
 static void stage_old_so_for_deferred_close(void* h) noexcept {
     if (!h)
         return;
-    std::lock_guard<std::mutex> lock(g_aot_staged_old_mtx);
+    std::scoped_lock<std::mutex> lock(g_aot_staged_old_mtx);
     g_aot_staged_old_handles.push_back(h);
     g_aura_reload_old_so_pending.store(g_aot_staged_old_handles.size(), std::memory_order_relaxed);
     g_aura_reload_old_so_staged_total.fetch_add(1, std::memory_order_relaxed);
@@ -1709,7 +1709,7 @@ extern "C" void aura_force_drain_old_so(void) {
         return;
     std::vector<void*> to_close;
     {
-        std::lock_guard<std::mutex> lock(g_aot_staged_old_mtx);
+        std::scoped_lock<std::mutex> lock(g_aot_staged_old_mtx);
         to_close.swap(g_aot_staged_old_handles);
         g_aura_reload_old_so_pending.store(0, std::memory_order_relaxed);
     }
@@ -1876,7 +1876,7 @@ extern "C" bool aura_is_current_workspace_eval(void* eval_ptr) noexcept;
 extern "C" bool aura_is_current_workspace_eval(void* eval_ptr) noexcept {
     if (eval_ptr == nullptr)
         return true; // process-default AotState is always current
-    std::lock_guard<std::mutex> lock(g_aot_state_mtx);
+    std::scoped_lock<std::mutex> lock(g_aot_state_mtx);
     // Issue #2178 / #2165: empty map → first-touch Evaluator is allowed (MVP
     // single-workspace). Only reject when another eval_ptr is already registered
     // (true cross-workspace). aot_state_for() will insert on first use.
@@ -2598,7 +2598,7 @@ extern "C" void aura_aot_soft_stale_peer_slots_for_name(const char* name, void* 
         return;
     if (aura_aot_state_map_size() <= 1)
         return;
-    std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+    std::scoped_lock<std::mutex> lock(g_stable_func_id_mtx);
     const auto want = reinterpret_cast<std::uintptr_t>(owner);
     // #4936: every foreign slot is marked; map order does not matter.
     for (const auto& inner : g_eval_to_stable_func_id | std::views::values) {
@@ -2711,7 +2711,7 @@ extern "C" void aura_aot_mark_peer_jit_name_soft_stale(const char* name) {
         return; // no multi-eval live → skip fanout (zero extra work)
     const std::uint64_t h = peer_jit_name_hash(name);
     {
-        std::lock_guard<std::mutex> lock(g_peer_jit_name_soft_stale_mtx);
+        std::scoped_lock<std::mutex> lock(g_peer_jit_name_soft_stale_mtx);
         for (unsigned i = 0; i < kPeerJitNameSoftStaleCap; ++i) {
             auto& slot = g_peer_jit_name_soft_stale[(h + i) % kPeerJitNameSoftStaleCap];
             const std::uint64_t cur = slot.name_hash.load(std::memory_order_acquire);
@@ -2755,7 +2755,7 @@ extern "C" void aura_aot_clear_peer_jit_name_soft_stale(const char* name) {
     if (g_peer_jit_name_soft_stale_live.load(std::memory_order_acquire) == 0)
         return;
     const std::uint64_t h = peer_jit_name_hash(name);
-    std::lock_guard<std::mutex> lock(g_peer_jit_name_soft_stale_mtx);
+    std::scoped_lock<std::mutex> lock(g_peer_jit_name_soft_stale_mtx);
     for (unsigned i = 0; i < kPeerJitNameSoftStaleCap; ++i) {
         auto& slot = g_peer_jit_name_soft_stale[(h + i) % kPeerJitNameSoftStaleCap];
         const std::uint64_t cur = slot.name_hash.load(std::memory_order_acquire);
@@ -2820,7 +2820,7 @@ extern "C" void aura_aot_mark_peer_ir_name_soft_stale(const char* name) {
     if (aura_aot_state_map_size() <= 1)
         return;
     const std::uint64_t h = peer_jit_name_hash(name);
-    std::lock_guard<std::mutex> lock(g_peer_ir_name_soft_stale_mtx);
+    std::scoped_lock<std::mutex> lock(g_peer_ir_name_soft_stale_mtx);
     for (unsigned i = 0; i < kPeerIrNameSoftStaleCap; ++i) {
         auto& slot = g_peer_ir_name_soft_stale[(h + i) % kPeerIrNameSoftStaleCap];
         const std::uint64_t cur = slot.name_hash.load(std::memory_order_acquire);
@@ -3257,7 +3257,7 @@ extern "C" std::uint64_t aura_reflect_hygiene_macro_reject_total(void) {
 extern "C" int aura_post_steal_aot_revalidate(void* ev_ptr, std::uint64_t resume_bridge_epoch) {
     AotState* st = nullptr;
     if (ev_ptr) {
-        std::lock_guard<std::mutex> lock(g_aot_state_mtx);
+        std::scoped_lock<std::mutex> lock(g_aot_state_mtx);
         auto it = g_aot_state_map.find(ev_ptr);
         if (it != g_aot_state_map.end())
             st = it->second.get();
@@ -4136,7 +4136,7 @@ static bool aot_reload_fail_is_auto_retryable(AotReloadFail reason) noexcept {
 static bool aura_reload_aot_module_for_eval_once(void* eval_ptr, const char* path,
                                                  std::uint64_t version) {
     // Serialize concurrent reloads so staging state is single-writer.
-    std::lock_guard<std::mutex> reload_lock(g_aot_reload_mtx);
+    std::scoped_lock<std::mutex> reload_lock(g_aot_reload_mtx);
 
     // Issue #2093: clear last-fail at the start of every attempt so
     // a failure path that exits without setting last-fail (e.g. the
@@ -5274,7 +5274,7 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
         if (filter_by_eval) {
             bool foreign_owned = false;
             {
-                std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+                std::scoped_lock<std::mutex> lock(g_stable_func_id_mtx);
                 // #4936: an any-of test; map order does not matter.
                 for (const auto& inner : g_eval_to_stable_func_id | std::views::values) {
                     auto it = inner.find(name);
@@ -5410,7 +5410,7 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
                 int preserved = 0;
                 std::uint32_t sid = 0;
                 {
-                    std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+                    std::scoped_lock<std::mutex> lock(g_stable_func_id_mtx);
                     // Issue #2670: reemit path uses reemit-owner eval key (or
                     // register-owner fallback) so multi-eval reemit preserves
                     // per-eval sids.
@@ -5438,7 +5438,7 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
             int preserved = 0;
             std::uint32_t sid = 0;
             {
-                std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+                std::scoped_lock<std::mutex> lock(g_stable_func_id_mtx);
                 // Issue #2670: same owner key as host-emit path.
                 sid = preserve_stable_func_id_for_eval_locked(
                     aura_aot_get_reemit_owner_eval() ? aura_aot_get_reemit_owner_eval()
@@ -5461,7 +5461,7 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
             int preserved = 0;
             std::uint32_t sid = 0;
             {
-                std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+                std::scoped_lock<std::mutex> lock(g_stable_func_id_mtx);
                 sid = preserve_stable_func_id_for_eval_locked(
                     aura_aot_get_reemit_owner_eval() ? aura_aot_get_reemit_owner_eval()
                                                      : aura_aot_get_register_owner_eval(),
@@ -6831,13 +6831,13 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
     // emit:move-int / emit:linear under ASAN when the LLVM link
     // failed on missing linear-epoch symbols.
     std::string src(source);
-    char exe_buf[4096];
+    std::array<char, 4096> exe_buf{};
     std::string aura_exe = "./build/aura";
     {
-        ssize_t n = ::readlink("/proc/self/exe", exe_buf, sizeof(exe_buf) - 1);
+        ssize_t n = ::readlink("/proc/self/exe", exe_buf.data(), exe_buf.size() - 1);
         if (n > 0) {
-            exe_buf[n] = '\0';
-            aura_exe.assign(exe_buf, static_cast<std::size_t>(n));
+            exe_buf[static_cast<std::size_t>(n)] = '\0';
+            aura_exe.assign(exe_buf.data(), static_cast<std::size_t>(n));
         }
     }
     // Single-quote escape for the shell: ' -> '\''
@@ -6852,10 +6852,10 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
     std::string cmd = "echo '" + sh_src + "' | " + aura_exe + " 2>/dev/null | head -1";
     std::string result;
     if (const ::aura::core::unique_pipe pipe{::popen(cmd.c_str(), "r")}) {
-        char buf[4096];
+        std::array<char, 4096> buf{};
         std::string line;
-        while (::fgets(buf, sizeof(buf), pipe.get()))
-            line += buf;
+        while (::fgets(buf.data(), static_cast<int>(buf.size()), pipe.get()))
+            line += buf.data();
         if (!line.empty())
             result = line;
     }

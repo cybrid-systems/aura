@@ -129,7 +129,7 @@ namespace detail {
 // Register (or refresh) a file; returns its id (>= 1).
 export inline std::uint32_t register_source_file(std::string path, std::string content) {
     auto& table = detail::source_file_table();
-    const std::lock_guard lock(table.mu);
+    const std::scoped_lock lock(table.mu);
     for (std::size_t idx = 0; idx < table.files.size(); ++idx) {
         if (table.files[idx].path == path) {
             table.files[idx].content = std::move(content);
@@ -143,13 +143,13 @@ export inline std::uint32_t register_source_file(std::string path, std::string c
 // The entry program: locations with file_id 0 are shown in this file.
 export inline void set_entry_source_file(std::uint32_t file_id) {
     auto& table = detail::source_file_table();
-    const std::lock_guard lock(table.mu);
+    const std::scoped_lock lock(table.mu);
     table.entry = file_id;
 }
 
 export inline std::optional<SourceFile> source_file(std::uint32_t file_id) {
     auto& table = detail::source_file_table();
-    const std::lock_guard lock(table.mu);
+    const std::scoped_lock lock(table.mu);
     if (file_id == 0)
         file_id = table.entry;
     if (file_id == 0 || file_id > table.files.size())
@@ -175,7 +175,7 @@ export inline std::string display_source_path(std::string path) {
 
 export inline std::string source_file_path(std::uint32_t file_id) {
     auto& table = detail::source_file_table();
-    const std::lock_guard lock(table.mu);
+    const std::scoped_lock lock(table.mu);
     if (file_id == 0)
         file_id = table.entry;
     if (file_id == 0 || file_id > table.files.size())
@@ -186,7 +186,7 @@ export inline std::string source_file_path(std::uint32_t file_id) {
 // Bind a module FlatAST to its file. id 0 drops the binding.
 export inline void bind_flat_to_source_file(const void* flat, std::uint32_t file_id) {
     auto& table = detail::source_file_table();
-    const std::lock_guard lock(table.mu);
+    const std::scoped_lock lock(table.mu);
     for (auto pos = table.flats.begin(); pos != table.flats.end(); ++pos) {
         if (pos->first == flat) {
             if (file_id == 0)
@@ -204,7 +204,7 @@ export inline void bind_flat_to_source_file(const void* flat, std::uint32_t file
 // so a later FlatAST at a reused address is not shown as that module.
 export inline void unbind_source_file_flats(std::string_view path) {
     auto& table = detail::source_file_table();
-    const std::lock_guard lock(table.mu);
+    const std::scoped_lock lock(table.mu);
     std::uint32_t file_id = 0;
     for (std::size_t idx = 0; idx < table.files.size(); ++idx)
         if (table.files[idx].path == path)
@@ -216,7 +216,7 @@ export inline void unbind_source_file_flats(std::string_view path) {
 
 export inline std::uint32_t source_file_for_flat(const void* flat) {
     auto& table = detail::source_file_table();
-    const std::lock_guard lock(table.mu);
+    const std::scoped_lock lock(table.mu);
     for (const auto& [bound_flat, bound_id] : table.flats)
         if (bound_flat == flat)
             return bound_id;

@@ -109,7 +109,7 @@ def main() -> int:
     else:
         add_body = ast[add_idx : add_idx + 900]
     # #2488: exclusive unique_lock on OwnedSharedMutex (was recursive_mutex).
-    if "flatast_mutex_" not in add_body or ("unique_lock" not in add_body and "lock_guard" not in add_body):
+    if "flatast_mutex_" not in add_body or ("unique_lock" not in add_body and "scoped_lock" not in add_body and "lock_guard" not in add_body):
         fails.append("AC3: add_node must exclusive-lock flatast_mutex_")
     must("2413 AC3", "AC3", test)
 

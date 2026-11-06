@@ -92,7 +92,7 @@ namespace {
         {
             // Issue #4860: unlocked size()+push_back raced a concurrent publish
             // (double free). Index read, push and stamp are one critical section.
-            std::lock_guard slock(ev.alloc_storage_lock_);
+            std::scoped_lock slock(ev.alloc_storage_lock_);
             hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             aura_hash_stamp_new_table_owner();

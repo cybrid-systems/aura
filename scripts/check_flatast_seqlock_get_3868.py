@@ -66,7 +66,7 @@ def main() -> int:
         fails.append("AC3: could not locate get() seqlock body span")
     else:
         body = ast[start:end]
-        for tok in ("unique_lock", "shared_lock", "lock_guard", "SoAReadGuard"):
+        for tok in ("unique_lock", "shared_lock", "scoped_lock", "lock_guard", "SoAReadGuard"):
             if tok in body:
                 fails.append(f"AC3: hot-path get() must not take {tok}")
         if "return v;" not in body or "attempt" not in body:

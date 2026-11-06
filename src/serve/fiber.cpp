@@ -276,14 +276,14 @@ namespace {
     void register_fiber_in_registry(Fiber* f) noexcept {
         if (!f)
             return;
-        std::lock_guard<std::mutex> lock(fiber_registry().mtx);
+        std::scoped_lock<std::mutex> lock(fiber_registry().mtx);
         fiber_registry().fibers.emplace(f->id(), f);
     }
 
     void unregister_fiber_from_registry(Fiber* f) noexcept {
         if (!f)
             return;
-        std::lock_guard<std::mutex> lock(fiber_registry().mtx);
+        std::scoped_lock<std::mutex> lock(fiber_registry().mtx);
         fiber_registry().fibers.erase(f->id());
     }
 
@@ -304,7 +304,7 @@ namespace {
     bool registered_fiber_reclaimed_not_done(void* owner) noexcept {
         if (!owner)
             return false;
-        std::lock_guard<std::mutex> lock(fiber_registry().mtx);
+        std::scoped_lock<std::mutex> lock(fiber_registry().mtx);
         for (const auto& kv : fiber_registry().fibers) {
             if (kv.second != owner)
                 continue;
@@ -346,7 +346,7 @@ namespace {
 // release workspace_mtx_ / MutationHold without waiting for voluntary
 // Phase-5 exit alone.
 extern "C" int aura_fiber_request_hold_budget_cancel(std::uint64_t fiber_id) noexcept {
-    std::lock_guard<std::mutex> lock(fiber_registry().mtx);
+    std::scoped_lock<std::mutex> lock(fiber_registry().mtx);
     Fiber* f = find_fiber_by_id_locked_held(fiber_id);
     if (!f)
         return 0;
@@ -362,7 +362,7 @@ extern "C" int aura_fiber_request_hold_budget_cancel(std::uint64_t fiber_id) noe
 // owner is the holder). Soft callers never reach here (reject_enabled
 // gate on force_degrade).
 extern "C" int aura_fiber_request_urgent_inbody_poll(std::uint64_t fiber_id) noexcept {
-    std::lock_guard<std::mutex> lock(fiber_registry().mtx);
+    std::scoped_lock<std::mutex> lock(fiber_registry().mtx);
     Fiber* f = find_fiber_by_id_locked_held(fiber_id);
     if (!f)
         return 0;
@@ -510,7 +510,7 @@ extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept {
     if (g_hold_budget_cancel_escalated.exchange(1, std::memory_order_acq_rel) == 0) {
         aura_evaluator_force_degrade_outermost_holder(fid);
     } else {
-        std::lock_guard<std::mutex> lock(fiber_registry().mtx);
+        std::scoped_lock<std::mutex> lock(fiber_registry().mtx);
         if (Fiber* f = find_fiber_by_id_locked_held(fid)) {
             // Issue #3133: inject synthetic yield reason alongside the
             // existing force_safepoint re-arm. The synthetic state
@@ -544,7 +544,7 @@ extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept {
     // dispose_no_edge_holder → Reclaimed (#3764). Soft already returned.
     if (no_edge_latched) {
         {
-            std::lock_guard<std::mutex> lock(fiber_registry().mtx);
+            std::scoped_lock<std::mutex> lock(fiber_registry().mtx);
             if (Fiber* f = find_fiber_by_id_locked_held(fid))
                 f->inject_synthetic_mutation_boundary_yield();
         }
@@ -592,7 +592,7 @@ extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept {
             // already ran above with the dual-restore + unlock arm.
             if (auto* cur = g_current_fiber; !(cur && cur->id() == fid)) {
                 (void)steal_safety_production_residual_zero_v_read();
-                std::lock_guard<std::mutex> lock(fiber_registry().mtx);
+                std::scoped_lock<std::mutex> lock(fiber_registry().mtx);
                 if (Fiber* f = find_fiber_by_id_locked_held(fid))
                     (void)dispose_no_edge_holder(f);
             }
@@ -642,7 +642,7 @@ extern "C" int aura_hold_budget_poll_busy_path(void) noexcept {
     // dispose (Reclaimed/Done). unique_lock stays with the holder until
     // same-fiber Guard exit / consume.
     (void)steal_safety_production_residual_zero_v_read();
-    std::lock_guard<std::mutex> lock(fiber_registry().mtx);
+    std::scoped_lock<std::mutex> lock(fiber_registry().mtx);
     if (Fiber* f = find_fiber_by_id_locked_held(live.fiber_id))
         (void)dispose_no_edge_holder(f);
     return exceeded;
@@ -669,7 +669,7 @@ extern "C" int aura_mutation_hold_no_edge_still_held(void) noexcept {
 // Issue #2726: read-only diagnostic accessor (peek, no consume).
 // Used by tests + observability; weak no-op when fiber not found.
 extern "C" int aura_fiber_peek_hold_budget_cancel(std::uint64_t fiber_id) noexcept {
-    std::lock_guard<std::mutex> lock(fiber_registry().mtx);
+    std::scoped_lock<std::mutex> lock(fiber_registry().mtx);
     Fiber* f = find_fiber_by_id_locked_held(fiber_id);
     if (!f)
         return 0;
@@ -731,7 +731,7 @@ std::uint64_t current_fiber_session_mid() noexcept {
 extern "C" std::uint64_t aura_fiber_session_mid(std::uint64_t fiber_id) noexcept {
     if (fiber_id == 0)
         return 0;
-    std::lock_guard<std::mutex> lock(fiber_registry().mtx);
+    std::scoped_lock<std::mutex> lock(fiber_registry().mtx);
     Fiber* f = find_fiber_by_id_locked_held(fiber_id);
     if (!f)
         return 0;
@@ -742,7 +742,7 @@ extern "C" std::uint64_t aura_fiber_session_mid(std::uint64_t fiber_id) noexcept
 extern "C" void aura_fiber_clear_session_mid(std::uint64_t fiber_id) noexcept {
     if (fiber_id == 0)
         return;
-    std::lock_guard<std::mutex> lock(fiber_registry().mtx);
+    std::scoped_lock<std::mutex> lock(fiber_registry().mtx);
     Fiber* f = find_fiber_by_id_locked_held(fiber_id);
     if (f)
         f->clear_session_mid();
@@ -2268,7 +2268,7 @@ std::uint64_t Fiber::join_reclaim_total() noexcept {
 void Fiber::register_orphan_root_release(std::function<void()> drop) noexcept {
     if (!drop)
         return;
-    std::lock_guard<std::mutex> lk(orphan_roots_mtx_);
+    std::scoped_lock<std::mutex> lk(orphan_roots_mtx_);
     orphan_root_releases_.push_back(std::move(drop));
     // Bump HWM (snapshot of pending count across all fibers when
     // the table grows). Decay happens on release; HWM is monotonic
@@ -2288,7 +2288,7 @@ void Fiber::register_orphan_root_release(std::function<void()> drop) noexcept {
 std::size_t Fiber::release_orphan_roots() noexcept {
     std::vector<std::function<void()>> drops;
     {
-        std::lock_guard<std::mutex> lk(orphan_roots_mtx_);
+        std::scoped_lock<std::mutex> lk(orphan_roots_mtx_);
         if (!orphan_root_releases_.empty())
             drops.swap(orphan_root_releases_);
     }
@@ -2323,19 +2323,19 @@ std::size_t Fiber::release_orphan_roots() noexcept {
 
 // Issue #3438: outermost-Guard linear-keep management + scoped drain face.
 void Fiber::set_outermost_linear_keep(std::unordered_set<void*> keep) noexcept {
-    std::lock_guard<std::mutex> lk(outermost_linear_keep_mtx_);
+    std::scoped_lock<std::mutex> lk(outermost_linear_keep_mtx_);
     outermost_linear_keep_ = std::move(keep);
     outermost_linear_keep_armed_ = true;
 }
 
 void Fiber::clear_outermost_linear_keep() noexcept {
-    std::lock_guard<std::mutex> lk(outermost_linear_keep_mtx_);
+    std::scoped_lock<std::mutex> lk(outermost_linear_keep_mtx_);
     outermost_linear_keep_.clear();
     outermost_linear_keep_armed_ = false;
 }
 
 bool Fiber::take_outermost_linear_keep(std::unordered_set<void*>& out) noexcept {
-    std::lock_guard<std::mutex> lk(outermost_linear_keep_mtx_);
+    std::scoped_lock<std::mutex> lk(outermost_linear_keep_mtx_);
     if (!outermost_linear_keep_armed_)
         return false;
     out = std::move(outermost_linear_keep_);
@@ -2350,13 +2350,13 @@ bool Fiber::take_outermost_linear_keep(std::unordered_set<void*>& out) noexcept 
 // keep mutex — lock order matches Guard enter (snapshot then set).
 void Fiber::maybe_lazy_arm_outermost_linear_keep() noexcept {
     {
-        std::lock_guard<std::mutex> lk(outermost_linear_keep_mtx_);
+        std::scoped_lock<std::mutex> lk(outermost_linear_keep_mtx_);
         if (outermost_linear_keep_armed_)
             return;
     }
     std::unordered_set<void*> snap;
     aura::core::lifetime::snapshot_linear_roots(snap);
-    std::lock_guard<std::mutex> lk(outermost_linear_keep_mtx_);
+    std::scoped_lock<std::mutex> lk(outermost_linear_keep_mtx_);
     if (outermost_linear_keep_armed_)
         return;
     outermost_linear_keep_ = std::move(snap);
@@ -2394,7 +2394,7 @@ std::size_t unpin_linear_roots_scoped_for_fiber(Fiber* f) noexcept {
 }
 
 [[nodiscard]] bool Fiber::has_orphan_roots() const noexcept {
-    std::lock_guard<std::mutex> lk(orphan_roots_mtx_);
+    std::scoped_lock<std::mutex> lk(orphan_roots_mtx_);
     return !orphan_root_releases_.empty();
 }
 

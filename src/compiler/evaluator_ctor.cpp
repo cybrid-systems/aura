@@ -306,7 +306,7 @@ Evaluator::~Evaluator() {
     // Drop live EnvFrameRef slots without drop() scans — those walk
     // closures_/env_frames_ that are about to be destroyed.
     {
-        std::lock_guard<std::mutex> lock(live_env_frame_refs_mtx_);
+        std::scoped_lock<std::mutex> lock(live_env_frame_refs_mtx_);
         live_env_frame_ref_slots_.clear();
     }
 
@@ -370,7 +370,7 @@ Evaluator::~Evaluator() {
     // Issue #1663: hold arena_set_mtx_ so concurrent set_arena cannot
     // interleave with teardown.
     {
-        std::lock_guard<std::mutex> lock(arena_set_mtx_);
+        std::scoped_lock<std::mutex> lock(arena_set_mtx_);
         if (arena_) {
             arena_->clear_arena_owner();
             arena_->set_on_compact_hook(nullptr);

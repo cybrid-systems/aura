@@ -108,7 +108,7 @@ EvalValue Evaluator::build_policy_hash(const MemoryPolicy& p) {
     {
         // Issue #4860: unlocked size()+push_back raced a concurrent publish
         // (double free). Index read, push and stamp are one critical section.
-        std::lock_guard slock(alloc_storage_lock_);
+        std::scoped_lock slock(alloc_storage_lock_);
         hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         aura_hash_stamp_new_table_owner();
@@ -153,7 +153,7 @@ Evaluator::build_ast_lifecycle_hash(std::span<const std::pair<std::string, EvalV
     {
         // Issue #4860: unlocked size()+push_back raced a concurrent publish
         // (double free). Index read, push and stamp are one critical section.
-        std::lock_guard slock(alloc_storage_lock_);
+        std::scoped_lock slock(alloc_storage_lock_);
         hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         aura_hash_stamp_new_table_owner();
@@ -283,7 +283,7 @@ bool Evaluator::save_panic_checkpoint() {
         workspace_source_text_generation_ == workspace_flat_->generation()) {
         bool newly_live = false;
         {
-            std::lock_guard alloc_lock(alloc_storage_lock_);
+            std::scoped_lock alloc_lock(alloc_storage_lock_);
             newly_live = panic_safe_source_.empty();
             panic_safe_source_ = workspace_source_text_;
             panic_safe_string_heap_size_ = string_heap_.size();
@@ -317,7 +317,7 @@ bool Evaluator::save_panic_checkpoint() {
     // snapshots do not touch the heap, so they stay outside the lock.
     bool newly_live = false;
     {
-        std::lock_guard alloc_lock(alloc_storage_lock_);
+        std::scoped_lock alloc_lock(alloc_storage_lock_);
         // Issue #3850: bump live-CP depth only on empty→live transition
         // (re-save of an already-live checkpoint must not double-count).
         newly_live = panic_safe_source_.empty();
@@ -376,7 +376,7 @@ bool Evaluator::restore_panic_checkpoint() {
     // readers (f64vector-ref/-dot hold const refs into the heap).
     std::size_t idx = 0;
     {
-        std::lock_guard alloc_lock(alloc_storage_lock_);
+        std::scoped_lock alloc_lock(alloc_storage_lock_);
         idx = string_heap_.mint(panic_safe_source_);
     }
     auto result = (*set_fn)({make_string(idx)});
@@ -421,7 +421,7 @@ bool Evaluator::restore_panic_checkpoint() {
         // was fixed). The truncate touches env frames + closures, not the
         // value arenas.
         {
-            std::lock_guard alloc_lock_resize(alloc_storage_lock_);
+            std::scoped_lock alloc_lock_resize(alloc_storage_lock_);
             std::size_t new_string_heap_size = idx + 1;
             if (new_string_heap_size <= string_heap_.size()) {
                 string_heap_.resize(new_string_heap_size);

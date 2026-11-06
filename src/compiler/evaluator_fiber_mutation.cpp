@@ -115,7 +115,7 @@ namespace fiber_stack_pool_detail {
         T* acquire() {
             pool_stats().live_stacks.fetch_add(1, std::memory_order_relaxed);
             {
-                std::lock_guard lock(mutex_);
+                std::scoped_lock lock(mutex_);
                 if (!pool_.empty()) {
                     // The caller owns the stack until release().
                     T* v = pool_.back().release();
@@ -140,7 +140,7 @@ namespace fiber_stack_pool_detail {
             pool_stats().live_stacks.fetch_sub(1, std::memory_order_relaxed);
             owned->clear();
             maybe_shrink(*owned);
-            std::lock_guard lock(mutex_);
+            std::scoped_lock lock(mutex_);
             if (pool_.size() < kMaxPooled)
                 pool_.push_back(std::move(owned));
         }
@@ -338,7 +338,7 @@ namespace {
         // Held across the drop so ~Evaluator cannot run concurrently with it.
         // Lock order: owner mutex -> slab table -> string heap; the owner mutex
         // is otherwise only taken by the ctor/dtor (outside both).
-        std::lock_guard<std::mutex> g(fiber_slab_owner_mu());
+        std::scoped_lock<std::mutex> g(fiber_slab_owner_mu());
         if (fiber_slab_owner_live().count(ctx) == 0)
             return;
         try {
@@ -359,7 +359,7 @@ void aura::compiler::Evaluator::arm_fiber_slab_body_exit(std::uint64_t fiber_id)
 
 void aura::compiler::Evaluator::fiber_slab_owner_register() noexcept {
     try {
-        std::lock_guard<std::mutex> g(fiber_slab_owner_mu());
+        std::scoped_lock<std::mutex> g(fiber_slab_owner_mu());
         fiber_slab_owner_live().insert(static_cast<const void*>(this));
     } catch (...) {
         // [SILENCE-PRIM-#4854] OOM: unregistered owners are never touched by
@@ -368,7 +368,7 @@ void aura::compiler::Evaluator::fiber_slab_owner_register() noexcept {
 }
 
 void aura::compiler::Evaluator::fiber_slab_owner_unregister() noexcept {
-    std::lock_guard<std::mutex> g(fiber_slab_owner_mu());
+    std::scoped_lock<std::mutex> g(fiber_slab_owner_mu());
     fiber_slab_owner_live().erase(static_cast<const void*>(this));
 }
 // Issue #1403: thread-local stack of Evaluator* hooks (replaces the
@@ -692,7 +692,7 @@ aura::compiler::Evaluator::children_stable_batch(aura::ast::NodeId id) noexcept 
 void aura::compiler::Evaluator::note_restamp_hot_cone_held_from_pins_() noexcept {
     for (const auto& ref : atomic_batch_pinned_refs_)
         aura::ast::note_restamp_hot_cone_held_node(static_cast<std::uint32_t>(ref.id));
-    std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
+    std::scoped_lock<std::mutex> lock(cow_boundary_pins_mtx_);
     for (const auto& ref : cow_boundary_pinned_refs_)
         aura::ast::note_restamp_hot_cone_held_node(static_cast<std::uint32_t>(ref.id));
 }
@@ -735,7 +735,7 @@ std::size_t aura::compiler::Evaluator::restamp_pinned_stable_refs() noexcept {
     for (auto& ref : atomic_batch_pinned_refs_)
         restamp_one(ref);
     {
-        std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
+        std::scoped_lock<std::mutex> lock(cow_boundary_pins_mtx_);
         // Issue #2189: restamp Agent pin table; drop free/OOR so steal/Guard
         // never leaves dangling pins across hosts (invalidate-on-fail).
         for (auto& ref : cow_boundary_pinned_refs_) {
@@ -1570,7 +1570,7 @@ void Evaluator::mark_outermost_mutation_failed() noexcept {
                 fid = static_cast<std::uint32_t>(g->captured_fiber_id());
         }
         auto& reg = ::aura::core::capability::g_capability_registry();
-        std::lock_guard<std::mutex> lock(reg.mtx);
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         (void)reg.mark_session_bound_stolen_locked(capability_tenant_id_, mid, fid);
         (void)::aura::core::capability::revoke_session_grants_on_steal_or_abort_locked(
             mid, /*steal=*/false, fid);
@@ -1758,7 +1758,7 @@ extern "C" void aura_evaluator_force_degrade_outermost_holder(std::uint64_t fibe
             // Issue #3209: mark stolen for every tenant bound to mid
             // (tenant=0 used to no-op). Then revoke + clear victim mid.
             auto& reg = ::aura::core::capability::g_capability_registry();
-            std::lock_guard<std::mutex> lock(reg.mtx);
+            std::scoped_lock<std::mutex> lock(reg.mtx);
             (void)::aura::core::capability::revoke_session_grants_on_steal_or_abort_locked(
                 mid, /*steal=*/false, static_cast<std::uint32_t>(fiber_id));
             if (aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire) ==
@@ -3224,7 +3224,7 @@ static void revoke_session_grants_on_fiber_join(aura::serve::Fiber* f) noexcept 
         mode == EffectSandboxMode::Restricted || mode == EffectSandboxMode::Strict;
     if (!production && met.capability_live_session_grants.load(std::memory_order_relaxed) == 0)
         return; // Soft/Off + no live residual: zero-cost (AC4)
-    std::lock_guard<std::mutex> lock(reg.mtx);
+    std::scoped_lock<std::mutex> lock(reg.mtx);
     // Issue #3799: Fiber::id is the join-site fiber key (never invent 0).
     (void)reg.revoke_session_grants_for_mid_locked(mid, "session-mid-exit",
                                                    static_cast<std::uint32_t>(f->id()));
@@ -3370,7 +3370,7 @@ extern "C" void aura_fiber_root_pending_body(void* evaluator, std::uint64_t clos
         return;
     auto* ev = static_cast<Evaluator*>(evaluator);
     try {
-        std::lock_guard<std::mutex> lock(g_pending_fiber_roots_mtx);
+        std::scoped_lock<std::mutex> lock(g_pending_fiber_roots_mtx);
         auto& slot = g_pending_fiber_roots[ev];
         if (!slot)
             slot = std::make_unique<PendingFiberRootState>();
@@ -3405,7 +3405,7 @@ extern "C" void aura_fiber_release_pending_body(void* evaluator, std::uint64_t f
         return;
     auto* ev = static_cast<Evaluator*>(evaluator);
     try {
-        std::lock_guard<std::mutex> lock(g_pending_fiber_roots_mtx);
+        std::scoped_lock<std::mutex> lock(g_pending_fiber_roots_mtx);
         auto it = g_pending_fiber_roots.find(ev);
         if (it == g_pending_fiber_roots.end())
             return;
@@ -3441,7 +3441,7 @@ extern "C" void aura_fiber_root_pending_body_latest(void* evaluator) noexcept {
         return;
     auto* ev = static_cast<Evaluator*>(evaluator);
     try {
-        std::lock_guard<std::mutex> lock(g_pending_fiber_roots_mtx);
+        std::scoped_lock<std::mutex> lock(g_pending_fiber_roots_mtx);
         auto& slot = g_pending_fiber_roots[ev];
         if (!slot)
             slot = std::make_unique<PendingFiberRootState>();
@@ -3473,7 +3473,7 @@ extern "C" void aura_fiber_release_pending_body_latest(void* evaluator) noexcept
         return;
     auto* ev = static_cast<Evaluator*>(evaluator);
     try {
-        std::lock_guard<std::mutex> lock(g_pending_fiber_roots_mtx);
+        std::scoped_lock<std::mutex> lock(g_pending_fiber_roots_mtx);
         auto it = g_pending_fiber_roots.find(ev);
         if (it == g_pending_fiber_roots.end())
             return;
@@ -3897,7 +3897,7 @@ extern "C" void aura_fiber_install_tenant_scope_for_resume(void* fiber_ptr) noex
     if (f->has_resume_safety_ticket() && f->session_mid() != 0) {
         const auto resume_mid = f->session_mid();
         auto& reg = ::aura::core::capability::g_capability_registry();
-        std::lock_guard<std::mutex> lock(reg.mtx);
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         (void)::aura::core::capability::revoke_session_grants_on_steal_or_abort_locked(
             resume_mid, /*steal=*/true, static_cast<std::uint32_t>(f->id()));
         f->clear_session_mid();
@@ -4351,7 +4351,7 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
             // Issue #3209: mark_stolen → revoke → clear victim mid under
             // registry lock so resume consume cannot observe a live grant.
             auto& reg = ::aura::core::capability::g_capability_registry();
-            std::lock_guard<std::mutex> lock(reg.mtx);
+            std::scoped_lock<std::mutex> lock(reg.mtx);
             (void)::aura::core::capability::revoke_session_grants_on_steal_or_abort_locked(
                 mid, /*steal=*/true, static_cast<std::uint32_t>(fiber->id()));
             fiber->clear_session_mid();
@@ -5245,7 +5245,7 @@ std::size_t Evaluator::refresh_stale_macro_frames(std::uint64_t /*hint_env_id*/,
     };
     restamp_macro_pins(atomic_batch_pinned_refs_);
     {
-        std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
+        std::scoped_lock<std::mutex> lock(cow_boundary_pins_mtx_);
         restamp_macro_pins(cow_boundary_pinned_refs_);
     }
 
@@ -5282,7 +5282,7 @@ void Evaluator::probe_and_repin_macro_provenance() noexcept {
     };
     repin(atomic_batch_pinned_refs_);
     {
-        std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
+        std::scoped_lock<std::mutex> lock(cow_boundary_pins_mtx_);
         repin(cow_boundary_pinned_refs_);
     }
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {

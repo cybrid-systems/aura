@@ -70,10 +70,10 @@ int run_test_audit_trail_lockfree() {
         CHECK(win.find("Issue #2819") != std::string::npos, "AC1: cites #2819");
         CHECK(win.find("audit_trail_lockfree_total") != std::string::npos, "AC1: lockfree metric");
         CHECK(win.find("lock_guard") == std::string::npos &&
-                  win.find("std::lock_guard") == std::string::npos,
+                  win.find("std::scoped_lock") == std::string::npos,
               "AC1: no lock_guard in capture_audit_event_forced");
         // Hot path must not take the trail mutex (comment may mention it).
-        CHECK(win.find("std::lock_guard lock(") == std::string::npos &&
+        CHECK(win.find("std::scoped_lock lock(") == std::string::npos &&
                   win.find("lock(g_trail()") == std::string::npos,
               "AC1: no trail mutex lock on hot path");
         CHECK(h.find("audit_trail_mutex_wait_us_total") != std::string::npos,

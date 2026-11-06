@@ -279,7 +279,7 @@ static void ac3763_1_audit_scope_pairs_mu() {
         ++pos;
     }
     pos = 0;
-    while ((pos = mb.find("std::lock_guard lock(mu_)", pos)) != std::string::npos) {
+    while ((pos = mb.find("std::scoped_lock lock(mu_)", pos)) != std::string::npos) {
         ++n_lock;
         ++pos;
     }

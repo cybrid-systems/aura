@@ -143,7 +143,7 @@ static void run_matrix(CompilerService& cs) {
                     }
                 }
                 {
-                    std::lock_guard<std::mutex> lk(eval_mtx);
+                    std::scoped_lock<std::mutex> lk(eval_mtx);
                     (void)cs.eval("(arena:request-defrag)");
                     (void)cs.eval("(fact 2)");
                 }

@@ -3198,7 +3198,7 @@ static void ac3613_4_source_and_linter() {
     if (p_fan != std::string::npos) {
         const auto win = mb.substr(p_fan, 900);
         const auto p_note = win.find("note_mailbox_deferred_under_boundary(&local_stats_");
-        const auto p_mu = win.find("std::lock_guard lock(mu_)");
+        const auto p_mu = win.find("std::scoped_lock lock(mu_)");
         CHECK(p_note != std::string::npos && p_mu != std::string::npos && p_note < p_mu,
               "3613 AC6: note BEFORE mu_ in fanout");
     }
@@ -3625,7 +3625,7 @@ static void ac3763_2_recv_try_pop_under_guard() {
     if (recv_pos != std::string::npos) {
         const auto win = mb.substr(recv_pos, 2800);
         const auto p_holds = win.find("if (this_fiber_holds)");
-        const auto p_mu = win.find("std::lock_guard lock(mu_)");
+        const auto p_mu = win.find("std::scoped_lock lock(mu_)");
         CHECK(p_holds != std::string::npos && p_mu != std::string::npos && p_holds < p_mu,
               "3763 AC2: this_fiber_holds before mu_ in recv");
     }

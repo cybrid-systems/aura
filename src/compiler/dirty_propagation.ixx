@@ -290,7 +290,7 @@ inline std::vector<NodeId>& t_pipeline_cascade_roots() noexcept {
 }
 
 inline void set_pipeline_dep_graph(const DepGraph* g) noexcept {
-    std::lock_guard<std::mutex> lock(g_pipeline_cascade_mtx);
+    std::scoped_lock<std::mutex> lock(g_pipeline_cascade_mtx);
     g_pipeline_dep_graph.store(g, std::memory_order_release);
 }
 
@@ -418,7 +418,7 @@ inline std::size_t cascade_mark_dirty_many(DirtySet& set, std::span<const NodeId
 // Issue #3264: lock + acquire-load the graph; count dropped roots when
 // the graph is unset. Empty-root flush is a no-op (zero extra).
 inline std::size_t flush_pipeline_cascade_roots() {
-    std::lock_guard<std::mutex> lock(g_pipeline_cascade_mtx);
+    std::scoped_lock<std::mutex> lock(g_pipeline_cascade_mtx);
     const DepGraph* graph = g_pipeline_dep_graph.load(std::memory_order_acquire);
     if (t_pipeline_cascade_roots().empty()) {
         (void)flush_dirty_skip_subtree_to_metrics();
@@ -468,7 +468,7 @@ inline void push_to_ir_dirty(const DirtySet& src, std::span<std::uint8_t> ir_dir
 
 // Convenience: merge local DirtySet into g_global_dirty.
 inline void push_to_global(const DirtySet& src) {
-    std::lock_guard<std::mutex> lock(g_pipeline_cascade_mtx);
+    std::scoped_lock<std::mutex> lock(g_pipeline_cascade_mtx);
     for (std::size_t i = 0; i < src.bits.size(); ++i) {
         if (src.bits[i])
             g_global_dirty.mark(static_cast<NodeId>(i));
@@ -479,7 +479,7 @@ inline void push_to_global(const DirtySet& src) {
 
 // Convenience: copy g_global_dirty into dest (OR-merge).
 inline void pull_from_global(DirtySet& dest) {
-    std::lock_guard<std::mutex> lock(g_pipeline_cascade_mtx);
+    std::scoped_lock<std::mutex> lock(g_pipeline_cascade_mtx);
     for (std::size_t i = 0; i < g_global_dirty.bits.size(); ++i) {
         if (g_global_dirty.bits[i])
             dest.mark(static_cast<NodeId>(i));

@@ -567,7 +567,7 @@ static void ac9_grant_mid_joins_boundary_typedmid() {
     bool found_grant = false;
     {
         auto& reg = aura::core::capability::g_capability_registry();
-        std::lock_guard<std::mutex> lock(reg.mtx);
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         auto it = reg.by_tenant.find(7);
         if (it != reg.by_tenant.end())
             for (const auto& g : it->second)
@@ -626,7 +626,7 @@ static void ac10_grant_mid_without_guard_soft_epoch() {
     bool found_grant = false;
     {
         auto& reg = aura::core::capability::g_capability_registry();
-        std::lock_guard<std::mutex> lock(reg.mtx);
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         auto it = reg.by_tenant.find(ev.capability_tenant_id());
         if (it != reg.by_tenant.end())
             for (const auto& g : it->second)
@@ -794,7 +794,7 @@ static void ac14_epoch_advance_mid_session_revoke_lifecycle() {
     int live_rows = 0;
     {
         auto& reg = aura::core::capability::g_capability_registry();
-        std::lock_guard<std::mutex> lock(reg.mtx);
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         auto it = reg.by_tenant.find(7);
         if (it != reg.by_tenant.end())
             for (const auto& g : it->second)
@@ -830,7 +830,7 @@ static void ac14_epoch_advance_mid_session_revoke_lifecycle() {
     int left = 0;
     {
         auto& reg = aura::core::capability::g_capability_registry();
-        std::lock_guard<std::mutex> lock(reg.mtx);
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         auto it = reg.by_tenant.find(7);
         if (it != reg.by_tenant.end())
             for (const auto& g : it->second)

@@ -77,7 +77,7 @@ inline void stamp_elided_cast_deopt_meta(std::uint64_t site_key, std::uint64_t m
     // Soft + production: stamp when evidence non-zero (bounded). Soft "optional"
     // means absence of stamp is not a hard failure; we still stamp for Agents.
     {
-        std::lock_guard<std::mutex> lock(detail::g_meta_mu);
+        std::scoped_lock<std::mutex> lock(detail::g_meta_mu);
         detail::g_meta_ring[detail::g_meta_head] =
             ElidedCastDeoptMeta{site_key, mutation_id, narrow_evidence, original_type_tag, type_id};
         detail::g_meta_head = (detail::g_meta_head + 1) % kElidedCastDeoptMetaCap;
@@ -98,7 +98,7 @@ inline void stamp_elided_cast_deopt_meta(std::uint64_t site_key, std::uint64_t m
 // Post: optional meta; lookup_hits bumped on hit
 [[nodiscard]] inline std::optional<ElidedCastDeoptMeta>
 lookup_elided_cast_deopt_meta(std::uint64_t site_key) noexcept {
-    std::lock_guard<std::mutex> lock(detail::g_meta_mu);
+    std::scoped_lock<std::mutex> lock(detail::g_meta_mu);
     if (detail::g_meta_count == 0)
         return std::nullopt;
     // Walk newest → oldest (ring is write-forward).
@@ -138,7 +138,7 @@ lookup_elided_cast_deopt_meta(std::uint64_t site_key) noexcept {
 // Purpose: drop one (or all, site_key==0) elided-cast deopt entries.
 // Persist-reject / type-drift reuse this — no second cache.
 inline void invalidate_elided_cast_deopt_meta(std::uint64_t site_key) noexcept {
-    std::lock_guard<std::mutex> lock(detail::g_meta_mu);
+    std::scoped_lock<std::mutex> lock(detail::g_meta_mu);
     if (site_key == 0) {
         detail::g_meta_ring.fill(ElidedCastDeoptMeta{});
         detail::g_meta_head = 0;
@@ -176,7 +176,7 @@ inline bool reverify_elided_cast_deopt_site(std::uint64_t site_key, std::uint32_
     ElidedCastDeoptMeta snap[kElidedCastDeoptMetaCap];
     std::size_t n = 0;
     {
-        std::lock_guard<std::mutex> lock(detail::g_meta_mu);
+        std::scoped_lock<std::mutex> lock(detail::g_meta_mu);
         n = detail::g_meta_count;
         for (std::size_t i = 0; i < n; ++i) {
             const std::size_t idx =
@@ -203,7 +203,7 @@ inline bool reverify_elided_cast_deopt_site(std::uint64_t site_key, std::uint32_
 [[nodiscard]] inline std::uint32_t narrow_evidence_for_ast_node(std::uint32_t node) noexcept {
     if (node == 0)
         return 0;
-    std::lock_guard<std::mutex> lock(detail::g_meta_mu);
+    std::scoped_lock<std::mutex> lock(detail::g_meta_mu);
     for (std::size_t n = 0; n < detail::g_meta_count; ++n) {
         const std::size_t idx =
             (detail::g_meta_head + kElidedCastDeoptMetaCap - 1 - n) % kElidedCastDeoptMetaCap;
@@ -215,7 +215,7 @@ inline bool reverify_elided_cast_deopt_site(std::uint64_t site_key, std::uint32_
 
 // Purpose: test isolation — clear ring + size (not stamped_total lifetime)
 inline void clear_elided_cast_deopt_meta_for_test() noexcept {
-    std::lock_guard<std::mutex> lock(detail::g_meta_mu);
+    std::scoped_lock<std::mutex> lock(detail::g_meta_mu);
     detail::g_meta_ring.fill(ElidedCastDeoptMeta{});
     detail::g_meta_head = 0;
     detail::g_meta_count = 0;

@@ -1684,7 +1684,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
 
     add("offload:snapshot", [&ev, offload_handles](const auto&) -> EvalValue {
         std::string source = ev.authoritative_workspace_source();
-        std::lock_guard lock(offload_handles->mutex);
+        std::scoped_lock lock(offload_handles->mutex);
         const auto id = offload_handles->next_snapshot++;
         offload_handles->snapshots.emplace(id, std::move(source));
         return make_int(id);
@@ -1700,7 +1700,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             const auto snap_id = as_int(a[0]);
             std::string source;
             {
-                std::lock_guard lock(offload_handles->mutex);
+                std::scoped_lock lock(offload_handles->mutex);
                 auto it = offload_handles->snapshots.find(snap_id);
                 if (it == offload_handles->snapshots.end())
                     return mev("bad-arg", "offload:submit: unknown snapshot handle");
@@ -2468,7 +2468,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             // One cons slot; pairs_ growth is serialized like every other
             // reader (#1397).
             [[nodiscard]] EvalValue cons(EvalValue head, EvalValue tail) const {
-                std::lock_guard lock(ev.alloc_storage_lock_);
+                std::scoped_lock lock(ev.alloc_storage_lock_);
                 const auto pid = ev.pairs_.size();
                 ev.pairs_.push_back({head, tail});
                 return make_pair(pid);
@@ -2737,14 +2737,14 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 }
                 if (types::is_symbol(v)) {
                     const auto idx = types::as_symbol_idx(v);
-                    std::lock_guard lock(ev.symbol_table_mtx_);
+                    std::scoped_lock lock(ev.symbol_table_mtx_);
                     if (idx >= ev.symbol_table_.size())
                         return std::nullopt;
                     return ev.symbol_table_[idx];
                 }
                 if (types::is_keyword(v)) {
                     const auto idx = types::as_keyword_idx(v);
-                    std::lock_guard lock(ev.keyword_table_mtx_);
+                    std::scoped_lock lock(ev.keyword_table_mtx_);
                     if (idx >= ev.keyword_table_.size())
                         return std::nullopt;
                     // keyword_table_ entries keep their leading ':'.
@@ -2761,7 +2761,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                         EvalValue car_v{};
                         EvalValue cdr_v{};
                         {
-                            std::lock_guard lock(ev.alloc_storage_lock_);
+                            std::scoped_lock lock(ev.alloc_storage_lock_);
                             const auto idx = types::as_pair_idx(cur);
                             if (idx >= ev.pairs_.size())
                                 return std::nullopt;
@@ -2794,7 +2794,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 if (types::is_vector(v)) {
                     std::vector<EvalValue> elems;
                     {
-                        std::lock_guard lock(ev.alloc_storage_lock_);
+                        std::scoped_lock lock(ev.alloc_storage_lock_);
                         const auto idx = types::as_vector_idx(v);
                         if (idx >= ev.vector_heap_.size())
                             return std::nullopt;

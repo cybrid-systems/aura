@@ -6392,7 +6392,7 @@ inline void reset_for_test() noexcept {
     reset_pending_full_solve_residual_for_test();
     reset_occurrence_persist_seq_for_test();
     apply_dev_audit_defaults(); // Sampled/4 + dev_audit_opt_in; clears production
-    std::lock_guard lock(g_trail().mu);
+    std::scoped_lock lock(g_trail().mu);
     for (auto& e : g_trail().ring)
         e = TypedMutationAuditEvent{};
 }

@@ -63,8 +63,8 @@ def main() -> int:
     else:
         if "hook_mtx_" not in compact:
             fails.append("AC1: has_on_compact_hook missing hook_mtx_")
-        if "lock_guard" not in compact:
-            fails.append("AC1: has_on_compact_hook missing lock_guard")
+        if "scoped_lock" not in compact:
+            fails.append("AC1: has_on_compact_hook missing scoped_lock")
     if not layout or "on_layout_change_mtx_" not in layout:
         fails.append("AC1: has_on_layout_change missing on_layout_change_mtx_")
     if not root or "root_remap_mtx_" not in root:

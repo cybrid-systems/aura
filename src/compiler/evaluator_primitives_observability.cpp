@@ -1382,7 +1382,7 @@ namespace {
 // Issue #3531: seed once, return the live vector (no per-call copy).
 const std::vector<std::string>& ObservabilityPrims::stats_primitives() {
     auto& c = g_metrics_catalog();
-    std::lock_guard<std::mutex> lock(c.mu);
+    std::scoped_lock<std::mutex> lock(c.mu);
     seed_metrics_catalog_unlocked();
     return c.names;
 }
@@ -1391,7 +1391,7 @@ void ObservabilityPrims::register_catalog_query(std::string_view key) {
     if (key.empty())
         return;
     auto& c = g_metrics_catalog();
-    std::lock_guard<std::mutex> lock(c.mu);
+    std::scoped_lock<std::mutex> lock(c.mu);
     seed_metrics_catalog_unlocked();
     if (c.seen.find(key) != c.seen.end())
         return;
@@ -1406,14 +1406,14 @@ bool ObservabilityPrims::catalog_contains(std::string_view key) {
     if (key.empty())
         return false;
     auto& c = g_metrics_catalog();
-    std::lock_guard<std::mutex> lock(c.mu);
+    std::scoped_lock<std::mutex> lock(c.mu);
     seed_metrics_catalog_unlocked();
     return c.seen.find(key) != c.seen.end();
 }
 
 std::uint64_t ObservabilityPrims::catalog_size() {
     auto& c = g_metrics_catalog();
-    std::lock_guard<std::mutex> lock(c.mu);
+    std::scoped_lock<std::mutex> lock(c.mu);
     seed_metrics_catalog_unlocked();
     return static_cast<std::uint64_t>(c.names.size());
 }
@@ -1551,7 +1551,7 @@ int ObservabilityPrims::register_catalog_probe_for_test(std::string_view key) {
     register_stats_impl(std::string(key), [](const auto&) -> EvalValue { return make_int(3531); });
     {
         auto& c = g_metrics_catalog();
-        std::lock_guard<std::mutex> lock(c.mu);
+        std::scoped_lock<std::mutex> lock(c.mu);
         c.runtime_impl_names.emplace_back(key);
     }
     register_catalog_query(key);
@@ -1561,7 +1561,7 @@ int ObservabilityPrims::register_catalog_probe_for_test(std::string_view key) {
 
 void ObservabilityPrims::clear_catalog_runtime_for_test() {
     auto& c = g_metrics_catalog();
-    std::lock_guard<std::mutex> lock(c.mu);
+    std::scoped_lock<std::mutex> lock(c.mu);
     seed_metrics_catalog_unlocked();
     auto& impls = legacy_stats_impls();
     for (const auto& n : c.runtime_impl_names)
@@ -1684,7 +1684,7 @@ EvalValue ObservabilityPrims::stats_drift_check(Evaluator& ev) {
     {
         // Issue #4860: unlocked size()+push_back raced a concurrent publish
         // (double free). Index read, push and stamp are one critical section.
-        std::lock_guard slock(ev.alloc_storage_lock_);
+        std::scoped_lock slock(ev.alloc_storage_lock_);
         hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
     }

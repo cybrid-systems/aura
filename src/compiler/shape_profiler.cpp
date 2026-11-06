@@ -1015,7 +1015,7 @@ std::uint32_t ShapeProfiler::on_arena_compact(std::span<const FnKey> dirty_or_re
     std::vector<HookWork> hooks_to_fire;
     std::uint32_t ring_before = 0;
     {
-        std::lock_guard<std::mutex> meta(meta_mtx_);
+        std::scoped_lock<std::mutex> meta(meta_mtx_);
         ring_before = deopt_ring_count_;
     }
     const auto mut_before = mutation_induced_invalidations_.load(std::memory_order_relaxed);
@@ -1092,7 +1092,7 @@ std::uint32_t ShapeProfiler::on_arena_compact(std::span<const FnKey> dirty_or_re
     if (touched == 0) {
         deopt_storm_compact_suppressed.fetch_add(1, std::memory_order_relaxed);
         {
-            std::lock_guard<std::mutex> meta(meta_mtx_);
+            std::scoped_lock<std::mutex> meta(meta_mtx_);
             contract_assert(deopt_ring_count_ == ring_before);
         }
         contract_assert(mutation_induced_invalidations_.load(std::memory_order_relaxed) ==
@@ -1103,7 +1103,7 @@ std::uint32_t ShapeProfiler::on_arena_compact(std::span<const FnKey> dirty_or_re
 
     // #2617: fail-closed if a future edit feeds the storm ring from compact.
     {
-        std::lock_guard<std::mutex> meta(meta_mtx_);
+        std::scoped_lock<std::mutex> meta(meta_mtx_);
         contract_assert(deopt_ring_count_ == ring_before);
     }
     contract_assert(mutation_induced_invalidations_.load(std::memory_order_relaxed) == mut_before);
@@ -1151,7 +1151,7 @@ double ShapeProfiler::on_boundary_or_fiber_sync(bool clear_compact_only_storm) n
     {
         // Issue #2937: storm ring under meta_mtx_; threshold is atomic.
         const std::uint32_t thr = deopt_storm_threshold_.load(std::memory_order_acquire);
-        std::lock_guard<std::mutex> meta(meta_mtx_);
+        std::scoped_lock<std::mutex> meta(meta_mtx_);
         if (clear_compact_only_storm && deopt_storm_active_.load(std::memory_order_acquire)) {
             if (deopt_ring_count_ < thr) {
                 deopt_storm_active_.store(false, std::memory_order_release);
@@ -1213,7 +1213,7 @@ void ShapeProfiler::update_deopt_storm_state_(FnKey fn) noexcept {
     const double stable_ratio =
         nprof > 0 ? static_cast<double>(stable) / static_cast<double>(nprof) : 0.0;
 
-    std::lock_guard<std::mutex> meta(meta_mtx_);
+    std::scoped_lock<std::mutex> meta(meta_mtx_);
     // Push the new event into the ring.
     if (deopt_ring_.size() != win) {
         deopt_ring_.assign(win > 0 ? win : 1, DeoptEvent{0, 0});
@@ -1367,7 +1367,7 @@ void ShapeProfiler::reset() {
     global_time_.store(0, std::memory_order_relaxed);
     profile_evictions_.store(0, std::memory_order_relaxed);
     {
-        std::lock_guard<std::mutex> meta(meta_mtx_);
+        std::scoped_lock<std::mutex> meta(meta_mtx_);
         deopt_ring_.clear();
         deopt_ring_head_ = 0;
         deopt_ring_count_ = 0;

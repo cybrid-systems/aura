@@ -75,7 +75,7 @@ static void ac1_source_lock_parity() {
     CHECK(compact.find("hook_mtx_") != std::string::npos,
           "AC1: has_on_compact_hook takes hook_mtx_");
     CHECK(compact.find("lock_guard") != std::string::npos ||
-              compact.find("std::lock_guard") != std::string::npos,
+              compact.find("std::scoped_lock") != std::string::npos,
           "AC1: has_on_compact_hook uses lock_guard");
     CHECK(layout.find("on_layout_change_mtx_") != std::string::npos,
           "AC1: has_on_layout_change takes on_layout_change_mtx_");

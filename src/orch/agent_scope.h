@@ -2409,7 +2409,7 @@ inline std::unordered_map<void*, std::unique_ptr<AgentScope>>& g_evaluator_agent
 // destroying AgentScope before Scheduler at session boundaries.
 inline AgentScope& get_or_create_agent_scope(void* ev_key, serve::Scheduler& sched) {
     {
-        std::lock_guard lock(g_evaluator_agent_scopes_mtx);
+        std::scoped_lock lock(g_evaluator_agent_scopes_mtx);
         auto& m = g_evaluator_agent_scopes();
         auto it = m.find(ev_key);
         if (it != m.end())
@@ -2419,7 +2419,7 @@ inline AgentScope& get_or_create_agent_scope(void* ev_key, serve::Scheduler& sch
     // holding the registry lock across that is a lock-order hazard against
     // scheduler callbacks.
     auto scope = std::make_unique<AgentScope>(sched);
-    std::lock_guard lock(g_evaluator_agent_scopes_mtx);
+    std::scoped_lock lock(g_evaluator_agent_scopes_mtx);
     auto& m = g_evaluator_agent_scopes();
     auto it = m.find(ev_key);
     if (it != m.end())
@@ -2432,7 +2432,7 @@ inline AgentScope& get_or_create_agent_scope(void* ev_key, serve::Scheduler& sch
 // Issue #2588: find an existing scope for the given Evaluator (key).
 // Returns nullptr if no scope has been created yet.
 inline AgentScope* find_agent_scope(void* ev_key) noexcept {
-    std::lock_guard lock(g_evaluator_agent_scopes_mtx);
+    std::scoped_lock lock(g_evaluator_agent_scopes_mtx);
     auto& m = g_evaluator_agent_scopes();
     auto it = m.find(ev_key);
     return it == m.end() ? nullptr : it->second.get();
@@ -2446,7 +2446,7 @@ inline bool drop_agent_scope(void* ev_key) noexcept {
     // released: the destructor joins fibers that can re-enter the registry.
     std::unique_ptr<AgentScope> dropped;
     {
-        std::lock_guard lock(g_evaluator_agent_scopes_mtx);
+        std::scoped_lock lock(g_evaluator_agent_scopes_mtx);
         auto& m = g_evaluator_agent_scopes();
         auto it = m.find(ev_key);
         if (it == m.end())
@@ -2470,7 +2470,7 @@ inline std::size_t reset_all_agent_scopes_for_test() noexcept {
     // the lock (~AgentScope joins fibers that re-enter the registry).
     std::unordered_map<void*, std::unique_ptr<AgentScope>> drained;
     {
-        std::lock_guard lock(g_evaluator_agent_scopes_mtx);
+        std::scoped_lock lock(g_evaluator_agent_scopes_mtx);
         drained.swap(g_evaluator_agent_scopes());
     }
     const auto n = drained.size();

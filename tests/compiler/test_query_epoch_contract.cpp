@@ -155,7 +155,7 @@ int run_test_query_epoch_contract() {
         std::mutex eval_mu; // serialize eval like #332 (service not fully MT-safe)
         auto query_worker = [&]() {
             for (int i = 0; i < 20; ++i) {
-                std::lock_guard<std::mutex> lk(eval_mu);
+                std::scoped_lock<std::mutex> lk(eval_mu);
                 auto r = cs.eval("(query:defines)");
                 if (r)
                     ++query_ok;
@@ -165,7 +165,7 @@ int run_test_query_epoch_contract() {
         };
         auto mutate_worker = [&]() {
             for (int i = 0; i < 10; ++i) {
-                std::lock_guard<std::mutex> lk(eval_mu);
+                std::scoped_lock<std::mutex> lk(eval_mu);
                 auto r = cs.eval(std::format("(mutate:set-body \"g\" \"(lambda () {})\")", i + 2));
                 if (r)
                     ++mutate_ok;

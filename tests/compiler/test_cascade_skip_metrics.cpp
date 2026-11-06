@@ -235,7 +235,7 @@ static void ac3264_2_flush_mutex() {
     auto pos = dirty.find("inline std::size_t flush_pipeline_cascade_roots()");
     CHECK(pos != std::string::npos, "3264 AC2: flush present");
     auto win = dirty.substr(pos, 1800);
-    CHECK(win.find("std::lock_guard<std::mutex> lock(g_pipeline_cascade_mtx)") != std::string::npos,
+    CHECK(win.find("std::scoped_lock<std::mutex> lock(g_pipeline_cascade_mtx)") != std::string::npos,
           "3264 AC2: lock in flush");
     CHECK(dirty.find("std::mutex g_pipeline_cascade_mtx") != std::string::npos,
           "3264 AC2: mutex declared");

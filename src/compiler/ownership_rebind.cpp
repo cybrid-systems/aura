@@ -201,7 +201,7 @@ std::span<const OwnershipRebindNodeId> collect_linear_or_dirty_roots_for_rebind(
     // because linear_roots() carries the canonical "object survived the
     // densify/steal pass" identity.
     {
-        std::lock_guard<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
+        std::scoped_lock<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
         for (const void* obj : aura::core::lifetime::linear_roots()) {
             // linear_roots() stores opaque void* (object identity). For the
             // #2708 validate-walk sentinel, we use the pointer as a 32-bit
@@ -235,7 +235,7 @@ std::span<const OwnershipRebindNodeId> collect_linear_or_dirty_roots_for_rebind(
             auto& shards = aura::core::lifetime::pin_registry_shards();
             for (std::size_t si = 0; si < aura::core::lifetime::kPinRegistryShardCount; ++si) {
                 auto& shard = shards[si];
-                std::lock_guard<std::mutex> lock(shard.mtx);
+                std::scoped_lock<std::mutex> lock(shard.mtx);
                 for (auto* p : shard.pins) {
                     if (!p || !p->pinned() || !p->ptr())
                         continue;

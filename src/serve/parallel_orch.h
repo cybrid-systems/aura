@@ -515,7 +515,7 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
                     if (g_current_fiber)
                         aborted.fiber_id = g_current_fiber->id();
                     {
-                        std::lock_guard lock(sh->results_mu);
+                        std::scoped_lock lock(sh->results_mu);
                         if (i < sh->results.size())
                             sh->results[i] = std::move(aborted);
                     }
@@ -593,7 +593,7 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
             const std::string value = r.value;
             const std::string error = r.error;
             {
-                std::lock_guard lock(sh->results_mu);
+                std::scoped_lock lock(sh->results_mu);
                 if (i < sh->results.size())
                     sh->results[i] = std::move(r);
             }
@@ -666,7 +666,7 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
             g_parallel_orch_stats.spawn_rejected_quota.fetch_add(1, std::memory_order_relaxed);
             g_parallel_orch_stats.quota_rejects.fetch_add(1, std::memory_order_relaxed);
             {
-                std::lock_guard lock(sh->results_mu);
+                std::scoped_lock lock(sh->results_mu);
                 if (i < sh->results.size()) {
                     sh->results[i].ok = false;
                     sh->results[i].error = "ResourceQuotaExceeded: fibers quota exceeded";
@@ -677,7 +677,7 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
             g_parallel_orch_stats.tasks_err.fetch_add(1, std::memory_order_relaxed);
             // Mark remaining not-started tasks as quota-exceeded (no fiber allocated).
             for (std::size_t j = i + 1; j < tasks.size(); ++j) {
-                std::lock_guard lock(sh->results_mu);
+                std::scoped_lock lock(sh->results_mu);
                 if (j < sh->results.size() && sh->results[j].error == "not-started") {
                     sh->results[j].ok = false;
                     sh->results[j].error = "ResourceQuotaExceeded: fibers quota exceeded";
@@ -767,7 +767,7 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
 
     // Mutex-protected snapshot; shared_ptr keeps storage alive for any late fiber.
     {
-        std::lock_guard lock(sh->results_mu);
+        std::scoped_lock lock(sh->results_mu);
         out.results = sh->results;
     }
     out.ok_count = sh->ok_n.load(std::memory_order_relaxed);

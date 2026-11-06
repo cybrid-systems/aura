@@ -1026,7 +1026,7 @@ namespace {
         ~TwThreadDefaultSeg() {
             if (!seg)
                 return;
-            std::lock_guard<std::mutex> lk(g_tw_reg_mu);
+            std::scoped_lock<std::mutex> lk(g_tw_reg_mu);
             std::erase_if(g_tw_registry, [s = seg](const std::shared_ptr<TwRootSet>& sp) {
                 return sp.get() == s;
             });
@@ -1042,7 +1042,7 @@ namespace {
         auto sp = std::make_shared<TwRootSet>();
         sp->fiber_owned = fiber_owned;
         TwRootSet* raw = sp.get();
-        std::lock_guard<std::mutex> lk(g_tw_reg_mu);
+        std::scoped_lock<std::mutex> lk(g_tw_reg_mu);
         g_tw_registry.push_back(std::move(sp));
         return *raw;
     }
@@ -1366,7 +1366,7 @@ namespace {
         if (!g_tw_collect_mu.try_lock())
             return false;
         {
-            std::lock_guard<std::mutex> lk(g_tw_reg_mu);
+            std::scoped_lock<std::mutex> lk(g_tw_reg_mu);
             h.snapshot = g_tw_registry;
         }
         TwRootSet* self_cur = t_tw_cur;
@@ -1476,7 +1476,7 @@ extern "C" void aura_tw_roots_free(void* state) noexcept {
     // Before the registry drop: a collector that already holds a snapshot
     // must not walk frame pointers into a stack that is about to be unmapped.
     set->dead.store(true, std::memory_order_release);
-    std::lock_guard<std::mutex> lk(g_tw_reg_mu);
+    std::scoped_lock<std::mutex> lk(g_tw_reg_mu);
     std::erase_if(g_tw_registry,
                   [set](const std::shared_ptr<TwRootSet>& sp) { return sp.get() == set; });
 }
@@ -1951,7 +1951,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                     // Issue #1397: size() read + emplace_back() must be atomic
                     // (fiber:spawn shares Evaluator across threads).
                     {
-                        std::lock_guard lock(alloc_storage_lock_);
+                        std::scoped_lock lock(alloc_storage_lock_);
                         auto sidx = string_heap_.mint(s ? s : "");
                         return types::make_string(sidx);
                     }
@@ -2636,7 +2636,7 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
     auto cd = [&](const std::string& fn, const EvalValue& args) -> EvalValue {
         // Issue #1397: size() read + push_back() + index return must be
         // atomic (fiber:spawn shares Evaluator across threads).
-        std::lock_guard lock(alloc_storage_lock_);
+        std::scoped_lock lock(alloc_storage_lock_);
         // Issue #4727: a form head inside a quoted datum is an identifier
         // atom too, so it is a symbol there. Non-datum callers (macro data)
         // keep the string head eval_data_as_code matches on.
@@ -2701,7 +2701,7 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             // size()/push_back pair corrupts the monotonic resource
             // and shows up later as a SIGSEGV in an unrelated
             // hashtable walk.
-            std::lock_guard lock(alloc_storage_lock_);
+            std::scoped_lock lock(alloc_storage_lock_);
             if (name.size() <= 6) {
                 auto it = short_str_cache_.find(name);
                 if (it != short_str_cache_.end())
@@ -2747,7 +2747,7 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             items.reserve(v.children.size());
             for (auto it = v.children.rbegin(); it != v.children.rend(); ++it)
                 items.push_back(ast_to_data(flat, pool, *it, datum));
-            std::lock_guard lock(alloc_storage_lock_);
+            std::scoped_lock lock(alloc_storage_lock_);
             EvalValue tail = make_void();
             for (auto& item : items) {
                 auto pair_idx = pairs_.size();
@@ -2762,7 +2762,7 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             items.reserve(v.children.size());
             for (auto it = v.children.rbegin(); it != v.children.rend(); ++it)
                 items.push_back(ast_to_data(flat, pool, *it, datum));
-            std::lock_guard lock(alloc_storage_lock_);
+            std::scoped_lock lock(alloc_storage_lock_);
             EvalValue tail = make_void();
             for (auto& item : items) {
                 auto pair_idx = pairs_.size();
@@ -2780,7 +2780,7 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
                 v.children.size() > 2 ? ast_to_data(flat, pool, v.child(2), datum) : make_void();
             // Issue #1397: lock across the two push_backs + make_pair calls
             // so the tail indices the IfExpr chain uses are stable.
-            std::lock_guard lock(alloc_storage_lock_);
+            std::scoped_lock lock(alloc_storage_lock_);
             auto tail = make_pair(pairs_.size());
             pairs_.push_back({then_b, else_b});
             tail = make_pair(pairs_.size());
@@ -2790,7 +2790,7 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
         case ast::NodeTag::Lambda: {
             // Issue #1397: each push_back in the per-param loop + final body
             // push_back is atomic for stable returned pair index.
-            std::lock_guard lock(alloc_storage_lock_);
+            std::scoped_lock lock(alloc_storage_lock_);
             EvalValue params_tail = make_void();
             for (auto it = v.params.rbegin(); it != v.params.rend(); ++it) {
                 auto pname = std::string(pool.resolve(*it));
@@ -2809,7 +2809,7 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             auto name_str = std::string(pool.resolve(v.sym_id));
             // Issue #1397: size() + push_back for both string_heap_ and pairs_
             // must be atomic so the symbol / value pair has stable indices.
-            std::lock_guard lock(alloc_storage_lock_);
+            std::scoped_lock lock(alloc_storage_lock_);
             auto nidx = push_string_heap(name_str);
             auto val =
                 v.children.empty() ? make_void() : ast_to_data(flat, pool, v.child(0), datum);
@@ -2900,7 +2900,7 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             auto car = ast_to_data(flat, pool, v.child(0), datum);
             auto cdr_val =
                 v.children.size() > 1 ? ast_to_data(flat, pool, v.child(1), datum) : make_void();
-            std::lock_guard lock(alloc_storage_lock_);
+            std::scoped_lock lock(alloc_storage_lock_);
             auto pi = pairs_.size();
             pairs_.push_back({car, cdr_val});
             return make_pair(pi);
@@ -3308,7 +3308,7 @@ namespace {
     }
     [[maybe_unused]] static std::optional<LegacyMacroSite4759>
     legacy_macro_site_lookup_4759(const std::string& key) {
-        std::lock_guard lk(legacy_macro_site_mtx_4759());
+        std::scoped_lock lk(legacy_macro_site_mtx_4759());
         auto& sites = legacy_macro_sites_4759();
         auto it = sites.find(key);
         if (it == sites.end())
@@ -3318,7 +3318,7 @@ namespace {
     // False when the cache is full (caller retains the program itself).
     [[maybe_unused]] static bool legacy_macro_site_store_4759(const std::string& key,
                                                               const LegacyMacroSite4759& site) {
-        std::lock_guard lk(legacy_macro_site_mtx_4759());
+        std::scoped_lock lk(legacy_macro_site_mtx_4759());
         auto& sites = legacy_macro_sites_4759();
         if (sites.size() >= kLegacyMacroSiteCap4759)
             return false;
@@ -7357,7 +7357,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     // after a same-text string literal. Reuse the quote slot.
                     // emplace does not replace a key a quote already owns.
                     // #4717: shared map; same recursive lock as the mint path.
-                    std::lock_guard short_cache_lock(alloc_storage_lock_);
+                    std::scoped_lock short_cache_lock(alloc_storage_lock_);
                     if (raw_sv.size() <= 6) {
                         if (auto it = short_str_cache_.find(raw_sv); it != short_str_cache_.end()) {
                             string_intern_by_sym_.set(v.sym_id, it->second);
@@ -7429,7 +7429,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                         // have pushed the same name. Reuse that index so
                         // (eq? fr :no-workspace) is identity. SymId cache
                         // avoids the scan on hits.
-                        std::lock_guard kw_lock(keyword_table_mtx_);
+                        std::scoped_lock kw_lock(keyword_table_mtx_);
                         for (std::size_t ki = 0; ki < keyword_table_.size(); ++ki) {
                             if (keyword_table_[ki] == name) {
                                 auto val = make_keyword(static_cast<std::uint64_t>(ki));
@@ -7774,7 +7774,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 if (memo_ok_4894) {
                                     aura::ast::NodeId memo_hit = aura::ast::NULL_NODE;
                                     {
-                                        std::lock_guard memo_lk(hyg_call_memo_mtx_4894_);
+                                        std::scoped_lock memo_lk(hyg_call_memo_mtx_4894_);
                                         auto fit = hyg_call_memo_4894_.find(f);
                                         if (fit != hyg_call_memo_4894_.end()) {
                                             auto cit = fit->second.find(current_id);
@@ -7970,7 +7970,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 // expansion (bounded; cleared when full).
                                 if (memo_ok_4894 && expanded != aura::ast::NULL_NODE &&
                                     f->is_macro_introduced(expanded)) {
-                                    std::lock_guard memo_lk(hyg_call_memo_mtx_4894_);
+                                    std::scoped_lock memo_lk(hyg_call_memo_mtx_4894_);
                                     if (hyg_call_memo_4894_.size() >= 64 &&
                                         !hyg_call_memo_4894_.contains(f))
                                         hyg_call_memo_4894_.clear();
@@ -8161,7 +8161,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                                 std::vector<LegacyMacroSite4759>>
                                                 overflow_4759;
                                             static std::mutex overflow_mtx_4759;
-                                            std::lock_guard lk(overflow_mtx_4759);
+                                            std::scoped_lock lk(overflow_mtx_4759);
                                             overflow_4759->push_back(site);
                                         }
                                         return legacy_macro_run_4759(site);
@@ -8468,7 +8468,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                         // alloc_storage_lock_ (no std::malloc / g_pair_slots).
                                         const auto car_v = types::EvalValue{slot->car};
                                         const auto cdr_v = types::EvalValue{slot->cdr};
-                                        std::lock_guard lock(alloc_storage_lock_);
+                                        std::scoped_lock lock(alloc_storage_lock_);
                                         const auto new_id = pairs_.size();
                                         pairs_.push_back({car_v, cdr_v});
                                         *last_result = make_pair(new_id);
@@ -9606,7 +9606,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                     // and do not hold the deque lock across module_mtx_.
                                     void** env_slot = nullptr;
                                     {
-                                        std::lock_guard<std::mutex> cover_lock(
+                                        std::scoped_lock<std::mutex> cover_lock(
                                             module_create_cover_mu_);
                                         module_create_covers_.push_back(nullptr);
                                         env_slot = &module_create_covers_.back();
@@ -9619,14 +9619,14 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                     }
                                     void* created = nullptr;
                                     {
-                                        std::lock_guard<std::mutex> cover_lock(
+                                        std::scoped_lock<std::mutex> cover_lock(
                                             module_create_cover_mu_);
                                         created = env_slot ? *env_slot : nullptr;
                                     }
                                     std::size_t mod_idx = 0;
                                     {
                                         std::unique_lock<std::shared_mutex> mod_lock(module_mtx_);
-                                        std::lock_guard<std::mutex> rewrite_lock(
+                                        std::scoped_lock<std::mutex> rewrite_lock(
                                             densify_rewrite_mu_);
                                         created = densify_rewrite_lookup_locked_(created);
                                         mod_idx = modules_.size();
@@ -9637,7 +9637,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                         functor_instance_cache_[cache_key] = mod_idx;
                                     }
                                     {
-                                        std::lock_guard<std::mutex> cover_lock(
+                                        std::scoped_lock<std::mutex> cover_lock(
                                             module_create_cover_mu_);
                                         if (env_slot)
                                             *env_slot = created;
@@ -9824,7 +9824,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             // top_ consult, so the drop would unbind them out
                             // from under the returned closure.
                             cfr.live_safe_top_ = true;
-                            std::lock_guard<std::mutex> snap_lock(cap_snap_mtx_);
+                            std::scoped_lock<std::mutex> snap_lock(cap_snap_mtx_);
                             cap_snap_cache_.erase(cap_id);
                         }
                     }

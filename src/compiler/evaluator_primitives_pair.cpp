@@ -177,7 +177,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]))
                 return make_void();
             // Issue #2651: serialize content mutate vs concurrent reallocate.
-            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::scoped_lock lock(ev.alloc_storage_lock_);
             auto idx = as_string_idx(a[0]);
             if (idx >= string_heap.size())
                 return make_void();
@@ -203,7 +203,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             if (a.empty() || !is_string(a[0]))
                 return make_bool(false);
             // Issue #2651: pairs_ + string_heap_ under alloc_storage_lock_.
-            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::scoped_lock lock(ev.alloc_storage_lock_);
             auto idx = as_string_idx(a[0]);
             if (idx >= string_heap.size())
                 return make_bool(false);
@@ -250,7 +250,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             // Issue #2651: snapshot under lock then intern.
             std::string result;
             {
-                std::lock_guard lock(ev.alloc_storage_lock_);
+                std::scoped_lock lock(ev.alloc_storage_lock_);
                 auto v = a[0];
                 while (is_pair(v)) {
                     auto p = as_pair_idx(v);
@@ -285,7 +285,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             if (a.size() < 2 || !is_string(a[1]))
                 return make_bool(false);
             // Issue #2651: multi-fiber long joins (overnight pads) must lock.
-            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::scoped_lock lock(ev.alloc_storage_lock_);
             auto delim_idx = as_string_idx(a[1]);
             if (delim_idx >= string_heap.size())
                 return make_bool(false);
@@ -367,8 +367,8 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             // NodeId on the Soft bare list. Same car on the hash returns
             // that NodeId. A hash that is not a QueryResult stays "not a pair".
             if (!a.empty() && is_hash(a[0])) {
-                std::lock_guard hlock(ev.hash_tables_mutex());
-                std::lock_guard slock(ev.alloc_storage_lock_);
+                std::scoped_lock hlock(ev.hash_tables_mutex());
+                std::scoped_lock slock(ev.alloc_storage_lock_);
                 const auto hidx = as_hash_idx(a[0]);
                 if (hidx < g_hash_tables.size() && g_hash_tables[hidx] &&
                     !aura_hash_gate_checked(hidx, ev.capability_tenant_id(),
@@ -982,7 +982,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             // write all under alloc_storage_lock_ so concurrent
             // push_back / resize cannot realloc pairs_ between
             // idx capture and write.
-            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::scoped_lock lock(ev.alloc_storage_lock_);
             auto idx = as_pair_idx(a[0]);
             if (idx < pairs.size()) {
                 // Issue #4298: in-range pairs_ skipped the #4057 owner compare.
@@ -1036,7 +1036,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                 return make_void();
             // Issue #1397 + #1399: same atomic guard as set-car! —
             // idx capture inside lock_guard, not before.
-            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::scoped_lock lock(ev.alloc_storage_lock_);
             auto idx = as_pair_idx(a[0]);
             if (idx < pairs.size()) {
                 // Issue #4298: same in-range write gate as set-car!.
@@ -1092,7 +1092,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             // races pmr::vector / monotonic_buffer_resource → SIGSEGV in
             // allocate/deallocate (H9). Hold alloc_storage_lock_ for the
             // entire read-intern-push critical section.
-            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::scoped_lock lock(ev.alloc_storage_lock_);
             std::string result;
             for (std::size_t i = 0; i < a.size(); ++i) {
                 const auto& v = a[i];
@@ -1195,7 +1195,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             }
             // Issue #2651 / #2652: the heap read runs under the alloc lock
             // (the string heap shares it as its own mutex).
-            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::scoped_lock lock(ev.alloc_storage_lock_);
             if (idx >= string_heap.size())
                 return make_primitive_error(string_heap, error_values, "string-hash: corrupt slot",
                                             ev.primitive_error_counter_ptr());
