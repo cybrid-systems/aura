@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 912 | Preferred destination suites |
-| **Total scanned** | **912** | |
+| `tests/core/test_*.cpp` | 914 | Preferred destination suites |
+| **Total scanned** | **914** | |
 
 ### Related artifacts
 
@@ -34,11 +34,11 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 96 | 96 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 277 | 277 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 110 | 110 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 111 | 111 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 28 | 28 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 62 | 62 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 88 | 88 | P2 — link-profile heavy; migrate AC smoke first |
-| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 55 | 55 | P2 — small-medium; soa_batch precedent |
+| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 56 | 56 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 132 | 132 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 64 | 64 | P3 — review case-by-case |
 
@@ -279,6 +279,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_blame_soft_recover.cpp`
 - `tests/compiler/test_blame_stamp_on_degrade.cpp`
 - `tests/compiler/test_blame_tracking_typed_mutate.cpp`
+- `tests/compiler/test_boot_replace_subtree.cpp`
 - `tests/compiler/test_boundary_solve_hard_gate.cpp`
 - `tests/serve/test_boundary_yield_steal_metrics.cpp`
 - `tests/compiler/test_bugfix.cpp`
@@ -815,6 +816,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_prim_registrar_ref.cpp`
 - `tests/compiler/test_primcall_narg.cpp`
 - `tests/compiler/test_primcall_str_intern.cpp`
+- `tests/compiler/test_primfn_arith_overlay.cpp`
 - `tests/compiler/test_primitive_meta_self_describing_closed_loop.cpp`
 - `tests/core/test_primitive_resource_quota_stats.cpp`
 - `tests/compiler/test_primitives_capture_contract.cpp`
@@ -1522,13 +1524,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_rollback_latest.cpp` (—) [domain_suite, theme_compiler] — AC1: source has no second all_mutations() ID walk inside rollback-latest
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (110)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (111)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (110)
+#### domain/ (111)
 
 - `tests/orch/test_agent_apply_mutex.cpp` (—) [large, domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_failure_policy.cpp` (—) [large, domain_suite, theme_orch] — AC1: AgentFailurePolicy available under aura::orch; StallPolicy
@@ -1604,6 +1606,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/orch/test_per_scope_bp_admit.cpp` (—) [large, domain_suite, theme_orch] — tests/orch/test_per_scope_bp_admit.cpp
 - `tests/compiler/test_pmr_alloc_fiber_safe.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2997 — 4–8 fiber concurrent list construction + lock SLO.
 - `tests/compiler/test_post_densify_linear_type_revalidate.cpp` (—) [domain_suite, theme_compiler] — AC1: Ordered phase helper runs after Moving densify (or stamp-mismatch
+- `tests/compiler/test_primfn_arith_overlay.cpp` (—) [small, domain_suite, theme_compiler] — AC1: a small lambda and a function pointer are PrimFn, not std::function
 - `tests/serve/test_production_sweep.cpp` (—) [domain_suite, theme_serve] — test_production_sweep.cpp — fiber production sweep (standalone; SIGSEGV in batch)
 - `tests/serve/test_prompt6_epoch_atomic_visibility_fiber_steal.cpp` (—) [domain_suite, theme_serve] — test_prompt6_epoch_atomic_visibility_fiber_steal.cpp — Issue #739:
 - `tests/compiler/test_prompt6_full_memory_safety_fuzz_stress.cpp` (—) [domain_suite, theme_compiler] — test_prompt6_full_memory_safety_fuzz_stress.cpp — Issue #602:
@@ -1846,19 +1849,20 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workload_adaptive_relower.cpp` (—) [domain_suite, theme_compiler] — AC1: default base=8 compatible with #2032 (no forced signals)
 - `tests/compiler/test_write_string_escape.cpp` (—) [domain_suite, theme_compiler] — AC1: (write "a\"b") → "a\"b" under default JIT path
 
-### `shape_soa` — Shape / SoA / column layout (55)
+### `shape_soa` — Shape / SoA / column layout (56)
 
 **Target:** tests/core/test_soa_batch.cpp (no move needed)
 
 **Priority:** P2 — small-medium; soa_batch precedent
 
-#### domain/ (55)
+#### domain/ (56)
 
 - `tests/compiler/test_alloc_block_seal_last.cpp` (—) [domain_suite, theme_compiler] — AC1: finalize_last_blocks / finalize_soa_module / #2820 cites
 - `tests/compiler/test_apply_closure_envframe_soa.cpp` (—) [domain_suite, theme_compiler] — Issue #1365/#1475/#1511/#1626/#1632/#1660 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_ast_concurrency.cpp` (—) [domain_suite, theme_core] — Issue #2444 — region_by_sym_dense_ concurrent set_function_region +
 - `tests/compiler/test_ast_unparse.cpp` (—) [domain_suite, theme_compiler] — AC1: unparse callable via aura.core.ast_unparse (no Evaluator import)
 - `tests/core/test_binding_gens_atomic.cpp` (—) [domain_suite, theme_core] — AC1: atomic shared_ptr snapshot for readers
+- `tests/compiler/test_boot_replace_subtree.cpp` (—) [domain_suite, theme_compiler] — AC1: constructing CompilerService runs register_all_primitives
 - `tests/core/test_cow_column_4772.cpp` (#4772) [domain_suite, theme_core] — Issue #4772: unit tests for core/cow_column.hh — the chunk-tracked SoA
 - `tests/compiler/test_cpp26_contracts_hotpath_arena_soa_value_shape_pass.cpp` (—) [domain_suite, theme_compiler] — test_cpp26_contracts_hotpath_arena_soa_value_shape_pass.cpp — Issue #742:
 - `tests/compiler/test_dead_coercion_columnar.cpp` (—) [domain_suite, theme_compiler] — AC1: residual_aos_bridge_total unchanged by DCE SoA path; columnar_total bumps

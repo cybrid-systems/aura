@@ -60,8 +60,7 @@ int main() {
     aura::compiler::CompilerService cs;
     const auto plus = cs.evaluator().primitives().lookup("+");
     const auto repl = cs.evaluator().primitives().lookup("mutate:replace-subtree");
-    expect(plus.has_value() && repl.has_value(),
-           "boot registered + and mutate:replace-subtree");
+    expect(plus.has_value() && repl.has_value(), "boot registered + and mutate:replace-subtree");
 
     auto sum = cs.eval("(+ 1 2)");
     show_err(sum, "(+ 1 2)");

@@ -91,8 +91,8 @@ replace_subtree_captured_syms(const aura::ast::FlatAST& flat,
 // The small printer replace-subtree stores as the displaced node's text.
 // It is not the larger query-and-replace / replace-pattern printers.
 [[nodiscard]] inline std::string replace_subtree_old_source(const aura::ast::FlatAST& flat,
-                                                           const aura::ast::StringPool& pool,
-                                                           aura::ast::NodeId root) {
+                                                            const aura::ast::StringPool& pool,
+                                                            aura::ast::NodeId root) {
     using aura::ast::NodeId;
     auto src = [&](this auto&& self, NodeId id) -> std::string {
         if (id >= flat.size() || id == aura::ast::NULL_NODE)
