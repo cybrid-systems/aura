@@ -865,7 +865,7 @@ inline std::atomic<std::uint64_t> g_macro_self_evo_fiber_violation_budget{0};
 inline std::atomic<std::uint64_t> g_macro_self_evo_fiber_violation_deny_total{0};
 
 inline void bump_fiber_hygiene_on_enter(std::uint32_t fiber_id, int depth) noexcept {
-    std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+    std::scoped_lock lock(g_fiber_hygiene_mu);
     auto& slot = ensure_fiber_hygiene_slot(fiber_id);
     slot.depth = depth;
     slot.clone_in_flight = 1;
@@ -874,7 +874,7 @@ inline void bump_fiber_hygiene_on_enter(std::uint32_t fiber_id, int depth) noexc
 // atomic). Called from note_hygiene_last_limit_reason* on reject only —
 // no new TLS, no quiet-path walk.
 static void stamp_fiber_last_limit_reason(std::uint32_t fiber_id, std::uint8_t code) noexcept {
-    std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+    std::scoped_lock lock(g_fiber_hygiene_mu);
     ensure_fiber_hygiene_slot(fiber_id).last_limit_reason = code;
 }
 
@@ -888,7 +888,7 @@ static void stamp_fiber_last_limit_reason(std::uint32_t fiber_id, std::uint8_t c
 [[nodiscard]] static std::uint8_t hygiene_last_limit_reason_effective() noexcept {
     const auto fid = static_cast<std::uint32_t>(aura_fiber_current_id());
     {
-        std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+        std::scoped_lock lock(g_fiber_hygiene_mu);
         if (auto it = g_fiber_hygiene_map.find(fid); it != g_fiber_hygiene_map.end()) {
             if (const auto fr = it->second.last_limit_reason; fr != 0)
                 return fr;
@@ -897,7 +897,7 @@ static void stamp_fiber_last_limit_reason(std::uint32_t fiber_id, std::uint8_t c
     return g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
 }
 inline void bump_fiber_hygiene_on_violation(std::uint32_t fiber_id) noexcept {
-    std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+    std::scoped_lock lock(g_fiber_hygiene_mu);
     ensure_fiber_hygiene_slot(fiber_id).violations += 1;
     g_fiber_hygiene_violation_per_fiber_total.fetch_add(1, std::memory_order_relaxed);
 }
@@ -909,7 +909,7 @@ inline void bump_fiber_hygiene_on_exit(std::uint32_t fiber_id,
     // so gensym_map_size reflects the live hygiene rename occupancy of
     // this expand, not a placeholder zero. Bumped under the same lock
     // as depth/violations so the snapshot is consistent.
-    std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+    std::scoped_lock lock(g_fiber_hygiene_mu);
     auto& slot = ensure_fiber_hygiene_slot(fiber_id);
     slot.depth = 0;
     slot.gensym_map_size = name_map_size_snapshot;
@@ -921,7 +921,7 @@ inline void bump_fiber_hygiene_on_exit(std::uint32_t fiber_id,
 inline void unwind_fiber_hygiene_on_steal(std::uint32_t fiber_id) noexcept {
     if (fiber_id == 0)
         return;
-    std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+    std::scoped_lock lock(g_fiber_hygiene_mu);
     auto it = g_fiber_hygiene_map.find(fiber_id);
     if (it == g_fiber_hygiene_map.end())
         return;
@@ -931,7 +931,7 @@ inline void unwind_fiber_hygiene_on_steal(std::uint32_t fiber_id) noexcept {
 }
 FiberHygieneStats get_fiber_hygiene_metrics(std::uint32_t fiber_id) noexcept {
     g_fiber_hygiene_query_total.fetch_add(1, std::memory_order_relaxed);
-    std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+    std::scoped_lock lock(g_fiber_hygiene_mu);
     auto it = g_fiber_hygiene_map.find(fiber_id);
     return it == g_fiber_hygiene_map.end() ? FiberHygieneStats{} : it->second;
 }
@@ -946,7 +946,7 @@ FiberHygieneStats get_fiber_hygiene_metrics(std::uint32_t fiber_id) noexcept {
 }
 
 std::size_t fiber_hygiene_stats_map_size() noexcept {
-    std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+    std::scoped_lock lock(g_fiber_hygiene_mu);
     return g_fiber_hygiene_map.size();
 }
 
@@ -960,7 +960,7 @@ std::size_t fiber_hygiene_stats_map_size() noexcept {
 // slots); 4/5 stay Agent-facing sticky (#3888).
 inline void retire_own_fiber_pre_walk_deny() noexcept {
     const auto fid = static_cast<std::uint32_t>(aura_fiber_current_id());
-    std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+    std::scoped_lock lock(g_fiber_hygiene_mu);
     if (auto it = g_fiber_hygiene_map.find(fid); it != g_fiber_hygiene_map.end()) {
         const auto fr = it->second.last_limit_reason;
         if (fr == kHygieneLimitReasonDepthLimit || fr == kHygieneLimitReasonPassLimit ||
@@ -1440,7 +1440,7 @@ extern "C" int aura_hygiene_expand_deny_blocks_eval(void) noexcept {
     const auto fid = static_cast<std::uint32_t>(aura_fiber_current_id());
     std::uint8_t fr = 0;
     {
-        std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+        std::scoped_lock lock(g_fiber_hygiene_mu);
         if (auto it = g_fiber_hygiene_map.find(fid); it != g_fiber_hygiene_map.end())
             fr = it->second.last_limit_reason;
     }
@@ -1463,7 +1463,7 @@ static void reset_macro_hygiene_last_limit_reason_impl() noexcept {
     g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
     // Issue #3787: also clear per-fiber sticky 8/9/10 so host tests that
     // share fiber_id 0 do not keep deny_all armed after reset.
-    std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+    std::scoped_lock lock(g_fiber_hygiene_mu);
     for (auto& [_, slot] : g_fiber_hygiene_map)
         slot.last_limit_reason = 0;
 }
@@ -1498,7 +1498,7 @@ extern "C" int aura_macro_self_evo_check_fiber_hygiene_budget(std::uint32_t fibe
     // fiber_id 0 = no recorded fiber (defensive; bumpers skip fid=0).
     if (budget == 0 || fiber_id == 0)
         return 0;
-    std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+    std::scoped_lock lock(g_fiber_hygiene_mu);
     auto it = g_fiber_hygiene_map.find(fiber_id);
     if (it == g_fiber_hygiene_map.end())
         return 0; // no recorded expand events → permit
@@ -1526,7 +1526,7 @@ extern "C" int aura_macro_self_evo_check_fiber_hygiene_budget(std::uint32_t fibe
 extern "C" std::uint64_t
 aura_macro_self_evo_count_fibers_meeting_filter(std::uint64_t min_violations,
                                                 int min_depth) noexcept {
-    std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+    std::scoped_lock lock(g_fiber_hygiene_mu);
     std::uint64_t count = 0;
     for (const auto& [fid, stats] : g_fiber_hygiene_map) {
         (void)fid;
@@ -3309,7 +3309,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                 r, 0, std::memory_order_relaxed, std::memory_order_relaxed);
         }
         const auto fid = static_cast<std::uint32_t>(aura_fiber_current_id());
-        std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+        std::scoped_lock lock(g_fiber_hygiene_mu);
         if (auto it = g_fiber_hygiene_map.find(fid); it != g_fiber_hygiene_map.end()) {
             const auto fr = it->second.last_limit_reason;
             if (fr == kHygieneLimitReasonGensymCeiling || fr == kHygieneLimitReasonDepthLimit ||
