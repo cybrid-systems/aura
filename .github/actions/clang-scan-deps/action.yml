@@ -1,0 +1,19 @@
+name: Install clang-scan-deps 23.1.5
+description: >-
+  Official LLVM 23.1.5 clang-scan-deps, the same commit as aura-ci's clang++.
+  Not clang-tools-22 and not the old dev image.
+
+runs:
+  using: composite
+  steps:
+    - name: Restore clang-scan-deps
+      id: cache
+      uses: actions/cache@v6
+      with:
+        path: ${{ github.workspace }}/.cache/clang-scan-deps
+        key: clang-scan-deps-23.1.5-${{ runner.arch }}-392dfff97d29
+    - name: Install clang-scan-deps next to clang++
+      shell: bash
+      env:
+        SCAN_DEPS_CACHE: ${{ github.workspace }}/.cache/clang-scan-deps
+      run: bash scripts/ci/install_clang_scan_deps.sh
