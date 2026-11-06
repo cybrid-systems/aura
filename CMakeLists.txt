@@ -1826,6 +1826,9 @@ target_link_libraries(test_issue_178 PRIVATE aura_test_objects stdc++ pthread)
 # + regression. Non-duplicative with #266/#369/#553/#213.
 aura_add_issue_test(test_mutation_rollback_coverage)
 aura_issue_test_link_light(test_mutation_rollback_coverage)
+# Issue #4936: mutation-record wire bytes through the memcpy helpers.
+# Imports aura.core.mutation only; no JIT.
+aura_add_issue_test(test_mutation_wire)
 # Issue #3018: engine:metrics :all / :prefix fail-soft on hash insert miss.
 aura_add_issue_test(test_engine_metrics_facade)
 aura_issue_test_link_light(test_engine_metrics_facade)
