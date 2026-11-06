@@ -1661,6 +1661,8 @@ add_executable(test_opcode_reflect tests/reflect/test_opcode_reflect.cpp)
 aura_add_issue_test(test_hygiene_metrics)
 # Issue #4936: std::array file chunks. No JIT.
 aura_add_issue_test(test_chunk_io)
+# Issue #4936: handoff stash insert/take. No JIT.
+aura_add_issue_test(test_handoff_stash)
 target_include_directories(test_opcode_reflect PRIVATE src)
 target_compile_options(test_opcode_reflect PRIVATE ${AURA_REFLECTION_FLAG} -Wall
                        -Wno-sign-compare -Wno-unused-local-typedefs)

@@ -15,7 +15,9 @@ namespace aura::compiler::io {
 inline constexpr std::size_t kReadChunk = 4096;
 inline constexpr std::size_t kCopyChunk = 8192;
 
-// Append from fd until EOF. false leaves out partial and the fd open.
+// Append from fd until EOF. On failure (anything but EINTR), returns false
+// and keeps every byte already in `out`, including bytes this call appended
+// before the failing read. It does not roll those bytes back. The fd stays open.
 [[nodiscard]] inline bool append_fd(int fd, std::string& out) {
     std::array<char, kReadChunk> buf{};
     while (true) {
