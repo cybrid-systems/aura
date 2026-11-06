@@ -757,7 +757,7 @@ extern "C" void aura_set_lock_hooks(void (*lock_read)(void*), void (*unlock_read
     // Dedicated mutex: workspace write lock is implemented *via* these hooks
     // so we cannot call aura_lock_workspace_write here (not yet defined /
     // chicken-and-egg on first install).
-    std::lock_guard<std::mutex> lock(s_lock_hooks_mtx);
+    std::scoped_lock lock(s_lock_hooks_mtx);
     g_lock_hooks.lock_read = lock_read;
     g_lock_hooks.unlock_read = unlock_read;
     g_lock_hooks.lock_write = lock_write;
@@ -777,7 +777,7 @@ static void clear_evaluator_runtime_hooks_impl(void* user) {
     if (!user)
         return;
     {
-        std::lock_guard<std::mutex> lock(s_lock_hooks_mtx);
+        std::scoped_lock lock(s_lock_hooks_mtx);
         if (g_lock_hooks.user_data == user)
             g_lock_hooks = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     }
@@ -2169,7 +2169,7 @@ static void* densify_cell_ptr_(int64_t cell) noexcept {
 // `incoming` empty keeps only those still-referenced previous keys.
 static void publish_densify_mirror_(const std::unordered_map<void*, void*>& incoming) {
     std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
-    std::lock_guard<std::mutex> dlock(densify_remap_detail::mtx());
+    std::scoped_lock dlock(densify_remap_detail::mtx());
     const auto nclos = g_closure_func_ids.size();
     if (g_closure_must_deopt.size() < nclos)
         g_closure_must_deopt.resize(nclos, 0);
@@ -2239,7 +2239,7 @@ static void publish_densify_mirror_(const std::unordered_map<void*, void*>& inco
 extern "C" void aura_set_densify_object_remap(const void* const* olds, const void* const* news,
                                               std::size_t n) {
     if (!olds || !news || n == 0) {
-        std::lock_guard<std::mutex> lock(densify_remap_detail::mtx());
+        std::scoped_lock lock(densify_remap_detail::mtx());
         densify_remap_detail::object_remap().clear();
         return;
     }
@@ -2260,12 +2260,12 @@ extern "C" void aura_densify_mirror_retain_live_keys(void) {
 }
 
 extern "C" void aura_clear_densify_object_remap(void) {
-    std::lock_guard<std::mutex> lock(densify_remap_detail::mtx());
+    std::scoped_lock lock(densify_remap_detail::mtx());
     densify_remap_detail::object_remap().clear();
 }
 
 extern "C" void aura_set_densify_candidates(const void* const* cands, std::size_t n) {
-    std::lock_guard<std::mutex> lock(densify_remap_detail::mtx());
+    std::scoped_lock lock(densify_remap_detail::mtx());
     auto& s = densify_remap_detail::densify_candidates();
     s.clear();
     if (!cands || n == 0)
@@ -2278,7 +2278,7 @@ extern "C" void aura_set_densify_candidates(const void* const* cands, std::size_
 }
 
 extern "C" void aura_clear_densify_candidates(void) {
-    std::lock_guard<std::mutex> lock(densify_remap_detail::mtx());
+    std::scoped_lock lock(densify_remap_detail::mtx());
     densify_remap_detail::densify_candidates().clear();
 }
 
@@ -2315,7 +2315,7 @@ static int remount_capture_cells_via_densify_(std::size_t cid) {
     std::unordered_map<void*, void*> remap_copy;
     std::unordered_set<void*> cand_copy;
     {
-        std::lock_guard<std::mutex> lock(densify_remap_detail::mtx());
+        std::scoped_lock lock(densify_remap_detail::mtx());
         if (densify_remap_detail::object_remap().empty() &&
             densify_remap_detail::densify_candidates().empty())
             return 1; // AC3: zero work
@@ -2391,7 +2391,7 @@ static bool closure_env_cells_hit_any_arena_remap_(std::size_t cid) {
 }
 
 static bool closure_env_cells_hit_window_remap_(std::size_t cid) {
-    std::lock_guard<std::mutex> lock(densify_remap_detail::mtx());
+    std::scoped_lock lock(densify_remap_detail::mtx());
     const auto& remap = densify_remap_detail::object_remap();
     if (remap.empty())
         return false;
@@ -3133,7 +3133,7 @@ static std::atomic<std::uint32_t> g_pure_anon_fail_exit_age{0};
 static constexpr std::uint32_t kPureAnonHealFailExitStride = 8;
 
 extern "C" void aura_test_reset_pure_anon_bg_queue() noexcept {
-    std::lock_guard<std::mutex> lock(g_pure_anon_bg_mtx);
+    std::scoped_lock lock(g_pure_anon_bg_mtx);
     g_pure_anon_bg_head = 0;
     g_pure_anon_bg_tail = 0;
     g_pure_anon_bg_size.store(0, std::memory_order_relaxed);
@@ -3183,7 +3183,7 @@ extern "C" void aura_pure_anon_bg_enqueue(std::int64_t closure_id) noexcept {
         return;
     bool overflowed = false;
     {
-        std::lock_guard<std::mutex> lock(g_pure_anon_bg_mtx);
+        std::scoped_lock lock(g_pure_anon_bg_mtx);
         const auto sz = g_pure_anon_bg_size.load(std::memory_order_relaxed);
         if (sz >= kPureAnonBgQueueCap) {
             g_pure_anon_bg_overflow_total.fetch_add(1, std::memory_order_relaxed);
@@ -3218,7 +3218,7 @@ static void pure_anon_pressure_force_leave_oldest(std::size_t max_n) noexcept {
     std::int64_t batch[kPureAnonPressureForceBatch];
     std::size_t n = 0;
     {
-        std::lock_guard<std::mutex> lock(g_pure_anon_bg_mtx);
+        std::scoped_lock lock(g_pure_anon_bg_mtx);
         auto sz = g_pure_anon_bg_size.load(std::memory_order_relaxed);
         auto head = g_pure_anon_bg_head;
         const auto lim = max_n < kPureAnonPressureForceBatch ? max_n : kPureAnonPressureForceBatch;
@@ -3246,7 +3246,7 @@ extern "C" void aura_pure_anon_bg_remount_drain(std::uint64_t max_n) noexcept {
     std::int64_t batch[kPureAnonBgQueueCap];
     std::size_t n = 0;
     {
-        std::lock_guard<std::mutex> lock(g_pure_anon_bg_mtx);
+        std::scoped_lock lock(g_pure_anon_bg_mtx);
         auto sz = g_pure_anon_bg_size.load(std::memory_order_relaxed);
         while (n < max_n && sz > 0) {
             batch[n++] = g_pure_anon_bg_q[g_pure_anon_bg_head];
@@ -4782,7 +4782,7 @@ static std::mutex g_define_dropped_fns_mtx;
 
 static void
 note_define_dropped_fns_locked(const std::vector<int64_t (*)(int64_t*, uint32_t)>& dropped) {
-    std::lock_guard<std::mutex> lock(g_define_dropped_fns_mtx);
+    std::scoped_lock lock(g_define_dropped_fns_mtx);
     for (auto fn : dropped) {
         if (!fn)
             continue;
@@ -4805,7 +4805,7 @@ note_define_dropped_fns_locked(const std::vector<int64_t (*)(int64_t*, uint32_t)
 static bool fn_is_define_dropped_locked(int64_t (*fn)(int64_t*, uint32_t)) noexcept {
     if (!fn)
         return false;
-    std::lock_guard<std::mutex> lock(g_define_dropped_fns_mtx);
+    std::scoped_lock lock(g_define_dropped_fns_mtx);
     for (auto p : g_define_dropped_fns) {
         if (p == fn)
             return true;
@@ -4945,7 +4945,7 @@ void aura_note_ir_func_define(int64_t func_id, const char* name) {
 extern "C" void aura_note_ir_func_owner(int64_t func_id, const char* owner_name) {
     if (func_id < 0 || owner_name == nullptr || owner_name[0] == '\0')
         return;
-    std::lock_guard<std::mutex> lock(g_ir_closure_creators_mtx);
+    std::scoped_lock lock(g_ir_closure_creators_mtx);
     const std::string owner(owner_name);
     auto& callees = g_ir_closure_creators[owner];
     auto& evicted = g_ir_closure_evicted[owner];
@@ -5286,7 +5286,7 @@ static std::vector<int64_t> collect_nested_lambda_func_ids_locked(std::string_vi
     std::vector<int64_t> out;
     std::unordered_set<int64_t> seen_ids;
     {
-        std::lock_guard<std::mutex> lock(g_ir_closure_creators_mtx);
+        std::scoped_lock lock(g_ir_closure_creators_mtx);
         for (const auto& entry : g_ir_closure_creators) {
             if (!jit_key_matches_define(entry.first, name))
                 continue;
@@ -5309,7 +5309,7 @@ static std::vector<int64_t> collect_nested_lambda_func_ids_locked(std::string_vi
         const auto bind = g_ir_func_define_names.find(out[i]);
         if (bind == g_ir_func_define_names.end() || bind->second.empty())
             continue;
-        std::lock_guard<std::mutex> lock(g_ir_closure_creators_mtx);
+        std::scoped_lock lock(g_ir_closure_creators_mtx);
         append_closure_creator_func_ids_locked(bind->second, out, seen_ids);
     }
     return out;
@@ -6466,12 +6466,12 @@ namespace {
 } // namespace
 
 extern "C" void aura_set_jit_error_display(void (*fn)(void*, std::int64_t), void* user) {
-    std::lock_guard<std::mutex> lock(g_error_display_mtx);
+    std::scoped_lock lock(g_error_display_mtx);
     g_error_display = {fn, user};
 }
 
 extern "C" void aura_clear_jit_error_display_if_user(void* user) {
-    std::lock_guard<std::mutex> lock(g_error_display_mtx);
+    std::scoped_lock lock(g_error_display_mtx);
     if (g_error_display.user == user)
         g_error_display = {};
 }
@@ -6493,7 +6493,7 @@ namespace {
 
 extern "C" void aura_set_keyword_hooks(int64_t (*intern)(void*, const char*),
                                        const char* (*name)(void*, int64_t), void* user_data) {
-    std::lock_guard<std::mutex> lock(g_keyword_hooks_mtx);
+    std::scoped_lock lock(g_keyword_hooks_mtx);
     g_keyword_hooks.intern = intern;
     g_keyword_hooks.name = name;
     g_keyword_hooks.user = user_data;
@@ -6502,7 +6502,7 @@ extern "C" void aura_set_keyword_hooks(int64_t (*intern)(void*, const char*),
 extern "C" void aura_clear_keyword_hooks_if_user(void* user) {
     if (!user)
         return;
-    std::lock_guard<std::mutex> lock(g_keyword_hooks_mtx);
+    std::scoped_lock lock(g_keyword_hooks_mtx);
     if (g_keyword_hooks.user == user)
         g_keyword_hooks = {};
 }
@@ -6511,7 +6511,7 @@ int64_t aura_intern_keyword(const char* name) {
     int64_t (*fn)(void*, const char*) = nullptr;
     void* user = nullptr;
     {
-        std::lock_guard<std::mutex> lock(g_keyword_hooks_mtx);
+        std::scoped_lock lock(g_keyword_hooks_mtx);
         fn = g_keyword_hooks.intern;
         user = g_keyword_hooks.user;
     }
@@ -6537,7 +6537,7 @@ namespace {
 
 extern "C" void aura_set_symbol_hooks(int64_t (*intern)(void*, const char*),
                                       const char* (*name)(void*, int64_t), void* user_data) {
-    std::lock_guard<std::mutex> lock(g_symbol_hooks_mtx);
+    std::scoped_lock lock(g_symbol_hooks_mtx);
     g_symbol_hooks.intern = intern;
     g_symbol_hooks.name = name;
     g_symbol_hooks.user = user_data;
@@ -6546,7 +6546,7 @@ extern "C" void aura_set_symbol_hooks(int64_t (*intern)(void*, const char*),
 extern "C" void aura_clear_symbol_hooks_if_user(void* user) {
     if (!user)
         return;
-    std::lock_guard<std::mutex> lock(g_symbol_hooks_mtx);
+    std::scoped_lock lock(g_symbol_hooks_mtx);
     if (g_symbol_hooks.user == user)
         g_symbol_hooks = {};
 }
@@ -6555,7 +6555,7 @@ extern "C" int64_t aura_intern_symbol(const char* name) {
     int64_t (*fn)(void*, const char*) = nullptr;
     void* user = nullptr;
     {
-        std::lock_guard<std::mutex> lock(g_symbol_hooks_mtx);
+        std::scoped_lock lock(g_symbol_hooks_mtx);
         fn = g_symbol_hooks.intern;
         user = g_symbol_hooks.user;
     }
@@ -6569,7 +6569,7 @@ extern "C" const char* aura_symbol_name(int64_t idx) {
     const char* (*fn)(void*, int64_t) = nullptr;
     void* user = nullptr;
     {
-        std::lock_guard<std::mutex> lock(g_symbol_hooks_mtx);
+        std::scoped_lock lock(g_symbol_hooks_mtx);
         fn = g_symbol_hooks.name;
         user = g_symbol_hooks.user;
     }
@@ -6587,7 +6587,7 @@ extern "C" const char* aura_keyword_name(int64_t idx) {
     const char* (*fn)(void*, int64_t) = nullptr;
     void* user = nullptr;
     {
-        std::lock_guard<std::mutex> lock(g_keyword_hooks_mtx);
+        std::scoped_lock lock(g_keyword_hooks_mtx);
         fn = g_keyword_hooks.name;
         user = g_keyword_hooks.user;
     }
@@ -7160,7 +7160,7 @@ namespace {
 } // namespace
 
 extern "C" void aura_set_jit_hash_miss_error(int64_t (*hook)(void*, int64_t), void* user) {
-    std::lock_guard<std::mutex> lock(g_hash_miss_error_mtx);
+    std::scoped_lock lock(g_hash_miss_error_mtx);
     g_hash_miss_error = {hook, user};
 }
 
@@ -7168,7 +7168,7 @@ extern "C" int64_t aura_hash_ref_miss_error(int64_t key_val) {
     int64_t (*fn)(void*, int64_t) = nullptr;
     void* user = nullptr;
     {
-        std::lock_guard<std::mutex> lock(g_hash_miss_error_mtx);
+        std::scoped_lock lock(g_hash_miss_error_mtx);
         fn = g_hash_miss_error.fn;
         user = g_hash_miss_error.user;
     }
@@ -7505,25 +7505,25 @@ static aura_fiber_id_fn_t current_fiber_id_hook() noexcept {
 // one if it doesn't exist yet. Holds the mutex briefly.
 static std::vector<ExFrame>& get_current_ex_stack() {
     std::uint64_t fid = current_fiber_id_hook() ? current_fiber_id_hook()() : 0;
-    std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
+    std::scoped_lock lock(g_fiber_ex_stacks_mtx_);
     return g_fiber_ex_stacks[fid];
 }
 
 extern "C" void aura_exception_push(std::uint64_t handler_block, std::uint64_t payload_slot) {
     std::uint64_t fid = current_fiber_id_hook() ? current_fiber_id_hook()() : 0;
-    std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
+    std::scoped_lock lock(g_fiber_ex_stacks_mtx_);
     g_fiber_ex_stacks[fid].push_back({handler_block, payload_slot});
 }
 extern "C" void aura_exception_pop() {
     std::uint64_t fid = current_fiber_id_hook() ? current_fiber_id_hook()() : 0;
-    std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
+    std::scoped_lock lock(g_fiber_ex_stacks_mtx_);
     auto& s = g_fiber_ex_stacks[fid];
     if (!s.empty())
         s.pop_back();
 }
 extern "C" std::uint64_t aura_exception_top_handler() {
     std::uint64_t fid = current_fiber_id_hook() ? current_fiber_id_hook()() : 0;
-    std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
+    std::scoped_lock lock(g_fiber_ex_stacks_mtx_);
     auto it = g_fiber_ex_stacks.find(fid);
     if (it == g_fiber_ex_stacks.end() || it->second.empty())
         return 0;
@@ -7531,7 +7531,7 @@ extern "C" std::uint64_t aura_exception_top_handler() {
 }
 extern "C" std::uint64_t aura_exception_top_payload() {
     std::uint64_t fid = current_fiber_id_hook() ? current_fiber_id_hook()() : 0;
-    std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
+    std::scoped_lock lock(g_fiber_ex_stacks_mtx_);
     auto it = g_fiber_ex_stacks.find(fid);
     if (it == g_fiber_ex_stacks.end() || it->second.empty())
         return ~0ULL;
@@ -7539,7 +7539,7 @@ extern "C" std::uint64_t aura_exception_top_payload() {
 }
 extern "C" std::uint64_t aura_exception_depth() {
     std::uint64_t fid = current_fiber_id_hook() ? current_fiber_id_hook()() : 0;
-    std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
+    std::scoped_lock lock(g_fiber_ex_stacks_mtx_);
     auto it = g_fiber_ex_stacks.find(fid);
     if (it == g_fiber_ex_stacks.end())
         return 0;
@@ -7551,7 +7551,7 @@ extern "C" std::uint64_t aura_exception_depth() {
 // Used by the (jit:exception-fibers) Aura primitive to
 // enumerate all fibers with active exception state.
 extern "C" std::uint64_t aura_exception_depth_for_fiber(std::uint64_t fid) {
-    std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
+    std::scoped_lock lock(g_fiber_ex_stacks_mtx_);
     auto it = g_fiber_ex_stacks.find(fid);
     if (it == g_fiber_ex_stacks.end())
         return 0;
@@ -7562,7 +7562,7 @@ extern "C" std::uint64_t aura_exception_depth_for_fiber(std::uint64_t fid) {
 // exception state. Used by the (jit:exception-fibers)
 // Aura primitive.
 extern "C" std::uint64_t aura_exception_fiber_count() {
-    std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
+    std::scoped_lock lock(g_fiber_ex_stacks_mtx_);
     return static_cast<std::uint64_t>(g_fiber_ex_stacks.size());
 }
 
@@ -7570,7 +7570,7 @@ extern "C" std::uint64_t aura_exception_fiber_count() {
 // by the session-reset path (was previously clearing the
 // thread_local g_ex_stack).
 extern "C" void aura_exception_clear_all() {
-    std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
+    std::scoped_lock lock(g_fiber_ex_stacks_mtx_);
     g_fiber_ex_stacks.clear();
 }
 
@@ -7718,7 +7718,7 @@ void aura_display_value(int64_t val, int64_t write_mode) {
         void (*fn)(void*, std::int64_t) = nullptr;
         void* user = nullptr;
         {
-            std::lock_guard<std::mutex> lock(g_error_display_mtx);
+            std::scoped_lock lock(g_error_display_mtx);
             fn = g_error_display.fn;
             user = g_error_display.user;
         }
@@ -7754,7 +7754,7 @@ static std::vector<double> g_float_pool;
 static std::mutex g_float_pool_mtx;
 
 std::int64_t aura_alloc_float(double d) {
-    std::lock_guard<std::mutex> lock(g_float_pool_mtx);
+    std::scoped_lock lock(g_float_pool_mtx);
     std::int64_t idx = static_cast<std::int64_t>(g_float_pool.size());
     g_float_pool.push_back(d);
     return aura::compiler::types::make_float_raw_v2(static_cast<std::uint64_t>(idx));
@@ -7764,7 +7764,7 @@ double aura_float_ref(std::int64_t val) {
     if (!aura::compiler::types::is_float_raw_v2(val))
         return 0.0;
     std::uint64_t idx = aura::compiler::types::float_idx_raw_v2(val);
-    std::lock_guard<std::mutex> lock(g_float_pool_mtx);
+    std::scoped_lock lock(g_float_pool_mtx);
     if (idx < g_float_pool.size())
         return g_float_pool[static_cast<std::size_t>(idx)];
     return 0.0;
@@ -7774,7 +7774,7 @@ double aura_float_ref(std::int64_t val) {
 // `aura --jit-session` ";;floatpool" and the L1 test can assert that a
 // float accumulator loop does not box per iteration.
 extern "C" std::uint64_t aura_jit_float_pool_size() {
-    std::lock_guard<std::mutex> lock(g_float_pool_mtx);
+    std::scoped_lock lock(g_float_pool_mtx);
     return static_cast<std::uint64_t>(g_float_pool.size());
 }
 
@@ -7801,7 +7801,7 @@ const std::vector<std::string>* aura_jit_pool_ptr() {
 // until next call on this thread — safe vs concurrent push_back).
 const char* aura_jit_pool_string(std::size_t idx) {
     static thread_local std::string tls;
-    std::lock_guard<std::mutex> lock(g_string_pool_mtx);
+    std::scoped_lock lock(g_string_pool_mtx);
     if (idx < g_string_pool.size()) {
         tls = g_string_pool[idx];
         return tls.c_str();
@@ -7811,13 +7811,13 @@ const char* aura_jit_pool_string(std::size_t idx) {
 
 // Get JIT pool size
 std::size_t aura_jit_pool_size() {
-    std::lock_guard<std::mutex> lock(g_string_pool_mtx);
+    std::scoped_lock lock(g_string_pool_mtx);
     return g_string_pool.size();
 }
 
 std::int64_t aura_alloc_string(const char* s) {
     using aura::compiler::types::make_string_raw_v2;
-    std::lock_guard<std::mutex> lock(g_string_pool_mtx); // Issue #1306
+    std::scoped_lock lock(g_string_pool_mtx); // Issue #1306
     // Issue #2577: intern by content — PrimCall re-intern of the same
     // result (e.g. repeated string-append of fixed args) reuses one slot.
     std::string_view sv(s ? s : "");
@@ -7837,7 +7837,7 @@ const char* aura_string_ref(std::int64_t val) {
     std::uint64_t idx = string_idx_raw_v2(val);
     // Issue #1306: TLS copy so returned pointer is stable vs concurrent alloc.
     static thread_local std::string tls_ref;
-    std::lock_guard<std::mutex> lock(g_string_pool_mtx);
+    std::scoped_lock lock(g_string_pool_mtx);
     if (idx < g_string_pool.size()) {
         tls_ref = g_string_pool[static_cast<std::size_t>(idx)];
         return tls_ref.c_str();
@@ -7855,7 +7855,7 @@ const char* aura_jit_string_content(std::int64_t val) {
         return nullptr;
     std::uint64_t idx = string_idx_raw_v2(val);
     static thread_local std::string tls_content;
-    std::lock_guard<std::mutex> lock(g_string_pool_mtx);
+    std::scoped_lock lock(g_string_pool_mtx);
     if (idx < g_string_pool.size()) {
         tls_content = g_string_pool[static_cast<std::size_t>(idx)];
         return tls_content.c_str();
@@ -7894,7 +7894,7 @@ extern "C" void aura_set_hash_str_eq_callback(int64_t (*fn)(int64_t, int64_t)) {
 // Tests use it to put the same bytes at a second index. aura_alloc_string
 // still returns the first interned index for that text.
 extern "C" void aura_test_set_string_pool_slot(std::size_t idx, const char* s) {
-    std::lock_guard<std::mutex> lock(g_string_pool_mtx);
+    std::scoped_lock lock(g_string_pool_mtx);
     if (g_string_pool.size() <= idx)
         g_string_pool.resize(idx + 1);
     g_string_pool[idx] = s ? s : "";
@@ -7930,7 +7930,7 @@ extern "C" int64_t aura_hash_key_eq(int64_t stored_key, int64_t search_key) {
         const auto qi = static_cast<std::size_t>(string_idx_raw_v2(search_key));
         {
             // Issue #1306: lock pool for concurrent safety.
-            std::lock_guard<std::mutex> lock(g_string_pool_mtx);
+            std::scoped_lock lock(g_string_pool_mtx);
             if (si < g_string_pool.size() && qi < g_string_pool.size())
                 return (g_string_pool[si] == g_string_pool[qi]) ? 1 : 0;
         }
@@ -8015,12 +8015,12 @@ void aura_reset_runtime() {
     // capacity for reuse; only the size counters reset.
     // Issue #1306/#1307: lock pools during clear.
     {
-        std::lock_guard<std::mutex> lock(g_string_pool_mtx);
+        std::scoped_lock lock(g_string_pool_mtx);
         g_string_pool.clear();
         g_string_intern.clear(); // Issue #2577
     }
     {
-        std::lock_guard<std::mutex> lock(g_float_pool_mtx);
+        std::scoped_lock lock(g_float_pool_mtx);
         g_float_pool.clear();
     }
     // Issue #137: free hash tables. The `hash` primitive

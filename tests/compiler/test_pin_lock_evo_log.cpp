@@ -51,12 +51,24 @@ struct TempDir {
 };
 
 int main() {
-    static_assert(aura::core::resource_quota::ResourceQuota::dimension_name_at(0) == "memory");
-    static_assert(aura::core::resource_quota::ResourceQuota::dimension_name_at(1) == "fibers");
-    static_assert(aura::core::resource_quota::ResourceQuota::dimension_name_at(4) ==
-                  "offload_inflight");
-    static_assert(aura::core::resource_quota::ResourceQuota::dimension_name_at(5) == "unknown");
-    static_assert(aura::core::resource_quota::ResourceQuota::dimension_name_at(-1) == "unknown");
+    using RQ = aura::core::resource_quota::ResourceQuota;
+    static_assert(!aura::core::resource_quota::DimensionIndex<bool>);
+    static_assert(aura::core::resource_quota::DimensionIndex<char>);
+    static_assert(aura::core::resource_quota::DimensionIndex<signed char>);
+    static_assert(aura::core::resource_quota::DimensionIndex<unsigned char>);
+    static_assert(aura::core::resource_quota::DimensionIndex<int>);
+    static_assert(aura::core::resource_quota::DimensionIndex<unsigned>);
+    static_assert(aura::core::resource_quota::DimensionIndex<std::int64_t>);
+    static_assert(aura::core::resource_quota::DimensionIndex<std::uint64_t>);
+    static_assert(RQ::dimension_name_at(char{0}) == "memory");
+    static_assert(RQ::dimension_name_at(static_cast<signed char>(-1)) == "unknown");
+    static_assert(RQ::dimension_name_at(static_cast<signed char>(1)) == "fibers");
+    static_assert(RQ::dimension_name_at(static_cast<unsigned char>(4)) == "offload_inflight");
+    static_assert(RQ::dimension_name_at(static_cast<unsigned char>(255)) == "unknown");
+    static_assert(RQ::dimension_name_at(0) == "memory");
+    static_assert(RQ::dimension_name_at(-1) == "unknown");
+    static_assert(RQ::dimension_name_at(0u) == "memory");
+    static_assert(RQ::dimension_name_at(99u) == "unknown");
 
     int storage = 42;
     const auto pins_before = aura::core::lifetime::live_pin_count();
