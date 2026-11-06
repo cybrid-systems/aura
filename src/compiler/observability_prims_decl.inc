@@ -29,7 +29,7 @@ struct ObservabilityPrims {
     // Exposed via (stats:get "stats:drift-check") / (engine:metrics "stats:drift-check")
     // — not a public add() (SlimSurface ceiling).
     [[nodiscard]] static EvalValue stats_drift_check(Evaluator& ev);
-    using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+    using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 #define OBS_EVAL_TIER(N) static void register_eval_p##N(PrimRegistrar add, Evaluator& ev);
 #include "compiler/observability_eval_tiers.inc"
 #undef OBS_EVAL_TIER

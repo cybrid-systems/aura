@@ -31,7 +31,7 @@ import aura.compiler.value;
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 // Issue #4812: fiber body on this thread (evaluator_primitives_messaging.cpp).
 std::int64_t fiber_body_id_4778() noexcept;

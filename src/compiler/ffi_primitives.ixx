@@ -68,7 +68,7 @@ struct FFIFunc {
 // signature matches `Primitives::add(string, PrimFn)`.
 export class FFIRuntime {
 public:
-    using RegisterFn = std::function<void(std::string, PrimFn)>;
+    using RegisterFn = std::function_ref<void(std::string, PrimFn)>;
 
     // Returns true if signature was parsed successfully.
     // sig format: "(ArgType) -> RetType"

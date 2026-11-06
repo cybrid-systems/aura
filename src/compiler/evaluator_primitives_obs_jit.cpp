@@ -82,7 +82,7 @@ extern "C" std::uint64_t aura_scheduler_init_aura_result_ok_total();
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -123,7 +123,7 @@ using types::make_void;
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -1457,7 +1457,7 @@ void ObservabilityPrims::register_jit_p7(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -3088,7 +3088,7 @@ void ObservabilityPrims::register_jit_p15(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -4351,7 +4351,7 @@ void ObservabilityPrims::register_jit_p23(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -5795,7 +5795,7 @@ void ObservabilityPrims::register_jit_p31(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -7088,7 +7088,7 @@ void ObservabilityPrims::register_jit_p39(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -7639,7 +7639,7 @@ void ObservabilityPrims::register_jit_p47(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -8098,7 +8098,7 @@ void ObservabilityPrims::register_jit_p55(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -8612,7 +8612,7 @@ void ObservabilityPrims::register_jit_p63(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -9283,7 +9283,7 @@ void ObservabilityPrims::register_jit_p71(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -9641,7 +9641,7 @@ void ObservabilityPrims::register_jit_p79(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -9997,7 +9997,7 @@ void ObservabilityPrims::register_jit_p87(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -10719,7 +10719,7 @@ void ObservabilityPrims::register_jit_p95(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -12678,7 +12678,7 @@ void ObservabilityPrims::register_jit_p103(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
@@ -13171,7 +13171,7 @@ void ObservabilityPrims::register_jit_p111(PrimRegistrar add, Evaluator& ev) {
 
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;
