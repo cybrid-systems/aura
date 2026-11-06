@@ -11,50 +11,56 @@
 
 namespace aura::compiler {
 
-inline std::string format_float_shortest(double v) {
+inline std::string format_float_shortest(double value) {
     // NaN sign is not meaningful (0.0/0.0 yields a negative quiet NaN on
     // x86-64 and to_chars spells it "-nan"); print one canonical "nan".
-    if (v != v)
+    if (value != value)
         return "nan";
     std::array<char, 64> buf;
-    const auto [ptr, ec] = std::to_chars(buf.data(), buf.data() + buf.size(), v);
+    const auto [ptr, ec] = std::to_chars(buf.data(), buf.data() + buf.size(), value);
     if (ec != std::errc{})
-        return std::to_string(v);
-    std::string s(buf.data(), static_cast<std::size_t>(ptr - buf.data()));
-    const bool special = s.find("inf") != std::string::npos || s.find("INF") != std::string::npos ||
-                         s.find("nan") != std::string::npos || s.find("NAN") != std::string::npos;
-    if (!special && s.find('.') == std::string::npos && s.find('e') == std::string::npos &&
-        s.find('E') == std::string::npos)
-        s += ".0";
-    return s;
+        return std::to_string(value);
+    std::string text(buf.data(), static_cast<std::size_t>(ptr - buf.data()));
+    const bool special =
+        text.find("inf") != std::string::npos || text.find("INF") != std::string::npos ||
+        text.find("nan") != std::string::npos || text.find("NAN") != std::string::npos;
+    if (!special && text.find('.') == std::string::npos && text.find('e') == std::string::npos &&
+        text.find('E') == std::string::npos)
+        text += ".0";
+    return text;
 }
 
 // Issue #4472: lowercase digits, radix 2..36. Radix 10 stays std::to_string.
-inline std::string format_int_radix(std::int64_t n, int radix) {
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters) — value/base are distinct.
+inline std::string format_int_radix(std::int64_t value, int radix) {
     if (radix == 10)
-        return std::to_string(n);
-    const bool neg = n < 0;
+        return std::to_string(value);
+    const bool neg = value < 0;
     std::uint64_t mag = 0;
     if (neg)
-        mag = static_cast<std::uint64_t>(-(n + 1)) + 1u;
+        mag = static_cast<std::uint64_t>(-(value + 1)) + 1u;
     else
-        mag = static_cast<std::uint64_t>(n);
+        mag = static_cast<std::uint64_t>(value);
     if (mag == 0)
         return "0";
     std::array<char, 72> buf;
-    int i = 0;
-    while (mag > 0 && i < static_cast<int>(buf.size())) {
-        const auto d = static_cast<unsigned>(mag % static_cast<unsigned>(radix));
-        buf[i++] = static_cast<char>(d < 10 ? '0' + d : 'a' + (d - 10));
+    int pos = 0;
+    while (mag > 0 && pos < static_cast<int>(buf.size())) {
+        const auto digit = static_cast<unsigned>(mag % static_cast<unsigned>(radix));
+        buf.at(static_cast<std::size_t>(pos)) =
+            static_cast<char>(digit < 10 ? '0' + digit : 'a' + (digit - 10));
+        ++pos;
         mag /= static_cast<unsigned>(radix);
     }
-    std::string s;
-    s.reserve(static_cast<std::size_t>(i) + (neg ? 1 : 0));
+    std::string text;
+    text.reserve(static_cast<std::size_t>(pos) + (neg ? 1 : 0));
     if (neg)
-        s.push_back('-');
-    while (i > 0)
-        s.push_back(buf[--i]);
-    return s;
+        text.push_back('-');
+    while (pos > 0) {
+        --pos;
+        text.push_back(buf.at(static_cast<std::size_t>(pos)));
+    }
+    return text;
 }
 
 } // namespace aura::compiler

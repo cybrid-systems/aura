@@ -511,11 +511,11 @@ namespace serialize_detail {
     }
 
     template <class T> inline const char* object_bytes(const T& obj) noexcept {
-        return static_cast<const char*>(static_cast<const void*>(std::addressof(obj)));
+        return reinterpret_cast<const char*>(std::addressof(obj));
     }
 
     template <class T> inline char* object_bytes(T& obj) noexcept {
-        return static_cast<char*>(static_cast<void*>(std::addressof(obj)));
+        return reinterpret_cast<char*>(std::addressof(obj));
     }
 
     template <class T> inline const T& member_at(const char* field) noexcept {
