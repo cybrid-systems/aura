@@ -18,6 +18,7 @@
 
 #include "core/ownership.hh" // #4936 unique_file
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -59,11 +60,11 @@ inline std::string default_run_id() {
     const std::time_t t = std::time(nullptr);
     std::tm tm{};
     ::gmtime_r(&t, &tm);
-    char buf[48];
-    std::snprintf(buf, sizeof buf, "%04d%02d%02dT%02d%02d%02dZ-%d", tm.tm_year + 1900,
+    std::array<char, 48> buf;
+    std::snprintf(buf.data(), buf.size(), "%04d%02d%02dT%02d%02d%02dZ-%d", tm.tm_year + 1900,
                   tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec,
                   static_cast<int>(::getpid()));
-    return buf;
+    return buf.data();
 }
 
 inline bool log_enabled() noexcept {

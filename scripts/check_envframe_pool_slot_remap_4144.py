@@ -82,8 +82,11 @@ def main() -> int:
         ok = ok and good
 
     fn = mut.find(FN)
-    # 9500 chars covers the full walk through the #3210 temp-canary drain.
-    win = mut[fn : fn + 9500] if fn >= 0 else ""
+    # Covers the walk through slot registration. #4936 names the raw-pointer
+    # slots with moving_pointer_slot, which lengthens this prefix; the
+    # window still stops inside the function, and comment-stripping keeps
+    # the #3368 "do not call" note from counting as a dual-note.
+    win = mut[fn : fn + 12000] if fn >= 0 else ""
     code_only = _strip_comments(win)
 
     walk = code_only.find("env_frame_shards_[ef_i].mu")

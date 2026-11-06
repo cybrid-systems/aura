@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 905 | Preferred destination suites |
-| **Total scanned** | **905** | |
+| `tests/core/test_*.cpp` | 906 | Preferred destination suites |
+| **Total scanned** | **906** | |
 
 ### Related artifacts
 
@@ -40,7 +40,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 88 | 88 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 54 | 54 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 131 | 131 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 61 | 61 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 62 | 62 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -191,6 +191,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_adaptive_partial_relower_threshold.cpp`
 - `tests/compiler/test_adaptive_reverify_limit.cpp`
 - `tests/core/test_add_node_builder_contract.cpp`
+- `tests/core/test_address_bits_scratch.cpp`
 - `tests/compiler/test_adt_exhaustiveness_audit.cpp`
 - `tests/compiler/test_adt_exhaustiveness_production_hard.cpp`
 - `tests/compiler/test_adt_hard_gate_exhaustiveness.cpp`
@@ -2040,14 +2041,15 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_workspace_mtx_contention.cpp` (—) [domain_suite, theme_compiler] — AC1: Source cites #2523; residual strategy documented
 
-### `uncategorized` — Uncategorized / mixed (61)
+### `uncategorized` — Uncategorized / mixed (62)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (61)
+#### domain/ (62)
 
+- `tests/core/test_address_bits_scratch.cpp` (—) [domain_suite, theme_core] — AC1: bit_cast round-trips a pointer and an integer address
 - `tests/compiler/test_and_or_error_value.cpp` (—) [domain_suite, theme_compiler] — (#4535 contract: only the UNCAUGHT face prints).
 - `tests/compiler/test_arithmetic_int64_safety.cpp` (—) [large, domain_suite, theme_compiler] — test_arithmetic_int64_safety.cpp — Issues #1150–#1156 Phase 1
 - `tests/compiler/test_ast_workspace_modules.cpp` (—) [domain_suite, theme_compiler] — test_ast_workspace_modules.cpp — Issue #563:
