@@ -133,7 +133,9 @@ struct Entry {
 };
 
 // Appends one line; returns the new record id ("" when off or on I/O error).
-inline std::string log_append(const Entry& e) {
+// Cold audit write. A non-empty id is always run + '#' + sequence.
+inline std::string log_append(const Entry& e)
+    post(r: r.empty() || r.find('#') != std::string::npos) {
     if (!log_enabled())
         return {};
     auto& s = log_state();
