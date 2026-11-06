@@ -132,7 +132,18 @@ int run_test_subtree_gen_atomic() {
             });
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+        // AC2 is a progress claim, not a 40ms throughput claim. Under a
+        // loaded CI runner the fixed sleep could expire before either bumper
+        // got its first scheduling slice (bump_ops=0, a load flake, not a
+        // lock failure). Wait for one op from each side, then soak briefly
+        // so the two still overlap.
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while ((bump_ops.load(std::memory_order_relaxed) == 0 ||
+                valid_ops.load(std::memory_order_relaxed) == 0) &&
+               std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
         stop.store(true, std::memory_order_release);
         for (auto& th : threads)
             th.join();
