@@ -2480,9 +2480,15 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     // itself is a no-op when a MutationBoundary is already active, so
     // existing boundary callers continue to roll back via the boundary
     // itself (no double-rollback).
-    struct ExpandCheckpointGuard : ::aura::core::NoCopy {
+    // #3157 pins `struct ExpandCheckpointGuard {`. Copy is deleted here
+    // instead of a NoCopy base so that spelling, and the install/restore
+    // calls below, stay the rollback contract.
+    struct ExpandCheckpointGuard {
         bool owned = false;
         bool consumed = false;
+        ExpandCheckpointGuard() = default;
+        ExpandCheckpointGuard(const ExpandCheckpointGuard&) = delete;
+        ExpandCheckpointGuard& operator=(const ExpandCheckpointGuard&) = delete;
         // Issue #3608: production no-Evaluator local rollback. The C-ABI save
         // cannot snapshot anything without a current Evaluator (weak stub /
         // null strong def), so the guard falls back to the #3608 FlatAST
@@ -4299,9 +4305,12 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
     // Issue #3062: Restricted/Strict (sandbox active) refuse partial writes
     // on limit. Soft/Off keeps the historical half-expand return (zero-cost).
     const bool production_surface = aura::core::sandbox::is_sandbox_active();
-    struct ExpandCheckpointGuard : ::aura::core::NoCopy {
+    struct ExpandCheckpointGuard {
         bool owned = false;
         bool consumed = false;
+        ExpandCheckpointGuard() = default;
+        ExpandCheckpointGuard(const ExpandCheckpointGuard&) = delete;
+        ExpandCheckpointGuard& operator=(const ExpandCheckpointGuard&) = delete;
         // Issue #3608: local no-Evaluator rollback — mirrors the clone walk
         // guard (see clone_macro_body_at_depth): snapshot the bare flat's
         // node count when the C-ABI save cannot own a checkpoint, and
