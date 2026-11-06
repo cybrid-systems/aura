@@ -2,6 +2,7 @@
 #ifndef AURA_COMPILER_RUNTIME_PATHS_H
 #define AURA_COMPILER_RUNTIME_PATHS_H
 
+#include <array>
 #include <cstdlib>
 #include <cstddef>
 #include <filesystem>
@@ -62,11 +63,11 @@ inline constexpr const char* kEnvStdlibDir = "AURA_STDLIB_DIR";
 [[nodiscard]] inline std::string resolve_self_executable(const char* argv0 = nullptr) {
 #if defined(__linux__)
     {
-        char buf[4096];
-        const ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+        std::array<char, 4096> buf{};
+        const ssize_t n = ::readlink("/proc/self/exe", buf.data(), buf.size() - 1);
         if (n > 0) {
             buf[static_cast<std::size_t>(n)] = '\0';
-            return std::string(buf);
+            return std::string(buf.data());
         }
     }
 #endif

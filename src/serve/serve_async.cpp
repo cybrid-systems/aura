@@ -12,6 +12,7 @@
 #include "mailbox.h"
 #include "aura_platform.h"
 #include "runtime_production_abi.h"
+#include "compiler/chunk_io.hh" // #4936 std::array stdout drain
 
 #include <array>
 #include <atomic>
@@ -297,17 +298,7 @@ auto capture_stdout_during(Fn&& fn)
     ::close(fds[1]);
     std::string captured;
     std::thread drain([&] {
-        char buf[4096];
-        while (true) {
-            const ssize_t n = ::read(fds[0], buf, sizeof(buf));
-            if (n > 0) {
-                captured.append(buf, static_cast<std::size_t>(n));
-                continue;
-            }
-            if (n < 0 && errno == EINTR)
-                continue;
-            break;
-        }
+        (void)aura::compiler::io::append_fd(fds[0], captured);
     });
     struct Finish {
         int saved;
