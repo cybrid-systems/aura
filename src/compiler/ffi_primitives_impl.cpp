@@ -8,6 +8,7 @@
 // multiple evaluators with independent FFI state.
 
 module;
+#include "compiler/ffi_addr.hh" // #4936 named FFI address conversions
 #include "compiler/locked_string_heap.hh" // Issue #4543
 
 #include <dlfcn.h>
@@ -259,7 +260,7 @@ void FFIRuntime::register_primitives(RegisterFn add,
         if (a.empty() || !types::is_int(a[0]))
             return make_int(0);
         auto addr = types::as_int(a[0]);
-        void* p = reinterpret_cast<void*>(static_cast<std::uintptr_t>(addr));
+        void* p = aura::compiler::ptr_from_i64(addr);
         // Issue #4556: polling the same address reuses its slot (the slot
         // is valid while it still holds p — c-free / densify rewrite break
         // the match) instead of growing opaque_heap_ by one per call.
@@ -299,7 +300,7 @@ void FFIRuntime::register_primitives(RegisterFn add,
         std::uint32_t slot = 0;
         if (!locate_opaque(*oh, packed, slot))
             return raise_stale_opaque("c-opaque->int: stale opaque (the slot was recycled)");
-        return make_int(reinterpret_cast<std::int64_t>((*oh)[slot]));
+        return make_int(aura::compiler::i64_from_ptr((*oh)[slot]));
     });
 
     add("c-alloc", [this, oh, coverage_counters](std::span<const EvalValue> a) -> EvalValue {
@@ -458,7 +459,7 @@ void FFIRuntime::register_primitives(RegisterFn add,
             // plain memcpy (Soft/Off zero extra remap — helper early-returns).
             if constexpr (sizeof(v) == sizeof(void*)) {
                 (void)aura::ast::cover_interior_int_pattern_for_densify(
-                    reinterpret_cast<void**>(base + offset), static_cast<std::uintptr_t>(v));
+                    aura::compiler::pointer_slot_at(base, offset), static_cast<std::uintptr_t>(v));
             }
         } else if (types::is_float(val)) {
             auto v = types::as_float(val);
@@ -472,7 +473,7 @@ void FFIRuntime::register_primitives(RegisterFn add,
                 std::uintptr_t pattern = 0;
                 std::memcpy(&pattern, &v, sizeof(pattern));
                 (void)aura::ast::cover_interior_int_pattern_for_densify(
-                    reinterpret_cast<void**>(base + offset), pattern);
+                    aura::compiler::pointer_slot_at(base, offset), pattern);
             }
         } else if (types::is_opaque(val)) {
             const auto vpacked = types::as_opaque_idx(val);
@@ -496,7 +497,7 @@ void FFIRuntime::register_primitives(RegisterFn add,
             // libc-heap / external with no arena alias: helper EXEMPT
             // when !Moving (Soft/Off zero extra). Required + no slot
             // fail-closes — after memcpy the interior slot is live.
-            void** interior = reinterpret_cast<void**>(base + offset);
+            void** interior = aura::compiler::pointer_slot_at(base, offset);
             if (!aura::ast::opaque_heap_element_cover_or_required_fail(ptr, interior,
                                                                        "struct-interior")) {
                 std::memset(base + offset, 0, sizeof(ptr));
@@ -628,7 +629,7 @@ void FFIRuntime::register_primitives(RegisterFn add,
         add("ffi:pin-buffer", [](std::span<const EvalValue> a) -> EvalValue {
             if (a.size() < 2 || !types::is_int(a[0]) || !types::is_int(a[1]))
                 return make_int(-1);
-            void* ptr = reinterpret_cast<void*>(static_cast<std::uintptr_t>(types::as_int(a[0])));
+            void* ptr = aura::compiler::ptr_from_i64(types::as_int(a[0]));
             std::uint64_t gen = static_cast<std::uint64_t>(types::as_int(a[1]));
             std::uint64_t arena_id = (a.size() >= 3 && types::is_int(a[2]))
                                          ? static_cast<std::uint64_t>(types::as_int(a[2]))

@@ -58,7 +58,10 @@ contracts, so `cmake/clang_contract_shim.h` expands `pre` / `post` / `contract_a
     the old `vector<char>` pun produced. Top-level `auto_serialize(vector<T>)`
     still prefixes the element count. Do not collapse those two layouts.
   Spellings pinned by an existing test stay written out (`#4144` `&fr.pool_`,
-  `#3647` closure slots, `#3180` cover slots). JIT/FFI casts not yet in a helper
+  `#3647` closure slots, `#3180` cover slots). FFI function pointers, integer
+  cells, and densify interior slots in `ffi_hot_path` and `ffi_primitives`
+  go through `src/compiler/ffi_addr.hh`. The same shapes still written with
+  a raw cast in `aura_jit.cpp`, `aura_jit_runtime.cpp`, and `aura_jit_bridge.cpp`
   are still open, not exempt.
 - T3 **[hard]** No `const_cast` (`cppcoreguidelines-pro-type-const-cast`). Existing
   sites are not exempt because they are numerous. A cast that drops const and then

@@ -17,6 +17,7 @@
 #include <string>
 #include <string_view>
 
+#include "compiler/ffi_addr.hh" // #4936 named FFI address conversions
 #include "hash_meta.h" // FNV constants (#901)
 // Issue #195: C ABI — 0 when no fiber (host thread / tests).
 extern "C" std::uint64_t aura_fiber_current_id();
@@ -232,12 +233,12 @@ struct FFIBatchHotPath {
         }
         switch (abi) {
             case RenderFfiAbi::BatchArgs: {
-                auto* f = reinterpret_cast<BatchRenderFn>(fn);
+                auto* f = fn_from_void<BatchRenderFn>(fn);
                 g_ffi_hot_path_stats().invoke_total.fetch_add(1, std::memory_order_relaxed);
                 return f(args.data(), args.size());
             }
             case RenderFfiAbi::Nullary: {
-                auto* f = reinterpret_cast<NullaryFn>(fn);
+                auto* f = fn_from_void<NullaryFn>(fn);
                 g_ffi_hot_path_stats().invoke_total.fetch_add(1, std::memory_order_relaxed);
                 f();
                 return 0;
@@ -261,7 +262,7 @@ struct FFIBatchHotPath {
             g_ffi_hot_path_stats().invoke_skip_total.fetch_add(1, std::memory_order_relaxed);
             return -1;
         }
-        auto* f = reinterpret_cast<CellGridPresentFn>(fn);
+        auto* f = fn_from_void<CellGridPresentFn>(fn);
         g_ffi_hot_path_stats().invoke_total.fetch_add(1, std::memory_order_relaxed);
         g_ffi_hot_path_stats().cellgrid_invoke_total.fetch_add(1, std::memory_order_relaxed);
         return f(cells, w, h, dirty_or_null);
@@ -386,13 +387,13 @@ inline std::atomic<void*>& g_cellgrid_present_backend() noexcept {
     return p;
 }
 inline void register_cellgrid_present_backend(CellGridPresentFn fn) noexcept {
-    g_cellgrid_present_backend().store(reinterpret_cast<void*>(fn), std::memory_order_release);
+    g_cellgrid_present_backend().store(void_from_fn(fn), std::memory_order_release);
 }
 inline void clear_cellgrid_present_backend() noexcept {
     g_cellgrid_present_backend().store(nullptr, std::memory_order_release);
 }
 [[nodiscard]] inline CellGridPresentFn cellgrid_present_backend() noexcept {
-    return reinterpret_cast<CellGridPresentFn>(
+    return fn_from_void<CellGridPresentFn>(
         g_cellgrid_present_backend().load(std::memory_order_acquire));
 }
 
@@ -412,7 +413,7 @@ inline constexpr std::string_view kCellGridSignature =
         return false;
     const auto sig_h = ffi_sig_hash(kBindCellGridPresent, kCellGridSignature);
     const auto ret = global_ffi_batch_hot_path().dispatch_cellgrid(
-        sig_h, reinterpret_cast<void*>(fn), cells, w, h, dirty, render_effect_token, caller_tenant);
+        sig_h, void_from_fn(fn), cells, w, h, dirty, render_effect_token, caller_tenant);
     if (out_ret)
         *out_ret = ret;
     return true;
