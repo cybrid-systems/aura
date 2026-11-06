@@ -77,7 +77,7 @@ inline void c_free(gsl::owner<void*> ptr) noexcept {
 
 // Owns a C-heap pointer handed out by a C API (realpath, getcwd, strdup).
 struct CFree {
-    void operator()(void* ptr) const noexcept { c_free(ptr); }
+    void operator()(gsl::owner<void*> ptr) const noexcept { c_free(ptr); }
 };
 template <class T> using unique_c_ptr = std::unique_ptr<T, CFree>;
 
