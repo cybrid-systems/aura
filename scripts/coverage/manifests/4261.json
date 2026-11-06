@@ -4,14 +4,14 @@
   "ok": "OK #4261 primfn_no_std_function: SBO/FnPtr; Soft capturing kept",
   "checks": [
     {
-      "ac": "AC1-primfn",
+      "ac": "AC1-cite",
       "path": "src/compiler/evaluator.ixx",
-      "contains": [
-        "Issue #4261",
-        "kPrimFnNoStdFunctionIssue = 4261",
-        "uses_std_function",
-        "kSboBytes"
-      ]
+      "contains": ["Issue #4261", "kPrimFnNoStdFunctionIssue = 4261"]
+    },
+    {
+      "ac": "AC1-primfn",
+      "path": "src/compiler/evaluator_pure.ixx",
+      "contains": ["uses_std_function", "kSboBytes"]
     },
     {
       "ac": "AC3-finalize",
