@@ -14,11 +14,13 @@ jobs:
   release:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.1.1
+      image: ghcr.io/cybrid-systems/aura-ci:v0.1.0
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/ci-krb5
 
       - name: Install Python CI deps
         run: pip install --break-system-packages -r requirements-dev.txt
