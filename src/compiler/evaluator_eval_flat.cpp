@@ -1018,7 +1018,7 @@ namespace {
     // Issue #4713: this thread's plain segment. Registered lazily on the
     // first walk and dropped at thread exit so the registry never keeps a
     // pointer into a dead thread's storage.
-    struct TwThreadDefaultSeg {
+    struct TwThreadDefaultSeg : ::aura::core::NoCopy {
         TwRootSet* seg = nullptr;
         bool walking = false;
         ~TwThreadDefaultSeg() {
@@ -1029,7 +1029,6 @@ namespace {
                 return sp.get() == s;
             });
         }
-        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
     };
 
     thread_local TwRootSet* t_tw_cur = nullptr;
@@ -6877,11 +6876,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
             std::format("recursion depth exceeded (>{}) fiber={}", MAX_C_STACK_DEPTH, fid)});
     }
     ++c_stack_depth;
-    struct DepthGuard {
+    struct DepthGuard : ::aura::core::NoCopy {
         std::size_t& d;
         ~DepthGuard() { --d; }
-        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
-    } guard{c_stack_depth};
+    } guard{{}, c_stack_depth};
     // Issue #4465: arm only the outermost eval. Nested module eval keeps
     // its error value so load_module_file still fail-closes (#2570).
     // Issue #4717: per-body (fiber Context) — two bodies each arm their own
@@ -6897,7 +6895,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
         set_file_diag_root_id(id);
         set_file_resume_form({});
     }
-    struct FileDiagGuard {
+    struct FileDiagGuard : ::aura::core::NoCopy {
         Evaluator* ev;
         bool armed;
         ~FileDiagGuard() {
@@ -6906,8 +6904,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
             ev->set_file_diag_root_flat(nullptr);
             ev->set_file_diag_root_id(ast::NULL_NODE);
         }
-        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
-    } file_diag_guard{this, arm_file_diag};
+    } file_diag_guard{{}, this, arm_file_diag};
     auto result = eval_flat_body(flat, pool, id, env);
     if (arm_file_diag && result && is_error(*result) && !is_string(*result))
         return file_mode_escaped_primitive(*this, *result, flat, id);
@@ -8647,11 +8644,10 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                             // so display's arg-error consumption is suspended
                             // here — the error must reach this try's catch.
                             ++try_body_depth_ctx();
-                            struct TryBodyScope {
+                            struct TryBodyScope : ::aura::core::NoCopy {
                                 int& d;
                                 ~TryBodyScope() { --d; }
-                                [[no_unique_address]] ::aura::core::NoCopy no_copy{};
-                            } try_body_scope{try_body_depth_ctx()};
+                            } try_body_scope{{}, try_body_depth_ctx()};
                             // Issue #4838: the try body must NOT arm the
                             // file-diag rewrite. Under a closure/fiber body
                             // no outer eval has armed a root, so the first

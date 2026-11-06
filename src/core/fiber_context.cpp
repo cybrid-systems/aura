@@ -34,7 +34,7 @@ namespace {
     std::atomic<std::uint64_t> g_ctx_plain_total{0};
     std::atomic<std::uint64_t> g_ctx_plain_freed_total{0};
 
-    struct PlainContextOwner {
+    struct PlainContextOwner : ::aura::core::NoCopy {
         ~PlainContextOwner() {
             gsl::owner<Context*> c = t_ctx_plain;
             if (!c)
@@ -45,7 +45,6 @@ namespace {
             delete c;
             g_ctx_plain_freed_total.fetch_add(1, std::memory_order_relaxed);
         }
-        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
     };
     thread_local PlainContextOwner t_ctx_plain_owner;
 

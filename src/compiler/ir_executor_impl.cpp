@@ -529,14 +529,13 @@ EvalResult IRInterpreter::drain_call_stack(std::size_t base) {
     // another worker, and the pairing must not leak.
     if (drain_depth_.fetch_add(1, std::memory_order_acq_rel) == 0)
         aura_ir_drain_begin();
-    struct DrainCountGuard {
+    struct DrainCountGuard : ::aura::core::NoCopy {
         std::atomic<int>& depth;
         ~DrainCountGuard() {
             if (depth.fetch_sub(1, std::memory_order_acq_rel) == 1)
                 aura_ir_drain_end();
         }
-        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
-    } drain_count_guard{drain_depth_};
+    } drain_count_guard{{}, drain_depth_};
     // Issue #4600 §3: publish this instance for the duration of the drain.
     // A JIT guard exit inside a native callee resumes the deopting frame;
     // that resume must run here, where the frame's cell / closure ids live.

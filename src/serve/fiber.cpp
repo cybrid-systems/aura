@@ -2572,12 +2572,11 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
         // window (the park path stays blocked).
         const bool prev_join_wait = self->join_wait_yield_allowed();
         self->set_join_wait_yield_allowed(true);
-        struct JoinWaitYieldFlag {
+        struct JoinWaitYieldFlag : ::aura::core::NoCopy {
             Fiber* f;
             bool prev;
             ~JoinWaitYieldFlag() { f->set_join_wait_yield_allowed(prev); }
-            [[no_unique_address]] ::aura::core::NoCopy no_copy{};
-        } join_wait_flag{self, prev_join_wait};
+        } join_wait_flag{{}, self, prev_join_wait};
 
         // Wait loop: BlockingIO yield parks until target Done wakes us
         // (or we poll for timeout/cancel via Explicit yields when deadline).

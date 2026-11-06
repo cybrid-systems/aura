@@ -238,11 +238,10 @@ NodeId parse_expr(ParserState& s) {
         return NULL_NODE;
     }
     // RAII depth decrement on any exit path
-    struct DepthGuard {
+    struct DepthGuard : ::aura::core::NoCopy {
         std::size_t& d;
         ~DepthGuard() { --d; }
-        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
-    } _dg{s.depth};
+    } _dg{{}, s.depth};
     auto tok = s.lex.peek();
     switch (tok.kind) {
         case TokenKind::Integer:

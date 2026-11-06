@@ -32,9 +32,10 @@ contracts, so `cmake/clang_contract_shim.h` expands `pre` / `post` / `contract_a
 - R3 **[review]** A raw `T*` or `T&` never owns. Nullable non-owning parameters are `T*`, non-null ones `T&`.
 - R4 **[soft]** Define all five special members or none; spell the rest `= default` / `= delete`
   (`cppcoreguidelines-special-member-functions`). An RAII guard is never copyable: delete its copy pair (the moves
-  are then suppressed too), or, for an aggregate guard, end it with `[[no_unique_address]] aura::core::NoCopy
-  no_copy{};` so brace initialisation keeps working. A type whose atomics make a move a copy spells the move as
-  delegating to the copy.
+  are then suppressed too), or, for an aggregate guard, inherit `aura::core::NoCopy` and brace-initialise the base
+  first (`Guard g{{}, args...};`) so the guard stays an aggregate without a public data member. A move transfers
+  the containers and load/stores atomics; it does not delegate to the copy constructor. The moved-from atomic keeps
+  its value.
 - R5 **[review]** Nodes and slots are held by strong ids (`NodeId`, `SymId`, ...). Never hold a raw pointer or index
   across compaction / densify (the #4928 class of bug).
 - R6 **[hard]** No use after `std::move` (`bugprone-use-after-move`); no dangling `string_view` / `span`

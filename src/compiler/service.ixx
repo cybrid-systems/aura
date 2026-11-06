@@ -862,11 +862,10 @@ namespace {
         if (!fnp)
             return 0;
         std::vector<std::int64_t> osr_slots(slots, slots + nslots);
-        struct OsrBusyGuard {
+        struct OsrBusyGuard : ::aura::core::NoCopy {
             int& flag;
             ~OsrBusyGuard() { flag = 0; }
-            [[no_unique_address]] ::aura::core::NoCopy no_copy{};
-        } osr_busy_guard{t_jit_osr_busy};
+        } osr_busy_guard{{}, t_jit_osr_busy};
         t_jit_osr_busy = 1;
         const std::int64_t v = reinterpret_cast<aura::jit::ScalarFn>(fnp)(
             osr_slots.data(), static_cast<std::int32_t>(argc));
@@ -3859,12 +3858,11 @@ public:
                         // Issue #4457: lower_to_ir starts at flat.root. The
                         // begin root would make bind-time execute() run every
                         // sibling form (display) before the real eval.
-                        struct RestoreRoot {
+                        struct RestoreRoot : ::aura::core::NoCopy {
                             aura::ast::FlatAST* flat;
                             aura::ast::NodeId root;
                             ~RestoreRoot() { flat->root = root; }
-                            [[no_unique_address]] ::aura::core::NoCopy no_copy{};
-                        } restore{flat_ptr, flat_ptr->root};
+                        } restore{{}, flat_ptr, flat_ptr->root};
                         flat_ptr->root = cid_reg;
                         (void)cache_define_prefer_partial(input, *flat_ptr, *pool_ptr, cid_reg,
                                                           std::string(n_reg), /*bind_in_env=*/true,
@@ -15325,11 +15323,10 @@ public:
         {
             auto& eval_mut = const_cast<Evaluator&>(evaluator_);
             if (eval_mut.try_lock_workspace_shared()) {
-                struct UnlockGuard {
+                struct UnlockGuard : ::aura::core::NoCopy {
                     Evaluator& e;
                     ~UnlockGuard() { e.unlock_workspace_shared(); }
-                    [[no_unique_address]] ::aura::core::NoCopy no_copy{};
-                } guard{eval_mut};
+                } guard{{}, eval_mut};
                 const auto* wf = eval_mut.workspace_flat();
                 if (wf) {
                     const auto& markers = wf->marker_column();
@@ -16606,11 +16603,10 @@ public:
         // (plain lock_shared).
         auto& eval_mut = const_cast<Evaluator&>(evaluator_);
         eval_mut.lock_workspace_shared();
-        struct UnlockGuard {
+        struct UnlockGuard : ::aura::core::NoCopy {
             Evaluator& e;
             ~UnlockGuard() { e.unlock_workspace_shared(); }
-            [[no_unique_address]] ::aura::core::NoCopy no_copy{};
-        } guard{eval_mut};
+        } guard{{}, eval_mut};
         auto hist = (node == aura::ast::NULL_NODE) ? source->all_mutations()
                                                    : source->mutation_history(node);
         for (auto& rec : hist) {

@@ -6635,11 +6635,10 @@ struct CompilerMetrics {
             // just inline the unlock at every return. With
             // only one return path below, a manual unlock
             // at the end is the simplest correct approach.
-            struct UnlockGuard {
+            struct UnlockGuard : ::aura::core::NoCopy {
                 std::atomic_flag* f;
                 ~UnlockGuard() { f->clear(std::memory_order_release); }
-                [[no_unique_address]] ::aura::core::NoCopy no_copy{};
-            } guard{&primitive_fastpath_per_prim_lock_};
+            } guard{{}, &primitive_fastpath_per_prim_lock_};
             if (slot >= primitive_fastpath_per_prim_capacity_) {
                 std::size_t new_cap = primitive_fastpath_per_prim_capacity_ == 0
                                           ? std::max<std::size_t>(256, slot + 1)

@@ -7,7 +7,7 @@
 // * c_alloc/c_free   the C heap shared with JIT code and C ABI callers.
 // * opaque_ptr       a type-erased owner for pimpl members.
 // * unique_file      std::FILE* that fcloses itself. open_file() never throws.
-// * NoCopy           a member that pins an aggregate RAII guard in place.
+// * NoCopy           an empty base that pins an aggregate RAII guard in place.
 // * immortal<T>      a function-local singleton that is constructed on first
 //                    use and never destroyed, for state fibers or detached
 //                    threads may still touch during static destruction. It
@@ -58,25 +58,21 @@ using unique_pipe = std::unique_ptr<std::FILE, PipeCloser>;
 // pair slabs, FFI buffers) is malloc/free by contract, because emitted code
 // and C callers free it. These are the only malloc-family calls in the
 // tree; everything else owns through unique_ptr, a container or an arena.
-[[nodiscard]] inline void* c_alloc(std::size_t bytes) noexcept {
-    // NOLINTNEXTLINE(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory): C-heap entry
-    // point
-    return std::malloc(bytes);
+// The return type is gsl::owner so the allocation is an owner in the type
+// system (cppcoreguidelines-owning-memory). The malloc itself is the
+// documented C-heap entry and is suppressed only on that call.
+[[nodiscard]] inline gsl::owner<void*> c_alloc(std::size_t bytes) noexcept {
+    return std::malloc(bytes); // NOLINT(cppcoreguidelines-no-malloc): C-heap entry
 }
-[[nodiscard]] inline void* c_calloc(std::size_t count, std::size_t bytes) noexcept {
-    // NOLINTNEXTLINE(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory): C-heap entry
-    // point
-    return std::calloc(count, bytes);
+[[nodiscard]] inline gsl::owner<void*> c_calloc(std::size_t count, std::size_t bytes) noexcept {
+    return std::calloc(count, bytes); // NOLINT(cppcoreguidelines-no-malloc): C-heap entry
 }
-[[nodiscard]] inline void* c_realloc(void* ptr, std::size_t bytes) noexcept {
-    // NOLINTNEXTLINE(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory): C-heap entry
-    // point
-    return std::realloc(ptr, bytes);
+[[nodiscard]] inline gsl::owner<void*> c_realloc(gsl::owner<void*> ptr,
+                                                 std::size_t bytes) noexcept {
+    return std::realloc(ptr, bytes); // NOLINT(cppcoreguidelines-no-malloc): C-heap entry
 }
-inline void c_free(void* ptr) noexcept {
-    // NOLINTNEXTLINE(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory): C-heap exit
-    // point
-    std::free(ptr);
+inline void c_free(gsl::owner<void*> ptr) noexcept {
+    std::free(ptr); // NOLINT(cppcoreguidelines-no-malloc): C-heap exit
 }
 
 // Owns a C-heap pointer handed out by a C API (realpath, getcwd, strdup).
@@ -87,19 +83,25 @@ template <class T> using unique_c_ptr = std::unique_ptr<T, CFree>;
 
 // A type-erased owner for a pimpl member whose type the declaring module
 // interface cannot name (Evaluator's TypeChecker / InferenceEngine). The
-// deleter is bound by adopt_opaque<T>, so reset() runs ~T.
+// deleter is bound by adopt_opaque<T>, so reset() runs ~T. destroy_ is
+// private: the type has a call operator, so a public data member would be
+// a misc-non-private-member-variables-in-classes finding.
 struct OpaqueDelete {
-    void (*destroy)(void*) noexcept = nullptr;
+    explicit OpaqueDelete(void (*destroy)(void*) noexcept = nullptr) noexcept
+        : destroy_(destroy) {}
     void operator()(void* ptr) const noexcept {
-        if (destroy != nullptr) {
-            destroy(ptr);
+        if (destroy_ != nullptr) {
+            destroy_(ptr);
         }
     }
+
+private:
+    void (*destroy_)(void*) noexcept;
 };
 using opaque_ptr = std::unique_ptr<void, OpaqueDelete>;
 
 template <class T> void destroy_opaque(void* ptr) noexcept {
-    const std::unique_ptr<T> owned{static_cast<T*>(ptr)};
+    const std::unique_ptr<T> owned{static_cast<gsl::owner<T*>>(static_cast<T*>(ptr))};
 }
 
 template <class T> [[nodiscard]] opaque_ptr adopt_opaque(std::unique_ptr<T> owned) noexcept {
@@ -107,7 +109,7 @@ template <class T> [[nodiscard]] opaque_ptr adopt_opaque(std::unique_ptr<T> owne
 }
 
 [[nodiscard]] inline unique_file open_file(const char* path, const char* mode) noexcept {
-    return unique_file{std::fopen(path, mode)};
+    return unique_file{static_cast<gsl::owner<std::FILE*>>(std::fopen(path, mode))};
 }
 
 // Flushes and closes `file`; reports whether every write reached the OS. The
@@ -121,10 +123,11 @@ template <class T> [[nodiscard]] opaque_ptr adopt_opaque(std::unique_ptr<T> owne
     return flushed;
 }
 
-// NoCopy: a member that makes an aggregate RAII guard neither copyable nor
-// movable without giving it a constructor (a constructor would end aggregate
-// initialisation). Use it as `[[no_unique_address]] NoCopy no_copy{};` after
-// the data members (cpp-style R4).
+// NoCopy: a public empty base that makes an aggregate RAII guard neither
+// copyable nor movable without giving it a constructor (a constructor would
+// end aggregate initialisation) and without a public data member (a member
+// next to a destructor is misc-non-private-member-variables-in-classes).
+// Brace-initialise the base first: `Guard g{{}, args...};` (cpp-style R4).
 struct NoCopy {
     NoCopy() = default;
     NoCopy(const NoCopy&) = delete;

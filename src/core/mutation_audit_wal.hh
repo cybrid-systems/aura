@@ -140,7 +140,7 @@ inline AuditWalMetrics& g_audit_wal_metrics() noexcept {
 }
 
 // Process-wide WAL controller (optional persist).
-struct MutationAuditWal {
+struct MutationAuditWal : ::aura::core::NoCopy {
     mutable std::mutex mtx;
     bool enabled = false;
     std::string dir;
@@ -851,7 +851,6 @@ struct MutationAuditWal {
         typed_bytes = 0;
         pruned_upto_ = 0;
     }
-    [[no_unique_address]] ::aura::core::NoCopy no_copy{};
 };
 
 // Issue #2150: resolve WAL directory.

@@ -925,7 +925,7 @@ extern "C" size_t aura_g_owned_pair_slots_size() {
 }
 
 namespace {
-struct PairSlotCleanup {
+struct PairSlotCleanup : ::aura::core::NoCopy {
     ~PairSlotCleanup() {
         // Issue #4755: walk and clear under the registry mutex so the
         // iteration cannot observe a concurrent push_back's realloc.
@@ -937,7 +937,6 @@ struct PairSlotCleanup {
         // Issue #898: JIT cons slabs are not on g_owned_pair_slots_.
         free_pair_slabs();
     }
-    [[no_unique_address]] ::aura::core::NoCopy no_copy{};
 };
 [[maybe_unused]] PairSlotCleanup g_pair_slot_cleanup;
 } // namespace
