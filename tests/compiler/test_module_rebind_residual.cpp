@@ -269,10 +269,17 @@ static void ac8_source_gate_4109() {
     // shard barrier and runs the locked #4109 restamp in the same critical
     // section. The ride-up invariant is carried by that publisher, at BOTH
     // boundary sites.
+    // Issue #4936 B1b: the enter site captures cp.version into entry_version
+    // before cp is moved onto the active boundary stack, so the publisher is
+    // invoked with either spelling. Keep this in lockstep with
+    // check_materialize_defuse_4109.py (AC3) — one call per boundary site.
     std::size_t boundary_bumps = 0;
-    for (auto bp = boundary_src.find("bump_defuse_and_restamp(cp.version"); bp != std::string::npos;
-         bp = boundary_src.find("bump_defuse_and_restamp(cp.version", bp + 1))
-        ++boundary_bumps;
+    for (const char* callee :
+         {"bump_defuse_and_restamp(entry_version", "bump_defuse_and_restamp(cp.version"}) {
+        for (auto bp = boundary_src.find(callee); bp != std::string::npos;
+             bp = boundary_src.find(callee, bp + 1))
+            ++boundary_bumps;
+    }
     CHECK(
         boundary_bumps >= 2,
         "AC8: boundary bump rides still-valid captures up (#4109, #4730 publisher at enter+exit)");
