@@ -216,10 +216,12 @@ jobs:
         # Issue #4936: the changed-lines clang-tidy gate diffs HEAD~1..HEAD.
         fetch-depth: 2
 
+    - uses: ./.github/actions/ci-krb5
+
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-dev-v1.1.1-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-aura-ci-v0.1.0-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -302,10 +304,12 @@ jobs:
         # `&& 0 || 1` would coerce 0 to the fallback 1.
         fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
 
+    - uses: ./.github/actions/ci-krb5
+
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-dev-v1.1.1-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-aura-ci-v0.1.0-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -428,10 +432,12 @@ jobs:
       with:
         fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
 
+    - uses: ./.github/actions/ci-krb5
+
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-dev-v1.1.1-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-aura-ci-v0.1.0-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -524,6 +530,8 @@ jobs:
       image: ghcr.io/cybrid-systems/aura-ci:v0.1.0
     steps:
     - uses: actions/checkout@v7
+
+    - uses: ./.github/actions/ci-krb5
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -674,10 +682,12 @@ jobs:
     steps:
     - uses: actions/checkout@v7
 
+    - uses: ./.github/actions/ci-krb5
+
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-dev-v1.1.1-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-aura-ci-v0.1.0-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -726,7 +736,7 @@ jobs:
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-dev-v1.1.1-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-aura-ci-v0.1.0-${{ hashFiles('requirements-dev.txt') }}
 
     - uses: actions/cache@v6
       with:
@@ -793,10 +803,12 @@ jobs:
     steps:
     - uses: actions/checkout@v7
 
+    - uses: ./.github/actions/ci-krb5
+
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-dev-v1.1.1-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-aura-ci-v0.1.0-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt

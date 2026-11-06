@@ -47,6 +47,7 @@ jobs:
       image: ghcr.io/cybrid-systems/aura-ci:v0.1.0
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/ci-krb5
       - name: Build aura
         run: |
           git config --global --add safe.directory '*'

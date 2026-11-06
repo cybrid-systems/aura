@@ -18,9 +18,18 @@ OLD = "ghcr.io/cybrid-systems/dev:v1.1.1"
 NEW = "ghcr.io/cybrid-systems/aura-ci:v0.1.0"
 RUNTIME = "ghcr.io/cybrid-systems/aura:"
 
-# Jobs that compile or test Aura inside the toolchain container.
+# Jobs that compile Aura inside the toolchain container.
 PINNED = {
     ".github/workflows/ci.yml": 7,
+    ".github/workflows/dist.yml": 1,
+    ".github/workflows/nightly.yml": 2,
+    ".github/workflows/release.yml": 1,
+}
+# Compile jobs also install libkrb5-dev. deployment-health only runs a
+# downloaded binary, so ci.yml has one fewer action use than image pins.
+KRB5_ACTION = "uses: ./.github/actions/ci-krb5"
+KRB5_USES = {
+    ".github/workflows/ci.yml": 6,
     ".github/workflows/dist.yml": 1,
     ".github/workflows/nightly.yml": 2,
     ".github/workflows/release.yml": 1,
@@ -38,6 +47,15 @@ class CiToolchainImage(unittest.TestCase):
             text = (ROOT / rel).read_text()
             self.assertEqual(text.count(NEW), count, rel)
             self.assertNotIn(OLD, text, rel)
+
+    def test_compile_jobs_install_krb5_link_names(self) -> None:
+        action = ROOT / ".github" / "actions" / "ci-krb5" / "action.yml"
+        body = action.read_text()
+        self.assertIn("libkrb5-dev", body)
+        self.assertNotIn(OLD, body)
+        for rel, count in KRB5_USES.items():
+            text = (ROOT / rel).read_text()
+            self.assertEqual(text.count(KRB5_ACTION), count, rel)
 
     def test_runtime_image_is_not_the_toolchain(self) -> None:
         for path in (ROOT / "templates").rglob("ci.yml"):
