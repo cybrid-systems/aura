@@ -137,7 +137,8 @@ void check_pod_vectors() {
     VecHolder one;
     one.xs = {0xffffffffu};
     one.tail = 7;
-    const auto one_back = aura::reflect::auto_deserialize<VecHolder>(aura::reflect::auto_serialize(one));
+    const auto one_back =
+        aura::reflect::auto_deserialize<VecHolder>(aura::reflect::auto_serialize(one));
     check(one_back.xs.size() == 1 && one_back.xs[0] == 0xffffffffu && one_back.ys.empty() &&
               one_back.tail == 7,
           "single high element and empty sibling");

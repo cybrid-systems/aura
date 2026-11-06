@@ -16,7 +16,7 @@ module;
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "observability_metrics.h" // Issue #2021: CompilerMetrics snapshot
 #include "typed_mutation_audit.h" // Issue #3278: production_defaults_active() gate for cross-pool schema homology
-#include "core/ownership.hh" // Issue #4936: NoCopy
+#include "core/ownership.hh"            // Issue #4936: NoCopy
 #include "compiler/hygiene_builtins.hh" // Issue #4936 B4: constexpr reserved names
 
 module aura.compiler.macro_expansion;

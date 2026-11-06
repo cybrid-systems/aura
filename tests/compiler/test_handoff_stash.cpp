@@ -53,7 +53,8 @@ int main() {
             aura::orch::HandoffToken gone;
             expect(!stash.take(first, gone), "evicted hash is gone");
             aura::orch::HandoffToken last;
-            expect(stash.take(one.hash, last) && last.source_fiber_id == 65, "newest token is kept");
+            expect(stash.take(one.hash, last) && last.source_fiber_id == 65,
+                   "newest token is kept");
         }
     }
 

@@ -297,9 +297,7 @@ auto capture_stdout_during(Fn&& fn)
     }
     ::close(fds[1]);
     std::string captured;
-    std::thread drain([&] {
-        (void)aura::compiler::io::append_fd(fds[0], captured);
-    });
+    std::thread drain([&] { (void)aura::compiler::io::append_fd(fds[0], captured); });
     struct Finish {
         int saved;
         int read_fd;

@@ -12,7 +12,7 @@ module;
 #include "lock_order_audit.h" // Issue #2354: Module rank
 #include "primitives_detail.h"
 #include "security_capabilities.h"
-#include "core/ownership.hh" // #4936 unique_c_ptr
+#include "core/ownership.hh"    // #4936 unique_c_ptr
 #include "compiler/chunk_io.hh" // #4936 std::array file chunks
 
 module aura.compiler.evaluator;
