@@ -199,7 +199,7 @@ void WorkerThread::stop() {
     // wakeup window. The wake_evfd_ write happens outside the lock
     // (it's not what cv waits on, it's the WakingFibers path).
     {
-        std::lock_guard<std::mutex> lock(wake_mutex_);
+        std::scoped_lock<std::mutex> lock(wake_mutex_);
         running_.store(false, std::memory_order_release);
     }
     if (wake_evfd_ >= 0) {
@@ -207,7 +207,7 @@ void WorkerThread::stop() {
         ::write(wake_evfd_, &val, sizeof(val));
     }
     {
-        std::lock_guard<std::mutex> lock(wake_mutex_);
+        std::scoped_lock<std::mutex> lock(wake_mutex_);
         wake_cv_.notify_all();
     }
 }
@@ -249,7 +249,7 @@ void WorkerThread::enqueue(Fiber* fiber) {
         // runs 36692907837 / 36694879795: #4176 AC2 done frozen at 199
         // for the whole 1800s suite budget; #4230 AC2 driver parked on
         // join iteration 1, ok 0/200).
-        std::lock_guard<std::mutex> lock(inject_mutex_);
+        std::scoped_lock<std::mutex> lock(inject_mutex_);
         inject_queue_.push_back(fiber);
         inject_pending_.store(true, std::memory_order_release);
     }
@@ -267,7 +267,7 @@ void WorkerThread::enqueue(Fiber* fiber) {
         // Issue #4783: pair the remote notify with wake_mutex_ so it cannot
         // land between the parker's predicate check and its sleep (lost
         // wakeup → full 100 ms park). Same pairing as stop() (#2573).
-        std::lock_guard<std::mutex> lock(wake_mutex_);
+        std::scoped_lock<std::mutex> lock(wake_mutex_);
         wake_cv_.notify_one();
     }
 }
@@ -283,7 +283,7 @@ void WorkerThread::enqueue_fifo(Fiber* fiber) {
     if (g_worker_ctx == &ctx_) {
         ready_fifo_.push_back(fiber);
     } else {
-        std::lock_guard<std::mutex> lock(inject_mutex_);
+        std::scoped_lock<std::mutex> lock(inject_mutex_);
         fifo_inject_.push_back(fiber);
         inject_pending_.store(true, std::memory_order_release);
     }
@@ -297,7 +297,7 @@ void WorkerThread::enqueue_fifo(Fiber* fiber) {
     if (g_worker_ctx == &ctx_) {
         wake_cv_.notify_one();
     } else {
-        std::lock_guard<std::mutex> lock(wake_mutex_);
+        std::scoped_lock<std::mutex> lock(wake_mutex_);
         wake_cv_.notify_one();
     }
 }
@@ -313,7 +313,7 @@ bool WorkerThread::drain_injections() {
     std::deque<Fiber*> batch;
     std::deque<Fiber*> fifo_batch;
     {
-        std::lock_guard<std::mutex> lock(inject_mutex_);
+        std::scoped_lock<std::mutex> lock(inject_mutex_);
         if (inject_queue_.empty() && fifo_inject_.empty())
             return false;
         batch.swap(inject_queue_);

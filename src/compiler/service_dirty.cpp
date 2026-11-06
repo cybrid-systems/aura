@@ -906,7 +906,7 @@ void CompilerService::mark_all_defines_dirty() {
         // Issue #4753: the dropped tree-walker publication record belongs to
         // the same replaced workspace.
         {
-            std::lock_guard<std::mutex> tw_lock(retired_tw_closure_mtx_);
+            std::scoped_lock<std::mutex> tw_lock(retired_tw_closure_mtx_);
             retired_tw_closure_owner_.clear();
             retired_tw_closure_order_.clear();
         }

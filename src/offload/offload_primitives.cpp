@@ -88,7 +88,7 @@ namespace {
         auto& reg = registry();
         std::uint64_t snapshot_id = 0;
         {
-            std::lock_guard lock(reg.mutex);
+            std::scoped_lock lock(reg.mutex);
             snapshot_id = reg.next_snapshot_id++;
         }
         auto input =
@@ -108,7 +108,7 @@ namespace {
             case aura::offload::SubmitStatus::ShuttingDown:
                 return -3;
         }
-        std::lock_guard lock(reg.mutex);
+        std::scoped_lock lock(reg.mutex);
         const int id = reg.next_ticket_id++;
         reg.tickets.emplace(id, std::move(submission.ticket));
         return id;
@@ -116,7 +116,7 @@ namespace {
 
     std::shared_ptr<Ticket> find_ticket(int id) {
         auto& reg = registry();
-        std::lock_guard lock(reg.mutex);
+        std::scoped_lock lock(reg.mutex);
         auto it = reg.tickets.find(id);
         return it == reg.tickets.end() ? nullptr : it->second;
     }

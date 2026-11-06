@@ -236,7 +236,7 @@ bool test_eight_thread_concurrent_shape() {
         for (int i = 0; i < iters; ++i) {
             const int v = val_dist(rng);
             {
-                std::lock_guard lock(eval_mu);
+                std::scoped_lock lock(eval_mu);
                 (void)cs.eval("(wrap " + std::to_string(v & 7) + ")");
                 (void)cs.typed_mutate("(mutate:rebind \"acc\" \"" + std::to_string(v) + "\")");
             }
@@ -269,7 +269,7 @@ bool test_fiber_yield_shape_refresh() {
         sched.spawn([&, f]() {
             for (int i = 0; i < k_iters; ++i) {
                 {
-                    std::lock_guard lock(eval_mu);
+                    std::scoped_lock lock(eval_mu);
                     (void)cs.eval("(add1 " + std::to_string(f + i) + ")");
                 }
                 Fiber::yield(YieldReason::MutationBoundary);

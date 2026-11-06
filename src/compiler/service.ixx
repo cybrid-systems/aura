@@ -299,7 +299,7 @@ static bool park_exec_holds_4765() {
     EvalMutexWaitTls& t = t_eval_mutex_wait_tls;
     if (t.exec_released || t.exec_holds.empty())
         return false;
-    std::lock_guard<std::mutex> lk(g_exec_parked_mtx_4765);
+    std::scoped_lock<std::mutex> lk(g_exec_parked_mtx_4765);
     for (auto& h : t.exec_holds)
         ++g_exec_parked_4765[h.m].parked;
     return true;
@@ -364,7 +364,7 @@ struct ExecUnderGate4765 {
                 return;
             }
             {
-                std::lock_guard<std::mutex> lk(g_exec_parked_mtx_4765);
+                std::scoped_lock<std::mutex> lk(g_exec_parked_mtx_4765);
                 auto it = g_exec_parked_4765.find(&m);
                 if (it != g_exec_parked_4765.end() && it->second.parked > 0) {
                     ++it->second.walking;
@@ -382,7 +382,7 @@ struct ExecUnderGate4765 {
             m.unlock();
         if (borrowed) {
             {
-                std::lock_guard<std::mutex> lk(g_exec_parked_mtx_4765);
+                std::scoped_lock<std::mutex> lk(g_exec_parked_mtx_4765);
                 auto it = g_exec_parked_4765.find(&m);
                 if (it != g_exec_parked_4765.end()) {
                     --it->second.walking;
@@ -2407,17 +2407,17 @@ public:
     std::size_t mailbox_size() const { return mailbox_.size(); }
 
     static void register_session(const std::string& id, CompilerService* svc) {
-        std::lock_guard lk(registry_mtx());
+        std::scoped_lock lk(registry_mtx());
         registry()[id] = svc;
     }
 
     static void unregister_session(const std::string& id) {
-        std::lock_guard lk(registry_mtx());
+        std::scoped_lock lk(registry_mtx());
         registry().erase(id);
     }
 
     static CompilerService* lookup(const std::string& id) {
-        std::lock_guard lk(registry_mtx());
+        std::scoped_lock lk(registry_mtx());
         auto it = registry().find(id);
         return it != registry().end() ? it->second : nullptr;
     }
@@ -7525,7 +7525,7 @@ public:
                                                                        lock_order::Level::DepGraph);
             dep_graph_generation_.fetch_add(1, std::memory_order_release);
             metrics_.dep_graph_generation_total.fetch_add(1, std::memory_order_relaxed);
-            std::lock_guard<std::mutex> cascade_guard(cascade_decision_mtx_);
+            std::scoped_lock<std::mutex> cascade_guard(cascade_decision_mtx_);
             deferred_hybrid_armed_.store(1, std::memory_order_release);
             deferred_hybrid_gen_.fetch_add(1, std::memory_order_relaxed);
         }
@@ -7581,7 +7581,7 @@ public:
             metrics_.dep_graph_generation_total.fetch_add(1, std::memory_order_relaxed);
             // Arm deferred so a mid-abort reject after this bump is
             // visible to the next peel impact_ub / force-full path.
-            std::lock_guard<std::mutex> cascade_guard(cascade_decision_mtx_);
+            std::scoped_lock<std::mutex> cascade_guard(cascade_decision_mtx_);
             deferred_hybrid_armed_.store(1, std::memory_order_release);
             deferred_hybrid_gen_.fetch_add(1, std::memory_order_relaxed);
         }
@@ -9909,7 +9909,7 @@ public:
                         bool slot_is_closure = false;
                         if (cell && types::is_cell(*cell)) {
                             // Issue #4717: snapshot under the cells storage lock.
-                            std::lock_guard<std::recursive_mutex> cell_lk(
+                            std::scoped_lock<std::recursive_mutex> cell_lk(
                                 evaluator_.cells_storage_mutex());
                             const auto ci = types::as_cell_id(*cell);
                             slot_is_closure = ci < evaluator_.cells().size() &&
@@ -9963,7 +9963,7 @@ public:
                 // Issue #4717: snapshot the cell under the storage lock so a
                 // concurrent cell append cannot reallocate underneath.
                 {
-                    std::lock_guard<std::recursive_mutex> cell_lk(evaluator_.cells_storage_mutex());
+                    std::scoped_lock<std::recursive_mutex> cell_lk(evaluator_.cells_storage_mutex());
                     if (ci >= evaluator_.cells().size())
                         return;
                     actual = evaluator_.cells()[ci];
@@ -12149,7 +12149,7 @@ public:
         // thread is still inside LLVM.
         void stop_and_join() noexcept {
             {
-                std::lock_guard<std::mutex> lk(mu_);
+                std::scoped_lock<std::mutex> lk(mu_);
                 stop_ = true;
             }
             cv_.notify_all();
@@ -12157,7 +12157,7 @@ public:
                 th_.join();
         }
         void enqueue(std::unique_ptr<TierJob4682> job, TierStats4682& stats) {
-            std::lock_guard<std::mutex> lk(mu_);
+            std::scoped_lock<std::mutex> lk(mu_);
             if (stop_)
                 return;
             stats_ = &stats;
@@ -12253,7 +12253,7 @@ public:
                         stats_->failed.fetch_add(1, std::memory_order_relaxed);
                 }
                 {
-                    std::lock_guard<std::mutex> lk(mu_);
+                    std::scoped_lock<std::mutex> lk(mu_);
                     busy_ = false;
                 }
                 idle_cv_.notify_all();
@@ -12261,7 +12261,7 @@ public:
             // Code owned by `jit` is unmapped here, after the loop: the
             // worker only stops when the service is being destroyed.
             {
-                std::lock_guard<std::mutex> lk(mu_);
+                std::scoped_lock<std::mutex> lk(mu_);
                 busy_ = false;
             }
             idle_cv_.notify_all();
@@ -12507,7 +12507,7 @@ public:
         // sync_workspace_value_cells_from_env / eval_flat_body). Lock order
         // everywhere is bindings -> cell storage.
         auto bind_guard = evaluator_.top_env().lock_bindings_exclusive();
-        std::lock_guard<std::recursive_mutex> cells_lock(evaluator_.cells_storage_mutex());
+        std::scoped_lock<std::recursive_mutex> cells_lock(evaluator_.cells_storage_mutex());
         auto existing = evaluator_.top_env().lookup_binding(name);
         if (existing && types::is_cell(*existing)) {
             auto ci = types::as_cell_id(*existing);
@@ -14256,7 +14256,7 @@ public:
         if (cid == 0 || name.empty())
             return;
         const auto id = static_cast<aura::compiler::ClosureId>(cid);
-        std::lock_guard<std::mutex> lk(retired_tw_closure_mtx_);
+        std::scoped_lock<std::mutex> lk(retired_tw_closure_mtx_);
         retired_tw_closure_owner_[id] = name;
         auto& order = retired_tw_closure_order_[name];
         order.push_back(id);
@@ -14267,7 +14267,7 @@ public:
     }
 
     std::optional<std::string> retired_tw_closure_name_(aura::compiler::ClosureId cid) {
-        std::lock_guard<std::mutex> lk(retired_tw_closure_mtx_);
+        std::scoped_lock<std::mutex> lk(retired_tw_closure_mtx_);
         auto it = retired_tw_closure_owner_.find(cid);
         if (it == retired_tw_closure_owner_.end())
             return std::nullopt;
@@ -18074,7 +18074,7 @@ private:
             // in relower_dirty_defines_from_workspace. Lock order: this
             // mutex is held AFTER dep_graph_mtx_ + mutate_mtx_ (so it's
             // safe to acquire here without risk of inversion).
-            std::lock_guard<std::mutex> cascade_guard(cascade_decision_mtx_);
+            std::scoped_lock<std::mutex> cascade_guard(cascade_decision_mtx_);
             deferred_hybrid_edges_.emplace_back(caller, callee);
             // Issue #3657: reject MUST arm so deferred_hybrid_pending_
             // upper_bound_ (armed==0 → 0) includes this edge on the
@@ -18187,7 +18187,7 @@ private:
             // DURING a concurrent relower decision window (which holds the
             // lock) and the re-arm escapes the #3257 last-look / #3168
             // attribution, under-marking the caller cone on a partial peel.
-            std::lock_guard<std::mutex> cascade_guard(cascade_decision_mtx_);
+            std::scoped_lock<std::mutex> cascade_guard(cascade_decision_mtx_);
             deferred_hybrid_edges_.emplace_back(caller, callee);
             // Issue #3657: reject MUST arm (same contract as
             // record_dependency) so pending UB consult sees the edge.

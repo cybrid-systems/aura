@@ -595,7 +595,7 @@ int run_test_sandbox_mode_authority_2657() {
         auto p_eff = prim.find("security:set-effect-sandbox-mode!");
         CHECK(p_eff != std::string::npos, "3995 AC3: effect-mode prim present");
         auto win = prim.substr(p_eff, 2200);
-        CHECK(win.find("lock_guard") != std::string::npos &&
+        CHECK(win.find("scoped_lock") != std::string::npos &&
                   win.find("effects_effective_for_locked") != std::string::npos,
               "3995 AC3: effect-mode prim locked TA");
         CHECK(win.find("!ev.has_capability") == std::string::npos,
@@ -603,7 +603,7 @@ int run_test_sandbox_mode_authority_2657() {
         auto p_sb = prim.find("security:set-sandbox-mode!");
         CHECK(p_sb != std::string::npos, "3995 AC3: bool-mode prim present");
         auto win_sb = prim.substr(p_sb, 1800);
-        CHECK(win_sb.find("lock_guard") != std::string::npos &&
+        CHECK(win_sb.find("scoped_lock") != std::string::npos &&
                   win_sb.find("effects_effective_for_locked") != std::string::npos,
               "3995 AC3: bool-mode prim locked TA");
         CHECK(sec.find("allow_cross_tenant_ = true") != std::string::npos,
@@ -633,7 +633,7 @@ int run_test_sandbox_mode_authority_2657() {
         aura::core::sandbox::set_mode(SandboxMode::Restricted);
         {
             auto& reg = g_capability_registry();
-            std::lock_guard<std::mutex> lock(reg.mtx);
+            std::scoped_lock<std::mutex> lock(reg.mtx);
             CHECK(reg.holds_wildcard_only_locked(7), "4012 AC1: wildcard-only holder");
             CHECK((static_cast<std::uint16_t>(reg.effects_for_locked(7)) &
                    static_cast<std::uint16_t>(Effect::TenantAdmin)) == 0,

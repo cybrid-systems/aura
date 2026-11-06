@@ -419,7 +419,7 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
             // take their own workspace locks and must not nest under it.
             std::uint32_t sidx = 0;
             {
-                std::lock_guard lock(ev.alloc_storage_lock_);
+                std::scoped_lock lock(ev.alloc_storage_lock_);
                 sidx = static_cast<std::uint32_t>(ev.string_heap_.mint(blob.source));
             }
             auto set_fn = ev.primitives_.lookup("set-code");
@@ -548,7 +548,7 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #1397: string_heap_ push_back atomic — hoist the
             // size() + push_back() out of an inner block so `kidx` is
             // visible to the `make_string(kidx).val` call below.
-            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::scoped_lock lock(ev.alloc_storage_lock_);
             const std::size_t kidx = ev.string_heap_.mint(k);
             auto meta = ht->metadata();
             auto keys = ht->keys();
@@ -579,7 +579,7 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
         {
             // Issue #4860: unlocked size()+push_back raced a concurrent publish
             // (double free). Index read, push and stamp are one critical section.
-            std::lock_guard slock(ev.alloc_storage_lock_);
+            std::scoped_lock slock(ev.alloc_storage_lock_);
             hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             aura_hash_stamp_new_table_owner();

@@ -150,7 +150,7 @@ namespace root_remap_detail {
 // compiler external roots into the Moving densify window. Returns copies
 // under the registry lock; safe to walk without holding the lock.
 [[nodiscard]] inline std::vector<void**> root_remap_registered_slots_snapshot() noexcept {
-    std::lock_guard<std::mutex> lock(root_remap_detail::registry_mtx());
+    std::scoped_lock<std::mutex> lock(root_remap_detail::registry_mtx());
     std::vector<void**> out = root_remap_detail::stable_slots();
     const auto& cc = root_remap_detail::closure_capture_slots();
     out.insert(out.end(), cc.begin(), cc.end());
@@ -160,7 +160,7 @@ namespace root_remap_detail {
 inline void register_root_remap_stable_slot(void** slot) noexcept {
     if (!slot)
         return;
-    std::lock_guard<std::mutex> lock(root_remap_detail::registry_mtx());
+    std::scoped_lock<std::mutex> lock(root_remap_detail::registry_mtx());
     auto& v = root_remap_detail::stable_slots();
     if (std::find(v.begin(), v.end(), slot) == v.end())
         v.push_back(slot);
@@ -169,7 +169,7 @@ inline void register_root_remap_stable_slot(void** slot) noexcept {
 inline void unregister_root_remap_stable_slot(void** slot) noexcept {
     if (!slot)
         return;
-    std::lock_guard<std::mutex> lock(root_remap_detail::registry_mtx());
+    std::scoped_lock<std::mutex> lock(root_remap_detail::registry_mtx());
     auto& v = root_remap_detail::stable_slots();
     v.erase(std::remove(v.begin(), v.end(), slot), v.end());
 }
@@ -177,7 +177,7 @@ inline void unregister_root_remap_stable_slot(void** slot) noexcept {
 inline void register_root_remap_closure_capture_slot(void** slot) noexcept {
     if (!slot)
         return;
-    std::lock_guard<std::mutex> lock(root_remap_detail::registry_mtx());
+    std::scoped_lock<std::mutex> lock(root_remap_detail::registry_mtx());
     auto& v = root_remap_detail::closure_capture_slots();
     if (std::find(v.begin(), v.end(), slot) == v.end())
         v.push_back(slot);
@@ -186,7 +186,7 @@ inline void register_root_remap_closure_capture_slot(void** slot) noexcept {
 inline void unregister_root_remap_closure_capture_slot(void** slot) noexcept {
     if (!slot)
         return;
-    std::lock_guard<std::mutex> lock(root_remap_detail::registry_mtx());
+    std::scoped_lock<std::mutex> lock(root_remap_detail::registry_mtx());
     auto& v = root_remap_detail::closure_capture_slots();
     v.erase(std::remove(v.begin(), v.end(), slot), v.end());
 }
@@ -290,17 +290,17 @@ public:
 // Mark addresses as densify candidates even when absent from object_remap
 // (AC4 fail-closed path + dropped-track densify). Cleared by reset.
 inline void mark_root_remap_densify_candidates(const std::unordered_set<void*>& cands) {
-    std::lock_guard<std::mutex> lock(root_remap_detail::registry_mtx());
+    std::scoped_lock<std::mutex> lock(root_remap_detail::registry_mtx());
     root_remap_detail::extra_densify_candidates() = cands;
 }
 
 inline void clear_root_remap_densify_candidates() noexcept {
-    std::lock_guard<std::mutex> lock(root_remap_detail::registry_mtx());
+    std::scoped_lock<std::mutex> lock(root_remap_detail::registry_mtx());
     root_remap_detail::extra_densify_candidates().clear();
 }
 
 inline void reset_root_remap_registries_for_test() noexcept {
-    std::lock_guard<std::mutex> lock(root_remap_detail::registry_mtx());
+    std::scoped_lock<std::mutex> lock(root_remap_detail::registry_mtx());
     root_remap_detail::stable_slots().clear();
     root_remap_detail::closure_capture_slots().clear();
     root_remap_detail::extra_densify_candidates().clear();
@@ -358,7 +358,7 @@ run_root_remap_pass(const std::unordered_map<void*, void*>& object_remap) noexce
 
     // AC3: empty remap → no rewrite work, no fail scans.
     if (object_remap.empty() && [&] {
-            std::lock_guard<std::mutex> lock(root_remap_detail::registry_mtx());
+            std::scoped_lock<std::mutex> lock(root_remap_detail::registry_mtx());
             return root_remap_detail::extra_densify_candidates().empty();
         }()) {
         // Issue #4046: an empty window must not drop tombstones a closure
@@ -372,7 +372,7 @@ run_root_remap_pass(const std::unordered_map<void*, void*>& object_remap) noexce
     std::vector<void**> capture_copy;
     std::unordered_set<void*> densify_keys;
     {
-        std::lock_guard<std::mutex> lock(root_remap_detail::registry_mtx());
+        std::scoped_lock<std::mutex> lock(root_remap_detail::registry_mtx());
         stable_copy = root_remap_detail::stable_slots();
         capture_copy = root_remap_detail::closure_capture_slots();
         densify_keys = root_remap_detail::extra_densify_candidates();

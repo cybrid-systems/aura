@@ -314,19 +314,19 @@ enum class GcDeferOverflowPolicy : std::uint8_t {
 // Without the lock, HardFail can land between the policy check and the
 // ProcessWide arm → depth bumped under HardFail (safety bypass).
 inline void set_gc_defer_max_armed_for_test(std::size_t n) noexcept {
-    std::lock_guard<std::mutex> lock(detail::g_gc_defer_armed_mtx);
+    std::scoped_lock<std::mutex> lock(detail::g_gc_defer_armed_mtx);
     detail::g_max_armed_override.store(n, std::memory_order_release);
 }
 inline void reset_gc_defer_max_armed_for_test() noexcept {
-    std::lock_guard<std::mutex> lock(detail::g_gc_defer_armed_mtx);
+    std::scoped_lock<std::mutex> lock(detail::g_gc_defer_armed_mtx);
     detail::g_max_armed_override.store(0, std::memory_order_release);
 }
 inline void set_gc_defer_overflow_policy_for_test(GcDeferOverflowPolicy p) noexcept {
-    std::lock_guard<std::mutex> lock(detail::g_gc_defer_armed_mtx);
+    std::scoped_lock<std::mutex> lock(detail::g_gc_defer_armed_mtx);
     detail::g_overflow_policy_override.store(static_cast<int>(p), std::memory_order_release);
 }
 inline void reset_gc_defer_overflow_policy_for_test() noexcept {
-    std::lock_guard<std::mutex> lock(detail::g_gc_defer_armed_mtx);
+    std::scoped_lock<std::mutex> lock(detail::g_gc_defer_armed_mtx);
     detail::g_overflow_policy_override.store(0, std::memory_order_release);
 }
 
@@ -337,7 +337,7 @@ inline void reset_gc_defer_overflow_policy_for_test() noexcept {
 // Issue #2429: also under g_gc_defer_armed_mtx (affects policy when
 // override is unset and env cache has not locked in).
 inline void set_gc_defer_production_locked(bool v) noexcept {
-    std::lock_guard<std::mutex> lock(detail::g_gc_defer_armed_mtx);
+    std::scoped_lock<std::mutex> lock(detail::g_gc_defer_armed_mtx);
     detail::g_production_locked.store(v ? 1 : 0, std::memory_order_release);
 }
 [[nodiscard]] inline bool gc_defer_production_locked() noexcept {
@@ -673,7 +673,7 @@ inline void arm_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
         return;
     }
     const auto cap = gc_defer_max_armed();
-    std::lock_guard<std::mutex> lock(detail::g_gc_defer_armed_mtx);
+    std::scoped_lock<std::mutex> lock(detail::g_gc_defer_armed_mtx);
     for (std::size_t i = 0; i < cap; ++i) {
         auto& e = detail::g_gc_defer_armed_table[i];
         if (e.id == evaluator_id) {
@@ -728,7 +728,7 @@ inline void arm_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
         return true;
     }
     const auto cap = gc_defer_max_armed();
-    std::lock_guard<std::mutex> lock(detail::g_gc_defer_armed_mtx);
+    std::scoped_lock<std::mutex> lock(detail::g_gc_defer_armed_mtx);
     for (std::size_t i = 0; i < cap; ++i) {
         auto& e = detail::g_gc_defer_armed_table[i];
         if (e.id == evaluator_id) {
@@ -893,7 +893,7 @@ inline void release_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
         return;
     }
     const auto cap = gc_defer_max_armed();
-    std::lock_guard<std::mutex> lock(detail::g_gc_defer_armed_mtx);
+    std::scoped_lock<std::mutex> lock(detail::g_gc_defer_armed_mtx);
     for (std::size_t i = 0; i < cap; ++i) {
         auto& e = detail::g_gc_defer_armed_table[i];
         if (e.id == evaluator_id) {
@@ -931,7 +931,7 @@ inline void release_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
     if (!evaluator_id)
         return false;
     const auto cap = gc_defer_max_armed();
-    std::lock_guard<std::mutex> lock(detail::g_gc_defer_armed_mtx);
+    std::scoped_lock<std::mutex> lock(detail::g_gc_defer_armed_mtx);
     for (std::size_t i = 0; i < cap; ++i) {
         const auto& e = detail::g_gc_defer_armed_table[i];
         if (e.id == evaluator_id)
@@ -952,7 +952,7 @@ inline void release_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
         return 0;
     std::uint32_t cleared = 0;
     const auto cap = gc_defer_max_armed();
-    std::lock_guard<std::mutex> lock(detail::g_gc_defer_armed_mtx);
+    std::scoped_lock<std::mutex> lock(detail::g_gc_defer_armed_mtx);
     for (std::size_t i = 0; i < cap; ++i) {
         auto& e = detail::g_gc_defer_armed_table[i];
         if (e.id == evaluator_id) {

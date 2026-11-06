@@ -146,7 +146,7 @@ struct WalOverflowRecord {
 inline WalOverflowRecord* wal_overflow_ring_storage() noexcept {
     // Process-local storage (header ODR-safe via inline). Sized at
     // kWalOverflowRingCapacity; head + count are atomic to allow push
-    // from the WAL append path (under std::lock_guard) and read from
+    // from the WAL append path (under std::scoped_lock) and read from
     // query:security-posture without synchronization. Pointer to the
     // static array so wal_overflow_ring_push can index ring[h % capacity].
     static WalOverflowRecord buf[kWalOverflowRingCapacity]{};
@@ -191,7 +191,7 @@ inline std::atomic<std::uint64_t>& wal_overflow_ring_wrap_refuse_total() noexcep
 // wal_append_fail_closed_active() (fail-closed). Soft / WAL-off: push is
 // never called today (zero cost). Returns false when #3838 refuse-on-wrap
 // declines the store (live slots preserved). Thread-safe under WAL's
-// std::lock_guard.
+// std::scoped_lock.
 [[nodiscard]] inline bool wal_overflow_ring_push(const WalOverflowRecord& rec) noexcept {
     auto* ring = wal_overflow_ring_storage();
     auto& cnt = wal_overflow_ring_count();
@@ -449,7 +449,7 @@ struct SecurityEventWal : ::aura::core::NoCopy {
     bool enable(std::string_view persist_dir,
                 std::vector<SecurityEventWalRecord>* out_replay = nullptr,
                 std::size_t max_replay = 1024) noexcept {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         close_unlocked();
         dir.assign(persist_dir);
         enabled = false;
@@ -594,7 +594,7 @@ struct SecurityEventWal : ::aura::core::NoCopy {
     }
 
     void disable() noexcept {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         close_unlocked();
         enabled = false;
         rotate_open_fail_ = false;
@@ -607,13 +607,13 @@ struct SecurityEventWal : ::aura::core::NoCopy {
     [[nodiscard]] bool is_enabled() const noexcept { return enabled; }
 
     [[nodiscard]] std::string directory() const noexcept {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         return dir;
     }
 
     // Issue #3970: live retained files (segment_index + 1). 0 when disabled.
     [[nodiscard]] std::uint32_t retained_segment_count() const noexcept {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         return enabled ? (segment_index + 1) : 0;
     }
 
@@ -627,7 +627,7 @@ struct SecurityEventWal : ::aura::core::NoCopy {
     find_recent_by_mutation_id(std::uint64_t mid, std::uint32_t max_segments = 2) noexcept {
         if (mid == 0 || !enabled || max_segments == 0)
             return std::nullopt;
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         if (!enabled || dir.empty())
             return std::nullopt;
         if (fp)
@@ -662,7 +662,7 @@ struct SecurityEventWal : ::aura::core::NoCopy {
     // implicitly via the in-memory ring (this is just the durable
     // mirror). Batched flush mirrors mutation_audit_wal.
     bool append(const SecurityEventWalRecord& rec) noexcept {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         // Issue #3056 AC1: WAL-off (`!enabled`) stays silent. Issue #4446:
         // enabled + null fp retries the segment once, then fail-closes
         // like fwrite-miss (append_fail, SLO, overflow).
@@ -768,7 +768,7 @@ struct SecurityEventWal : ::aura::core::NoCopy {
     }
 
     void set_rotate_bytes(std::uint64_t n) noexcept {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         if (n >= sizeof(SecurityEventWalRecord) * 4)
             rotate_bytes = n;
     }

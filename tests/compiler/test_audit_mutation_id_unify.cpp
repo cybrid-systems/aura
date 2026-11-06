@@ -1327,7 +1327,7 @@ static void ac3903_1_correlate_tenant_passthrough() {
     bool found = false;
     std::uint32_t seen_tenant = 999;
     {
-        std::lock_guard<std::mutex> lock(aura::compiler::typed_audit::g_trail().mu);
+        std::scoped_lock<std::mutex> lock(aura::compiler::typed_audit::g_trail().mu);
         for (const auto& e : aura::compiler::typed_audit::g_trail().ring) {
             if (e.mutation_id == mid) {
                 found = true;
@@ -1350,7 +1350,7 @@ static void ac3903_2_default_tenant_zero_unchanged() {
     bool found = false;
     std::uint32_t seen_tenant = 999;
     {
-        std::lock_guard<std::mutex> lock(aura::compiler::typed_audit::g_trail().mu);
+        std::scoped_lock<std::mutex> lock(aura::compiler::typed_audit::g_trail().mu);
         for (const auto& e : aura::compiler::typed_audit::g_trail().ring) {
             if (e.mutation_id == mid) {
                 found = true;
@@ -1404,7 +1404,7 @@ static void ac3994_1_host_path_deny_typed_tenant() {
     bool found = false;
     std::uint32_t seen_tenant = 0;
     {
-        std::lock_guard<std::mutex> lock(aura::compiler::typed_audit::g_trail().mu);
+        std::scoped_lock<std::mutex> lock(aura::compiler::typed_audit::g_trail().mu);
         for (const auto& e : aura::compiler::typed_audit::g_trail().ring) {
             if (std::string_view(e.name) != "write-file")
                 continue;

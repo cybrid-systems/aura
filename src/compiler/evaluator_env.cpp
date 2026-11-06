@@ -271,7 +271,7 @@ void Evaluator::inject_envframe_dual_path_desync_for_test(EnvId id) noexcept {
     // Issue #4464: a snapshot of the pre-inject frame would hide this
     // desync on the #4350 fast path. Drop it under the shard lock
     // (cap_snap_mtx_ is a leaf, same order as alloc_env_frame).
-    std::lock_guard<std::mutex> snap_lock(cap_snap_mtx_);
+    std::scoped_lock<std::mutex> snap_lock(cap_snap_mtx_);
     cap_snap_cache_.erase(id);
 }
 
@@ -1557,7 +1557,7 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitiv
     //
     // The all-shard barrier now exists only on scan paths that need a
     // frozen snapshot (truncate_env_frames_to_checkpoint, compact).
-    std::lock_guard<std::mutex> alloc_lock(env_frame_alloc_mtx_);
+    std::scoped_lock<std::mutex> alloc_lock(env_frame_alloc_mtx_);
     if (env_frames_.size() >= NULL_ENV_ID) {
         // 4G envs reached (unreachable: the store caps at kMaxSlots
         // first). Issue #4790: an exhausted arena fails loudly at the
@@ -1608,7 +1608,7 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitiv
         {
             // Issue #4448: drop the previous occupant's snapshot (and any
             // empty one built in the window before this fill).
-            std::lock_guard<std::mutex> snap_lock(cap_snap_mtx_);
+            std::scoped_lock<std::mutex> snap_lock(cap_snap_mtx_);
             cap_snap_cache_.erase(id);
         }
         return id;
@@ -1734,7 +1734,7 @@ aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(const Env& e, EnvId pa
     // Drop it while the shard lock is held so the next materialize
     // rebuilds from these bindings. Fresh ids have no entry.
     {
-        std::lock_guard<std::mutex> snap_lock(cap_snap_mtx_);
+        std::scoped_lock<std::mutex> snap_lock(cap_snap_mtx_);
         cap_snap_cache_.erase(id);
     }
     return id;
@@ -1782,7 +1782,7 @@ bool Evaluator::ensure_envframe_dual_path_consistency(const EnvFrame& fr) const 
 // are immutable after alloc, so the frozen view never goes stale.
 std::shared_ptr<const CapSnapshot> Evaluator::cap_snap_for_frame(EnvId frame_id) {
     {
-        std::lock_guard<std::mutex> lock(cap_snap_mtx_);
+        std::scoped_lock<std::mutex> lock(cap_snap_mtx_);
         if (auto it = cap_snap_cache_.find(frame_id); it != cap_snap_cache_.end()) {
             // Issue #4448: EnvIds are not immutable identity — compact
             // renumbers frames and truncate reuses their ids, so a cached
@@ -1847,7 +1847,7 @@ std::shared_ptr<const CapSnapshot> Evaluator::cap_snap_for_frame(EnvId frame_id)
         }
     }
     if (snap) {
-        std::lock_guard<std::mutex> lock(cap_snap_mtx_);
+        std::scoped_lock<std::mutex> lock(cap_snap_mtx_);
         cap_snap_cache_[frame_id] = snap;
     }
     return snap;
@@ -2500,7 +2500,7 @@ void Evaluator::retire_superseded_define_closure(std::string_view name, ClosureI
     bool have_drop = false;
     ClosureId drop_id = 0;
     {
-        std::lock_guard<std::mutex> g(define_closure_gens_mu_);
+        std::scoped_lock<std::mutex> g(define_closure_gens_mu_);
         auto& gen = define_closure_gens_[std::string(name)];
         if (gen.has_cur && gen.cur == published)
             return;
@@ -2671,7 +2671,7 @@ ClosureId Evaluator::register_active_closure(Closure cl) {
     std::unique_lock<std::shared_mutex> wlock(closures_shards_[closures_shard_index(id)].mu);
     // Issue #4386: shard lock, then the published old→new map, then insert.
     if (aura::ast::moving_compact_feature_enabled()) {
-        std::lock_guard<std::mutex> rewrite_lock(densify_rewrite_mu_);
+        std::scoped_lock<std::mutex> rewrite_lock(densify_rewrite_mu_);
         cl.flat = static_cast<decltype(cl.flat)>(densify_rewrite_lookup_locked_(cl.flat));
         cl.pool = static_cast<decltype(cl.pool)>(densify_rewrite_lookup_locked_(cl.pool));
     }
@@ -3387,7 +3387,7 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
     // the fast path returns before it). Clear in the same critical
     // section as the generation bump; cap_snap_mtx_ is a leaf lock.
     {
-        std::lock_guard<std::mutex> lock(cap_snap_mtx_);
+        std::scoped_lock<std::mutex> lock(cap_snap_mtx_);
         cap_snap_cache_.clear();
     }
     // Issue #4109: restamp survivor env_gen_stamp_ in the same critical
@@ -3688,7 +3688,7 @@ std::size_t Evaluator::compact_env_frames() {
     // remapped cids (first-class hot-update epoch participant). Notify +
     // invalidate stay under this interlock (+ caller MutationBoundaryGuard
     // on the primitive path) so they are atomic w.r.t. other mutations.
-    std::lock_guard interlock(compact_env_frames_lock_);
+    std::scoped_lock interlock(compact_env_frames_lock_);
     // Issue #2131: GcCoordScope PrePin → Cascade → PostAudit for compact.
     gc_coord::Scope compact_gc_coord(gc_coord::Path::Compact);
     // Issue #2087: clear env_id_remap_ at start of compact (mirrors
@@ -3756,7 +3756,7 @@ std::size_t Evaluator::compact_env_frames() {
         // can be valid; drop any residue so later frame growth starts
         // from a clean cache (idempotent with the gen-validated hits).
         {
-            std::lock_guard<std::mutex> lock(cap_snap_mtx_);
+            std::scoped_lock<std::mutex> lock(cap_snap_mtx_);
             cap_snap_cache_.clear();
         }
         env_frame_reuse_.clear();
@@ -3928,7 +3928,7 @@ std::size_t Evaluator::compact_env_frames() {
     // (no path takes env locks under it), so clearing under
     // env_frames_mtx_ cannot invert.
     {
-        std::lock_guard<std::mutex> lock(cap_snap_mtx_);
+        std::scoped_lock<std::mutex> lock(cap_snap_mtx_);
         cap_snap_cache_.clear();
     }
     // Issue #4109: restamp survivor env_gen_stamp_ in the same critical
@@ -4329,7 +4329,7 @@ void EnvFrameRef::drop(Evaluator& ev) noexcept {
 EnvFrameRef* Evaluator::register_live_env_frame_ref(EnvFrameRef ref) const noexcept {
     if (!ref.has_ownership())
         return nullptr;
-    std::lock_guard<std::mutex> lock(live_env_frame_refs_mtx_);
+    std::scoped_lock<std::mutex> lock(live_env_frame_refs_mtx_);
     // Bounded retention (mirrors cow_boundary_pinned_refs_ drop-oldest).
     if (live_env_frame_ref_slots_.size() >= kMaxLiveEnvFrameRefs)
         live_env_frame_ref_slots_.pop_front();
@@ -4355,7 +4355,7 @@ EnvFrameRef* Evaluator::register_live_env_frame_ref(EnvFrameRef ref) const noexc
 void Evaluator::unregister_live_env_frame_ref(EnvFrameRef* p) const noexcept {
     if (!p)
         return;
-    std::lock_guard<std::mutex> lock(live_env_frame_refs_mtx_);
+    std::scoped_lock<std::mutex> lock(live_env_frame_refs_mtx_);
     for (auto it = live_env_frame_ref_slots_.begin(); it != live_env_frame_ref_slots_.end(); ++it) {
         if (&*it == p) {
             live_env_frame_ref_slots_.erase(it);
@@ -4369,7 +4369,7 @@ EnvFrameRef* Evaluator::inject_live_env_frame_ref_for_test(EnvFrameRef ref) noex
 }
 
 std::size_t Evaluator::live_env_frame_ref_count() const noexcept {
-    std::lock_guard<std::mutex> lock(live_env_frame_refs_mtx_);
+    std::scoped_lock<std::mutex> lock(live_env_frame_refs_mtx_);
     std::size_t n = 0;
     for (const auto& r : live_env_frame_ref_slots_) {
         if (r.has_ownership())
@@ -4379,7 +4379,7 @@ std::size_t Evaluator::live_env_frame_ref_count() const noexcept {
 }
 
 std::vector<EnvFrameRef*> Evaluator::live_env_frame_refs() noexcept {
-    std::lock_guard<std::mutex> lock(live_env_frame_refs_mtx_);
+    std::scoped_lock<std::mutex> lock(live_env_frame_refs_mtx_);
     std::vector<EnvFrameRef*> out;
     out.reserve(live_env_frame_ref_slots_.size());
     for (auto& r : live_env_frame_ref_slots_) {
@@ -4400,7 +4400,7 @@ std::vector<EnvFrameRef*> Evaluator::live_env_frame_refs() noexcept {
 // must not re-enter this mutex (leaf lock; they only touch metrics +
 // dual-path / linear scan).
 void Evaluator::sync_live_env_frame_refs_ownership() noexcept {
-    std::lock_guard<std::mutex> lock(live_env_frame_refs_mtx_);
+    std::scoped_lock<std::mutex> lock(live_env_frame_refs_mtx_);
     if (live_env_frame_ref_slots_.empty())
         return; // Soft / no-hold: free
     for (auto& r : live_env_frame_ref_slots_) {

@@ -78,11 +78,11 @@ def _rows(mb: str, test: str, canary: str, build: str, query: str, obs: str) -> 
     else:
         win2 = mb[p2 : p2 + 900]
         must(NOTE, "AC2 note call", win2)
-        must("std::lock_guard lock(mu_)", "AC2 mu_", win2)
+        must("std::scoped_lock lock(mu_)", "AC2 mu_", win2)
         if (
             NOTE in win2
-            and "std::lock_guard lock(mu_)" in win2
-            and win2.find(NOTE) > win2.find("std::lock_guard lock(mu_)")
+            and "std::scoped_lock lock(mu_)" in win2
+            and win2.find(NOTE) > win2.find("std::scoped_lock lock(mu_)")
         ):
             fails.append("AC2: note must precede mu_")
 
@@ -128,7 +128,7 @@ def main() -> int:
             + FANOUT_CITE
             + "\n"
             + NOTE
-            + "\nstd::lock_guard lock(mu_)\n"
+            + "\nstd::scoped_lock lock(mu_)\n"
             + MOVED
             + "\n"
         )

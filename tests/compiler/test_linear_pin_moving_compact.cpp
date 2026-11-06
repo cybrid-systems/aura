@@ -107,7 +107,7 @@ int run_test_linear_pin_moving_compact() {
         CHECK(g_linear_pin_total.load() == 3, "AC1.5: pin_total == 3 after 3 pins");
         CHECK(linear_root_snapshot().live_count == 3, "AC1.6: live_count == 3");
         {
-            std::lock_guard<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
+            std::scoped_lock<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
             auto& roots = aura::core::lifetime::linear_roots();
             CHECK(roots.count(kRootA) == 1, "AC1.7: RootA in registry");
             CHECK(roots.count(kRootB) == 1, "AC1.8: RootB in registry");
@@ -118,7 +118,7 @@ int run_test_linear_pin_moving_compact() {
         CHECK(g_linear_unpin_total.load() == 1, "AC1.10: unpin_total == 1");
         CHECK(linear_root_snapshot().live_count == 2, "AC1.11: live_count == 2 after unpin");
         {
-            std::lock_guard<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
+            std::scoped_lock<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
             auto& roots = aura::core::lifetime::linear_roots();
             CHECK(roots.count(kRootA) == 1, "AC1.12: RootA still in registry");
             CHECK(roots.count(kRootB) == 0, "AC1.13: RootB removed from registry");
@@ -300,7 +300,7 @@ int run_test_linear_pin_moving_compact() {
         CHECK(linear_root_snapshot().live_count == 2,
               "AC6.2: bridge pin populates registry (live_count == 2)");
         {
-            std::lock_guard<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
+            std::scoped_lock<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
             auto& roots = aura::core::lifetime::linear_roots();
             CHECK(roots.count(kRootA) == 1, "AC6.3: RootA registered via bridge");
             CHECK(roots.count(kRootB) == 1, "AC6.4: RootB registered via bridge");
@@ -313,7 +313,7 @@ int run_test_linear_pin_moving_compact() {
         CHECK(linear_root_snapshot().live_count == 1,
               "AC6.6: bridge unpin removes RootA from registry");
         {
-            std::lock_guard<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
+            std::scoped_lock<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
             auto& roots = aura::core::lifetime::linear_roots();
             CHECK(roots.count(kRootA) == 0, "AC6.7: RootA removed via bridge unpin");
             CHECK(roots.count(kRootB) == 1, "AC6.8: RootB still registered");
@@ -347,7 +347,7 @@ int run_test_linear_pin_moving_compact() {
         CHECK(linear_root_snapshot().live_count == 1,
               "AC6.13: inline pin + bridge unpin interleaves correctly");
         {
-            std::lock_guard<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
+            std::scoped_lock<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
             auto& roots = aura::core::lifetime::linear_roots();
             CHECK(roots.count(kRootA) == 0, "AC6.14: RootA drained via bridge");
             CHECK(roots.count(kRootB) == 1, "AC6.15: RootB remains via inline pin");
@@ -390,7 +390,7 @@ int run_test_linear_pin_moving_compact() {
         CHECK(linear_root_snapshot().live_count == 1,
               "ac3249_1_nested: nested abort drained extra, outer pin remains");
         {
-            std::lock_guard<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
+            std::scoped_lock<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
             auto& roots = aura::core::lifetime::linear_roots();
             CHECK(roots.count(kRootA) == 1, "ac3249_1_nested: outer root stays");
             CHECK(roots.count(kRootD) == 0, "ac3249_1_nested: nested extra drained");
@@ -605,7 +605,7 @@ int run_test_linear_pin_moving_compact() {
         CHECK(linear_root_remap_total_v_read() == 1, "ac3350_1: remap counter");
         CHECK(linear_root_snapshot().live_count == 2, "ac3350_1: live_count unchanged");
         {
-            std::lock_guard<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
+            std::scoped_lock<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
             auto& roots = aura::core::lifetime::linear_roots();
             CHECK(roots.count(kOldAddr1) == 0, "ac3350_1: old address not registered");
             CHECK(roots.count(kNewAddr1) == 1, "ac3350_1: post-remap address registered");
@@ -626,7 +626,7 @@ int run_test_linear_pin_moving_compact() {
         pack[kOldAddr2] = kNewAddr1;
         CHECK(remap_linear_roots_under_moving(pack) == 2, "ac3350_1: packing rewrite 2");
         {
-            std::lock_guard<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
+            std::scoped_lock<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
             auto& roots = aura::core::lifetime::linear_roots();
             CHECK(roots.count(kOldAddr1) == 0, "ac3350_1: vacated source gone");
             CHECK(roots.count(kOldAddr2) == 1, "ac3350_1: reused slot is live dest");

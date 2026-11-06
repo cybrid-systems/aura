@@ -129,7 +129,7 @@ extern "C" void aura_escape_move_gate_publish_for_key(void* eval, std::uint64_t 
                                                       const char* const* names,
                                                       std::size_t n) noexcept {
     auto& s = escape_move_gate_state();
-    std::lock_guard lock(s.mu);
+    std::scoped_lock lock(s.mu);
     auto& entry = s.entries[{eval, cow_gen}];
     entry.active = active != 0;
     entry.blocked.clear();
@@ -143,7 +143,7 @@ extern "C" void aura_escape_move_gate_publish_for_key(void* eval, std::uint64_t 
 
 extern "C" void aura_escape_move_gate_clear_key(void* eval, std::uint64_t cow_gen) noexcept {
     auto& s = escape_move_gate_state();
-    std::lock_guard lock(s.mu);
+    std::scoped_lock lock(s.mu);
     s.entries.erase({eval, cow_gen});
 }
 
@@ -154,7 +154,7 @@ extern "C" std::size_t aura_escape_move_gate_clear_eval(void* eval) noexcept {
     if (!eval)
         return 0;
     auto& s = escape_move_gate_state();
-    std::lock_guard lock(s.mu);
+    std::scoped_lock lock(s.mu);
     std::size_t erased = 0;
     for (auto it = s.entries.begin(); it != s.entries.end();) {
         if (it->first.eval == eval) {
@@ -189,7 +189,7 @@ extern "C" int aura_escape_blocks_move_elision_for_key(void* eval, std::uint64_t
     if (!binding || binding[0] == '\0')
         return 0;
     auto& s = escape_move_gate_state();
-    std::lock_guard lock(s.mu);
+    std::scoped_lock lock(s.mu);
     auto it = s.entries.find({eval, cow_gen});
     if (it != s.entries.end()) {
         // Matching key: zero-cost relative to full map scan (AC3).
@@ -219,7 +219,7 @@ extern "C" int aura_escape_blocks_move_elision_for_key(void* eval, std::uint64_t
 extern "C" void aura_escape_move_gate_set(int active, const char* const* names,
                                           std::size_t n) noexcept {
     auto& s = escape_move_gate_state();
-    std::lock_guard lock(s.mu);
+    std::scoped_lock lock(s.mu);
     auto& entry = s.entries[aura::compiler::detail::current_escape_key];
     entry.active = active != 0;
     entry.blocked.clear();
@@ -233,7 +233,7 @@ extern "C" void aura_escape_move_gate_set(int active, const char* const* names,
 
 extern "C" void aura_escape_move_gate_clear() noexcept {
     auto& s = escape_move_gate_state();
-    std::lock_guard lock(s.mu);
+    std::scoped_lock lock(s.mu);
     s.entries[aura::compiler::detail::current_escape_key] = {};
 }
 
@@ -266,7 +266,7 @@ extern "C" int aura_linear_fast_path_depth_or_densify_block() noexcept {
 
 extern "C" int aura_escape_move_gate_active() noexcept {
     auto& s = escape_move_gate_state();
-    std::lock_guard lock(s.mu);
+    std::scoped_lock lock(s.mu);
     auto it = s.entries.find(aura::compiler::detail::current_escape_key);
     if (it == s.entries.end())
         return 0;
@@ -277,7 +277,7 @@ extern "C" int aura_escape_blocks_move_elision(const char* binding) noexcept {
     if (!binding || binding[0] == '\0')
         return 0;
     auto& s = escape_move_gate_state();
-    std::lock_guard lock(s.mu);
+    std::scoped_lock lock(s.mu);
     auto it = s.entries.find(aura::compiler::detail::current_escape_key);
     if (it == s.entries.end() || !it->second.active)
         return 0;

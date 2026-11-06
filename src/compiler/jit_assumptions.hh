@@ -176,22 +176,22 @@ public:
         return l;
     }
     void record(Event e) {
-        std::lock_guard g(mu_);
+        std::scoped_lock g(mu_);
         if (ring_.size() >= kCap)
             ring_.pop_front();
         ring_.push_back(std::move(e));
         ++total_;
     }
     [[nodiscard]] std::vector<Event> snapshot() const {
-        std::lock_guard g(mu_);
+        std::scoped_lock g(mu_);
         return {ring_.begin(), ring_.end()};
     }
     [[nodiscard]] std::uint64_t total() const {
-        std::lock_guard g(mu_);
+        std::scoped_lock g(mu_);
         return total_;
     }
     void clear_for_test() {
-        std::lock_guard g(mu_);
+        std::scoped_lock g(mu_);
         ring_.clear();
         total_ = 0;
     }
@@ -217,22 +217,22 @@ public:
         return d;
     }
     void note(std::string_view fn) {
-        std::lock_guard g(mu_);
+        std::scoped_lock g(mu_);
         const auto n = ++counts_[std::string(fn)];
         if (n >= threshold() && stormed_.insert(std::string(fn)).second)
             stats().storm_marks.fetch_add(1, std::memory_order_relaxed);
     }
     [[nodiscard]] bool stormed(std::string_view fn) const {
-        std::lock_guard g(mu_);
+        std::scoped_lock g(mu_);
         return stormed_.count(std::string(fn)) != 0;
     }
     [[nodiscard]] std::uint64_t count(std::string_view fn) const {
-        std::lock_guard g(mu_);
+        std::scoped_lock g(mu_);
         const auto it = counts_.find(std::string(fn));
         return it == counts_.end() ? 0 : it->second;
     }
     void clear_for_test() {
-        std::lock_guard g(mu_);
+        std::scoped_lock g(mu_);
         counts_.clear();
         stormed_.clear();
     }

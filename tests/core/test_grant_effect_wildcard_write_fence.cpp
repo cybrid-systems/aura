@@ -111,7 +111,7 @@ int run_test_grant_effect_wildcard_write_fence() {
         ev.grant_capability("*");
         // Verify wildcard-only state.
         auto& reg = g_capability_registry();
-        std::lock_guard<std::mutex> lock(reg.mtx);
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         check(reg.holds_wildcard_only_locked(tenant),
               "tenant holds wildcard-only (no explicit TA grant)");
         std::uint16_t before_bits = static_cast<std::uint16_t>(reg.effects_for_locked(tenant));
@@ -168,7 +168,7 @@ int run_test_grant_effect_wildcard_write_fence() {
         auto& reg = g_capability_registry();
         std::uint16_t before_bits;
         {
-            std::lock_guard<std::mutex> lock(reg.mtx);
+            std::scoped_lock<std::mutex> lock(reg.mtx);
             before_bits = static_cast<std::uint16_t>(reg.effects_for_locked(tenant));
         }
         check((before_bits & kTA) != 0,
@@ -185,7 +185,7 @@ int run_test_grant_effect_wildcard_write_fence() {
               "AC3: explicit-TA holder does NOT bump fence-deny counter");
         std::uint16_t after_bits;
         {
-            std::lock_guard<std::mutex> lock(reg.mtx);
+            std::scoped_lock<std::mutex> lock(reg.mtx);
             after_bits = static_cast<std::uint16_t>(reg.effects_for_locked(tenant));
         }
         check((after_bits & kTA) != 0, "AC3: TA bit present after explicit-TA holder grants");
@@ -213,7 +213,7 @@ int run_test_grant_effect_wildcard_write_fence() {
         auto& reg = g_capability_registry();
         std::uint16_t bits;
         {
-            std::lock_guard<std::mutex> lock(reg.mtx);
+            std::scoped_lock<std::mutex> lock(reg.mtx);
             bits = static_cast<std::uint16_t>(reg.effects_for_locked(tenant));
         }
         check((bits & kMSE) == 0,
@@ -241,7 +241,7 @@ int run_test_grant_effect_wildcard_write_fence() {
         auto& reg = g_capability_registry();
         std::uint16_t bits;
         {
-            std::lock_guard<std::mutex> lock(reg.mtx);
+            std::scoped_lock<std::mutex> lock(reg.mtx);
             bits = static_cast<std::uint16_t>(reg.effects_for_locked(tenant));
         }
         check((bits & kTA) != 0, "AC5: TA bit lands under Off mode (no fence cost)");

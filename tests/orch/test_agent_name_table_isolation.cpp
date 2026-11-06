@@ -203,7 +203,7 @@ static void acci_scope_registry_serialized() {
     const auto spawn_h = read_file("src/orch/agent_spawn.h");
     CHECK(spawn_h.find("inline std::mutex g_evaluator_agent_scopes_mtx") != std::string::npos,
           "scope registry access is serialized by a mutex");
-    CHECK(h.find("std::lock_guard lock(g_evaluator_agent_scopes_mtx)") != std::string::npos,
+    CHECK(h.find("std::scoped_lock lock(g_evaluator_agent_scopes_mtx)") != std::string::npos,
           "agent_scope.h takes the registry lock (CTAD keeps std::mutex out of the guard surface)");
     CHECK(h.find("drained.swap(g_evaluator_agent_scopes())") != std::string::npos,
           "reset swaps the map under the lock (body insert targets the fresh map)");

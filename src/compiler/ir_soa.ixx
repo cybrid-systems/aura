@@ -440,7 +440,7 @@ namespace ir_soa_detail {
 
     inline IrSoaColumnSlab& column_slab_for(const void* key) {
         auto& shard = column_slab_shards()[column_slab_shard_index(key)];
-        std::lock_guard lock(shard.mu);
+        std::scoped_lock lock(shard.mu);
         auto& m = shard.map;
         auto it = m.find(key);
         if (it == m.end())
@@ -450,7 +450,7 @@ namespace ir_soa_detail {
 
     inline void drop_column_slab(const void* key) noexcept {
         auto& shard = column_slab_shards()[column_slab_shard_index(key)];
-        std::lock_guard lock(shard.mu);
+        std::scoped_lock lock(shard.mu);
         shard.map.erase(key);
     }
 
@@ -462,7 +462,7 @@ namespace ir_soa_detail {
         auto& shards = column_slab_shards();
         if (si_from == si_to) {
             auto& shard = shards[si_from];
-            std::lock_guard lock(shard.mu);
+            std::scoped_lock lock(shard.mu);
             auto& m = shard.map;
             auto it = m.find(from);
             if (it == m.end())
@@ -475,8 +475,8 @@ namespace ir_soa_detail {
         // Ordered multi-shard locks avoid deadlock under concurrent rekey.
         const std::size_t lo = si_from < si_to ? si_from : si_to;
         const std::size_t hi = si_from < si_to ? si_to : si_from;
-        std::lock_guard lock_lo(shards[lo].mu);
-        std::lock_guard lock_hi(shards[hi].mu);
+        std::scoped_lock lock_lo(shards[lo].mu);
+        std::scoped_lock lock_hi(shards[hi].mu);
         auto it = shards[si_from].map.find(from);
         if (it == shards[si_from].map.end())
             return;

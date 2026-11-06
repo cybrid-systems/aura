@@ -247,7 +247,7 @@ class FiberArenaTable {
 public:
     FiberStringArena& get_or_create(std::uint64_t fiber_id) {
         {
-            std::lock_guard<std::mutex> g(mu_);
+            std::scoped_lock<std::mutex> g(mu_);
             auto it = arenas_.find(fiber_id);
             if (it != arenas_.end())
                 return *it->second;
@@ -285,18 +285,18 @@ public:
     // Diagnostic read: the caller must own the fiber, or the fiber must
     // have finished (no concurrent mint into this arena).
     [[nodiscard]] FiberStringArena* find(std::uint64_t fiber_id) {
-        std::lock_guard<std::mutex> g(mu_);
+        std::scoped_lock<std::mutex> g(mu_);
         auto it = arenas_.find(fiber_id);
         return it == arenas_.end() ? nullptr : it->second.get();
     }
 
     [[nodiscard]] bool contains(std::uint64_t fiber_id) {
-        std::lock_guard<std::mutex> g(mu_);
+        std::scoped_lock<std::mutex> g(mu_);
         return arenas_.find(fiber_id) != arenas_.end();
     }
 
     [[nodiscard]] std::size_t size() {
-        std::lock_guard<std::mutex> g(mu_);
+        std::scoped_lock<std::mutex> g(mu_);
         return arenas_.size();
     }
 
@@ -308,7 +308,7 @@ private:
     std::unique_ptr<FiberStringArena> take(std::uint64_t fiber_id) {
         std::unique_ptr<FiberStringArena> owned;
         {
-            std::lock_guard<std::mutex> g(mu_);
+            std::scoped_lock<std::mutex> g(mu_);
             auto it = arenas_.find(fiber_id);
             if (it == arenas_.end())
                 return owned;
@@ -490,7 +490,7 @@ public:
                                   FiberSlabArena::SlotStamper stamp,
                                   FiberSlabArena::SlotStamperVoid unstamp, void* ctx,
                                   bool* created = nullptr) {
-        std::lock_guard<std::mutex> g(mu_);
+        std::scoped_lock<std::mutex> g(mu_);
         auto it = arenas_.find(fiber_id);
         if (it != arenas_.end())
             return *it->second;
@@ -508,7 +508,7 @@ public:
     std::unique_ptr<FiberSlabArena> take(std::uint64_t fiber_id) {
         std::unique_ptr<FiberSlabArena> owned;
         {
-            std::lock_guard<std::mutex> g(mu_);
+            std::scoped_lock<std::mutex> g(mu_);
             auto it = arenas_.find(fiber_id);
             if (it == arenas_.end())
                 return owned;
@@ -523,13 +523,13 @@ public:
     }
 
     [[nodiscard]] FiberSlabArena* find(std::uint64_t fiber_id) {
-        std::lock_guard<std::mutex> g(mu_);
+        std::scoped_lock<std::mutex> g(mu_);
         auto it = arenas_.find(fiber_id);
         return it == arenas_.end() ? nullptr : it->second.get();
     }
 
     [[nodiscard]] std::size_t size() {
-        std::lock_guard<std::mutex> g(mu_);
+        std::scoped_lock<std::mutex> g(mu_);
         return arenas_.size();
     }
 

@@ -104,7 +104,7 @@ inline void set_mode(SandboxMode m) noexcept {
     if (u > static_cast<std::uint8_t>(SandboxMode::Strict))
         u = static_cast<std::uint8_t>(SandboxMode::Strict);
     {
-        std::lock_guard<std::mutex> lock(g_sandbox_mode_authority_mu());
+        std::scoped_lock<std::mutex> lock(g_sandbox_mode_authority_mu());
         // 1) Atomic source of truth (release pairs with acquire reads).
         g_sandbox_mode_atomic().store(u, std::memory_order_release);
         // 2) Plain enum mirror (backward-compat with code that reads
@@ -170,7 +170,7 @@ struct SandboxAuthorityStats {
 };
 
 inline SandboxAuthorityStats snapshot_sandbox_authority_stats() noexcept {
-    std::lock_guard<std::mutex> lock(g_sandbox_mode_authority_mu());
+    std::scoped_lock<std::mutex> lock(g_sandbox_mode_authority_mu());
     SandboxAuthorityStats s;
     s.authority_set_total = g_sandbox_mode_authority_set_total().load(std::memory_order_acquire);
     s.current_mode = g_sandbox_mode_atomic().load(std::memory_order_acquire);

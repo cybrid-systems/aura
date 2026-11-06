@@ -56,6 +56,7 @@ def main() -> int:
     must("audit_trail_lockfree_total", "AC1", body)
     must("g_trail().ring", "AC1", body)
     must_not("lock_guard", "AC1", body)
+    must_not("scoped_lock", "AC1", body)
     must_not("std::lock_guard lock(", "AC1", body)
     must_not("lock(g_trail()", "AC1", body)
 

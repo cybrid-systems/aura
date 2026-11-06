@@ -35,7 +35,7 @@ struct RecordingSink final : CompletionSink {
 
     void on_complete(std::shared_ptr<Ticket> ticket) noexcept override {
         {
-            std::lock_guard<std::mutex> lock(m);
+            std::scoped_lock<std::mutex> lock(m);
             done.push_back(std::move(ticket));
         }
         cv.notify_all();
@@ -47,7 +47,7 @@ struct RecordingSink final : CompletionSink {
     }
 
     std::size_t count() const {
-        std::lock_guard<std::mutex> lock(m);
+        std::scoped_lock<std::mutex> lock(m);
         return done.size();
     }
 };
@@ -383,7 +383,7 @@ void test_weighted_dispatch_order() {
 
     std::vector<OffloadClass> order;
     {
-        std::lock_guard<std::mutex> lock(sink.m);
+        std::scoped_lock<std::mutex> lock(sink.m);
         for (const auto& ticket : sink.done)
             order.push_back(ticket->klass);
     }

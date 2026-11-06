@@ -187,7 +187,7 @@ bool test_concurrent_atomic_batches() {
     std::atomic<int> completed{0};
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
-            std::lock_guard<std::mutex> lk(mtx);
+            std::scoped_lock<std::mutex> lk(mtx);
             // Vacuous atomic batch — no actual mutations,
             // just exercises the Aura primitive path under
             // concurrent load.

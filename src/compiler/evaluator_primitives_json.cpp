@@ -743,8 +743,8 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 // stamp are one critical section now.
                 std::size_t hidx = 0;
                 {
-                    std::lock_guard hlock(ev.hash_tables_mutex());
-                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    std::scoped_lock hlock(ev.hash_tables_mutex());
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
                     hidx = g_hash_tables.size();
                     g_hash_tables.push_back(ht);
                     // Issue #4110: stamp the owner parallel to the table (SSOT helper;

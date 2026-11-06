@@ -296,13 +296,13 @@ public:
     // here; aura.compiler.type_checker owns the layout). compact() bumps
     // the generation, which drops the cached TypeIds with it.
     std::shared_ptr<const void> prim_env_cache() const {
-        std::lock_guard lock(prim_env_mu_);
+        std::scoped_lock lock(prim_env_mu_);
         if (prim_env_cache_ && prim_env_gen_ == generation())
             return prim_env_cache_;
         return nullptr;
     }
     void set_prim_env_cache(std::shared_ptr<const void> c) {
-        std::lock_guard lock(prim_env_mu_);
+        std::scoped_lock lock(prim_env_mu_);
         prim_env_cache_ = std::move(c);
         prim_env_gen_ = generation();
     }
