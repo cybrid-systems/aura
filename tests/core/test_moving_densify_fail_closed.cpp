@@ -5037,6 +5037,11 @@ static void ac4288_phase5_blocked_publish_closes_window() {
     aura::compiler::typed_audit::apply_production_audit_defaults();
     aura::ast::set_moving_compact_enabled(1);
     aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
+    // Earlier members (#3974/#4143) stamp a per-eval LCP Reject; this fresh
+    // CompilerService can reuse the same evaluator address, which would make
+    // Phase-5 take the #3782 LCP-blocked fail-closed face instead of the
+    // clean canary refuse under test. Same isolation as the #4928 member.
+    aura::core::lifetime_consistency_proof::reset_lcp_eval_slots_for_test();
     aura::core::lifetime_consistency_proof::reset_densify_entry_lcp_blocked_for_test();
     aura::core::densify_consistency::reset_densify_consistency_for_test();
     // Prior members leave a live densify-fail admit snapshot. A clean
