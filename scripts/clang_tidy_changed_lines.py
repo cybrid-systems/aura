@@ -73,7 +73,16 @@ HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
 def git(*args: str) -> str:
-    return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
+    # `safe.directory=*` keeps the gate working in container jobs where
+    # actions/checkout's temporary global config does not reach the job
+    # container (git then refuses with "dubious ownership", rc=128).
+    return subprocess.run(
+        ["git", "-c", "safe.directory=*", *args],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
 
 
 def pick_base(explicit: str | None) -> str:

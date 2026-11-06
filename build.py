@@ -14009,7 +14009,10 @@ def test_issues():
     # Issue #3522: stream stdout/stderr (do not capture_output). Capture
     # hid every per-binary line until exit, so a 1800s timeout printed
     # nothing and hid which binary was running / hung.
-    timeout_s = 1800 if tier == "full" else 300
+    # Fast tier: one shard can own a 240s orch batch (test_orch_agent_batch)
+    # plus a 600s jit_late1 bundle; the old 300s cap killed the shard while
+    # a legitimate per-binary timeout was still running.
+    timeout_s = 1800 if tier == "full" else 900
     cmd = [
         sys.executable,
         str(run_path),

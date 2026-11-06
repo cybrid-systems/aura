@@ -1,8 +1,10 @@
 """Resolve which issue test targets to build/run for fast vs full CI.
 
 Issue #1484 sub-task 4 audit (2026-07-16): AURA_ISSUES_TIER=fast
-covers 24 targets (10 bundles + 5 test_issue_* + domain batches) —
-sufficient for catching broken-include regressions in PR CI.
+covers the domain batch suites plus the enabled link-profile bundles —
+sufficient for catching broken-include regressions in PR CI. The list is
+checked against build/build.ninja at resolve time, so a target that CMake
+disabled no longer turns the whole shard build into "unknown target".
 The 9 broken files fixed at commit 313c530d were in low-tier
 tests (per issue body), and the new test_check_test_includes.sh
 shell test runs upstream of all tiers (pre-commit hook +
@@ -17,6 +19,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 # Issue #1932: lives under tests/python/
@@ -29,18 +32,12 @@ PROFILES_FIXTURE = _TESTS / "fixtures" / "issue_link_profiles.json"
 # Match tests/<any-subdir>/test_*.cpp (R1 src/-aligned).
 ISSUE_CPP_RE = re.compile(r"^tests/(?:[\w]+/)?(test_[\w]+)\.cpp$")
 
+# Profiles CMake actually calls aura_add_issue_bundle() for. jit_late2/3
+# are disabled there (bundle mains reference undefined entry functions);
+# listing them here made a git-changed member resolve to a dead target.
 BUNDLE_PROFILES = (
     "light",
-    "jit",
-    "jit_minimal",
-    "jit_contract",
-    "jit_tests",
-    "fiber",
     "jit_late1",
-    "jit_late2",
-    "jit_late3",
-    "jit_late4",
-    "jit_late5",
     "light_late",
 )
 
@@ -111,6 +108,23 @@ def git_changed_issue_targets(root: Path | None = None) -> list[str]:
     return sorted(targets)
 
 
+_NINJA_TARGETS: set[str] | None | bool = False
+
+
+def _ninja_target_names() -> set[str] | None:
+    """Targets defined by build/build.ninja, or None when there is no build."""
+    global _NINJA_TARGETS
+    if _NINJA_TARGETS is not False:
+        return _NINJA_TARGETS  # type: ignore[return-value]
+    text: str | None = None
+    try:
+        text = (ROOT / "build" / "build.ninja").read_text(errors="replace")
+    except OSError:
+        text = None
+    _NINJA_TARGETS = set(re.findall(r"^build ([^:\s]+):", text, re.M)) if text else None
+    return _NINJA_TARGETS  # type: ignore[return-value]
+
+
 def resolve_issue_targets(tier: str | None = None) -> list[str]:
     """Targets to build/run. Full tier returns empty list (= use aggregate)."""
     tier = tier or issues_tier()
@@ -118,4 +132,13 @@ def resolve_issue_targets(tier: str | None = None) -> list[str]:
         return []
     targets = set(load_fast_targets())
     targets.update(git_changed_issue_targets())
+    live = _ninja_target_names()
+    if live is not None:
+        unknown = sorted(t for t in targets if t not in live)
+        if unknown:
+            print(
+                f"warning: fast issue tier names target(s) not in build/build.ninja; ignoring: {', '.join(unknown)}",
+                file=sys.stderr,
+            )
+            targets.difference_update(unknown)
     return sorted(targets)
