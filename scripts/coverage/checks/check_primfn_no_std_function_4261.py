@@ -71,9 +71,9 @@ def main() -> int:
             fails.append("AC1: PrimFn still has std::function member/usage")
         if re.search(r"\bfn_\b", body_code) and "std::function" in body_code:
             fails.append("AC1: residual fn_ std::function field")
-    if "using PrimFn = std::function" in _read("src/compiler/ffi_primitives.ixx") or "using PrimFn = std::function" in _read(
-        "src/compiler/adt_runtime.ixx"
-    ):
+    if "using PrimFn = std::function" in _read(
+        "src/compiler/ffi_primitives.ixx"
+    ) or "using PrimFn = std::function" in _read("src/compiler/adt_runtime.ixx"):
         fails.append("AC1: FFI/ADT still mirror PrimFn as std::function")
 
     must("hot_timing_held_", "AC3 finalize wrap", ev)
