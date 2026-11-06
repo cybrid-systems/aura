@@ -220,7 +220,7 @@ Scheduler::~Scheduler() {
     {
         std::vector<AgentScopeObserver> observers;
         {
-            std::lock_guard<std::mutex> lock(agent_scope_observers_mutex_);
+            std::scoped_lock<std::mutex> lock(agent_scope_observers_mutex_);
             observers.swap(agent_scope_observers_);
         }
         for (const auto& o : observers) {
@@ -278,7 +278,7 @@ void Scheduler::register_agent_scope_observer(void* cookie,
                                               Scheduler::ScopeLifetimeFn fn) noexcept {
     if (!cookie || !fn)
         return;
-    std::lock_guard<std::mutex> lock(agent_scope_observers_mutex_);
+    std::scoped_lock<std::mutex> lock(agent_scope_observers_mutex_);
     // Replace if already registered (idempotent re-bind).
     for (auto& o : agent_scope_observers_) {
         if (o.cookie == cookie) {
@@ -292,7 +292,7 @@ void Scheduler::register_agent_scope_observer(void* cookie,
 void Scheduler::unregister_agent_scope_observer(void* cookie) noexcept {
     if (!cookie)
         return;
-    std::lock_guard<std::mutex> lock(agent_scope_observers_mutex_);
+    std::scoped_lock<std::mutex> lock(agent_scope_observers_mutex_);
     agent_scope_observers_.erase(
         std::remove_if(agent_scope_observers_.begin(), agent_scope_observers_.end(),
                        [cookie](const AgentScopeObserver& o) { return o.cookie == cookie; }),
@@ -548,7 +548,7 @@ void Scheduler::post_offload_completion(std::uint64_t fiber_id, std::uint64_t wa
     if (offload_completion_fd_ < 0)
         return;
     {
-        std::lock_guard<std::mutex> lock(offload_completion_mutex_);
+        std::scoped_lock<std::mutex> lock(offload_completion_mutex_);
         offload_completions_.push_back(OffloadCompletion{fiber_id, wait_gen});
     }
     const std::uint64_t one = 1;
@@ -563,7 +563,7 @@ void Scheduler::drain_offload_completions() noexcept {
     }
     std::vector<OffloadCompletion> items;
     {
-        std::lock_guard<std::mutex> lock(offload_completion_mutex_);
+        std::scoped_lock<std::mutex> lock(offload_completion_mutex_);
         items.swap(offload_completions_);
     }
     for (const auto& item : items) {

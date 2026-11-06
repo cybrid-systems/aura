@@ -1751,7 +1751,7 @@ bool HotUpdateRegistry::should_throttle_reemit(std::uint64_t region_or_priority)
         // acquisition to lock_order audit (Level::HotUpdate rank).
         (void)::aura::compiler::lock_order::on_acquire(
             ::aura::compiler::lock_order::Level::HotUpdate, __builtin_FILE(), __builtin_LINE());
-        std::lock_guard<std::mutex> lock(region_windows_mtx_);
+        std::scoped_lock<std::mutex> lock(region_windows_mtx_);
         auto it = region_windows_.find(key);
         if (it != region_windows_.end() && it->second)
             w = it->second.get();
@@ -1890,7 +1890,7 @@ std::uint64_t HotUpdateRegistry::deopt_storm_region_overflow_total() const noexc
 }
 
 std::uint64_t HotUpdateRegistry::storm_isolation_region_count() const noexcept {
-    std::lock_guard<std::mutex> lock(region_windows_mtx_);
+    std::scoped_lock<std::mutex> lock(region_windows_mtx_);
     return static_cast<std::uint64_t>(region_windows_.size());
 }
 
@@ -1903,7 +1903,7 @@ std::uint64_t HotUpdateRegistry::deopt_storm_region_detected_total() const noexc
 }
 
 void HotUpdateRegistry::reset_region_storm_windows_for_test() noexcept {
-    std::lock_guard<std::mutex> lock(region_windows_mtx_);
+    std::scoped_lock<std::mutex> lock(region_windows_mtx_);
     region_windows_.clear();
     deopt_storm_region_last_id_.store(0, std::memory_order_relaxed);
     // deopt_storm_region_detected_total_ is cumulative lifetime count — keep.
@@ -1929,7 +1929,7 @@ void HotUpdateRegistry::test_pump_deopt_for_region(std::uint64_t region, std::ui
             hard_thr = threshold + 1;
     }
     deopt_observed_total_.fetch_add(n, std::memory_order_relaxed);
-    std::lock_guard<std::mutex> lock(region_windows_mtx_);
+    std::scoped_lock<std::mutex> lock(region_windows_mtx_);
     auto it = region_windows_.find(region);
     if (it == region_windows_.end()) {
         if (region_windows_.size() >= kStormIsolationRegionCap)
@@ -2006,7 +2006,7 @@ void HotUpdateRegistry::on_stale_deopt(std::uint64_t region) noexcept {
             hard_thr = threshold + 1;
     }
     deopt_observed_total_.fetch_add(1, std::memory_order_relaxed);
-    std::lock_guard<std::mutex> lock(region_windows_mtx_);
+    std::scoped_lock<std::mutex> lock(region_windows_mtx_);
     auto it = region_windows_.find(region);
     if (it == region_windows_.end()) {
         if (region_windows_.size() >= kStormIsolationRegionCap) {
@@ -2698,22 +2698,22 @@ std::uint64_t HotUpdateRegistry::register_epoch_listener(EpochListener fn) {
     // to lock_order audit (Level::HotUpdate rank).
     (void)::aura::compiler::lock_order::on_acquire(::aura::compiler::lock_order::Level::HotUpdate,
                                                    __builtin_FILE(), __builtin_LINE());
-    std::lock_guard<std::mutex> lock(listeners_mtx_);
+    std::scoped_lock<std::mutex> lock(listeners_mtx_);
     epoch_listeners_.push_back(std::move(fn));
     register_calls_.fetch_add(1, std::memory_order_relaxed);
     return next_listener_id_++;
 }
 
 std::uint64_t HotUpdateRegistry::register_dirty_listener(DirtyListener fn) {
-    std::lock_guard<std::mutex> lock(listeners_mtx_);
+    std::scoped_lock<std::mutex> lock(listeners_mtx_);
     dirty_listeners_.push_back(std::move(fn));
     register_calls_.fetch_add(1, std::memory_order_relaxed);
     return next_listener_id_++;
 }
 
 std::uint64_t HotUpdateRegistry::register_storm_listener(StormListener fn) {
-    std::lock_guard<std::mutex> call_lock(storm_call_mtx_);
-    std::lock_guard<std::mutex> lock(listeners_mtx_);
+    std::scoped_lock<std::mutex> call_lock(storm_call_mtx_);
+    std::scoped_lock<std::mutex> lock(listeners_mtx_);
     const auto id = next_listener_id_++;
     for (auto& slot : storm_slots_) {
         if (slot.id.load(std::memory_order_relaxed) != 0)
@@ -2730,8 +2730,8 @@ std::uint64_t HotUpdateRegistry::register_storm_listener(StormListener fn) {
 }
 
 void HotUpdateRegistry::unregister_storm_listener(std::uint64_t id) noexcept {
-    std::lock_guard<std::mutex> call_lock(storm_call_mtx_);
-    std::lock_guard<std::mutex> lock(listeners_mtx_);
+    std::scoped_lock<std::mutex> call_lock(storm_call_mtx_);
+    std::scoped_lock<std::mutex> lock(listeners_mtx_);
     if (id == 0)
         return;
     for (auto& slot : storm_slots_) {
@@ -2744,8 +2744,8 @@ void HotUpdateRegistry::unregister_storm_listener(std::uint64_t id) noexcept {
 }
 
 void HotUpdateRegistry::clear_listeners() noexcept {
-    std::lock_guard<std::mutex> call_lock(storm_call_mtx_);
-    std::lock_guard<std::mutex> lock(listeners_mtx_);
+    std::scoped_lock<std::mutex> call_lock(storm_call_mtx_);
+    std::scoped_lock<std::mutex> lock(listeners_mtx_);
     epoch_listeners_.clear();
     dirty_listeners_.clear();
     for (auto& slot : storm_slots_) {
@@ -2758,7 +2758,7 @@ void HotUpdateRegistry::notify_epoch_bump(std::uint64_t epoch) noexcept {
     epoch_notify_.fetch_add(1, std::memory_order_relaxed);
     std::vector<EpochListener> copy;
     {
-        std::lock_guard<std::mutex> lock(listeners_mtx_);
+        std::scoped_lock<std::mutex> lock(listeners_mtx_);
         copy = epoch_listeners_;
     }
     for (auto& fn : copy) {
@@ -2776,7 +2776,7 @@ void HotUpdateRegistry::notify_dirty_define(const char* name) noexcept {
     dirty_notify_.fetch_add(1, std::memory_order_relaxed);
     std::vector<DirtyListener> copy;
     {
-        std::lock_guard<std::mutex> lock(listeners_mtx_);
+        std::scoped_lock<std::mutex> lock(listeners_mtx_);
         copy = dirty_listeners_;
     }
     for (auto& fn : copy) {
@@ -2800,9 +2800,9 @@ void HotUpdateRegistry::notify_deopt_storm_locked(std::uint64_t deopts_in_window
         // for in-flight callbacks — the listener captures the service
         // `this`, and a concurrent worker registration's realloc must not
         // free the buffer another thread is walking.
-        std::lock_guard<std::mutex> call_lock(storm_call_mtx_);
+        std::scoped_lock<std::mutex> call_lock(storm_call_mtx_);
         {
-            std::lock_guard<std::mutex> lock(listeners_mtx_);
+            std::scoped_lock<std::mutex> lock(listeners_mtx_);
             for (const auto& slot : storm_slots_) {
                 const auto slot_id = slot.id.load(std::memory_order_acquire);
                 if (slot_id != 0 && slot.fn)
@@ -2845,7 +2845,7 @@ HotUpdateRegistry::Snapshot HotUpdateRegistry::snapshot() const noexcept {
     s.emit_region_mask =
         static_cast<std::int64_t>(emit_region_mask_.load(std::memory_order_relaxed));
     {
-        std::lock_guard<std::mutex> lock(listeners_mtx_);
+        std::scoped_lock<std::mutex> lock(listeners_mtx_);
         s.epoch_listeners = static_cast<std::int64_t>(epoch_listeners_.size());
         s.dirty_listeners = static_cast<std::int64_t>(dirty_listeners_.size());
         {

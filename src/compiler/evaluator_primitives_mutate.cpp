@@ -11432,7 +11432,7 @@ void Evaluator::enqueue_cascade_bfs_invalidate(std::string name) noexcept {
     if (name.empty())
         return;
     // Issue #4717: another body's boundary drain may be swapping the queue.
-    std::lock_guard cascade_lock(cascade_bfs_mtx_);
+    std::scoped_lock cascade_lock(cascade_bfs_mtx_);
     // Dedup: O(n) small — cascade typically marks few defines per boundary.
     for (const auto& existing : pending_cascade_bfs_invalidate_) {
         if (existing == name)
@@ -11448,7 +11448,7 @@ void Evaluator::drain_cascade_bfs_invalidate() noexcept {
     // Issue #4717: queue is fed by any body's mutate primitive.
     std::vector<std::string> batch;
     {
-        std::lock_guard cascade_lock(cascade_bfs_mtx_);
+        std::scoped_lock cascade_lock(cascade_bfs_mtx_);
         if (pending_cascade_bfs_invalidate_.empty())
             return;
         // Snapshot + clear first so re-entrant cascade during invalidate
@@ -11537,7 +11537,7 @@ void Evaluator::clear_cascade_bfs_invalidate() noexcept {
     // rollback suppression. Clearing here - not only when the batch itself
     // is non-empty - keeps it from ever reaching a later committed mutation.
     primitives_detail::rebind_rollback_cascade_pending() = false;
-    std::lock_guard cascade_lock(cascade_bfs_mtx_); // Issue #4717
+    std::scoped_lock cascade_lock(cascade_bfs_mtx_); // Issue #4717
     if (pending_cascade_bfs_invalidate_.empty())
         return;
     const auto n = static_cast<std::uint64_t>(pending_cascade_bfs_invalidate_.size());

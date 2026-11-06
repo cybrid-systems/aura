@@ -4677,12 +4677,12 @@ bool test_gc_heap_mutex_hook() {
 
     {
         auto& mtx = aura::messaging::g_heap_mutex();
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         CHECK(locked, "heap mutex hook returns valid mutex");
     }
 
     {
-        std::lock_guard<std::mutex> lock(aura::messaging::g_heap_mutex());
+        std::scoped_lock<std::mutex> lock(aura::messaging::g_heap_mutex());
     }
 
     aura::messaging::g_heap_mutex = nullptr;

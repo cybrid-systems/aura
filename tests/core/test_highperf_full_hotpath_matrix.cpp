@@ -273,7 +273,7 @@ bool test_eight_thread_concurrent_hotpath() {
     std::atomic<int> errors{0};
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
-            std::lock_guard<std::mutex> lk(mtx);
+            std::scoped_lock<std::mutex> lk(mtx);
             if ((i & 3) == 0) {
                 (void)cs.eval("(query:tag-arity-count 32 0)");
             } else if ((i & 3) == 1) {

@@ -307,7 +307,7 @@ inline void defer_cascade(std::string_view name) noexcept {
     if (name.empty())
         return;
     auto& st = g_deferred();
-    std::lock_guard<std::mutex> lock(st.mtx);
+    std::scoped_lock<std::mutex> lock(st.mtx);
     const auto [it, inserted] = st.names.emplace(name);
     (void)it;
     auto& m = g_metrics();
@@ -326,7 +326,7 @@ inline void note_render_allowed_cascade() noexcept {
     auto& st = g_deferred();
     std::vector<std::string> out;
     {
-        std::lock_guard<std::mutex> lock(st.mtx);
+        std::scoped_lock<std::mutex> lock(st.mtx);
         out.reserve(st.names.size());
         for (auto& n : st.names)
             out.push_back(std::move(n));
@@ -342,7 +342,7 @@ inline void note_render_allowed_cascade() noexcept {
 
 [[nodiscard]] inline std::size_t deferred_pending() noexcept {
     auto& st = g_deferred();
-    std::lock_guard<std::mutex> lock(st.mtx);
+    std::scoped_lock<std::mutex> lock(st.mtx);
     return st.names.size();
 }
 
@@ -468,7 +468,7 @@ inline void reset_for_test() noexcept {
     // Keep env_budget_applied so tests don't re-read env mid-suite unless cleared.
     {
         auto& st = g_deferred();
-        std::lock_guard<std::mutex> lock(st.mtx);
+        std::scoped_lock<std::mutex> lock(st.mtx);
         st.names.clear();
     }
     t_budget_depth = 0;

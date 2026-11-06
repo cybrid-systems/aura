@@ -484,7 +484,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         if (!is_string(v))
             return -1;
         const auto idx = static_cast<std::size_t>(types::as_string_idx(v));
-        std::lock_guard lock(ev.alloc_storage_lock_);
+        std::scoped_lock lock(ev.alloc_storage_lock_);
         if (idx >= ev.string_heap_.size() || ev.string_at(idx).size() % 8 != 0)
             return -1;
         return static_cast<std::int64_t>(ev.string_at(idx).size());
@@ -553,7 +553,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #4597: a live 'f64 view. Branch before as_string_idx. Do not
             // tenant-check a view (it is not a string slot).
             if (is_opaque(a[0])) {
-                std::lock_guard lock(ev.alloc_storage_lock_);
+                std::scoped_lock lock(ev.alloc_storage_lock_);
                 const double* data = nullptr;
                 std::int64_t n = 0;
                 const int rc = f64_view_locked(a[0], data, n);
@@ -587,7 +587,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             // heap can reallocate between validation and read on another fiber.
             // Issue #4597: an 'f64 view is read under the same lock. Not a string
             // slot, so no tenant check.
-            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::scoped_lock lock(ev.alloc_storage_lock_);
             if (is_opaque(a[0])) {
                 const double* data = nullptr;
                 std::int64_t n = 0;
@@ -621,7 +621,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             double x = 0.0;
             if (a.size() < 3 || f64slot(a[0]) < 0 || !is_int(a[1]) || !as_real(a[2], x))
                 return f64err("f64vector-set!: expected (f64vector index number)");
-            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::scoped_lock lock(ev.alloc_storage_lock_);
             const auto idx = static_cast<std::size_t>(types::as_string_idx(a[0]));
             // Issue #4519: f64slot validated under its own critical section
             // and released the lock; a concurrent restore_panic_checkpoint
@@ -656,7 +656,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         // Issue #4597: either side may be a live 'f64 view. A view is not a
         // string slot, so it is not tenant-checked. Both pointers stay valid
         // for the whole MAC because the lock is held.
-        std::lock_guard lock(ev.alloc_storage_lock_);
+        std::scoped_lock lock(ev.alloc_storage_lock_);
         auto load = [&](const EvalValue& v, const double*& p, std::int64_t& n) -> std::string {
             if (is_opaque(v)) {
                 const int rc = f64_view_locked(v, p, n);
@@ -742,7 +742,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         // concurrent push_back realloc between the bounds check and copy.
         std::string src;
         {
-            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::scoped_lock lock(ev.alloc_storage_lock_);
             const auto idx = static_cast<std::size_t>(types::as_string_idx(a[0]));
             if (idx >= ev.string_heap_.size())
                 return f64err("bytes->f64vector: expected a byte string");
@@ -761,7 +761,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #4509: same locked snapshot as bytes->f64vector.
             std::string src;
             {
-                std::lock_guard lock(ev.alloc_storage_lock_);
+                std::scoped_lock lock(ev.alloc_storage_lock_);
                 const auto idx = static_cast<std::size_t>(types::as_string_idx(a[0]));
                 if (idx >= ev.string_heap_.size())
                     return f64err("f32-bytes->f64vector: expected a byte string");
@@ -938,7 +938,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         if (off < 0 || cnt < 0 || cnt > (1LL << 40))
             return f64err("c-view: byte-offset and count must be non-negative");
         const auto width = FFIRuntime::view_width(kind);
-        std::lock_guard lock(ev.alloc_storage_lock_);
+        std::scoped_lock lock(ev.alloc_storage_lock_);
         auto& rt = ev.ffi_runtime_;
         auto& oh = ev.opaque_heap_;
         const auto src_packed = types::as_opaque_idx(a[0]);
@@ -1000,13 +1000,13 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
     ev.defer_std_host_prim("c-view?", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_opaque(a[0]))
             return make_bool(false);
-        std::lock_guard lock(ev.alloc_storage_lock_);
+        std::scoped_lock lock(ev.alloc_storage_lock_);
         return make_bool(ev.ffi_runtime_.is_native_view(types::as_opaque_idx(a[0])));
     });
     ev.defer_std_host_prim("c-view-length", [&ev, f64err, view_at](const auto& a) -> EvalValue {
         if (a.empty())
             return f64err("c-view-length: expected a native view (c-view)");
-        std::lock_guard lock(ev.alloc_storage_lock_);
+        std::scoped_lock lock(ev.alloc_storage_lock_);
         char* base = nullptr;
         NativeView m;
         if (auto e = view_at(a[0], "c-view-length", base, m); !e.empty())
@@ -1017,7 +1017,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         "c-view-ref", [&ev, f64err, view_at, view_load](const auto& a) -> EvalValue {
             if (a.size() < 2 || !is_int(a[1]))
                 return f64err("c-view-ref: expected (view index)");
-            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::scoped_lock lock(ev.alloc_storage_lock_);
             char* base = nullptr;
             NativeView m;
             if (auto e = view_at(a[0], "c-view-ref", base, m); !e.empty())
@@ -1032,7 +1032,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
     ev.defer_std_host_prim("c-view-set!", [&ev, f64err, view_at](const auto& a) -> EvalValue {
         if (a.size() < 3 || !is_int(a[1]) || !(is_int(a[2]) || is_float(a[2])))
             return f64err("c-view-set!: expected (view index number)");
-        std::lock_guard lock(ev.alloc_storage_lock_);
+        std::scoped_lock lock(ev.alloc_storage_lock_);
         char* base = nullptr;
         NativeView m;
         if (auto e = view_at(a[0], "c-view-set!", base, m); !e.empty())
@@ -1101,7 +1101,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         [&ev, f64err, view_at, f64_dst_gate, copy_view](const auto& a) -> EvalValue {
             if (a.size() < 2)
                 return f64err("c-view-copy!: expected (view f64vector [dst-index])");
-            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::scoped_lock lock(ev.alloc_storage_lock_);
             char* base = nullptr;
             NativeView m;
             if (auto e = view_at(a[0], "c-view-copy!", base, m); !e.empty())
@@ -1131,7 +1131,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         "c-view->f64vector", [&ev, f64err, view_at, copy_view](const auto& a) -> EvalValue {
             if (a.empty())
                 return f64err("c-view->f64vector: expected a native view");
-            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::scoped_lock lock(ev.alloc_storage_lock_);
             char* base = nullptr;
             NativeView m;
             if (auto e = view_at(a[0], "c-view->f64vector", base, m); !e.empty())
@@ -1163,7 +1163,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
                     return f64err("c-view-read-consistent!: max-tries must be >= 1");
                 max_tries = as_int(a[4]);
             }
-            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::scoped_lock lock(ev.alloc_storage_lock_);
             char* base = nullptr;
             NativeView m;
             if (auto e = view_at(a[0], "c-view-read-consistent!", base, m); !e.empty())
@@ -1234,7 +1234,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
     add("f64vector-sum", [&ev, f64err, f64_src, rd](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty())
             return f64err("f64vector-sum: expected an f64vector");
-        std::lock_guard lock(ev.alloc_storage_lock_);
+        std::scoped_lock lock(ev.alloc_storage_lock_);
         std::size_t idx = 0;
         std::string err;
         if (!f64_src(a[0], "f64vector-sum", idx, err))
@@ -1251,7 +1251,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         [&ev, f64err, f64_src, rd](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty())
                 return f64err("f64vector-max-index: expected an f64vector");
-            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::scoped_lock lock(ev.alloc_storage_lock_);
             std::size_t idx = 0;
             std::string err;
             if (!f64_src(a[0], "f64vector-max-index", idx, err))
@@ -1274,7 +1274,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         [&ev, f64err, f64_src, f64_dst_gate, rd](std::span<const EvalValue> a) -> EvalValue {
             if (a.size() < 3)
                 return f64err("f64vector-sub!: expected (dst a b)");
-            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::scoped_lock lock(ev.alloc_storage_lock_);
             std::size_t di = 0, xi = 0, yi = 0;
             std::string err;
             if (!f64_dst_gate(a[0], "f64vector-sub!", di, err) ||
@@ -1300,7 +1300,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             double alpha = 0.0;
             if (a.size() < 3 || !as_real(a[2], alpha))
                 return f64err("f64vector-ewma!: expected (acc x alpha)");
-            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::scoped_lock lock(ev.alloc_storage_lock_);
             std::size_t di = 0, xi = 0;
             std::string err;
             if (!f64_dst_gate(a[0], "f64vector-ewma!", di, err) ||
@@ -1357,7 +1357,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
                 return f64err("c-handle: tag must be a string or symbol");
             }
         }
-        std::lock_guard lock(ev.alloc_storage_lock_);
+        std::scoped_lock lock(ev.alloc_storage_lock_);
         auto& oh = ev.opaque_heap_;
         void* ptr = nullptr;
         if (is_opaque(a[0])) {
@@ -1393,7 +1393,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         void* fin = nullptr;
         void* ptr = nullptr;
         {
-            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::scoped_lock lock(ev.alloc_storage_lock_);
             const auto packed = types::as_opaque_idx(a[0]);
             // Generation before the null test: a recycled slot's packed index
             // still names the slot, and treating the whole word as an index
@@ -1417,7 +1417,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
     ev.defer_std_host_prim("c-handle-live?", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_opaque(a[0]))
             return make_bool(false);
-        std::lock_guard lock(ev.alloc_storage_lock_);
+        std::scoped_lock lock(ev.alloc_storage_lock_);
         const auto packed = types::as_opaque_idx(a[0]);
         std::uint32_t slot = 0;
         if (!ev.ffi_runtime_.locate_opaque(ev.opaque_heap_, packed, slot))
@@ -1432,7 +1432,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         std::string tag;
         {
-            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::scoped_lock lock(ev.alloc_storage_lock_);
             const auto packed = types::as_opaque_idx(a[0]);
             std::uint32_t slot = 0;
             if (!ev.ffi_runtime_.locate_opaque(ev.opaque_heap_, packed, slot) ||

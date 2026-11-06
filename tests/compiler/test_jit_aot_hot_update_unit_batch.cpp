@@ -398,7 +398,7 @@ namespace aura_issue_544_detail {
         std::atomic<int> cycles_done{0};
         auto worker = [&](int tid) {
             for (int i = 0; i < K_ITERS; ++i) {
-                std::lock_guard<std::mutex> lk(mtx);
+                std::scoped_lock<std::mutex> lk(mtx);
                 std::string code = "(mutate:replace-value (define a ";
                 code += std::to_string(tid * 1000 + i);
                 code += ") (define a ";

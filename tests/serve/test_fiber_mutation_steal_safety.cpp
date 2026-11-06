@@ -118,7 +118,7 @@ bool test_eight_thread_mutate() {
     s.cs = &cs;
     auto worker = [&](int tid) {
         for (int i = 0; i < k_iters_8(); ++i) {
-            std::lock_guard<std::mutex> lk(s.eval_mtx);
+            std::scoped_lock<std::mutex> lk(s.eval_mtx);
             int name_idx = (tid * 7 + i) % K_NAME_POOL;
             int v = tid * 100 + i;
             std::string code = "(mutate:replace-value (define q" + std::to_string(name_idx) + " " +
@@ -171,7 +171,7 @@ bool test_fifty_thread_starvation() {
 
     auto worker = [&](int tid) {
         for (int i = 0; i < k_iters_50(); ++i) {
-            std::lock_guard<std::mutex> lk(mtx);
+            std::scoped_lock<std::mutex> lk(mtx);
             std::string code = "(define v" + std::to_string(tid) + " " + std::to_string(i) + ")";
             (void)cs.eval(code);
             per_thread[tid].fetch_add(1);
@@ -216,7 +216,7 @@ bool test_gc_during_mutation() {
 
     auto worker = [&](int tid) {
         for (int j = 0; j < k_iters && !stop_workers.load(); ++j) {
-            std::lock_guard<std::mutex> lk(cs_eval_mutex());
+            std::scoped_lock<std::mutex> lk(cs_eval_mutex());
             std::string code = "(mutate:replace-value (define x " + std::to_string(tid * 1000 + j) +
                                ") (define x " + std::to_string(tid * 1000 + j) + "))";
             (void)cs.eval(code);
@@ -232,7 +232,7 @@ bool test_gc_during_mutation() {
     std::thread gc_thread([&]() {
         for (int i = 0; i < 3; ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
-            std::lock_guard<std::mutex> lk(cs_eval_mutex());
+            std::scoped_lock<std::mutex> lk(cs_eval_mutex());
             (void)cs.eval("(gc-heap)");
         }
     });
@@ -317,7 +317,7 @@ bool test_scheduler_fiber_yield_metrics() {
             }
             // Capture the per-fiber yield counter.
             if (aura::serve::g_current_fiber) {
-                std::lock_guard<std::mutex> lk(mb_mtx);
+                std::scoped_lock<std::mutex> lk(mb_mtx);
                 mb_counts.push_back(aura::serve::g_current_fiber->yield_mutation_boundary_count());
             }
             completed.fetch_add(1);

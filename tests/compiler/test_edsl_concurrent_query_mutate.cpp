@@ -87,7 +87,7 @@ static constexpr int K_ITERS = 50;
 static void query_worker(SharedState* s) {
     for (int i = 0; i < K_ITERS; ++i) {
         {
-            std::lock_guard<std::mutex> lk(s->eval_mtx);
+            std::scoped_lock<std::mutex> lk(s->eval_mtx);
             auto r = s->cs->eval("(query:pattern \"42\")");
             (void)r;
             if (auto* flat = s->cs->evaluator().workspace_flat()) {
@@ -143,7 +143,7 @@ static void mutate_worker(SharedState* s, int fiber_id) {
                 break;
         }
         {
-            std::lock_guard<std::mutex> lk(s->eval_mtx);
+            std::scoped_lock<std::mutex> lk(s->eval_mtx);
             auto r = s->cs->eval(code);
             (void)r;
         }

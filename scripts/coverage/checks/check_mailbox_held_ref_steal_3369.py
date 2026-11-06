@@ -65,7 +65,7 @@ def main() -> int:
     # Walk function on MultiFiberMailbox.
     must("for_each_pending_held_ref_for_fiber", "AC1 walk function in multi_fiber_mailbox.h", mfbh)
     must(
-        "std::lock_guard lock(mu_);",
+        "std::scoped_lock lock(mu_);",
         "AC1 walk holds mu_ (same lock as push/recv)",
         mfbh,
     )

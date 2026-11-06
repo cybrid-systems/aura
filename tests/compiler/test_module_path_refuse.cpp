@@ -149,7 +149,7 @@ static void ac3266_2_validate_before_lock() {
     CHECK(pos != std::string::npos, "3266 AC2: load_module_file");
     auto win = loader.substr(pos, 1600);
     auto val = win.find("is_plausible_module_path(path)");
-    auto lock = win.find("std::lock_guard interlock(compact_env_frames_lock_)");
+    auto lock = win.find("std::scoped_lock interlock(compact_env_frames_lock_)");
     CHECK(val != std::string::npos && lock != std::string::npos && val < lock,
           "3266 AC2: validate before lock");
     CHECK(win.find("Issue #3266") != std::string::npos, "3266 AC2: cite");

@@ -1334,7 +1334,7 @@ static void ac3365_1_restricted_mt_unstamped_denies() {
     // unstamped-ref (not missing-capability).
     auto& reg = aura::core::capability::g_capability_registry();
     {
-        std::lock_guard<std::mutex> lock(reg.mtx);
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         reg.grant(42, "tenant-admin",
                   static_cast<Effect>(aura::compiler::security::kEffectTenantAdmin), {});
     }
@@ -1350,7 +1350,7 @@ static void ac3365_1_restricted_mt_unstamped_denies() {
     ev.set_effect_sandbox_mode(0);
     ev.set_tenant_principal(0, {}, false);
     {
-        std::lock_guard<std::mutex> lock(reg.mtx);
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         reg.clear_for_test();
     }
     // Reset isolation policy + env flag.
@@ -1365,7 +1365,7 @@ static void ac3365_2_correct_stamp_allows() {
     ev.set_tenant_principal(42, {}, false);
     auto& reg = aura::core::capability::g_capability_registry();
     {
-        std::lock_guard<std::mutex> lock(reg.mtx);
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         reg.grant(42, "tenant-admin",
                   static_cast<Effect>(aura::compiler::security::kEffectTenantAdmin), {});
     }
@@ -1379,7 +1379,7 @@ static void ac3365_2_correct_stamp_allows() {
     ev.set_effect_sandbox_mode(0);
     ev.set_tenant_principal(0, {}, false);
     {
-        std::lock_guard<std::mutex> lock(reg.mtx);
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         reg.clear_for_test();
     }
     aura::core::workspace_isolation::g_workspace_isolation().clear_for_test();
@@ -1395,7 +1395,7 @@ static void ac3365_3_single_tenant_restricted_allows() {
     ev.set_tenant_principal(7, {}, false);
     auto& reg = aura::core::capability::g_capability_registry();
     {
-        std::lock_guard<std::mutex> lock(reg.mtx);
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         reg.grant(7, "tenant-admin",
                   static_cast<Effect>(aura::compiler::security::kEffectTenantAdmin), {});
     }
@@ -1408,7 +1408,7 @@ static void ac3365_3_single_tenant_restricted_allows() {
     ev.set_effect_sandbox_mode(0);
     ev.set_tenant_principal(0, {}, false);
     {
-        std::lock_guard<std::mutex> lock(reg.mtx);
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         reg.clear_for_test();
     }
     aura::core::workspace_isolation::g_workspace_isolation().clear_for_test();
@@ -1424,7 +1424,7 @@ static void ac3365_4_soft_off_zero_cost() {
     ev.set_tenant_principal(42, {}, false);
     auto& reg = aura::core::capability::g_capability_registry();
     {
-        std::lock_guard<std::mutex> lock(reg.mtx);
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         reg.grant(42, "tenant-admin",
                   static_cast<Effect>(aura::compiler::security::kEffectTenantAdmin), {});
     }
@@ -1435,7 +1435,7 @@ static void ac3365_4_soft_off_zero_cost() {
     aura::core::provenance::set_multi_tenant_env_active(false);
     ev.set_tenant_principal(0, {}, false);
     {
-        std::lock_guard<std::mutex> lock(reg.mtx);
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         reg.clear_for_test();
     }
     aura::core::workspace_isolation::g_workspace_isolation().clear_for_test();
@@ -1452,7 +1452,7 @@ static void ac3365_5_strict_unstamped_denies() {
     ev.set_tenant_principal(7, {}, false);
     auto& reg = aura::core::capability::g_capability_registry();
     {
-        std::lock_guard<std::mutex> lock(reg.mtx);
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         reg.grant(7, "tenant-admin",
                   static_cast<Effect>(aura::compiler::security::kEffectTenantAdmin), {});
     }
@@ -1462,7 +1462,7 @@ static void ac3365_5_strict_unstamped_denies() {
     ev.set_effect_sandbox_mode(0);
     ev.set_tenant_principal(0, {}, false);
     {
-        std::lock_guard<std::mutex> lock(reg.mtx);
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         reg.clear_for_test();
     }
     aura::core::workspace_isolation::g_workspace_isolation().clear_for_test();

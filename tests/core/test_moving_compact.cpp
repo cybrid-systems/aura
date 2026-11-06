@@ -954,7 +954,7 @@ int run_test_moving_compact() {
                 }
             }
             {
-                std::lock_guard<std::mutex> lock(linear_roots_mtx());
+                std::scoped_lock<std::mutex> lock(linear_roots_mtx());
                 CHECK(linear_roots() == expected, "ac3350_3: registry holds post-remap identities");
             }
             CHECK(rewritten > 0, "ac3350_3: at least one linear identity rewritten");

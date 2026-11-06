@@ -61,7 +61,7 @@ def main() -> int:
     fpos = dirty.find("inline std::size_t flush_pipeline_cascade_roots()")
     fwin = dirty[fpos : fpos + 1800] if fpos >= 0 else ""
     must("std::mutex g_pipeline_cascade_mtx", "AC2 mutex", dirty)
-    must("std::lock_guard<std::mutex> lock(g_pipeline_cascade_mtx)", "AC2 flush lock", fwin)
+    must("std::scoped_lock<std::mutex> lock(g_pipeline_cascade_mtx)", "AC2 flush lock", fwin)
     must("g_pipeline_dep_graph.load(std::memory_order_acquire)", "AC2 flush acquire", fwin)
     must("ac3264_2_flush_mutex", "AC2 test", skip)
 

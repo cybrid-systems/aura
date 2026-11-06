@@ -89,7 +89,7 @@ struct FfiRenderHotpathGuard {
     }
     void* raw = nullptr;
     if (alloc_mu != nullptr) {
-        std::lock_guard<std::recursive_mutex> alloc(*alloc_mu);
+        std::scoped_lock<std::recursive_mutex> alloc(*alloc_mu);
         if (oi >= oh->size() || !(*oh)[oi])
             return false;
         raw = (*oh)[oi];
@@ -644,7 +644,7 @@ void FFIRuntime::register_primitives(RegisterFn add,
             else
                 pin->mark_ffi_handoff(); // #2048: handoff signal on pin
             aura::gc_hooks::arm_ffi_pin_defer();
-            std::lock_guard<std::mutex> lock(g_ffi_pin_registry_mtx);
+            std::scoped_lock<std::mutex> lock(g_ffi_pin_registry_mtx);
             const std::int64_t handle = static_cast<std::int64_t>(g_ffi_pin_registry.size());
             g_ffi_pin_registry.push_back(std::move(pin));
             return make_int(handle);
@@ -653,7 +653,7 @@ void FFIRuntime::register_primitives(RegisterFn add,
             if (a.empty() || !types::is_int(a[0]))
                 return make_int(0);
             const std::size_t idx = static_cast<std::size_t>(types::as_int(a[0]));
-            std::lock_guard<std::mutex> lock(g_ffi_pin_registry_mtx);
+            std::scoped_lock<std::mutex> lock(g_ffi_pin_registry_mtx);
             if (idx >= g_ffi_pin_registry.size() || !g_ffi_pin_registry[idx])
                 return make_int(0);
             g_ffi_pin_registry[idx]->unpin_on_compact();
@@ -663,7 +663,7 @@ void FFIRuntime::register_primitives(RegisterFn add,
         });
         // Issue #2005 / #2048: (query:ffi-pin-count) → live FFI LifetimePin count.
         sink_query_prim("query:ffi-pin-count", [](std::span<const EvalValue>) -> EvalValue {
-            std::lock_guard<std::mutex> lock(g_ffi_pin_registry_mtx);
+            std::scoped_lock<std::mutex> lock(g_ffi_pin_registry_mtx);
             std::int64_t n = 0;
             for (const auto& p : g_ffi_pin_registry)
                 if (p && p->pinned())

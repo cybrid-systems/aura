@@ -178,7 +178,7 @@ int run_test_agent_ask_typed_corr() {
             auto reply_mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/8);
             std::uint64_t corr = 9001;
             {
-                std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+                std::scoped_lock<std::mutex> lock(aura::orch::g_pending_ask_mu);
                 aura::orch::g_pending_asks[corr] = reply_mb;
             }
             MailMessage m;
@@ -194,7 +194,7 @@ int run_test_agent_ask_typed_corr() {
             CHECK(matched && t2 && *matched == "no-prefix-body",
                   "AC1: pure typed reply body without text parse");
             {
-                std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+                std::scoped_lock<std::mutex> lock(aura::orch::g_pending_ask_mu);
                 aura::orch::g_pending_asks.erase(corr);
             }
         }
@@ -270,7 +270,7 @@ int run_test_agent_ask_typed_corr() {
                 // Hand-build legacy reply into pending dest (text only).
                 std::shared_ptr<MultiFiberMailbox> dest;
                 {
-                    std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+                    std::scoped_lock<std::mutex> lock(aura::orch::g_pending_ask_mu);
                     auto it = aura::orch::g_pending_asks.find(corr);
                     if (it != aura::orch::g_pending_asks.end())
                         dest = it->second.mailbox;
@@ -483,7 +483,7 @@ int run_test_agent_ask_typed_corr() {
         auto reply_mb4049 = std::make_shared<MultiFiberMailbox>(/*high_water=*/16);
         const std::uint64_t corr4049 = 4049001;
         {
-            std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+            std::scoped_lock<std::mutex> lock(aura::orch::g_pending_ask_mu);
             aura::orch::g_pending_asks[corr4049] = reply_mb4049;
         }
         auto ok4049 = cs4049.eval(std::format(
@@ -546,7 +546,7 @@ int run_test_agent_ask_typed_corr() {
         aura::core::provenance::set_hard_capture_tenant(false);
         aura::core::provenance::set_stable_ref_export_hard_reject(false);
         {
-            std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+            std::scoped_lock<std::mutex> lock(aura::orch::g_pending_ask_mu);
             aura::orch::g_pending_asks.erase(corr4049);
         }
 
@@ -666,7 +666,7 @@ int run_test_agent_ask_typed_corr() {
                     continue;
                 std::shared_ptr<MultiFiberMailbox> dest;
                 {
-                    std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+                    std::scoped_lock<std::mutex> lock(aura::orch::g_pending_ask_mu);
                     auto it = aura::orch::g_pending_asks.find(ask->correlation_id);
                     if (it != aura::orch::g_pending_asks.end())
                         dest = it->second.mailbox;
@@ -771,7 +771,7 @@ int run_test_agent_ask_typed_corr() {
             while (!stop4384.load(std::memory_order_relaxed) &&
                    !stamped4384.load(std::memory_order_relaxed)) {
                 {
-                    std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+                    std::scoped_lock<std::mutex> lock(aura::orch::g_pending_ask_mu);
                     for (const auto& [id, route] : aura::orch::g_pending_asks) {
                         (void)id;
                         if (route.target_fiber == ask_target4384.id && route.mailbox &&
@@ -1072,7 +1072,7 @@ int run_test_agent_ask_typed_corr() {
         auto reply_mb4060 = std::make_shared<MultiFiberMailbox>(/*high_water=*/16);
         const std::uint64_t corr4060 = 4060001;
         {
-            std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+            std::scoped_lock<std::mutex> lock(aura::orch::g_pending_ask_mu);
             aura::orch::g_pending_asks[corr4060] = reply_mb4060;
         }
         const auto reply_fail0 = href(cs4060, "agent-reply-fail-total");
@@ -1113,7 +1113,7 @@ int run_test_agent_ask_typed_corr() {
         aura::core::provenance::set_hard_capture_tenant(false);
         aura::core::provenance::set_stable_ref_export_hard_reject(false);
         {
-            std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+            std::scoped_lock<std::mutex> lock(aura::orch::g_pending_ask_mu);
             aura::orch::g_pending_asks.erase(corr4060);
         }
 
@@ -1154,7 +1154,7 @@ int run_test_agent_ask_typed_corr() {
         const std::uint64_t corr4061 = 4061001;
         const std::uint64_t target_id4061 = 4061100;
         {
-            std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+            std::scoped_lock<std::mutex> lock(aura::orch::g_pending_ask_mu);
             aura::orch::g_pending_asks[corr4061] =
                 aura::orch::PendingAskRoute{mb4061, target_id4061};
         }
@@ -1168,7 +1168,7 @@ int run_test_agent_ask_typed_corr() {
                           forged && is_int(*forged) ? as_int(*forged) : -1));
         CHECK(mb4061->size() == 0, "4061: foreign reply did not push");
         {
-            std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+            std::scoped_lock<std::mutex> lock(aura::orch::g_pending_ask_mu);
             auto it = aura::orch::g_pending_asks.find(corr4061);
             CHECK(it != aura::orch::g_pending_asks.end() && it->second.mailbox &&
                       it->second.target_fiber == target_id4061,
@@ -1190,7 +1190,7 @@ int run_test_agent_ask_typed_corr() {
         aura::compiler::typed_audit::apply_dev_audit_defaults();
         auto mb_soft4061 = std::make_shared<MultiFiberMailbox>(/*high_water=*/16);
         {
-            std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+            std::scoped_lock<std::mutex> lock(aura::orch::g_pending_ask_mu);
             aura::orch::g_pending_asks[corr4061] =
                 aura::orch::PendingAskRoute{mb_soft4061, target_id4061};
         }
@@ -1200,7 +1200,7 @@ int run_test_agent_ask_typed_corr() {
         auto soft = agent_reply(corr4061, "soft-ok", /*reply_dest=*/nullptr, &forged4061);
         CHECK(soft.ok && soft.status == "ok", "4061: Soft delivers by corr with no fiber compare");
         {
-            std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+            std::scoped_lock<std::mutex> lock(aura::orch::g_pending_ask_mu);
             aura::orch::g_pending_asks.erase(corr4061);
         }
         const auto spawn4061 = read_file("src/orch/agent_spawn.h");
@@ -1390,7 +1390,7 @@ int run_test_agent_ask_typed_corr() {
             bool parked4506d = false;
             for (int i = 0; i < 10000; ++i) {
                 {
-                    std::lock_guard<std::mutex> lock(aura::orch::g_pending_ask_mu);
+                    std::scoped_lock<std::mutex> lock(aura::orch::g_pending_ask_mu);
                     for (const auto& [id, route] : aura::orch::g_pending_asks) {
                         if (route.target_fiber == target4506d.id && route.mailbox) {
                             corr4506d = id;

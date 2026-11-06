@@ -42,12 +42,12 @@ namespace mutation {
     }
 
     void register_custom_predicate(const std::string& pred_name, const std::string& type_name) {
-        std::lock_guard<std::mutex> lock(custom_predicate_mtx());
+        std::scoped_lock<std::mutex> lock(custom_predicate_mtx());
         custom_predicate_registry()[pred_name] = type_name;
     }
 
     std::optional<std::string> lookup_custom_predicate_type(const std::string& pred_name) {
-        std::lock_guard<std::mutex> lock(custom_predicate_mtx());
+        std::scoped_lock<std::mutex> lock(custom_predicate_mtx());
         auto& m = custom_predicate_registry();
         auto it = m.find(pred_name);
         if (it == m.end())

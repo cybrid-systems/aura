@@ -125,14 +125,14 @@ def main() -> int:
     must("Issue #3145", "AC4", cap)
     must("caller_principal", "AC4", cap)
     must("grant_macro_self_evo", "AC4", cap)
-    # The check must run under mtx (existing std::lock_guard<std::mutex>
+    # The check must run under mtx (existing std::scoped_lock<std::mutex>
     # block on the registry). The by_tenant.find() inside the
     # admin-check lambda runs while the lock is held.
     macro_p = cap.find("void grant_macro_self_evo")
     if macro_p > 0:
         end = macro_p + 8000  # generous slice for the function body
         snip = cap[macro_p:end]
-        if "std::lock_guard<std::mutex> lock(mtx)" not in snip:
+        if "std::scoped_lock<std::mutex> lock(mtx)" not in snip:
             fails.append("AC4: grant_macro_self_evo must take registry mtx (admin check must be locked)")
     # Prim call site forwards the principal.
     must("ev.capability_tenant_id()", "AC4", prim)

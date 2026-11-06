@@ -174,7 +174,7 @@ static void ac7_orig() {
     std::atomic<int> completed{0};
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
-            std::lock_guard<std::mutex> lk(mtx);
+            std::scoped_lock<std::mutex> lk(mtx);
             rebind_f_add(cs, tid * 100 + i, "ac7");
             completed.fetch_add(1);
         }
@@ -307,7 +307,7 @@ static void ac6_task1() {
     std::atomic<int> completed{0};
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
-            std::lock_guard<std::mutex> lk(mtx);
+            std::scoped_lock<std::mutex> lk(mtx);
             rebind_f_add(cs, tid * 100 + i, "t1ac6");
             completed.fetch_add(1);
         }

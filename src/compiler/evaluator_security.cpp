@@ -288,7 +288,7 @@ void Evaluator::grant_capability(std::string cap, bool single_use, bool session_
                 }
             } else {
                 auto& reg = g_capability_registry();
-                std::lock_guard<std::mutex> lock(reg.mtx);
+                std::scoped_lock<std::mutex> lock(reg.mtx);
                 bool live = false;
                 if (auto git = reg.by_tenant.find(capability_tenant_id_);
                     git != reg.by_tenant.end()) {
@@ -317,7 +317,7 @@ void Evaluator::grant_capability(std::string cap, bool single_use, bool session_
     // deny. AC3 Soft/Off zero-cost (sandbox_mode atomic relaxed load).
     if (eff != Effect::None) {
         auto& reg = g_capability_registry();
-        std::lock_guard<std::mutex> lock(reg.mtx);
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         // Deny SE mid joins the audit-TU SSOT (#3801/#3837): compute in THIS
         // TU — the header-inline fence clone's weak-symbol binding reads
         // empty TypedMid join state and lands the deny SE on raw epoch.
@@ -1578,7 +1578,7 @@ bool Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
         // (unlocked read of by_tenant via effects_for) was a TOCTOU window
         // that allowed a momentarily-held TenantAdmin to land a foreign
         // grant before revocation.
-        std::lock_guard<std::mutex> lock(reg.mtx);
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         const auto held = reg.effects_effective_for_locked(self_tenant, mid);
         const bool is_admin = has_effect(held, Effect::TenantAdmin);
         if (!is_admin) {
@@ -1611,7 +1611,7 @@ bool Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
         // back the registry write) and the #3144 effects_for strip — the
         // residual privilege-escalation path this issue closes.
         if (force_bind && is_high_risk) {
-            std::lock_guard<std::mutex> lock(reg.mtx);
+            std::scoped_lock<std::mutex> lock(reg.mtx);
             const auto held = reg.effects_effective_for_locked(self_tenant, mid);
             if (!has_effect(held, Effect::TenantAdmin)) {
                 using ::aura::core::security_event::SecurityEventKind;
@@ -1742,7 +1742,7 @@ void Evaluator::grant_effect_durable(std::uint64_t tenant_id, std::string_view n
     // revoke (#3126 TOCTOU-closed).
     {
         auto& reg_durable = g_capability_registry();
-        std::lock_guard<std::mutex> lock(reg_durable.mtx);
+        std::scoped_lock<std::mutex> lock(reg_durable.mtx);
         const auto held_durable = reg_durable.effects_effective_for_locked(self_tenant, mid);
         const bool is_admin = has_effect(held_durable, Effect::TenantAdmin);
         if (force_bind && foreign_target && !is_admin) {
@@ -1871,7 +1871,7 @@ void Evaluator::grant_effect_durable_sticky(std::uint64_t tenant_id, std::string
     // so the string mirror never re-takes the mutex while it is still held.
     {
         auto& reg_sticky = g_capability_registry();
-        std::lock_guard<std::mutex> lock(reg_sticky.mtx);
+        std::scoped_lock<std::mutex> lock(reg_sticky.mtx);
         const auto held_sticky = reg_sticky.effects_effective_for_locked(self_tenant, mid);
         const bool is_admin = has_effect(held_sticky, Effect::TenantAdmin);
         // Issue #2969 AC1: foreign-tenant write-fence — same as #2967.
@@ -2013,7 +2013,7 @@ void Evaluator::grant_effect_session(std::uint64_t tenant_id, std::string_view n
     const bool foreign_target = tenant_id != 0 && tenant_id != self_tenant;
     auto& reg_session = g_capability_registry();
     if (force_bind && (foreign_target || is_high_risk)) {
-        std::lock_guard<std::mutex> lock(reg_session.mtx);
+        std::scoped_lock<std::mutex> lock(reg_session.mtx);
         const auto held = reg_session.effects_effective_for_locked(self_tenant, mid);
         const bool is_admin = has_effect(held, Effect::TenantAdmin);
         if (foreign_target && !is_admin) {
@@ -2090,7 +2090,7 @@ void Evaluator::revoke_effect_capability(std::uint64_t tenant_id, std::string_vi
     bool lost_ta = false;
     if (force_bind && foreign_target) {
         {
-            std::lock_guard<std::mutex> lock(reg_revoke.mtx);
+            std::scoped_lock<std::mutex> lock(reg_revoke.mtx);
             const auto caller_mid = typed_audit::join_audit_and_se_mid(0);
             const auto held = reg_revoke.effects_effective_for_locked(self_tenant, caller_mid);
             const bool is_admin = has_effect(held, Effect::TenantAdmin);
@@ -2297,7 +2297,7 @@ void Evaluator::set_tenant_principal(std::uint64_t tenant_id, std::string_view /
             // Issue #3995: hold mtx across TA check + flag store (TOCTOU vs
             // concurrent revoke). kCapCapability maps to TenantAdmin bits.
             auto& reg = ::aura::core::capability::g_capability_registry();
-            std::lock_guard<std::mutex> lock(reg.mtx);
+            std::scoped_lock<std::mutex> lock(reg.mtx);
             const auto caller_mid = typed_audit::join_audit_and_se_mid(0);
             const bool privileged =
                 !reg.holds_wildcard_only_locked(capability_tenant_id_) &&
@@ -2436,7 +2436,7 @@ void Evaluator::TenantScope::release() noexcept {
         mode == EffectSandboxMode::Restricted || mode == EffectSandboxMode::Strict;
     const bool have_live = met.capability_live_session_grants.load(std::memory_order_relaxed) != 0;
     if (scope_mid_ != 0 && (production || have_live)) {
-        std::lock_guard<std::mutex> lock(reg.mtx);
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         (void)reg.revoke_session_grants_for_locked(scope_tenant_, scope_mid_, fiber_id_,
                                                    "scope-dtor-cascade");
         // Issue #4430: retire this principal's write-side strings for the
@@ -2632,7 +2632,7 @@ bool Evaluator::tw_closure_tenant_allows(ClosureId id, std::uint16_t required_ef
         return true;
     std::uint64_t rec = 0;
     {
-        std::lock_guard<std::mutex> lk(closure_slot_tenants_mu_);
+        std::scoped_lock<std::mutex> lk(closure_slot_tenants_mu_);
         if (auto it = closure_slot_tenants_.find(id); it != closure_slot_tenants_.end())
             rec = it->second;
     }

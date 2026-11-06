@@ -763,7 +763,7 @@ struct CapabilityRegistry {
                 return false;
             }
         }
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         return grant_locked(tenant, name, effects, prov, single_use, session_bound,
                             caller_principal, soft_session, soft_workspace, soft_source);
     }
@@ -1093,7 +1093,7 @@ struct CapabilityRegistry {
             (mode == EffectSandboxMode::Restricted || mode == EffectSandboxMode::Strict);
         if (!production && met.capability_live_session_grants.load(std::memory_order_relaxed) == 0)
             return 0; // AC3 / #3048 AC4: zero extra work when no session grants
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         return revoke_session_grants_for_mid_locked(mid, reason, fiber_id);
     }
 
@@ -1171,14 +1171,14 @@ struct CapabilityRegistry {
             (mode == EffectSandboxMode::Restricted || mode == EffectSandboxMode::Strict);
         if (!production && met.capability_live_session_grants.load(std::memory_order_relaxed) == 0)
             return 0; // AC3: zero extra work when no session grants
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         return revoke_session_grants_for_locked(tenant, mid, fiber_id, reason);
     }
 
     // Issue #3142: count live SessionBound entries for given tenant
     // (AC3 long-run chaos test: must == 0 after 1000 nested aborts).
     [[nodiscard]] std::size_t session_bound_entries_alive(TenantId tenant) const noexcept {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         auto it = by_tenant.find(tenant);
         if (it == by_tenant.end())
             return 0;
@@ -1248,7 +1248,7 @@ struct CapabilityRegistry {
         const auto mode = sandbox_mode.load(std::memory_order_acquire);
         const bool production =
             (mode == EffectSandboxMode::Restricted || mode == EffectSandboxMode::Strict);
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         const auto orphans = count_session_bound_orphans_locked(live_mids, fiber_id);
         if (!production || orphans == 0)
             return orphans; // Soft/Off observe-only; production no-op on clean state
@@ -1351,7 +1351,7 @@ struct CapabilityRegistry {
                                    std::uint32_t fiber_id) noexcept {
         if (mid == 0 || tenant == 0)
             return false;
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         return mark_session_bound_stolen_locked(tenant, mid, fiber_id);
     }
 
@@ -1410,7 +1410,7 @@ struct CapabilityRegistry {
     void revoke(TenantId tenant, std::string_view name, std::uint64_t revoke_at_epoch = 0) {
         bool lost_ta = false;
         {
-            std::lock_guard<std::mutex> lock(mtx);
+            std::scoped_lock<std::mutex> lock(mtx);
             const bool had_ta = has_effect(effects_for_locked(tenant), Effect::TenantAdmin);
             revoke_locked(tenant, name, revoke_at_epoch);
             if (had_ta && !has_effect(effects_for_locked(tenant), Effect::TenantAdmin))
@@ -1916,7 +1916,7 @@ struct CapabilityRegistry {
 
     // Issue #2055: lookup a grant for tests / audit (newest name match).
     [[nodiscard]] bool find_grant(TenantId tenant, std::string_view name, CapabilityGrant& out) {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         auto it = by_tenant.find(tenant);
         if (it == by_tenant.end())
             return false;
@@ -2084,7 +2084,7 @@ struct CapabilityRegistry {
         if (prov.fiber_id == 0)
             prov.fiber_id = effect_fiber_id_or(0);
 
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         // Issue #3029: production Restricted/Strict requires TenantAdmin
         // (or "tenant-admin" / "capability") on the CALLER principal.
         // Soft/Off (sandbox_mode==Off) is zero-cost.
@@ -2251,7 +2251,7 @@ struct CapabilityRegistry {
 
     // Issue #2023 / #2386: revoke MacroSelfEvo + stamp revoke_epoch (#2055).
     void revoke_macro_self_evo(TenantId tenant, std::uint64_t revoke_at_epoch = 0) {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         auto it = by_tenant.find(tenant);
         if (it != by_tenant.end()) {
             for (auto& g : it->second) {
@@ -2315,7 +2315,7 @@ struct CapabilityRegistry {
         const auto mode = sandbox_mode.load(std::memory_order_acquire);
         if (mode != EffectSandboxMode::Restricted || prov.mutation_id == 0)
             return false;
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         if (!grant_locked(tenant, kSoftAutoGrantName, effects, prov,
                           /*single_use=*/false, /*session_bound=*/true,
                           /*caller_principal=*/0, /*soft_session=*/true, workspace_id,
@@ -2410,7 +2410,7 @@ struct CapabilityRegistry {
     // A foreign ref is the caller's decision; this does not see it.
     [[nodiscard]] bool soft_session_admits_self(TenantId tenant, std::uint32_t workspace,
                                                 std::uint16_t req_bits) {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         if (!soft_session_active_ || tenant != soft_session_tenant_)
             return false;
         if (workspace != soft_session_workspace_)
@@ -2441,7 +2441,7 @@ struct CapabilityRegistry {
     void disarm_soft_workspace_filter_locked() noexcept { soft_workspace_filter_ = false; }
 
     void clear_for_test() {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::scoped_lock<std::mutex> lock(mtx);
         by_tenant.clear();
         macro_self_evo_by_tenant.clear();
         soft_session_active_ = false;
@@ -2550,7 +2550,7 @@ inline std::size_t revoke_session_grants_on_steal_or_abort(std::uint64_t session
         (mode == EffectSandboxMode::Restricted || mode == EffectSandboxMode::Strict);
     if (!production && met.capability_live_session_grants.load(std::memory_order_relaxed) == 0)
         return 0; // AC4: Soft / empty live residual — no lock
-    std::lock_guard<std::mutex> lock(reg.mtx);
+    std::scoped_lock<std::mutex> lock(reg.mtx);
     return revoke_session_grants_on_steal_or_abort_locked(session_mid, steal, fiber_id);
 }
 
@@ -2577,7 +2577,7 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
                             (mode == EffectSandboxMode::Restricted && sandbox_active);
 
     {
-        std::lock_guard<std::mutex> lock(reg.mtx);
+        std::scoped_lock<std::mutex> lock(reg.mtx);
         const auto hard0 = met.capability_fiber_hard_deny_total.load(std::memory_order_relaxed);
         // Issue #3363: unify the need_grant path — `wildcard_ok` no longer
         // skips the #3144 effects_for_locked strip. Wildcard-only TA/MSE
@@ -3034,7 +3034,7 @@ check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard
         return out;
     }
 
-    std::lock_guard<std::mutex> lock(reg.mtx);
+    std::scoped_lock<std::mutex> lock(reg.mtx);
     const Effect held = reg.effects_for(tenant);
     const bool has_bit = has_effect(held, Effect::MacroSelfEvo);
     auto pol_it = reg.macro_self_evo_by_tenant.find(tenant);

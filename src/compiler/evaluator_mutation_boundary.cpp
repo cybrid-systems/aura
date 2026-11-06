@@ -4786,7 +4786,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 mode == ::aura::core::capability::EffectSandboxMode::Strict;
             if (production ||
                 met.capability_live_session_grants.load(std::memory_order_relaxed) != 0) {
-                std::lock_guard<std::mutex> lock(reg.mtx);
+                std::scoped_lock<std::mutex> lock(reg.mtx);
                 // Issue #3799 / Issue #3241: prefer enter-captured fiber_id_ so
                 // TLS-cleared dtor under Restricted+MT never mid-only sweeps
                 // peer outermost grants. Fall back to live current id;
@@ -4975,7 +4975,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         const bool production = mode == ::aura::core::capability::EffectSandboxMode::Restricted ||
                                 mode == ::aura::core::capability::EffectSandboxMode::Strict;
         if (production || met.capability_live_session_grants.load(std::memory_order_relaxed) != 0) {
-            std::lock_guard<std::mutex> lock(reg.mtx);
+            std::scoped_lock<std::mutex> lock(reg.mtx);
             // Issue #3799 / Issue #3241: (mid, fiber) so a peer outermost sharing
             // epoch mid is not collateral. Prefer enter-captured fiber_id_
             // (TLS may already be clear at dtor). fiber=0 under Soft /
@@ -8621,7 +8621,7 @@ Evaluator::transaction_guard_host_for_region(Evaluator& ev, std::uint64_t region
 // remap mechanisms (no second registry).
 std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
     // Serialize vs set_flat_pool / set_current_* (densify reads *slot).
-    std::lock_guard<std::mutex> mutate_targets_lock(mutate_target_mu_);
+    std::scoped_lock<std::mutex> mutate_targets_lock(mutate_target_mu_);
     // Issue #4928: arena_ (not a group member) needs the slots too.
     if (!arena_group_ && !arena_)
         return 0;
@@ -9032,8 +9032,8 @@ int Evaluator::densify_unstable_fill_begin() noexcept {
     densify_value_slot_owner_.store(self, std::memory_order_release);
     densify_value_slot_filling_ = true;
     {
-        std::lock_guard<std::recursive_mutex> alloc_lock(alloc_storage_lock_);
-        std::lock_guard<std::mutex> rewrite_lock(densify_rewrite_mu_);
+        std::scoped_lock<std::recursive_mutex> alloc_lock(alloc_storage_lock_);
+        std::scoped_lock<std::mutex> rewrite_lock(densify_rewrite_mu_);
         densify_moved_rewrite_.clear();
     }
     densify_opaque_value_slots_.clear();
@@ -9160,9 +9160,9 @@ bool Evaluator::densify_apply_container_remap_(const std::unordered_set<void*>& 
         for (std::size_t i = 0; i < kClosuresShardCount; ++i)
             shards[i] = std::unique_lock<std::shared_mutex>(closures_shards_[i].mu);
         std::unique_lock<std::shared_mutex> mod_lock(module_mtx_);
-        std::lock_guard<std::recursive_mutex> alloc_lock(alloc_storage_lock_);
-        std::lock_guard<std::mutex> cover_lock(module_create_cover_mu_);
-        std::lock_guard<std::mutex> rewrite_lock(densify_rewrite_mu_);
+        std::scoped_lock<std::recursive_mutex> alloc_lock(alloc_storage_lock_);
+        std::scoped_lock<std::mutex> cover_lock(module_create_cover_mu_);
+        std::scoped_lock<std::mutex> rewrite_lock(densify_rewrite_mu_);
         for (void*& op : opaque_heap_)
             rewrite_one(op);
         if (!check_value_slots && densify_live_containers_prerewritten_) {
@@ -9358,7 +9358,7 @@ void Evaluator::push_module_env_for_test(void* p) {
 }
 
 std::vector<void*> Evaluator::copy_opaque_heap_for_test() const {
-    std::lock_guard<std::recursive_mutex> alloc(alloc_storage_lock_);
+    std::scoped_lock<std::recursive_mutex> alloc(alloc_storage_lock_);
     return opaque_heap_;
 }
 

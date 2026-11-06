@@ -75,7 +75,7 @@ struct AgentNameTable {
     // behavior preserved (#2078 "same-name spawn overrides prior").
     // Cost when both flags are false: two bool loads, no atomic (AC2).
     aura::orch::AgentHandle* put(aura::orch::AgentHandle&& h) {
-        std::lock_guard<std::mutex> lock(impl_->mu_);
+        std::scoped_lock<std::mutex> lock(impl_->mu_);
         // Issue #3564: recycle stuck Reclaimed quota on every put so a
         // host that forgot wait_reclaimed and spawned a *different*
         // name still frees the old slot's reservation. Flags stay —
@@ -151,7 +151,7 @@ struct AgentNameTable {
     // mailbox.
     std::shared_ptr<aura::serve::mf_mailbox::MultiFiberMailbox>
     mailbox_of(const std::string& name) const {
-        std::lock_guard<std::mutex> lock(impl_->mu_);
+        std::scoped_lock<std::mutex> lock(impl_->mu_);
         auto it = impl_->agents_.find(name);
         if (it == impl_->agents_.end())
             return nullptr;
@@ -159,7 +159,7 @@ struct AgentNameTable {
     }
 
     aura::orch::AgentHandle* find(const std::string& name) {
-        std::lock_guard<std::mutex> lock(impl_->mu_);
+        std::scoped_lock<std::mutex> lock(impl_->mu_);
         auto it = impl_->agents_.find(name);
         if (it == impl_->agents_.end())
             return nullptr;
@@ -197,7 +197,7 @@ struct AgentNameTable {
     aura::orch::AgentHandle* find_by_fiber(std::uint64_t fiber_id) {
         std::string name;
         {
-            std::lock_guard<std::mutex> lock(impl_->mu_);
+            std::scoped_lock<std::mutex> lock(impl_->mu_);
             for (auto& [n, slot] : impl_->agents_) {
                 if (slot.id == fiber_id) {
                     name = n;
@@ -215,7 +215,7 @@ struct AgentNameTable {
     // and Done-path / abandoned husks. This table only — not a process walk
     // and not an AgentRegistry. Caller is production; Soft never calls.
     void append_live_region_keys(std::vector<std::uint64_t>& out, std::string_view exclude_name) {
-        std::lock_guard<std::mutex> lock(impl_->mu_);
+        std::scoped_lock<std::mutex> lock(impl_->mu_);
         for (const auto& [n, slot] : impl_->agents_) {
             if (n == exclude_name)
                 continue;
@@ -242,7 +242,7 @@ struct AgentNameTable {
     bool retire_settled(const std::string& name) {
         aura::orch::AgentHandle retired;
         {
-            std::lock_guard<std::mutex> lock(impl_->mu_);
+            std::scoped_lock<std::mutex> lock(impl_->mu_);
             auto it = impl_->agents_.find(name);
             if (it == impl_->agents_.end())
                 return false;
@@ -269,7 +269,7 @@ struct AgentNameTable {
     // AgentHandle destructors release arena reservation. The map is
     // cleared so the destructor doesn't double-release.
     std::vector<aura::orch::AgentHandle> drain_for_cleanup() {
-        std::lock_guard<std::mutex> lock(impl_->mu_);
+        std::scoped_lock<std::mutex> lock(impl_->mu_);
         std::vector<aura::orch::AgentHandle> out;
         out.reserve(impl_->agents_.size());
         for (auto& [name, handle] : impl_->agents_) {
@@ -281,7 +281,7 @@ struct AgentNameTable {
     }
 
     std::size_t size() const {
-        std::lock_guard<std::mutex> lock(impl_->mu_);
+        std::scoped_lock<std::mutex> lock(impl_->mu_);
         return impl_->agents_.size();
     }
 

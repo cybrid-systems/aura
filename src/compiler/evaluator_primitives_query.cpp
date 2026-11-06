@@ -351,12 +351,12 @@ namespace module_export_cache {
         if (ec) {
             g_stat_fail.fetch_add(1, std::memory_order_relaxed);
             g_miss.fetch_add(1, std::memory_order_relaxed);
-            std::lock_guard<std::mutex> lock(g_mtx);
+            std::scoped_lock<std::mutex> lock(g_mtx);
             g_by_path[resolved] = Entry{};
             return {false, {}};
         }
         {
-            std::lock_guard<std::mutex> lock(g_mtx);
+            std::scoped_lock<std::mutex> lock(g_mtx);
             auto it = g_by_path.find(resolved);
             if (it != g_by_path.end() && it->second.valid && it->second.mtime == mtime) {
                 g_hit.fetch_add(1, std::memory_order_relaxed);
@@ -377,7 +377,7 @@ namespace module_export_cache {
             fresh.exports = parse_module_exports(content);
             fresh.valid = true;
         }
-        std::lock_guard<std::mutex> lock(g_mtx);
+        std::scoped_lock<std::mutex> lock(g_mtx);
         // Another thread may have filled the cache; prefer freshest valid entry.
         auto& slot = g_by_path[resolved];
         if (!(slot.valid && slot.mtime == mtime))
@@ -388,7 +388,7 @@ namespace module_export_cache {
     }
 
     void reset_for_test() {
-        std::lock_guard<std::mutex> lock(g_mtx);
+        std::scoped_lock<std::mutex> lock(g_mtx);
         g_by_path.clear();
         g_hit.store(0, std::memory_order_relaxed);
         g_miss.store(0, std::memory_order_relaxed);
@@ -595,7 +595,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             };
             std::size_t size = 0;
             {
-                std::lock_guard<std::mutex> lock(module_export_cache::g_mtx);
+                std::scoped_lock<std::mutex> lock(module_export_cache::g_mtx);
                 size = module_export_cache::g_by_path.size();
             }
             auto* ht = FlatHashTable::create(query_hash_capacity_for(16));

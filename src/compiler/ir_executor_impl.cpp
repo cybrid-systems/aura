@@ -2233,7 +2233,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                     // two fiber bodies could realloc this
                                     // process-global vector at once. The
                                     // registry owns its own mutex.
-                                    std::lock_guard<std::mutex> owned_pairs(g_owned_pair_slots_mtx);
+                                    std::scoped_lock<std::mutex> owned_pairs(
+                                        g_owned_pair_slots_mtx);
                                     g_owned_pair_slots_.push_back(slot);
                                 }
                                 aura_unlock_workspace_write();

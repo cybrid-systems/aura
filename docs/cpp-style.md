@@ -135,7 +135,8 @@ contracts, so `cmake/clang_contract_shim.h` expands `pre` / `post` / `contract_a
   undefined, so the concept excludes `bool` by name.
   `kDimensionNames` is a `constexpr` array and `dim_name` is `constexpr`.
   `log_append` is a cold audit boundary with `post(r: r.empty() || r.find('#') != npos)`.
-  Pin-registry and quota-tenant locks are `scoped_lock` (P6). The pin-registry
+  Pin-registry and quota-tenant locks are `scoped_lock` (P6). Every plain
+  single-mutex `lock_guard` in `src/` is `scoped_lock` too. The pin-registry
   lock-wait counter already existed; no new hot-path metric was added.
 
 ## 5. Contracts (C++26 P2900)
@@ -171,7 +172,11 @@ contracts, so `cmake/clang_contract_shim.h` expands `pre` / `post` / `contract_a
 - P4 **[review]** Branch hints are `[[likely]]` / `[[unlikely]]`, not macros.
 - P5 **[review]** Macros only for include guards, platform/compiler detection and contract macros that need `#expr`.
   Constants are `constexpr`; function-like macros become `inline` functions or templates.
-- P6 **[soft]** Locks use `std::scoped_lock` (`modernize-use-scoped-lock`).
+- P6 **[hard]** A single mutex is `std::scoped_lock` (`modernize-use-scoped-lock`).
+  `std::unique_lock` stays where the code defers, adopts, tries, or unlocks
+  early: `scoped_lock` cannot express those. Multiple mutexes stay on the
+  existing `std::lock` + `defer_lock` order, not a silent `scoped_lock`
+  that would reorder them.
 
 ## 8. Other
 
@@ -180,8 +185,9 @@ contracts, so `cmake/clang_contract_shim.h` expands `pre` / `post` / `contract_a
   Signal alt stacks, crash printers, and C ABI `FILE*` callbacks that must not
   throw stay on `printf`. WAL magic and on-disk `char[N]` members stay C arrays
   because the layout is the format. Read and copy scratch in `chunk_io.hh`
-  (`4096` / `8192`) is `std::array`. Other local `char buf[N]` (tenant jail,
-  JIT exe path) are still open, not an exemption. Scheduler metrics dumps are
+  (`4096` / `8192`) is `std::array`. The tenant-jail `readlink` / `process_vm_readv`
+  / stdout scratch and the JIT `/proc/self/exe` plus `fgets` scratch are
+  `std::array` too; the C API still receives `data()`. Scheduler metrics dumps are
   ordinary I/O and use `std::print`.
 - **[review]** Split functions longer than 300 lines.
 

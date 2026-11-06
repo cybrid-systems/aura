@@ -116,7 +116,7 @@ int run_test_check_and_record_wildcard_strip() {
         auto& reg = g_capability_registry();
         bool is_wildcard_only;
         {
-            std::lock_guard<std::mutex> lock(reg.mtx);
+            std::scoped_lock<std::mutex> lock(reg.mtx);
             is_wildcard_only = reg.holds_wildcard_only_locked(tenant);
         }
         check(is_wildcard_only, "tenant holds wildcard-only (no explicit TA/MSE grants)");

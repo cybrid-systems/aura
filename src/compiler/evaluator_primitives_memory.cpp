@@ -144,7 +144,7 @@ build_kv_hash_4816(Evaluator& ev, std::span<const std::pair<std::string, types::
     {
         // Issue #4860: unlocked size()+push_back raced a concurrent publish
         // (double free). Index read, push and stamp are one critical section.
-        std::lock_guard slock(ev.alloc_storage_lock_);
+        std::scoped_lock slock(ev.alloc_storage_lock_);
         hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         aura_hash_stamp_new_table_owner();
@@ -376,7 +376,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 // that push (double free / UAF). One critical section under
                 // the same lock, and the #4093 tenant stamps die with the
                 // tables they describe.
-                std::lock_guard<std::recursive_mutex> hash_registry(ev.alloc_storage_lock_);
+                std::scoped_lock<std::recursive_mutex> hash_registry(ev.alloc_storage_lock_);
                 for (auto* fht : g_hash_tables)
                     FlatHashTable::destroy(fht);
                 g_hash_tables.clear();
@@ -390,7 +390,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             ev.vector_slot_tenants_.shrink_to_fit();
             {
                 // Issue #4386: module is already held. alloc inside that block.
-                std::lock_guard<std::recursive_mutex> opq_lock(ev.alloc_storage_lock_);
+                std::scoped_lock<std::recursive_mutex> opq_lock(ev.alloc_storage_lock_);
                 // Issue #4597: snapshot finalizers before the heap is cleared.
                 // drain does not call them and does not clear oh.
                 native_fins = ev.ffi_runtime_.drain_native_finalizers(ev.opaque_heap_);
@@ -452,7 +452,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 return gc_heap_reset_impl();
         }
         if (aura::messaging::g_gc_collect) {
-            std::lock_guard<std::mutex> lock(ev.heap_mutex());
+            std::scoped_lock<std::mutex> lock(ev.heap_mutex());
             return types::make_bool(aura::messaging::g_gc_collect());
         }
         g_gc_heap_requests_4816.fetch_add(1, std::memory_order_relaxed);
@@ -565,7 +565,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         {
             // Issue #4831: same publish-path peer as (gc-heap) — a live
             // agent body may mint into the registry while this cleanup runs.
-            std::lock_guard<std::recursive_mutex> hash_registry(ev.alloc_storage_lock_);
+            std::scoped_lock<std::recursive_mutex> hash_registry(ev.alloc_storage_lock_);
             for (auto* fht : g_hash_tables)
                 FlatHashTable::destroy(fht);
             g_hash_tables.clear();
@@ -580,7 +580,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         std::vector<std::pair<void*, void*>> native_fins;
         {
             // Issue #4386: shard locks are already released. alloc alone.
-            std::lock_guard<std::recursive_mutex> opq_lock(ev.alloc_storage_lock_);
+            std::scoped_lock<std::recursive_mutex> opq_lock(ev.alloc_storage_lock_);
             // Issue #4597: same drain as gc-heap. Finalizers run after the lock.
             native_fins = ev.ffi_runtime_.drain_native_finalizers(ev.opaque_heap_);
             ev.opaque_heap_.clear();
@@ -701,7 +701,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             {
                 // Issue #4860: unlocked size()+push_back raced a concurrent publish
                 // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
+                std::scoped_lock slock(ev.alloc_storage_lock_);
                 hidx = g_hash_tables.size();
                 g_hash_tables.push_back(ht);
                 aura_hash_stamp_new_table_owner();
@@ -949,7 +949,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         {
             // Issue #4860: unlocked size()+push_back raced a concurrent publish
             // (double free). Index read, push and stamp are one critical section.
-            std::lock_guard slock(ev.alloc_storage_lock_);
+            std::scoped_lock slock(ev.alloc_storage_lock_);
             hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             aura_hash_stamp_new_table_owner();
@@ -1445,7 +1445,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 {
                     // Issue #4860: unlocked size()+push_back raced a concurrent publish
                     // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
                     hidx = g_hash_tables.size();
                     g_hash_tables.push_back(ht);
                     aura_hash_stamp_new_table_owner();
@@ -1584,7 +1584,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 {
                     // Issue #4860: unlocked size()+push_back raced a concurrent publish
                     // (double free). Index read, push and stamp are one critical section.
-                    std::lock_guard slock(ev.alloc_storage_lock_);
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
                     hidx = g_hash_tables.size();
                     g_hash_tables.push_back(ht);
                     aura_hash_stamp_new_table_owner();
@@ -1739,7 +1739,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             {
                 // Issue #4860: unlocked size()+push_back raced a concurrent publish
                 // (double free). Index read, push and stamp are one critical section.
-                std::lock_guard slock(ev.alloc_storage_lock_);
+                std::scoped_lock slock(ev.alloc_storage_lock_);
                 hidx = g_hash_tables.size();
                 g_hash_tables.push_back(ht);
                 aura_hash_stamp_new_table_owner();
@@ -1896,7 +1896,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         {
             // Issue #4860: unlocked size()+push_back raced a concurrent publish
             // (double free). Index read, push and stamp are one critical section.
-            std::lock_guard slock(ev.alloc_storage_lock_);
+            std::scoped_lock slock(ev.alloc_storage_lock_);
             hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             aura_hash_stamp_new_table_owner();
@@ -2024,7 +2024,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         {
             // Issue #4860: unlocked size()+push_back raced a concurrent publish
             // (double free). Index read, push and stamp are one critical section.
-            std::lock_guard slock(ev.alloc_storage_lock_);
+            std::scoped_lock slock(ev.alloc_storage_lock_);
             hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             aura_hash_stamp_new_table_owner();

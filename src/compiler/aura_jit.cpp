@@ -5514,7 +5514,7 @@ struct AuraJIT::Impl {
     // Issue #1323 (P0): lock compile_mtx_ — concurrent find + operator[]
     // (insert under compile()) is UB on unordered_map without a lock.
     std::uint64_t unhandled_count_for_fn(const std::string& name) const {
-        std::lock_guard<std::mutex> lock(compile_mtx_);
+        std::scoped_lock<std::mutex> lock(compile_mtx_);
         auto it = fn_unhandled_counts_.find(name);
         if (it == fn_unhandled_counts_.end())
             return 0;
@@ -5713,7 +5713,7 @@ struct AuraJIT::Impl {
         // Issue #2475: removed unused default-constructed `fn_lock`
         // (unique_lock not bound to any mutex) that suggested a
         // per-function exclusive upgrade which was never assigned.
-        std::lock_guard<std::mutex> compile_lock(compile_mtx_);
+        std::scoped_lock<std::mutex> compile_lock(compile_mtx_);
         if (!init())
             return nullptr;
 
@@ -6398,7 +6398,7 @@ struct AuraJIT::Impl {
         // bridge epoch bump). Caller falls back to interpreter / recompile.
         bool hygiene_refuse = false;
         {
-            std::lock_guard<std::mutex> lock(compile_mtx_);
+            std::scoped_lock<std::mutex> lock(compile_mtx_);
             auto it = fn_trackers_.find(name);
             if (it != fn_trackers_.end() && it->second.deopt_pending) {
                 if (metrics)
@@ -6450,12 +6450,12 @@ struct AuraJIT::Impl {
                 aura_note_ir_func_define(func_id, name);
             // Issue #1516: map IR func_id → name for per-function AOT.
             if (func_id >= 0) {
-                std::lock_guard<std::mutex> lock(compile_mtx_);
+                std::scoped_lock<std::mutex> lock(compile_mtx_);
                 fn_id_to_name_[static_cast<std::uint32_t>(func_id)] = name;
             }
             // Issue #2022: mirror marker into name-keyed tracker when live.
             if (source_marker == 1) {
-                std::lock_guard<std::mutex> lock(compile_mtx_);
+                std::scoped_lock<std::mutex> lock(compile_mtx_);
                 auto tit = fn_trackers_.find(std::string(name));
                 if (tit != fn_trackers_.end()) {
                     tit->second.source_marker = 1;
@@ -6613,7 +6613,7 @@ std::string AuraJIT::compile_to_llvm_ir() {
     // this lock in compile(); unguarded read races with replace/free (UAF).
     if (!impl_)
         return std::string();
-    std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
+    std::scoped_lock<std::mutex> lock(impl_->compile_mtx_);
     if (!impl_->last_module_) {
         return std::string();
     }
@@ -6669,7 +6669,7 @@ bool AuraJIT::compile_to_object_file(const std::string& path) {
     // Issue #1308 (P0): same lock as compile_to_llvm_ir.
     if (!impl_)
         return false;
-    std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
+    std::scoped_lock<std::mutex> lock(impl_->compile_mtx_);
     if (!impl_->last_module_) {
         return false;
     }
@@ -6684,7 +6684,7 @@ std::string AuraJIT::compile_function_to_llvm_ir_by_name(const char* name) {
         metrics_.aot_per_function_miss_total.fetch_add(1, std::memory_order_relaxed);
         return {};
     }
-    std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
+    std::scoped_lock<std::mutex> lock(impl_->compile_mtx_);
     auto it = impl_->fn_aot_modules_.find(name);
     if (it == impl_->fn_aot_modules_.end() || !it->second) {
         metrics_.aot_per_function_miss_total.fetch_add(1, std::memory_order_relaxed);
@@ -6703,7 +6703,7 @@ bool AuraJIT::compile_function_to_object_by_name(const char* name, const std::st
         metrics_.aot_per_function_miss_total.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
-    std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
+    std::scoped_lock<std::mutex> lock(impl_->compile_mtx_);
     auto it = impl_->fn_aot_modules_.find(name);
     if (it == impl_->fn_aot_modules_.end() || !it->second) {
         metrics_.aot_per_function_miss_total.fetch_add(1, std::memory_order_relaxed);
@@ -6724,7 +6724,7 @@ std::string AuraJIT::compile_function_to_llvm_ir(std::uint32_t func_id) {
     }
     std::string name;
     {
-        std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
+        std::scoped_lock<std::mutex> lock(impl_->compile_mtx_);
         auto it = impl_->fn_id_to_name_.find(func_id);
         if (it != impl_->fn_id_to_name_.end())
             name = it->second;
@@ -6743,7 +6743,7 @@ bool AuraJIT::compile_function_to_object(std::uint32_t func_id, const std::strin
     }
     std::string name;
     {
-        std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
+        std::scoped_lock<std::mutex> lock(impl_->compile_mtx_);
         auto it = impl_->fn_id_to_name_.find(func_id);
         if (it != impl_->fn_id_to_name_.end())
             name = it->second;
@@ -6881,7 +6881,7 @@ const std::vector<FunctionMeta>& AuraJIT::compiled_functions() const {
 uint8_t AuraJIT::fn_source_marker(const char* name) const {
     if (!impl_ || !name || !name[0])
         return 0;
-    std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
+    std::scoped_lock<std::mutex> lock(impl_->compile_mtx_);
     auto it = impl_->fn_trackers_.find(name);
     if (it == impl_->fn_trackers_.end())
         return 0;
@@ -6891,7 +6891,7 @@ uint8_t AuraJIT::fn_source_marker(const char* name) const {
 uint32_t AuraJIT::fn_provenance(const char* name) const {
     if (!impl_ || !name || !name[0])
         return 0;
-    std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
+    std::scoped_lock<std::mutex> lock(impl_->compile_mtx_);
     auto it = impl_->fn_trackers_.find(name);
     if (it == impl_->fn_trackers_.end())
         return 0;
@@ -6908,7 +6908,7 @@ void AuraJIT::invalidate(const char* name) {
     // Issue #1324 (P0): acquire compile_mtx_ BEFORE any erase of
     // fn_trackers_ / fn_unhandled_counts_. Previously erases ran
     // unlocked while compile() inserts under compile_mtx_ → UB.
-    std::lock_guard<std::mutex> compile_lock(impl_->compile_mtx_);
+    std::scoped_lock<std::mutex> compile_lock(impl_->compile_mtx_);
     // Issue #1516: drop per-function AOT snapshot on invalidate.
     impl_->fn_aot_modules_.erase(n);
     // Issue #1545: pre-evict linear live-closure scan (mark invalid +
@@ -6988,7 +6988,7 @@ void AuraJIT::invalidate_prefix(const char* prefix) {
         return;
     std::string p_hash = p + "#";
     // Issue #1324 (P0): lock compile_mtx_ before any trackers/unhandled erase.
-    std::lock_guard<std::mutex> compile_lock(impl_->compile_mtx_);
+    std::scoped_lock<std::mutex> compile_lock(impl_->compile_mtx_);
     for (auto it = impl_->fn_trackers_.begin(); it != impl_->fn_trackers_.end();) {
         if (it->first == p || it->first.rfind(p_hash, 0) == 0) {
             if (it->second.tracker) {
@@ -7031,7 +7031,7 @@ void AuraJIT::invalidate_prefix(const char* prefix) {
 std::size_t AuraJIT::invalidate_all() noexcept {
     if (!impl_)
         return 0;
-    std::lock_guard<std::mutex> compile_lock(impl_->compile_mtx_);
+    std::scoped_lock<std::mutex> compile_lock(impl_->compile_mtx_);
     (void)aura_jit_linear_live_closure_scan();
     std::size_t n = 0;
     for (auto& [name, tr] : impl_->fn_trackers_) {
@@ -7059,7 +7059,7 @@ std::size_t AuraJIT::invalidate_all() noexcept {
 void AuraJIT::capture_fn_epoch(const char* name, std::uint64_t current_bridge_epoch) {
     if (!impl_ || !name)
         return;
-    std::lock_guard<std::mutex> compile_lock(impl_->compile_mtx_);
+    std::scoped_lock<std::mutex> compile_lock(impl_->compile_mtx_);
     impl_->fn_captured_epochs_[name].store(current_bridge_epoch, std::memory_order_release);
     impl_->recompute_epochs_uniform_locked();
     metrics_.jit_epoch_stale_check_total.fetch_add(1, std::memory_order_relaxed);
@@ -7079,7 +7079,7 @@ bool AuraJIT::is_fn_epoch_stale(const char* name, std::uint64_t current_bridge_e
             (w >> 2) == current_bridge_epoch)
             return false;
     }
-    std::lock_guard<std::mutex> compile_lock(impl_->compile_mtx_);
+    std::scoped_lock<std::mutex> compile_lock(impl_->compile_mtx_);
     auto it = impl_->fn_captured_epochs_.find(name);
     if (it == impl_->fn_captured_epochs_.end())
         return false; // never captured → pass-through
@@ -7094,7 +7094,7 @@ std::size_t AuraJIT::walk_active_closures(std::uint64_t current_bridge_epoch) no
     metrics_.walk_active_closures_total.fetch_add(1, std::memory_order_relaxed);
     if (!impl_)
         return 0;
-    std::lock_guard<std::mutex> compile_lock(impl_->compile_mtx_);
+    std::scoped_lock<std::mutex> compile_lock(impl_->compile_mtx_);
 
     // Phase 1: O(C) — collect stale names from fn_captured_epochs_.
     std::unordered_set<std::string> stale_names;
@@ -7162,7 +7162,7 @@ std::size_t AuraJIT::batch_deopt_for(const char* name, std::uint64_t current_epo
     std::string n(name);
     std::string n_hash = n + "#";
     std::size_t marked = 0;
-    std::lock_guard<std::mutex> compile_lock(impl_->compile_mtx_);
+    std::scoped_lock<std::mutex> compile_lock(impl_->compile_mtx_);
     for (auto& [key, entry] : impl_->fn_trackers_) {
         if (key != n && key.rfind(n_hash, 0) != 0)
             continue;
@@ -7195,7 +7195,7 @@ bool AuraJIT::is_deopt_pending(const char* name) const noexcept {
     // Issue #4572: no tracker pending => no name pending (lock-free).
     if (impl_->deopt_pending_live_.load(std::memory_order_acquire) == 0)
         return false;
-    std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
+    std::scoped_lock<std::mutex> lock(impl_->compile_mtx_);
     auto it = impl_->fn_trackers_.find(name);
     return it != impl_->fn_trackers_.end() && it->second.deopt_pending;
 }
@@ -7206,7 +7206,7 @@ std::uint64_t AuraJIT::deopt_pending_count() const noexcept {
     // Issue #4572: exact live counter maintained under compile_mtx_.
     if (impl_->deopt_pending_live_.load(std::memory_order_acquire) == 0)
         return 0;
-    std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
+    std::scoped_lock<std::mutex> lock(impl_->compile_mtx_);
     std::uint64_t n = 0;
     for (const auto& [_, e] : impl_->fn_trackers_) {
         if (e.deopt_pending)
@@ -7223,7 +7223,7 @@ std::size_t AuraJIT::clear_deopt_pending_keep_native(const char* name,
                                                      std::uint64_t current_epoch) noexcept {
     if (!impl_ || !name || !*name)
         return 0;
-    std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
+    std::scoped_lock<std::mutex> lock(impl_->compile_mtx_);
     std::size_t cleared = 0;
     const std::string base(name);
     const std::string prefix = base + "#";

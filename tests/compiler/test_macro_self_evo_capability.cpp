@@ -347,7 +347,7 @@ static void ac3459_1_production_mid_refuse() {
     CHECK(!landed, "AC1: production mid==0 → grant_macro_self_evo refuses");
     bool saw_mse = false;
     {
-        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        std::scoped_lock<std::mutex> lock(g_capability_registry().mtx);
         const auto it = g_capability_registry().by_tenant.find(tenant);
         if (it != g_capability_registry().by_tenant.end())
             for (const auto& g : it->second)
@@ -384,7 +384,7 @@ static void ac3459_2_live_mid_lands_with_m() {
     CHECK(landed, "AC2: live mid M + explicit TA lands");
     bool found = false;
     {
-        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        std::scoped_lock<std::mutex> lock(g_capability_registry().mtx);
         const auto it = g_capability_registry().by_tenant.find(tenant);
         if (it != g_capability_registry().by_tenant.end())
             for (const auto& g : it->second)
@@ -423,7 +423,7 @@ static void ac3459_3_no_explicit_ta_denied() {
     CHECK(!landed, "AC3: no explicit TA → denied");
     bool saw_mse = false;
     {
-        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        std::scoped_lock<std::mutex> lock(g_capability_registry().mtx);
         const auto it = g_capability_registry().by_tenant.find(target_t);
         if (it != g_capability_registry().by_tenant.end())
             for (const auto& g : it->second)
@@ -449,7 +449,7 @@ static void ac3459_4_off_synthesis_contract() {
     CHECK(landed, "AC4: Off grants without TA fence");
     bool saw_nonzero_mid = false;
     {
-        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        std::scoped_lock<std::mutex> lock(g_capability_registry().mtx);
         const auto it = g_capability_registry().by_tenant.find(tenant);
         if (it != g_capability_registry().by_tenant.end())
             for (const auto& g : it->second)
@@ -513,7 +513,7 @@ static void ac4133_1_registry_caller_only_fence() {
     CHECK(!landed, "4133 AC1: target-only TA → mint denied (caller-only fence)");
     bool saw_mse = false;
     {
-        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        std::scoped_lock<std::mutex> lock(g_capability_registry().mtx);
         const auto it = g_capability_registry().by_tenant.find(target_t);
         if (it != g_capability_registry().by_tenant.end())
             for (const auto& g : it->second)

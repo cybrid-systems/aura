@@ -700,9 +700,9 @@ int run_test_agent_ask() {
         CHECK(kt_src4731.find("std::uint64_t intern_keyword_slot(std::string_view name)") !=
                   std::string::npos,
               "4731 AC1: one atomic scan+append helper");
-        CHECK(kt_src4731.find("std::lock_guard lock(keyword_table_mtx_)") != std::string::npos,
+        CHECK(kt_src4731.find("std::scoped_lock lock(keyword_table_mtx_)") != std::string::npos,
               "4731 AC1: the helper serializes on keyword_table_mtx_");
-        CHECK(ef_src4731.find("std::lock_guard kw_lock(keyword_table_mtx_);") != std::string::npos,
+        CHECK(ef_src4731.find("std::scoped_lock kw_lock(keyword_table_mtx_);") != std::string::npos,
               "4731 AC1: the interpreter intern path takes keyword_table_mtx_");
     }
 

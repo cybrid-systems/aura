@@ -215,7 +215,7 @@ struct FFIBatchHotPath {
     //   3) store sig_hash LAST (publish token; acquire on hash sees fn/abi)
     void update_cache(std::uint64_t sig_hash, void* fn, RenderFfiAbi abi) noexcept {
         // Issue #2474: publish protocol (hash last).
-        std::lock_guard<std::mutex> lock(miss_mtx);
+        std::scoped_lock<std::mutex> lock(miss_mtx);
         cached_sig_hash.store(0, std::memory_order_release); // invalidate first
         cached_abi.store(static_cast<std::uint8_t>(abi), std::memory_order_release);
         cached_func_ptr.store(fn, std::memory_order_release);       // fn before hash
@@ -364,7 +364,7 @@ struct FFIBatchHotPath {
     }
 
     void clear_cache() noexcept {
-        std::lock_guard<std::mutex> lock(miss_mtx);
+        std::scoped_lock<std::mutex> lock(miss_mtx);
         // Issue #2474: invalidate hash first so lock-free readers miss
         // before fn is nulled (symmetric with update_cache publish order).
         cached_sig_hash.store(0, std::memory_order_release);

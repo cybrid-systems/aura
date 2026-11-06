@@ -56,7 +56,7 @@ def main() -> int:
     lpos = loader.find("Evaluator::load_module_file")
     lwin = loader[lpos : lpos + 1400] if lpos >= 0 else ""
     val = lwin.find("is_plausible_module_path(path)")
-    lock = lwin.find("std::lock_guard interlock(compact_env_frames_lock_)")
+    lock = lwin.find("std::scoped_lock interlock(compact_env_frames_lock_)")
     if val < 0 or lock < 0 or val > lock:
         fails.append("AC2: validate must precede compact_env_frames_lock_")
     must("Issue #3266", "AC2 cite", lwin)

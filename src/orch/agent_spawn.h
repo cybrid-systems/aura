@@ -1235,14 +1235,14 @@ inline void register_agent_coop(std::uint64_t fiber_id,
                                 std::shared_ptr<AgentCoopYield> coop) noexcept {
     if (!coop || fiber_id == 0 || coop->max_no_yield_ms == 0)
         return;
-    std::lock_guard<std::mutex> lock(g_agent_coop_mu);
+    std::scoped_lock<std::mutex> lock(g_agent_coop_mu);
     g_agent_coop_by_fiber[fiber_id] = std::move(coop);
 }
 
 inline void unregister_agent_coop(std::uint64_t fiber_id) noexcept {
     if (fiber_id == 0)
         return;
-    std::lock_guard<std::mutex> lock(g_agent_coop_mu);
+    std::scoped_lock<std::mutex> lock(g_agent_coop_mu);
     g_agent_coop_by_fiber.erase(fiber_id);
 }
 
@@ -1250,7 +1250,7 @@ inline void unregister_agent_coop(std::uint64_t fiber_id) noexcept {
 lookup_agent_coop(std::uint64_t fiber_id) noexcept {
     if (fiber_id == 0)
         return nullptr;
-    std::lock_guard<std::mutex> lock(g_agent_coop_mu);
+    std::scoped_lock<std::mutex> lock(g_agent_coop_mu);
     auto it = g_agent_coop_by_fiber.find(fiber_id);
     if (it == g_agent_coop_by_fiber.end())
         return nullptr;
@@ -1319,7 +1319,7 @@ inline void note_mailbox_bp_recent_event(std::string_view scope_id = {},
     // concurrent maybe_decay cannot snapshot-then-zero past a live
     // increment (silent BP event loss → under-admit).
     {
-        std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
+        std::scoped_lock<std::mutex> lock(g_scope_bp_map_mtx);
         auto it = g_scope_bp_map.find(std::string{scope_id});
         ScopeBpGauge* gauge = nullptr;
         if (it == g_scope_bp_map.end()) {
@@ -1422,7 +1422,7 @@ inline void note_mailbox_bp_recent_event(std::string_view scope_id = {},
 inline std::shared_ptr<ScopeBpGauge> lookup_scope_bp_gauge(std::string_view scope_id) noexcept {
     if (scope_id.empty())
         return nullptr;
-    std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
+    std::scoped_lock<std::mutex> lock(g_scope_bp_map_mtx);
     auto it = g_scope_bp_map.find(std::string{scope_id});
     if (it == g_scope_bp_map.end())
         return nullptr;
@@ -1460,7 +1460,7 @@ inline std::shared_ptr<ScopeBpGauge> lookup_scope_bp_gauge(std::string_view scop
         return false;
     if (!production_defaults_active())
         return false;
-    std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
+    std::scoped_lock<std::mutex> lock(g_scope_bp_map_mtx);
     if (g_scope_bp_map.find(std::string{scope_id}) != g_scope_bp_map.end())
         return false;
     return g_scope_bp_map.size() >= kMailboxBpScopeMapCap;
@@ -1473,7 +1473,7 @@ inline std::shared_ptr<ScopeBpGauge> lookup_scope_bp_gauge(std::string_view scop
 inline bool erase_scope_bp_gauge(std::string_view scope_id) noexcept {
     if (scope_id.empty())
         return false;
-    std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
+    std::scoped_lock<std::mutex> lock(g_scope_bp_map_mtx);
     return g_scope_bp_map.erase(std::string{scope_id}) > 0;
 }
 
@@ -1516,7 +1516,7 @@ inline std::unordered_map<std::string, std::uint64_t> g_scope_bp_refs{};
 inline void note_scope_bp_gauge_ref(const std::string& scope_id) noexcept {
     if (scope_id.empty() || scope_id.compare(0, 5, "bare:") == 0)
         return;
-    std::lock_guard lock(g_scope_bp_map_mtx);
+    std::scoped_lock lock(g_scope_bp_map_mtx);
     ++g_scope_bp_refs[scope_id];
 }
 // Issue #3942: post-attach held_ref revalidation. A steal that lands
@@ -1555,7 +1555,7 @@ inline void maybe_release_scope_bp_gauge_ref(const std::string& scope_id) noexce
         return;
     bool erase_now = false;
     {
-        std::lock_guard lock(g_scope_bp_map_mtx);
+        std::scoped_lock lock(g_scope_bp_map_mtx);
         auto it = g_scope_bp_refs.find(scope_id);
         if (it == g_scope_bp_refs.end())
             return;
@@ -1578,7 +1578,7 @@ inline void maybe_release_scope_bp_gauge_ref(const std::string& scope_id) noexce
 // reset_all_agent_scopes_for_test so scope lifecycle reset also frees
 // the #2633 residual leak.
 inline std::size_t reset_scope_bp_map_for_test() noexcept {
-    std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
+    std::scoped_lock<std::mutex> lock(g_scope_bp_map_mtx);
     const auto n = g_scope_bp_map.size();
     g_scope_bp_map.clear();
     g_scope_bp_refs.clear(); // Issue #3943: drop refcounts with the gauges
@@ -1587,7 +1587,7 @@ inline std::size_t reset_scope_bp_map_for_test() noexcept {
 
 // Issue #2778: test / observability — current map occupancy under lock.
 inline std::size_t scope_bp_map_size_for_test() noexcept {
-    std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
+    std::scoped_lock<std::mutex> lock(g_scope_bp_map_mtx);
     return g_scope_bp_map.size();
 }
 
@@ -1605,7 +1605,7 @@ inline std::vector<ScopeBpHotSenderRow>
 snapshot_bp_hot_senders(std::size_t max_scopes = 4) noexcept {
     std::vector<ScopeBpHotSenderRow> rows;
     {
-        std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
+        std::scoped_lock<std::mutex> lock(g_scope_bp_map_mtx);
         rows.reserve(g_scope_bp_map.size());
         for (const auto& [id, g] : g_scope_bp_map) {
             if (!g)
@@ -1672,7 +1672,7 @@ inline void maybe_decay_mailbox_bp_recent() noexcept {
     // denial). Scope path below is race-free under the map mutex.
     if (process_quiet && last_bp != 0)
         g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_release);
-    std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
+    std::scoped_lock<std::mutex> lock(g_scope_bp_map_mtx);
     for (const auto& [_, g] : g_scope_bp_map) {
         if (!g)
             continue;
@@ -1868,7 +1868,7 @@ struct AgentHandle {
     [[nodiscard]] bool body_failed(std::string* msg = nullptr) const {
         if (!body_outcome)
             return false;
-        std::lock_guard<std::mutex> lk(body_outcome->mu);
+        std::scoped_lock<std::mutex> lk(body_outcome->mu);
         if (body_outcome->failed && msg)
             *msg = body_outcome->error;
         return body_outcome->failed;
@@ -2684,7 +2684,7 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     if (!production_defaults_active() || !aura::core::sandbox::is_sandbox_active())
         return true;
     auto& reg = ::aura::core::capability::g_capability_registry();
-    std::lock_guard<std::mutex> lock(reg.mtx);
+    std::scoped_lock<std::mutex> lock(reg.mtx);
     using ::aura::core::capability::Effect;
     using ::aura::core::capability::has_effect;
     // Issue #4440: session mid is the audit join (boundary mid, else epoch).
@@ -5427,7 +5427,7 @@ inline std::unordered_map<std::uint64_t, PendingAskRoute> g_pending_asks;
 inline void note_ask_delivered_to(std::uint64_t corr_id, std::uint64_t fiber_id) noexcept {
     if (corr_id == 0 || fiber_id == 0)
         return;
-    std::lock_guard<std::mutex> lock(g_pending_ask_mu);
+    std::scoped_lock<std::mutex> lock(g_pending_ask_mu);
     auto it = g_pending_asks.find(corr_id);
     if (it != g_pending_asks.end())
         it->second.delivered_to = fiber_id;
@@ -5551,7 +5551,7 @@ agent_reply(std::uint64_t corr_id, std::string_view body,
     std::shared_ptr<serve::mf_mailbox::MultiFiberMailbox> held;
     serve::mf_mailbox::MultiFiberMailbox* dest = reply_dest;
     if (!dest) {
-        std::lock_guard<std::mutex> lock(g_pending_ask_mu);
+        std::scoped_lock<std::mutex> lock(g_pending_ask_mu);
         auto it = g_pending_asks.find(corr_id);
         if (it == g_pending_asks.end() || !it->second.mailbox) {
             out.status = "unknown-corr";
@@ -5745,14 +5745,14 @@ agent_reply(AgentHandle& self, std::uint64_t corr_id, std::string_view body,
         reply_mb->set_bp_scope_id(target.bp_scope_id);
     // Issue #2401: register so agent_reply(corr, body) can find dest.
     {
-        std::lock_guard<std::mutex> lock(g_pending_ask_mu);
+        std::scoped_lock<std::mutex> lock(g_pending_ask_mu);
         g_pending_asks[corr_id] = PendingAskRoute{reply_mb, target.id};
     }
     // RAII unregister on every exit path (ok / timeout / malformed / early).
     struct PendingAskGuard : ::aura::core::NoCopy {
         std::uint64_t id;
         ~PendingAskGuard() {
-            std::lock_guard<std::mutex> lock(g_pending_ask_mu);
+            std::scoped_lock<std::mutex> lock(g_pending_ask_mu);
             g_pending_asks.erase(id);
         }
     } pending_guard{{}, corr_id};
