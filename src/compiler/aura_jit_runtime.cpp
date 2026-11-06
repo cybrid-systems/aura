@@ -7755,7 +7755,7 @@ static std::mutex g_float_pool_mtx;
 
 std::int64_t aura_alloc_float(double d) {
     std::lock_guard<std::mutex> lock(g_float_pool_mtx);
-    std::int64_t idx = (std::int64_t)g_float_pool.size();
+    std::int64_t idx = static_cast<std::int64_t>(g_float_pool.size());
     g_float_pool.push_back(d);
     return aura::compiler::types::make_float_raw_v2(static_cast<std::uint64_t>(idx));
 }
@@ -7766,7 +7766,7 @@ double aura_float_ref(std::int64_t val) {
     std::uint64_t idx = aura::compiler::types::float_idx_raw_v2(val);
     std::lock_guard<std::mutex> lock(g_float_pool_mtx);
     if (idx < g_float_pool.size())
-        return g_float_pool[(std::size_t)idx];
+        return g_float_pool[static_cast<std::size_t>(idx)];
     return 0.0;
 }
 
@@ -7839,7 +7839,7 @@ const char* aura_string_ref(std::int64_t val) {
     static thread_local std::string tls_ref;
     std::lock_guard<std::mutex> lock(g_string_pool_mtx);
     if (idx < g_string_pool.size()) {
-        tls_ref = g_string_pool[(std::size_t)idx];
+        tls_ref = g_string_pool[static_cast<std::size_t>(idx)];
         return tls_ref.c_str();
     }
     return "";
@@ -7857,7 +7857,7 @@ const char* aura_jit_string_content(std::int64_t val) {
     static thread_local std::string tls_content;
     std::lock_guard<std::mutex> lock(g_string_pool_mtx);
     if (idx < g_string_pool.size()) {
-        tls_content = g_string_pool[(std::size_t)idx];
+        tls_content = g_string_pool[static_cast<std::size_t>(idx)];
         return tls_content.c_str();
     }
     return nullptr;

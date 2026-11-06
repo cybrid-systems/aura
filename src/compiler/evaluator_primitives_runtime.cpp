@@ -327,7 +327,7 @@ namespace {
                 auto kname = keywords[kidx];
                 std::fprintf(stdout, "%s", kname.c_str());
             } else {
-                std::fprintf(stdout, ":%zu", (size_t)kidx);
+                std::fprintf(stdout, ":%zu", static_cast<size_t>(kidx));
             }
             return;
         }
@@ -344,7 +344,7 @@ namespace {
         if (is_pair(v) && !pairs.empty()) {
             auto idx = as_pair_idx(v);
             if (idx >= pairs.size()) {
-                std::fprintf(stdout, "<pair[%zu]>", (size_t)idx);
+                std::fprintf(stdout, "<pair[%zu]>", static_cast<size_t>(idx));
                 return;
             }
             // Check if it's a proper list (cdr chain ends in void)
@@ -420,7 +420,7 @@ namespace {
             return;
         }
         if (is_cell(v)) {
-            std::fprintf(stdout, "<cell[%zu]>", (size_t)as_cell_id(v));
+            std::fprintf(stdout, "<cell[%zu]>", static_cast<size_t>(as_cell_id(v)));
             return;
         }
         std::fprintf(stdout, "<unknown>");

@@ -433,7 +433,7 @@ ReplaceTemplate parse_rt(TokenStream& ts) {
         ReplaceTemplate r;
         if (op == "child") {
             r.kind = ReplaceTemplate::Kind::CopyChild;
-            r.child_index = (std::uint32_t)std::stoul(ts.next());
+            r.child_index = static_cast<std::uint32_t>(std::stoul(ts.next()));
         } else if (op == "LiteralInt") {
             r.kind = ReplaceTemplate::Kind::NewLiteral;
             r.int_value = std::stoll(ts.next());
@@ -530,27 +530,29 @@ TransformEngine::generate_patches(std::span<const aura::ast::NodeId> matches,
         auto v = ast_.get(mid);
         switch (replacement.kind) {
             case ReplaceTemplate::Kind::NewLiteral:
-                patches.push_back({mid, 0, (std::uint64_t)aura::ast::NodeTag::LiteralInt});
-                patches.push_back({mid, 1, (std::uint64_t)replacement.int_value});
+                patches.push_back(
+                    {mid, 0, static_cast<std::uint64_t>(aura::ast::NodeTag::LiteralInt)});
+                patches.push_back({mid, 1, static_cast<std::uint64_t>(replacement.int_value)});
                 break;
             case ReplaceTemplate::Kind::CopyChild:
                 if (replacement.child_index < v.children.size()) {
                     auto cv = ast_.get(v.child(replacement.child_index));
-                    patches.push_back({mid, 0, (std::uint64_t)cv.tag});
-                    patches.push_back({mid, 1, (std::uint64_t)cv.int_value});
-                    patches.push_back({mid, 2, (std::uint64_t)cv.sym_id});
+                    patches.push_back({mid, 0, static_cast<std::uint64_t>(cv.tag)});
+                    patches.push_back({mid, 1, static_cast<std::uint64_t>(cv.int_value)});
+                    patches.push_back({mid, 2, static_cast<std::uint64_t>(cv.sym_id)});
                 }
                 break;
             case ReplaceTemplate::Kind::NewNode: {
                 auto nid = build_node(replacement);
                 if (nid != aura::ast::NULL_NODE) {
                     auto nv = ast_.get(nid);
-                    patches.push_back({mid, 0, (std::uint64_t)nv.tag});
-                    patches.push_back({mid, 1, (std::uint64_t)nv.int_value});
-                    patches.push_back({mid, 2, (std::uint64_t)nv.sym_id});
+                    patches.push_back({mid, 0, static_cast<std::uint64_t>(nv.tag)});
+                    patches.push_back({mid, 1, static_cast<std::uint64_t>(nv.int_value)});
+                    patches.push_back({mid, 2, static_cast<std::uint64_t>(nv.sym_id)});
                     auto min_c = std::min(v.children.size(), nv.children.size());
                     for (std::size_t i = 0; i < min_c; ++i)
-                        ast_.set_child(mid, (std::uint32_t)i, nv.child((std::uint32_t)i));
+                        ast_.set_child(mid, static_cast<std::uint32_t>(i),
+                                       nv.child(static_cast<std::uint32_t>(i)));
                 }
                 break;
             }
