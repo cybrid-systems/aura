@@ -37,6 +37,9 @@
 #ifndef AURA_CORE_DENSIFY_CONSISTENCY_REPORT_H
 #define AURA_CORE_DENSIFY_CONSISTENCY_REPORT_H
 
+#include "core/address_bits.hh" // Issue #4936: eval-id hash is address bits, not a slot
+
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -370,10 +373,10 @@ struct DensifyEvalSlot {
     std::atomic<std::uint8_t> in_flight{0};
 };
 inline constexpr std::size_t kDensifyEvalSlotCount = 64; // power of two
-inline DensifyEvalSlot g_densify_eval_slots[kDensifyEvalSlotCount];
+inline std::array<DensifyEvalSlot, kDensifyEvalSlotCount> g_densify_eval_slots{};
 
 inline std::size_t densify_eval_slot_base(const void* eval_id) noexcept {
-    auto h = reinterpret_cast<std::uintptr_t>(eval_id);
+    auto h = aura::core::address_bits(eval_id);
     h ^= h >> 17;
     h *= 0x9E3779B97F4A7C15ULL;
     h ^= h >> 29;

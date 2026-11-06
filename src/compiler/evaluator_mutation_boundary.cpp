@@ -77,6 +77,7 @@ module;
 #include "core/sandbox.hh"                   // Issue #2145 Strict hard-gate
 #include "core/provenance_tracker.hh"        // Issue #2222: boundary LinearEnforce Strict hold
 #include "core/arena_auto_policy_stats.h"    // in_render_hotpath
+#include "core/address_bits.hh"              // Issue #4936: moving pointer slots
 #include "core/densify_consistency_report.h" // Issue #2341: DensifyConsistencyReport + counter
 #include "core/moving_densify_health.hh"     // Issue #2619: Agent Moving densify health
 #include "mutation_boundary_shared_exit.h"   // Issue #2600: shared exit helper (soft + full Guard)
@@ -8629,13 +8630,13 @@ std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
     known_slots.reserve(16);
     // Production intermediate buffers (#2889 inventory).
     if (workspace_flat_)
-        known_slots.push_back(reinterpret_cast<void**>(&workspace_flat_));
+        known_slots.push_back(aura::core::moving_pointer_slot(workspace_flat_));
     if (workspace_pool_)
-        known_slots.push_back(reinterpret_cast<void**>(&workspace_pool_));
+        known_slots.push_back(aura::core::moving_pointer_slot(workspace_pool_));
     if (mutate_target_flat_)
-        known_slots.push_back(reinterpret_cast<void**>(&mutate_target_flat_));
+        known_slots.push_back(aura::core::moving_pointer_slot(mutate_target_flat_));
     if (mutate_target_pool_)
-        known_slots.push_back(reinterpret_cast<void**>(&mutate_target_pool_));
+        known_slots.push_back(aura::core::moving_pointer_slot(mutate_target_pool_));
     // Issue #4717: current_flat/current_pool are relaxed ATOMICS now, so
     // they cannot be handed to the remap as void** slots. They are a
     // "current source" hint re-stamped at the top of every eval_flat_body
@@ -8650,13 +8651,13 @@ std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
         auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
         for (auto& node : wt->nodes_) {
             if (node.flat)
-                known_slots.push_back(reinterpret_cast<void**>(&node.flat));
+                known_slots.push_back(aura::core::moving_pointer_slot(node.flat));
             if (node.pool)
-                known_slots.push_back(reinterpret_cast<void**>(&node.pool));
+                known_slots.push_back(aura::core::moving_pointer_slot(node.pool));
             if (node.parent_flat_)
-                known_slots.push_back(reinterpret_cast<void**>(&node.parent_flat_));
+                known_slots.push_back(aura::core::moving_pointer_slot(node.parent_flat_));
             if (node.parent_pool_)
-                known_slots.push_back(reinterpret_cast<void**>(&node.parent_pool_));
+                known_slots.push_back(aura::core::moving_pointer_slot(node.parent_pool_));
         }
     }
     // Compiler roots: RootRemap host-registered stable refs + closure captures.
@@ -8717,7 +8718,7 @@ std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
             densify_mod.lock();
         for (auto*& m : modules_) {
             if (m) {
-                known_slots.push_back(reinterpret_cast<void**>(&m));
+                known_slots.push_back(aura::core::moving_pointer_slot(m));
                 if (densify_fill == 1)
                     densify_unstable_note_module(m);
             }
@@ -8725,7 +8726,7 @@ std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
         known_slots.resize(densify_base);
     }
     if (require_inject_env_)
-        known_slots.push_back(reinterpret_cast<void**>(&require_inject_env_));
+        known_slots.push_back(aura::core::moving_pointer_slot(require_inject_env_));
     // Issue #3647 (#3055 residual): known Closure body slots. closures_
     // entries are node-stable (unordered_map), so &cl.flat / &cl.pool are
     // lasting void** — Moving densify rewrites them via the slot SSOT below

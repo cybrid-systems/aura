@@ -56,6 +56,7 @@
 #include "compiler/messaging_bridge.h"             // #4722 wait-lock drop
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -795,8 +796,8 @@ inline void note_mailbox_under_boundary_wait_sample(std::uint64_t us, bool dropp
             1, std::memory_order_relaxed);
     // Refresh p50/p99 edge approximations from the 5-bucket hist.
     // Edges for bucket upper bounds (last is open-ended → use max-so-far).
-    static constexpr std::uint64_t kEdges[5] = {100, 1'000, 10'000, 100'000, 0};
-    std::uint64_t counts[5];
+    static constexpr std::array<std::uint64_t, 5> kEdges{100, 1'000, 10'000, 100'000, 0};
+    std::array<std::uint64_t, 5> counts;
     std::uint64_t total = 0;
     for (std::size_t i = 0; i < 5; ++i) {
         counts[i] =

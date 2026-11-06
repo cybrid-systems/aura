@@ -709,10 +709,10 @@ namespace {
                     break;
                 default:
                     if (static_cast<unsigned char>(c) < 0x20) {
-                        char buf[8];
-                        std::snprintf(buf, sizeof(buf), "\\u%04x",
+                        std::array<char, 8> buf;
+                        std::snprintf(buf.data(), buf.size(), "\\u%04x",
                                       static_cast<unsigned>(static_cast<unsigned char>(c)));
-                        out += buf;
+                        out += buf.data();
                     } else {
                         out.push_back(c);
                     }
