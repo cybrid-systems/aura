@@ -115,7 +115,10 @@ contracts, so `cmake/clang_contract_shim.h` expands `pre` / `post` / `contract_a
   - `PrimFn` is the owning small-buffer callable (`evaluator_pure`). The stored
     callable is copy constructible and `const`-invocable, returning `EvalValue`.
     A heap box uses aligned `operator new` / `delete`. Move copies an SBO payload
-    and is not `noexcept`. FFI and ADT registration take that type; they do not
+    and is not `noexcept`. Assignment builds the new payload before destroying the
+    old one. If that build throws, the old value stays. If the following SBO
+    install throws, the target is left empty and destructible. Metadata is stored
+    only after a payload exists. FFI and ADT registration take that type; they do not
     keep a `std::function` mirror.
   - Primitive registration follows that split: `Evaluator::prim_registrar()` returns an owning
     `std::function` (the lambda moves the name and `PrimFn` into the table). `register_*` parameters

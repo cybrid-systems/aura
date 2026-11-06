@@ -69,7 +69,7 @@ def main() -> int:
         body_code = re.sub(r"//[^\n]*", "", body)
         if "std::function<" in body_code:
             fails.append("AC1: PrimFn still has std::function member/usage")
-        if "fn_" in body_code and "std::function" in body:
+        if re.search(r"\bfn_\b", body_code) and "std::function" in body_code:
             fails.append("AC1: residual fn_ std::function field")
     if "using PrimFn = std::function" in _read("src/compiler/ffi_primitives.ixx") or "using PrimFn = std::function" in _read(
         "src/compiler/adt_runtime.ixx"

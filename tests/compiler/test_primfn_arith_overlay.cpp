@@ -39,6 +39,48 @@ aura::compiler::types::EvalValue forty(std::span<const aura::compiler::types::Ev
     return aura::compiler::types::make_int(40);
 }
 
+template <std::size_t Pad, std::size_t Align> struct alignas(Align) Payload {
+    static std::atomic<int> live;
+    static std::atomic<int> bad;
+    static constexpr int kCookie = 0x00C0FFEE;
+    char pad[Pad]{};
+    int cookie = kCookie;
+    int value = 0;
+    int* budget = nullptr;
+
+    explicit Payload(int v, int* b = nullptr) : value(v), budget(b) { live.fetch_add(1); }
+    Payload(const Payload& other) : value(other.value), budget(other.budget) {
+        if (budget != nullptr && *budget <= 0)
+            throw std::runtime_error("payload-copy");
+        if (budget != nullptr)
+            --*budget;
+        cookie = kCookie;
+        live.fetch_add(1);
+    }
+    ~Payload() {
+        if (cookie != kCookie)
+            bad.fetch_add(1);
+        else
+            live.fetch_sub(1);
+        cookie = 0;
+    }
+    aura::compiler::types::EvalValue operator()(std::span<const aura::compiler::types::EvalValue>) const {
+        return aura::compiler::types::make_int(value);
+    }
+};
+
+template <std::size_t Pad, std::size_t Align> std::atomic<int> Payload<Pad, Align>::live{0};
+template <std::size_t Pad, std::size_t Align> std::atomic<int> Payload<Pad, Align>::bad{0};
+
+using Small = Payload<1, alignof(std::max_align_t)>;
+using Large = Payload<80, alignof(std::max_align_t)>;
+using Aligned = Payload<96, 64>;
+
+void reset_payload(auto& live, auto& bad) {
+    live.store(0);
+    bad.store(0);
+}
+
 } // namespace
 
 int main() {
@@ -213,6 +255,175 @@ int main() {
         aura::compiler::PrimFn copy(wide);
         auto aligned_copy = copy({});
         expect(aura::compiler::types::as_int(aligned_copy) == 5, "copied overaligned payload stays aligned");
+    }
+
+    // Callable assignment. Construction of the new payload happens before the
+    // old value is destroyed. A throw there keeps the old value. The SBO
+    // install copies again; a throw there leaves the target empty.
+    {
+        reset_payload(Small::live, Small::bad);
+        int deny = 0;
+        Small incoming{6, &deny};
+        {
+            aura::compiler::PrimFn target{Small{3, nullptr}};
+            bool threw = false;
+            try {
+                target = incoming;
+            } catch (const std::runtime_error&) {
+                threw = true;
+            }
+            auto kept = target({});
+            expect(threw && aura::compiler::types::as_int(kept) == 3 && !Small::bad.load(),
+                   "throwing small assignment keeps the old value");
+            target = Small{7, nullptr};
+            expect(aura::compiler::types::as_int(target({})) == 7,
+                   "target accepts another assignment after a failed small one");
+        }
+        expect(Small::live.load() == 1 && Small::bad.load() == 0,
+               "destroying the target does not double-destroy the small payload");
+    }
+    {
+        reset_payload(Small::live, Small::bad);
+        int budget = 1;
+        Small incoming{6, &budget};
+        {
+            aura::compiler::PrimFn target{Small{3, nullptr}};
+            bool threw = false;
+            try {
+                target = incoming;
+            } catch (const std::runtime_error&) {
+                threw = true;
+            }
+            expect(threw && !target && Small::bad.load() == 0,
+                   "second small copy leaves the target empty");
+            expect(aura::compiler::types::as_int(incoming({})) == 6,
+                   "the incoming small callable is still alive");
+            target = Small{7, nullptr};
+            expect(aura::compiler::types::as_int(target({})) == 7,
+                   "empty target can be assigned after the second copy throws");
+        }
+        expect(Small::live.load() == 1 && Small::bad.load() == 0,
+               "empty target destructor does not destroy an unconstructed small payload");
+    }
+    {
+        reset_payload(Large::live, Large::bad);
+        int deny = 0;
+        Large incoming{6, &deny};
+        {
+            aura::compiler::PrimFn target{Small{3, nullptr}};
+            bool threw = false;
+            try {
+                target = incoming;
+            } catch (const std::runtime_error&) {
+                threw = true;
+            }
+            expect(threw && aura::compiler::types::as_int(target({})) == 3 && Large::bad.load() == 0,
+                   "throwing large assignment keeps the old value");
+        }
+        expect(Small::bad.load() == 0 && Large::live.load() == 1,
+               "target destructor after a failed large assignment is clean");
+    }
+    {
+        reset_payload(Aligned::live, Aligned::bad);
+        int deny = 0;
+        Aligned incoming{6, &deny};
+        {
+            aura::compiler::PrimFn target{Small{3, nullptr}};
+            bool threw = false;
+            try {
+                target = incoming;
+            } catch (const std::runtime_error&) {
+                threw = true;
+            }
+            expect(threw && aura::compiler::types::as_int(target({})) == 3 && Aligned::bad.load() == 0,
+                   "throwing overaligned assignment keeps the old value");
+        }
+        expect(Aligned::live.load() == 1 && Aligned::bad.load() == 0,
+               "target destructor after a failed overaligned assignment is clean");
+    }
+    {
+        reset_payload(Large::live, Large::bad);
+        aura::compiler::primfn_alloc_fail_budget_for_test().store(1);
+        {
+            aura::compiler::PrimFn target{Small{3, nullptr}};
+            bool threw = false;
+            try {
+                target = Large{6, nullptr};
+            } catch (const std::bad_alloc&) {
+                threw = true;
+            }
+            expect(threw && aura::compiler::types::as_int(target({})) == 3 &&
+                       aura::compiler::primfn_alloc_fail_budget_for_test().load() == 0,
+                   "heap allocation failure keeps the old value");
+            target = Large{6, nullptr};
+            expect(target.uses_heap_box() && aura::compiler::types::as_int(target({})) == 6,
+                   "target accepts a heap payload after allocation failure");
+        }
+        expect(Large::live.load() == 0 && Large::bad.load() == 0 && Small::bad.load() == 0,
+               "payloads are destroyed once after the allocation-failure assignment");
+    }
+    {
+        reset_payload(Small::live, Small::bad);
+        int budget = 1;
+        Small body{4, &budget};
+        aura::compiler::PrimFn src = body;
+        {
+            aura::compiler::PrimFn target{Small{3, nullptr}};
+            bool threw = false;
+            try {
+                target = src;
+            } catch (const std::runtime_error&) {
+                threw = true;
+            }
+            expect(threw && aura::compiler::types::as_int(target({})) == 3 &&
+                       aura::compiler::types::as_int(src({})) == 4 && Small::bad.load() == 0,
+                   "copy assignment keeps the target when the first clone throws");
+        }
+        expect(Small::live.load() == 2 && Small::bad.load() == 0,
+               "target destructor after a failed copy assignment does not touch the source");
+    }
+    {
+        reset_payload(Small::live, Small::bad);
+        int budget = 1;
+        Small body{4, &budget};
+        aura::compiler::PrimFn src = body;
+        {
+            aura::compiler::PrimFn target{Small{3, nullptr}};
+            bool threw = false;
+            try {
+                target = std::move(src);
+            } catch (const std::runtime_error&) {
+                threw = true;
+            }
+            expect(threw && aura::compiler::types::as_int(target({})) == 3 &&
+                       aura::compiler::types::as_int(src({})) == 4 && Small::bad.load() == 0,
+                   "move assignment keeps both objects when the first clone throws");
+        }
+        expect(Small::live.load() == 2 && Small::bad.load() == 0,
+               "target destructor after the first move clone throws is clean");
+    }
+    {
+        reset_payload(Small::live, Small::bad);
+        int budget = 2;
+        Small body{4, &budget};
+        aura::compiler::PrimFn src = body;
+        {
+            aura::compiler::PrimFn target{Small{3, nullptr}};
+            bool threw = false;
+            try {
+                target = std::move(src);
+            } catch (const std::runtime_error&) {
+                threw = true;
+            }
+            expect(threw && !target && aura::compiler::types::as_int(src({})) == 4 &&
+                       Small::bad.load() == 0,
+                   "second move clone leaves the target empty and the source alive");
+            target = Small{7, nullptr};
+            expect(aura::compiler::types::as_int(target({})) == 7,
+                   "empty target is assignable after the second move clone throws");
+        }
+        expect(Small::live.load() == 2 && Small::bad.load() == 0,
+               "empty target destructor after the second move clone does not destroy the source");
     }
 
     {

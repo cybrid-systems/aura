@@ -68,6 +68,13 @@ concept PrimFnPayload =
     std::copy_constructible<std::decay_t<F>> &&
     std::is_invocable_r_v<EvalValue, const std::decay_t<F>&, std::span<const EvalValue>>;
 
+// Test seam for the heap-box allocation. Zero allocates. A positive value
+// throws std::bad_alloc that many times and does not touch the PrimFn.
+export inline std::atomic<int>& primfn_alloc_fail_budget_for_test() noexcept {
+    static std::atomic<int> budget{0};
+    return budget;
+}
+
 // Issue #913: dual-path PrimFn — free-function pointers use a bare FnPtr
 // (no type-erasure heap); capturing lambdas bind a small-buffer trampoline.
 // Issue #4261: drop std::function — SBO trampoline (or one-shot heap box for
@@ -93,6 +100,10 @@ export class PrimFn {
     alignas(std::max_align_t) std::byte sbo_[kSboBytes]{};
 
     [[nodiscard]] static void* alloc_box(std::size_t size, std::size_t align) {
+        if (primfn_alloc_fail_budget_for_test().load(std::memory_order_relaxed) > 0) {
+            primfn_alloc_fail_budget_for_test().fetch_sub(1, std::memory_order_relaxed);
+            throw std::bad_alloc();
+        }
         return ::operator new(size, std::align_val_t{align});
     }
     static void free_box(void* p, std::size_t align) noexcept {
@@ -130,24 +141,50 @@ export class PrimFn {
     }
     template <class F> static void destroy_erased(void* obj) { static_cast<F*>(obj)->~F(); }
 
-    template <class F> void bind_callable(F&& callable) {
-        using Decayed = std::decay_t<F>;
-        clear();
-        if constexpr (std::is_convertible_v<Decayed, FnPtr>) {
-            ptr_ = static_cast<FnPtr>(callable);
-            return;
-        }
+    template <class Decayed> void publish_payload(void* heap) noexcept {
+        ptr_ = nullptr;
         invoker_ = &invoke_erased<Decayed>;
         cloner_ = &clone_erased<Decayed>;
         destroyer_ = &destroy_erased<Decayed>;
+        heap_ = heap;
         storage_size_ = sizeof(Decayed);
         storage_align_ = alignof(Decayed);
-        if constexpr (sizeof(Decayed) <= kSboBytes &&
-                      alignof(Decayed) <= alignof(std::max_align_t)) {
-            ::new (static_cast<void*>(sbo_)) Decayed(std::forward<F>(callable));
+    }
+
+    // Basic guarantee for a live object. The new payload is built before the
+    // old one is destroyed. Allocation or construction failure leaves *this
+    // unchanged. Installing an SBO then copies once more; if that copy throws,
+    // the side object is destroyed and *this is left empty. Metadata is stored
+    // only after the payload exists, so a later destructor cannot destroy an
+    // unconstructed object.
+    template <class F> void bind_callable(F&& callable) {
+        using Decayed = std::decay_t<F>;
+        if constexpr (std::is_convertible_v<Decayed, FnPtr>) {
+            clear();
+            ptr_ = static_cast<FnPtr>(callable);
+            return;
+        }
+        constexpr bool in_sbo = sizeof(Decayed) <= kSboBytes &&
+                                alignof(Decayed) <= alignof(std::max_align_t);
+        if constexpr (in_sbo) {
+            if (heap_ == nullptr && invoker_ == nullptr) {
+                ::new (static_cast<void*>(sbo_)) Decayed(std::forward<F>(callable));
+                publish_payload<Decayed>(nullptr);
+                return;
+            }
+            alignas(std::max_align_t) std::byte side[kSboBytes];
+            ::new (static_cast<void*>(side)) Decayed(std::forward<F>(callable));
+            clear();
+            try {
+                ::new (static_cast<void*>(sbo_))
+                    Decayed(*reinterpret_cast<const Decayed*>(side));
+            } catch (...) {
+                reinterpret_cast<Decayed*>(side)->~Decayed();
+                throw;
+            }
+            reinterpret_cast<Decayed*>(side)->~Decayed();
+            publish_payload<Decayed>(nullptr);
         } else {
-            // Soft large or overaligned capture: one heap box at registration.
-            // operator new(size) is only aligned to __STDCPP_DEFAULT_NEW_ALIGNMENT__.
             void* mem = alloc_box(sizeof(Decayed), alignof(Decayed));
             try {
                 ::new (mem) Decayed(std::forward<F>(callable));
@@ -155,7 +192,8 @@ export class PrimFn {
                 free_box(mem, alignof(Decayed));
                 throw;
             }
-            heap_ = mem;
+            clear();
+            publish_payload<Decayed>(mem);
         }
     }
 
@@ -176,15 +214,9 @@ public:
         bind_callable(std::forward<F>(callable));
     }
 
-    PrimFn(const PrimFn& other) {
-        ptr_ = other.ptr_;
+    PrimFn(const PrimFn& other) : ptr_(other.ptr_) {
         if (other.invoker_ == nullptr)
             return;
-        invoker_ = other.invoker_;
-        cloner_ = other.cloner_;
-        destroyer_ = other.destroyer_;
-        storage_size_ = other.storage_size_;
-        storage_align_ = other.storage_align_;
         if (other.heap_ != nullptr) {
             void* mem = alloc_box(other.storage_size_, other.storage_align_);
             try {
@@ -197,24 +229,34 @@ public:
         } else {
             other.cloner_(static_cast<void*>(sbo_), static_cast<const void*>(other.sbo_));
         }
-    }
-
-    // Not noexcept: an SBO payload is copied, and that copy may throw.
-    // The source is destroyed only after the copy succeeds.
-    PrimFn(PrimFn&& other) {
-        ptr_ = other.ptr_;
         invoker_ = other.invoker_;
         cloner_ = other.cloner_;
         destroyer_ = other.destroyer_;
         storage_size_ = other.storage_size_;
         storage_align_ = other.storage_align_;
+    }
+
+    // Not noexcept: an SBO payload is copied, and that copy may throw.
+    // The source is destroyed only after the copy succeeds. Metadata is
+    // copied only after that, so a throw does not arm a destructor.
+    PrimFn(PrimFn&& other) {
         if (other.heap_ != nullptr) {
             heap_ = other.heap_;
             other.heap_ = nullptr;
         } else if (other.invoker_ != nullptr && other.cloner_ != nullptr) {
             other.cloner_(static_cast<void*>(sbo_), static_cast<const void*>(other.sbo_));
             other.destroyer_(static_cast<void*>(other.sbo_));
+        } else {
+            ptr_ = other.ptr_;
+            other.ptr_ = nullptr;
+            return;
         }
+        ptr_ = other.ptr_;
+        invoker_ = other.invoker_;
+        cloner_ = other.cloner_;
+        destroyer_ = other.destroyer_;
+        storage_size_ = other.storage_size_;
+        storage_align_ = other.storage_align_;
         other.ptr_ = nullptr;
         other.invoker_ = nullptr;
         other.cloner_ = nullptr;
@@ -231,6 +273,9 @@ public:
         return *this;
     }
 
+    // Basic guarantee. The first SBO clone happens before *this changes: a
+    // throw there keeps both objects. The second clone runs after *this is
+    // cleared: a throw there destroys the side copy and leaves *this empty.
     PrimFn& operator=(PrimFn&& other) {
         if (this == &other)
             return *this;
