@@ -36,6 +36,7 @@ module;
 #include <cstring>
 #include <exception>
 #include <expected>
+#include <new>
 #include <iostream>
 #include <ostream>
 #include <print>
@@ -60,6 +61,13 @@ namespace aura::compiler {
 
 using EvalValue = types::EvalValue;
 
+// The stored callable is invoked as a const object and must return EvalValue.
+// It is copied into the SBO or the heap box, so it must be copy constructible.
+template <class F>
+concept PrimFnPayload =
+    std::copy_constructible<std::decay_t<F>> &&
+    std::is_invocable_r_v<EvalValue, const std::decay_t<F>&, std::span<const EvalValue>>;
+
 // Issue #913: dual-path PrimFn — free-function pointers use a bare FnPtr
 // (no type-erasure heap); capturing lambdas bind a small-buffer trampoline.
 // Issue #4261: drop std::function — SBO trampoline (or one-shot heap box for
@@ -81,7 +89,15 @@ export class PrimFn {
     Destroyer destroyer_ = nullptr;
     void* heap_ = nullptr;
     std::size_t storage_size_ = 0;
+    std::size_t storage_align_ = 0;
     alignas(std::max_align_t) std::byte sbo_[kSboBytes]{};
+
+    [[nodiscard]] static void* alloc_box(std::size_t size, std::size_t align) {
+        return ::operator new(size, std::align_val_t{align});
+    }
+    static void free_box(void* p, std::size_t align) noexcept {
+        ::operator delete(p, std::align_val_t{align});
+    }
 
     [[nodiscard]] const void* obj_ptr() const noexcept {
         return heap_ != nullptr ? heap_ : static_cast<const void*>(sbo_);
@@ -94,7 +110,7 @@ export class PrimFn {
         if (destroyer_ != nullptr && (invoker_ != nullptr || heap_ != nullptr))
             destroyer_(obj_ptr());
         if (heap_ != nullptr) {
-            ::operator delete(heap_);
+            free_box(heap_, storage_align_);
             heap_ = nullptr;
         }
         ptr_ = nullptr;
@@ -102,6 +118,7 @@ export class PrimFn {
         cloner_ = nullptr;
         destroyer_ = nullptr;
         storage_size_ = 0;
+        storage_align_ = 0;
     }
 
     template <class F>
@@ -124,13 +141,21 @@ export class PrimFn {
         cloner_ = &clone_erased<Decayed>;
         destroyer_ = &destroy_erased<Decayed>;
         storage_size_ = sizeof(Decayed);
+        storage_align_ = alignof(Decayed);
         if constexpr (sizeof(Decayed) <= kSboBytes &&
                       alignof(Decayed) <= alignof(std::max_align_t)) {
             ::new (static_cast<void*>(sbo_)) Decayed(std::forward<F>(callable));
         } else {
-            // Soft large-capture overflow: one heap box at registration, not per apply.
-            heap_ = ::operator new(sizeof(Decayed));
-            ::new (heap_) Decayed(std::forward<F>(callable));
+            // Soft large or overaligned capture: one heap box at registration.
+            // operator new(size) is only aligned to __STDCPP_DEFAULT_NEW_ALIGNMENT__.
+            void* mem = alloc_box(sizeof(Decayed), alignof(Decayed));
+            try {
+                ::new (mem) Decayed(std::forward<F>(callable));
+            } catch (...) {
+                free_box(mem, alignof(Decayed));
+                throw;
+            }
+            heap_ = mem;
         }
     }
 
@@ -146,8 +171,7 @@ public:
     template <class F>
         requires(!std::is_same_v<std::decay_t<F>, PrimFn> &&
                  !std::is_same_v<std::decay_t<F>, std::nullptr_t> &&
-                 !std::is_same_v<std::decay_t<F>, FnPtr> &&
-                 std::invocable<F, std::span<const EvalValue>>)
+                 !std::is_same_v<std::decay_t<F>, FnPtr> && PrimFnPayload<F>)
     PrimFn(F&& callable) {
         bind_callable(std::forward<F>(callable));
     }
@@ -160,23 +184,34 @@ public:
         cloner_ = other.cloner_;
         destroyer_ = other.destroyer_;
         storage_size_ = other.storage_size_;
+        storage_align_ = other.storage_align_;
         if (other.heap_ != nullptr) {
-            heap_ = ::operator new(other.storage_size_);
-            other.cloner_(heap_, other.heap_);
+            void* mem = alloc_box(other.storage_size_, other.storage_align_);
+            try {
+                other.cloner_(mem, other.heap_);
+            } catch (...) {
+                free_box(mem, other.storage_align_);
+                throw;
+            }
+            heap_ = mem;
         } else {
             other.cloner_(static_cast<void*>(sbo_), static_cast<const void*>(other.sbo_));
         }
     }
 
-    PrimFn(PrimFn&& other) noexcept {
+    // Not noexcept: an SBO payload is copied, and that copy may throw.
+    // The source is destroyed only after the copy succeeds.
+    PrimFn(PrimFn&& other) {
         ptr_ = other.ptr_;
         invoker_ = other.invoker_;
         cloner_ = other.cloner_;
         destroyer_ = other.destroyer_;
         storage_size_ = other.storage_size_;
-        heap_ = other.heap_;
-        if (other.invoker_ != nullptr && other.heap_ == nullptr && other.cloner_ != nullptr) {
-            // Move SBO payload via clone+destroy (F may not be nothrow-move).
+        storage_align_ = other.storage_align_;
+        if (other.heap_ != nullptr) {
+            heap_ = other.heap_;
+            other.heap_ = nullptr;
+        } else if (other.invoker_ != nullptr && other.cloner_ != nullptr) {
             other.cloner_(static_cast<void*>(sbo_), static_cast<const void*>(other.sbo_));
             other.destroyer_(static_cast<void*>(other.sbo_));
         }
@@ -184,8 +219,8 @@ public:
         other.invoker_ = nullptr;
         other.cloner_ = nullptr;
         other.destroyer_ = nullptr;
-        other.heap_ = nullptr;
         other.storage_size_ = 0;
+        other.storage_align_ = 0;
     }
 
     PrimFn& operator=(const PrimFn& other) {
@@ -196,33 +231,44 @@ public:
         return *this;
     }
 
-    PrimFn& operator=(PrimFn&& other) noexcept {
+    PrimFn& operator=(PrimFn&& other) {
         if (this == &other)
             return *this;
-        clear();
+        if (other.heap_ == nullptr && other.invoker_ != nullptr && other.cloner_ != nullptr) {
+            alignas(std::max_align_t) std::byte tmp[kSboBytes];
+            other.cloner_(tmp, static_cast<const void*>(other.sbo_));
+            clear();
+            try {
+                other.cloner_(static_cast<void*>(sbo_), tmp);
+            } catch (...) {
+                other.destroyer_(tmp);
+                throw;
+            }
+            other.destroyer_(tmp);
+            other.destroyer_(static_cast<void*>(other.sbo_));
+        } else {
+            clear();
+            heap_ = other.heap_;
+            other.heap_ = nullptr;
+        }
         ptr_ = other.ptr_;
         invoker_ = other.invoker_;
         cloner_ = other.cloner_;
         destroyer_ = other.destroyer_;
         storage_size_ = other.storage_size_;
-        heap_ = other.heap_;
-        if (other.invoker_ != nullptr && other.heap_ == nullptr && other.cloner_ != nullptr) {
-            other.cloner_(static_cast<void*>(sbo_), static_cast<const void*>(other.sbo_));
-            other.destroyer_(static_cast<void*>(other.sbo_));
-        }
+        storage_align_ = other.storage_align_;
         other.ptr_ = nullptr;
         other.invoker_ = nullptr;
         other.cloner_ = nullptr;
         other.destroyer_ = nullptr;
-        other.heap_ = nullptr;
         other.storage_size_ = 0;
+        other.storage_align_ = 0;
         return *this;
     }
 
     template <class F>
         requires(!std::is_same_v<std::decay_t<F>, PrimFn> &&
-                 (std::is_same_v<std::decay_t<F>, std::nullptr_t> ||
-                  std::invocable<F, std::span<const EvalValue>>))
+                 (std::is_same_v<std::decay_t<F>, std::nullptr_t> || PrimFnPayload<F>))
     PrimFn& operator=(F&& f) {
         if constexpr (std::is_same_v<std::decay_t<F>, std::nullptr_t>) {
             clear();

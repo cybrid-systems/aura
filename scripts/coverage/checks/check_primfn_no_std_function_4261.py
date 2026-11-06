@@ -57,7 +57,8 @@ def main() -> int:
     must("uses_sbo_trampoline", "AC1 SBO API", pure)
     must("kSboBytes", "AC1 SBO size", pure)
     must("bind_callable", "AC2 Soft bind", pure)
-    must("std::invocable<", "AC1 callable constraint", pure)
+    must("is_invocable_r_v<EvalValue, const std::decay_t<F>&", "AC1 const callable", pure)
+    must("std::align_val_t", "AC1 aligned heap box", pure)
 
     prim_pos = pure.find("export class PrimFn")
     if prim_pos < 0:
