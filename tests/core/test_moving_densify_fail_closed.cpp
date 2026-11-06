@@ -5062,7 +5062,14 @@ static void ac4288_phase5_blocked_publish_closes_window() {
         CHECK(!hs.would_allow_mutate, "4288: soft-gate publish keeps would_allow false");
         CHECK(hs.objects_moved == 0, "4288: soft-gate moved nothing");
         CHECK(!hs.pin_contract_held, "4288: published pin is false");
-        CHECK(hs.agent_throttle, "4288: production-hard throttle is set");
+        // #4928: this canary moved nothing, so it is a clean refuse. Admit stays
+        // closed (the fail-closed half of #4288). Setting agent_throttle here
+        // locked every later mutate while the caller's closure was still live.
+        CHECK(!hs.agent_throttle, "4288: clean canary refuse does not set throttle");
+        CHECK(aura::core::moving_densify_health::window_relocate_refused_clean(),
+              "4288: clean canary refuse is recorded");
+        CHECK(!aura::core::moving_densify_health::window_apply_red(),
+              "4288: clean canary refuse is not apply-red");
         CHECK(aura::ast::g_moving_unified_success_total.load(std::memory_order_relaxed) == success0,
               "4288: unified success stays false");
     }
@@ -5157,6 +5164,47 @@ static void ac4928_relocate_refused_window_not_apply_red() {
     aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
     aura::core::densify_consistency::reset_densify_consistency_for_test();
     aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+}
+
+// Canary refuse stays fail-closed for mutate admit and is not apply-red.
+// A real incomplete densify under production-hard still sets the throttle.
+// A later clean refuse does not clear that throttle; a green window does.
+static void ac_canary_refuse_versus_fail_closed() {
+    std::println("\n--- canary refuse versus a real fail-closed window ---");
+    namespace mdh = aura::core::moving_densify_health;
+    const int prev_pref =
+        aura::ast::g_moving_untracked_hard_abort_pref.load(std::memory_order_relaxed);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    mdh::reset_moving_densify_health_for_test();
+    mdh::clear_agent_throttle_for_moving_densify();
+
+    mdh::publish_last_moving_densify_window(true, false, false, 0, 0, 0, 0,
+                                            /*relocate_refused_no_move=*/true);
+    CHECK(!mdh::snapshot().would_allow_mutate, "canary: admit stays closed");
+    CHECK(mdh::window_relocate_refused_clean(), "canary: recorded clean");
+    CHECK(!mdh::window_apply_red(), "canary: not apply-red");
+    CHECK(!mdh::agent_throttle_for_moving_densify(), "canary: does not set throttle");
+
+    mdh::publish_last_moving_densify_window(true, false, true, 3, 1, 0);
+    CHECK(!mdh::snapshot().would_allow_mutate, "red: admit stays closed");
+    CHECK(!mdh::window_relocate_refused_clean(), "red: not a clean refuse");
+    CHECK(mdh::window_apply_red(), "red: apply-red");
+    CHECK(mdh::snapshot().objects_moved == 3, "red: moved objects are published");
+    CHECK(mdh::agent_throttle_for_moving_densify(), "red: production-hard throttle is set");
+
+    mdh::publish_last_moving_densify_window(true, false, false, 0, 0, 0, 0, true);
+    CHECK(mdh::agent_throttle_for_moving_densify(), "canary after red: throttle stays set");
+    CHECK(!mdh::window_relocate_refused_clean(), "canary after red: not clean");
+    CHECK(mdh::window_apply_red(), "canary after red: still apply-red");
+
+    mdh::publish_last_moving_densify_window(true, true, false, 2, 0, 0);
+    CHECK(mdh::snapshot().would_allow_mutate, "green: admit opens");
+    CHECK(!mdh::window_apply_red(), "green: not apply-red");
+    CHECK(!mdh::agent_throttle_for_moving_densify(), "green: throttle cleared");
+
+    mdh::reset_moving_densify_health_for_test();
+    mdh::clear_agent_throttle_for_moving_densify();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(prev_pref, std::memory_order_relaxed);
 }
 
 // ── Issue #4751: zero-arena sticky-recovery retry folds the canary gate ──
@@ -9747,6 +9795,7 @@ int run_test_moving_densify_fail_closed() {
     ac4287_blocked_retry_publish_closes_window();
     ac4288_phase5_blocked_publish_closes_window();
     ac4928_relocate_refused_window_not_apply_red();
+    ac_canary_refuse_versus_fail_closed();
 
     std::println("\n=== Issue #4751: zero-arena sticky-recovery retry folds "
                  "the canary gate (#4288 sibling; extends fail_closed per #81967) ===");
