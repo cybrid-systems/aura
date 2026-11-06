@@ -35,7 +35,8 @@ Token Lexer::advance() {
         }
         case '.': {
             // Issue #4498: .5 is a float literal (R7RS).
-            if (pos_ + 1 < source_.size() && std::isdigit((unsigned char)source_[pos_ + 1]))
+            if (pos_ + 1 < source_.size() &&
+                std::isdigit(static_cast<unsigned char>(source_[pos_ + 1])))
                 return read_number();
             if (pos_ + 2 < source_.size() && source_[pos_ + 1] == '.' && source_[pos_ + 2] == '.') {
                 auto tok = make_tok(TokenKind::Ellipsis, "...");
@@ -45,16 +46,17 @@ Token Lexer::advance() {
             return make_tok(TokenKind::Dot, source_.substr(pos_++, 1));
         }
         default:
-            if (std::isdigit((unsigned char)c) || (c == '-' && pos_ + 1 < source_.size() &&
-                                                   std::isdigit((unsigned char)source_[pos_ + 1])))
+            if (std::isdigit(static_cast<unsigned char>(c)) ||
+                (c == '-' && pos_ + 1 < source_.size() &&
+                 std::isdigit(static_cast<unsigned char>(source_[pos_ + 1]))))
                 return read_number();
             // Issue #4498: -.5
             if (c == '-' && pos_ + 2 < source_.size() && source_[pos_ + 1] == '.' &&
-                std::isdigit((unsigned char)source_[pos_ + 2]))
+                std::isdigit(static_cast<unsigned char>(source_[pos_ + 2])))
                 return read_number();
-            if (std::isalpha((unsigned char)c) || c == '_' || c == '+' || c == '*' || c == '-' ||
-                c == '/' || c == '=' || c == '<' || c == '>' || c == '!' || c == '?' || c == ':' ||
-                c == '&' || c == '%')
+            if (std::isalpha(static_cast<unsigned char>(c)) || c == '_' || c == '+' || c == '*' ||
+                c == '-' || c == '/' || c == '=' || c == '<' || c == '>' || c == '!' || c == '?' ||
+                c == ':' || c == '&' || c == '%')
                 return read_identifier();
             // Issue #4805: R7RS |...| symbol quoting (`||` is the empty symbol).
             if (c == '|') {
@@ -173,22 +175,23 @@ Token Lexer::read_number() {
     std::size_t s = pos_;
     if (source_[pos_] == '-')
         pos_++;
-    while (pos_ < source_.size() && std::isdigit((unsigned char)source_[pos_]))
+    while (pos_ < source_.size() && std::isdigit(static_cast<unsigned char>(source_[pos_])))
         pos_++;
     bool is_float = false;
     // Decimal point followed by digit: 3.14
     if (pos_ < source_.size() && source_[pos_] == '.' && pos_ + 1 < source_.size() &&
-        std::isdigit((unsigned char)source_[pos_ + 1])) {
+        std::isdigit(static_cast<unsigned char>(source_[pos_ + 1]))) {
         pos_++; // consume '.'
-        while (pos_ < source_.size() && std::isdigit((unsigned char)source_[pos_]))
+        while (pos_ < source_.size() && std::isdigit(static_cast<unsigned char>(source_[pos_])))
             pos_++;
         is_float = true;
     } else if (pos_ < source_.size() && source_[pos_] == '.' && pos_ > s &&
-               std::isdigit((unsigned char)source_[pos_ - 1])) {
+               std::isdigit(static_cast<unsigned char>(source_[pos_ - 1]))) {
         // Issue #4498: 1. is a float literal when the dot ends the number
         // (followed by a delimiter), not the dotted-pair dot of (1 . 2).
         const std::size_t after = pos_ + 1;
-        const bool delim = after >= source_.size() || std::isspace((unsigned char)source_[after]) ||
+        const bool delim = after >= source_.size() ||
+                           std::isspace(static_cast<unsigned char>(source_[after])) ||
                            source_[after] == '(' || source_[after] == ')' ||
                            source_[after] == ';' || source_[after] == '"';
         if (delim) {
@@ -199,9 +202,9 @@ Token Lexer::read_number() {
     // Issue #4498: 1/2 is an exact rational in R7RS; Aura has none. Do not
     // split it into 1 and the symbol /2 — return one Error token.
     if (!is_float && pos_ + 1 < source_.size() && source_[pos_] == '/' &&
-        std::isdigit((unsigned char)source_[pos_ + 1])) {
+        std::isdigit(static_cast<unsigned char>(source_[pos_ + 1]))) {
         pos_++;
-        while (pos_ < source_.size() && std::isdigit((unsigned char)source_[pos_]))
+        while (pos_ < source_.size() && std::isdigit(static_cast<unsigned char>(source_[pos_])))
             pos_++;
         return make_tok(TokenKind::Error, source_.substr(s, pos_ - s));
     }
@@ -213,8 +216,8 @@ Token Lexer::read_number() {
         pos_++; // consume e/E
         if (pos_ < source_.size() && (source_[pos_] == '+' || source_[pos_] == '-'))
             pos_++;
-        if (pos_ < source_.size() && std::isdigit((unsigned char)source_[pos_])) {
-            while (pos_ < source_.size() && std::isdigit((unsigned char)source_[pos_]))
+        if (pos_ < source_.size() && std::isdigit(static_cast<unsigned char>(source_[pos_]))) {
+            while (pos_ < source_.size() && std::isdigit(static_cast<unsigned char>(source_[pos_])))
                 pos_++;
             is_float = true;
         } else {
@@ -269,7 +272,7 @@ Token Lexer::read_character() {
         return make_tok(TokenKind::Character, string_buf_);
     }
     // Single-character form for non-alphabetic characters: #\0 #\- #\( #\ ...
-    if (!std::isalpha((unsigned char)c)) {
+    if (!std::isalpha(static_cast<unsigned char>(c))) {
         ++pos_;
         string_buf_ = std::to_string(static_cast<unsigned char>(c));
         return make_tok(TokenKind::Character, string_buf_);
@@ -277,7 +280,7 @@ Token Lexer::read_character() {
     // Alphabetic start: read the full name run, then named-form lookup.
     const std::size_t ns = pos_;
     while (pos_ < source_.size() &&
-           (std::isalnum((unsigned char)source_[pos_]) || source_[pos_] == '-'))
+           (std::isalnum(static_cast<unsigned char>(source_[pos_])) || source_[pos_] == '-'))
         ++pos_;
     std::string_view name = source_.substr(ns, pos_ - ns);
     if (name.size() == 1) {
@@ -288,7 +291,7 @@ Token Lexer::read_character() {
     // Named form lookup (case-insensitive).
     std::string lower(name);
     for (auto& ch : lower)
-        ch = static_cast<char>(std::tolower((unsigned char)ch));
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
     int cp = -1;
     if (lower == "nul" || lower == "null")
         cp = 0;
@@ -346,9 +349,9 @@ Token Lexer::read_identifier() {
     std::size_t s = pos_;
     while (pos_ < source_.size()) {
         char c = source_[pos_];
-        if (std::isalnum((unsigned char)c) || c == '_' || c == '+' || c == '*' || c == '-' ||
-            c == '/' || c == '=' || c == '<' || c == '>' || c == '!' || c == '?' || c == ':' ||
-            c == '&' || c == '%')
+        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '+' || c == '*' ||
+            c == '-' || c == '/' || c == '=' || c == '<' || c == '>' || c == '!' || c == '?' ||
+            c == ':' || c == '&' || c == '%')
             pos_++;
         else
             break;
@@ -431,7 +434,7 @@ Token Lexer::consume() {
 }
 Token Lexer::make_tok(TokenKind k, std::string_view t) {
     Token r{k, t, line_, col_};
-    col_ += (std::uint32_t)t.size();
+    col_ += static_cast<std::uint32_t>(t.size());
     return r;
 }
 
