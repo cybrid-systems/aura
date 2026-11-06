@@ -1,7 +1,8 @@
 # Issue #4907: prebuilt aura for linux-x86_64 and linux-arm64 on every main push.
 #   build   — native runner per arch, inside the toolchain image: build, test, bundle
-#   verify  — bare Ubuntu 24.04 runner per arch (no toolchain image) + a clean
-#             ubuntu:24.04 container: install.sh, aura new evolve / run / test;
+#   verify  — bare Ubuntu 24.04 runner per arch (no toolchain image) + clean
+#             containers (ubuntu:24.04, ubuntu:26.10, Debian 12, Rocky 9,
+#             openEuler 24.03 LTS SP4): install.sh, aura new evolve / run / test;
 #             build and push the per-arch runtime image
 #   publish — rolling `nightly` release (tarballs + sha256) and the multi-arch
 #             manifest ghcr.io/cybrid-systems/aura:<sha> and :nightly (no stable
@@ -91,13 +92,13 @@ jobs:
           cd "$RUNNER_TEMP" && aura new evolve demo && cd demo && aura run && aura test
           test -s out/report.html
           echo "install → report: $(( $(date +%s) - start )) s"
-      - name: Clean containers (Ubuntu 24.04, Debian 12, Rocky 9, openEuler 24.03 LTS SP4)
+      - name: Clean containers (Ubuntu 24.04, Ubuntu 26.10, Debian 12, Rocky 9, openEuler 24.03 LTS SP4)
         # #4934: v0.1 supported distros. Stock images, nothing installed: install.sh
         # needs only sh, tar+gzip, sha256sum (all in the base images), and the
         # tarballs come from dist/, so no network is needed inside the container.
         run: |
           printf '(display (+ 1 2))\n' > dist/smoke.aura
-          for img in ubuntu:24.04 debian:12 rockylinux/rockylinux:9 openeuler/openeuler:24.03-lts-sp4; do
+          for img in ubuntu:24.04 ubuntu:26.10 debian:12 rockylinux/rockylinux:9 openeuler/openeuler:24.03-lts-sp4; do
             echo "::group::$img"
             docker run --rm -e AURA_VERSION="$VER" -v "$PWD:/src:ro" "$img" sh -c '
               set -e; . /etc/os-release; echo "$PRETTY_NAME $(uname -m)"
@@ -145,7 +146,8 @@ jobs:
 
           - linux-x86_64 and linux-arm64 tarballs (+ .sha256). Each carries its own loader,
             glibc 2.44 and libstdc++ (rt/), so the host glibc does not matter. Verified on
-            Ubuntu 24.04 (glibc 2.39), x86_64 and arm64. Needs Linux >= 3.2.
+            Ubuntu 24.04, Ubuntu 26.10, Debian 12, Rocky Linux 9, and openEuler 24.03 LTS SP4,
+            x86_64 and arm64. Needs Linux >= 3.2.
           - install: curl -fsSL https://raw.githubusercontent.com/cybrid-systems/aura/main/install.sh | sh
           - image: docker run --rm -v \$PWD:/w -w /w $IMAGE:nightly main.aura"
           gh release view nightly >/dev/null 2>&1 ||
@@ -161,7 +163,9 @@ jobs:
           v=${VER#v}
           notes="aura $VER
 
-          - linux-x86_64 and linux-arm64 tarballs (+ .sha256), verified on Ubuntu 24.04, x86_64 and arm64.
+          - linux-x86_64 and linux-arm64 tarballs (+ .sha256), verified on
+            Ubuntu 24.04, Ubuntu 26.10, Debian 12, Rocky Linux 9, and openEuler 24.03 LTS SP4,
+            x86_64 and arm64.
           - install: curl -fsSL https://raw.githubusercontent.com/cybrid-systems/aura/main/install.sh | AURA_VERSION=$VER sh
           - image: docker run --rm -v \$PWD:/w -w /w $IMAGE:$v main.aura"
           gh release view "$VER" >/dev/null 2>&1 ||

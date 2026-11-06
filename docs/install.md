@@ -22,16 +22,21 @@ under `~/.aura/<version>` and links `~/.local/bin/aura`. Settings:
 
 Each tarball carries its own dynamic loader, glibc and libstdc++ (`rt/`), and
 `bin/aura` is a small launcher that starts the real binary (`libexec/aura`) on
-them, so it does not depend on the host glibc. Supported hosts, each on x86_64 and
-arm64, verified on every `main` push and every release tag (bare runner for
-Ubuntu, clean stock containers for all four):
+them, so it does not depend on the host glibc. On every `main` push and
+release tag, the dist workflow runs each image below on the x86_64 runner and
+again on the arm64 runner (the bare host is Ubuntu 24.04; these are clean
+stock containers):
 
 | distro | image |
 |---|---|
 | Ubuntu 24.04 | `ubuntu:24.04` |
+| Ubuntu 26.10 | `ubuntu:26.10` |
 | Debian 12 | `debian:12` |
 | Rocky Linux 9 | `rockylinux/rockylinux:9` |
 | openEuler 24.03 LTS (SP4) | `openeuler/openeuler:24.03-lts-sp4` |
+
+Ubuntu 24.04 passing does not by itself mean Ubuntu 26.10 works. macOS,
+Windows, and any distro not in the table are not supported.
 
 `install.sh` needs only `sh`, `tar`/`gzip`, `sha256sum` and `curl` or `wget`. It needs Linux 3.2 or newer. macOS and Windows are not supported; use the image.
 
@@ -55,5 +60,6 @@ scripts/tools/bundle.sh build            # → dist/aura-<commit>-linux-<arch>.t
 ```
 
 The workflow is `.github/workflows/dist.yml`: build and test on native x86_64
-and arm64 runners, install the bundle on the bare Ubuntu 24.04 runners and in a clean `ubuntu:24.04` container,
-then publish the release assets and the image manifest.
+and arm64 runners, install the bundle on the bare Ubuntu 24.04 runners and in
+the clean containers listed above, then publish the release assets and the
+image manifest.
