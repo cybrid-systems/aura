@@ -1624,6 +1624,37 @@ static bool nested_cascade_relower_forced_4678() noexcept {
     return forced;
 }
 
+void Evaluator::rebase_open_mutation_checkpoint_after_flat_replace() noexcept {
+    // Issue #4937: ast:restore's direct path replaces every FlatAST column
+    // (assign_from_image) while this boundary's enter checkpoint still
+    // holds the pre-replace children_ vector. A later production exit
+    // gate — the CastOp density streak armed by relowering a general
+    // call such as member / equal? / not — fail-closes the boundary.
+    // abort_restore_dual_topology then splices those stale child ids
+    // onto the replaced columns (id >= flat.size(), lowering contract
+    // abort). Rebase the open checkpoint onto the flat that is live
+    // now so an abort restores a tree that matches the columns.
+    if (!workspace_flat_)
+        return;
+    auto& stk = active_mutation_stack();
+    if (stk.empty())
+        return;
+    auto& cp = stk.back();
+    if (cp.lightweight || cp.heap_slot_only || cp.exit_fence || cp.orch_soft_frame)
+        return;
+    cp.children_snapshot = workspace_flat_->snapshot_children();
+    cp.mutation_log_size = workspace_flat_->all_mutations().size();
+    cp.flat_generation_at_entry = workspace_flat_->generation();
+    if (!cp.dirty_soa_snapshot.dirty_.empty())
+        cp.dirty_soa_snapshot = workspace_flat_->snapshot_dirty_soa();
+    if (!cp.marker_provenance_snapshot.marker.empty())
+        cp.marker_provenance_snapshot = workspace_flat_->snapshot_marker_provenance();
+    if (cp.fine_rollback) {
+        cp.sym_id_snapshot = workspace_flat_->snapshot_sym_id();
+        cp.param_snapshot = workspace_flat_->snapshot_param_columns();
+    }
+}
+
 Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     auto& stack = active_mutation_stack();
     if (stack.empty())

@@ -56,6 +56,13 @@ so `out/../x` and a symlink inside `out/` that points elsewhere are refused:
 and the banner shows the scope, e.g. `caps=mutate,read,write:out/`. A bare
 `--grant write` (or `--preset dev`) lifts the scope.
 
+`mutate:rebind` replaces a live workspace define by name. A name that is
+not in the workspace is **added**: a new top-level define is linked in and
+the call returns `#t`, the same as a successful replace. It does not mean
+"not found". Defines that arrived only from a file, `-e`, or `--load` are
+not in the live AST until `(set-code ...)` and `(eval-current)`; rebind
+then returns `no-workspace` rather than a usage error.
+
 `--quiet` drops it. `macro-self-evo`, `tenant-admin` and `syscall` are never
 granted from the command line; they remain host-side grants (#4575).
 `AURA_SANDBOX=off` still turns every check off, for local debugging only.
