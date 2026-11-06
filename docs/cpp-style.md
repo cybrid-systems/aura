@@ -129,6 +129,11 @@ contracts, so `cmake/clang_contract_shim.h` expands `pre` / `post` / `contract_a
   - A recursive local lambda uses deducing `this`, not a `std::function` that captures itself.
 - C3 **[review]** Pin layout and performance assumptions with `static_assert`, e.g.
   `std::is_trivially_copyable_v<EvalValue>` and `sizeof(EvalValue) == 8`.
+- Landed: `ResourceQuota::dimension_name_at` is constrained by `std::integral`.
+  `kDimensionNames` is a `constexpr` array and `dim_name` is `constexpr`.
+  `log_append` is a cold audit boundary with `post(r: r.empty() || r.find('#') != npos)`.
+  Pin-registry and quota-tenant locks are `scoped_lock` (P6). The pin-registry
+  lock-wait counter already existed; no new hot-path metric was added.
 
 ## 5. Contracts (C++26 P2900)
 
