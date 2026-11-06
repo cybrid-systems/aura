@@ -183,7 +183,7 @@ static void bump_linear_occurrence_predicate_safe(void* metrics) {
         1, std::memory_order_relaxed);
 }
 
-static bool subtree_has_linear_ops(const FlatAST& flat, NodeId root) {
+bool subtree_has_linear_ops(const FlatAST& flat, NodeId root) {
     // Issue #4682 step 5b: exact short-circuit on the #4598 live counter.
     if (!flat.has_linear_ops_live())
         return false;

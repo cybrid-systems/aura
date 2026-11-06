@@ -907,7 +907,7 @@ int run_test_unquote_splicing_hygiene() {
               "3754: nested pre_scan inherits walk qq_depth");
         CHECK(me.find("!local_in_quote && !local_in_unquote") != std::string::npos,
               "3754: skip pre_scan in unquote caller-scope");
-        const auto pre = me.find("std::function<void(NodeId, int)> pre_scan = ");
+        const auto pre = me.find("auto pre_scan = [&](this auto&& self, NodeId nid, int qq_depth)");
         CHECK(pre != std::string::npos, "3754: pre_scan present");
         if (pre != std::string::npos) {
             const auto win = me.substr(pre, 4500);

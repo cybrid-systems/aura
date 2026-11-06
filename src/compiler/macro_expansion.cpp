@@ -2667,7 +2667,8 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         // expressions are NOT gensym'd (caller scope). Also bumps
         // g_macro_rest_param_nested_qq_hits_total whenever a dotted
         // Lambda/MacroDef is discovered inside qq (qq_depth > 0).
-        std::function<void(NodeId, int)> pre_scan = [&](NodeId nid, int qq_depth) {
+        // #4936 B4: deducing this. The closure does not own a std::function copy of itself.
+        auto pre_scan = [&](this auto&& self, NodeId nid, int qq_depth) {
             if (nid == NULL_NODE || nid >= source.size())
                 return;
             // Issue #3754: already in the unquote caller-scope zone —
@@ -2688,7 +2689,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                     if (cname == "quasiquote" && nv.children.size() >= 2) {
                         // Entering qq body: bump depth + recurse ONLY
                         // into the qq template (first arg).
-                        pre_scan(nv.child(1), qq_depth + 1);
+                        self(nv.child(1), qq_depth + 1);
                         return;
                     }
                     if (cname == "unquote") {
@@ -2700,7 +2701,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                         // bindings gensym and refs resolve via name_map
                         // (#2239 residual — qq_depth never decremented).
                         if (qq_depth > 1 && nv.children.size() >= 2)
-                            pre_scan(nv.child(1), qq_depth - 1);
+                            self(nv.child(1), qq_depth - 1);
                         return;
                     }
                     // Issue #2807: unquote-splicing (`,@x`) is caller
@@ -2714,7 +2715,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                             g_unquote_splicing_hygiene_mismatch_total.fetch_add(
                                 1, std::memory_order_relaxed);
                         } else if (nv.children.size() >= 2) {
-                            pre_scan(nv.child(1), qq_depth - 1);
+                            self(nv.child(1), qq_depth - 1);
                         }
                         return;
                     }
@@ -2775,7 +2776,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             }
             std::vector<aura::ast::NodeId> scan_children(nv.children.begin(), nv.children.end());
             for (auto c : scan_children)
-                pre_scan(c, qq_depth);
+                self(c, qq_depth);
         };
         pre_scan(body_id, qq_depth);
         // Issue #3506: pre_scan ignores rename_*_pre NULL_NODE; a ceiling

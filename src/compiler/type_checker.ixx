@@ -1859,6 +1859,10 @@ discover_cross_closure_linear_escapes(const aura::ast::FlatAST& flat,
 
 // Issue #1458: discover linear-related bindings under a subtree
 // for post-mutate rebind/set-body ownership validation.
+// Issue #4936: the linear-op tree walk. Exported so a test can run it;
+// infer still calls this same function.
+export bool subtree_has_linear_ops(const aura::ast::FlatAST& flat, aura::ast::NodeId root);
+
 export void discover_linear_bindings_in_subtree(const aura::ast::FlatAST& flat,
                                                 const aura::ast::StringPool& pool,
                                                 aura::ast::NodeId root,
