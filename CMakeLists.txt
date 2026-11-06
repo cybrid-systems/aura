@@ -1901,6 +1901,9 @@ aura_issue_test_link_light(test_workspace_state_lock)
 # capture fallback. Lives in tests/core/ per #81934/#81967.
 aura_add_issue_test(test_tenant_isolation_enforcement)
 aura_issue_test_link_light(test_tenant_isolation_enforcement)
+# Issue #4965: display/write list-spine depth must match the printer.
+aura_add_issue_test(test_display_list_spine_tenant)
+aura_issue_test_link_light(test_display_list_spine_tenant)
 # Issue #3597: grant_cross_tenant TA fence + cross_grants write must be one
 # ordered critical section (isolation → registry, never reverse). Behavior
 # oracle — two threads, one shared registry, revoke vs grant_cross_tenant
