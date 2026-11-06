@@ -1,4 +1,4 @@
-# Editor support and the REPL (Issue #4911)
+# Editor support and the REPL
 
 ## `aura repl` — hot reload without regenerating data
 
