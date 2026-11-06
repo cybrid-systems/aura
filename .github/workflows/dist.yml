@@ -44,7 +44,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.1.1
+      image: ghcr.io/cybrid-systems/aura-ci:v0.1.0
     steps:
       - uses: actions/checkout@v7
       - name: Build aura
