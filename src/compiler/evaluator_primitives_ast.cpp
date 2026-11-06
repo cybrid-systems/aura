@@ -1218,6 +1218,10 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                         // Empty diff: the graph stays as in sync as before.
                         dep_graph_synced_post = dep_graph_synced_pre;
                     }
+                    // Issue #4937: the image is the live tree now. The
+                    // boundary checkpoint still holds the pre-replace
+                    // children_; rebase before any exit-gate abort.
+                    ev.rebase_open_mutation_checkpoint_after_flat_replace();
                     did_direct = true;
                 } catch (...) {
                     // [SILENCE-PRIM-#615] Fall through to
