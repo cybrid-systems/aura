@@ -2002,9 +2002,8 @@ struct LLVMBuilder {
     llvm::Value* load_cell_epoch() {
         auto* i64_ty = llvm::Type::getInt64Ty(ctx);
         auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
-        auto* wptr = irb->CreateIntToPtr(
-            c64(aura::compiler::i64_from_ptr(&aura_cell_heap_epoch)),
-            ptr_ty);
+        auto* wptr =
+            irb->CreateIntToPtr(c64(aura::compiler::i64_from_ptr(&aura_cell_heap_epoch)), ptr_ty);
         auto* wv = irb->CreateLoad(i64_ty, wptr);
         wv->setAtomic(llvm::AtomicOrdering::Acquire);
         wv->setAlignment(llvm::Align(8));
@@ -2069,8 +2068,7 @@ struct LLVMBuilder {
         auto* bb_done = llvm::BasicBlock::Create(ctx, "l1_self_done", parent);
         auto* sid = irb->CreateLoad(i64_ty, self_id_alloca);
         auto* is_self = irb->CreateICmpEQ(callee, sid);
-        auto* wptr = irb->CreateIntToPtr(
-            c64(aura::compiler::i64_from_ptr(self_word_addr)), ptr_ty);
+        auto* wptr = irb->CreateIntToPtr(c64(aura::compiler::i64_from_ptr(self_word_addr)), ptr_ty);
         auto* wv = irb->CreateLoad(i64_ty, wptr);
         wv->setAtomic(llvm::AtomicOrdering::Acquire);
         wv->setAlignment(llvm::Align(8));
@@ -6131,8 +6129,7 @@ struct AuraJIT::Impl {
             builder.self_word_addr = aura::compiler::jit_atomic_u64_slot(&word->v);
             builder.self_word_alloca = builder.create_entry_alloca(i64_ty, "l1_self_word");
             auto* wptr0 = builder.irb->CreateIntToPtr(
-                builder.c64(
-                    aura::compiler::i64_from_ptr(builder.self_word_addr)),
+                builder.c64(aura::compiler::i64_from_ptr(builder.self_word_addr)),
                 llvm::PointerType::getUnqual(ctx));
             auto* wv0 = builder.irb->CreateLoad(i64_ty, wptr0);
             wv0->setAtomic(llvm::AtomicOrdering::Acquire);

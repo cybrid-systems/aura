@@ -647,6 +647,8 @@ public:
         ~MovingFreelistGuard() { pool_->release_moving_freelist_(kind_); }
         MovingFreelistGuard(const MovingFreelistGuard&) = delete;
         MovingFreelistGuard& operator=(const MovingFreelistGuard&) = delete;
+        MovingFreelistGuard(MovingFreelistGuard&&) = delete;
+        MovingFreelistGuard& operator=(MovingFreelistGuard&&) = delete;
         [[nodiscard]] bool denied() const noexcept { return kind_ == FreelistAdmit::Denied; }
         [[nodiscard]] bool exclusive() const noexcept {
             return kind_ == FreelistAdmit::Locked || kind_ == FreelistAdmit::Nested;
@@ -2265,6 +2267,8 @@ public:
 
     ASTArena(const ASTArena&) = delete;
     ASTArena& operator=(const ASTArena&) = delete;
+    ASTArena(ASTArena&&) = delete;
+    ASTArena& operator=(ASTArena&&) = delete;
     ~ASTArena() {
         live_arena_remap_detail::unnote(this);
         // Issue #2382 / #3124: clear installed hooks under their mutexes
