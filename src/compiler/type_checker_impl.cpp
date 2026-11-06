@@ -187,7 +187,8 @@ static bool subtree_has_linear_ops(const FlatAST& flat, NodeId root) {
     // Issue #4682 step 5b: exact short-circuit on the #4598 live counter.
     if (!flat.has_linear_ops_live())
         return false;
-    std::function<bool(NodeId)> walk = [&](NodeId id) -> bool {
+    // #4936 B4: deducing this, not a std::function that owns a copy of itself.
+    auto walk = [&](this auto&& self, NodeId id) -> bool {
         if (id == NULL_NODE || id >= flat.size() || flat.is_free_slot(id))
             return false;
         const auto v = flat.get(id);
@@ -195,7 +196,7 @@ static bool subtree_has_linear_ops(const FlatAST& flat, NodeId root) {
             v.tag == NodeTag::MutBorrow || v.tag == NodeTag::Drop)
             return true;
         for (auto c : v.children) {
-            if (c != NULL_NODE && walk(c))
+            if (c != NULL_NODE && self(c))
                 return true;
         }
         return false;
@@ -9841,7 +9842,7 @@ static void collect_linear_bindings_under_nodes(const aura::ast::FlatAST& flat,
     // (often the whole workspace via parent_id == root).
     if (!flat.has_linear_ops_live())
         return;
-    std::function<void(aura::ast::NodeId)> walk = [&](aura::ast::NodeId id) {
+    auto walk = [&](this auto&& self, aura::ast::NodeId id) {
         if (id == aura::ast::NULL_NODE || id >= flat.size() || flat.is_free_slot(id))
             return;
         auto v = flat.get(id);
@@ -9874,7 +9875,7 @@ static void collect_linear_bindings_under_nodes(const aura::ast::FlatAST& flat,
         }
         for (auto c : v.children) {
             if (c != aura::ast::NULL_NODE)
-                walk(c);
+                self(c);
         }
     };
     for (auto id : nodes)
@@ -11985,7 +11986,7 @@ bool OwnershipEnv::validate_ownership_full(const FlatAST& flat, const StringPool
     if (!flat.has_linear_ops_live() && !reg.has_any_linear_type())
         return true;
     std::unordered_set<std::string> linear_bindings;
-    std::function<void(NodeId)> discover = [&](NodeId id) {
+    auto discover = [&](this auto&& self, NodeId id) {
         if (id == NULL_NODE || id >= flat.size())
             return;
         auto v = flat.get(id);
@@ -12016,7 +12017,7 @@ bool OwnershipEnv::validate_ownership_full(const FlatAST& flat, const StringPool
         }
         // Recurse.
         for (auto c : v.children)
-            discover(c);
+            self(c);
     };
     discover(root);
 
