@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -139,6 +140,30 @@ int run_test_opcode_reflect() {
     check(members[4].name == "tags", "member tags");
 
     Smoke s{.id = 7, .flag = true, .name = "x", .dims = {1, 2, 3}, .tags = {9, 8}};
+    const auto bytes = aura::reflect::auto_serialize(s);
+    std::size_t pos = 0;
+    const Smoke back = aura::reflect::auto_deserialize<Smoke>(bytes, pos);
+    check(pos == bytes.size(), "serialize consumed the buffer");
+    check(back.id == 7 && back.flag && back.name == "x", "struct id/flag/name roundtrip");
+    check(back.dims == std::array<int, 3>{1, 2, 3}, "struct array roundtrip");
+    check(back.tags.size() == 2 && back.tags[0] == 9 && back.tags[1] == 8,
+          "struct vector<int> roundtrip");
+
+    const std::vector<std::uint32_t> nums{1u, 2u, 0x01020304u};
+    const auto num_bytes = aura::reflect::auto_serialize(nums);
+    const auto nums_back = aura::reflect::auto_deserialize<std::vector<std::uint32_t>>(num_bytes);
+    check(nums_back == nums, "vector<uint32_t> roundtrip");
+
+    const std::optional<int> present = 7;
+    const std::optional<int> absent;
+    check(aura::reflect::auto_deserialize<std::optional<int>>(
+              aura::reflect::auto_serialize(present)) == present,
+          "optional present");
+    check(
+        !aura::reflect::auto_deserialize<std::optional<int>>(aura::reflect::auto_serialize(absent))
+             .has_value(),
+        "optional empty");
+
     const std::string json = to_json(s);
     check(json.find("\"id\":7") != std::string::npos, "json id");
     check(json.find("\"flag\":true") != std::string::npos, "json flag");

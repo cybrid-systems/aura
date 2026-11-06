@@ -17,6 +17,7 @@ module;
 #include "observability_metrics.h" // Issue #2021: CompilerMetrics snapshot
 #include "typed_mutation_audit.h" // Issue #3278: production_defaults_active() gate for cross-pool schema homology
 #include "core/ownership.hh" // Issue #4936: NoCopy
+#include "compiler/hygiene_builtins.hh" // Issue #4936 B4: constexpr reserved names
 
 module aura.compiler.macro_expansion;
 
@@ -217,133 +218,8 @@ namespace detail {
         return on;
     }
 
-    // Issue #965: keep special forms + high-frequency primitives that
-    // macros must not gensym. Expanded beyond the original 56-name set
-    // so new stdlib-facing builtins (length, vector, make-hash, …) are
-    // preserved. Full registry-driven sync is Phase 2 (needs Evaluator
-    // at expand time); this set is the offline source of truth.
-    const std::unordered_set<std::string>& hygiene_builtins() {
-        static const std::unordered_set<std::string> builtins = {
-            // Special forms / control
-            "if",
-            "cond",
-            "let",
-            "let*",
-            "letrec",
-            "lambda",
-            "define",
-            "begin",
-            "set!",
-            "quote",
-            "unquote",
-            "quasiquote",
-            "case",
-            "when",
-            "unless",
-            "do",
-            "delay",
-            "force",
-            "import",
-            "export",
-            "module",
-            // Pair / list
-            "car",
-            "cdr",
-            "cons",
-            "list",
-            "list-sort",
-            "pair?",
-            "null?",
-            "list?",
-            "length",
-            "append",
-            "reverse",
-            "member",
-            "member?",
-            "memv",
-            "assoc",
-            "assv",
-            "eq?",
-            "equal?",
-            "eqv?",
-            // Arithmetic / compare
-            "+",
-            "-",
-            "*",
-            "/",
-            "quotient",
-            "remainder",
-            "modulo",
-            "=",
-            "<",
-            ">",
-            "<=",
-            ">=",
-            "not",
-            "and",
-            "or",
-            "void",
-            "max",
-            "min",
-            "abs",
-            // IO
-            "display",
-            "write",
-            "newline",
-            "read",
-            "write-file",
-            "read-file",
-            // Type predicates
-            "number?",
-            "integer?",
-            "float?",
-            "boolean?",
-            "string?",
-            "symbol?",
-            "char?",
-            "vector?",
-            "hash?",
-            "procedure?",
-            "error?",
-            // String
-            "string-append",
-            "string-length",
-            "string-ref",
-            "substring",
-            "number->string",
-            "string->number",
-            "string=?",
-            "symbol->string",
-            "string->symbol",
-            // Higher-order / collections
-            "apply",
-            "map",
-            "filter",
-            "foldl",
-            "foldr",
-            "for-each",
-            "vector",
-            "make-vector",
-            "vector-ref",
-            "vector-set!",
-            "vector-length",
-            "make-hash",
-            "hash-ref",
-            "hash-set!",
-            "hash-count",
-            // Errors / assert / gensym
-            "error",
-            "assert",
-            "gensym",
-            "raise",
-            // Eval / meta commonly used in macros
-            "eval",
-            "current-time",
-            "current-time-ms", // Issue #2655
-            "monotonic-ms",    // Issue #2655
-        };
-        return builtins;
-    }
+    // Issue #965 / #4936 B4: reserved names live in hygiene_builtins.hh.
+    // Full registry-driven sync is still Phase 2 (needs Evaluator at expand time).
 
 } // namespace detail
 
@@ -2679,7 +2555,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         auto name = std::string(source_pool.resolve(sid));
         // Ordinary template bindings: keep free macro-param names substitutable
         // (subst wins). Builtins keep their name.
-        if ((subst && subst->count(name)) || detail::hygiene_builtins().count(name))
+        if ((subst && subst->count(name)) || detail::hygiene_builtins_contains(name))
             return transplant(sid);
         auto it = name_map->find(name);
         if (it != name_map->end())
@@ -2721,7 +2597,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         if (!session.allow_rest_hygiene)
             return transplant(sid);
         auto name = std::string(source_pool.resolve(sid));
-        if (detail::hygiene_builtins().count(name))
+        if (detail::hygiene_builtins_contains(name))
             return transplant(sid);
         // Issue #3183: rest path shares the same gensym_cap ceiling as
         // rename_binding_pre / rename_binding (#2804 / #2811). Without
@@ -2923,7 +2799,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         if (it != name_map->end())
             return target_pool.intern(it->second);
         // Macro params, builtins keep their name (free uses → Variable subst)
-        if ((subst && subst->count(name)) || detail::hygiene_builtins().count(name))
+        if ((subst && subst->count(name)) || detail::hygiene_builtins_contains(name))
             return transplant(sid);
         // Issue #2804: gensym-map-size ceiling — parity with rename_binding_pre.
         // Clone walk can still allocate names pre-scan missed or refused;
@@ -3088,8 +2964,8 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                                               : rest_name;
                         // Issue #2805: builtins stay unmapped (parity with
                         // rename_rest_binding_pre / rename_binding_pre).
-                        if (detail::hygiene_builtins().count(src_nm) ||
-                            detail::hygiene_builtins().count(rest_name)) {
+                        if (detail::hygiene_builtins_contains(src_nm) ||
+                            detail::hygiene_builtins_contains(rest_name)) {
                             g_dotted_rest_builtin_rename_prevented_total.fetch_add(
                                 1, std::memory_order_relaxed);
                             // Keep param_syms.back() as the transplanted
