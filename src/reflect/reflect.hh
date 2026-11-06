@@ -474,16 +474,24 @@ inline void aura_reflect_nested_struct_throw_count_v_bump(std::uint64_t delta) n
 }
 } // extern "C"
 
-// Issue #4936 T2. Serialized byte views and reflected members live here.
-// append_pod / append_objects copy the object representation of a
-// trivially copyable value (same bytes the writer used to insert through
-// char*). object_bytes is the address of an object walked by member
-// offset. member_at names the member reflection recorded at that offset
-// (bool, string, string_view, span, vector). It is not a pun of an
-// unrelated allocation. vector<char> at a vector<T> member keeps the
-// historical writer: size() is that vector's element count, and that
-// many bytes are copied — not elem_size * size. Do not "correct" it
-// inside this helper.
+// Issue #4936 T2. append_pod / append_objects memcpy a trivially copyable
+// value. object_bytes is the address of the object being walked.
+// member_at is only for a member whose dynamic type is T (bool, string,
+// string_view, vector<string>). A vector<T> or span<T> is never read as
+// vector<char> or span<const char>: that pun is the wrong type.
+//
+// Wire compatibility, two layouts on purpose:
+//   * top-level auto_serialize(vector<T>) prefixes the element count;
+//   * a struct member vector<T> or span<T> of trivially copyable T
+//     prefixes the byte count (element_count * sizeof(T)), then the
+//     element bytes. That is what the old vector<char> pun produced on
+//     libstdc++ (size() became a byte count). Do not switch the member
+//     prefix to an element count; cached member blobs use the byte count.
+inline bool reflect_ensure(const std::vector<char>& buf, std::size_t pos,
+                           std::size_t n) noexcept;
+template <typename T>
+consteval auto get_data_members();
+
 namespace serialize_detail {
 
     template <class T>
@@ -523,6 +531,219 @@ namespace serialize_detail {
     template <class T>
     inline T& member_at(char* field) noexcept {
         return *std::launder(reinterpret_cast<T*>(field));
+    }
+
+    template <class Vec>
+    inline void append_trivial_vector_bytes(std::vector<char>& buf, const Vec& vec) {
+        using Elem = typename Vec::value_type;
+        static_assert(std::is_trivially_copyable_v<Elem>);
+        const auto nbytes = vec.size() * sizeof(Elem);
+        if (nbytes > 0xffffffffu)
+            return;
+        append_pod(buf, static_cast<std::uint32_t>(nbytes));
+        if (nbytes != 0)
+            append_objects(buf, vec.data(), vec.size());
+    }
+
+    template <class Span>
+    inline void append_span_bytes(std::vector<char>& buf, const Span& span) {
+        using Elem = std::remove_const_t<typename Span::element_type>;
+        static_assert(std::is_trivially_copyable_v<Elem>);
+        const auto nbytes = span.size() * sizeof(Elem);
+        if (nbytes > 0xffffffffu)
+            return;
+        append_pod(buf, static_cast<std::uint32_t>(nbytes));
+        if (nbytes != 0) {
+            const auto at = buf.size();
+            buf.resize(at + nbytes);
+            std::memcpy(buf.data() + at, span.data(), nbytes);
+        }
+    }
+
+    template <class T>
+    consteval bool is_std_vector_type(std::meta::info type) {
+        using namespace std::meta;
+        return is_class_type(type) && has_template_arguments(type) &&
+               template_of(type) == template_of(^^std::vector<int>);
+    }
+
+    template <class T>
+    consteval bool is_std_span_type(std::meta::info type) {
+        using namespace std::meta;
+        return is_class_type(type) && has_template_arguments(type) &&
+               template_of(type) == template_of(^^std::span<int>);
+    }
+
+    template <class T>
+    void write_nth_trivial_vector(std::vector<char>& buf, const T& obj, std::size_t nth) {
+        using namespace std::meta;
+        std::size_t seen = 0;
+        static constexpr auto members = get_data_members<T>();
+        template for (constexpr auto mem : members) {
+            constexpr auto type = type_of(mem);
+            if constexpr (is_std_vector_type<T>(type)) {
+                constexpr auto elem = template_arguments_of(type)[0];
+                if constexpr (!std::is_same_v<typename [:elem:], std::string> &&
+                              std::is_trivially_copyable_v<typename [:elem:]>) {
+                    if (seen == nth)
+                        append_trivial_vector_bytes(buf, obj.[:mem:]);
+                    ++seen;
+                } else if constexpr (!std::is_same_v<typename [:elem:], std::string>) {
+                    if (seen == nth) {
+                        // Not a trivially copyable element. Do not pun the
+                        // vector. A zero-length prefix keeps the following
+                        // members aligned; there is no defined payload.
+                        append_pod(buf, std::uint32_t{0});
+                    }
+                    ++seen;
+                }
+            }
+        }
+    }
+
+    template <class T>
+    void write_nth_span(std::vector<char>& buf, const T& obj, std::size_t nth) {
+        using namespace std::meta;
+        std::size_t seen = 0;
+        static constexpr auto members = get_data_members<T>();
+        template for (constexpr auto mem : members) {
+            constexpr auto type = type_of(mem);
+            if constexpr (is_std_span_type<T>(type)) {
+                constexpr auto elem = template_arguments_of(type)[0];
+                if constexpr (std::is_trivially_copyable_v<typename [:elem:]>) {
+                    if (seen == nth)
+                        append_span_bytes(buf, obj.[:mem:]);
+                    ++seen;
+                }
+            }
+        }
+    }
+
+    template <class T>
+    void read_nth_trivial_vector(const std::vector<char>& buf, std::size_t& pos, T& obj,
+                                 std::size_t nth) {
+        using namespace std::meta;
+        std::size_t seen = 0;
+        static constexpr auto members = get_data_members<T>();
+        template for (constexpr auto mem : members) {
+            constexpr auto type = type_of(mem);
+            if constexpr (is_std_vector_type<T>(type)) {
+                constexpr auto elem = template_arguments_of(type)[0];
+                if constexpr (!std::is_same_v<typename [:elem:], std::string> &&
+                              std::is_trivially_copyable_v<typename [:elem:]>) {
+                    if (seen == nth) {
+                        auto& vec = obj.[:mem:];
+                        vec.clear();
+                        if (!reflect_ensure(buf, pos, 4))
+                            return;
+                        std::uint32_t nbytes = 0;
+                        std::memcpy(&nbytes, buf.data() + pos, 4);
+                        pos += 4;
+                        using Elem = typename std::remove_cvref_t<decltype(vec)>::value_type;
+                        if (sizeof(Elem) == 0 || nbytes % sizeof(Elem) != 0)
+                            return;
+                        if (!reflect_ensure(buf, pos, nbytes))
+                            return;
+                        vec.resize(nbytes / sizeof(Elem));
+                        if (nbytes != 0)
+                            std::memcpy(vec.data(), buf.data() + pos, nbytes);
+                        pos += nbytes;
+                    }
+                    ++seen;
+                } else if constexpr (!std::is_same_v<typename [:elem:], std::string>) {
+                    if (seen == nth) {
+                        if (!reflect_ensure(buf, pos, 4))
+                            return;
+                        pos += 4;
+                    }
+                    ++seen;
+                }
+            }
+        }
+    }
+
+    template <class T>
+    std::size_t trivial_vector_bytes(const T& obj, std::size_t nth) {
+        using namespace std::meta;
+        std::size_t seen = 0;
+        std::size_t measure = 0;
+        static constexpr auto members = get_data_members<T>();
+        template for (constexpr auto mem : members) {
+            constexpr auto type = type_of(mem);
+            if constexpr (is_std_vector_type<T>(type)) {
+                constexpr auto elem = template_arguments_of(type)[0];
+                if constexpr (std::is_trivially_copyable_v<typename [:elem:]>) {
+                    if (seen == nth)
+                        measure = obj.[:mem:].size() * sizeof(typename [:elem:]);
+                    ++seen;
+                } else if constexpr (!std::is_same_v<typename [:elem:], std::string>) {
+                    if (seen == nth)
+                        measure = obj.[:mem:].size();
+                    ++seen;
+                } else {
+                    if (seen == nth)
+                        measure = obj.[:mem:].size();
+                    ++seen;
+                }
+            }
+        }
+        return measure;
+    }
+
+    template <class T>
+    std::size_t span_element_count(const T& obj, std::size_t nth) {
+        using namespace std::meta;
+        std::size_t seen = 0;
+        std::size_t measure = 0;
+        static constexpr auto members = get_data_members<T>();
+        template for (constexpr auto mem : members) {
+            constexpr auto type = type_of(mem);
+            if constexpr (is_std_span_type<T>(type)) {
+                if (seen == nth)
+                    measure = obj.[:mem:].size();
+                ++seen;
+            }
+        }
+        return measure;
+    }
+
+    template <class T>
+    void read_nth_span(const std::vector<char>& buf, std::size_t& pos, T& obj, std::size_t nth) {
+        using namespace std::meta;
+        std::size_t seen = 0;
+        static constexpr auto members = get_data_members<T>();
+        template for (constexpr auto mem : members) {
+            constexpr auto type = type_of(mem);
+            if constexpr (is_std_span_type<T>(type)) {
+                constexpr auto elem = template_arguments_of(type)[0];
+                if constexpr (std::is_trivially_copyable_v<typename [:elem:]>) {
+                    if (seen == nth) {
+                        auto& span = obj.[:mem:];
+                        span = {};
+                        if (!reflect_ensure(buf, pos, 4))
+                            return;
+                        std::uint32_t nbytes = 0;
+                        std::memcpy(&nbytes, buf.data() + pos, 4);
+                        pos += 4;
+                        using Raw = std::remove_const_t<
+                            typename std::remove_cvref_t<decltype(span)>::element_type>;
+                        if (sizeof(Raw) == 0 || nbytes % sizeof(Raw) != 0)
+                            return;
+                        if (!reflect_ensure(buf, pos, nbytes))
+                            return;
+                        const auto count = nbytes / sizeof(Raw);
+                        const Raw* live = nullptr;
+                        if (count != 0) {
+                            live = std::start_lifetime_as_array<Raw>(
+                                static_cast<const void*>(buf.data() + pos), count);
+                        }
+                        span = std::span<const Raw>(live, count);
+                        pos += nbytes;
+                    }
+                    ++seen;
+                }
+            }
+        }
     }
 
 } // namespace serialize_detail
@@ -630,6 +851,8 @@ void auto_serialize(std::vector<char>& buf, const std::array<T, N>& arr) {
 template <typename T> void auto_serialize(std::vector<char>& buf, const T& obj) {
     constexpr auto members = reflect_members<T>();
     const auto* base = serialize_detail::object_bytes(obj);
+    std::size_t vec_ord = 0;
+    std::size_t span_ord = 0;
     for (auto& m : members) {
         const auto* field = base + m.offset;
         switch (m.kind) {
@@ -687,38 +910,15 @@ template <typename T> void auto_serialize(std::vector<char>& buf, const T& obj) 
                 break;
             }
             case MemberKind::Span: {
-                // Issue #217 Cycle 6/7: std::span is a
-                // non-owning view (ptr + size). Write
-                // byte-prefixed raw elements (NOT count-
-                // prefixed — the element type might not
-                // be char, so we write the byte count
-                // directly). The deserialized span will
-                // point into the buf (no copy) — caller
-                // must keep the buf alive for the
-                // lifetime of the deserialized span.
-                //
-                // Cycle 7 fix: use elem_size from the
-                // MemberInfo (set by reflect_members for
-                // Span MemberKind) to correctly compute
-                // the byte count for non-char element
-                // types (e.g. std::span<const NodeId> in
-                // NodeView).
-                auto& sp = serialize_detail::member_at<std::span<const char>>(field);
-                uint32_t byte_count = static_cast<uint32_t>(sp.size() * m.elem_size);
-                serialize_detail::append_pod(buf, byte_count);
-                if (byte_count > 0)
-                    buf.insert(buf.end(), sp.data(), sp.data() + byte_count);
+                // Byte-count prefix, then the element bytes. The span is
+                // the real member type (not span<const char>).
+                serialize_detail::write_nth_span<T>(buf, obj, span_ord++);
                 break;
             }
             case MemberKind::Vector: {
-                // Issue #217 Cycle 11: vector<string> special path.
-                // The POD-vector path below reads the member as
-                // vector<char>. That keeps the historical writer: size()
-                // is the element count, and that many bytes are copied.
-                // Reading a vector<string> that way would copy the string
-                // objects' internal bytes, not the characters, so string
-                // elements take the length-prefixed path instead.
-                // Detect by elem_size == sizeof(std::string).
+                // Issue #217 Cycle 11: vector<string> is length-prefixed
+                // strings. Trivially copyable elements are the real vector,
+                // with a byte-count prefix (see serialize_detail).
                 // Issue #1123: cap count/len to uint32 max; refuse silent wrap.
                 if (m.elem_size == sizeof(std::string)) {
                     auto& vec = serialize_detail::member_at<std::vector<std::string>>(field);
@@ -735,15 +935,8 @@ template <typename T> void auto_serialize(std::vector<char>& buf, const T& obj) 
                             buf.insert(buf.end(), s.data(), s.data() + s.size());
                     }
                 } else {
-                    // POD-vector path: reinterpret as vector<char>
-                    // so vec.size() gives the byte count.
-                    auto& vec = serialize_detail::member_at<std::vector<char>>(field);
-                    if (vec.size() > 0xFFFFFFFFull)
-                        break;
-                    uint32_t sz = static_cast<uint32_t>(vec.size());
-                    serialize_detail::append_pod(buf, sz);
-                    if (!vec.empty())
-                        buf.insert(buf.end(), vec.data(), vec.data() + vec.size());
+                    // Byte-count prefix + element bytes, via the real vector.
+                    serialize_detail::write_nth_trivial_vector<T>(buf, obj, vec_ord++);
                 }
                 break;
             }
@@ -938,6 +1131,8 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
     T obj{};
     constexpr auto members = reflect_members<T>();
     auto* base = serialize_detail::object_bytes(obj);
+    std::size_t vec_ord = 0;
+    std::size_t span_ord = 0;
     for (auto& m : members) {
         auto* field = base + m.offset;
         switch (m.kind) {
@@ -1018,27 +1213,9 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
                 break;
             }
             case MemberKind::Span: {
-                // Issue #1126: bounds-check payload. Span remains
-                // non-owning into buf (caller must keep buf alive);
-                // empty span on short/corrupt input (no dangling).
-                if (!reflect_ensure(buf, pos, 4)) {
-                    const std::span<const char> empty{};
-                    std::memcpy(field, &empty, sizeof(empty));
-                    break;
-                }
-                uint32_t byte_count = 0;
-                std::memcpy(&byte_count, buf.data() + pos, 4);
-                pos += 4;
-                if (!reflect_ensure(buf, pos, byte_count)) {
-                    const std::span<const char> empty{};
-                    std::memcpy(field, &empty, sizeof(empty));
-                    break;
-                }
-                const std::size_t elem_count =
-                    m.elem_size > 0 ? byte_count / m.elem_size : byte_count;
-                const std::span<const char> sp(buf.data() + pos, elem_count);
-                std::memcpy(field, &sp, sizeof(sp));
-                pos += byte_count;
+                // Points into buf. Caller keeps buf alive. A byte length
+                // that is not a multiple of the element size is rejected.
+                serialize_detail::read_nth_span<T>(buf, pos, obj, span_ord++);
                 break;
             }
             case MemberKind::Vector: {
@@ -1072,16 +1249,7 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
                         vec.push_back(std::move(s));
                     }
                 } else {
-                    if (!reflect_ensure(buf, pos, 4))
-                        break;
-                    uint32_t sz = 0;
-                    std::memcpy(&sz, buf.data() + pos, 4);
-                    pos += 4;
-                    if (!reflect_ensure(buf, pos, sz))
-                        break;
-                    auto& vec = serialize_detail::member_at<std::vector<char>>(field);
-                    vec.assign(buf.data() + pos, buf.data() + pos + sz);
-                    pos += sz;
+                    serialize_detail::read_nth_trivial_vector<T>(buf, pos, obj, vec_ord++);
                 }
                 break;
             }
@@ -1192,15 +1360,18 @@ template <typename T> bool auto_validate(const T& obj, std::string* error = null
     constexpr auto members = reflect_members<T>();
     const auto* base = serialize_detail::object_bytes(obj);
     bool ok = true;
+    std::size_t vec_ord = 0;
+    std::size_t span_ord = 0;
 
     for (auto& m : members) {
         const auto* field = base + m.offset;
         switch (m.kind) {
             case MemberKind::Vector: {
-                auto& vec = serialize_detail::member_at<std::vector<char>>(field);
-                if (vec.size() > 100000000) {
+                // Byte length, matching the member wire prefix. The real
+                // vector is visited below; this case only keeps the switch.
+                if (serialize_detail::trivial_vector_bytes<T>(obj, vec_ord++) > 100000000u) {
                     if (error)
-                        *error = std::string(m.name) + " too large: " + std::to_string(vec.size());
+                        *error = std::string(m.name) + " too large";
                     ok = false;
                 }
                 break;
@@ -1232,11 +1403,10 @@ template <typename T> bool auto_validate(const T& obj, std::string* error = null
                 // Issue #217 Cycle 6: size check for
                 // std::span (it's also a container-like
                 // type with a size() accessor).
-                auto& sp = serialize_detail::member_at<std::span<const char>>(field);
-                if (sp.size() > 100000000) {
+                const auto span_n = serialize_detail::span_element_count<T>(obj, span_ord++);
+                if (span_n > 100000000u) {
                     if (error)
-                        *error =
-                            std::string(m.name) + " span too large: " + std::to_string(sp.size());
+                        *error = std::string(m.name) + " span too large: " + std::to_string(span_n);
                     ok = false;
                 }
                 break;
