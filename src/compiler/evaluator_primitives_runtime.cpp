@@ -107,6 +107,75 @@ namespace {
     static bool is_end_of_list(const EvalValue& v) noexcept {
         return is_void(v);
     }
+    // Issue #4965: Floyd cycle entrance on a pair spine. O(n) pair follows,
+    // no heap allocation. nullopt means the spine ends (proper void, a
+    // dotted non-pair, or an out-of-range index) before any index repeats.
+    // The returned index is the first pair of the cycle. display/write both
+    // use it so they stop on the same pair, after that pair's car has been
+    // handled once.
+    static bool inrange_pair_index(const EvalValue& v, std::span<const Pair> pairs,
+                                   std::size_t& idx) noexcept {
+        if (!is_pair(v))
+            return false;
+        idx = as_pair_idx(v);
+        return idx < pairs.size();
+    }
+    static std::optional<std::size_t> list_spine_cycle_index(const EvalValue& head,
+                                                            std::span<const Pair> pairs) noexcept {
+        std::size_t head_idx = 0;
+        if (!inrange_pair_index(head, pairs, head_idx))
+            return std::nullopt;
+        auto advance = [&](const EvalValue& v) noexcept -> std::optional<EvalValue> {
+            std::size_t i = 0;
+            if (!inrange_pair_index(v, pairs, i))
+                return std::nullopt;
+            return pairs[i].cdr;
+        };
+        EvalValue slow = head;
+        EvalValue fast = head;
+        bool met = false;
+        // One slow step per iteration. A cycle meets within O(spine) steps,
+        // which is at most pairs.size(). The cap only stops a torn cdr.
+        const std::size_t cap = pairs.size() + 1;
+        for (std::size_t n = 0; n < cap; ++n) {
+            const auto f1 = advance(fast);
+            if (!f1)
+                break;
+            const auto f2 = advance(*f1);
+            if (!f2)
+                break;
+            const auto s1 = advance(slow);
+            if (!s1)
+                break;
+            fast = *f2;
+            slow = *s1;
+            std::size_t fi = 0;
+            std::size_t si = 0;
+            if (inrange_pair_index(fast, pairs, fi) && inrange_pair_index(slow, pairs, si) &&
+                fi == si) {
+                met = true;
+                break;
+            }
+        }
+        if (!met)
+            return std::nullopt;
+        slow = head;
+        for (std::size_t n = 0; n < cap; ++n) {
+            std::size_t si = 0;
+            std::size_t fi = 0;
+            if (!inrange_pair_index(slow, pairs, si) || !inrange_pair_index(fast, pairs, fi))
+                return std::nullopt;
+            if (si == fi)
+                return si;
+            const auto ns = advance(slow);
+            const auto nf = advance(fast);
+            if (!ns || !nf)
+                return std::nullopt;
+            slow = *ns;
+            fast = *nf;
+        }
+        return std::nullopt;
+    }
     // Format a value to string (same formatting as io_print_val but returns string)
     // Issue #4530: gate every string slot reachable from a format payload
     // (pairs / vectors) before fmt_val_to_string reads a byte. Returns true
@@ -358,21 +427,29 @@ namespace {
                 std::print(stdout, ")");
                 return;
             }
-            // Walk the chain to see if it's a proper list
+            // Walk the chain to see if it's a proper list. Floyd (#4965)
+            // names the cycle entrance in linear time and no extra heap.
+            // Stop when that pair is reached again. Do not recurse into it.
+            // Finite proper and dotted lists have no entrance, so their
+            // spelling is unchanged. Every car is still printed at depth+1.
+            const auto cycle_at = list_spine_cycle_index(v, pairs);
             std::vector<EvalValue> elements;
             elements.push_back(pairs[idx].car);
             auto next = cdr;
-            bool proper = true;
+            bool cycle = false;
+            bool lap = cycle_at && *cycle_at == idx;
             while (!is_end_of_list(next)) {
-                if (!is_pair(next)) {
-                    proper = false;
+                if (!is_pair(next))
                     break;
-                }
                 auto nidx = as_pair_idx(next);
-                if (nidx >= pairs.size()) {
-                    proper = false;
+                if (nidx >= pairs.size())
+                    break;
+                if (cycle_at && nidx == *cycle_at && lap) {
+                    cycle = true;
                     break;
                 }
+                if (cycle_at && nidx == *cycle_at)
+                    lap = true;
                 elements.push_back(pairs[nidx].car);
                 next = pairs[nidx].cdr;
             }
@@ -383,7 +460,9 @@ namespace {
                 io_print_val(elements[i], heap, pairs, quote, depth + 1, keywords, vectors,
                              symbols);
             }
-            if (!is_end_of_list(next)) {
+            if (cycle) {
+                std::print(stdout, " ...");
+            } else if (!is_end_of_list(next)) {
                 std::print(stdout, " . ");
                 io_print_val(next, heap, pairs, quote, depth + 1, keywords, vectors, symbols);
             }
@@ -431,32 +510,57 @@ namespace {
     // before any byte is copied or reaches stdout when a pair, vector, or
     // string slot reachable from v is a foreign tenant's mint; the in-range
     // helpers record the IsolationDeny (op = the prim name). Mirrors the
-    // io_print_val shape (same string/pair/vector arms, same depth bound;
-    // keywords and hashes print no payload). Soft/Off the helpers return
-    // true before any stamp load, so this stays a pure structural walk.
-    // Heaps arrive as spans from the friend registration lambdas.
+    // io_print_val shape (same string/pair/vector arms; keywords and hashes
+    // print no payload). Soft/Off the helpers return true before any stamp
+    // load, so this stays a pure structural walk.
+    //
+    // Issue #4965: a proper/dotted list spine is not nesting. io_print_val
+    // prints every car at the same depth+1, then the dotted tail at that
+    // same depth. Recursing on cdr with depth+1 stopped the check at 64
+    // while the printer still emitted later cars. The spine is iterative
+    // at a constant depth. Floyd finds the cycle entrance in linear time
+    // with no extra heap; this walk and the printer stop on the second
+    // visit. depth>64 is only the nested truncation, where the printer
+    // writes "..." and does not read a byte. Heaps arrive as spans from
+    // the friend registration lambdas.
     static bool io_walk_tenant_allows(const EvalValue& v, Evaluator& ev,
                                       ::aura::compiler::StringPoolView heap,
                                       std::span<const Pair> pairs,
                                       std::span<const std::vector<EvalValue>> vectors,
                                       std::string_view op, int depth) {
         if (depth > 64)
-            return true; // the printer truncates here anyway
+            return true; // nested truncation: printer emits "..." and reads no byte
         if (is_string(v)) {
             auto idx = as_string_idx(v);
             return idx >= heap.size() ||
                    ev.inrange_string_tenant_allows(idx, /*required_effects=*/0, op);
         }
         if (is_pair(v) && !pairs.empty()) {
-            auto idx = as_pair_idx(v);
-            if (idx >= pairs.size())
-                return true; // printer prints <pair[n]> placeholder only
-            if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
-                                               /*required_effects=*/0, op))
-                return false;
-            if (!io_walk_tenant_allows(pairs[idx].car, ev, heap, pairs, vectors, op, depth + 1))
-                return false;
-            return io_walk_tenant_allows(pairs[idx].cdr, ev, heap, pairs, vectors, op, depth + 1);
+            // Issue #4965: same Floyd entrance as io_print_val. Cars and a
+            // dotted tail are checked at depth+1. Soft/Off pays no stamp
+            // load: inrange_* returns before the stamp arrays are read.
+            const auto cycle_at = list_spine_cycle_index(v, pairs);
+            EvalValue node = v;
+            bool lap = false;
+            while (is_pair(node)) {
+                const auto idx = as_pair_idx(node);
+                if (idx >= pairs.size())
+                    return true; // printer placeholder only, no payload bytes
+                if (cycle_at && idx == *cycle_at && lap)
+                    return true; // second visit: printer emits "..." and stops
+                if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                                   /*required_effects=*/0, op))
+                    return false;
+                if (!io_walk_tenant_allows(pairs[idx].car, ev, heap, pairs, vectors, op,
+                                           depth + 1))
+                    return false;
+                if (cycle_at && idx == *cycle_at)
+                    lap = true;
+                node = pairs[idx].cdr;
+            }
+            if (!is_end_of_list(node))
+                return io_walk_tenant_allows(node, ev, heap, pairs, vectors, op, depth + 1);
+            return true;
         }
         if (is_vector(v)) {
             auto idx = as_vector_idx(v);
