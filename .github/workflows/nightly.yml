@@ -125,6 +125,8 @@ jobs:
     steps:
     - uses: actions/checkout@v7
 
+    - uses: ./.github/actions/ci-krb5
+
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
 
@@ -159,6 +161,8 @@ jobs:
       image: ghcr.io/cybrid-systems/aura-ci:v0.1.0
     steps:
     - uses: actions/checkout@v7
+
+    - uses: ./.github/actions/ci-krb5
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
