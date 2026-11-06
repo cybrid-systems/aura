@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 907 | Preferred destination suites |
-| **Total scanned** | **907** | |
+| `tests/core/test_*.cpp` | 908 | Preferred destination suites |
+| **Total scanned** | **908** | |
 
 ### Related artifacts
 
@@ -40,7 +40,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 88 | 88 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 54 | 54 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 132 | 132 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 62 | 62 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 63 | 63 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -315,6 +315,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp`
 - `tests/serve/test_chaos_steal_mutation_gc.cpp`
 - `tests/core/test_check_and_record_wildcard_strip.cpp`
+- `tests/compiler/test_chunk_io.cpp`
 - `tests/core/test_clear_macro_dirty_concurrent.cpp`
 - `tests/compiler/test_clone_provenance_per_evaluator.cpp`
 - `tests/compiler/test_clone_walk_gensym_ceiling.cpp`
@@ -2043,13 +2044,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_workspace_mtx_contention.cpp` (—) [domain_suite, theme_compiler] — AC1: Source cites #2523; residual strategy documented
 
-### `uncategorized` — Uncategorized / mixed (62)
+### `uncategorized` — Uncategorized / mixed (63)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (62)
+#### domain/ (63)
 
 - `tests/core/test_address_bits_scratch.cpp` (—) [domain_suite, theme_core] — AC1: bit_cast round-trips a pointer and an integer address
 - `tests/compiler/test_and_or_error_value.cpp` (—) [domain_suite, theme_compiler] — (#4535 contract: only the UNCAUGHT face prints).
@@ -2059,6 +2060,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_aura_result_error_policy.cpp` (—) [domain_suite, theme_compiler] — test_aura_result_error_policy.cpp — Issues #807 + #808:
 - `tests/compiler/test_bugfix.cpp` (—) [domain_suite, theme_compiler] — Issue #957/#968/#982/#984 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_cascade_impact_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_cascade_impact_batch.cpp — thematic multi-TU batch
+- `tests/compiler/test_chunk_io.cpp` (—) [small, domain_suite, theme_compiler] — AC1: append_fd matches a file larger than one chunk, including 0 and 0xFF
 - `tests/compiler/test_closure_free.cpp` (—) [domain_suite, theme_compiler] — test_closure_free.cpp — Issue #1361: aura_free_closure + ID reuse
 - `tests/compiler/test_compile02_no_dup_imports.cpp` (—) [domain_suite, theme_compiler] — Issue #1857 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_composite_commit_cs_reuse.cpp` (—) [domain_suite, theme_compiler] — AC1: inject type conflict into commit CS → solve_fail + reject

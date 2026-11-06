@@ -13,6 +13,7 @@ module;
 #include "primitives_detail.h"
 #include "security_capabilities.h"
 #include "core/ownership.hh" // #4936 unique_c_ptr
+#include "compiler/chunk_io.hh" // #4936 std::array file chunks
 
 module aura.compiler.evaluator;
 
@@ -146,11 +147,11 @@ std::string Evaluator::resolve_module_path(const std::string& path) const {
     // find its own lib/ wherever it is run from. AURA_PATH stays first.
     {
         static const std::string exe_dir = [] {
-            char buf[4096];
-            const auto n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+            std::array<char, 4096> buf{};
+            const auto n = ::readlink("/proc/self/exe", buf.data(), buf.size() - 1);
             if (n <= 0)
                 return std::string{};
-            std::string exe(buf, static_cast<std::size_t>(n));
+            std::string exe(buf.data(), static_cast<std::size_t>(n));
             const auto slash = exe.rfind('/');
             return slash == std::string::npos ? std::string{} : exe.substr(0, slash);
         }();
@@ -419,18 +420,9 @@ namespace {
             ::close(fd);
             return NofollowRead::OpenFailed;
         }
-        char buf[4096];
-        while (true) {
-            const auto n = ::read(fd, buf, sizeof(buf));
-            if (n < 0) {
-                if (errno == EINTR)
-                    continue;
-                ::close(fd);
-                return NofollowRead::ReadFailed;
-            }
-            if (n == 0)
-                break;
-            out.append(buf, static_cast<std::size_t>(n));
+        if (!aura::compiler::io::append_fd(fd, out)) {
+            ::close(fd);
+            return NofollowRead::ReadFailed;
         }
         ::close(fd);
         return NofollowRead::Ok;

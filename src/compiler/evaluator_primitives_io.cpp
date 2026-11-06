@@ -1420,13 +1420,13 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             const auto mode = ev.effect_sandbox_mode();
             const bool mt = hard_capture_tenant_active() || multi_tenant_env_active();
             if (tenant_host_path_policy_active(mode, mt)) {
-                char link[64];
-                std::snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
-                char buf[4096];
-                const auto nlink = ::readlink(link, buf, sizeof(buf) - 1);
+                std::array<char, 64> link{};
+                std::snprintf(link.data(), link.size(), "/proc/self/fd/%d", fd);
+                std::array<char, 4096> buf{};
+                const auto nlink = ::readlink(link.data(), buf.data(), buf.size() - 1);
                 if (nlink > 0 && buf[0] == '/') {
-                    buf[nlink] = '\0';
-                    const std::string_view target(buf, static_cast<std::size_t>(nlink));
+                    buf[static_cast<std::size_t>(nlink)] = '\0';
+                    const std::string_view target(buf.data(), static_cast<std::size_t>(nlink));
                     const auto base = tenant_host_roots_base();
                     if (path_is_under_root(target, base)) {
                         std::string resolved;

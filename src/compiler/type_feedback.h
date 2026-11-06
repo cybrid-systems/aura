@@ -350,7 +350,7 @@ inline Recorder enter_slow(const EnterInfo& in) {
     auto& t = detail::table();
     std::shared_ptr<Row> row;
     {
-        std::lock_guard lock(t.mu);
+        std::scoped_lock lock(t.mu);
         detail::drop_anonymous_over_cap(t);
         const std::string key = detail::map_key(in);
         auto it = t.rows.find(key);
@@ -545,7 +545,7 @@ inline void reset_name(std::string_view name) {
     if (name.empty())
         return;
     auto& t = detail::table();
-    std::lock_guard lock(t.mu);
+    std::scoped_lock lock(t.mu);
     bool dropped = false;
     for (auto it = t.rows.begin(); it != t.rows.end();) {
         if (detail::name_matches(it->first, name) || detail::name_matches(it->second->name, name)) {
@@ -563,7 +563,7 @@ inline std::string render(std::string_view name) {
     std::vector<std::shared_ptr<Row>> hits;
     {
         auto& t = detail::table();
-        std::lock_guard lock(t.mu);
+        std::scoped_lock lock(t.mu);
         for (auto& [k, row] : t.rows) {
             if (!row)
                 continue;
@@ -653,7 +653,7 @@ inline bool shape_map_from_feedback(std::string_view fn_name, std::uint8_t sourc
     std::shared_ptr<Row> row;
     {
         auto& t = detail::table();
-        std::lock_guard lock(t.mu);
+        std::scoped_lock lock(t.mu);
         auto it = t.rows.find(std::string(fn_name));
         if (it == t.rows.end()) {
             for (auto& [k, cand] : t.rows) {

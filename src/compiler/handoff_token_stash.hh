@@ -54,7 +54,7 @@ struct HandoffTokenStash {
     };
 
     InsertResult insert(aura::orch::HandoffToken tok) {
-        std::lock_guard<std::mutex> lock(mu_);
+        std::scoped_lock lock(mu_);
         InsertResult out;
         if (fifo_.size() >= kHandoffTokenStashCap && !fifo_.empty()) {
             out.evicted = fifo_.front();
@@ -70,7 +70,7 @@ struct HandoffTokenStash {
     }
 
     bool take(const std::string& hash, aura::orch::HandoffToken& out) {
-        std::lock_guard<std::mutex> lock(mu_);
+        std::scoped_lock lock(mu_);
         auto it = by_hash_.find(hash);
         if (it == by_hash_.end())
             return false;
@@ -86,7 +86,7 @@ struct HandoffTokenStash {
     }
 
     bool peek(const std::string& hash, aura::orch::HandoffToken& out) {
-        std::lock_guard<std::mutex> lock(mu_);
+        std::scoped_lock lock(mu_);
         auto it = by_hash_.find(hash);
         if (it == by_hash_.end())
             return false;
@@ -108,22 +108,22 @@ struct HandoffTokenStash {
     }
 
     [[nodiscard]] bool contains(const std::string& hash) const {
-        std::lock_guard<std::mutex> lock(mu_);
+        std::scoped_lock lock(mu_);
         return by_hash_.find(hash) != by_hash_.end();
     }
 
     [[nodiscard]] std::size_t size() const {
-        std::lock_guard<std::mutex> lock(mu_);
+        std::scoped_lock lock(mu_);
         return by_hash_.size();
     }
 
     [[nodiscard]] std::vector<std::string> hashes() const {
-        std::lock_guard<std::mutex> lock(mu_);
+        std::scoped_lock lock(mu_);
         return {fifo_.begin(), fifo_.end()};
     }
 
     std::vector<std::string> drain_hashes() {
-        std::lock_guard<std::mutex> lock(mu_);
+        std::scoped_lock lock(mu_);
         std::vector<std::string> out(fifo_.begin(), fifo_.end());
         fifo_.clear();
         by_hash_.clear();
@@ -149,12 +149,12 @@ struct HandoffRouteTable {
     std::deque<std::string> fifo;
 
     void route(const std::string& hash, void* ev) {
-        std::lock_guard<std::mutex> lock(mu);
+        std::scoped_lock lock(mu);
         by_hash[hash] = ev;
         fifo.push_back(hash);
     }
     void unroute(const std::string& hash) {
-        std::lock_guard<std::mutex> lock(mu);
+        std::scoped_lock lock(mu);
         by_hash.erase(hash);
         for (auto q = fifo.begin(); q != fifo.end(); ++q) {
             if (*q == hash) {
@@ -164,7 +164,7 @@ struct HandoffRouteTable {
         }
     }
     void unroute_all(const std::vector<std::string>& hashes) {
-        std::lock_guard<std::mutex> lock(mu);
+        std::scoped_lock lock(mu);
         for (const auto& h : hashes) {
             by_hash.erase(h);
         }
@@ -178,7 +178,7 @@ struct HandoffRouteTable {
         }
     }
     [[nodiscard]] void* find(const std::string& hash) {
-        std::lock_guard<std::mutex> lock(mu);
+        std::scoped_lock lock(mu);
         auto it = by_hash.find(hash);
         return it == by_hash.end() ? nullptr : it->second;
     }
