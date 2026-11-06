@@ -41,7 +41,7 @@ import aura.compiler.hardware_backend;
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 using types::as_bool;
 using types::as_cell_id;

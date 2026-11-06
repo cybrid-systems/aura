@@ -84,7 +84,7 @@ namespace {
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 
 // Issue #918 Phase 1: explicit using-declarations (no `using namespace`).
 using types::as_bool;

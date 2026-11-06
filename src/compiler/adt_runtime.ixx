@@ -47,7 +47,7 @@ struct AdtCtorEntry {
 // Per-Evaluator ADT runtime (replaces the old global table + registration logic).
 export class AdtRuntime {
 public:
-    using RegisterFn = std::function<void(std::string, PrimFn)>;
+    using RegisterFn = std::function_ref<void(std::string, PrimFn)>;
 
     // Register the ADT-related primitives/ctors via the callback.
     // Wiring mechanism complete (Step 2.3 FFI pattern); population still triggered

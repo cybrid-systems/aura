@@ -142,7 +142,7 @@ std::atomic<std::uint64_t> g_occurrence_goals_live_truncated_total{0};
 std::atomic<std::uint32_t> g_occurrence_goals_live_wired{1};
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 using ModulePathResolver = std::function<std::string(const std::string&)>;
 
 // Issue #918 Phase 1: explicit using-declarations (no `using namespace`).

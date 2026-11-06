@@ -1665,6 +1665,8 @@ aura_add_issue_test(test_chunk_io)
 aura_add_issue_test(test_handoff_stash)
 # Issue #4936: linear walks and pre_scan quote hygiene actually run.
 aura_add_issue_test(test_walk_runtime)
+# Issue #4936: function_ref registration does not store the callback.
+aura_add_issue_test(test_prim_registrar_ref)
 target_include_directories(test_opcode_reflect PRIVATE src)
 target_compile_options(test_opcode_reflect PRIVATE ${AURA_REFLECTION_FLAG} -Wall
                        -Wno-sign-compare -Wno-unused-local-typedefs)

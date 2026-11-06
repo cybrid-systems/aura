@@ -90,7 +90,7 @@ Evaluator::eval_program_for_pool(const aura::ast::StringPool* pool) const {
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
-using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
 using MakeErrorVal = std::function<EvalValue(const std::string&, const std::string&)>;
 
 // Issue #918 Phase 1: explicit using-declarations (no `using namespace`).
