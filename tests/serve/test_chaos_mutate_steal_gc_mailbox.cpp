@@ -421,6 +421,8 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
     // #2755 four-arm set; production readiness binds them too.
     const auto res_envframe0 = aura::serve::steal_safety_residual_envframe_lag_total_v_read();
     const auto res_life0 = aura::serve::steal_safety_residual_lifetime_proof_reject_total_v_read();
+    // #3002: this pass's wait histogram, not a max left by an earlier test.
+    const auto wait_snap = aura::serve::mf_mailbox::snapshot_under_boundary_wait();
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
 
@@ -764,9 +766,10 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
     // Soft / PR default: metric-only, no abort. Production-like soak
     // (residual_zero_gate / prod_gate) aborts.
     {
-        const auto p99 =
+        const auto p99_process =
             aura::serve::mf_mailbox::g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.load(
                 std::memory_order_relaxed);
+        const auto p99 = aura::serve::mf_mailbox::under_boundary_wait_p99_since(wait_snap);
         const auto slo = aura::compiler::mailbox_under_boundary_wait_slo_us();
         const auto cancel1 =
             aura::serve::mf_mailbox::g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(
@@ -777,9 +780,10 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
         const auto d_ff = ff1 - mb_ff0;
         const bool p99_hot = slo != 0 && p99 >= slo;
         const bool held_still = aura_evaluator_mutation_boundary_held() != 0;
-        std::println("  #3002 mailbox hold SLO: p99={} slo={} cancel_delta={} "
+        std::println("  #3002 mailbox hold SLO: p99={} p99_process={} slo={} cancel_delta={} "
                      "forced_fail_closed_delta={} held_still={} (gate={})",
-                     p99, slo, d_cancel, d_ff, held_still ? 1 : 0, residual_zero_gate ? 1 : 0);
+                     p99, p99_process, slo, d_cancel, d_ff, held_still ? 1 : 0,
+                     residual_zero_gate ? 1 : 0);
         const bool soak_abort = residual_zero_gate || prod_gate;
         if (soak_abort && aura::compiler::typed_audit::production_defaults_active()) {
             CHECK(!(p99_hot && d_cancel == 0 && d_ff == 0),

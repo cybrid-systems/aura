@@ -60,9 +60,10 @@ contracts, so `cmake/clang_contract_shim.h` expands `pre` / `post` / `contract_a
   Spellings pinned by an existing test stay written out (`#4144` `&fr.pool_`,
   `#3647` closure slots, `#3180` cover slots). FFI function pointers, integer
   cells, and densify interior slots in `ffi_hot_path` and `ffi_primitives`
-  go through `src/compiler/ffi_addr.hh`. The same shapes still written with
-  a raw cast in `aura_jit.cpp`, `aura_jit_runtime.cpp`, and `aura_jit_bridge.cpp`
-  are still open, not exempt.
+  go through `src/compiler/ffi_addr.hh`, and so do the address-sized casts in
+  `aura_jit.cpp`, `aura_jit_runtime.cpp`, and `aura_jit_bridge.cpp`. A C-string
+  byte scan (`unsigned char*`) stays a direct cast: it is not an address cell.
+  The JIT version word uses `jit_atomic_u64_slot` because the slot is an atomic.
 - T3 **[hard]** No `const_cast` (`cppcoreguidelines-pro-type-const-cast`). Existing
   sites are not exempt because they are numerous. A cast that drops const and then
   writes is still a defect unless the object is already mutable or a test pins the

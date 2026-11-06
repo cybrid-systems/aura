@@ -833,6 +833,57 @@ inline void note_mailbox_under_boundary_wait_sample(std::uint64_t us, bool dropp
     maybe_mailbox_defer_slo_hold_cancel();
 }
 
+// Process-lifetime histogram. A later soak must judge samples it added,
+// not a max left by an earlier test in the same process (#3002).
+struct UnderBoundaryWaitSnap {
+    std::uint64_t counts[MultiFiberMailboxStats::kUnderBoundaryWaitHistBuckets]{};
+    std::uint64_t max_us = 0;
+};
+
+[[nodiscard]] inline UnderBoundaryWaitSnap snapshot_under_boundary_wait() noexcept {
+    UnderBoundaryWaitSnap s;
+    for (std::size_t i = 0; i < MultiFiberMailboxStats::kUnderBoundaryWaitHistBuckets; ++i) {
+        s.counts[i] = g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[i].load(
+            std::memory_order_relaxed);
+    }
+    s.max_us = g_mf_mailbox_stats.mailbox_under_boundary_wait_us_max.load(std::memory_order_relaxed);
+    return s;
+}
+
+// p99 upper edge of samples recorded after snap. No new samples → 0.
+// The open bucket (≥100ms) uses a max that rose during the window; if
+// the max did not rise, a new open-bucket sample is reported as 100ms,
+// which is still at the SLO edge and does not borrow an older spike.
+[[nodiscard]] inline std::uint64_t
+under_boundary_wait_p99_since(const UnderBoundaryWaitSnap& snap) noexcept {
+    std::uint64_t counts[MultiFiberMailboxStats::kUnderBoundaryWaitHistBuckets]{};
+    std::uint64_t total = 0;
+    for (std::size_t i = 0; i < MultiFiberMailboxStats::kUnderBoundaryWaitHistBuckets; ++i) {
+        const auto now = g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[i].load(
+            std::memory_order_relaxed);
+        counts[i] = now >= snap.counts[i] ? now - snap.counts[i] : 0;
+        total += counts[i];
+    }
+    if (total == 0)
+        return 0;
+    static constexpr std::uint64_t kEdges[4]{100, 1'000, 10'000, 100'000};
+    const auto now_max =
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_us_max.load(std::memory_order_relaxed);
+    const auto open_edge =
+        counts[4] == 0 ? std::uint64_t{0} : (now_max > snap.max_us ? now_max : std::uint64_t{100'000});
+    const auto target99 = (total * 99 + 99) / 100;
+    std::uint64_t cum = 0;
+    for (std::size_t i = 0; i < 4; ++i) {
+        cum += counts[i];
+        if (cum >= target99)
+            return kEdges[i];
+    }
+    cum += counts[4];
+    if (cum >= target99)
+        return open_edge;
+    return open_edge;
+}
+
 // Issue #2958: under-boundary wait / open-window age ≥ SLO → request
 // hold-budget cancel on the live outermost holder (production defaults).
 // Soft: breach_observe + soft_observe only. Under-SLO / no open window:
