@@ -470,13 +470,11 @@ extern "C" void aura_jit_set_macro_deopt_restore_fn(std::uint64_t (*fn)() noexce
 // trick is used by drop_pair / drop_cell / drop_closure for the
 // pair/cell/closure raw pointer handling.
 extern "C" void aura_jit_pin_linear_root(std::uint64_t obj_id) noexcept {
-    aura::core::lifetime::pin_linear_root(
-        aura::compiler::ptr_from_i64(obj_id));
+    aura::core::lifetime::pin_linear_root(aura::compiler::ptr_from_i64(obj_id));
 }
 
 extern "C" void aura_jit_unpin_linear_root(std::uint64_t obj_id) noexcept {
-    aura::core::lifetime::unpin_linear_root(
-        aura::compiler::ptr_from_i64(obj_id));
+    aura::core::lifetime::unpin_linear_root(aura::compiler::ptr_from_i64(obj_id));
 }
 
 // Issue #2100: note deopt round-trip for a func_id side-table entry.
@@ -4900,8 +4898,8 @@ void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t), int32_
 // Issue #4387: product runtime.c 2-arg aura_register_fn calls this weak
 // hook. Forward into the strong 5-arg registrar (zero local/arg/env).
 void aura_note_aot_constructor_jit_fn(int64_t func_id, int64_t fn_ptr) {
-    auto* fn =
-        aura::compiler::fn_from_bits<int64_t (*)(int64_t*, uint32_t)>(static_cast<std::uintptr_t>(fn_ptr));
+    auto* fn = aura::compiler::fn_from_bits<int64_t (*)(int64_t*, uint32_t)>(
+        static_cast<std::uintptr_t>(fn_ptr));
     aura_register_fn(func_id, fn, 0, 0, 0);
 }
 

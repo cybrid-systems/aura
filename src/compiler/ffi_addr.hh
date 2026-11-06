@@ -66,7 +66,8 @@ template <class Fn> [[nodiscard]] inline std::int64_t i64_from_fn(Fn fn) noexcep
 
 // Pointer-sized word at a byte offset inside an FFI buffer. Densify
 // rewrites that word; the offset is the caller's layout, not this helper's.
-template <class Byte> [[nodiscard]] inline void** pointer_slot_at(Byte* base, std::size_t offset) noexcept {
+template <class Byte>
+[[nodiscard]] inline void** pointer_slot_at(Byte* base, std::size_t offset) noexcept {
     static_assert(sizeof(Byte) == 1);
     return reinterpret_cast<void**>(base + offset);
 }

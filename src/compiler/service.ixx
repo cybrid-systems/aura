@@ -3609,20 +3609,33 @@ public:
             }
         }
         // Phase 4: parse directly into FlatAST, evaluator reads FlatAST directly.
-        // Arena-allocate FlatAST/Pool so closures can reference them across calls.
-        auto alloc = arena_.allocator();
+        // A pure expression (`(+ 1 1)`) does not escape its AST. Allocating
+        // each one in the service monotonic arena kept every dead tree until
+        // the service died (chaos soak, ~50MB/s). Reuse one heap FlatAST /
+        // StringPool and destroy it on the next pure eval. A tree that
+        // defines, quotes a non-literal, or allocates a closure is retained
+        // for the life of the service — those objects stay reachable.
         aura::ast::StringPool* pool_ptr = nullptr;
         aura::ast::FlatAST* flat_ptr = nullptr;
         // Issue #4070: stack pool_ptr / flat_ptr must not stay in
         // external_root_slots_for_densify_ after eval returns. EXEMPT
-        // (no slot). The objects live in current_ast_ / current_pool_
-        // and are above the small-pool limit. set-code still covers
-        // its member addresses. Soft note_intermediate pushes any
-        // non-null slot, so this path must not pass one either.
-        pool_ptr = arena_.create_with_cover<aura::ast::StringPool>(
-            nullptr, "stack-cover-dies-at-return", alloc);
-        flat_ptr = arena_.create_with_cover<aura::ast::FlatAST>(
-            nullptr, "stack-cover-dies-at-return", alloc);
+        // (no slot). set-code still covers its member addresses.
+        release_dead_oneshot_eval_ast();
+        const auto closures_before_oneshot = evaluator_.closures_size();
+        recyclable_eval_pool_ = std::make_unique<aura::ast::StringPool>();
+        recyclable_eval_flat_ = std::make_unique<aura::ast::FlatAST>();
+        recyclable_eval_escaped_ = false;
+        pool_ptr = recyclable_eval_pool_.get();
+        flat_ptr = recyclable_eval_flat_.get();
+        struct NoteOneshotEscape {
+            CompilerService* self;
+            const aura::ast::FlatAST* flat;
+            std::size_t closures_before;
+            ~NoteOneshotEscape() {
+                if (self != nullptr && flat != nullptr)
+                    self->note_oneshot_eval_escaped(*flat, closures_before);
+            }
+        } note_oneshot_escape{this, flat_ptr, closures_before_oneshot};
         // Issue #4901: when this eval returns, pin the macro view of its
         // flat. A procedure it defined, called by a later eval after a
         // macro was redefined, keeps the definition in effect here.
@@ -18697,6 +18710,46 @@ private:
 
     // Persistent AST for mutation workflows (set_code / typed_mutate).
     aura::ast::FlatAST* current_ast_ = nullptr;
+    // One-shot eval AST. Destroyed on the next pure eval. Retained when
+    // the tree can still be referenced (define / lambda / closure).
+    std::unique_ptr<aura::ast::FlatAST> recyclable_eval_flat_;
+    std::unique_ptr<aura::ast::StringPool> recyclable_eval_pool_;
+    bool recyclable_eval_escaped_ = false;
+    std::vector<std::unique_ptr<aura::ast::FlatAST>> retained_eval_flats_;
+    std::vector<std::unique_ptr<aura::ast::StringPool>> retained_eval_pools_;
+
+    void release_dead_oneshot_eval_ast() {
+        if (!recyclable_eval_flat_)
+            return;
+        if (!recyclable_eval_escaped_ && recyclable_eval_flat_.get() == current_ast_) {
+            recyclable_eval_flat_.reset();
+            recyclable_eval_pool_.reset();
+        } else {
+            retained_eval_flats_.push_back(std::move(recyclable_eval_flat_));
+            retained_eval_pools_.push_back(std::move(recyclable_eval_pool_));
+        }
+        recyclable_eval_escaped_ = false;
+    }
+
+    void note_oneshot_eval_escaped(const aura::ast::FlatAST& flat, std::size_t closures_before) {
+        if (evaluator_.closures_size() != closures_before) {
+            recyclable_eval_escaped_ = true;
+            return;
+        }
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            switch (flat.get(id).tag) {
+            case aura::ast::NodeTag::LiteralInt:
+            case aura::ast::NodeTag::LiteralFloat:
+            case aura::ast::NodeTag::LiteralString:
+            case aura::ast::NodeTag::Variable:
+            case aura::ast::NodeTag::Call:
+                break;
+            default:
+                recyclable_eval_escaped_ = true;
+                return;
+            }
+        }
+    }
     aura::ast::StringPool* current_pool_ = nullptr;
 
     // Issue #147: post-mutation invariant check mode. Default
