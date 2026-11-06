@@ -18,13 +18,13 @@
 
 #include "core/ownership.hh" // #4936 unique_file
 
-#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <format>
 #include <filesystem>
 #include <mutex>
 #include <string>
@@ -60,11 +60,8 @@ inline std::string default_run_id() {
     const std::time_t t = std::time(nullptr);
     std::tm tm{};
     ::gmtime_r(&t, &tm);
-    std::array<char, 48> buf;
-    std::snprintf(buf.data(), buf.size(), "%04d%02d%02dT%02d%02d%02dZ-%d", tm.tm_year + 1900,
-                  tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec,
-                  static_cast<int>(::getpid()));
-    return buf.data();
+    return std::format("{:04}{:02}{:02}T{:02}{:02}{:02}Z-{}", tm.tm_year + 1900, tm.tm_mon + 1,
+                       tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, static_cast<int>(::getpid()));
 }
 
 inline bool log_enabled() noexcept {
@@ -114,9 +111,7 @@ inline void json_escape_into(std::string& out, std::string_view in) {
                 break;
             default:
                 if (c < 0x20) {
-                    char b[8];
-                    std::snprintf(b, sizeof b, "\\u%04x", c);
-                    out += b;
+                    out += std::format("\\u{:04x}", static_cast<unsigned>(c));
                 } else {
                     out.push_back(static_cast<char>(c));
                 }
@@ -173,10 +168,8 @@ inline std::string log_append(const Entry& e) {
     json_escape_into(line, e.old_src);
     line += ",\"new\":";
     json_escape_into(line, e.new_src);
-    char dur[32];
-    std::snprintf(dur, sizeof dur, "%.3f", e.dur_ms);
     line += ",\"dur_ms\":";
-    line += dur;
+    line += std::format("{:.3f}", e.dur_ms);
     line += "}\n";
     std::error_code ec;
     const std::filesystem::path p(s.path);
