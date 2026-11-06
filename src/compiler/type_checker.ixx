@@ -13,8 +13,7 @@ module;
 #include <utility>
 #include <vector>
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
-#include "compiler/observability_metrics.h"          // Issue #2262: g_partial_cs_* atomics
-#include "compiler/ownership_escape_lowering_gate.h" // Issue #2263
+#include "compiler/observability_metrics.h" // Issue #2262: g_partial_cs_* atomics
 #include "compiler/typed_mutation_audit.h" // Issue #2277: TypedMutationAuditCounters delta_timeout_*
 
 export module aura.compiler.type_checker;
@@ -76,6 +75,7 @@ export inline constexpr int kBidirectionalQuoteWalkIssue = 3700;
 // tag; use fresh_var. Soft/Production same fresh_var hole.
 export inline constexpr int kBidirectionalEmptyTypeAnnotationNoDynamicIssue = 3830;
 
+// NOLINTNEXTLINE(misc-include-cleaner) — NodeTag comes from import aura.core.
 export [[nodiscard]] constexpr bool is_bidirectional_tag_covered(aura::ast::NodeTag tag) noexcept {
     using T = aura::ast::NodeTag;
     switch (tag) {
@@ -120,6 +120,7 @@ export [[nodiscard]] constexpr bool is_bidirectional_tag_covered(aura::ast::Node
 }
 
 consteval bool bidirectional_coverage_table_complete() {
+    // NOLINTNEXTLINE(misc-include-cleaner) — kNodeTagMax comes from import aura.core.
     for (std::uint32_t i = 1; i <= aura::ast::kNodeTagMax; ++i) {
         if (i == 0x0C)
             continue; // reserved gap, not a mutate-reachable tag
