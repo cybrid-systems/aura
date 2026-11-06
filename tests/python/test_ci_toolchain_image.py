@@ -20,7 +20,7 @@ RUNTIME = "ghcr.io/cybrid-systems/aura:"
 
 # Jobs that compile Aura inside the toolchain container.
 PINNED = {
-    ".github/workflows/ci.yml": 7,
+    ".github/workflows/ci.yml": 8,
     ".github/workflows/dist.yml": 1,
     ".github/workflows/nightly.yml": 2,
     ".github/workflows/release.yml": 1,
@@ -29,7 +29,7 @@ PINNED = {
 # downloaded binary, so ci.yml has one fewer action use than image pins.
 KRB5_ACTION = "uses: ./.github/actions/ci-krb5"
 KRB5_USES = {
-    ".github/workflows/ci.yml": 6,
+    ".github/workflows/ci.yml": 7,
     ".github/workflows/dist.yml": 1,
     ".github/workflows/nightly.yml": 2,
     ".github/workflows/release.yml": 1,
@@ -56,6 +56,20 @@ class CiToolchainImage(unittest.TestCase):
         for rel, count in KRB5_USES.items():
             text = (ROOT / rel).read_text()
             self.assertEqual(text.count(KRB5_ACTION), count, rel)
+
+    def test_scan_deps_is_the_matching_llvm_release(self) -> None:
+        script = (ROOT / "scripts" / "ci" / "install_clang_scan_deps.sh").read_text()
+        self.assertIn("llvmorg-23.1.5", script)
+        self.assertIn("392dfff97d29b59d77e5cac6d4b6ef2585fe7117", script)
+        self.assertIn("LLVM-23.1.5-Linux-X64.tar.xz", script)
+        self.assertIn("LLVM-23.1.5-Linux-ARM64.tar.xz", script)
+        self.assertNotIn("clang-tools-22", script)
+        self.assertNotIn("dev:v1.1.1", script)
+        gate = (WORKFLOWS / "ci.yml").read_text()
+        self.assertIn("uses: ./.github/actions/clang-scan-deps", gate)
+        self.assertIn("CMAKE_CXX_COMPILER_CLANG_SCAN_DEPS=/usr/local/bin/clang-scan-deps", gate)
+        self.assertIn("runs-on: ubuntu-24.04-arm", gate)
+        self.assertIn("clang-module-arm64", gate)
 
     def test_runtime_image_is_not_the_toolchain(self) -> None:
         for path in (ROOT / "templates").rglob("ci.yml"):
