@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 911 | Preferred destination suites |
-| **Total scanned** | **911** | |
+| `tests/core/test_*.cpp` | 912 | Preferred destination suites |
+| **Total scanned** | **912** | |
 
 ### Related artifacts
 
@@ -38,7 +38,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 28 | 28 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 62 | 62 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 88 | 88 | P2 — link-profile heavy; migrate AC smoke first |
-| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 54 | 54 | P2 — small-medium; soa_batch precedent |
+| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 55 | 55 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 132 | 132 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 64 | 64 | P3 — review case-by-case |
 
@@ -881,6 +881,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_replace_pattern_allow_macro_unify.cpp`
 - `tests/compiler/test_replace_pattern_multi_match_nodeid_stability.cpp`
 - `tests/compiler/test_replace_pattern_no_match_no_leak.cpp`
+- `tests/compiler/test_replace_subtree_capture.cpp`
 - `tests/compiler/test_replace_subtree_new_body_hygiene.cpp`
 - `tests/compiler/test_replace_value_audit_consistency.cpp`
 - `tests/compiler/test_require_effect_auto_isolation.cpp`
@@ -1845,13 +1846,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workload_adaptive_relower.cpp` (—) [domain_suite, theme_compiler] — AC1: default base=8 compatible with #2032 (no forced signals)
 - `tests/compiler/test_write_string_escape.cpp` (—) [domain_suite, theme_compiler] — AC1: (write "a\"b") → "a\"b" under default JIT path
 
-### `shape_soa` — Shape / SoA / column layout (54)
+### `shape_soa` — Shape / SoA / column layout (55)
 
 **Target:** tests/core/test_soa_batch.cpp (no move needed)
 
 **Priority:** P2 — small-medium; soa_batch precedent
 
-#### domain/ (54)
+#### domain/ (55)
 
 - `tests/compiler/test_alloc_block_seal_last.cpp` (—) [domain_suite, theme_compiler] — AC1: finalize_last_blocks / finalize_soa_module / #2820 cites
 - `tests/compiler/test_apply_closure_envframe_soa.cpp` (—) [domain_suite, theme_compiler] — Issue #1365/#1475/#1511/#1626/#1632/#1660 (#1978 renamed): issue# moved from filename to header.
@@ -1880,6 +1881,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_query_find_by_define.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_query_find_by_define.cpp --
 - `tests/core/test_raii_guard_flatast_lifetime.cpp` (—) [domain_suite, theme_core] — AC1: scoped StructuralMutationGuard / ReaderLockGuard work
 - `tests/core/test_region_dense_atomic.cpp` (—) [domain_suite, theme_core] — AC1: concurrent writer + reader does not tear dense uint8 cells
+- `tests/compiler/test_replace_subtree_capture.cpp` (—) [small, domain_suite, theme_compiler] — AC1: a free var bound by an outer lambda or let is reported once
 - `tests/core/test_restamp_lazy_align_atomic.cpp` (—) [domain_suite, theme_core] — AC1: flag is atomic (store/load with acquire/release)
 - `tests/compiler/test_self_func_active_invariant.cpp` (—) [domain_suite, theme_compiler] — AC1: source helpers + static_assert + #2826 cites
 - `tests/core/test_set_workspace_flat.cpp` (—) [domain_suite, theme_core] — Issue #1729 (#1978 renamed): issue# moved from filename to header.
