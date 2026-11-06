@@ -151,6 +151,10 @@ def main() -> int:
     #      the release-asset upload step.
     # ============================================================
     must("chaos-soak-hard-gate-2722", "AC4", release)
+    # The tarball build uses build_repro/. The soak binary is built from
+    # the default build directory, so the release job must configure that
+    # tree before the gate. Static coverage is not the hard gate.
+    must("python3 build.py configure", "AC4", release)
     # Tag push trigger.
     must_match(
         r"tags:\s*\n\s*-\s*\"v\*\"",
@@ -162,6 +166,12 @@ def main() -> int:
     # release assets upload.
     upload_step = release.find("softprops/action-gh-release")
     chaos_step_pos = release.find("chaos-soak-hard-gate-2722")
+    configure_step_pos = release.find("python3 build.py configure")
+    if configure_step_pos == -1 or chaos_step_pos == -1 or configure_step_pos >= chaos_step_pos:
+        fails.append(
+            "AC4: python3 build.py configure must PRECEDE chaos-soak-hard-gate-2722 "
+            "(the soak binary is built from the default build, not build_repro/)"
+        )
     if chaos_step_pos == -1 or upload_step == -1:
         fails.append(
             "AC4: chaos-soak-hard-gate-2722 step + softprops/action-gh-release step must both be present in release.yml"

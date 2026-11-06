@@ -28,6 +28,16 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           ./scripts/tools/release.sh "$VERSION"  # #4907: was ./scripts/release.sh (missing)
 
+      # release.sh configures build_repro/ for the tarball. The chaos SOAK
+      # hard gate builds and runs test_chaos_mutate_steal_gc_mailbox from
+      # the default build directory. Configure that tree here, in Release,
+      # so the next step executes the soak instead of stopping on a missing
+      # CMakeCache after static coverage.
+      - name: Configure the build the chaos SOAK hard gate runs
+        env:
+          AURA_BUILD_TYPE: Release
+        run: python3 build.py configure
+
       # Issue #2722: RELEASE chaos SOAK hard deploy gate. Required for
       # any tag / release candidate that claims multi-fiber mutation
       # safety. Runs the full SOAK (300s / 8 workers / 256 fibers)
