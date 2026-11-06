@@ -24,6 +24,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 EV = "src/compiler/evaluator.ixx"
+EV_PURE = "src/compiler/evaluator_pure.ixx"
 TEST = "tests/compiler/test_primitives_hotpath_registry_slo.cpp"
 BUILD = "build.py"
 GF = "scripts/coverage/simple_check_grandfather.txt"
@@ -44,6 +45,7 @@ def main() -> int:
             fails.append(f"{label}: missing {n!r}")
 
     ev = _read(EV)
+    pure = _read(EV_PURE)
     test = _read(TEST)
     build = _read(BUILD)
     gf = _read(GF)
@@ -51,22 +53,27 @@ def main() -> int:
 
     must("Issue #4261", "AC1 cite", ev)
     must("kPrimFnNoStdFunctionIssue = 4261", "AC1 stamp", ev)
-    must("uses_std_function", "AC1 API", ev)
-    must("uses_sbo_trampoline", "AC1 SBO API", ev)
-    must("kSboBytes", "AC1 SBO size", ev)
-    must("bind_callable", "AC2 Soft bind", ev)
+    must("uses_std_function", "AC1 API", pure)
+    must("uses_sbo_trampoline", "AC1 SBO API", pure)
+    must("kSboBytes", "AC1 SBO size", pure)
+    must("bind_callable", "AC2 Soft bind", pure)
+    must("std::invocable<", "AC1 callable constraint", pure)
 
-    prim_pos = ev.find("export class PrimFn")
+    prim_pos = pure.find("export class PrimFn")
     if prim_pos < 0:
-        fails.append("AC1: PrimFn missing")
+        fails.append("AC1: PrimFn missing from evaluator_pure")
     else:
-        prim_end = ev.find("kPrimFnNoStdFunctionIssue", prim_pos)
-        body = ev[prim_pos:prim_end] if prim_end > prim_pos else ev[prim_pos : prim_pos + 4000]
+        prim_end = pure.find("} // namespace aura::compiler", prim_pos)
+        body = pure[prim_pos:prim_end] if prim_end > prim_pos else pure[prim_pos : prim_pos + 8000]
         body_code = re.sub(r"//[^\n]*", "", body)
         if "std::function<" in body_code:
             fails.append("AC1: PrimFn still has std::function member/usage")
         if "fn_" in body_code and "std::function" in body:
             fails.append("AC1: residual fn_ std::function field")
+    if "using PrimFn = std::function" in _read("src/compiler/ffi_primitives.ixx") or "using PrimFn = std::function" in _read(
+        "src/compiler/adt_runtime.ixx"
+    ):
+        fails.append("AC1: FFI/ADT still mirror PrimFn as std::function")
 
     must("hot_timing_held_", "AC3 finalize wrap", ev)
     must("name_cstr", "AC3 SBO capture", ev)

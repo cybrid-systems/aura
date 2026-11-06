@@ -31,14 +31,12 @@ export module aura.compiler.ffi_primitives;
 import std;
 import aura.core.ast;
 import aura.compiler.value;
+import aura.compiler.evaluator_pure;
 
 namespace aura::compiler {
 
-// Mirror of aura::compiler::PrimFn (defined in
-// evaluator.ixx). To avoid the cyclic import, we
-// re-declare the same alias here. The compiler enforces
-// that the types are compatible at the call site.
-using PrimFn = std::function<types::EvalValue(std::span<const types::EvalValue>)>;
+// PrimFn is the owning SBO callable from evaluator_pure. A std::function
+// alias here re-erased every c-* registration.
 
 // Issue #4553: c-func signature limits; must equal kFfiMaxIntSlots /
 // kFfiMaxSseSlots in evaluator_pure.ixx (the call path's slot counts).
