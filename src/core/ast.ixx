@@ -6607,7 +6607,19 @@ public:
         contract_assert(static_cast<bool>(guard));
         const auto rolled = rollback_to_size(mutation_log_checkpoint);
         SoAWriteGuard soa(this);
-        restore_children_locked(std::move(children_snapshot));
+        // Issue #4937: ast:restore's assign_from_image installs a smaller
+        // flat, then a production guard deny (a density-streak latch from
+        // an earlier boundary's exit relower — a primitive call such as
+        // member lowers through the general Call path and leaves
+        // unannotated CastOps) runs this abort. The entry children
+        // snapshot still names nodes of the pre-restore flat. Installing
+        // it onto the image publishes child ids past size(), and the next
+        // lower_flat_expr hits the node-id contract. A snapshot longer
+        // than the live flat is not a pre-image of these columns.
+        if (children_snapshot.size() > size())
+            children_snapshot.clear();
+        else
+            restore_children_locked(std::move(children_snapshot));
         // Issue #3865: dirty SoA restored with the topology.
         restore_dirty_soa(std::move(dirty_soa_snapshot));
         // Issue #4076: failed unstamp must not leave marker_=User against
