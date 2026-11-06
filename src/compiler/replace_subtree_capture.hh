@@ -1,26 +1,31 @@
 #pragma once
 
-// Issue #4936 B4 / #142: replace-subtree capture and the small rollback printer.
+// Issue #4936 / #142: replace-subtree capture and the small rollback printer.
 // Both used to be local std::function lambdas that called themselves. They do
 // not escape the call. The walks are deducing this.
 //
 // collect_outer_bindings was declared next to this logic and never called.
 // Outer bindings are the flat scan: every Lambda / Let / LetRec name whose
 // node is outside `root`.
-
+//
+// Not a template. aura::core::ASTContainer requires get/children/tag only.
+// This walk also reads NodeView::params and sym_id, which is FlatAST::get.
+// There is one production caller. Symbol sets are SymId. NodeId is only the
+// node being visited and the set of nodes inside the new subtree.
+//
 // Include only after `import std;` and `import aura.core.ast;`. A standard
 // header here would be parsed twice against the std module.
 
 namespace aura::compiler {
 
-template <class Flat>
-std::vector<aura::ast::SymId>
-replace_subtree_captured_syms(const Flat& flat,
+[[nodiscard]] inline std::vector<aura::ast::SymId>
+replace_subtree_captured_syms(const aura::ast::FlatAST& flat,
                               const std::unordered_set<aura::ast::SymId>& builtin_syms,
                               aura::ast::NodeId root) {
-    using NodeId = aura::ast::NodeId;
-    std::vector<NodeId> captured;
-    std::unordered_set<NodeId> new_bindings;
+    using aura::ast::NodeId;
+    using aura::ast::SymId;
+    std::vector<SymId> captured;
+    std::unordered_set<SymId> new_bindings;
     auto collect_new_bindings = [&](this auto&& self, NodeId id) {
         if (id >= flat.size() || id == aura::ast::NULL_NODE)
             return;
@@ -48,7 +53,7 @@ replace_subtree_captured_syms(const Flat& flat,
     };
     mark_new(root);
 
-    std::unordered_set<NodeId> outer_bindings;
+    std::unordered_set<SymId> outer_bindings;
     for (NodeId id = 0; id < flat.size(); ++id) {
         if (in_new_subtree.count(id))
             continue;
@@ -85,9 +90,10 @@ replace_subtree_captured_syms(const Flat& flat,
 
 // The small printer replace-subtree stores as the displaced node's text.
 // It is not the larger query-and-replace / replace-pattern printers.
-template <class Flat, class Pool>
-std::string replace_subtree_old_source(const Flat& flat, const Pool& pool, aura::ast::NodeId root) {
-    using NodeId = aura::ast::NodeId;
+[[nodiscard]] inline std::string replace_subtree_old_source(const aura::ast::FlatAST& flat,
+                                                           const aura::ast::StringPool& pool,
+                                                           aura::ast::NodeId root) {
+    using aura::ast::NodeId;
     auto src = [&](this auto&& self, NodeId id) -> std::string {
         if (id >= flat.size() || id == aura::ast::NULL_NODE)
             return "";
