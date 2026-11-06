@@ -1,4 +1,5 @@
 // aura_jit.cpp — LLVM ORC JIT backend for Aura IR
+#include "compiler/ffi_addr.hh" // #4936 named JIT/FFI addresses
 #include <bit>
 #include "aura_jit.h"
 #include "aura_jit_bridge.h"
@@ -2002,7 +2003,7 @@ struct LLVMBuilder {
         auto* i64_ty = llvm::Type::getInt64Ty(ctx);
         auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
         auto* wptr = irb->CreateIntToPtr(
-            c64(static_cast<int64_t>(reinterpret_cast<std::uintptr_t>(&aura_cell_heap_epoch))),
+            c64(aura::compiler::i64_from_ptr(&aura_cell_heap_epoch)),
             ptr_ty);
         auto* wv = irb->CreateLoad(i64_ty, wptr);
         wv->setAtomic(llvm::AtomicOrdering::Acquire);
@@ -2069,7 +2070,7 @@ struct LLVMBuilder {
         auto* sid = irb->CreateLoad(i64_ty, self_id_alloca);
         auto* is_self = irb->CreateICmpEQ(callee, sid);
         auto* wptr = irb->CreateIntToPtr(
-            c64(static_cast<int64_t>(reinterpret_cast<std::uintptr_t>(self_word_addr))), ptr_ty);
+            c64(aura::compiler::i64_from_ptr(self_word_addr)), ptr_ty);
         auto* wv = irb->CreateLoad(i64_ty, wptr);
         wv->setAtomic(llvm::AtomicOrdering::Acquire);
         wv->setAlignment(llvm::Align(8));
@@ -5908,7 +5909,7 @@ struct AuraJIT::Impl {
             auto* ok = builder.irb->CreateCall(builder.fn_pair_inline_ok, {});
             builder.pair_ok = builder.irb->CreateICmpNE(ok, builder.c64(0));
             builder.pair_dir = builder.irb->CreateIntToPtr(
-                builder.c64u(reinterpret_cast<std::uintptr_t>(aura_pair_seg_dir_base())),
+                builder.c64u(aura::compiler::bits_from_ptr(aura_pair_seg_dir_base())),
                 llvm::PointerType::getUnqual(ctx));
         }
         if (reads_pairs && !builder.pair_ok) {
@@ -5988,7 +5989,7 @@ struct AuraJIT::Impl {
                     aura::compiler::jit_assume::stats().prologue_word_armed.fetch_add(
                         1, std::memory_order_relaxed);
                     auto* wptr = builder.irb->CreateIntToPtr(
-                        builder.c64u(reinterpret_cast<std::uintptr_t>(&word->v)),
+                        builder.c64u(aura::compiler::bits_from_ptr(&word->v)),
                         llvm::PointerType::getUnqual(ctx));
                     auto* wv = builder.irb->CreateLoad(llvm::Type::getInt64Ty(ctx), wptr);
                     wv->setAtomic(llvm::AtomicOrdering::Acquire);
@@ -6127,11 +6128,11 @@ struct AuraJIT::Impl {
                 builder.irb->CreateCall(llvm::FunctionCallee(builder.fn_native_self_id), {});
             builder.irb->CreateStore(sid, builder.self_id_alloca);
             auto* word = aura::compiler::jit_assume::DefineVersions::instance().word(fn.name);
-            builder.self_word_addr = reinterpret_cast<std::uint64_t*>(&word->v);
+            builder.self_word_addr = aura::compiler::jit_atomic_u64_slot(&word->v);
             builder.self_word_alloca = builder.create_entry_alloca(i64_ty, "l1_self_word");
             auto* wptr0 = builder.irb->CreateIntToPtr(
                 builder.c64(
-                    static_cast<int64_t>(reinterpret_cast<std::uintptr_t>(builder.self_word_addr))),
+                    aura::compiler::i64_from_ptr(builder.self_word_addr)),
                 llvm::PointerType::getUnqual(ctx));
             auto* wv0 = builder.irb->CreateLoad(i64_ty, wptr0);
             wv0->setAtomic(llvm::AtomicOrdering::Acquire);

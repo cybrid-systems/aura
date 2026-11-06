@@ -14,6 +14,7 @@
 // the evaluator partition by extracting focused modules.
 
 module;
+#include "compiler/ffi_addr.hh" // #4936 named FFI address conversions
 #include "compiler/locked_string_heap.hh" // Issue #4543
 #include <array>
 #include <cstddef>
@@ -462,7 +463,7 @@ public:
     }
     static void run_native_finalizer(void* fin, void* ptr) {
         if (fin != nullptr && ptr != nullptr)
-            reinterpret_cast<void (*)(void*)>(fin)(ptr);
+            aura::compiler::fn_from_void<void (*)(void*)>(fin)(ptr);
     }
 
 private:

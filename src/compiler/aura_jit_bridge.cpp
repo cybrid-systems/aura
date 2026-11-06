@@ -7,6 +7,7 @@
 // pipeline: host-wired LLVM emit callback + process-stable name→func_id
 // map across mutation epochs (see docs/hot-update.md).
 
+#include "compiler/ffi_addr.hh" // #4936 named JIT/FFI addresses
 #include "aura_jit.h"
 #include "core/atomic_fence_port.h"
 #include "aura_jit_bridge.h"
@@ -1527,7 +1528,7 @@ void clear_aot_staging() noexcept {
 
 void apply_aot_staging_to_live() noexcept {
     const std::uint64_t epoch = g_aot_table_epoch.load(std::memory_order_acquire);
-    const auto owner = reinterpret_cast<std::uintptr_t>(g_aot_register_owner_eval);
+    const auto owner = aura::compiler::bits_from_ptr(g_aot_register_owner_eval);
     // Issue #4245: production multi-eval reload must not clobber peer-owned
     // slots (hard-invalidate owner-scope parity #3300/#3750). Skip peer
     // overwrite and soft-stale the peer slot instead; only exchange slots
@@ -1624,7 +1625,7 @@ void commit_func_table_swap() {
             const auto nh = g_func_id_name_hash[i].load(std::memory_order_acquire);
             if (nh == 0)
                 continue;
-            const auto want = reinterpret_cast<std::uintptr_t>(owner_ptr);
+            const auto want = aura::compiler::bits_from_ptr(owner_ptr);
             for (unsigned j = 0; j < kMaxAotFuncs; ++j) {
                 if (j == i)
                     continue;
@@ -2155,7 +2156,7 @@ extern "C" void aura_register_fn_tracked(int64_t func_id, int64_t fn_ptr) {
     slot.table_generation.store(g_aot_table_epoch.load(std::memory_order_acquire),
                                 std::memory_order_relaxed);
     // Issue #2299: stamp owning eval (0 when process-default / unset).
-    slot.owner_eval.store(reinterpret_cast<std::uintptr_t>(g_aot_register_owner_eval),
+    slot.owner_eval.store(aura::compiler::bits_from_ptr(g_aot_register_owner_eval),
                           std::memory_order_relaxed);
     // Issue #3070: successful register/reemit clears peer soft-stale.
     slot.soft_stale.store(0, std::memory_order_release);
@@ -2164,7 +2165,7 @@ extern "C" void aura_register_fn_tracked(int64_t func_id, int64_t fn_ptr) {
     // this at 0. Production hard path clears the slot to prevent the
     // next call from hitting a wrong table.
     if (aot_metrics()) {
-        const auto current_owner = reinterpret_cast<std::uintptr_t>(
+        const auto current_owner = aura::compiler::bits_from_ptr(
             g_aot_register_owner_eval ? g_aot_register_owner_eval : g_aot_reemit_owner_eval);
         const auto stamped_owner = slot.owner_eval.load(std::memory_order_relaxed);
         if (current_owner != 0 && stamped_owner != 0 && current_owner != stamped_owner) {
@@ -2576,7 +2577,7 @@ extern "C" int aura_aot_last_table_bump_owner_scoped(void) {
 // (peer table). Probe returns 0; raw probe still sees the pointer.
 // No table-epoch advance.
 extern "C" void aura_aot_mark_peer_slots_soft_stale(void* owner) {
-    const auto self = reinterpret_cast<std::uintptr_t>(owner);
+    const auto self = aura::compiler::bits_from_ptr(owner);
     for (unsigned i = 0; i < kMaxAotFuncs; ++i) {
         auto& slot = g_aot_func_slots[i];
         if (slot.fn_ptr.load(std::memory_order_acquire) == 0)
@@ -2599,7 +2600,7 @@ extern "C" void aura_aot_soft_stale_peer_slots_for_name(const char* name, void* 
     if (aura_aot_state_map_size() <= 1)
         return;
     std::scoped_lock<std::mutex> lock(g_stable_func_id_mtx);
-    const auto want = reinterpret_cast<std::uintptr_t>(owner);
+    const auto want = aura::compiler::bits_from_ptr(owner);
     // #4936: every foreign slot is marked; map order does not matter.
     for (const auto& inner : g_eval_to_stable_func_id | std::views::values) {
         auto it = inner.find(name);
@@ -3010,11 +3011,11 @@ extern "C" void aura_hot_update_bump_defuse_version(void) noexcept {
 //     count + aot_reload_fall_back_slot_invalidate_calls_total by 1.
 //   - Records last eval_ptr for Agent dashboards (#2299 AC4).
 static std::size_t aot_invalidate_all_stale_slots_for_eval_impl(void* eval_ptr) {
-    g_aot_last_slot_invalidate_eval.store(reinterpret_cast<std::uintptr_t>(eval_ptr),
+    g_aot_last_slot_invalidate_eval.store(aura::compiler::bits_from_ptr(eval_ptr),
                                           std::memory_order_release);
     const auto cur_epoch = g_aot_table_epoch.load(std::memory_order_acquire);
     const bool filter_by_eval = (eval_ptr != nullptr);
-    const auto want_owner = reinterpret_cast<std::uintptr_t>(eval_ptr);
+    const auto want_owner = aura::compiler::bits_from_ptr(eval_ptr);
     std::size_t invalidated = 0;
     for (unsigned i = 0; i < kMaxAotFuncs; ++i) {
         auto& slot = g_aot_func_slots[i];
@@ -3050,7 +3051,7 @@ static std::size_t aot_invalidate_all_stale_slots_for_eval_impl(void* eval_ptr) 
         m->aot_reload_fall_back_slot_invalidate_calls_total.fetch_add(1, std::memory_order_relaxed);
         // Issue #2299 AC4: last-eval observability (pointer as u64).
         m->aot_reload_fall_back_slot_invalidate_last_eval.store(
-            reinterpret_cast<std::uint64_t>(eval_ptr), std::memory_order_relaxed);
+            aura::compiler::bits_from_ptr(eval_ptr), std::memory_order_relaxed);
         if (filter_by_eval)
             m->aot_reload_fall_back_slot_invalidate_per_eval_calls_total.fetch_add(
                 1, std::memory_order_relaxed);
@@ -3089,7 +3090,7 @@ extern "C" void aura_aot_invalidate_owner_slot_for_func_id(std::int64_t func_id,
     // aot_invalidate_all_stale_slots_for_eval(eval) path on a real
     // table-epoch bump (#2271/#2299).
     if (owner_eval != nullptr) {
-        const auto want_owner = reinterpret_cast<std::uintptr_t>(owner_eval);
+        const auto want_owner = aura::compiler::bits_from_ptr(owner_eval);
         const auto slot_owner = slot.owner_eval.load(std::memory_order_acquire);
         if (slot_owner != 0 && slot_owner != want_owner)
             return;
@@ -4968,7 +4969,7 @@ static bool default_llvm_incremental_emit(const char* name, std::uint64_t region
 
 static std::int64_t reemit_sentinel_fn_ptr() {
     return static_cast<std::int64_t>(
-        reinterpret_cast<std::uintptr_t>(&aura_aot_reemit_sentinel_fn));
+        aura::compiler::bits_from_fn(&aura_aot_reemit_sentinel_fn));
 }
 
 static std::int64_t lookup_installed_jit_fn(const char* name) {
@@ -5198,7 +5199,7 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
     void* const filter_eval =
         g_aot_reemit_owner_eval != nullptr ? g_aot_reemit_owner_eval : g_aot_register_owner_eval;
     const bool filter_by_eval = (filter_eval != nullptr);
-    const auto want_owner = reinterpret_cast<std::uintptr_t>(filter_eval);
+    const auto want_owner = aura::compiler::bits_from_ptr(filter_eval);
 
     // Region mask: process emit mask is the cascade default. When a
     // filter eval is set and its AotState region_mask is non-zero,
