@@ -145,7 +145,7 @@ def main() -> int:
         and pos_prescan_wrap != -1
     )
     # pre_scan must NOT have a Call-head "quote" handler.
-    pos_prescan_lambda = me.find("std::function<void(NodeId, int)> pre_scan")
+    pos_prescan_lambda = me.find("auto pre_scan = [&](this auto&& self, NodeId nid, int qq_depth)")
     prescan_window = ""
     if pos_prescan_lambda != -1:
         prescan_window = me[pos_prescan_lambda : pos_prescan_lambda + 3000]
