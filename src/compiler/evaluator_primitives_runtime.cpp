@@ -8,6 +8,7 @@ module;
 #include "primitives_detail.h"
 #include "runtime_shared.h"
 #include "float_repr.hh" // Issue #4468
+#include "compiler/generic_error_words.hh" // #4936 B4 constexpr error tokens
 
 module aura.compiler.evaluator;
 
@@ -1125,10 +1126,8 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
                     if (!kw.empty() && norm_out.find(kw) != std::string::npos) {
                         // Guard: for error-like output with short keywords
                         if (is_error_like && kw.size() <= 5) {
-                            // Generic error words that should never match in error output
-                            static const std::unordered_set<std::string> generic_words = {
-                                "error", "type", "parse", "syntax", "kind"};
-                            if (generic_words.count(kw)) {
+                            // Generic error words that should never match in error output.
+                            if (is_generic_error_word(kw)) {
                                 // Skip — too generic, likely part of error message
                                 if (is_pair(p.cdr)) {
                                     pair_idx = as_pair_idx(p.cdr);
