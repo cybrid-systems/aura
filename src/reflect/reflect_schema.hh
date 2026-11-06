@@ -145,7 +145,7 @@ template <typename T> struct schema_storage {
                 append("0");
                 return;
             }
-            char tmp[32];
+            std::array<char, 32> tmp{};
             int len = 0;
             while (val > 0) {
                 tmp[len++] = '0' + (val % 10);

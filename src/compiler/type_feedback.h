@@ -18,7 +18,10 @@
 #ifndef AURA_COMPILER_TYPE_FEEDBACK_H
 #define AURA_COMPILER_TYPE_FEEDBACK_H
 
+#include "core/address_bits.hh" // Issue #4936: anonymous site key is address bits
+
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -217,10 +220,10 @@ namespace detail {
         std::string_view n(in.name ? in.name : "", in.name_len);
         if (public_name(n))
             return std::string(n);
-        char buf[32];
-        std::snprintf(buf, sizeof(buf), "#%lx",
-                      static_cast<unsigned long>(reinterpret_cast<std::uintptr_t>(in.key)));
-        return std::string(buf);
+        std::array<char, 32> buf;
+        std::snprintf(buf.data(), buf.size(), "#%lx",
+                      static_cast<unsigned long>(aura::core::address_bits(in.key)));
+        return std::string(buf.data());
     }
 
     inline std::uint8_t joined(std::uint8_t cur, std::uint8_t obs) noexcept {

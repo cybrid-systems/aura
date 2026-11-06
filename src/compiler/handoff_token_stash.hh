@@ -7,6 +7,7 @@
 
 #include "orch/orch.h"
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -40,10 +41,10 @@ struct HandoffStashEntry {
     static std::atomic<std::uint64_t> seq{1};
     const auto n = seq.fetch_add(1, std::memory_order_relaxed);
     const auto r = static_cast<std::uint64_t>(std::random_device{}());
-    char buf[48];
-    std::snprintf(buf, sizeof(buf), "handoff:%016llx-%llu", static_cast<unsigned long long>(r),
-                  static_cast<unsigned long long>(n));
-    return std::string(buf);
+    std::array<char, 48> buf;
+    std::snprintf(buf.data(), buf.size(), "handoff:%016llx-%llu",
+                  static_cast<unsigned long long>(r), static_cast<unsigned long long>(n));
+    return std::string(buf.data());
 }
 
 struct HandoffTokenStash {

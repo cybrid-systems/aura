@@ -207,7 +207,7 @@ export constexpr std::string_view gradual_permissiveness_name(GradualPermissiven
 }
 
 export inline GradualPermissiveness parse_gradual_permissiveness(std::string_view s) noexcept {
-    char buf[16];
+    std::array<char, 16> buf;
     std::size_t n = s.size() < 15 ? s.size() : 15;
     for (std::size_t i = 0; i < n; ++i) {
         char c = s[i];
@@ -216,7 +216,7 @@ export inline GradualPermissiveness parse_gradual_permissiveness(std::string_vie
         buf[i] = c;
     }
     buf[n] = '\0';
-    std::string_view v{buf, n};
+    std::string_view v{buf.data(), n};
     if (v == "permissive" || v == "0")
         return GradualPermissiveness::Permissive;
     if (v == "strict" || v == "2")
@@ -256,7 +256,7 @@ export constexpr std::string_view typecheck_metrics_tier_name(TypecheckMetricsTi
 }
 
 export inline TypecheckMetricsTier parse_typecheck_metrics_tier(std::string_view s) noexcept {
-    char buf[16];
+    std::array<char, 16> buf;
     std::size_t n = s.size() < 15 ? s.size() : 15;
     for (std::size_t i = 0; i < n; ++i) {
         char c = s[i];
@@ -265,7 +265,7 @@ export inline TypecheckMetricsTier parse_typecheck_metrics_tier(std::string_view
         buf[i] = c;
     }
     buf[n] = '\0';
-    std::string_view v{buf, n};
+    std::string_view v{buf.data(), n};
     if (v == "full" || v == "1")
         return TypecheckMetricsTier::Full;
     return TypecheckMetricsTier::Minimal;

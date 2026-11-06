@@ -47,10 +47,10 @@ namespace detail {
         void append(char c) { out.push_back(c); }
 
         void append_int(std::int64_t v) {
-            char buf[32];
-            auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), v);
+            std::array<char, 32> buf;
+            auto [ptr, ec] = std::to_chars(buf.data(), buf.data() + buf.size(), v);
             if (ec == std::errc{})
-                out.append(buf, static_cast<std::size_t>(ptr - buf));
+                out.append(buf.data(), static_cast<std::size_t>(ptr - buf.data()));
             else
                 out.append(std::to_string(v));
         }

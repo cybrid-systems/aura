@@ -21,6 +21,7 @@ module;
 #include "core/sandbox.hh"               // Issue #3132: is_sandbox_active
 #include "core/moving_densify_health.hh" // Issue #3421: g_last_objects_moved
 #include "core/lifetime_consistency_proof.hh" // Issue #3421: last_lifetime_consistency_would_allow
+#include "core/address_bits.hh"               // Issue #4936: address bits and moving slots
 #include "core/densify_consistency_report.h"  // Issue #4125: densify_in_flight_for (eval-keyed)
 #include "compiler/mark_all_owner_clear.hh"   // Issue #4360: snapshot restore clears IR owners
 #include "compiler/user_arity.hh"             // Issue #4467: call-site procedure arity
@@ -727,7 +728,8 @@ static bool production_ffi_apply_densify_hard_refuse(ast::ASTArena* arena, const
         // #4555) or the marshal SSO slot — neither can name an arena address.
         if (arg_types[i] == 2 || arg_types[i] == 3)
             continue; // Float (numeric) / String (heap std::string bytes or SSO slot)
-        auto live = reinterpret_cast<void*>(static_cast<std::intptr_t>(marshalled.i_vals[i]));
+        auto live = aura::core::pointer_from_address_bits<void*>(
+            static_cast<std::uintptr_t>(static_cast<std::intptr_t>(marshalled.i_vals[i])));
         if (live && arena && arena->resolve_object_remap(live))
             return true;
     }
@@ -1728,7 +1730,8 @@ void Evaluator::collect_tw_inflight_roots(std::vector<types::EvalValue>& out) {
 // the TCO `continue` below can still note while-edges on the callee.
 static void feedback_enter_call(std::uint64_t cid, std::string_view name, const EvalValue* args,
                                 std::uint32_t nargs) {
-    const auto* key = reinterpret_cast<const void*>(static_cast<std::uintptr_t>(cid) + 1u);
+    const auto* key = aura::core::pointer_from_address_bits<const void*>(
+        static_cast<std::uintptr_t>(cid) + 1u);
     feedback::note_call_current(static_cast<std::uint32_t>(cid));
     auto argc = nargs;
     if (argc > feedback::kMaxUserArgs)
@@ -1943,7 +1946,8 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                     fn_ptr, ffi_ic, ffi_dc, ffi_ni, ffi_nd);
                 if (ret_type == 3 && result_i != 0) {
                     // String return: char* → string_heap
-                    auto s = reinterpret_cast<const char*>(static_cast<std::intptr_t>(result_i));
+                    auto s = aura::core::pointer_from_address_bits<const char*>(
+                        static_cast<std::uintptr_t>(static_cast<std::intptr_t>(result_i)));
                     // Issue #1397: size() read + emplace_back() must be atomic
                     // (fiber:spawn shares Evaluator across threads).
                     {
@@ -1956,7 +1960,8 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                     // Opaque: store pointer in opaque_heap_, return OpaqueRef.
                     // Issue #4386: feature-on takes alloc_storage_lock_ then the
                     // rewrite map and does not enqueue the element address.
-                    auto* raw = reinterpret_cast<void*>(result_i);
+                    auto* raw = aura::core::pointer_from_address_bits<void*>(
+                        static_cast<std::uintptr_t>(result_i));
                     const bool moving_gate = aura::ast::moving_compact_feature_enabled() != 0;
                     bool cover_ok = false;
                     std::uint64_t oi = 0;
@@ -8455,7 +8460,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 if (idx < g_pair_slots.size() && g_pair_slots[idx]) {
                                     auto* slot = g_pair_slots[idx];
                                     auto arena_end = g_tl_arena.base + g_tl_arena.offset;
-                                    auto ptr = reinterpret_cast<uint8_t*>(slot);
+                                    auto ptr = static_cast<std::uint8_t*>(static_cast<void*>(slot));
                                     if (g_tl_arena.base && ptr >= g_tl_arena.base &&
                                         ptr < arena_end) {
                                         // Snapshot car/cdr before pop invalidates slot.
@@ -9641,7 +9646,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                 }
                                 auto mod_idx = modules_.size();
                                 modules_.push_back(nullptr);
-                                void** env_slot = reinterpret_cast<void**>(&modules_.back());
+                                void** env_slot = aura::core::moving_pointer_slot(modules_.back());
                                 auto* cached_env =
                                     inst_arena.create_with_cover<Env>(env_slot, nullptr, mod_env);
                                 if (cached_env) {
@@ -12207,7 +12212,7 @@ bool Evaluator::restore_workspace_snapshot_under_lock(std::size_t id) noexcept {
             update_shared_tree_root();
             last_post_restore_report_ = workspace_flat_->validate_post_restore();
             last_post_restore_violations_ = last_post_restore_report_.violations;
-            defuse_index_destroy(reinterpret_cast<void**>(&defuse_index_));
+            defuse_index_destroy(aura::core::moving_pointer_slot(defuse_index_));
             defuse_affected_syms_.clear();
             {
                 aura::compiler::MarkAllClearsIrOwners clear_ir_owners;
