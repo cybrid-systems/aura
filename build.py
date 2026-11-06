@@ -25200,10 +25200,7 @@ def cmd_chaos_soak_hard_gate_2722():
             )
             rc = cmd_configure()
             if rc != 0:
-                fail(
-                    "chaos SOAK hard gate configure failed "
-                    "(static coverage only does not pass the release hard gate)"
-                )
+                fail("chaos SOAK hard gate configure failed (static coverage only does not pass the release hard gate)")
                 return rc
         info("building test_chaos_mutate_steal_gc_mailbox…")
         nproc = os.cpu_count() or 4
