@@ -4578,14 +4578,13 @@ public:
                         // Issue #4396: arm before relocate; clear after publish.
                         // Issue #4576: arm before the hook publishes pool_ slots.
                         void* inflight_owner = arena_owner();
-                        struct AutoArmInFlight {
+                        struct AutoArmInFlight : ::aura::core::NoCopy {
                             void*& owner;
                             ~AutoArmInFlight() {
                                 if (owner)
                                     aura::core::densify_consistency::clear_densify_in_flight(owner);
                             }
-                            [[no_unique_address]] ::aura::core::NoCopy no_copy{};
-                        } auto_arm_inflight{inflight_owner};
+                        } auto_arm_inflight{{}, inflight_owner};
                         if (inflight_owner)
                             aura::core::densify_consistency::arm_densify_in_flight(inflight_owner);
                         invoke_known_roots_hook();

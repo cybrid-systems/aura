@@ -74,7 +74,7 @@ inline constexpr const char* kEnvStdlibDir = "AURA_STDLIB_DIR";
         // #4936: std::filesystem::canonical is realpath(3) without the
         // malloc'd result buffer.
         std::error_code ec;
-        if (auto rp = std::filesystem::canonical(argv0, ec); !ec)
+        if (const auto rp = std::filesystem::canonical(argv0, ec); !ec)
             return rp.string();
         return std::string(argv0);
     }

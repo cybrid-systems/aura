@@ -4,7 +4,8 @@
 // The ABI stays extern "C" (that TU cannot import the module graph, #2290),
 // but every buffer it returns is now released by the TU that allocated it:
 // hold it in IrBufferPtr, never delete[] it by hand.
-#pragma once
+#ifndef AURA_COMPILER_IR_BUFFER_ABI_H
+#define AURA_COMPILER_IR_BUFFER_ABI_H
 
 #include <cstddef>
 #include <memory>
@@ -23,3 +24,5 @@ struct IrBufferFree {
 using IrBufferPtr = std::unique_ptr<const char[], IrBufferFree>;
 
 } // namespace aura::ir
+
+#endif // AURA_COMPILER_IR_BUFFER_ABI_H

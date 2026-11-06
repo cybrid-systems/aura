@@ -1698,15 +1698,14 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     // the outermost occurrence refresh, both before this function returns.
     // Drop them on the outermost return so the next boundary does not
     // replay the previous name set.
-    struct ClearStagedDefuseOnOutermost {
+    struct ClearStagedDefuseOnOutermost : ::aura::core::NoCopy {
         Evaluator* ev;
         bool outermost;
         ~ClearStagedDefuseOnOutermost() {
             if (outermost && ev)
                 ev->defuse_affected_syms_.clear();
         }
-        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
-    } clear_staged_defuse{this, !nested_boundary};
+    } clear_staged_defuse{{}, this, !nested_boundary};
     // Issue #3322: production/Full force-close the pre-proof observation
     // window (nested exit + outermost render-fast skip). Soft/Off: no-op.
     // Does not stamp TypeLinearCommitProof or persist occurrence.
@@ -1719,14 +1718,13 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             m->nested_observation_window_closed_total.fetch_add(1, std::memory_order_relaxed);
     };
     // Issue #3233: pair pcv_checkpoint_live_enter from snapshot.
-    struct PcvCkptExit {
+    struct PcvCkptExit : ::aura::core::NoCopy {
         bool on;
         ~PcvCkptExit() {
             if (on)
                 aura::ast::pcv_checkpoint_live_exit();
         }
-        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
-    } pcv_ckpt_exit{!cp.lightweight && !cp.heap_slot_only};
+    } pcv_ckpt_exit{{}, !cp.lightweight && !cp.heap_slot_only};
     // Issue #4432: BoundaryExit and phase-4 reemit run after this clear.
     // Capture the session audit mid first. join(0) would publish the
     // process Mutation epoch.
@@ -4755,13 +4753,12 @@ extern "C" void aura_evaluator_force_unlock_outermost_holder(std::uint64_t fiber
 // ── destructor ───────────────────────────────────────────────────────────
 Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // One pre-cascade audit per boundary exit (cascade marks + BFS drain).
-    struct BoundaryPrepBatch {
+    struct BoundaryPrepBatch : ::aura::core::NoCopy {
         const std::function<void(bool)>* fn = nullptr;
         ~BoundaryPrepBatch() {
             if (fn && *fn)
                 (*fn)(false);
         }
-        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
     } boundary_prep_batch;
     if (ev_ && !inert_ && ev_->boundary_prep_batch_fn_) {
         boundary_prep_batch.fn = &ev_->boundary_prep_batch_fn_;
@@ -8672,13 +8669,12 @@ std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
     const int densify_fill = densify_unstable_fill_begin();
     if (densify_fill == 3)
         return 0;
-    struct DensifyHold {
+    struct DensifyHold : ::aura::core::NoCopy {
         Evaluator* ev = nullptr;
         ~DensifyHold() {
             if (ev)
                 ev->densify_reregister_inflight_.fetch_sub(1, std::memory_order_acq_rel);
         }
-        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
     } densify_hold;
     if (densify_fill == 2 &&
         densify_value_slot_owner_.load(std::memory_order_acquire) != std::this_thread::get_id() &&
@@ -9302,7 +9298,7 @@ bool Evaluator::commit_unstable_densify_root_remap(bool relocated) noexcept {
     if (densify_commit_active_)
         return true;
     densify_commit_active_ = true;
-    struct Release {
+    struct Release : ::aura::core::NoCopy {
         Evaluator* ev;
         bool ok = true;
         ~Release() {
@@ -9318,8 +9314,7 @@ bool Evaluator::commit_unstable_densify_root_remap(bool relocated) noexcept {
             ev->densify_value_slot_owner_.store(std::thread::id{}, std::memory_order_release);
             ev->densify_value_slot_mu_.unlock();
         }
-        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
-    } release{this};
+    } release{{}, this};
     try {
         if (relocated && arena_group_ && aura::ast::moving_compact_feature_enabled() != 0) {
             if (!densify_rewrite_containers_from_published_())

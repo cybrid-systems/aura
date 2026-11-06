@@ -429,7 +429,7 @@ namespace {
     // own atexit handler AFTER main's: LIFO makes it run first, quiescing
     // the workers before the runtime teardown.
     void orch_sched_stop_at_exit();
-    struct OrchSchedHolder {
+    struct OrchSchedHolder : ::aura::core::NoCopy {
         std::unique_ptr<aura::serve::Scheduler> sched;
         std::thread runner;
         std::mutex mu;
@@ -474,7 +474,6 @@ namespace {
                 runner.join();
         }
         ~OrchSchedHolder() { stop_and_join(); }
-        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
     };
     // Issue #4847: construct the holder on the FIRST orch call, never at
     // static-init time. ~OrchSchedHolder stops the scheduler and destroys
@@ -625,9 +624,8 @@ namespace {
             // agent apply window. Mark the depth so this body's own nested
             // spawns inherit the waiver, and run without taking the mutex.
             Evaluator::push_agent_apply_hold();
-            struct NestedHoldPop {
+            struct NestedHoldPop : ::aura::core::NoCopy {
                 ~NestedHoldPop() { Evaluator::pop_agent_apply_hold(); }
-                [[no_unique_address]] ::aura::core::NoCopy no_copy{};
             } nested_pop;
             run();
         } else {

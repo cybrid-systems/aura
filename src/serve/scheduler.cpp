@@ -486,14 +486,13 @@ std::int64_t spawn_with_pinned_body(Scheduler& sched, void* evaluator, Fiber::Fu
             // Release the pin once the body has been applied: the closure
             // is not needed any more. The guard also releases on the error
             // path.
-            struct PendingBodyPinRelease {
+            struct PendingBodyPinRelease : ::aura::core::NoCopy {
                 void* evaluator;
                 ~PendingBodyPinRelease() {
                     if (evaluator)
                         aura_fiber_release_pending_body_latest(evaluator);
                 }
-                [[no_unique_address]] ::aura::core::NoCopy no_copy{};
-            } pin_release{evaluator};
+            } pin_release{{}, evaluator};
             body();
         },
         worker_id, stack_size);

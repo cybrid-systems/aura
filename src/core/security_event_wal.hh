@@ -311,7 +311,7 @@ inline SecurityEventWalMetrics& g_security_event_wal_metrics() noexcept {
 }
 
 // Process-wide side-car WAL controller (opt-in via enable()).
-struct SecurityEventWal {
+struct SecurityEventWal : ::aura::core::NoCopy {
     mutable std::mutex mtx;
     bool enabled = false;
     std::string dir;
@@ -798,7 +798,6 @@ struct SecurityEventWal {
         rotate_bytes = kDefaultRotateBytes;
         pruned_upto_ = 0;
     }
-    [[no_unique_address]] ::aura::core::NoCopy no_copy{};
 };
 
 // Issue #2225: resolve the SecurityEventWAL directory. Falls through to

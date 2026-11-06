@@ -2480,7 +2480,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     // itself is a no-op when a MutationBoundary is already active, so
     // existing boundary callers continue to roll back via the boundary
     // itself (no double-rollback).
-    struct ExpandCheckpointGuard {
+    struct ExpandCheckpointGuard : ::aura::core::NoCopy {
         bool owned = false;
         bool consumed = false;
         // Issue #3608: production no-Evaluator local rollback. The C-ABI save
@@ -2513,7 +2513,6 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             if (owned && !consumed)
                 aura_evaluator_commit_macro_expand_checkpoint();
         }
-        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
     } expand_ckpt;
     const bool production_surface = aura::core::sandbox::is_sandbox_active();
     if (hygiene_depth == 0 && production_surface)
@@ -4300,7 +4299,7 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
     // Issue #3062: Restricted/Strict (sandbox active) refuse partial writes
     // on limit. Soft/Off keeps the historical half-expand return (zero-cost).
     const bool production_surface = aura::core::sandbox::is_sandbox_active();
-    struct ExpandCheckpointGuard {
+    struct ExpandCheckpointGuard : ::aura::core::NoCopy {
         bool owned = false;
         bool consumed = false;
         // Issue #3608: local no-Evaluator rollback — mirrors the clone walk
@@ -4338,7 +4337,6 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
             if (owned && !consumed)
                 aura_evaluator_commit_macro_expand_checkpoint();
         }
-        [[no_unique_address]] ::aura::core::NoCopy no_copy{};
     } expand_ckpt;
     // Issue #2019: track whether any pass expanded so we restamp
     // MacroIntroduced gens once before return (FlatAST consistency).

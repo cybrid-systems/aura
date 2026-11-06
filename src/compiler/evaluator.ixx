@@ -771,11 +771,52 @@ public:
                                     std::memory_order_relaxed);
         return *this;
     }
-    // The atomic members make a move a copy; spelled out so the rule of
-    // five is explicit (cpp-style R4).
-    Env(Env&& o)
-        : Env(std::as_const(o)) {}
-    Env& operator=(Env&& o) { return *this = std::as_const(o); }
+    // Containers move; the atomics are load/store (an atomic has no
+    // transferring move). Do not delegate to the copy constructor: that
+    // copies every binding vector and is not noexcept (cpp-style R4).
+    // The moved-from atomics and non-owning pointers keep their values.
+    Env(Env&& other) noexcept
+        : parent_(other.parent_)
+        , primitives_(other.primitives_)
+        , pool_(other.pool_.load(std::memory_order_acquire))
+        , cap_snap_(std::move(other.cap_snap_))
+        , pool_epoch_(other.pool_epoch_.load(std::memory_order_acquire))
+        , bindings_(std::move(other.bindings_))
+        , binding_index_(std::move(other.binding_index_))
+        , bindings_symid_(std::move(other.bindings_symid_))
+        , symid_index_(std::move(other.symid_index_))
+        , rekey_memo_4682_{std::move(other.rekey_memo_4682_[0]),
+                           std::move(other.rekey_memo_4682_[1])}
+        , rekey_memo_next_4682_(other.rekey_memo_next_4682_)
+        , bindings_linear_ownership_state_(std::move(other.bindings_linear_ownership_state_))
+        , owner_(other.owner_)
+        , parent_id_(other.parent_id_)
+        , env_version_(other.env_version_)
+        , bindings_legacy_uses_(other.bindings_legacy_uses_.load(std::memory_order_relaxed)) {}
+    Env& operator=(Env&& other) noexcept {
+        if (this == &other)
+            return *this;
+        parent_ = other.parent_;
+        primitives_ = other.primitives_;
+        pool_.store(other.pool_.load(std::memory_order_acquire), std::memory_order_release);
+        cap_snap_ = std::move(other.cap_snap_);
+        pool_epoch_.store(other.pool_epoch_.load(std::memory_order_acquire),
+                          std::memory_order_release);
+        bindings_ = std::move(other.bindings_);
+        binding_index_ = std::move(other.binding_index_);
+        bindings_symid_ = std::move(other.bindings_symid_);
+        symid_index_ = std::move(other.symid_index_);
+        rekey_memo_4682_[0] = std::move(other.rekey_memo_4682_[0]);
+        rekey_memo_4682_[1] = std::move(other.rekey_memo_4682_[1]);
+        rekey_memo_next_4682_ = other.rekey_memo_next_4682_;
+        bindings_linear_ownership_state_ = std::move(other.bindings_linear_ownership_state_);
+        owner_ = other.owner_;
+        parent_id_ = other.parent_id_;
+        env_version_ = other.env_version_;
+        bindings_legacy_uses_.store(other.bindings_legacy_uses_.load(std::memory_order_relaxed),
+                                    std::memory_order_relaxed);
+        return *this;
+    }
     ~Env() = default;
     void set_parent(const Env* p) { parent_ = p; }
     void set_primitives(const Primitives* p) { primitives_ = p; }
@@ -1287,11 +1328,15 @@ export struct CopyableAtomicU64 {
         v.store(o.v.load(std::memory_order_acquire), std::memory_order_release);
         return *this;
     }
-    // An atomic has no cheaper move than a load/store copy.
-    CopyableAtomicU64(CopyableAtomicU64&& o) noexcept
-        : CopyableAtomicU64(std::as_const(o)) {}
-    CopyableAtomicU64& operator=(CopyableAtomicU64&& o) noexcept {
-        return *this = std::as_const(o);
+    // An atomic has no transferring move. Load/store the value directly so
+    // the move does not call the copy constructor (cert-oop11). The
+    // moved-from atomic keeps its value.
+    CopyableAtomicU64(CopyableAtomicU64&& other) noexcept
+        : v(other.v.load(std::memory_order_acquire)) {}
+    CopyableAtomicU64& operator=(CopyableAtomicU64&& other) noexcept {
+        if (this != &other)
+            v.store(other.v.load(std::memory_order_acquire), std::memory_order_release);
+        return *this;
     }
     ~CopyableAtomicU64() = default;
     CopyableAtomicU64& operator=(std::uint64_t x) noexcept {
@@ -1667,8 +1712,8 @@ private:
                 root_[pg].exchange(nullptr, std::memory_order_acq_rel)};
             if (page == nullptr)
                 continue;
-            for (auto& b : page->blocks)
-                std::unique_ptr<Block>{b.exchange(nullptr, std::memory_order_acq_rel)}.reset();
+            for (auto& block : page->blocks)
+                std::unique_ptr<Block>{block.exchange(nullptr, std::memory_order_acq_rel)}.reset();
         }
         size_.store(0, std::memory_order_release);
     }
@@ -9312,7 +9357,7 @@ public:
     void gate_spawn_apply_region(std::uint64_t region_key, bool region_fast, F&& body,
                                  OnLock&& on_lock, OnRetry&& on_retry,
                                  std::uint64_t owner_identity = 0) {
-        struct Release {
+        struct Release : ::aura::core::NoCopy {
             Evaluator* self = nullptr;
             std::uint64_t key = 0;
             bool armed = false;
@@ -9323,17 +9368,15 @@ public:
                 self->spawn_region_inflight_.erase(key);
                 self->spawn_region_inflight_cv_.notify_all();
             }
-            [[no_unique_address]] ::aura::core::NoCopy no_copy{};
-        } rel{this, region_key, false};
+        } rel{{}, this, region_key, false};
 
         auto invoke = [&]() {
             auto& depth = agent_apply_hold_depth_tls_();
             ++depth;
-            struct DepthReset {
+            struct DepthReset : ::aura::core::NoCopy {
                 int& depth;
                 ~DepthReset() { --depth; }
-                [[no_unique_address]] ::aura::core::NoCopy no_copy{};
-            } reset{depth};
+            } reset{{}, depth};
             body();
         };
 
@@ -9358,7 +9401,7 @@ public:
             on_retry();
         // Issue #4873: publish the holder so a blocking recv in this body can
         // release the gate across its wait.
-        struct HoldClear {
+        struct HoldClear : ::aura::core::NoCopy {
             Evaluator* self;
             void* lock;
             ~HoldClear() {
@@ -9378,8 +9421,7 @@ public:
                         ++it;
                 }
             }
-            [[no_unique_address]] ::aura::core::NoCopy no_copy{};
-        } hold_clear{this, &apply};
+        } hold_clear{{}, this, &apply};
         if (owner_identity != 0) {
             std::lock_guard<std::mutex> guard(agent_apply_pause_mu_);
             agent_apply_wait_lock_ = &apply;
