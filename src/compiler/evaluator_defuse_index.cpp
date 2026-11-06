@@ -525,7 +525,8 @@ struct DefUseIndex {
         for (auto& [sym, entries] : entries_by_sym) {
             if (sym > max_sym)
                 continue;
-            sym_to_range_[sym] = (sym_scopes_vals_.size() << 16) | (uint32_t)entries.size();
+            sym_to_range_[sym] =
+                (sym_scopes_vals_.size() << 16) | static_cast<uint32_t>(entries.size());
             for (auto& e : entries) {
                 sym_scopes_keys_.push_back(sym);
                 sym_scopes_vals_.push_back((e.scope_idx << 1) | (e.is_def ? 1u : 0u));
