@@ -164,8 +164,8 @@ export class PrimFn {
             ptr_ = static_cast<FnPtr>(callable);
             return;
         }
-        constexpr bool in_sbo = sizeof(Decayed) <= kSboBytes &&
-                                alignof(Decayed) <= alignof(std::max_align_t);
+        constexpr bool in_sbo =
+            sizeof(Decayed) <= kSboBytes && alignof(Decayed) <= alignof(std::max_align_t);
         if constexpr (in_sbo) {
             if (heap_ == nullptr && invoker_ == nullptr) {
                 ::new (static_cast<void*>(sbo_)) Decayed(std::forward<F>(callable));
@@ -176,8 +176,7 @@ export class PrimFn {
             ::new (static_cast<void*>(side)) Decayed(std::forward<F>(callable));
             clear();
             try {
-                ::new (static_cast<void*>(sbo_))
-                    Decayed(*reinterpret_cast<const Decayed*>(side));
+                ::new (static_cast<void*>(sbo_)) Decayed(*reinterpret_cast<const Decayed*>(side));
             } catch (...) {
                 reinterpret_cast<Decayed*>(side)->~Decayed();
                 throw;
@@ -214,7 +213,8 @@ public:
         bind_callable(std::forward<F>(callable));
     }
 
-    PrimFn(const PrimFn& other) : ptr_(other.ptr_) {
+    PrimFn(const PrimFn& other)
+        : ptr_(other.ptr_) {
         if (other.invoker_ == nullptr)
             return;
         if (other.heap_ != nullptr) {
