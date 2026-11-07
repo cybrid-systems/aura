@@ -24,7 +24,6 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(AURA_CONTRACT_FLAG "")
     set(AURA_CONTRACT_INCLUDE_FLAGS "")
     set(AURA_REFLECTION_FLAG "")
-    add_compile_options(-Wno-unknown-warning-option)
     # Clang-only warning classes that this codebase trips but GCC does not.
     add_compile_options(-Wno-mismatched-tags -Wno-unused-private-field)
     # extern "C" accessors that return C++ types are intentional here (GCC
