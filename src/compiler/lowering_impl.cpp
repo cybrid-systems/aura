@@ -1749,7 +1749,7 @@ static std::uint32_t lower_flat_expr(
                 std::println("DEBUG: current_flat NULL at lambda bridge data");
             if (!state.current_pool)
                 std::println("DEBUG: current_pool NULL at lambda bridge data");
-            std::uint32_t fid;
+            std::uint32_t fid = 0;
             if (preclaimed_fid) {
                 // Issue #2292: replace the self-placeholder in place.
                 func.id = *preclaimed_fid;
