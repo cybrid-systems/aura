@@ -542,6 +542,18 @@ target_compile_options(aura-reflect PRIVATE ${AURA_REFLECTION_FLAG})
 target_compile_features(aura-reflect PUBLIC cxx_std_26)
 target_link_libraries(aura-reflect PRIVATE stdc++)
 
+# GCC at -O2 -g emits "variable tracking size limit exceeded with
+# '-fvar-tracking-assignments'" notes for these two very large TUs (the
+# ubsan-smoke log carried them). Variable-level debug info there is not
+# needed and stack traces stay symbolized, so scope the opt-out to the TUs
+# instead of weakening the whole build.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    set_property(SOURCE src/compiler/observability_json.cpp
+        APPEND PROPERTY COMPILE_OPTIONS -fno-var-tracking-assignments)
+    set_property(SOURCE src/compiler/evaluator_primitives_obs_jit.cpp
+        APPEND PROPERTY COMPILE_OPTIONS -fno-var-tracking-assignments)
+endif()
+
 # Link reflect into aura
 target_link_libraries(aura PRIVATE aura-reflect)
 

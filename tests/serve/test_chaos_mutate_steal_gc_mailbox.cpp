@@ -2209,6 +2209,30 @@ static void ac3620_1_guard_held_mailbox_no_edge_hold_windows() {
           "#3620: production_defaults_active (production split under test)");
     aura::serve::set_production_multi_worker_latched_for_test(true);
 
+    // Earlier members can leave the #3619 no-edge probe latched on the
+    // sticky bus; the #4158 quarantine gate then rejects a fresh acquire
+    // and the window below never opens (push_bp / probe both 0). Poll the
+    // window closed first and wait for the probe to drop.
+    (void)aura::serve::aura_hold_budget_poll_inbody_window();
+    {
+        const auto clear_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        while (aura::serve::aura_mutation_hold_no_edge_still_held() != 0 &&
+               std::chrono::steady_clock::now() < clear_deadline) {
+            (void)aura::serve::aura_hold_budget_poll_busy_path();
+            (void)aura::serve::aura_hold_budget_poll_inbody_window();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+
+    // Earlier members leave the process-wide mailbox hold SLO signal
+    // latched (p99 from their slow under-boundary waits), and the
+    // production security-schedule gate then rejects this acquire with
+    // "security-schedule:mailbox-hold-slo". This row measures #3613/#3619,
+    // not the SLO history, so start from a clean signal.
+    aura::serve::mf_mailbox::g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(
+        0, std::memory_order_relaxed);
+    aura::serve::mf_mailbox::g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(
+        0, std::memory_order_relaxed);
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "#3620: warm eval");
     auto& ev = cs.evaluator();
@@ -2225,12 +2249,18 @@ static void ac3620_1_guard_held_mailbox_no_edge_hold_windows() {
     Scheduler sched(2);
 
     std::atomic<bool> guard_held{false};
+    std::atomic<bool> guard_ok{false};
     std::atomic<bool> body_done{false};
     std::atomic<int> push_ok_while_live{0}; // AC2: hard-fail if > 0
     std::atomic<int> push_bp{0};            // #3613: expect > 0
     std::atomic<int> no_edge_probe_seen{0}; // #3619: expect > 0 while held
 
     std::atomic<bool> stop_peers{false};
+    // Handshake: the holder starts its no-edge body only after the peer is
+    // already polling. Without it a slow CI scheduler could start the main
+    // loop after the 6xSLO body had already expired, so push_bp and the
+    // no-edge probe both stayed 0 (the failures seen on shared runners).
+    std::atomic<bool> peer_ready{false};
 
     // Peer fibers: normal cooperative bodies (Explicit edges) — real steal
     // traffic during the window; no steal may tear the live Guard (AC2:
@@ -2256,8 +2286,19 @@ static void ac3620_1_guard_held_mailbox_no_edge_hold_windows() {
         bool ok = false;
         {
             auto gr = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &ok);
+            if (!gr) {
+                std::println("  #3620 diag reject: {}", gr.error().message);
+                ok = false;
+            }
+            guard_ok.store(ok, std::memory_order_release);
             guard_held.store(ok, std::memory_order_release);
             if (ok) {
+                // Do not start the timed window until the peer loop is live.
+                const auto ready_deadline =
+                    std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+                while (!peer_ready.load(std::memory_order_acquire) &&
+                       std::chrono::steady_clock::now() < ready_deadline)
+                    std::this_thread::yield();
                 const auto deadline =
                     std::chrono::steady_clock::now() + std::chrono::nanoseconds(body_ns);
                 volatile std::uint64_t acc = 0;
@@ -2272,6 +2313,17 @@ static void ac3620_1_guard_held_mailbox_no_edge_hold_windows() {
     });
 
     std::thread io([&sched]() { sched.run(); });
+
+    // Release the holder into its timed body only once this thread is
+    // ready to sample the window (see peer_ready above).
+    {
+        const auto guard_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!guard_held.load(std::memory_order_acquire) &&
+               !body_done.load(std::memory_order_acquire) &&
+               std::chrono::steady_clock::now() < guard_deadline)
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+    }
+    peer_ready.store(true, std::memory_order_release);
 
     // Peer: while A holds the outermost Guard — push must BP (#3613:
     // note_mailbox_deferred_under_boundary BEFORE any lock), and the
@@ -2305,6 +2357,7 @@ static void ac3620_1_guard_held_mailbox_no_edge_hold_windows() {
     io.join();
 
     // AC2 hard-fails + window positives:
+    CHECK(guard_ok.load(), "#3620: holder acquired the outermost MutationBoundaryGuard");
     CHECK(push_ok_while_live.load() == 0,
           "#3620 AC2: push Ok while shared Evaluator boundary live → hard-fail");
     CHECK(push_bp.load() > 0, "#3620 AC1: Guard-held mailbox push Backpressures (#3613)");

@@ -381,7 +381,9 @@ void ac3392_1_source_cite_evaluator_face() {
     CHECK(astx.find("std::vector<StableNodeRef> children_stable(NodeId id) const") !=
               std::string::npos,
           "3392 AC2: FlatAST::children_stable keeps allocating convenience");
-    CHECK(astx.find("template <typename Fn> void for_each_stable_child") != std::string::npos,
+    // #2960 constrained the template to invocable Fn and clang-format put
+    // the signature on its own line; pin the constrained form.
+    CHECK(astx.find("void for_each_stable_child(NodeId id, Fn&& fn) const") != std::string::npos,
           "3392 AC1: for_each_stable_child callback (per #398) still available");
 }
 

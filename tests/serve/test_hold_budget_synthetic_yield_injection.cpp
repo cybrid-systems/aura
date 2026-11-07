@@ -1715,11 +1715,20 @@ int run_test_hold_budget_eval_flat_safepoint_3693() {
               "3693/#4032 AC1: host poll shares #3988 ABI");
         CHECK(efl.find("Issue #4032") != std::string::npos, "3693/#4032 AC1: cites expand");
         const auto poll = efl.find("eval_flat_hold_budget_safepoint_poll");
-        const auto loop = efl.find("while (true) {");
-        CHECK(poll != std::string::npos && loop != std::string::npos, "3693 AC1: hot loop present");
-        const auto loop_win = loop == std::string::npos ? std::string{} : efl.substr(loop, 400);
-        CHECK(loop_win.find("EVAL_FLAT_HOLD_BUDGET_POLL()") != std::string::npos,
-              "3693 AC1: eval_flat hot loop polls");
+        CHECK(poll != std::string::npos, "3693 AC1: hot loop present");
+        // The file has several while (true) loops; the eval_flat dispatch
+        // loop is whichever one carries the per-opcode poll. Scanning all
+        // of them keeps the AC on the behavior instead of on the first
+        // loop in the file (a helper gained its own loop and broke it).
+        bool loop_polls = false;
+        for (auto at = efl.find("while (true) {"); at != std::string::npos;
+             at = efl.find("while (true) {", at + 1)) {
+            if (efl.substr(at, 400).find("EVAL_FLAT_HOLD_BUDGET_POLL()") != std::string::npos) {
+                loop_polls = true;
+                break;
+            }
+        }
+        CHECK(loop_polls, "3693 AC1: eval_flat hot loop polls");
         CHECK(efl.find("EvalResult Evaluator::eval_flat_apply_mutate_rebind") != std::string::npos,
               "3693 AC1: lockless rebind present");
         const auto reb = efl.find("EvalResult Evaluator::eval_flat_apply_mutate_rebind");
