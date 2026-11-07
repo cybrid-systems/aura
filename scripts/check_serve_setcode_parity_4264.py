@@ -69,8 +69,20 @@ def main() -> int:
         "lock_order::is_held(lock_order::Level::Workspace)" in loader,
         "AC1: adopt probe consults lock_order::is_held(Level::Workspace)",
     )
+    # The circular-dep probe still adopts inline. Every loading_stack_ erase
+    # goes through erase_loading_module, which adopts the same way. 1 inline
+    # circular site + 7 erase calls = the previous 8 load-path adopts.
     adopt_sites = loader.count("WorkspaceAdoptIfNeeded wlock_adopt_4264(workspace_mtx_);")
-    check(adopt_sites == 8, f"AC1: all 8 load-path lock sites adopt the held exclusive (found {adopt_sites})")
+    erase_calls = loader.count("erase_loading_module(resolved);")
+    check(
+        "void Evaluator::erase_loading_module" in loader and "loading_stack_.erase(resolved);" in loader,
+        "AC1: erase_loading_module adopts, then erases loading_stack_",
+    )
+    check(
+        adopt_sites == 2 and erase_calls == 7,
+        f"AC1: circular adopt plus erase_loading_module cover the 8 load-path sites "
+        f"(inline adopts {adopt_sites}, erase calls {erase_calls})",
+    )
     old_locks = loader.count("std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);")
     check(old_locks == 0, f"AC1: fresh workspace re-lock removed from the loader (found {old_locks})")
 

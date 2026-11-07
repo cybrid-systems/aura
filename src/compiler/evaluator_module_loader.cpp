@@ -443,426 +443,129 @@ namespace {
     }
 } // namespace
 
-types::EvalValue Evaluator::load_module_file(const std::string& path) {
-    // Issue #4460: this load's reason replaces any previous one.
-    last_module_load_failure_.clear();
-    // Issue #3266: validate before lock (string predicate; no shared
-    // state). Refuse path does not take compact_env_frames_lock_
-    // (zero extra). Issue #2653 H10 fail-closed. Issue #1401: lock
-    // only for env/closure insertion vs compact_env_frames.
-    if (!is_plausible_module_path(path)) {
-        const auto shown = truncate_path_for_log(path);
-        if (path.empty())
-            std::println(std::cerr, "load_module_file: refuse empty path");
-        else if (path.size() > shown.size())
-            std::println(std::cerr, "load_module_file: refuse non-module path '{}…' (len={})",
-                         shown, path.size());
-        else
-            std::println(std::cerr, "load_module_file: refuse non-module path '{}'", shown);
-        return types::make_void();
-    }
-    // Issue #4399: tenant host-path before any read or eval. Deny is void.
-    std::string gated;
-    if (!check_tenant_host_path(path, gated, "load-module"))
-        return types::make_void();
-    std::scoped_lock interlock(compact_env_frames_lock_);
-    // Issue #3457-fix: string_intern_by_sym_ / keyword_intern_by_sym_ are
-    // keyed by POOL-LOCAL SymIds. Each module load swaps in its own pool
-    // (own SymId space), so entries cached under another module's pool
-    // poison later lookups (observed: (require std/list) inside a module
-    // resolved as the CURRENT module's name -> circular dependency ->
-    // module-load-failed). eval_flat also rebinds on `p` change; this
-    // RAII still fences the load-module window (parse / require before
-    // the TCO loop). The tables are caches: clearing at module-eval
-    // entry/exit is always correct and keeps #3457's dense SymId probe
-    // hot within a single module's eval.
-    struct SymInternPoolReset {
-        Evaluator& ev;
-        explicit SymInternPoolReset(Evaluator& e) noexcept
-            : ev(e) {
-            ev.clear_sym_intern();
-        }
-        ~SymInternPoolReset() noexcept { ev.clear_sym_intern(); }
-        SymInternPoolReset(const SymInternPoolReset&) = delete;
-        SymInternPoolReset& operator=(const SymInternPoolReset&) = delete;
-        SymInternPoolReset(SymInternPoolReset&&) = delete;
-        SymInternPoolReset& operator=(SymInternPoolReset&&) = delete;
-    } sym_intern_pool_reset(*this);
-    // 1. Resolve path. Active policy already produced the only path
-    // the rest of this load may touch (Issue #4399).
-    // Issue #4936: read the policy once; `gated` is handed over only on the
-    // policy path, and the not-found branch below must take the same path.
-    const bool host_policy = host_path_policy_active();
-    std::string resolved;
-    if (host_policy)
-        resolved.swap(gated);
-    else
-        resolved = resolve_module_path(gated);
-    if (resolved.empty()) {
-        const auto shown = truncate_path_for_log(path);
-        last_module_load_failure_ = std::string("cannot resolve '") + std::string(shown) + "'";
-        // Issue #4918: say where we looked.
-        if (!host_policy) {
-            const auto searched = module_search_candidates(gated);
-            if (!searched.empty()) {
-                last_module_load_failure_ += " (searched: ";
-                for (std::size_t i = 0; i < searched.size() && i < 6; ++i) {
-                    if (i != 0)
-                        last_module_load_failure_ += ", ";
-                    last_module_load_failure_ += searched[i];
-                }
-                if (searched.size() > 6)
-                    last_module_load_failure_ += ", …";
-                last_module_load_failure_ += ")";
+void Evaluator::erase_loading_module(const std::string& resolved) {
+    WorkspaceAdoptIfNeeded wlock_adopt_4264(workspace_mtx_);
+    loading_stack_.erase(resolved);
+}
+
+types::EvalValue Evaluator::fail_unresolved_module(const std::string& path, bool host_policy,
+                                                   const std::string& gated) {
+    const auto shown = truncate_path_for_log(path);
+    last_module_load_failure_ = std::string("cannot resolve '") + std::string(shown) + "'";
+    // Issue #4918: say where we looked.
+    if (!host_policy) {
+        const auto searched = module_search_candidates(gated);
+        if (!searched.empty()) {
+            last_module_load_failure_ += " (searched: ";
+            for (std::size_t i = 0; i < searched.size() && i < 6; ++i) {
+                if (i != 0)
+                    last_module_load_failure_ += ", ";
+                last_module_load_failure_ += searched[i];
             }
+            if (searched.size() > 6)
+                last_module_load_failure_ += ", …";
+            last_module_load_failure_ += ")";
         }
-        // Issue #4460: file mode reports this once, on the require form.
-        // Other callers keep the operator log and the void return.
-        if (!require_failure_is_diagnostic_) {
-            std::println(std::cerr, "load_module_file: cannot resolve '{}'", shown);
-        }
-        return types::make_void();
     }
-    // Issue #3174 / #3176: install deferred host prims
-    // (git/tcp/http/shell/sys/file-*/c-*) before evaluating the std module.
-    // Sandbox without grant → error.
-    {
-        const auto gate = ensure_std_host_prims(resolved);
-        if (types::is_error(gate))
-            return gate;
+    // Issue #4460: file mode reports this once, on the require form.
+    // Other callers keep the operator log and the void return.
+    if (!require_failure_is_diagnostic_) {
+        std::println(std::cerr, "load_module_file: cannot resolve '{}'", shown);
     }
+    return types::make_void();
+}
 
-    // 2. Check cache
-    auto cache_it = module_cache_.find(resolved);
-    if (cache_it != module_cache_.end()) {
-        return types::make_module(cache_it->second);
+types::EvalValue Evaluator::fail_module_parse(const std::string& resolved,
+                                              std::string_view parse_error) {
+    erase_loading_module(resolved);
+    last_module_load_failure_ = "parse error for " + resolved;
+    if (!parse_error.empty()) {
+        last_module_load_failure_ += ": ";
+        last_module_load_failure_ += parse_error;
     }
+    // Issue #4460: file mode reports this once, on the require form.
+    if (!require_failure_is_diagnostic_) {
+        std::println(std::cerr, "load_module_file: parse error for {}", resolved);
+        if (!parse_error.empty())
+            std::println(std::cerr, "  {}", parse_error);
+    }
+    // Free the partial allocation — module was never inserted into cache.
+    arena_group_->reset_module(resolved);
+    return types::make_void();
+}
 
-    // 3. Circular dependency detection (Issue #1132: under workspace_mtx_
-    // so concurrent load_module_file calls cannot race the set).
-    {
-        WorkspaceAdoptIfNeeded wlock_adopt_4264(workspace_mtx_);
-        if (loading_stack_.count(resolved)) {
-            // Issue #1488 / #1692: do NOT string_heap_.push_back(
-            // "circular dependency: " + resolved) — return is make_void()
-            // and the index was never consumed (dead heap pollution).
-            // Surface only via stderr for operators/debug.
-            std::println(std::cerr, "load_module_file: circular dependency: '{}'", resolved);
-            return types::make_void();
-        }
-        loading_stack_.insert(resolved);
-    }
-    // Issue #3266: lock released for file I/O on purpose (do not hold
-    // workspace_mtx_ across the module open). Concurrent load of the same
-    // path may see loading_stack_ and report circular-dep while this
-    // thread is in I/O; module_cache_ is populated before erase below
-    // so a late arriver can hit cache after we finish.
-
-    // 4. Read file. Issue #4414: O_NOFOLLOW on the checked path. A
-    // final-component symlink fails the open (zero read of the target).
-    // Issue #4264: open, read, and empty each adopt the held exclusive
-    // before erasing loading_stack_ (the three pre-merge failure returns).
-    std::string content;
-    const auto opened = read_regular_nofollow(resolved, content);
-    if (opened == NofollowRead::OpenFailed) {
-        {
-            WorkspaceAdoptIfNeeded wlock_adopt_4264(workspace_mtx_);
-            loading_stack_.erase(resolved);
-        }
-        return types::make_void();
-    }
-    if (opened == NofollowRead::ReadFailed) {
-        {
-            WorkspaceAdoptIfNeeded wlock_adopt_4264(workspace_mtx_);
-            loading_stack_.erase(resolved);
-        }
-        return types::make_void();
-    }
-    if (content.empty()) {
-        {
-            WorkspaceAdoptIfNeeded wlock_adopt_4264(workspace_mtx_);
-            loading_stack_.erase(resolved);
-        }
-        return types::make_void();
-    }
-
-    // 5. Parse
-    if (!arena_) {
-        {
-            WorkspaceAdoptIfNeeded wlock_adopt_4264(workspace_mtx_);
-            loading_stack_.erase(resolved);
-        }
-        std::println(std::cerr, "load_module_file: no arena");
-        return types::make_void();
-    }
-    // Per-module arena: StringPool / FlatAST / mod_env all live here so the
-    // entire module (incl. closures that reference its FlatAST/Pool) can be
-    // freed in O(1) by reset_module(resolved). The default 8MB initial size
-    // matches ASTArena's main arena budget; can be tuned per module later.
-    auto& mod_arena = arena_group_->module_arena(resolved);
-    auto alloc = mod_arena.allocator();
-    aura::ast::StringPool* pool_ptr = nullptr;
-    aura::ast::FlatAST* flat_ptr = nullptr;
-    // Issue #4070: mod_arena outlives this frame. EXEMPT the stack
-    // covers so the next Moving rewrite does not dereference them.
-    pool_ptr = mod_arena.create_with_cover<aura::ast::StringPool>(
-        nullptr, "stack-cover-dies-at-return", alloc);
-    flat_ptr = mod_arena.create_with_cover<aura::ast::FlatAST>(nullptr,
-                                                               "stack-cover-dies-at-return", alloc);
-    auto pr = aura::parser::parse_to_flat(content, *flat_ptr, *pool_ptr);
-    if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-        {
-            WorkspaceAdoptIfNeeded wlock_adopt_4264(workspace_mtx_);
-            loading_stack_.erase(resolved);
-        }
-        last_module_load_failure_ = "parse error for " + resolved;
-        if (!pr.error.empty()) {
-            last_module_load_failure_ += ": ";
-            last_module_load_failure_ += pr.error;
-        }
-        // Issue #4460: file mode reports this once, on the require form.
-        if (!require_failure_is_diagnostic_) {
-            std::println(std::cerr, "load_module_file: parse error for {}", resolved);
-            if (!pr.error.empty())
-                std::println(std::cerr, "  {}", pr.error);
-        }
-        // Free the partial allocation — module was never inserted into cache.
-        arena_group_->reset_module(resolved);
-        return types::make_void();
-    }
-    flat_ptr->root = pr.root;
-    // Issue #4916: diagnostics produced by this module's code name this
-    // file and quote its lines (not the entry file's same line number).
-    aura::diag::bind_flat_to_source_file(flat_ptr,
-                                         aura::diag::register_source_file(resolved, content));
-
-    // 6. Create isolated module env (child of top_ for primitive access)
-    // Arena-allocate in the per-module arena so closures captured during
-    // module eval stay valid for the module's lifetime.
-    Env* mod_env = nullptr;
-    // Issue #4070: &mod_env dies at return. require_inject_env_ is the
-    // lasting slot (register_known). EXEMPT the stack cover.
-    mod_env = mod_arena.create_with_cover<Env>(nullptr, "stack-cover-dies-at-return", &top_);
-    mod_env->set_primitives(&primitives_);
-    // Issue #2766: attach the module StringPool so Env::bind dual-writes
-    // bindings_ + bindings_symid_ during (require …) inject and define.
-    // Without pool, require-only string binds leave bindings_symid_ short;
-    // later set_pool+define (letrec multi-define) or materialize dual-path
-    // hard-fail empties capture env → unbound private free-vars (*cell*).
-    mod_env->set_pool(pool_ptr);
-    // Explicit owner: Env(&top_) copies top_.owner_, but some call sites
-    // later re-parent or default-construct Envs that lose it. Primitive
-    // dispatch uses owner()->invoke_prim_with_telemetry; null owner is a
-    // SIGSEGV (bump_primitive_call_count si_addr≈0x730) after require.
-    mod_env->set_owner(this);
-    // Issue #232 follow-up: register the module env in env_frames_ so
-    // closures captured during module eval (e.g., the lambda in
-    // `(define (f x) ...)`) can walk the parent chain via SoA when
-    // materialize_call_env creates a fresh env for the call. Without
-    // this, the closure body can't see bindings from the surrounding
-    // scope (e.g., from a nested `(require "other-module" all:)`).
-    //
-    // Pass top_.parent_id() (the env_id of top_'s frame, which is
-    // the root frame index) as the explicit parent. This makes the
-    // new frame's parent_id_ point to top_'s frame so the SoA walk
-    // can find top_'s bindings (which is where the require primitive
-    // injects the required module's exports).
-    EnvId top_id = top_.parent_id();
-    if (top_id == NULL_ENV_ID)
-        top_id = 0; // top_ is at index 0
-    EnvId mod_id = alloc_env_frame_from_env(*mod_env, top_id);
-    const_cast<Env*>(mod_env)->set_parent_id(mod_id);
-
-
-    // 7. Clear any stale export set from previous module loads
+types::EvalValue Evaluator::fail_module_load(const std::string& resolved, const std::string& why) {
+    // Issue #4460: file mode surfaces why on the require diagnostic.
+    // The fail-closed reset below is unchanged (#2570).
+    if (!require_failure_is_diagnostic_)
+        std::println(std::cerr, "load_module_file: eval failed for {}: {}", resolved, why);
     if (current_export_set_)
         current_export_set_->clear();
+    erase_loading_module(resolved);
+    aura::diag::unbind_source_file_flats(resolved); // Issue #4916
+    arena_group_->reset_module(resolved);
+    // First-class error so (require)/(import) can signal failure
+    // (void was indistinguishable from empty success in some paths).
+    auto sid = string_heap_.mint(std::string("module-load-failed: ") + resolved + ": " + why);
+    auto eidx = primitives_detail::push_error_cause(error_values_, types::make_string(sid));
+    return types::make_error(eidx);
+}
 
-    // 8. Evaluate module in its own env.
-    // Issue #2566: nested (require)/(import) must inject into mod_env so
-    // free-vars (e.g. mutate:boundary-safe?) resolve inside module closures.
-    // RAII restores previous inject target for nested load_module_file.
-    struct RequireInjectGuard {
-        Evaluator& ev;
-        Env* prev;
-        explicit RequireInjectGuard(Evaluator& e, Env* target) noexcept
-            : ev(e)
-            , prev(e.require_inject_env_) {
-            e.require_inject_env_ = target;
+std::optional<std::string> Evaluator::apply_module_export_filter(Env* mod_env) {
+    if (!(current_export_set_ && !current_export_set_->empty()))
+        return std::nullopt;
+    // Issue #2570: exports that are bound to void cells are the
+    // partial-letrec failure mode (define pre-allocated, body never
+    // filled after mid-body abort). Fail the load rather than publish
+    // those names. Missing export names (declared but never defined)
+    // are filtered out below — some std modules historically export
+    // names that live as primitives only; do not hard-fail those.
+    //
+    // Exception: `(define ceil ceil)` under multi-define letrec used
+    // to re-bind the pre-allocated void cell to itself (RHS shadowed
+    // the primitive). Variable lookup now falls through void→prim, but
+    // if a cell is still void and a same-named primitive exists, fill
+    // the cell so the export is usable (std/math floor/ceil/sin/…).
+    for (const auto& exp : *current_export_set_) {
+        auto bound = mod_env->lookup_binding(exp);
+        if (!bound)
+            continue;
+        types::EvalValue actual = *bound;
+        std::optional<std::size_t> cell_idx;
+        if (types::is_cell(actual)) {
+            auto ci = types::as_cell_id(actual);
+            if (ci >= cells_.size())
+                return std::string("export '" + exp + "' has invalid cell");
+            cell_idx = ci;
+            actual = cells_[ci];
         }
-        ~RequireInjectGuard() noexcept { ev.require_inject_env_ = prev; }
-        RequireInjectGuard(const RequireInjectGuard&) = delete;
-        RequireInjectGuard& operator=(const RequireInjectGuard&) = delete;
-        RequireInjectGuard(RequireInjectGuard&&) = delete;
-        RequireInjectGuard& operator=(RequireInjectGuard&&) = delete;
-    };
-    RequireInjectGuard inject_guard(*this, mod_env);
-    // Issue #4918: "./x" / "../x" inside this module resolve against
-    // this module's directory while its body runs.
-    struct ModuleBaseDirGuard {
-        Evaluator& ev;
-        ModuleBaseDirGuard(Evaluator& e, const std::string& file)
-            : ev(e) {
-            const auto slash = file.rfind('/');
-            ev.module_base_dirs_.push_back(slash == std::string::npos ? std::string(".")
-                                           : slash == 0               ? std::string("/")
-                                                                      : file.substr(0, slash));
-        }
-        ~ModuleBaseDirGuard() noexcept {
-            if (!ev.module_base_dirs_.empty())
-                ev.module_base_dirs_.pop_back();
-        }
-        ModuleBaseDirGuard(const ModuleBaseDirGuard&) = delete;
-        ModuleBaseDirGuard& operator=(const ModuleBaseDirGuard&) = delete;
-        ModuleBaseDirGuard(ModuleBaseDirGuard&&) = delete;
-        ModuleBaseDirGuard& operator=(ModuleBaseDirGuard&&) = delete;
-    } base_dir_guard(*this, resolved);
-
-    auto expanded = aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, flat_ptr->root);
-    // Issue #4078: do not eval a refused half-expand. fail_load (below)
-    // drops the partial module; the reason string is the existing one.
-    EvalResult result = std::unexpected(
-        aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError, "hygiene-pass-limit"});
-    if (aura_hygiene_expand_deny_blocks_eval()) {
-        const char* why = aura_macro_hygiene_last_limit_reason_string();
-        if (why != nullptr && why[0] != '\0')
-            result = std::unexpected(macro_limit_diag_4876(why, "hygiene-pass-limit"));
-    } else {
-        result = eval_flat(*flat_ptr, *pool_ptr, expanded, *mod_env);
-    }
-
-    // Issue #2570: fail-closed module load — do NOT cache a half-evaluated
-    // module. Mid-body unbound/error (e.g. letrec define phase) used to
-    // return unexpected while load_module_file ignored it, published export
-    // filtering over partial bindings, and cached the module. Then
-    // (require …) returned #t, early:fn worked, and late:fn stayed void/
-    // uncallable. All-or-nothing: abort load, free arena, surface error.
-    auto fail_load = [&](const std::string& why) -> types::EvalValue {
-        // Issue #4460: file mode surfaces why on the require diagnostic.
-        // The fail-closed reset below is unchanged (#2570).
-        if (!require_failure_is_diagnostic_)
-            std::println(std::cerr, "load_module_file: eval failed for {}: {}", resolved, why);
-        if (current_export_set_)
-            current_export_set_->clear();
-        {
-            WorkspaceAdoptIfNeeded wlock_adopt_4264(workspace_mtx_);
-            loading_stack_.erase(resolved);
-        }
-        aura::diag::unbind_source_file_flats(resolved); // Issue #4916
-        arena_group_->reset_module(resolved);
-        // First-class error so (require)/(import) can signal failure
-        // (void was indistinguishable from empty success in some paths).
-        auto sid = string_heap_.mint(std::string("module-load-failed: ") + resolved + ": " + why);
-        auto eidx = primitives_detail::push_error_cause(error_values_, types::make_string(sid));
-        return types::make_error(eidx);
-    };
-    if (!result) {
-        return fail_load(result.error().format());
-    }
-    if (types::is_error(*result) && !types::is_string(*result)) {
-        std::string why = "error value from module body";
-        auto eidx = as_error_idx(*result);
-        if (eidx < error_values_.size()) {
-            auto& cause = error_values_[eidx];
-            if (is_string(cause)) {
-                auto si = as_string_idx(cause);
-                if (si < string_heap_.size()) {
-                    // Issue #4691: module-load fail copies the cause.
-                    // Gate before the bytes. Soft/Off stays inside the consult.
-                    if (!inrange_string_tenant_allows(si, /*required_effects=*/0, "file-mode"))
-                        why = "file-mode: cross-tenant string slot read denied (#4505)";
-                    else
-                        why = string_at(si);
-                }
-            }
-        }
-        return fail_load(why);
-    }
-
-    // 9. Apply export filtering: if (export ...) was declared, remove unexported bindings
-    if (current_export_set_ && !current_export_set_->empty()) {
-        // Issue #2570: exports that are bound to void cells are the
-        // partial-letrec failure mode (define pre-allocated, body never
-        // filled after mid-body abort). Fail the load rather than publish
-        // those names. Missing export names (declared but never defined)
-        // are filtered out below — some std modules historically export
-        // names that live as primitives only; do not hard-fail those.
-        //
-        // Exception: `(define ceil ceil)` under multi-define letrec used
-        // to re-bind the pre-allocated void cell to itself (RHS shadowed
-        // the primitive). Variable lookup now falls through void→prim, but
-        // if a cell is still void and a same-named primitive exists, fill
-        // the cell so the export is usable (std/math floor/ceil/sin/…).
-        for (const auto& exp : *current_export_set_) {
-            auto bound = mod_env->lookup_binding(exp);
-            if (!bound)
+        if (types::is_void(actual)) {
+            auto slot = primitives_.slot_for_name(exp);
+            if (slot != std::numeric_limits<std::size_t>::max()) {
+                auto prim = types::make_primitive(slot);
+                if (cell_idx)
+                    cells_[*cell_idx] = prim;
                 continue;
-            types::EvalValue actual = *bound;
-            std::optional<std::size_t> cell_idx;
-            if (types::is_cell(actual)) {
-                auto ci = types::as_cell_id(actual);
-                if (ci >= cells_.size())
-                    return fail_load("export '" + exp + "' has invalid cell");
-                cell_idx = ci;
-                actual = cells_[ci];
             }
-            if (types::is_void(actual)) {
-                auto slot = primitives_.slot_for_name(exp);
-                if (slot != std::numeric_limits<std::size_t>::max()) {
-                    auto prim = types::make_primitive(slot);
-                    if (cell_idx)
-                        cells_[*cell_idx] = prim;
-                    continue;
-                }
-                return fail_load("export '" + exp +
-                                 "' is unbound (void); define may have failed or been skipped");
-            }
+            return std::string("export '" + exp +
+                               "' is unbound (void); define may have failed or been skipped");
         }
-        // Issue #4350: filter through replace_string_bindings so the name
-        // index is rebuilt — Env::lookup treats binding_index_ as
-        // authoritative, and an in-place erase shifts every later slot.
-        std::vector<std::pair<std::string, EvalValue>> kept;
-        kept.reserve(mod_env->bindings().size());
-        for (const auto& b : std::as_const(*mod_env).bindings()) {
-            if (current_export_set_->count(b.first))
-                kept.push_back(b);
-        }
-        mod_env->replace_string_bindings(kept);
-        current_export_set_->clear();
     }
-
-    // 10. Store module (pointer to arena-allocated env — persists for the
-    // module's lifetime, freed by gc_module(resolved)).
-    // Issue #1991 (B-010): take unique_lock(module_mtx_) around the
-    // module_* writes — (gc) primitive clears modules_, module_cache_,
-    // module_arena_ptrs_ in one shot. Without the lock, a concurrent
-    // (gc) could half-clear the cache between the push_back and the
-    // module_cache_[resolved] = mod_idx assignment.
-    // Issue #2354: Module rank (after Closures in total order when audit on).
-    std::size_t mod_idx = 0;
-    {
-        aura::compiler::lock_order::AuditScope lo_module(aura::compiler::lock_order::Level::Module);
-        std::unique_lock<std::shared_mutex> mod_lock(module_mtx_);
-        // Issue #4386: rewrite a this-window moved Env* before it is published.
-        if (aura::ast::moving_compact_feature_enabled()) {
-            std::scoped_lock<std::mutex> rewrite_lock(densify_rewrite_mu_);
-            mod_env = static_cast<Env*>(densify_rewrite_lookup_locked_(mod_env));
-        }
-        mod_idx = modules_.size();
-        modules_.push_back(mod_env);
-        module_cache_[resolved] = mod_idx;
-        module_arena_ptrs_[resolved] = &mod_arena;
+    // Issue #4350: filter through replace_string_bindings so the name
+    // index is rebuilt — Env::lookup treats binding_index_ as
+    // authoritative, and an in-place erase shifts every later slot.
+    std::vector<std::pair<std::string, EvalValue>> kept;
+    kept.reserve(mod_env->bindings().size());
+    for (const auto& b : std::as_const(*mod_env).bindings()) {
+        if (current_export_set_->count(b.first))
+            kept.push_back(b);
     }
-    // Issue #1668: do not string_heap_.push_back(resolved) — display name
-    // lives in module_names_; the bare heap push never captured an index
-    // (dead pollution on every load_module, same #1488 heuristic class).
-    module_names_.push_back(resolved);
+    mod_env->replace_string_bindings(kept);
+    current_export_set_->clear();
+    return std::nullopt;
+}
 
-    // 10b. IR caching callback (registered by CompilerService)
-    if (module_loaded_cb_) {
-        module_loaded_cb_(content, resolved);
-    }
-
+void Evaluator::ingest_loaded_module_type_sigs(const std::string& resolved, Env* mod_env) {
     // 10c. 自动加载 .aura-type 类型签名文件
     // 检查 {module}.aura 同目录下是否有 {module}.aura-type 文件
     // Issue #4414: this sibling is a second host open. The .aura fence
@@ -945,11 +648,316 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
                 .type_str = param_str + "|Any", .module_file = resolved, .resolved = false};
         }
     }
+}
 
+Env* Evaluator::create_loaded_module_env(ast::ASTArena& mod_arena, ast::StringPool* pool_ptr) {
+    Env* mod_env = nullptr;
+    // Issue #4070: &mod_env dies at return. require_inject_env_ is the
+    // lasting slot (register_known). EXEMPT the stack cover.
+    mod_env = mod_arena.create_with_cover<Env>(nullptr, "stack-cover-dies-at-return", &top_);
+    mod_env->set_primitives(&primitives_);
+    // Issue #2766: attach the module StringPool so Env::bind dual-writes
+    // bindings_ + bindings_symid_ during (require …) inject and define.
+    // Without pool, require-only string binds leave bindings_symid_ short;
+    // later set_pool+define (letrec multi-define) or materialize dual-path
+    // hard-fail empties capture env → unbound private free-vars (*cell*).
+    mod_env->set_pool(pool_ptr);
+    // Explicit owner: Env(&top_) copies top_.owner_, but some call sites
+    // later re-parent or default-construct Envs that lose it. Primitive
+    // dispatch uses owner()->invoke_prim_with_telemetry; null owner is a
+    // SIGSEGV (bump_primitive_call_count si_addr≈0x730) after require.
+    mod_env->set_owner(this);
+    // Issue #232 follow-up: register the module env in env_frames_ so
+    // closures captured during module eval (e.g., the lambda in
+    // `(define (f x) ...)`) can walk the parent chain via SoA when
+    // materialize_call_env creates a fresh env for the call. Without
+    // this, the closure body can't see bindings from the surrounding
+    // scope (e.g., from a nested `(require "other-module" all:)`).
+    //
+    // Pass top_.parent_id() (the env_id of top_'s frame, which is
+    // the root frame index) as the explicit parent. This makes the
+    // new frame's parent_id_ point to top_'s frame so the SoA walk
+    // can find top_'s bindings (which is where the require primitive
+    // injects the required module's exports).
+    EnvId top_id = top_.parent_id();
+    if (top_id == NULL_ENV_ID)
+        top_id = 0; // top_ is at index 0
+    EnvId mod_id = alloc_env_frame_from_env(*mod_env, top_id);
+    const_cast<Env*>(mod_env)->set_parent_id(mod_id);
+    return mod_env;
+}
+
+types::EvalValue Evaluator::load_module_file(const std::string& path) {
+    // Issue #4460: this load's reason replaces any previous one.
+    last_module_load_failure_.clear();
+    // Issue #3266: validate before lock (string predicate; no shared
+    // state). Refuse path does not take compact_env_frames_lock_
+    // (zero extra). Issue #2653 H10 fail-closed. Issue #1401: lock
+    // only for env/closure insertion vs compact_env_frames.
+    if (!is_plausible_module_path(path)) {
+        const auto shown = truncate_path_for_log(path);
+        if (path.empty())
+            std::println(std::cerr, "load_module_file: refuse empty path");
+        else if (path.size() > shown.size())
+            std::println(std::cerr, "load_module_file: refuse non-module path '{}…' (len={})",
+                         shown, path.size());
+        else
+            std::println(std::cerr, "load_module_file: refuse non-module path '{}'", shown);
+        return types::make_void();
+    }
+    // Issue #4399: tenant host-path before any read or eval. Deny is void.
+    std::string gated;
+    if (!check_tenant_host_path(path, gated, "load-module"))
+        return types::make_void();
+    std::scoped_lock interlock(compact_env_frames_lock_);
+    // Issue #3457-fix: string_intern_by_sym_ / keyword_intern_by_sym_ are
+    // keyed by POOL-LOCAL SymIds. Each module load swaps in its own pool
+    // (own SymId space), so entries cached under another module's pool
+    // poison later lookups (observed: (require std/list) inside a module
+    // resolved as the CURRENT module's name -> circular dependency ->
+    // module-load-failed). eval_flat also rebinds on `p` change; this
+    // RAII still fences the load-module window (parse / require before
+    // the TCO loop). The tables are caches: clearing at module-eval
+    // entry/exit is always correct and keeps #3457's dense SymId probe
+    // hot within a single module's eval.
+    struct SymInternPoolReset {
+        Evaluator& ev;
+        explicit SymInternPoolReset(Evaluator& e) noexcept
+            : ev(e) {
+            ev.clear_sym_intern();
+        }
+        ~SymInternPoolReset() noexcept { ev.clear_sym_intern(); }
+        SymInternPoolReset(const SymInternPoolReset&) = delete;
+        SymInternPoolReset& operator=(const SymInternPoolReset&) = delete;
+        SymInternPoolReset(SymInternPoolReset&&) = delete;
+        SymInternPoolReset& operator=(SymInternPoolReset&&) = delete;
+    } sym_intern_pool_reset(*this);
+    // 1. Resolve path. Active policy already produced the only path
+    // the rest of this load may touch (Issue #4399).
+    // Issue #4936: read the policy once; `gated` is handed over only on the
+    // policy path, and the not-found branch below must take the same path.
+    const bool host_policy = host_path_policy_active();
+    std::string resolved;
+    if (host_policy)
+        resolved.swap(gated);
+    else
+        resolved = resolve_module_path(gated);
+    if (resolved.empty())
+        return fail_unresolved_module(path, host_policy, gated);
+    // Issue #3174 / #3176: install deferred host prims
+    // (git/tcp/http/shell/sys/file-*/c-*) before evaluating the std module.
+    // Sandbox without grant → error.
+    {
+        const auto gate = ensure_std_host_prims(resolved);
+        if (types::is_error(gate))
+            return gate;
+    }
+
+    // 2. Check cache
+    auto cache_it = module_cache_.find(resolved);
+    if (cache_it != module_cache_.end()) {
+        return types::make_module(cache_it->second);
+    }
+
+    // 3. Circular dependency detection (Issue #1132: under workspace_mtx_
+    // so concurrent load_module_file calls cannot race the set).
     {
         WorkspaceAdoptIfNeeded wlock_adopt_4264(workspace_mtx_);
-        loading_stack_.erase(resolved);
+        if (loading_stack_.count(resolved)) {
+            // Issue #1488 / #1692: do NOT string_heap_.push_back(
+            // "circular dependency: " + resolved) — return is make_void()
+            // and the index was never consumed (dead heap pollution).
+            // Surface only via stderr for operators/debug.
+            std::println(std::cerr, "load_module_file: circular dependency: '{}'", resolved);
+            return types::make_void();
+        }
+        loading_stack_.insert(resolved);
     }
+    // Issue #3266: lock released for file I/O on purpose (do not hold
+    // workspace_mtx_ across the module open). Concurrent load of the same
+    // path may see loading_stack_ and report circular-dep while this
+    // thread is in I/O; module_cache_ is populated before erase below
+    // so a late arriver can hit cache after we finish.
+
+    // 4. Read file. Issue #4414: O_NOFOLLOW on the checked path. A
+    // final-component symlink fails the open (zero read of the target).
+    // Issue #4264: open, read, and empty each adopt the held exclusive
+    // before erasing loading_stack_ (the three pre-merge failure returns).
+    std::string content;
+    const auto opened = read_regular_nofollow(resolved, content);
+    if (opened == NofollowRead::OpenFailed) {
+        erase_loading_module(resolved);
+        return types::make_void();
+    }
+    if (opened == NofollowRead::ReadFailed) {
+        erase_loading_module(resolved);
+        return types::make_void();
+    }
+    if (content.empty()) {
+        erase_loading_module(resolved);
+        return types::make_void();
+    }
+
+    // 5. Parse
+    if (!arena_) {
+        erase_loading_module(resolved);
+        std::println(std::cerr, "load_module_file: no arena");
+        return types::make_void();
+    }
+    // Per-module arena: StringPool / FlatAST / mod_env all live here so the
+    // entire module (incl. closures that reference its FlatAST/Pool) can be
+    // freed in O(1) by reset_module(resolved). The default 8MB initial size
+    // matches ASTArena's main arena budget; can be tuned per module later.
+    auto& mod_arena = arena_group_->module_arena(resolved);
+    auto alloc = mod_arena.allocator();
+    aura::ast::StringPool* pool_ptr = nullptr;
+    aura::ast::FlatAST* flat_ptr = nullptr;
+    // Issue #4070: mod_arena outlives this frame. EXEMPT the stack
+    // covers so the next Moving rewrite does not dereference them.
+    pool_ptr = mod_arena.create_with_cover<aura::ast::StringPool>(
+        nullptr, "stack-cover-dies-at-return", alloc);
+    flat_ptr = mod_arena.create_with_cover<aura::ast::FlatAST>(nullptr,
+                                                               "stack-cover-dies-at-return", alloc);
+    auto pr = aura::parser::parse_to_flat(content, *flat_ptr, *pool_ptr);
+    if (!pr.success || pr.root == aura::ast::NULL_NODE)
+        return fail_module_parse(resolved, pr.error);
+    flat_ptr->root = pr.root;
+    // Issue #4916: diagnostics produced by this module's code name this
+    // file and quote its lines (not the entry file's same line number).
+    aura::diag::bind_flat_to_source_file(flat_ptr,
+                                         aura::diag::register_source_file(resolved, content));
+
+    // 6. Create isolated module env (child of top_ for primitive access)
+    // Arena-allocate in the per-module arena so closures captured during
+    // module eval stay valid for the module's lifetime.
+    Env* mod_env = create_loaded_module_env(mod_arena, pool_ptr);
+
+
+    // 7. Clear any stale export set from previous module loads
+    if (current_export_set_)
+        current_export_set_->clear();
+
+    // 8. Evaluate module in its own env.
+    // Issue #2566: nested (require)/(import) must inject into mod_env so
+    // free-vars (e.g. mutate:boundary-safe?) resolve inside module closures.
+    // RAII restores previous inject target for nested load_module_file.
+    struct RequireInjectGuard {
+        Evaluator& ev;
+        Env* prev;
+        explicit RequireInjectGuard(Evaluator& e, Env* target) noexcept
+            : ev(e)
+            , prev(e.require_inject_env_) {
+            e.require_inject_env_ = target;
+        }
+        ~RequireInjectGuard() noexcept { ev.require_inject_env_ = prev; }
+        RequireInjectGuard(const RequireInjectGuard&) = delete;
+        RequireInjectGuard& operator=(const RequireInjectGuard&) = delete;
+        RequireInjectGuard(RequireInjectGuard&&) = delete;
+        RequireInjectGuard& operator=(RequireInjectGuard&&) = delete;
+    };
+    RequireInjectGuard inject_guard(*this, mod_env);
+    // Issue #4918: "./x" / "../x" inside this module resolve against
+    // this module's directory while its body runs.
+    struct ModuleBaseDirGuard {
+        Evaluator& ev;
+        ModuleBaseDirGuard(Evaluator& e, const std::string& file)
+            : ev(e) {
+            const auto slash = file.rfind('/');
+            ev.module_base_dirs_.push_back(slash == std::string::npos ? std::string(".")
+                                           : slash == 0               ? std::string("/")
+                                                                      : file.substr(0, slash));
+        }
+        ~ModuleBaseDirGuard() noexcept {
+            if (!ev.module_base_dirs_.empty())
+                ev.module_base_dirs_.pop_back();
+        }
+        ModuleBaseDirGuard(const ModuleBaseDirGuard&) = delete;
+        ModuleBaseDirGuard& operator=(const ModuleBaseDirGuard&) = delete;
+        ModuleBaseDirGuard(ModuleBaseDirGuard&&) = delete;
+        ModuleBaseDirGuard& operator=(ModuleBaseDirGuard&&) = delete;
+    } base_dir_guard(*this, resolved);
+
+    auto expanded = aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, flat_ptr->root);
+    // Issue #4078: do not eval a refused half-expand. fail_load (below)
+    // drops the partial module; the reason string is the existing one.
+    EvalResult result = std::unexpected(
+        aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError, "hygiene-pass-limit"});
+    if (aura_hygiene_expand_deny_blocks_eval()) {
+        const char* why = aura_macro_hygiene_last_limit_reason_string();
+        if (why != nullptr && why[0] != '\0')
+            result = std::unexpected(macro_limit_diag_4876(why, "hygiene-pass-limit"));
+    } else {
+        result = eval_flat(*flat_ptr, *pool_ptr, expanded, *mod_env);
+    }
+
+    // Issue #2570: fail-closed module load — do NOT cache a half-evaluated
+    // module. Mid-body unbound/error (e.g. letrec define phase) used to
+    // return unexpected while load_module_file ignored it, published export
+    // filtering over partial bindings, and cached the module. Then
+    // (require …) returned #t, early:fn worked, and late:fn stayed void/
+    // uncallable. All-or-nothing: abort load, free arena, surface error.
+    if (!result) {
+        return fail_module_load(resolved, result.error().format());
+    }
+    if (types::is_error(*result) && !types::is_string(*result)) {
+        std::string why = "error value from module body";
+        auto eidx = as_error_idx(*result);
+        if (eidx < error_values_.size()) {
+            auto& cause = error_values_[eidx];
+            if (is_string(cause)) {
+                auto si = as_string_idx(cause);
+                if (si < string_heap_.size()) {
+                    // Issue #4691: module-load fail copies the cause.
+                    // Gate before the bytes. Soft/Off stays inside the consult.
+                    if (!inrange_string_tenant_allows(si, /*required_effects=*/0, "file-mode"))
+                        why = "file-mode: cross-tenant string slot read denied (#4505)";
+                    else
+                        why = string_at(si);
+                }
+            }
+        }
+        return fail_module_load(resolved, why);
+    }
+
+    // 9. Apply export filtering: if (export ...) was declared, remove unexported bindings
+    if (auto why = apply_module_export_filter(mod_env))
+        return fail_module_load(resolved, *why);
+
+    // 10. Store module (pointer to arena-allocated env — persists for the
+    // module's lifetime, freed by gc_module(resolved)).
+    // Issue #1991 (B-010): take unique_lock(module_mtx_) around the
+    // module_* writes — (gc) primitive clears modules_, module_cache_,
+    // module_arena_ptrs_ in one shot. Without the lock, a concurrent
+    // (gc) could half-clear the cache between the push_back and the
+    // module_cache_[resolved] = mod_idx assignment.
+    // Issue #2354: Module rank (after Closures in total order when audit on).
+    std::size_t mod_idx = 0;
+    {
+        aura::compiler::lock_order::AuditScope lo_module(aura::compiler::lock_order::Level::Module);
+        std::unique_lock<std::shared_mutex> mod_lock(module_mtx_);
+        // Issue #4386: rewrite a this-window moved Env* before it is published.
+        if (aura::ast::moving_compact_feature_enabled()) {
+            std::scoped_lock<std::mutex> rewrite_lock(densify_rewrite_mu_);
+            mod_env = static_cast<Env*>(densify_rewrite_lookup_locked_(mod_env));
+        }
+        mod_idx = modules_.size();
+        modules_.push_back(mod_env);
+        module_cache_[resolved] = mod_idx;
+        module_arena_ptrs_[resolved] = &mod_arena;
+    }
+    // Issue #1668: do not string_heap_.push_back(resolved) — display name
+    // lives in module_names_; the bare heap push never captured an index
+    // (dead pollution on every load_module, same #1488 heuristic class).
+    module_names_.push_back(resolved);
+
+    // 10b. IR caching callback (registered by CompilerService)
+    if (module_loaded_cb_) {
+        module_loaded_cb_(content, resolved);
+    }
+
+    ingest_loaded_module_type_sigs(resolved, mod_env);
+
+    erase_loading_module(resolved);
     return types::make_module(mod_idx);
 }
 
