@@ -30,6 +30,10 @@ struct QueryReplacePartialFail;
 struct ReplacePatternOptions;
 struct ReplacePatternMatch;
 
+// Issue #5033: mutate:* wrapper phase state (defined in
+// evaluator_primitives_mutate.cpp).
+struct MutateEffectTarget;
+
 // Peeled register parts. The struct is a friend of Evaluator, same as
 // CompilePrims. Each function is one responsibility group.
 struct RegSplitParts {
@@ -749,6 +753,36 @@ struct RegSplitParts {
     template <typename Ctx> static void register_mutate_hot_update_stats_primitive(Ctx& cx);
     template <typename Ctx> static void register_mutate_reload_recovery_stats_primitive(Ctx& cx);
     template <typename Ctx> static void register_mutate_aot_audit_stats_primitive(Ctx& cx);
+    // Issue #5033: mutate:* wrapper phases + node operand resolver.
+    static MutateEffectTarget mutate_effect_target(Evaluator& ev, const MakeErrorVal& mev,
+                                                   const char* op, std::span<const EvalValue> a);
+    static std::optional<EvalValue> mutate_effect_gate(Evaluator& ev, const MakeErrorVal& mev,
+                                                       const char* op,
+                                                       std::span<const EvalValue> a,
+                                                       const MutateEffectTarget& target);
+    template <typename GuardPtr>
+    static std::optional<EvalValue> mutate_wrapper_enter(
+        Evaluator& ev, const MakeErrorVal& mev, const char* op, bool guard_exempt,
+        bool& admit_armed, GuardPtr& wrapper_guard, bool& wrapper_ok, std::uint64_t& wraps_before,
+        std::uint64_t& token_before);
+    template <typename GuardPtr>
+    static std::optional<EvalValue> mutate_post_body_belt(
+        Evaluator& ev, const MakeErrorVal& mev, const char* op, bool guard_exempt,
+        GuardPtr& wrapper_guard, std::uint64_t wraps_before, std::uint64_t token_before);
+    template <typename GuardPtr>
+    static EvalValue mutate_wrapper_commit(Evaluator& ev, const MakeErrorVal& mev, const char* op,
+                                           bool guard_exempt, GuardPtr& wrapper_guard,
+                                           bool& wrapper_ok, EvalValue result);
+    template <typename Fn>
+    static EvalValue mutate_wrapped_call(Evaluator& ev, const MakeErrorVal& mev, const Fn& fn,
+                                         const std::string& op_name, bool guard_exempt,
+                                         std::span<const EvalValue> a);
+    static std::optional<aura::ast::FlatAST::StableNodeRef>
+    mutate_unpack_stable_ref_arg(Evaluator& ev, const EvalValue& arg);
+    static EvalValue mutate_resolve_node_arg(Evaluator& ev, const MakeErrorVal& mev,
+                                             aura::ast::FlatAST& flat,
+                                             std::span<const EvalValue> a, const char* op,
+                                             bool* ok, aura::ast::NodeId& out_node);
     // Issue #5033: query:typed-mutation-audit-trail insert phases.
     template <typename Kv>
     static void typed_audit_stats_snapshot_fields(

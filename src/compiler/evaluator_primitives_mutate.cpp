@@ -6188,6 +6188,817 @@ template <typename Ctx> void RegSplitParts::register_mutate_replace_subtree_prim
         });
 }
 
+// Issue #5033: mutate:* wrapper phases (peeled from register_mutate_primitives).
+// Wrapped body: target resolve -> effect gate -> boundary enter -> fn(a) ->
+// post-body belt -> commit / persist-reject + IR reinstall.
+struct MutateEffectTarget {
+    aura::ast::NodeId target_node = 0;
+    bool has_target = false;
+    std::uint64_t ref_tenant = 0;
+    std::optional<aura::ast::FlatAST::StableNodeRef> arg_ref;
+    std::optional<EvalValue> error;
+};
+
+MutateEffectTarget RegSplitParts::mutate_effect_target(Evaluator& ev, const MakeErrorVal& mev,
+                                                       const char* op,
+                                                       std::span<const EvalValue> a) {
+    MutateEffectTarget t;
+    // Issue #1565 / #2052: effect matrix + provenance audit FIRST so
+    // denied paths always hit the mutation audit ring + sandbox metrics
+    // (legacy string gate alone used to skip them).
+    // Best-effort target_node from first int / StableNodeRef arg.
+    // Issue #4654: node id 0 is a real node (NULL_NODE is ~0u).
+    // "No concrete target" is tracked explicitly below.
+    aura::ast::NodeId target_node = 0;
+    bool has_target = false;
+    std::uint64_t ref_tenant = 0;
+    // Issue #3993: keep packed/hash captured gen/wrap/cow so
+    // require_effect_on_ref does not brace-init gen=0 (false
+    // #3773 stale-ref before isolation). Occupancy-only fills
+    // live layout below.
+    std::optional<StableNodeRef> arg_ref;
+    if (!a.empty()) {
+        if (is_int(a[0])) {
+            // Issue #3724: Restricted+MT / Strict bare int must
+            // not occupancy-stamp via for_node_id. Body #3395
+            // reject is the production SSOT; occupancy stays
+            // empty so a later owner packed mutate is not
+            // IsolationDeny'd as if the denier owned the slot.
+            const bool consult_bare =
+                (ev.effect_sandbox_mode() == 2 || aura::core::sandbox::is_strict()) ||
+                (ev.effect_sandbox_mode() == 1 &&
+                 (aura::core::provenance::hard_capture_tenant_active() ||
+                  aura::core::provenance::multi_tenant_env_active()));
+            if (!consult_bare) {
+                target_node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+                // Issue #4654: a bare int is not an identity operand
+                // (#3395) - keep "int 0 = no concrete target".
+                has_target = target_node != 0;
+            }
+        } else if (is_pair(a[0])) {
+            // Issue #3640: single spine — the isolation gate MUST
+            // parse packed StableNodeRefs through the same
+            // unpack_stable_ref_arg as resolve_mutate_node_arg
+            // (#3396 v2). The old shallow parse read inner.cdr.car
+            // — the wrap_epoch slot — as ref_tenant: wrap == caller
+            // skipped the occupancy consult (cross-tenant mutate
+            // allowed pre-write), wrap != caller IsolationDeny'd a
+            // legitimate same-tenant packed mutate. Production +
+            // non-v2 packed leaves target/ref at 0 so the body
+            // falls through to the #3395 bare-int/v1 reject.
+            if (auto packed = RegSplitParts::mutate_unpack_stable_ref_arg(ev, a[0])) {
+                target_node = static_cast<aura::ast::NodeId>(packed->id);
+                // Issue #4654: packed ref id 0 is a real node.
+                has_target = true;
+                ref_tenant = packed->tenant_id;
+                arg_ref = *packed;
+            }
+        } else if (is_hash(a[0])) {
+            // Issue #3991: production QueryResult hash joins the
+            // wrapper isolation gate packed pair already uses.
+            // Resolve with tenant/fiber 0 so freshness is occupancy
+            // / wrap; IsolationDeny is require_effect_on_ref (same
+            // string as packed). Soft/Off: no extra consult
+            // (sandbox + effect mode both Off).
+            const bool hash_iso = aura::compiler::typed_audit::production_defaults_active() ||
+                                  ev.effect_sandbox_mode() != 0 || ev.sandbox_mode();
+            if (hash_iso) {
+                if (auto* ws = ev.workspace_flat()) {
+                    using aura::compiler::query_result_decode::HashNodeKind;
+                    using aura::compiler::query_result_decode::parse_query_result_match_index;
+                    using aura::compiler::query_result_decode::resolve_query_result_match;
+                    auto hr = resolve_query_result_match(
+                        a[0], ev.string_heap_, ev.pairs_, *ws, /*tenant=*/0,
+                        /*fiber=*/0, op, parse_query_result_match_index(a, ev.keyword_table()));
+                    if (hr.kind != HashNodeKind::Ok)
+                        t.error = mev(hr.err_kind, hr.err_msg);
+                    return t;
+                    target_node = hr.node;
+                    // Issue #4654: a QueryResult match id 0 is a real
+                    // node - gate it like any other id.
+                    has_target = true;
+                    ref_tenant = hr.tenant_id;
+                    StableNodeRef href{};
+                    href.id = hr.node;
+                    href.gen = hr.generation;
+                    href.wrap_epoch = hr.wrap_epoch;
+                    href.cow_epoch_at_capture = hr.cow_epoch_at_capture;
+                    href.tenant_id = hr.tenant_id;
+                    href.fiber_id = hr.fiber_id;
+                    arg_ref = href;
+                }
+            }
+        }
+    }
+
+    // Issue #1566 / #2052 / Issue #2658: multi-tenant workspace isolation +
+    // capability check. Issue #2942: concrete NodeId targets MUST go
+    // through require_effect_for_node_id (principal stamp) or
+    // require_effect_on_ref (stamped / foreign tenant) — never bare
+    // 2/3-arg require_effect with default ref_tenant=0 (late isolation
+    // window). Under Strict, also refuse when last hygiene stamp
+    // belongs to a foreign tenant (parity with mutate:atomic-batch
+    // #1878) — the strict heuristic must run BEFORE the gate so
+    // ref_tenant is correct for on_ref.
+    const bool strict_iso = (ev.effect_sandbox_mode() == 2) || aura::core::sandbox::is_strict();
+    const bool restricted_iso = ev.effect_sandbox_mode() == 1;
+    if (ref_tenant == 0 && has_target && (strict_iso || restricted_iso)) {
+        const auto self = ev.capability_tenant_id();
+        if (self != 0 && (strict_iso || aura::core::provenance::hard_capture_tenant_active() ||
+                          aura::core::provenance::multi_tenant_env_active())) {
+            // Issue #3415: occupancy int — consult last stamp /
+            // hygiene so Restricted+MT does not restamp a foreign
+            // owner as the caller. Soft / single-tenant Restricted
+            // skip (legacy #2056 / #1878 Strict-only slot).
+            auto existing = aura::core::provenance::existing_stamp_for_node(
+                static_cast<std::uint32_t>(target_node));
+            if (existing == 0) {
+                const auto& hs = aura::core::provenance::g_provenance_tracker().last_hygiene;
+                if (hs.tenant_id != 0 &&
+                    (hs.node_id == 0 || hs.node_id == static_cast<std::uint32_t>(target_node)))
+                    existing = hs.tenant_id;
+            }
+            if (existing != 0 && existing != self)
+                ref_tenant = existing;
+        }
+    }
+    t.target_node = target_node;
+    t.has_target = has_target;
+    t.ref_tenant = ref_tenant;
+    t.arg_ref = arg_ref;
+    return t;
+}
+
+std::optional<EvalValue> RegSplitParts::mutate_effect_gate(Evaluator& ev, const MakeErrorVal& mev,
+                                                           const char* op,
+                                                           std::span<const EvalValue> a,
+                                                           const MutateEffectTarget& target) {
+    using aura::compiler::security::kCapMutate;
+    using aura::compiler::security::kCapWildcard;
+    using aura::compiler::security::kEffectMutate;
+    const auto& target_node = target.target_node;
+    const auto& has_target = target.has_target;
+    const auto& ref_tenant = target.ref_tenant;
+    const auto& arg_ref = target.arg_ref;
+    // Issue #2942: pick mandated entry by target shape.
+    bool effect_ok = false;
+    // Issue #4654: gate node id 0 like any other id.
+    if (has_target) {
+        if (ref_tenant != 0) {
+            // Foreign or arg-stamped tenant — do not re-stamp principal.
+            // Issue #3993: packed/hash keep captured gen/wrap/cow
+            // (#3773 honest). Occupancy-only (no arg stamp) uses
+            // live make_ref_layout then overlays tenant — same as
+            // require_effect_for_node_id foreign path. Do not
+            // brace-init gen=0.
+            StableNodeRef gate_ref{};
+            if (arg_ref.has_value()) {
+                gate_ref = *arg_ref;
+                if (gate_ref.tenant_id == 0)
+                    gate_ref.tenant_id = ref_tenant;
+            } else if (auto* ws = ev.workspace_flat()) {
+                gate_ref = ws->make_ref_layout(target_node);
+                gate_ref.tenant_id = ref_tenant;
+            } else {
+                gate_ref.id = target_node;
+                gate_ref.tenant_id = ref_tenant;
+            }
+            effect_ok =
+                ev.require_effect_on_ref(static_cast<std::uint16_t>(kEffectMutate), op, gate_ref);
+        } else {
+            // NodeId-only: stamp current principal then on_ref.
+            effect_ok = ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate), op,
+                                                      target_node);
+        }
+    } else {
+        // No concrete workspace NodeId (e.g. global mutate ops) —
+        // documented non-target path keeps 2-arg require_effect.
+        effect_ok = ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), op);
+    }
+    if (!effect_ok) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            // Heuristic: distinguish capability vs isolation deny for metric
+            // downstream. require_effect* runs isolation first (auto-gate) then
+            // capability check — if ref_tenant is foreign, the deny is
+            // isolation; otherwise capability.
+            if (ref_tenant != 0 && ref_tenant != ev.capability_tenant_id()) {
+                m->mutate_force_isolation_denied_total.fetch_add(1, std::memory_order_relaxed);
+                return mev("tenant-isolation-denied", std::string("cross-tenant ") + op +
+                                                          " denied by WorkspaceIsolationPolicy "
+                                                          "(#1566/#2052/#2658/#2942)");
+            }
+            m->mutate_force_effect_denied_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #2076: unified Agent-readable deny reason (merr pair).
+            return mev("capability-denied", aura::compiler::security::format_deny_reason(
+                                                kEffectMutate, ev.capability_tenant_id(), op));
+        }
+        return mev("capability-denied", "mutate capability denied under sandbox");
+    }
+
+    // Issue #676: legacy string capability gate (still required when
+    // sandbox is on but effect mode is Off — require_effect's effect
+    // check always-allows under Off, so the string gate is the backstop
+    // that keeps legacy sandbox-mode enforcement active).
+    // #4322 skips this backstop for the kernel's own workspace.
+    if (!ev.kernel_self_workspace_mutate(op, ref_tenant) && ev.sandbox_mode() &&
+        !ev.has_capability(kCapMutate) && !ev.has_capability(kCapWildcard)) {
+        ev.bump_capability_denial();
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            m->mutate_force_effect_denied_total.fetch_add(1, std::memory_order_relaxed);
+            m->capability_denial_mutate_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        return mev("capability-denied", "mutate capability required in sandbox mode");
+    }
+
+    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+        m->mutate_force_effect_allowed_total.fetch_add(1, std::memory_order_relaxed);
+
+    // Issue #4438: packed v2 still carrying another Agent's mint
+    // is stale before the guard. The body ensure already denies,
+    // and the guard abort then replaces that stale-ref with
+    // persist-reject. Hash operands stay on the hash arm.
+    if (!a.empty() && is_pair(a[0]) && arg_ref.has_value() &&
+        aura::compiler::typed_audit::production_defaults_active()) {
+        const auto cur = ev.agent_scoped_fiber_id();
+        const auto held = arg_ref->fiber_id;
+        if (held != 0 && cur != 0 && held != cur) {
+            return mev("stale-ref", std::string(op) + ": stable-ref is stale");
+        }
+    }
+
+    return std::nullopt;
+}
+
+template <typename GuardPtr>
+std::optional<EvalValue>
+RegSplitParts::mutate_wrapper_enter(Evaluator& ev, const MakeErrorVal& mev, const char* op,
+                                    bool guard_exempt, bool& admit_armed, GuardPtr& wrapper_guard,
+                                    bool& wrapper_ok, std::uint64_t& wraps_before,
+                                    std::uint64_t& token_before) {
+    wraps_before = 0;
+    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+        wraps_before = m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed);
+    // Issue #3197: nested try_acquire does not bump the
+    // outermost wrap counter — snapshot the acquire token
+    // *before* the wrapper acquire so the belt still sees it.
+    token_before = aura::compiler::mutate_guard_acquire_token();
+    // Issue #3450: RO fence before acquire. A locked workspace
+    // must not take exclusive workspace_mtx_ for a no-op write
+    // (replace-type / atomic-batch missed the per-body check).
+    // GUARD_EXEMPT metadata/policy still runs. Per-body checks
+    // stay as belt.
+    if (!guard_exempt && ev.workspace_read_only_)
+        return mev("read-only", std::string(op) + ": workspace is read-only");
+    // Issue #3423: acquire before fn(a). GUARD_EXEMPT skips
+    // (metadata/policy — no extra acquire). Acquire fail →
+    // structured reject, zero topology write.
+    if (!guard_exempt) {
+        auto gr = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &wrapper_ok);
+        if (!gr) {
+            // Reject exit holds no guard — zero topology write
+            // (the #3423 AC2 "no write on acquire fail" face).
+            contract_assert(!wrapper_guard);
+            return mev("guard-reject", gr.error().message);
+        }
+        wrapper_guard = std::move(*gr);
+        // Inert / nested did not publish a session mid. Stay
+        // armed so the pre-note clears after that guard dies.
+        // Outermost owns the note from here (#4385).
+        if (wrapper_guard->is_outermost())
+            admit_armed = false;
+    }
+    // Issue #4257: production outermost — arm synthetic
+    // MutationBoundary yield (#3254) BEFORE fn(a) so any mid-body
+    // cooperative edge (check_gc_safepoint / yield / JIT poll /
+    // nested enter) consumes cancel + same-fiber force_release
+    // (#3222) without a second unlock protocol. Soft /
+    // !reject_enabled: skip. Edge-free busy-spin that never hits
+    // an edge stays fail-closed via #4158 quarantine dispose
+    // (foreign never unlocks unique_lock).
+    if (!guard_exempt && wrapper_guard && wrapper_guard->is_outermost() &&
+        aura::compiler::mutation_hold_budget_reject_enabled()) {
+        if (auto* cur = aura::serve::g_current_fiber)
+            cur->inject_synthetic_mutation_boundary_yield();
+    }
+    // Issue #4332: child-layer structural mutates must never write
+    // the shared parent FlatAST. workspace:switch keeps
+    // has_own_flat==false and points workspace_flat_ at the parent;
+    // without a wrapper-level clone every mutate:* except rebind /
+    // replace-subtree silently committed the child edit onto the
+    // parent tree (P0 isolation face: parent's next query/eval
+    // observed the child edit). Clone before any body write —
+    // idempotent once has_own_flat is set (root / no-tree no-op;
+    // rebind / replace-subtree's own trigger is a no-op after
+    // this) — and re-read the active flat so fn(a) writes the
+    // LOCAL clone. Fail-closed on read-only layer.
+    if (!guard_exempt && ev.workspace_tree_) {
+        if (!ev.trigger_lazy_cow(ev.workspace_tree_)) {
+            // Issue #4335: the wrapper already acquired the
+            // boundary and minted the session mid, but the
+            // clone never ran and the body is skipped. Leaving
+            // the success flag set lets ~MutationBoundaryGuard
+            // take the success exit and stamp a committed audit
+            // row for a mutate the caller observed as denied.
+            // Same fail-closed shape as the naked-mutate belt:
+            // mark the boundary failed so the dtor takes
+            // exit_mutation_boundary(false) and
+            // record_boundary_deny_after_restore joins a
+            // cow-refused deny on the same mid.
+            if (wrapper_guard)
+                wrapper_guard->mark_failed();
+            ev.mark_outermost_mutation_failed();
+            return mev("cow-refused", std::string(op) + ": COW refused (read-only layer)");
+        }
+        void* cow_flat = nullptr;
+        void* cow_pool = nullptr;
+        if (ev.refresh_active_flat_pool(ev.workspace_tree_, &cow_flat, &cow_pool)) {
+            ev.workspace_flat_ = static_cast<aura::ast::FlatAST*>(cow_flat);
+            ev.workspace_pool_ = static_cast<aura::ast::StringPool*>(cow_pool);
+        }
+    }
+    // C++26 contract mirror of the #3423 source-cite check:
+    // structural mutates reach fn(a) only under the wrapper
+    // boundary guard; GUARD_EXEMPT metadata prims skip it.
+    return std::nullopt;
+}
+
+template <typename GuardPtr>
+std::optional<EvalValue>
+RegSplitParts::mutate_post_body_belt(Evaluator& ev, const MakeErrorVal& mev, const char* op,
+                                     bool guard_exempt, GuardPtr& wrapper_guard,
+                                     std::uint64_t wraps_before, std::uint64_t token_before) {
+    // Issue #3480: poll existing inbody on the structural
+    // wrapper. A non-coop fn(a) never hits check_gc_safepoint;
+    // cancel armed → force-release hold + depth before a green
+    // result can ride the still-held lock. Happy path: two
+    // loads (reject_enabled + cancel_armed ns==0). Soft:
+    // reject_enabled false → no force-release. Cross-fiber
+    // still only request_hold_budget_cancel (this is same-fiber).
+    if (!guard_exempt && wrapper_guard && wrapper_guard->is_outermost() &&
+        aura::compiler::mutation_hold_budget_reject_enabled()) {
+        if (aura::serve::aura_hold_budget_cancel_armed() != 0 ||
+            aura::serve::aura_hold_budget_poll_inbody_window() != 0) {
+            wrapper_guard->force_release_hold_budget_inbody();
+            aura::compiler::g_mutation_hold_budget_forced_unlock_total.fetch_add(
+                1, std::memory_order_relaxed);
+            aura::compiler::g_mutation_hold_budget_forced_fail_closed_total.fetch_add(
+                1, std::memory_order_relaxed);
+            ev.disarm_rebind_light_path();
+            return mev("hold-budget-cancel", "outermost force-released");
+        }
+    }
+    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+        const auto wraps_after =
+            m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed);
+        const auto token_after = aura::compiler::mutate_guard_acquire_token();
+        // wraps_after == wraps_before is the outermost-naked
+        // compare (#2986 AC5). Issue #3197: nested acquire
+        // does not bump wraps — also accept the Guard token.
+        const bool acquired = !(wraps_after == wraps_before) || token_after != token_before;
+        if (!acquired) {
+            m->naked_mutate_attempt.fetch_add(1, std::memory_order_relaxed);
+            // Issue #2986 / #3197: production + requires_guard
+            // naked body → hard fail-closed. Happy Guard path
+            // does not load production_defaults.
+            // Issue #3423: belt — wrapper already acquired for
+            // !exempt; this arm is leftover if acquire is skipped.
+            if (!guard_exempt && aura::compiler::typed_audit::production_defaults_active()) {
+                m->naked_mutate_fail_closed_total.fetch_add(1, std::memory_order_relaxed);
+                if (wrapper_guard)
+                    wrapper_guard->mark_failed();
+                ev.mark_outermost_mutation_failed();
+                ev.disarm_rebind_light_path();
+                return mev("naked-mutate", std::string(op) + " skipped MutationBoundaryGuard under "
+                                                             "production (#2986/#3197/#3423)");
+            }
+        } else {
+            m->mutate_guard_enforced.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    return std::nullopt;
+}
+
+template <typename GuardPtr>
+EvalValue RegSplitParts::mutate_wrapper_commit(Evaluator& ev, const MakeErrorVal& mev,
+                                               const char* op, bool guard_exempt,
+                                               GuardPtr& wrapper_guard, bool& wrapper_ok,
+                                               EvalValue result) {
+    // Issue #4360: snapshot hard-rebind callers after the belt above
+    // and before the drain. The light path snapshots after.
+    struct HardReinstall {
+        Evaluator& ev;
+        std::string focus;
+        std::vector<std::string> callers;
+        bool done = false;
+        explicit HardReinstall(Evaluator& e)
+            : ev(e) {
+            if (ev.rebind_light_path())
+                return;
+            focus = ev.rebind_light_focus();
+            if (!focus.empty() && ev.get_dependents_fn_)
+                callers = ev.get_dependents_fn_(focus);
+        }
+        void install() {
+            if (focus.empty())
+                return;
+            ev.bind_workspace_lambda_via_ir(focus);
+            for (const auto& c : callers) {
+                if (!c.empty() && c != focus)
+                    ev.bind_workspace_lambda_via_ir(c);
+            }
+            ev.disarm_rebind_light_path();
+            done = true;
+        }
+        ~HardReinstall() {
+            if (!done && !focus.empty())
+                ev.disarm_rebind_light_path();
+        }
+        HardReinstall(const HardReinstall&) = delete;
+        HardReinstall& operator=(const HardReinstall&) = delete;
+        HardReinstall(HardReinstall&&) = delete;
+        HardReinstall& operator=(HardReinstall&&) = delete;
+    } hard_reinstall{ev};
+    // Issue #3697: outermost dtor persist-reject / abort_restore
+    // must run before the EDSL return. `return result` left the
+    // body's #t in the return slot, then unique_ptr dtor flipped
+    // wrapper_ok and restored AST — Agent saw committed mutate
+    // while the next query saw the pre-mutate tree. Hold-budget
+    // cancel already replaced the result before dtor; persist-
+    // reject had no equivalent. Soft/Off: dtor observe-only,
+    // wrapper_ok stays true, return unchanged.
+    if (!guard_exempt) {
+        wrapper_guard.reset();
+        if (!std::atomic_ref<bool>(wrapper_ok).load(std::memory_order_acquire)) {
+            // Issue #4914: the body already said why it refused
+            // (rebind-non-procedure, typecheck, invariant, …).
+            // Keep that reason for mutate:rebind; a generic
+            // persist-reject hid it. Other ops keep the #4652
+            // contract: an aborted outermost boundary reads as
+            // persist-reject. (Matched by suffix: the #3074
+            // guard scrapes the first quoted rebind op name as
+            // the registration site.)
+            const bool body_merr = std::string_view(op).ends_with(":rebind") && [&] {
+                if (is_error(result))
+                    return true;
+                if (!is_pair(result))
+                    return false;
+                const auto p0 = ev.pairs_[as_pair_idx(result)];
+                if (!is_string(p0.car) || !is_pair(p0.cdr))
+                    return false;
+                const auto p1 = ev.pairs_[as_pair_idx(p0.cdr)];
+                return is_string(p1.car) && is_int(p1.cdr) && as_int(p1.cdr) == 0;
+            }();
+            if (body_merr)
+                return result;
+            return mev("persist-reject", std::string(op) + " aborted; topology restored");
+        }
+    }
+    // Issue #4357: the rebind body guard is nested, so it does
+    // not drain. The outermost dtor above just did. A one-line
+    // Soft rebind leaves the light arm set so that drain skips
+    // the heavy invalidate. Install the new IR closure after
+    // the drain, then drop the arm. Failure paths disarm inside
+    // the body, so this stays quiet and does not specialise a
+    // rolled-back define.
+    if (ev.rebind_light_path()) {
+        const std::string focus = ev.rebind_light_focus();
+        std::vector<std::string> callers;
+        if (!focus.empty() && ev.get_dependents_fn_)
+            callers = ev.get_dependents_fn_(focus);
+        // Install the new IR while the arm is still set. That
+        // bind clears v2.dirty on the focus and its direct
+        // callers. edsl-ir-cache:cascade-after-mutate still
+        // requires those callers to stay dirty.
+        if (!focus.empty())
+            ev.bind_workspace_lambda_via_ir(focus);
+        if (ev.mark_define_dirty_fn_) {
+            for (const auto& c : callers) {
+                if (!c.empty() && c != focus)
+                    ev.mark_define_dirty_fn_(c);
+            }
+        }
+        ev.disarm_rebind_light_path();
+    } else {
+        hard_reinstall.install();
+    }
+    return result;
+}
+
+template <typename Fn>
+EvalValue RegSplitParts::mutate_wrapped_call(Evaluator& ev, const MakeErrorVal& mev, const Fn& fn,
+                                             const std::string& op_name, bool guard_exempt,
+                                             std::span<const EvalValue> a) {
+    using aura::compiler::security::kCapMutate;
+    using aura::compiler::security::kCapWildcard;
+    using aura::compiler::security::kEffectMutate;
+    const char* op = op_name.c_str();
+
+    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+        m->mutate_force_effect_check_total.fetch_add(1, std::memory_order_relaxed);
+
+    const auto target = RegSplitParts::mutate_effect_target(ev, mev, op, a);
+    if (target.error)
+        return *target.error;
+
+    struct AdmitSessionMid {
+        bool armed = false;
+        ~AdmitSessionMid() {
+            if (armed)
+                aura::compiler::typed_audit::clear_boundary_audit_mid();
+        }
+        void release() noexcept { armed = false; }
+        void arm_if_process_epoch(Evaluator& ev) noexcept {
+            using namespace aura::compiler::typed_audit;
+            if (g_tls_boundary_audit_noted || !production_defaults_active())
+                return;
+            if (g_tls_composite_batch_join_mid != 0)
+                return;
+            const auto epoch = ::aura::core::current_mutation_epoch();
+            if (epoch == 0 || peek_audit_mutation_id(0) != epoch)
+                return;
+            note_boundary_audit_tenant(ev.capability_tenant_id());
+            note_boundary_audit_mid(mint_session_audit_mid(epoch, static_cast<const void*>(&ev)));
+            armed = true;
+        }
+        AdmitSessionMid() = default;
+        AdmitSessionMid(const AdmitSessionMid&) = delete;
+        AdmitSessionMid& operator=(const AdmitSessionMid&) = delete;
+        AdmitSessionMid(AdmitSessionMid&&) = delete;
+        AdmitSessionMid& operator=(AdmitSessionMid&&) = delete;
+    } admit_session;
+    if (!guard_exempt)
+        admit_session.arm_if_process_epoch(ev);
+
+    if (auto err = RegSplitParts::mutate_effect_gate(ev, mev, op, a, target))
+        return *err;
+
+    std::unique_ptr<Evaluator::MutationBoundaryGuard> wrapper_guard;
+    bool wrapper_ok = true;
+    std::uint64_t wraps_before = 0;
+    std::uint64_t token_before = 0;
+    bool admit_armed = admit_session.armed;
+    if (auto err = RegSplitParts::mutate_wrapper_enter(ev, mev, op, guard_exempt, admit_armed,
+                                                       wrapper_guard, wrapper_ok, wraps_before,
+                                                       token_before))
+        return *err;
+    admit_session.armed = admit_armed;
+    contract_assert(guard_exempt || wrapper_guard != nullptr);
+    auto result = fn(a);
+    if (auto err = RegSplitParts::mutate_post_body_belt(ev, mev, op, guard_exempt, wrapper_guard,
+                                                        wraps_before, token_before))
+        return *err;
+    return RegSplitParts::mutate_wrapper_commit(ev, mev, op, guard_exempt, wrapper_guard,
+                                                wrapper_ok, result);
+}
+
+// Issue #5033: packed/v2 StableNodeRef unpack (was a lambda inside
+// register_mutate_primitives; shared by the resolve + wrapper paths).
+std::optional<aura::ast::FlatAST::StableNodeRef>
+RegSplitParts::mutate_unpack_stable_ref_arg(Evaluator& ev, const EvalValue& arg) {
+    if (!is_pair(arg))
+        return std::nullopt;
+    const auto outer = as_pair_idx(arg);
+    if (!is_int(ev.pairs_[outer].car))
+        return std::nullopt;
+    StableNodeRef ref{};
+    ref.id = static_cast<aura::ast::NodeId>(as_int(ev.pairs_[outer].car));
+    const auto cdr = ev.pairs_[outer].cdr;
+    // Issue #3396: v2 spine walker. Fills gen + wrap + tenant + cow from
+    // the nested pair spine (fiber + boundary if the next pair is also
+    // a pair). Returns true iff at least gen + wrap + tenant + cow were
+    // filled (i.e., the spine had depth ≥ 4 beyond (id . ...)).
+    auto walk_v2 = [&](const EvalValue& start) -> bool {
+        if (!is_pair(start))
+            return false;
+        const auto p_gen = as_pair_idx(start);
+        if (!is_int(ev.pairs_[p_gen].car))
+            return false;
+        ref.gen = static_cast<std::uint16_t>(as_int(ev.pairs_[p_gen].car));
+        auto rest = ev.pairs_[p_gen].cdr;
+        // wrap
+        if (!is_pair(rest))
+            return false;
+        const auto p_wrap = as_pair_idx(rest);
+        if (!is_int(ev.pairs_[p_wrap].car))
+            return false;
+        ref.wrap_epoch = static_cast<std::uint32_t>(as_int(ev.pairs_[p_wrap].car));
+        rest = ev.pairs_[p_wrap].cdr;
+        // tenant
+        if (!is_pair(rest))
+            return false;
+        const auto p_tenant = as_pair_idx(rest);
+        if (!is_int(ev.pairs_[p_tenant].car))
+            return false;
+        ref.tenant_id = static_cast<std::uint64_t>(as_int(ev.pairs_[p_tenant].car));
+        rest = ev.pairs_[p_tenant].cdr;
+        // cow
+        if (!is_pair(rest))
+            return false;
+        const auto p_cow = as_pair_idx(rest);
+        if (!is_int(ev.pairs_[p_cow].car))
+            return false;
+        ref.cow_epoch_at_capture = static_cast<std::uint64_t>(as_int(ev.pairs_[p_cow].car));
+        rest = ev.pairs_[p_cow].cdr;
+        // fiber (int), boundary (bool), install id (int). The first int
+        // is fiber. A later int is the #4315 install id. A bool is the
+        // boundary pin and is skipped.
+        bool saw_fiber = false;
+        while (is_pair(rest)) {
+            const auto p = as_pair_idx(rest);
+            if (static_cast<std::size_t>(p) >= ev.pairs_.size())
+                break;
+            if (is_int(ev.pairs_[p].car)) {
+                const auto n = as_int(ev.pairs_[p].car);
+                if (!saw_fiber) {
+                    ref.fiber_id = static_cast<std::uint32_t>(n);
+                    saw_fiber = true;
+                } else {
+                    ref.install_id_at_capture = static_cast<std::uint32_t>(n);
+                }
+            }
+            rest = ev.pairs_[p].cdr;
+        }
+        return true;
+    };
+    if (aura::compiler::typed_audit::production_defaults_active()) {
+        // Issue #3396: production requires v2 packed pair format.
+        // v1 (id . gen) or (id . (gen . _)) → nullopt (caller falls
+        // through to bare-int #3395 reject — no mutate of the slot).
+        if (!walk_v2(cdr))
+            return std::nullopt;
+    } else {
+        // Soft: existing v1 unpack (id . gen) or (id . (gen . _))
+        if (is_pair(cdr)) {
+            const auto inner = as_pair_idx(cdr);
+            if (is_int(ev.pairs_[inner].car))
+                ref.gen = static_cast<std::uint16_t>(as_int(ev.pairs_[inner].car));
+        } else if (is_int(cdr)) {
+            ref.gen = static_cast<std::uint16_t>(as_int(cdr));
+        }
+    }
+    return ref;
+}
+
+// Issue #5033: mutate:* node operand resolver (bare int / packed v2 / schema-2 hash).
+EvalValue RegSplitParts::mutate_resolve_node_arg(Evaluator& ev, const MakeErrorVal& mev,
+                                                 aura::ast::FlatAST& flat,
+                                                 std::span<const EvalValue> a, const char* op,
+                                                 bool* ok, aura::ast::NodeId& out_node) {
+    auto safe_str = [&ev](const EvalValue& v, std::string fallback = {}) -> std::string {
+        if (!is_string(v))
+            return fallback;
+        const auto i = as_string_idx(v);
+        if (i >= ev.string_heap_.size())
+            return fallback;
+        return ev.string_at(i);
+    };
+    if (a.empty()) {
+        *ok = false;
+        return mev("bad-arg", std::string(op) + ": missing node argument");
+    }
+    const EvalValue& arg = a[0];
+    // Issue #3424: production query:* returns schema-2 hash; accept it
+    // as a node operand. Freshness via query_result_is_fresh_with_refs.
+    // Do not hash → int → make_stamped_ref (occupancy).
+    // Issue #3695: N>1 matches require :index.
+    if (is_hash(arg)) {
+        using aura::compiler::query_result_decode::HashNodeKind;
+        using aura::compiler::query_result_decode::parse_query_result_match_index;
+        using aura::compiler::query_result_decode::resolve_query_result_match;
+        auto hr = resolve_query_result_match(
+            arg, ev.string_heap_, ev.pairs_, flat, ev.capability_tenant_id(),
+            // Issue #4165: Agent-scoped fiber resolve — a fiberless
+            // production Agent resolves under its own minted id, so a
+            // same-tenant foreign Agent's held hash denies InvalidFiber.
+            static_cast<std::uint64_t>(ev.agent_scoped_fiber_id()), op,
+            parse_query_result_match_index(a, ev.keyword_table()));
+        if (hr.kind == HashNodeKind::Ok) {
+            out_node = hr.node;
+            return make_void();
+        }
+        *ok = false;
+        return mev(hr.err_kind, hr.err_msg);
+    }
+    if (auto packed = RegSplitParts::mutate_unpack_stable_ref_arg(ev, arg)) {
+        // Issue #3415 AC7: packed / stamped ref keeps tenant. Do not
+        // make_stamped_ref (occupancy restamp as caller). add_mutate
+        // already routed foreign tenant through require_effect_on_ref.
+        ev.bump_stable_ref_validated_in_primitives_count();
+        // Issue #818: full provenance enforcement on mutate hot paths.
+        // Stamp validate_with_provenance when valid; attempt auto-
+        // refresh on cross-boundary stale refs; record fiber/workspace
+        // mismatches when capture fields disagree with active layer.
+        StableNodeRef ref = *packed;
+        const std::uint32_t active_ws =
+            ev.workspace_tree_ ? static_cast<WorkspaceTree*>(ev.workspace_tree_)->active_idx() : 0;
+        if (ref.workspace_id != 0 && ref.workspace_id != active_ws) {
+            ev.bump_stable_ref_fiber_workspace_mismatch_prevented();
+        }
+        // Issue #1630: force full provenance (fiber_id / cow / wrap /
+        // boundary_pinned) via ensure_valid_or_refresh on every mutate
+        // StableNodeRef input — supersedes bare validate_or_refresh.
+        // Issue #3661: production packed v2 with expired gen must not
+        // occupancy-remake the current occupant (auto_refresh wrote a
+        // new layout gen and skipped Strict). Soft keeps #2186 refresh.
+        const bool was_valid = ref.is_valid_in(flat) && flat.get_safe(ref).has_value();
+        const bool refresh = !aura::compiler::typed_audit::production_defaults_active();
+        if (ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/refresh).has_value()) {
+            if (!was_valid) {
+                ev.bump_stable_ref_cross_cow_refresh();
+            }
+            if (!ref.boundary_pinned) {
+                ev.pin_stable_ref_for_cow_boundary(ref);
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->stable_ref_auto_pin_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->stable_ref_boundary_auto_refresh.fetch_add(1, std::memory_order_relaxed);
+            ev.bump_stable_ref_provenance_enforced();
+            out_node = ref.id;
+            return make_void();
+        }
+        {
+            *ok = false;
+            const auto policy = ev.get_stale_ref_policy();
+            if (policy == Evaluator::StaleRefPolicy::Strict) {
+                ev.bump_stale_ref_blocked_count();
+                // Issue #1681: pass literal directly — do not intern
+                // "stale-ref" into string_heap_ on every blocked call.
+                return mev("stale-ref", "stable-ref is stale (Strict policy blocked)");
+            }
+            if (policy == Evaluator::StaleRefPolicy::Warn)
+                ev.bump_stale_ref_warned_count();
+            return mev("stale-ref", std::string(op) + ": stable-ref is stale");
+        }
+    }
+    if (is_int(arg)) {
+        // Issue #3395: production rejects bare int (occupancy, not
+        // identity — make_stamped_ref captures current generation of
+        // whatever still lives at the index, so an Agent holding a
+        // cached NodeId across a structural mutate + restamp will edit
+        // a different generation of the same index — I6 multi-round
+        // memory hole). Agent must pass packed v2 StableNodeRef or
+        // QueryResult match under production. Soft/Off keeps the
+        // historical "stamp current gen + auto-refresh" path
+        // (Issue #2186). bump_raw_nodeid_usage_in_primitives_count
+        // fires on the reject path so dashboards see the production
+        // gate blocking the occupancy input.
+        if (aura::compiler::typed_audit::production_defaults_active()) {
+            *ok = false;
+            ev.bump_raw_nodeid_usage_in_primitives_count();
+            // Issue #3215: occupancy reject of a live MacroIntroduced
+            // node is still a default-deny mutate. Stamp the Agent
+            // reason before returning so later expand pass-limit
+            // cannot leave last_limit_reason empty.
+            const auto node = static_cast<aura::ast::NodeId>(as_int(arg));
+            if (node < flat.size() && flat.is_live_node(node) && flat.is_macro_introduced(node) &&
+                !ev.get_allow_macro_mutate()) {
+                ev.record_hygiene_violation_attempt();
+                aura::compiler::macro_exp::note_hygiene_last_limit_reason(
+                    aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced);
+            }
+            return mev("stale-ref",
+                       std::string(op) +
+                           ": raw node-id rejected under production; "
+                           "use packed v2 StableNodeRef or QueryResult match (Issue #3395)");
+        }
+        ev.bump_raw_nodeid_usage_in_primitives_count();
+        const auto node = static_cast<aura::ast::NodeId>(as_int(arg));
+        if (node >= flat.size()) {
+            *ok = false;
+            return mev("out-of-range", std::string(op) + ": node ID " + std::to_string(node) +
+                                           " >= flat size " + std::to_string(flat.size()));
+        }
+        // Issue #2056: stamp tenant/fiber when promoting raw NodeId → ref.
+        // Issue #2186: force ensure_valid_or_refresh on bare NodeId path
+        // (was: is_valid_in + get_safe only — silent-stale gap after
+        // multi-round restamp when Agents unpack (id . gen) to int).
+        auto ref = ev.make_stamped_ref(node);
+        if (!ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/true).has_value()) {
+            *ok = false;
+            const auto policy = ev.get_stale_ref_policy();
+            if (policy == Evaluator::StaleRefPolicy::Strict) {
+                ev.bump_stale_ref_blocked_count();
+                // Issue #1681: literal tag, no string_heap_ push.
+                return mev("stale-ref", "raw node-id is stale (Strict policy blocked)");
+            }
+            if (policy == Evaluator::StaleRefPolicy::Warn)
+                ev.bump_stale_ref_warned_count();
+            return mev("stale-ref", std::string(op) + ": raw node-id is stale");
+        }
+        // Issue #1250: promote raw NodeId → pinned StableNodeRef on mutate.
+        if (!ref.boundary_pinned) {
+            ev.pin_stable_ref_for_cow_boundary(ref);
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->stable_ref_auto_pin_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        ev.bump_stable_ref_provenance_enforced();
+        out_node = ref.id;
+        return make_void();
+    }
+    *ok = false;
+    return mev("bad-arg", std::string("usage: (") + op + " node-id|stable-ref ...)");
+}
 template <typename Ctx> void RegSplitParts::register_mutate_atomic_batch_primitive(Ctx& cx) {
     auto& mev = cx.mev_ref;
     auto& safe_str = cx.safe_str_ref;
@@ -10637,91 +11448,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // (id . gen) shape. v1 packed refs under production fall through to
     // the bare-int #3395 reject gate (resolve_mutate_node_arg below).
     // Defined inside register_mutate_primitives (Evaluator friend) for private access.
-    auto unpack_stable_ref_arg = [&ev,
-                                  safe_str](const EvalValue& arg) -> std::optional<StableNodeRef> {
-        if (!is_pair(arg))
-            return std::nullopt;
-        const auto outer = as_pair_idx(arg);
-        if (!is_int(ev.pairs_[outer].car))
-            return std::nullopt;
-        StableNodeRef ref{};
-        ref.id = static_cast<aura::ast::NodeId>(as_int(ev.pairs_[outer].car));
-        const auto cdr = ev.pairs_[outer].cdr;
-        // Issue #3396: v2 spine walker. Fills gen + wrap + tenant + cow from
-        // the nested pair spine (fiber + boundary if the next pair is also
-        // a pair). Returns true iff at least gen + wrap + tenant + cow were
-        // filled (i.e., the spine had depth ≥ 4 beyond (id . ...)).
-        auto walk_v2 = [&](const EvalValue& start) -> bool {
-            if (!is_pair(start))
-                return false;
-            const auto p_gen = as_pair_idx(start);
-            if (!is_int(ev.pairs_[p_gen].car))
-                return false;
-            ref.gen = static_cast<std::uint16_t>(as_int(ev.pairs_[p_gen].car));
-            auto rest = ev.pairs_[p_gen].cdr;
-            // wrap
-            if (!is_pair(rest))
-                return false;
-            const auto p_wrap = as_pair_idx(rest);
-            if (!is_int(ev.pairs_[p_wrap].car))
-                return false;
-            ref.wrap_epoch = static_cast<std::uint32_t>(as_int(ev.pairs_[p_wrap].car));
-            rest = ev.pairs_[p_wrap].cdr;
-            // tenant
-            if (!is_pair(rest))
-                return false;
-            const auto p_tenant = as_pair_idx(rest);
-            if (!is_int(ev.pairs_[p_tenant].car))
-                return false;
-            ref.tenant_id = static_cast<std::uint64_t>(as_int(ev.pairs_[p_tenant].car));
-            rest = ev.pairs_[p_tenant].cdr;
-            // cow
-            if (!is_pair(rest))
-                return false;
-            const auto p_cow = as_pair_idx(rest);
-            if (!is_int(ev.pairs_[p_cow].car))
-                return false;
-            ref.cow_epoch_at_capture = static_cast<std::uint64_t>(as_int(ev.pairs_[p_cow].car));
-            rest = ev.pairs_[p_cow].cdr;
-            // fiber (int), boundary (bool), install id (int). The first int
-            // is fiber. A later int is the #4315 install id. A bool is the
-            // boundary pin and is skipped.
-            bool saw_fiber = false;
-            while (is_pair(rest)) {
-                const auto p = as_pair_idx(rest);
-                if (static_cast<std::size_t>(p) >= ev.pairs_.size())
-                    break;
-                if (is_int(ev.pairs_[p].car)) {
-                    const auto n = as_int(ev.pairs_[p].car);
-                    if (!saw_fiber) {
-                        ref.fiber_id = static_cast<std::uint32_t>(n);
-                        saw_fiber = true;
-                    } else {
-                        ref.install_id_at_capture = static_cast<std::uint32_t>(n);
-                    }
-                }
-                rest = ev.pairs_[p].cdr;
-            }
-            return true;
-        };
-        if (aura::compiler::typed_audit::production_defaults_active()) {
-            // Issue #3396: production requires v2 packed pair format.
-            // v1 (id . gen) or (id . (gen . _)) → nullopt (caller falls
-            // through to bare-int #3395 reject — no mutate of the slot).
-            if (!walk_v2(cdr))
-                return std::nullopt;
-        } else {
-            // Soft: existing v1 unpack (id . gen) or (id . (gen . _))
-            if (is_pair(cdr)) {
-                const auto inner = as_pair_idx(cdr);
-                if (is_int(ev.pairs_[inner].car))
-                    ref.gen = static_cast<std::uint16_t>(as_int(ev.pairs_[inner].car));
-            } else if (is_int(cdr)) {
-                ref.gen = static_cast<std::uint16_t>(as_int(cdr));
-            }
-        }
-        return ref;
+    auto unpack_stable_ref_arg = [&ev](const EvalValue& arg) -> std::optional<StableNodeRef> {
+        return RegSplitParts::mutate_unpack_stable_ref_arg(ev, arg);
     };
+
 
     // Issue #1259 / #1565 / #1566 / #2052 / #2057: every mutate:* registration
     // goes through this wrapper (AURA_SIDE_EFFECT_PRIM pattern). Forces
@@ -10842,512 +11572,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 });
         };
         ade(*op_name,
-            [&ev, mev, fn, op_name, guard_exempt,
-             unpack_stable_ref_arg](std::span<const EvalValue> a) -> EvalValue {
-                using aura::compiler::security::kCapMutate;
-                using aura::compiler::security::kCapWildcard;
-                using aura::compiler::security::kEffectMutate;
-                const char* op = op_name->c_str();
-
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                    m->mutate_force_effect_check_total.fetch_add(1, std::memory_order_relaxed);
-
-                // Issue #1565 / #2052: effect matrix + provenance audit FIRST so
-                // denied paths always hit the mutation audit ring + sandbox metrics
-                // (legacy string gate alone used to skip them).
-                // Best-effort target_node from first int / StableNodeRef arg.
-                // Issue #4654: node id 0 is a real node (NULL_NODE is ~0u).
-                // "No concrete target" is tracked explicitly below.
-                aura::ast::NodeId target_node = 0;
-                bool has_target = false;
-                std::uint64_t ref_tenant = 0;
-                // Issue #3993: keep packed/hash captured gen/wrap/cow so
-                // require_effect_on_ref does not brace-init gen=0 (false
-                // #3773 stale-ref before isolation). Occupancy-only fills
-                // live layout below.
-                std::optional<StableNodeRef> arg_ref;
-                if (!a.empty()) {
-                    if (is_int(a[0])) {
-                        // Issue #3724: Restricted+MT / Strict bare int must
-                        // not occupancy-stamp via for_node_id. Body #3395
-                        // reject is the production SSOT; occupancy stays
-                        // empty so a later owner packed mutate is not
-                        // IsolationDeny'd as if the denier owned the slot.
-                        const bool consult_bare =
-                            (ev.effect_sandbox_mode() == 2 || aura::core::sandbox::is_strict()) ||
-                            (ev.effect_sandbox_mode() == 1 &&
-                             (aura::core::provenance::hard_capture_tenant_active() ||
-                              aura::core::provenance::multi_tenant_env_active()));
-                        if (!consult_bare) {
-                            target_node = static_cast<aura::ast::NodeId>(as_int(a[0]));
-                            // Issue #4654: a bare int is not an identity operand
-                            // (#3395) - keep "int 0 = no concrete target".
-                            has_target = target_node != 0;
-                        }
-                    } else if (is_pair(a[0])) {
-                        // Issue #3640: single spine — the isolation gate MUST
-                        // parse packed StableNodeRefs through the same
-                        // unpack_stable_ref_arg as resolve_mutate_node_arg
-                        // (#3396 v2). The old shallow parse read inner.cdr.car
-                        // — the wrap_epoch slot — as ref_tenant: wrap == caller
-                        // skipped the occupancy consult (cross-tenant mutate
-                        // allowed pre-write), wrap != caller IsolationDeny'd a
-                        // legitimate same-tenant packed mutate. Production +
-                        // non-v2 packed leaves target/ref at 0 so the body
-                        // falls through to the #3395 bare-int/v1 reject.
-                        if (auto packed = unpack_stable_ref_arg(a[0])) {
-                            target_node = static_cast<aura::ast::NodeId>(packed->id);
-                            // Issue #4654: packed ref id 0 is a real node.
-                            has_target = true;
-                            ref_tenant = packed->tenant_id;
-                            arg_ref = *packed;
-                        }
-                    } else if (is_hash(a[0])) {
-                        // Issue #3991: production QueryResult hash joins the
-                        // wrapper isolation gate packed pair already uses.
-                        // Resolve with tenant/fiber 0 so freshness is occupancy
-                        // / wrap; IsolationDeny is require_effect_on_ref (same
-                        // string as packed). Soft/Off: no extra consult
-                        // (sandbox + effect mode both Off).
-                        const bool hash_iso =
-                            aura::compiler::typed_audit::production_defaults_active() ||
-                            ev.effect_sandbox_mode() != 0 || ev.sandbox_mode();
-                        if (hash_iso) {
-                            if (auto* ws = ev.workspace_flat()) {
-                                using aura::compiler::query_result_decode::HashNodeKind;
-                                using aura::compiler::query_result_decode::
-                                    parse_query_result_match_index;
-                                using aura::compiler::query_result_decode::
-                                    resolve_query_result_match;
-                                auto hr = resolve_query_result_match(
-                                    a[0], ev.string_heap_, ev.pairs_, *ws, /*tenant=*/0,
-                                    /*fiber=*/0, op,
-                                    parse_query_result_match_index(a, ev.keyword_table()));
-                                if (hr.kind != HashNodeKind::Ok)
-                                    return mev(hr.err_kind, hr.err_msg);
-                                target_node = hr.node;
-                                // Issue #4654: a QueryResult match id 0 is a real
-                                // node - gate it like any other id.
-                                has_target = true;
-                                ref_tenant = hr.tenant_id;
-                                StableNodeRef href{};
-                                href.id = hr.node;
-                                href.gen = hr.generation;
-                                href.wrap_epoch = hr.wrap_epoch;
-                                href.cow_epoch_at_capture = hr.cow_epoch_at_capture;
-                                href.tenant_id = hr.tenant_id;
-                                href.fiber_id = hr.fiber_id;
-                                arg_ref = href;
-                            }
-                        }
-                    }
-                }
-
-                // Issue #1566 / #2052 / Issue #2658: multi-tenant workspace isolation +
-                // capability check. Issue #2942: concrete NodeId targets MUST go
-                // through require_effect_for_node_id (principal stamp) or
-                // require_effect_on_ref (stamped / foreign tenant) — never bare
-                // 2/3-arg require_effect with default ref_tenant=0 (late isolation
-                // window). Under Strict, also refuse when last hygiene stamp
-                // belongs to a foreign tenant (parity with mutate:atomic-batch
-                // #1878) — the strict heuristic must run BEFORE the gate so
-                // ref_tenant is correct for on_ref.
-                const bool strict_iso =
-                    (ev.effect_sandbox_mode() == 2) || aura::core::sandbox::is_strict();
-                const bool restricted_iso = ev.effect_sandbox_mode() == 1;
-                if (ref_tenant == 0 && has_target && (strict_iso || restricted_iso)) {
-                    const auto self = ev.capability_tenant_id();
-                    if (self != 0 &&
-                        (strict_iso || aura::core::provenance::hard_capture_tenant_active() ||
-                         aura::core::provenance::multi_tenant_env_active())) {
-                        // Issue #3415: occupancy int — consult last stamp /
-                        // hygiene so Restricted+MT does not restamp a foreign
-                        // owner as the caller. Soft / single-tenant Restricted
-                        // skip (legacy #2056 / #1878 Strict-only slot).
-                        auto existing = aura::core::provenance::existing_stamp_for_node(
-                            static_cast<std::uint32_t>(target_node));
-                        if (existing == 0) {
-                            const auto& hs =
-                                aura::core::provenance::g_provenance_tracker().last_hygiene;
-                            if (hs.tenant_id != 0 &&
-                                (hs.node_id == 0 ||
-                                 hs.node_id == static_cast<std::uint32_t>(target_node)))
-                                existing = hs.tenant_id;
-                        }
-                        if (existing != 0 && existing != self)
-                            ref_tenant = existing;
-                    }
-                }
-                // Issue #4385: production outermost add_mutate stamps
-                // effect-allow on the session mid the Guard would mint.
-                // Note S before require_effect so peek/join see it. Guard
-                // resolve then sees S != epoch and does not mint again
-                // (#3964 mint stays on the Guard). Soft/Off, an already
-                // noted boundary, and a composite pin do not arm. The
-                // note is cleared on every return that never hands it to
-                // an outermost guard (deny stays on S, TLS does not leak).
-                struct AdmitSessionMid {
-                    bool armed = false;
-                    ~AdmitSessionMid() {
-                        if (armed)
-                            aura::compiler::typed_audit::clear_boundary_audit_mid();
-                    }
-                    void release() noexcept { armed = false; }
-                    void arm_if_process_epoch(Evaluator& ev) noexcept {
-                        using namespace aura::compiler::typed_audit;
-                        if (g_tls_boundary_audit_noted || !production_defaults_active())
-                            return;
-                        if (g_tls_composite_batch_join_mid != 0)
-                            return;
-                        const auto epoch = ::aura::core::current_mutation_epoch();
-                        if (epoch == 0 || peek_audit_mutation_id(0) != epoch)
-                            return;
-                        note_boundary_audit_tenant(ev.capability_tenant_id());
-                        note_boundary_audit_mid(
-                            mint_session_audit_mid(epoch, static_cast<const void*>(&ev)));
-                        armed = true;
-                    }
-                    AdmitSessionMid() = default;
-                    AdmitSessionMid(const AdmitSessionMid&) = delete;
-                    AdmitSessionMid& operator=(const AdmitSessionMid&) = delete;
-                    AdmitSessionMid(AdmitSessionMid&&) = delete;
-                    AdmitSessionMid& operator=(AdmitSessionMid&&) = delete;
-                } admit_session;
-                if (!guard_exempt)
-                    admit_session.arm_if_process_epoch(ev);
-
-                // Issue #2942: pick mandated entry by target shape.
-                bool effect_ok = false;
-                // Issue #4654: gate node id 0 like any other id.
-                if (has_target) {
-                    if (ref_tenant != 0) {
-                        // Foreign or arg-stamped tenant — do not re-stamp principal.
-                        // Issue #3993: packed/hash keep captured gen/wrap/cow
-                        // (#3773 honest). Occupancy-only (no arg stamp) uses
-                        // live make_ref_layout then overlays tenant — same as
-                        // require_effect_for_node_id foreign path. Do not
-                        // brace-init gen=0.
-                        StableNodeRef gate_ref{};
-                        if (arg_ref.has_value()) {
-                            gate_ref = *arg_ref;
-                            if (gate_ref.tenant_id == 0)
-                                gate_ref.tenant_id = ref_tenant;
-                        } else if (auto* ws = ev.workspace_flat()) {
-                            gate_ref = ws->make_ref_layout(target_node);
-                            gate_ref.tenant_id = ref_tenant;
-                        } else {
-                            gate_ref.id = target_node;
-                            gate_ref.tenant_id = ref_tenant;
-                        }
-                        effect_ok = ev.require_effect_on_ref(
-                            static_cast<std::uint16_t>(kEffectMutate), op, gate_ref);
-                    } else {
-                        // NodeId-only: stamp current principal then on_ref.
-                        effect_ok = ev.require_effect_for_node_id(
-                            static_cast<std::uint16_t>(kEffectMutate), op, target_node);
-                    }
-                } else {
-                    // No concrete workspace NodeId (e.g. global mutate ops) —
-                    // documented non-target path keeps 2-arg require_effect.
-                    effect_ok = ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), op);
-                }
-                if (!effect_ok) {
-                    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                        // Heuristic: distinguish capability vs isolation deny for metric
-                        // downstream. require_effect* runs isolation first (auto-gate) then
-                        // capability check — if ref_tenant is foreign, the deny is
-                        // isolation; otherwise capability.
-                        if (ref_tenant != 0 && ref_tenant != ev.capability_tenant_id()) {
-                            m->mutate_force_isolation_denied_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                            return mev("tenant-isolation-denied",
-                                       std::string("cross-tenant ") + op +
-                                           " denied by WorkspaceIsolationPolicy "
-                                           "(#1566/#2052/#2658/#2942)");
-                        }
-                        m->mutate_force_effect_denied_total.fetch_add(1, std::memory_order_relaxed);
-                        // Issue #2076: unified Agent-readable deny reason (merr pair).
-                        return mev("capability-denied",
-                                   aura::compiler::security::format_deny_reason(
-                                       kEffectMutate, ev.capability_tenant_id(), op));
-                    }
-                    return mev("capability-denied", "mutate capability denied under sandbox");
-                }
-
-                // Issue #676: legacy string capability gate (still required when
-                // sandbox is on but effect mode is Off — require_effect's effect
-                // check always-allows under Off, so the string gate is the backstop
-                // that keeps legacy sandbox-mode enforcement active).
-                // #4322 skips this backstop for the kernel's own workspace.
-                if (!ev.kernel_self_workspace_mutate(op, ref_tenant) && ev.sandbox_mode() &&
-                    !ev.has_capability(kCapMutate) && !ev.has_capability(kCapWildcard)) {
-                    ev.bump_capability_denial();
-                    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                        m->mutate_force_effect_denied_total.fetch_add(1, std::memory_order_relaxed);
-                        m->capability_denial_mutate_total.fetch_add(1, std::memory_order_relaxed);
-                    }
-                    return mev("capability-denied", "mutate capability required in sandbox mode");
-                }
-
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                    m->mutate_force_effect_allowed_total.fetch_add(1, std::memory_order_relaxed);
-
-                // Issue #4438: packed v2 still carrying another Agent's mint
-                // is stale before the guard. The body ensure already denies,
-                // and the guard abort then replaces that stale-ref with
-                // persist-reject. Hash operands stay on the hash arm.
-                if (!a.empty() && is_pair(a[0]) && arg_ref.has_value() &&
-                    aura::compiler::typed_audit::production_defaults_active()) {
-                    const auto cur = ev.agent_scoped_fiber_id();
-                    const auto held = arg_ref->fiber_id;
-                    if (held != 0 && cur != 0 && held != cur) {
-                        return mev("stale-ref", std::string(op) + ": stable-ref is stale");
-                    }
-                }
-
-                std::uint64_t wraps_before = 0;
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                    wraps_before =
-                        m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed);
-                // Issue #3197: nested try_acquire does not bump the
-                // outermost wrap counter — snapshot the acquire token
-                // *before* the wrapper acquire so the belt still sees it.
-                const auto token_before = aura::compiler::mutate_guard_acquire_token();
-                // Issue #3450: RO fence before acquire. A locked workspace
-                // must not take exclusive workspace_mtx_ for a no-op write
-                // (replace-type / atomic-batch missed the per-body check).
-                // GUARD_EXEMPT metadata/policy still runs. Per-body checks
-                // stay as belt.
-                if (!guard_exempt && ev.workspace_read_only_)
-                    return mev("read-only", std::string(op) + ": workspace is read-only");
-                // Issue #3423: acquire before fn(a). GUARD_EXEMPT skips
-                // (metadata/policy — no extra acquire). Acquire fail →
-                // structured reject, zero topology write.
-                std::unique_ptr<Evaluator::MutationBoundaryGuard> wrapper_guard;
-                bool wrapper_ok = true;
-                if (!guard_exempt) {
-                    auto gr =
-                        aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &wrapper_ok);
-                    if (!gr) {
-                        // Reject exit holds no guard — zero topology write
-                        // (the #3423 AC2 "no write on acquire fail" face).
-                        contract_assert(!wrapper_guard);
-                        return mev("guard-reject", gr.error().message);
-                    }
-                    wrapper_guard = std::move(*gr);
-                    // Inert / nested did not publish a session mid. Stay
-                    // armed so the pre-note clears after that guard dies.
-                    // Outermost owns the note from here (#4385).
-                    if (wrapper_guard->is_outermost())
-                        admit_session.release();
-                }
-                // Issue #4257: production outermost — arm synthetic
-                // MutationBoundary yield (#3254) BEFORE fn(a) so any mid-body
-                // cooperative edge (check_gc_safepoint / yield / JIT poll /
-                // nested enter) consumes cancel + same-fiber force_release
-                // (#3222) without a second unlock protocol. Soft /
-                // !reject_enabled: skip. Edge-free busy-spin that never hits
-                // an edge stays fail-closed via #4158 quarantine dispose
-                // (foreign never unlocks unique_lock).
-                if (!guard_exempt && wrapper_guard && wrapper_guard->is_outermost() &&
-                    aura::compiler::mutation_hold_budget_reject_enabled()) {
-                    if (auto* cur = aura::serve::g_current_fiber)
-                        cur->inject_synthetic_mutation_boundary_yield();
-                }
-                // Issue #4332: child-layer structural mutates must never write
-                // the shared parent FlatAST. workspace:switch keeps
-                // has_own_flat==false and points workspace_flat_ at the parent;
-                // without a wrapper-level clone every mutate:* except rebind /
-                // replace-subtree silently committed the child edit onto the
-                // parent tree (P0 isolation face: parent's next query/eval
-                // observed the child edit). Clone before any body write —
-                // idempotent once has_own_flat is set (root / no-tree no-op;
-                // rebind / replace-subtree's own trigger is a no-op after
-                // this) — and re-read the active flat so fn(a) writes the
-                // LOCAL clone. Fail-closed on read-only layer.
-                if (!guard_exempt && ev.workspace_tree_) {
-                    if (!ev.trigger_lazy_cow(ev.workspace_tree_)) {
-                        // Issue #4335: the wrapper already acquired the
-                        // boundary and minted the session mid, but the
-                        // clone never ran and the body is skipped. Leaving
-                        // the success flag set lets ~MutationBoundaryGuard
-                        // take the success exit and stamp a committed audit
-                        // row for a mutate the caller observed as denied.
-                        // Same fail-closed shape as the naked-mutate belt:
-                        // mark the boundary failed so the dtor takes
-                        // exit_mutation_boundary(false) and
-                        // record_boundary_deny_after_restore joins a
-                        // cow-refused deny on the same mid.
-                        if (wrapper_guard)
-                            wrapper_guard->mark_failed();
-                        ev.mark_outermost_mutation_failed();
-                        return mev("cow-refused",
-                                   std::string(op) + ": COW refused (read-only layer)");
-                    }
-                    void* cow_flat = nullptr;
-                    void* cow_pool = nullptr;
-                    if (ev.refresh_active_flat_pool(ev.workspace_tree_, &cow_flat, &cow_pool)) {
-                        ev.workspace_flat_ = static_cast<aura::ast::FlatAST*>(cow_flat);
-                        ev.workspace_pool_ = static_cast<aura::ast::StringPool*>(cow_pool);
-                    }
-                }
-                // C++26 contract mirror of the #3423 source-cite check:
-                // structural mutates reach fn(a) only under the wrapper
-                // boundary guard; GUARD_EXEMPT metadata prims skip it.
-                contract_assert(guard_exempt || wrapper_guard != nullptr);
-                auto result = fn(a);
-                // Issue #3480: poll existing inbody on the structural
-                // wrapper. A non-coop fn(a) never hits check_gc_safepoint;
-                // cancel armed → force-release hold + depth before a green
-                // result can ride the still-held lock. Happy path: two
-                // loads (reject_enabled + cancel_armed ns==0). Soft:
-                // reject_enabled false → no force-release. Cross-fiber
-                // still only request_hold_budget_cancel (this is same-fiber).
-                if (!guard_exempt && wrapper_guard && wrapper_guard->is_outermost() &&
-                    aura::compiler::mutation_hold_budget_reject_enabled()) {
-                    if (aura::serve::aura_hold_budget_cancel_armed() != 0 ||
-                        aura::serve::aura_hold_budget_poll_inbody_window() != 0) {
-                        wrapper_guard->force_release_hold_budget_inbody();
-                        aura::compiler::g_mutation_hold_budget_forced_unlock_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                        aura::compiler::g_mutation_hold_budget_forced_fail_closed_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                        ev.disarm_rebind_light_path();
-                        return mev("hold-budget-cancel", "outermost force-released");
-                    }
-                }
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                    const auto wraps_after =
-                        m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed);
-                    const auto token_after = aura::compiler::mutate_guard_acquire_token();
-                    // wraps_after == wraps_before is the outermost-naked
-                    // compare (#2986 AC5). Issue #3197: nested acquire
-                    // does not bump wraps — also accept the Guard token.
-                    const bool acquired =
-                        !(wraps_after == wraps_before) || token_after != token_before;
-                    if (!acquired) {
-                        m->naked_mutate_attempt.fetch_add(1, std::memory_order_relaxed);
-                        // Issue #2986 / #3197: production + requires_guard
-                        // naked body → hard fail-closed. Happy Guard path
-                        // does not load production_defaults.
-                        // Issue #3423: belt — wrapper already acquired for
-                        // !exempt; this arm is leftover if acquire is skipped.
-                        if (!guard_exempt &&
-                            aura::compiler::typed_audit::production_defaults_active()) {
-                            m->naked_mutate_fail_closed_total.fetch_add(1,
-                                                                        std::memory_order_relaxed);
-                            if (wrapper_guard)
-                                wrapper_guard->mark_failed();
-                            ev.mark_outermost_mutation_failed();
-                            ev.disarm_rebind_light_path();
-                            return mev("naked-mutate", std::string(op) +
-                                                           " skipped MutationBoundaryGuard under "
-                                                           "production (#2986/#3197/#3423)");
-                        }
-                    } else {
-                        m->mutate_guard_enforced.fetch_add(1, std::memory_order_relaxed);
-                    }
-                }
-                // Issue #4360: snapshot hard-rebind callers after the belt above
-                // and before the drain. The light path snapshots after.
-                struct HardReinstall {
-                    Evaluator& ev;
-                    std::string focus;
-                    std::vector<std::string> callers;
-                    bool done = false;
-                    explicit HardReinstall(Evaluator& e)
-                        : ev(e) {
-                        if (ev.rebind_light_path())
-                            return;
-                        focus = ev.rebind_light_focus();
-                        if (!focus.empty() && ev.get_dependents_fn_)
-                            callers = ev.get_dependents_fn_(focus);
-                    }
-                    void install() {
-                        if (focus.empty())
-                            return;
-                        ev.bind_workspace_lambda_via_ir(focus);
-                        for (const auto& c : callers) {
-                            if (!c.empty() && c != focus)
-                                ev.bind_workspace_lambda_via_ir(c);
-                        }
-                        ev.disarm_rebind_light_path();
-                        done = true;
-                    }
-                    ~HardReinstall() {
-                        if (!done && !focus.empty())
-                            ev.disarm_rebind_light_path();
-                    }
-                    HardReinstall(const HardReinstall&) = delete;
-                    HardReinstall& operator=(const HardReinstall&) = delete;
-                    HardReinstall(HardReinstall&&) = delete;
-                    HardReinstall& operator=(HardReinstall&&) = delete;
-                } hard_reinstall{ev};
-                // Issue #3697: outermost dtor persist-reject / abort_restore
-                // must run before the EDSL return. `return result` left the
-                // body's #t in the return slot, then unique_ptr dtor flipped
-                // wrapper_ok and restored AST — Agent saw committed mutate
-                // while the next query saw the pre-mutate tree. Hold-budget
-                // cancel already replaced the result before dtor; persist-
-                // reject had no equivalent. Soft/Off: dtor observe-only,
-                // wrapper_ok stays true, return unchanged.
-                if (!guard_exempt) {
-                    wrapper_guard.reset();
-                    if (!std::atomic_ref<bool>(wrapper_ok).load(std::memory_order_acquire)) {
-                        // Issue #4914: the body already said why it refused
-                        // (rebind-non-procedure, typecheck, invariant, …).
-                        // Keep that reason for mutate:rebind; a generic
-                        // persist-reject hid it. Other ops keep the #4652
-                        // contract: an aborted outermost boundary reads as
-                        // persist-reject. (Matched by suffix: the #3074
-                        // guard scrapes the first quoted rebind op name as
-                        // the registration site.)
-                        const bool body_merr = std::string_view(op).ends_with(":rebind") && [&] {
-                            if (is_error(result))
-                                return true;
-                            if (!is_pair(result))
-                                return false;
-                            const auto p0 = ev.pairs_[as_pair_idx(result)];
-                            if (!is_string(p0.car) || !is_pair(p0.cdr))
-                                return false;
-                            const auto p1 = ev.pairs_[as_pair_idx(p0.cdr)];
-                            return is_string(p1.car) && is_int(p1.cdr) && as_int(p1.cdr) == 0;
-                        }();
-                        if (body_merr)
-                            return result;
-                        return mev("persist-reject",
-                                   std::string(op) + " aborted; topology restored");
-                    }
-                }
-                // Issue #4357: the rebind body guard is nested, so it does
-                // not drain. The outermost dtor above just did. A one-line
-                // Soft rebind leaves the light arm set so that drain skips
-                // the heavy invalidate. Install the new IR closure after
-                // the drain, then drop the arm. Failure paths disarm inside
-                // the body, so this stays quiet and does not specialise a
-                // rolled-back define.
-                if (ev.rebind_light_path()) {
-                    const std::string focus = ev.rebind_light_focus();
-                    std::vector<std::string> callers;
-                    if (!focus.empty() && ev.get_dependents_fn_)
-                        callers = ev.get_dependents_fn_(focus);
-                    // Install the new IR while the arm is still set. That
-                    // bind clears v2.dirty on the focus and its direct
-                    // callers. edsl-ir-cache:cascade-after-mutate still
-                    // requires those callers to stay dirty.
-                    if (!focus.empty())
-                        ev.bind_workspace_lambda_via_ir(focus);
-                    if (ev.mark_define_dirty_fn_) {
-                        for (const auto& c : callers) {
-                            if (!c.empty() && c != focus)
-                                ev.mark_define_dirty_fn_(c);
-                        }
-                    }
-                    ev.disarm_rebind_light_path();
-                } else {
-                    hard_reinstall.install();
-                }
-                return result;
+            [&ev, mev, fn, op_name, guard_exempt](std::span<const EvalValue> a) -> EvalValue {
+                return RegSplitParts::mutate_wrapped_call(ev, mev, fn, *op_name, guard_exempt, a);
             });
         // Issue #2057: declare Effect contract on PrimMeta (body already
         // enforces — effect_enforced_in_body avoids double require_effect).
@@ -11375,158 +11601,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         ev.primitives().set_meta_for_name(*op_name, std::move(meta));
     };
 
-    auto resolve_mutate_node_arg = [&ev, mev, unpack_stable_ref_arg,
-                                    safe_str](aura::ast::FlatAST& flat,
+    auto resolve_mutate_node_arg = [&ev, mev](aura::ast::FlatAST& flat,
                                               std::span<const EvalValue> a, const char* op,
                                               bool* ok, aura::ast::NodeId& out_node) -> EvalValue {
-        if (a.empty()) {
-            *ok = false;
-            return mev("bad-arg", std::string(op) + ": missing node argument");
-        }
-        const EvalValue& arg = a[0];
-        // Issue #3424: production query:* returns schema-2 hash; accept it
-        // as a node operand. Freshness via query_result_is_fresh_with_refs.
-        // Do not hash → int → make_stamped_ref (occupancy).
-        // Issue #3695: N>1 matches require :index.
-        if (is_hash(arg)) {
-            using aura::compiler::query_result_decode::HashNodeKind;
-            using aura::compiler::query_result_decode::parse_query_result_match_index;
-            using aura::compiler::query_result_decode::resolve_query_result_match;
-            auto hr = resolve_query_result_match(
-                arg, ev.string_heap_, ev.pairs_, flat, ev.capability_tenant_id(),
-                // Issue #4165: Agent-scoped fiber resolve — a fiberless
-                // production Agent resolves under its own minted id, so a
-                // same-tenant foreign Agent's held hash denies InvalidFiber.
-                static_cast<std::uint64_t>(ev.agent_scoped_fiber_id()), op,
-                parse_query_result_match_index(a, ev.keyword_table()));
-            if (hr.kind == HashNodeKind::Ok) {
-                out_node = hr.node;
-                return make_void();
-            }
-            *ok = false;
-            return mev(hr.err_kind, hr.err_msg);
-        }
-        if (auto packed = unpack_stable_ref_arg(arg)) {
-            // Issue #3415 AC7: packed / stamped ref keeps tenant. Do not
-            // make_stamped_ref (occupancy restamp as caller). add_mutate
-            // already routed foreign tenant through require_effect_on_ref.
-            ev.bump_stable_ref_validated_in_primitives_count();
-            // Issue #818: full provenance enforcement on mutate hot paths.
-            // Stamp validate_with_provenance when valid; attempt auto-
-            // refresh on cross-boundary stale refs; record fiber/workspace
-            // mismatches when capture fields disagree with active layer.
-            StableNodeRef ref = *packed;
-            const std::uint32_t active_ws =
-                ev.workspace_tree_ ? static_cast<WorkspaceTree*>(ev.workspace_tree_)->active_idx()
-                                   : 0;
-            if (ref.workspace_id != 0 && ref.workspace_id != active_ws) {
-                ev.bump_stable_ref_fiber_workspace_mismatch_prevented();
-            }
-            // Issue #1630: force full provenance (fiber_id / cow / wrap /
-            // boundary_pinned) via ensure_valid_or_refresh on every mutate
-            // StableNodeRef input — supersedes bare validate_or_refresh.
-            // Issue #3661: production packed v2 with expired gen must not
-            // occupancy-remake the current occupant (auto_refresh wrote a
-            // new layout gen and skipped Strict). Soft keeps #2186 refresh.
-            const bool was_valid = ref.is_valid_in(flat) && flat.get_safe(ref).has_value();
-            const bool refresh = !aura::compiler::typed_audit::production_defaults_active();
-            if (ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/refresh).has_value()) {
-                if (!was_valid) {
-                    ev.bump_stable_ref_cross_cow_refresh();
-                }
-                if (!ref.boundary_pinned) {
-                    ev.pin_stable_ref_for_cow_boundary(ref);
-                    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                        m->stable_ref_auto_pin_total.fetch_add(1, std::memory_order_relaxed);
-                }
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                    m->stable_ref_boundary_auto_refresh.fetch_add(1, std::memory_order_relaxed);
-                ev.bump_stable_ref_provenance_enforced();
-                out_node = ref.id;
-                return make_void();
-            }
-            {
-                *ok = false;
-                const auto policy = ev.get_stale_ref_policy();
-                if (policy == Evaluator::StaleRefPolicy::Strict) {
-                    ev.bump_stale_ref_blocked_count();
-                    // Issue #1681: pass literal directly — do not intern
-                    // "stale-ref" into string_heap_ on every blocked call.
-                    return mev("stale-ref", "stable-ref is stale (Strict policy blocked)");
-                }
-                if (policy == Evaluator::StaleRefPolicy::Warn)
-                    ev.bump_stale_ref_warned_count();
-                return mev("stale-ref", std::string(op) + ": stable-ref is stale");
-            }
-        }
-        if (is_int(arg)) {
-            // Issue #3395: production rejects bare int (occupancy, not
-            // identity — make_stamped_ref captures current generation of
-            // whatever still lives at the index, so an Agent holding a
-            // cached NodeId across a structural mutate + restamp will edit
-            // a different generation of the same index — I6 multi-round
-            // memory hole). Agent must pass packed v2 StableNodeRef or
-            // QueryResult match under production. Soft/Off keeps the
-            // historical "stamp current gen + auto-refresh" path
-            // (Issue #2186). bump_raw_nodeid_usage_in_primitives_count
-            // fires on the reject path so dashboards see the production
-            // gate blocking the occupancy input.
-            if (aura::compiler::typed_audit::production_defaults_active()) {
-                *ok = false;
-                ev.bump_raw_nodeid_usage_in_primitives_count();
-                // Issue #3215: occupancy reject of a live MacroIntroduced
-                // node is still a default-deny mutate. Stamp the Agent
-                // reason before returning so later expand pass-limit
-                // cannot leave last_limit_reason empty.
-                const auto node = static_cast<aura::ast::NodeId>(as_int(arg));
-                if (node < flat.size() && flat.is_live_node(node) &&
-                    flat.is_macro_introduced(node) && !ev.get_allow_macro_mutate()) {
-                    ev.record_hygiene_violation_attempt();
-                    aura::compiler::macro_exp::note_hygiene_last_limit_reason(
-                        aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced);
-                }
-                return mev("stale-ref",
-                           std::string(op) +
-                               ": raw node-id rejected under production; "
-                               "use packed v2 StableNodeRef or QueryResult match (Issue #3395)");
-            }
-            ev.bump_raw_nodeid_usage_in_primitives_count();
-            const auto node = static_cast<aura::ast::NodeId>(as_int(arg));
-            if (node >= flat.size()) {
-                *ok = false;
-                return mev("out-of-range", std::string(op) + ": node ID " + std::to_string(node) +
-                                               " >= flat size " + std::to_string(flat.size()));
-            }
-            // Issue #2056: stamp tenant/fiber when promoting raw NodeId → ref.
-            // Issue #2186: force ensure_valid_or_refresh on bare NodeId path
-            // (was: is_valid_in + get_safe only — silent-stale gap after
-            // multi-round restamp when Agents unpack (id . gen) to int).
-            auto ref = ev.make_stamped_ref(node);
-            if (!ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/true).has_value()) {
-                *ok = false;
-                const auto policy = ev.get_stale_ref_policy();
-                if (policy == Evaluator::StaleRefPolicy::Strict) {
-                    ev.bump_stale_ref_blocked_count();
-                    // Issue #1681: literal tag, no string_heap_ push.
-                    return mev("stale-ref", "raw node-id is stale (Strict policy blocked)");
-                }
-                if (policy == Evaluator::StaleRefPolicy::Warn)
-                    ev.bump_stale_ref_warned_count();
-                return mev("stale-ref", std::string(op) + ": raw node-id is stale");
-            }
-            // Issue #1250: promote raw NodeId → pinned StableNodeRef on mutate.
-            if (!ref.boundary_pinned) {
-                ev.pin_stable_ref_for_cow_boundary(ref);
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                    m->stable_ref_auto_pin_total.fetch_add(1, std::memory_order_relaxed);
-            }
-            ev.bump_stable_ref_provenance_enforced();
-            out_node = ref.id;
-            return make_void();
-        }
-        *ok = false;
-        return mev("bad-arg", std::string("usage: (") + op + " node-id|stable-ref ...)");
+        return RegSplitParts::mutate_resolve_node_arg(ev, mev, flat, a, op, ok, out_node);
     };
+
 
     // Issue #5033: every peeled part re-binds these names at its top so the moved
     // slices stay verbatim. Each member refers to a helper defined above.
