@@ -61,10 +61,451 @@ using types::make_string;
 using types::make_vector;
 using types::make_void;
 
-void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
-                              ::aura::compiler::LockedStringHeap& string_heap,
-                              std::vector<EvalValue>& error_values,
-                              std::atomic<std::uint64_t>* primitive_error_counter, Evaluator& ev) {
+// Issue #5032: json-parse state and its recursive helpers live outside the
+// registration lambda so every helper stays under 300 lines. Member names match
+// the old captures, so the parser body did not change in the extraction.
+struct JsonParser {
+    std::string json_str;
+    std::size_t pos = 0;
+    std::pmr::vector<Pair>& pairs;
+    ::aura::compiler::LockedStringHeap& string_heap;
+    std::vector<EvalValue>& error_values;
+    std::atomic<std::uint64_t>* primitive_error_counter;
+    Evaluator& ev;
+
+    void skip_ws();
+    EvalValue parse_string();
+    EvalValue parse_number();
+    bool parse_keyword(std::string_view kw, EvalValue val);
+    EvalValue parse_array();
+    std::uint64_t json_object_key_hash(const EvalValue& key_val);
+    EvalValue parse_object();
+    EvalValue parse_value();
+};
+
+void JsonParser::skip_ws() {
+    while (pos < json_str.size() && (json_str[pos] == ' ' || json_str[pos] == '\t' ||
+                                     json_str[pos] == '\n' || json_str[pos] == '\r'))
+        pos++;
+}
+EvalValue JsonParser::parse_string() {
+    // Expected at ": advance past it
+    if (pos >= json_str.size() || json_str[pos] != '"')
+        return make_void();
+    pos++; // skip opening quote
+    std::string result;
+    while (pos < json_str.size()) {
+        if (json_str[pos] == '"') {
+            pos++;
+            break;
+        }
+        if (json_str[pos] == '\\' && pos + 1 < json_str.size()) {
+            pos++;
+            switch (json_str[pos]) {
+                case '"':
+                    result += '"';
+                    break;
+                case '\\':
+                    result += '\\';
+                    break;
+                case '/':
+                    result += '/';
+                    break;
+                case 'b':
+                    result += '\b';
+                    break;
+                case 'f':
+                    result += '\f';
+                    break;
+                case 'n':
+                    result += '\n';
+                    break;
+                case 't':
+                    result += '\t';
+                    break;
+                case 'r':
+                    result += '\r';
+                    break;
+                case 'u': {
+                    // Issue #1715: decode \uXXXX to UTF-8 (BMP).
+                    if (pos + 4 < json_str.size()) {
+                        unsigned code = 0;
+                        bool ok = true;
+                        for (int i = 1; i <= 4; ++i) {
+                            char h = json_str[pos + i];
+                            code <<= 4;
+                            if (h >= '0' && h <= '9')
+                                code |= static_cast<unsigned>(h - '0');
+                            else if (h >= 'a' && h <= 'f')
+                                code |= static_cast<unsigned>(h - 'a' + 10);
+                            else if (h >= 'A' && h <= 'F')
+                                code |= static_cast<unsigned>(h - 'A' + 10);
+                            else {
+                                ok = false;
+                                break;
+                            }
+                        }
+                        if (ok) {
+                            pos += 4; // last hex; loop pos++ advances past it
+                            if (code < 0x80) {
+                                result += static_cast<char>(code);
+                            } else if (code < 0x800) {
+                                result += static_cast<char>(0xC0 | (code >> 6));
+                                result += static_cast<char>(0x80 | (code & 0x3F));
+                            } else {
+                                result += static_cast<char>(0xE0 | (code >> 12));
+                                result += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+                                result += static_cast<char>(0x80 | (code & 0x3F));
+                            }
+                            break;
+                        }
+                    }
+                    result += 'u';
+                    break;
+                }
+                default:
+                    result += json_str[pos];
+                    break;
+            }
+        } else {
+            result += json_str[pos];
+        }
+        pos++;
+    }
+    if (!ev.prim_heap_quota_allow(PrimHeapDim::Strings, string_heap.size() + 1)) {
+        return make_primitive_error(string_heap, error_values,
+                                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Strings)),
+                                    primitive_error_counter);
+    }
+    auto sid = string_heap.mint(result);
+    return types::make_string(sid);
+}
+EvalValue JsonParser::parse_number() {
+    std::size_t start = pos;
+    bool is_float = false;
+    if (pos < json_str.size() && json_str[pos] == '-')
+        pos++;
+    while (pos < json_str.size() && json_str[pos] >= '0' && json_str[pos] <= '9')
+        pos++;
+    if (pos < json_str.size() && json_str[pos] == '.') {
+        is_float = true;
+        pos++;
+        while (pos < json_str.size() && json_str[pos] >= '0' && json_str[pos] <= '9')
+            pos++;
+    }
+    if (pos < json_str.size() && (json_str[pos] == 'e' || json_str[pos] == 'E')) {
+        is_float = true;
+        pos++;
+        if (pos < json_str.size() && (json_str[pos] == '+' || json_str[pos] == '-'))
+            pos++;
+        while (pos < json_str.size() && json_str[pos] >= '0' && json_str[pos] <= '9')
+            pos++;
+    }
+    auto num_str = json_str.substr(start, pos - start);
+    // Issue #2480: stod/stoll throw invalid_argument / out_of_range —
+    // must not escape the primitive (fiber crash). Return PRIM_ERROR.
+    try {
+        if (is_float)
+            return types::make_float(std::stod(num_str));
+        return types::make_int_or_promote(std::stoll(num_str));
+    } catch (const std::out_of_range&) {
+        // [SILENCE-PRIM-#615] structured error path (#2480).
+        return make_primitive_error(string_heap, error_values, "json-parse: number out of range",
+                                    primitive_error_counter);
+    } catch (const std::invalid_argument&) {
+        // [SILENCE-PRIM-#615] structured error path (#2480).
+        return make_primitive_error(string_heap, error_values, "json-parse: invalid number format",
+                                    primitive_error_counter);
+    }
+}
+bool JsonParser::parse_keyword(std::string_view kw, EvalValue val) {
+    if (pos + kw.size() <= json_str.size() && json_str.substr(pos, kw.size()) == kw) {
+        pos += kw.size();
+        return true;
+    }
+    return false;
+}
+EvalValue JsonParser::parse_array() {
+    pos++; // skip [
+    skip_ws();
+    std::vector<EvalValue> elems;
+    while (pos < json_str.size() && json_str[pos] != ']') {
+        skip_ws();
+        const auto before = pos;
+        elems.push_back(parse_value());
+        // Advance on stuck parse to avoid infinite loops (#1715).
+        if (pos == before) {
+            if (pos < json_str.size())
+                ++pos;
+            else
+                break;
+        }
+        skip_ws();
+        if (pos < json_str.size() && json_str[pos] == ',')
+            pos++;
+        skip_ws();
+    }
+    if (pos < json_str.size() && json_str[pos] == ']')
+        pos++;
+    // Issue #2916 / #2997: lock only materialization; one allow + reserve.
+    // Issue #4453: geometric pairs reserve (monotonic arena; not size+n).
+    Evaluator::ListCtorLockHold hold(ev);
+    const auto n = elems.size();
+    if ((ev.prim_heap_quota_limited(PrimHeapDim::Pairs) || n > kPrimHeapUnlimitedSmall) &&
+        !ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + n)) {
+        return make_primitive_error(string_heap, error_values,
+                                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                                    primitive_error_counter);
+    }
+    pairs.reserve(monotonic_pairs_reserve_cap(pairs.size(), pairs.capacity(), n));
+    EvalValue result = make_void();
+    for (std::size_t i = n; i > 0; --i) {
+        auto pid = pairs.size();
+        pairs.push_back({elems[i - 1], result});
+        result = types::make_pair(pid);
+    }
+    return result;
+}
+std::uint64_t JsonParser::json_object_key_hash(const EvalValue& key_val) {
+    std::uint64_t kh = 0x9e3779b97f4a7c15ull;
+    if (types::is_string(key_val)) {
+        auto ksid = types::as_string_idx(key_val);
+        if (ksid < string_heap.size()) {
+            auto& ks = string_heap[ksid];
+            kh = ::aura::compiler::stats::kFnvOffsetBasis;
+            for (char c : ks)
+                kh = (kh ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+        }
+    } else if (types::is_int(key_val)) {
+        kh = static_cast<std::uint64_t>(types::as_int(key_val)) * 0x9e3779b97f4a7c15ull;
+    }
+    return kh;
+}
+EvalValue JsonParser::parse_object() {
+    pos++; // skip {
+    // Issue #2997: snapshot k/v then reserve capacity (no parse-time grow).
+    std::vector<std::pair<EvalValue, EvalValue>> entries;
+    while (pos < json_str.size() && json_str[pos] != '}') {
+        skip_ws();
+        const auto before = pos;
+        auto key_val = parse_string();
+        skip_ws();
+        if (pos < json_str.size() && json_str[pos] == ':')
+            pos++;
+        skip_ws();
+        auto val = parse_value();
+        // Advance on stuck parse to avoid infinite loops (#1715).
+        if (pos == before) {
+            if (pos < json_str.size())
+                ++pos;
+            else
+                break;
+        }
+        entries.emplace_back(key_val, val);
+        skip_ws();
+        if (pos < json_str.size() && json_str[pos] == ',')
+            pos++;
+        skip_ws();
+    }
+    if (pos < json_str.size() && json_str[pos] == '}')
+        pos++;
+
+    // Issue #2481: start create(8), grow to 0.7 load so keys are not dropped.
+    auto* ht = FlatHashTable::create(8);
+    if (!ht)
+        return make_void();
+
+    auto grow_object_table = [&]() -> bool {
+        auto old_cap = ht->capacity;
+        auto new_cap = old_cap * 2;
+        if (new_cap < 8)
+            new_cap = 8;
+        auto* new_ht = FlatHashTable::create(new_cap);
+        if (!new_ht)
+            return false;
+        auto old_meta = ht->metadata();
+        auto old_keys = ht->keys();
+        auto old_vals = ht->values();
+        auto new_meta = new_ht->metadata();
+        auto new_keys = new_ht->keys();
+        auto new_vals = new_ht->values();
+        for (std::uint64_t i = 0; i < old_cap; ++i) {
+            if (old_meta[i] == 0xFF)
+                continue;
+            // Issue #4612: a deleted slot (tombstone) must not be
+            // resurrected by the rehash.
+            if (old_meta[i] == ::aura::compiler::hash::kTombstoneSlot)
+                continue;
+            EvalValue kv{old_keys[i]};
+            auto kh = json_object_key_hash(kv);
+            auto fp = old_meta[i];
+            bool placed = false;
+            for (std::uint64_t at = 0; at < new_cap; ++at) {
+                auto idx = ((kh >> 1) + at) & (new_cap - 1);
+                if (new_meta[idx] == 0xFF) {
+                    new_meta[idx] = fp;
+                    new_keys[idx] = old_keys[i];
+                    new_vals[idx] = old_vals[i];
+                    new_ht->size++;
+                    placed = true;
+                    break;
+                }
+            }
+            if (!placed) {
+                FlatHashTable::destroy(new_ht);
+                return false;
+            }
+        }
+        FlatHashTable::destroy(ht);
+        ht = new_ht;
+        return true;
+    };
+
+    while (entries.size() * 10 > ht->capacity * 7) {
+        if (!grow_object_table()) {
+            FlatHashTable::destroy(ht);
+            return make_primitive_error(string_heap, error_values,
+                                        "json-parse: hash table grow failed",
+                                        primitive_error_counter);
+        }
+    }
+
+    for (auto& [key_val, val] : entries) {
+        auto kh = json_object_key_hash(key_val);
+        const auto fp = ::aura::compiler::hash::fingerprint(kh);
+
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto cap = ht->capacity;
+
+        bool found = false;
+        for (std::size_t at = 0; at < cap; ++at) {
+            auto idx = ((kh >> 1) + at) & (cap - 1);
+            if (::aura::compiler::hash::hash_slot_is_live(meta[idx])) {
+                bool eq = false;
+                auto existing_key = EvalValue{keys[idx]};
+                if (types::is_string(existing_key) && types::is_string(key_val)) {
+                    auto ai = types::as_string_idx(existing_key);
+                    auto bi = types::as_string_idx(key_val);
+                    eq = (ai < string_heap.size() && bi < string_heap.size()) &&
+                         string_heap[ai] == string_heap[bi];
+                } else {
+                    eq = keys[idx] == key_val.val;
+                }
+                if (eq) {
+                    vals[idx] = val.val;
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if (found)
+            continue;
+        if (ht->size * 10 > ht->capacity * 7) {
+            if (!grow_object_table()) {
+                FlatHashTable::destroy(ht);
+                return make_primitive_error(string_heap, error_values,
+                                            "json-parse: hash table grow failed",
+                                            primitive_error_counter);
+            }
+            meta = ht->metadata();
+            keys = ht->keys();
+            vals = ht->values();
+            cap = ht->capacity;
+        }
+        bool inserted = false;
+        for (std::size_t at = 0; at < cap; ++at) {
+            auto idx = ((kh >> 1) + at) & (cap - 1);
+            if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
+                meta[idx] = fp;
+                keys[idx] = key_val.val;
+                vals[idx] = val.val;
+                ht->size++;
+                inserted = true;
+                break;
+            }
+        }
+        if (!inserted) {
+            if (!grow_object_table()) {
+                FlatHashTable::destroy(ht);
+                return make_primitive_error(string_heap, error_values,
+                                            "json-parse: hash table grow failed",
+                                            primitive_error_counter);
+            }
+            meta = ht->metadata();
+            keys = ht->keys();
+            vals = ht->values();
+            cap = ht->capacity;
+            for (std::size_t at = 0; at < cap; ++at) {
+                auto idx = ((kh >> 1) + at) & (cap - 1);
+                if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
+                    meta[idx] = fp;
+                    keys[idx] = key_val.val;
+                    vals[idx] = val.val;
+                    ht->size++;
+                    inserted = true;
+                    break;
+                }
+            }
+            if (!inserted) {
+                FlatHashTable::destroy(ht);
+                return make_primitive_error(string_heap, error_values,
+                                            "json-parse: hash table insert failed",
+                                            primitive_error_counter);
+            }
+        }
+    }
+    // Issue #4788: publish under the same locks every other
+    // g_hash_tables writer takes ((hash), hash-set! grow, the
+    // reclaim). json-parse runs on fiber worker threads, so the
+    // unlocked size()+push_back raced a concurrent publish: two
+    // threads reallocating the vector freed the same block
+    // (glibc "double free or corruption") and could also hand
+    // out the same index twice. Index read, push and owner
+    // stamp are one critical section now.
+    std::size_t hidx = 0;
+    {
+        std::scoped_lock hlock(ev.hash_tables_mutex());
+        std::scoped_lock slock(ev.alloc_storage_lock_);
+        hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        // Issue #4110: stamp the owner parallel to the table (SSOT helper;
+        // runtime_ssot contract).
+        aura_hash_stamp_new_table_owner();
+    }
+    return types::make_hash(hidx);
+}
+EvalValue JsonParser::parse_value() {
+    skip_ws();
+    if (pos >= json_str.size()) {
+        return make_primitive_error(string_heap, error_values,
+                                    "json-parse: unexpected end of input", primitive_error_counter);
+    }
+    char c = json_str[pos];
+    if (c == '"')
+        return parse_string();
+    if (c == '-' || (c >= '0' && c <= '9'))
+        return parse_number();
+    if (c == '[')
+        return parse_array();
+    if (c == '{')
+        return parse_object();
+    if (parse_keyword("true", make_bool(true)))
+        return make_bool(true);
+    if (parse_keyword("false", make_bool(false)))
+        return make_bool(false);
+    if (parse_keyword("null", make_void()))
+        return make_void();
+    // Issue #2998: invalid token is a true parse error, not silent void.
+    return make_primitive_error(string_heap, error_values, "json-parse: invalid input",
+                                primitive_error_counter);
+}
+
+void RegSplitParts::register_json_evo_primitives(
+    PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+    ::aura::compiler::LockedStringHeap& string_heap, std::vector<EvalValue>& error_values,
+    std::atomic<std::uint64_t>* primitive_error_counter, Evaluator& ev) {
     using aura::compiler::pure_general;
     using aura::compiler::register_prim;
 
@@ -151,6 +592,14 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         },
         aura::compiler::impure_general(0, "(evo:log-path) -> string|#f",
                                        "Active evolution log path (AURA_EVO_LOG), or #f (#4910)."));
+}
+
+void RegSplitParts::register_json_codec_primitives(
+    PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+    ::aura::compiler::LockedStringHeap& string_heap, std::vector<EvalValue>& error_values,
+    std::atomic<std::uint64_t>* primitive_error_counter, Evaluator& ev) {
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
 
     // json-encode: convert Aura value to JSON string
     // (json-encode value) → string
@@ -326,10 +775,17 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return types::make_string(sid);
         },
         pure_general(2, "(any string) -> string", "Lookup a string field from JSON/hash."));
+}
 
+void RegSplitParts::register_json_parse_primitive(
+    PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+    ::aura::compiler::LockedStringHeap& string_heap, std::vector<EvalValue>& error_values,
+    std::atomic<std::uint64_t>* primitive_error_counter, Evaluator& ev) {
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
 
     // json-parse: parse JSON string into Aura value
-    // (json-parse json-str) → value (Int/Float/String/Bool/Void/List/Hash)
+    // (json-parse json-str) -> value (Int/Float/String/Bool/Void/List/Hash)
     register_prim(
         add, ev, "json-parse",
         [&pairs, &string_heap, &error_values, primitive_error_counter,
@@ -339,451 +795,28 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                             "json-parse: expected a string",
                                             primitive_error_counter);
             }
-            auto json_str = string_heap[types::as_string_idx(a[0])];
-
-            std::size_t pos = 0;
-            auto skip_ws = [&]() {
-                while (pos < json_str.size() && (json_str[pos] == ' ' || json_str[pos] == '\t' ||
-                                                 json_str[pos] == '\n' || json_str[pos] == '\r'))
-                    pos++;
-            };
-
-            // Forward declarations for recursive parsing
-            std::function<EvalValue()> parse_value;
-
-            auto parse_string = [&]() -> EvalValue {
-                // Expected at ": advance past it
-                if (pos >= json_str.size() || json_str[pos] != '"')
-                    return make_void();
-                pos++; // skip opening quote
-                std::string result;
-                while (pos < json_str.size()) {
-                    if (json_str[pos] == '"') {
-                        pos++;
-                        break;
-                    }
-                    if (json_str[pos] == '\\' && pos + 1 < json_str.size()) {
-                        pos++;
-                        switch (json_str[pos]) {
-                            case '"':
-                                result += '"';
-                                break;
-                            case '\\':
-                                result += '\\';
-                                break;
-                            case '/':
-                                result += '/';
-                                break;
-                            case 'b':
-                                result += '\b';
-                                break;
-                            case 'f':
-                                result += '\f';
-                                break;
-                            case 'n':
-                                result += '\n';
-                                break;
-                            case 't':
-                                result += '\t';
-                                break;
-                            case 'r':
-                                result += '\r';
-                                break;
-                            case 'u': {
-                                // Issue #1715: decode \uXXXX to UTF-8 (BMP).
-                                if (pos + 4 < json_str.size()) {
-                                    unsigned code = 0;
-                                    bool ok = true;
-                                    for (int i = 1; i <= 4; ++i) {
-                                        char h = json_str[pos + i];
-                                        code <<= 4;
-                                        if (h >= '0' && h <= '9')
-                                            code |= static_cast<unsigned>(h - '0');
-                                        else if (h >= 'a' && h <= 'f')
-                                            code |= static_cast<unsigned>(h - 'a' + 10);
-                                        else if (h >= 'A' && h <= 'F')
-                                            code |= static_cast<unsigned>(h - 'A' + 10);
-                                        else {
-                                            ok = false;
-                                            break;
-                                        }
-                                    }
-                                    if (ok) {
-                                        pos += 4; // last hex; loop pos++ advances past it
-                                        if (code < 0x80) {
-                                            result += static_cast<char>(code);
-                                        } else if (code < 0x800) {
-                                            result += static_cast<char>(0xC0 | (code >> 6));
-                                            result += static_cast<char>(0x80 | (code & 0x3F));
-                                        } else {
-                                            result += static_cast<char>(0xE0 | (code >> 12));
-                                            result +=
-                                                static_cast<char>(0x80 | ((code >> 6) & 0x3F));
-                                            result += static_cast<char>(0x80 | (code & 0x3F));
-                                        }
-                                        break;
-                                    }
-                                }
-                                result += 'u';
-                                break;
-                            }
-                            default:
-                                result += json_str[pos];
-                                break;
-                        }
-                    } else {
-                        result += json_str[pos];
-                    }
-                    pos++;
-                }
-                if (!ev.prim_heap_quota_allow(PrimHeapDim::Strings, string_heap.size() + 1)) {
-                    return make_primitive_error(
-                        string_heap, error_values,
-                        std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Strings)),
-                        primitive_error_counter);
-                }
-                auto sid = string_heap.mint(result);
-                return types::make_string(sid);
-            };
-
-            auto parse_number = [&]() -> EvalValue {
-                std::size_t start = pos;
-                bool is_float = false;
-                if (pos < json_str.size() && json_str[pos] == '-')
-                    pos++;
-                while (pos < json_str.size() && json_str[pos] >= '0' && json_str[pos] <= '9')
-                    pos++;
-                if (pos < json_str.size() && json_str[pos] == '.') {
-                    is_float = true;
-                    pos++;
-                    while (pos < json_str.size() && json_str[pos] >= '0' && json_str[pos] <= '9')
-                        pos++;
-                }
-                if (pos < json_str.size() && (json_str[pos] == 'e' || json_str[pos] == 'E')) {
-                    is_float = true;
-                    pos++;
-                    if (pos < json_str.size() && (json_str[pos] == '+' || json_str[pos] == '-'))
-                        pos++;
-                    while (pos < json_str.size() && json_str[pos] >= '0' && json_str[pos] <= '9')
-                        pos++;
-                }
-                auto num_str = json_str.substr(start, pos - start);
-                // Issue #2480: stod/stoll throw invalid_argument / out_of_range —
-                // must not escape the primitive (fiber crash). Return PRIM_ERROR.
-                try {
-                    if (is_float)
-                        return types::make_float(std::stod(num_str));
-                    return types::make_int_or_promote(std::stoll(num_str));
-                } catch (const std::out_of_range&) {
-                    // [SILENCE-PRIM-#615] structured error path (#2480).
-                    return make_primitive_error(string_heap, error_values,
-                                                "json-parse: number out of range",
-                                                primitive_error_counter);
-                } catch (const std::invalid_argument&) {
-                    // [SILENCE-PRIM-#615] structured error path (#2480).
-                    return make_primitive_error(string_heap, error_values,
-                                                "json-parse: invalid number format",
-                                                primitive_error_counter);
-                }
-            };
-
-            auto parse_keyword = [&](std::string_view kw, EvalValue val) -> bool {
-                if (pos + kw.size() <= json_str.size() && json_str.substr(pos, kw.size()) == kw) {
-                    pos += kw.size();
-                    return true;
-                }
-                return false;
-            };
-
-            auto parse_array = [&]() -> EvalValue {
-                pos++; // skip [
-                skip_ws();
-                std::vector<EvalValue> elems;
-                while (pos < json_str.size() && json_str[pos] != ']') {
-                    skip_ws();
-                    const auto before = pos;
-                    elems.push_back(parse_value());
-                    // Advance on stuck parse to avoid infinite loops (#1715).
-                    if (pos == before) {
-                        if (pos < json_str.size())
-                            ++pos;
-                        else
-                            break;
-                    }
-                    skip_ws();
-                    if (pos < json_str.size() && json_str[pos] == ',')
-                        pos++;
-                    skip_ws();
-                }
-                if (pos < json_str.size() && json_str[pos] == ']')
-                    pos++;
-                // Issue #2916 / #2997: lock only materialization; one allow + reserve.
-                // Issue #4453: geometric pairs reserve (monotonic arena; not size+n).
-                Evaluator::ListCtorLockHold hold(ev);
-                const auto n = elems.size();
-                if ((ev.prim_heap_quota_limited(PrimHeapDim::Pairs) ||
-                     n > kPrimHeapUnlimitedSmall) &&
-                    !ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + n)) {
-                    return make_primitive_error(
-                        string_heap, error_values,
-                        std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
-                        primitive_error_counter);
-                }
-                pairs.reserve(monotonic_pairs_reserve_cap(pairs.size(), pairs.capacity(), n));
-                EvalValue result = make_void();
-                for (std::size_t i = n; i > 0; --i) {
-                    auto pid = pairs.size();
-                    pairs.push_back({elems[i - 1], result});
-                    result = types::make_pair(pid);
-                }
-                return result;
-            };
-
-            // Key hash used by json-parse object insertion (FNV for strings).
-            // Keep in sync with insert/lookup probes below.
-            auto json_object_key_hash = [&](const EvalValue& key_val) -> std::uint64_t {
-                std::uint64_t kh = 0x9e3779b97f4a7c15ull;
-                if (types::is_string(key_val)) {
-                    auto ksid = types::as_string_idx(key_val);
-                    if (ksid < string_heap.size()) {
-                        auto& ks = string_heap[ksid];
-                        kh = ::aura::compiler::stats::kFnvOffsetBasis;
-                        for (char c : ks)
-                            kh = (kh ^ static_cast<std::uint8_t>(c)) *
-                                 ::aura::compiler::stats::kFnvPrime;
-                    }
-                } else if (types::is_int(key_val)) {
-                    kh = static_cast<std::uint64_t>(types::as_int(key_val)) * 0x9e3779b97f4a7c15ull;
-                }
-                return kh;
-            };
-
-            auto parse_object = [&]() -> EvalValue {
-                pos++; // skip {
-                // Issue #2997: snapshot k/v then reserve capacity (no parse-time grow).
-                std::vector<std::pair<EvalValue, EvalValue>> entries;
-                while (pos < json_str.size() && json_str[pos] != '}') {
-                    skip_ws();
-                    const auto before = pos;
-                    auto key_val = parse_string();
-                    skip_ws();
-                    if (pos < json_str.size() && json_str[pos] == ':')
-                        pos++;
-                    skip_ws();
-                    auto val = parse_value();
-                    // Advance on stuck parse to avoid infinite loops (#1715).
-                    if (pos == before) {
-                        if (pos < json_str.size())
-                            ++pos;
-                        else
-                            break;
-                    }
-                    entries.emplace_back(key_val, val);
-                    skip_ws();
-                    if (pos < json_str.size() && json_str[pos] == ',')
-                        pos++;
-                    skip_ws();
-                }
-                if (pos < json_str.size() && json_str[pos] == '}')
-                    pos++;
-
-                // Issue #2481: start create(8), grow to 0.7 load so keys are not dropped.
-                auto* ht = FlatHashTable::create(8);
-                if (!ht)
-                    return make_void();
-
-                auto grow_object_table = [&]() -> bool {
-                    auto old_cap = ht->capacity;
-                    auto new_cap = old_cap * 2;
-                    if (new_cap < 8)
-                        new_cap = 8;
-                    auto* new_ht = FlatHashTable::create(new_cap);
-                    if (!new_ht)
-                        return false;
-                    auto old_meta = ht->metadata();
-                    auto old_keys = ht->keys();
-                    auto old_vals = ht->values();
-                    auto new_meta = new_ht->metadata();
-                    auto new_keys = new_ht->keys();
-                    auto new_vals = new_ht->values();
-                    for (std::uint64_t i = 0; i < old_cap; ++i) {
-                        if (old_meta[i] == 0xFF)
-                            continue;
-                        // Issue #4612: a deleted slot (tombstone) must not be
-                        // resurrected by the rehash.
-                        if (old_meta[i] == ::aura::compiler::hash::kTombstoneSlot)
-                            continue;
-                        EvalValue kv{old_keys[i]};
-                        auto kh = json_object_key_hash(kv);
-                        auto fp = old_meta[i];
-                        bool placed = false;
-                        for (std::uint64_t at = 0; at < new_cap; ++at) {
-                            auto idx = ((kh >> 1) + at) & (new_cap - 1);
-                            if (new_meta[idx] == 0xFF) {
-                                new_meta[idx] = fp;
-                                new_keys[idx] = old_keys[i];
-                                new_vals[idx] = old_vals[i];
-                                new_ht->size++;
-                                placed = true;
-                                break;
-                            }
-                        }
-                        if (!placed) {
-                            FlatHashTable::destroy(new_ht);
-                            return false;
-                        }
-                    }
-                    FlatHashTable::destroy(ht);
-                    ht = new_ht;
-                    return true;
-                };
-
-                while (entries.size() * 10 > ht->capacity * 7) {
-                    if (!grow_object_table()) {
-                        FlatHashTable::destroy(ht);
-                        return make_primitive_error(string_heap, error_values,
-                                                    "json-parse: hash table grow failed",
-                                                    primitive_error_counter);
-                    }
-                }
-
-                for (auto& [key_val, val] : entries) {
-                    auto kh = json_object_key_hash(key_val);
-                    const auto fp = ::aura::compiler::hash::fingerprint(kh);
-
-                    auto meta = ht->metadata();
-                    auto keys = ht->keys();
-                    auto vals = ht->values();
-                    auto cap = ht->capacity;
-
-                    bool found = false;
-                    for (std::size_t at = 0; at < cap; ++at) {
-                        auto idx = ((kh >> 1) + at) & (cap - 1);
-                        if (::aura::compiler::hash::hash_slot_is_live(meta[idx])) {
-                            bool eq = false;
-                            auto existing_key = EvalValue{keys[idx]};
-                            if (types::is_string(existing_key) && types::is_string(key_val)) {
-                                auto ai = types::as_string_idx(existing_key);
-                                auto bi = types::as_string_idx(key_val);
-                                eq = (ai < string_heap.size() && bi < string_heap.size()) &&
-                                     string_heap[ai] == string_heap[bi];
-                            } else {
-                                eq = keys[idx] == key_val.val;
-                            }
-                            if (eq) {
-                                vals[idx] = val.val;
-                                found = true;
-                                break;
-                            }
-                        }
-                    }
-                    if (found)
-                        continue;
-                    if (ht->size * 10 > ht->capacity * 7) {
-                        if (!grow_object_table()) {
-                            FlatHashTable::destroy(ht);
-                            return make_primitive_error(string_heap, error_values,
-                                                        "json-parse: hash table grow failed",
-                                                        primitive_error_counter);
-                        }
-                        meta = ht->metadata();
-                        keys = ht->keys();
-                        vals = ht->values();
-                        cap = ht->capacity;
-                    }
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < cap; ++at) {
-                        auto idx = ((kh >> 1) + at) & (cap - 1);
-                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                            meta[idx] = fp;
-                            keys[idx] = key_val.val;
-                            vals[idx] = val.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        if (!grow_object_table()) {
-                            FlatHashTable::destroy(ht);
-                            return make_primitive_error(string_heap, error_values,
-                                                        "json-parse: hash table grow failed",
-                                                        primitive_error_counter);
-                        }
-                        meta = ht->metadata();
-                        keys = ht->keys();
-                        vals = ht->values();
-                        cap = ht->capacity;
-                        for (std::size_t at = 0; at < cap; ++at) {
-                            auto idx = ((kh >> 1) + at) & (cap - 1);
-                            if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                                meta[idx] = fp;
-                                keys[idx] = key_val.val;
-                                vals[idx] = val.val;
-                                ht->size++;
-                                inserted = true;
-                                break;
-                            }
-                        }
-                        if (!inserted) {
-                            FlatHashTable::destroy(ht);
-                            return make_primitive_error(string_heap, error_values,
-                                                        "json-parse: hash table insert failed",
-                                                        primitive_error_counter);
-                        }
-                    }
-                }
-                // Issue #4788: publish under the same locks every other
-                // g_hash_tables writer takes ((hash), hash-set! grow, the
-                // reclaim). json-parse runs on fiber worker threads, so the
-                // unlocked size()+push_back raced a concurrent publish: two
-                // threads reallocating the vector freed the same block
-                // (glibc "double free or corruption") and could also hand
-                // out the same index twice. Index read, push and owner
-                // stamp are one critical section now.
-                std::size_t hidx = 0;
-                {
-                    std::scoped_lock hlock(ev.hash_tables_mutex());
-                    std::scoped_lock slock(ev.alloc_storage_lock_);
-                    hidx = g_hash_tables.size();
-                    g_hash_tables.push_back(ht);
-                    // Issue #4110: stamp the owner parallel to the table (SSOT helper;
-                    // runtime_ssot contract).
-                    aura_hash_stamp_new_table_owner();
-                }
-                return types::make_hash(hidx);
-            };
-
-            parse_value = [&]() -> EvalValue {
-                skip_ws();
-                if (pos >= json_str.size()) {
-                    return make_primitive_error(string_heap, error_values,
-                                                "json-parse: unexpected end of input",
-                                                primitive_error_counter);
-                }
-                char c = json_str[pos];
-                if (c == '"')
-                    return parse_string();
-                if (c == '-' || (c >= '0' && c <= '9'))
-                    return parse_number();
-                if (c == '[')
-                    return parse_array();
-                if (c == '{')
-                    return parse_object();
-                if (parse_keyword("true", make_bool(true)))
-                    return make_bool(true);
-                if (parse_keyword("false", make_bool(false)))
-                    return make_bool(false);
-                if (parse_keyword("null", make_void()))
-                    return make_void();
-                // Issue #2998: invalid token is a true parse error, not silent void.
-                return make_primitive_error(string_heap, error_values, "json-parse: invalid input",
-                                            primitive_error_counter);
-            };
-
-            return parse_value();
+            JsonParser parser{string_heap[types::as_string_idx(a[0])],
+                              0,
+                              pairs,
+                              string_heap,
+                              error_values,
+                              primitive_error_counter,
+                              ev};
+            return parser.parse_value();
         },
         pure_general(1, "(string) -> any", "Parse a JSON string into an Aura value."));
+}
+
+void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                              ::aura::compiler::LockedStringHeap& string_heap,
+                              std::vector<EvalValue>& error_values,
+                              std::atomic<std::uint64_t>* primitive_error_counter, Evaluator& ev) {
+    RegSplitParts::register_json_evo_primitives(add, pairs, string_heap, error_values,
+                                                primitive_error_counter, ev);
+    RegSplitParts::register_json_codec_primitives(add, pairs, string_heap, error_values,
+                                                  primitive_error_counter, ev);
+    RegSplitParts::register_json_parse_primitive(add, pairs, string_heap, error_values,
+                                                 primitive_error_counter, ev);
 }
 
 } // namespace aura::compiler::primitives_detail

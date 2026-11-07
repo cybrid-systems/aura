@@ -40,7 +40,7 @@ def main() -> int:
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
-    pidx = js.find("auto parse_number")
+    pidx = js.find("EvalValue JsonParser::parse_number")
     # try/catch is ~1.2k into the lambda body
     body = js[pidx : pidx + 2200] if pidx >= 0 else ""
 

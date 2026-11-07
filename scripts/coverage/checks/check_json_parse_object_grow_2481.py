@@ -38,7 +38,7 @@ def main() -> int:
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
-    pidx = js.find("auto parse_object")
+    pidx = js.find("EvalValue JsonParser::parse_object")
     # grow + fail paths live deep in the lambda (~8k chars)
     body = js[pidx : pidx + 9000] if pidx >= 0 else ""
 

@@ -114,7 +114,7 @@ static void ac4_source() {
     auto src = read_file("src/compiler/evaluator_primitives_json.cpp");
     CHECK(!src.empty(), "AC4: read json primitives");
     CHECK(src.find("Issue #2481") != std::string::npos, "AC4: cites #2481");
-    auto pos = src.find("auto parse_object");
+    auto pos = src.find("EvalValue JsonParser::parse_object");
     CHECK(pos != std::string::npos, "AC4: parse_object present");
     if (pos != std::string::npos) {
         auto win = src.substr(pos, 9000);
