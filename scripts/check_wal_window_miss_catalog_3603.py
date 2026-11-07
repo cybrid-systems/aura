@@ -193,8 +193,15 @@ def run_checks() -> list[str]:
 
     # AC3: the miss face never fires under Soft — the fallback-style gate
     # reuses summary_scan_ok; assert the ordering once more at the key.
-    if gate_pos != -1 and flat.find("const bool summary_scan_ok =") > gate_pos:
-        failures.append("3603 AC3: summary_scan_ok must be defined before the miss block")
+    if gate_pos != -1:
+        # #5029 moved the miss face into a helper that takes summary_scan_ok
+        # as a parameter; the gate may be a local definition (old shape) or
+        # that parameter, as long as it is established before the block.
+        local = flat.find("const bool summary_scan_ok =")
+        param = flat.find("bool summary_scan_ok)")
+        ok = (local != -1 and local < gate_pos) or (param != -1 and param < gate_pos)
+        if not ok:
+            failures.append("3603 AC3: summary_scan_ok must be defined before the miss block")
 
     # AC4: the merged-away name must not be resurrected anywhere in src/.
     for p in (REPO_ROOT / "src" / "compiler").glob("*.cpp"):
