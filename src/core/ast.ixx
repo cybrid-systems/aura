@@ -7579,7 +7579,7 @@ public:
     }
 
     static std::string wire_read_string(const std::vector<char>& buf, std::size_t& pos) {
-        std::uint32_t len;
+        std::uint32_t len = 0;
         std::memcpy(&len, &buf[pos], 4);
         pos += 4;
         std::string s(buf.data() + pos, buf.data() + pos + len);
@@ -7588,7 +7588,7 @@ public:
     }
 
     static std::vector<SymId> wire_read_vec_u32(const std::vector<char>& buf, std::size_t& pos) {
-        std::uint32_t sz;
+        std::uint32_t sz = 0;
         std::memcpy(&sz, &buf[pos], 4);
         pos += 4;
         std::vector<SymId> v(sz);
@@ -7610,13 +7610,13 @@ public:
 
     static void wire_read_map_u32_u8(const std::vector<char>& buf, std::size_t& pos,
                                      std::pmr::unordered_map<std::uint32_t, std::uint8_t>& m) {
-        std::uint32_t count;
+        std::uint32_t count = 0;
         std::memcpy(&count, &buf[pos], 4);
         pos += 4;
         m.clear();
         for (std::uint32_t i = 0; i < count; ++i) {
-            std::uint32_t k;
-            std::uint8_t v;
+            std::uint32_t k = 0;
+            std::uint8_t v = 0;
             std::memcpy(&k, &buf[pos], 4);
             pos += 4;
             std::memcpy(&v, &buf[pos], 1);
@@ -7735,7 +7735,7 @@ public:
     // root stay default). v2 includes all five fields.
     static FlatAST deserialize_soa(const std::vector<char>& buf, std::size_t& pos) {
         FlatAST ast;
-        std::uint32_t version;
+        std::uint32_t version = 0;
         std::memcpy(&version, &buf[pos], 4);
         pos += 4;
         if (version != 1 && version != 2) {
@@ -7743,13 +7743,13 @@ public:
             return ast;
         }
         const bool is_v2 = (version == 2);
-        std::uint32_t num_nodes;
+        std::uint32_t num_nodes = 0;
         std::memcpy(&num_nodes, &buf[pos], 4);
         pos += 4;
 
         auto read_column = [&buf, &pos](auto& col) {
             using T = typename std::remove_reference<decltype(col)>::type::value_type;
-            std::uint32_t count;
+            std::uint32_t count = 0;
             std::memcpy(&count, &buf[pos], 4);
             pos += 4;
             col.resize(count);
@@ -7822,7 +7822,7 @@ public:
         pos += 2; // reserved
 
         if (is_v2) {
-            std::uint32_t log_count;
+            std::uint32_t log_count = 0;
             std::memcpy(&log_count, &buf[pos], 4);
             pos += 4;
             ast.mutation_log_.clear();
@@ -7830,7 +7830,7 @@ public:
             for (std::uint32_t i = 0; i < log_count; ++i)
                 ast.mutation_log_.push_back(mutation::wire_read_mutation_record(buf, pos));
 
-            std::uint32_t mi_count;
+            std::uint32_t mi_count = 0;
             std::memcpy(&mi_count, &buf[pos], 4);
             pos += 4;
             ast.match_info_.resize(mi_count);
