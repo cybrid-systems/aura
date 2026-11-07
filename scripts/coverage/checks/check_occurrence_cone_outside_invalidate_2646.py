@@ -47,12 +47,25 @@ def main() -> int:
     must("last_partial_cone_truncated_", "AC2", impl)
 
     # AC3: gate on truncated + empty-set short-circuit
-    must("if (last_partial_cone_truncated_)", "AC3", impl)
+    if "if (st.tc.last_partial_cone_truncated_)" not in impl and "if (last_partial_cone_truncated_)" not in impl:
+        fails.append(
+            "AC3: missing if (last_partial_cone_truncated_) (or the st.tc.-scoped shape the partial_* helpers use)"
+        )
     must("outside_cone_conds.empty()", "AC3", impl)
 
     # AC4: ordering — #2646 fires AFTER #2622 sync
     # (text-position check: #2646 marker appears AFTER #2622 sync marker)
-    pos_2622 = impl.find("sync_occurrence_after_dirty(\n            std::span<const NodeId>(memo_targets.data(),")
+    def _sync_pos_with_memo(text: str) -> int:
+        start = 0
+        while True:
+            p = text.find("sync_occurrence_after_dirty(", start)
+            if p == -1:
+                return -1
+            if "memo_targets.data()" in text[p : p + 600]:
+                return p
+            start = p + 1
+
+    pos_2622 = _sync_pos_with_memo(impl)
     pos_2646 = impl.find("Issue #2646: cone-truncate must drop goals/memo")
     if pos_2622 == -1 or pos_2646 == -1 or pos_2646 <= pos_2622:
         fails.append("AC4: #2646 outside-invalidate position must be AFTER #2622 sync_occurrence_after_dirty")
