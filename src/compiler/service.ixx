@@ -3639,7 +3639,10 @@ public:
         recyclable_eval_escaped_ = false;
         pool_ptr = recyclable_eval_pool_.get();
         flat_ptr = recyclable_eval_flat_.get();
-        struct NoteOneshotEscape {
+        // Destructor suppresses implicit move, but copy would still be
+        // generated. NoCopy deletes both without a user constructor, so
+        // this stays an aggregate.
+        struct NoteOneshotEscape : ::aura::core::NoCopy {
             CompilerService* self;
             const aura::ast::FlatAST* flat;
             std::size_t closures_before;
@@ -3647,7 +3650,10 @@ public:
                 if (self != nullptr && flat != nullptr)
                     self->note_oneshot_eval_escaped(*flat, closures_before);
             }
-        } note_oneshot_escape{this, flat_ptr, closures_before_oneshot};
+        } note_oneshot_escape{{}, this, flat_ptr, closures_before_oneshot};
+        static_assert(std::is_aggregate_v<NoteOneshotEscape>);
+        static_assert(!std::is_copy_constructible_v<NoteOneshotEscape>);
+        static_assert(!std::is_move_constructible_v<NoteOneshotEscape>);
         // Issue #4901: when this eval returns, pin the macro view of its
         // flat. A procedure it defined, called by a later eval after a
         // macro was redefined, keeps the definition in effect here.
