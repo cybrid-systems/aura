@@ -23,12 +23,30 @@ Supported hosts are Ubuntu 24.04, Debian 12, Rocky Linux 9, and openEuler 24.03 
 ## Quick start
 
 ```sh
-aura new evolve demo
+aura demo
+```
+
+One definition, four fixed candidates, and the live source after each KEEP or
+ROLLBACK:
+
+```
+1 ROLLBACK  (define (guess) 10)   live (define (guess) 0)
+2 KEEP      (define (guess) 7)    live (define (guess) 7)
+3 ROLLBACK  (define (guess) 2)    live (define (guess) 7)
+4 KEEP      (define (guess) 42)   live (define (guess) 42)
+(guess) => 42
+```
+
+The same program is a project you can edit:
+
+```sh
+aura new evolve demo   # the same program as a project
 cd demo
 aura run
 aura test
 ```
 
+`aura demo agent` shows the two-role version (a proposer and a checker).
 `aura new` (`app`, `evolve`, or `agent`) writes a template from this repository. The evolve-strategy kit is a separate project: [aura-starter-kits](https://github.com/cybrid-systems/aura-starter-kits).
 
 [Getting started](docs/getting-started.md) · [Editor support and the REPL](docs/editor.md)

@@ -1,10 +1,24 @@
 # Getting started: projects and capabilities (#4912, #4913)
 
-## A project in three commands
+## The first run
 
-    aura new evolve demo      # or: app (modules + tests), agent (orch workflow)
+    aura demo
+
+prints the signature record: a definition is written into the live AST, kept
+or rolled back, and the live source after each decision.
+
+    1 ROLLBACK  (define (guess) 10)   live (define (guess) 0)
+    2 KEEP      (define (guess) 7)    live (define (guess) 7)
+    3 ROLLBACK  (define (guess) 2)    live (define (guess) 7)
+    4 KEEP      (define (guess) 42)   live (define (guess) 42)
+    (guess) => 42
+
+`aura demo agent` prints the two-role dialogue. The same evolve program is a
+project you can edit:
+
+    aura new evolve demo      # or: app (modules + tests), agent (two roles)
     cd demo
-    aura run                  # writes out/report.html
+    aura run
 
 `aura new` writes `aura.toml`, the program, `tests/` with golden files, a
 `.github/workflows/ci.yml` and a README. In a project:

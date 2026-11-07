@@ -5,7 +5,16 @@ push to `main` (the rolling `nightly` release) and from every `v*` tag.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/cybrid-systems/aura/main/install.sh | sh
-aura new evolve demo && cd demo && aura run
+aura demo
+
+The first command prints the signature record; each line is one rewrite of the
+live definition:
+
+    1 ROLLBACK  (define (guess) 10)   live (define (guess) 0)
+    2 KEEP      (define (guess) 7)    live (define (guess) 7)
+    3 ROLLBACK  (define (guess) 2)    live (define (guess) 7)
+    4 KEEP      (define (guess) 42)   live (define (guess) 42)
+    (guess) => 42
 ```
 
 `install.sh` picks the tarball for `uname -m`, checks its sha256, unpacks it
