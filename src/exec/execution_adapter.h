@@ -30,6 +30,7 @@
 #include <exception>
 #include <optional>
 #include <atomic>
+#include <type_traits>
 #include <vector>
 
 namespace aura::serve {
@@ -104,12 +105,14 @@ class operation_state {
 public:
     operation_state() = default;
 
-    // Non-copyable, movable
+    // Non-copyable. The move is the pointer plus three std::function
+    // moves, all noexcept. Spelling noexcept deletes the move if a
+    // later member can throw, instead of silently changing connect().
     ~operation_state() = default;
     operation_state(const operation_state&) = delete;
     operation_state& operator=(const operation_state&) = delete;
-    operation_state(operation_state&&) = default;
-    operation_state& operator=(operation_state&&) = default;
+    operation_state(operation_state&&) noexcept = default;
+    operation_state& operator=(operation_state&&) noexcept = default;
 
     // Begin execution. The receiver will be signalled upon completion.
     // After start(), the caller must keep this state alive until
@@ -129,6 +132,11 @@ private:
     int64_t fiber_id_ = -1;
     bool started_ = false;
 };
+
+static_assert(std::is_nothrow_move_constructible_v<operation_state>);
+static_assert(std::is_nothrow_move_assignable_v<operation_state>);
+static_assert(!std::is_copy_constructible_v<operation_state>);
+static_assert(!std::is_copy_assignable_v<operation_state>);
 
 // ── fiber_sender — a sender that spawns work on the fiber scheduler ──
 // Created by fiber_scheduler::schedule(fn).

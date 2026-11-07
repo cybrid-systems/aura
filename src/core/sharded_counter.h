@@ -19,6 +19,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
 
 namespace aura::core {
 
@@ -79,5 +80,12 @@ private:
 
     std::array<Shard, kShards> shards_{};
 };
+
+// Move loads the shard total into a fresh counter. Every member operation
+// is non-throwing, and the source counter keeps its value.
+static_assert(std::is_nothrow_move_constructible_v<ShardedCounter>);
+static_assert(std::is_nothrow_move_assignable_v<ShardedCounter>);
+static_assert(std::is_nothrow_copy_constructible_v<ShardedCounter>);
+static_assert(std::is_nothrow_copy_assignable_v<ShardedCounter>);
 
 } // namespace aura::core
