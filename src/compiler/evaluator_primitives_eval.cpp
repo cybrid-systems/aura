@@ -132,16 +132,6 @@ using types::make_void;
 
 namespace {
 
-    // Issue #4266: single typecheck core shared by (typecheck-current) and
-    // (typecheck-status). `ok` is the structured status Agents branch on —
-    // diagnostics ride `report` text, never the boolean, so a stdlib gate can
-    // reject without parsing English. One traversal, one cache, one coverage
-    // counter — no second model.
-    struct WorkspaceTypecheckResult {
-        bool ok = false;
-        std::string report;
-    };
-
     // Issue #4746: datum reader / printer recursion limits. Namespace scope
     // (not members): the reader struct below is a local class inside
     // register_eval_primitives, and a local class may not declare static
@@ -151,113 +141,489 @@ namespace {
 
 } // namespace
 
-void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev,
-                              std::function<void()> destroy_defuse_index) {
 
-    // Lives INSIDE register_eval_primitives — an Evaluator friend — because
-    // every `ev.` member touched below is private; a file-scope free
-    // function cannot reach them (caught by the first full rebuild).
-    // Returns nullopt when no workspace is live
-    // (the primitive layers render that face themselves). Locking, the #159
-    // Phase-5 cache, the #3082 mutation-boundary lock note, the #3081/#3294
-    // export-authority re-arm and the #159 cache write-back all keep their
-    // original semantics — this is a mechanical extraction, not a behavior
-    // change, for (typecheck-current).
-    auto run_workspace_typecheck = [&](Evaluator& ev) -> std::optional<WorkspaceTypecheckResult> {
-        // #3082: MutationBoundary already holds workspace_mtx_ uniquely.
-        // Re-taking a shared_lock on the same non-recursive mutex is EDEADLK
-        // (`Resource deadlock avoided`) — same reason agent.cpp uses
-        // run_typecheck_no_lock() mid-boundary.
-        std::shared_lock<std::shared_mutex> rlock;
-        if (ev.mutation_boundary_depth() == 0 && !ev.mutation_boundary_held())
-            rlock = std::shared_lock<std::shared_mutex>(ev.workspace_mtx_);
-        std::atomic_ref<std::uint64_t>(ev.coverage_counters_[1])
-            .fetch_add(1, std::memory_order_relaxed);
-        if (!ev.workspace_flat_ || !ev.workspace_pool_)
-            return std::nullopt;
+// Issue #5032: the eval / typecheck / EDSL registrations that used to be one
+// ~2700-line register_eval_primitives are peeled into RegSplitParts parts
+// (static members of a friend struct, so Evaluator's private state stays
+// reachable). Each part is one responsibility; registration order, names,
+// effect/capability checks and lambda capture lifetimes are unchanged.
 
-        // Phase 5 (Issue #159): cache check. If the workspace is clean (no
-        // dirty nodes anywhere) AND we have a cached result, reuse it. The
-        // status travels with the report so (typecheck-status) cache hits
-        // stay structured (#4266) — a cached report can still carry
-        // diagnostics (last check errored, nothing mutated since).
-        if (!ev.workspace_flat_->has_dirty_subtree(ev.workspace_flat_->root) &&
-            ev.last_typecheck_result_) {
-            return WorkspaceTypecheckResult{ev.last_typecheck_ok_, *ev.last_typecheck_result_};
+// Issue #4266: the single typecheck core shared by (typecheck-current) and
+// (typecheck-status). `ok` is the structured status Agents branch on —
+// diagnostics ride `report` text, never the boolean, so a stdlib gate can
+// reject without parsing English. One traversal, one cache, one coverage
+// counter — no second model.
+//
+// Issue #5032: a RegSplitParts static member (an Evaluator friend) because
+// every `ev.` member touched below is private; a file-scope free function
+// cannot reach them. Locking, the #159 Phase-5 cache, the #3082
+// mutation-boundary lock note, the #3081/#3294 export-authority re-arm and
+// the #159 cache write-back all keep their original semantics — this is a
+// mechanical extraction, not a behavior change, for (typecheck-current).
+std::optional<RegSplitParts::WorkspaceTypecheckResult>
+RegSplitParts::run_workspace_typecheck(Evaluator& ev) {
+    // #3082: MutationBoundary already holds workspace_mtx_ uniquely.
+    // Re-taking a shared_lock on the same non-recursive mutex is EDEADLK
+    // (`Resource deadlock avoided`) — same reason agent.cpp uses
+    // run_typecheck_no_lock() mid-boundary.
+    std::shared_lock<std::shared_mutex> rlock;
+    if (ev.mutation_boundary_depth() == 0 && !ev.mutation_boundary_held())
+        rlock = std::shared_lock<std::shared_mutex>(ev.workspace_mtx_);
+    std::atomic_ref<std::uint64_t>(ev.coverage_counters_[1])
+        .fetch_add(1, std::memory_order_relaxed);
+    if (!ev.workspace_flat_ || !ev.workspace_pool_)
+        return std::nullopt;
+
+    // Phase 5 (Issue #159): cache check. If the workspace is clean (no
+    // dirty nodes anywhere) AND we have a cached result, reuse it. The
+    // status travels with the report so (typecheck-status) cache hits
+    // stay structured (#4266) — a cached report can still carry
+    // diagnostics (last check errored, nothing mutated since).
+    if (!ev.workspace_flat_->has_dirty_subtree(ev.workspace_flat_->root) &&
+        ev.last_typecheck_result_) {
+        return WorkspaceTypecheckResult{ev.last_typecheck_ok_, *ev.last_typecheck_result_};
+    }
+
+    // Lazily create persistent type registry (stable TypeIds across calls)
+    (void)ev.ensure_type_registry();
+    auto& treg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
+    aura::compiler::TypeChecker tc(treg);
+    if (ev.compiler_metrics())
+        tc.set_metrics(ev.compiler_metrics());
+
+    // Inject custom type signatures declared by declare-type
+    if (!ev.declared_type_sigs_.empty()) {
+        std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                           std::equal_to<>>
+            sig_map;
+        std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                           std::equal_to<>>
+            mod_src_map;
+        for (auto& [name, decl] : ev.declared_type_sigs_) {
+            sig_map[name] = decl.type_str;
+            if (!decl.module_file.empty())
+                mod_src_map[name] = decl.module_file;
         }
+        tc.inject_type_sigs(sig_map, mod_src_map);
+    }
 
-        // Lazily create persistent type registry (stable TypeIds across calls)
-        (void)ev.ensure_type_registry();
-        auto& treg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
-        aura::compiler::TypeChecker tc(treg);
-        if (ev.compiler_metrics())
-            tc.set_metrics(ev.compiler_metrics());
+    aura::diag::DiagnosticCollector diag;
 
-        // Inject custom type signatures declared by declare-type
-        if (!ev.declared_type_sigs_.empty()) {
-            std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
-                               std::equal_to<>>
-                sig_map;
-            std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
-                               std::equal_to<>>
-                mod_src_map;
-            for (auto& [name, decl] : ev.declared_type_sigs_) {
-                sig_map[name] = decl.type_str;
-                if (!decl.module_file.empty())
-                    mod_src_map[name] = decl.module_file;
+    auto result =
+        tc.infer_flat(*ev.workspace_flat_, *ev.workspace_pool_, ev.workspace_flat_->root, diag);
+    // Issue #3081: copy infer authority so query:type / query-type-of
+    // never surface a half-solved TIMEOUT cone as truth.
+    // Issue #3082: do not grant_type_export_authority over mid/nested
+    // provisional inflight (copy_infer refuses; persist still still).
+    // Issue #3294 AC4: previous gate on tc.last_type_export_authoritative()
+    // did NOT fix AC4 — the typechecker's flag is true for trivial
+    // (solve returns SOLVED, line 4704 sets field=true) so the gate
+    // was a no-op. AC4 was failing because face was being cleared
+    // elsewhere (guard-destructor !success branch / depth-branch /
+    // else-branch of copy_infer at typecheck-current). Always pass
+    // true here: typecheck-current is a *re-arm* point (only on
+    // outermost SOLVED success does the persist+grant path in
+    // em.cpp grant; we just keep face alive on the trivial path).
+    // TIMEOUT/CONFLICT face stays refused via the typechecker's own
+    // last_type_export_authoritative_=false (line 4709) which the
+    // AC1 explicit copy_infer(false) test exercises directly.
+    ev.copy_infer_type_export_authority(true);
+
+    // TypeChecker now writes back normalized types via synthesize_flat + infer_flat,
+    // and clears per-node dirty flags. No need for post-pass cache sync.
+    // Safety clear for any nodes that may have been missed.
+    ev.workspace_flat_->clear_all_dirty();
+
+    WorkspaceTypecheckResult st;
+    st.report = "type: " + treg.format_type(result) + "\n";
+    auto all_diags = diag.diagnostics();
+    if (all_diags.empty()) {
+        st.report += "no errors\n";
+        st.ok = true;
+    } else {
+        st.report += "diagnostics:\n";
+        for (auto& d : all_diags) {
+            st.report +=
+                "  [" + std::to_string(static_cast<int>(d.kind)) + "] " + d.format() + "\n";
+        }
+    }
+
+    // Phase 5: cache the result for the next clean-workspace call —
+    // report and structured status in parity (#4266).
+    ev.last_typecheck_result_ = st.report;
+    ev.last_typecheck_ok_ = st.ok;
+    return st;
+}
+
+// Issue #5032: the install phase of (set-code) — fresh pool/flat, parse,
+// publish, dirty-mark and macro registration — peeled out so the
+// registration stays under the 300-line ceiling. Every error path returns
+// the rendered error with ok = false, exactly like the former inline body.
+std::optional<EvalValue> RegSplitParts::set_code_install_workspace(
+    Evaluator& ev, const MakeErrorVal& mev, const std::string& src, bool& ok,
+    std::string& set_code_src, const std::function<void()>& destroy_defuse_index,
+    const std::function<void()>& republish_workspace_define_sources) {
+    auto alloc = ev.arena_->allocator();
+    // Issue #4322: production required refuses both-null create
+    // (#3420), so the Restricted CLI never installed a workspace
+    // and the later mutate saw a session-less mid. Cover the
+    // long-lived workspace members, same as CompilerService::set_code.
+    // Soft: the slot register stays behind required-active.
+    auto* saved_pool = ev.workspace_pool_;
+    auto* saved_flat = ev.workspace_flat_;
+    auto* pool_ptr = ev.arena_->create_with_cover<aura::ast::StringPool>(
+        reinterpret_cast<void**>(&ev.workspace_pool_), nullptr, alloc);
+    auto* flat_ptr = ev.arena_->create_with_cover<aura::ast::FlatAST>(
+        reinterpret_cast<void**>(&ev.workspace_flat_), nullptr, alloc);
+    if (!pool_ptr || !flat_ptr) {
+        ev.workspace_pool_ = saved_pool;
+        ev.workspace_flat_ = saved_flat;
+        ok = false;
+        return mev("general-object-pin-required",
+                   "set-code: GeneralObjectPin required under production (#2891)");
+    }
+    // Issue #2891: GeneralObjectPin adopt on set-code create (agent
+    // self-modify path). The fresh pool/flat becomes the workspace
+    // (workspace_flat_ / workspace_pool_ below) — a densify-tracked
+    // intermediate. Under production required mode, pin failure must
+    // fail the create path closed, not just set sticky breach.
+    aura::core::lifetime::GeneralObjectPin set_pool_pin;
+    aura::core::lifetime::GeneralObjectPin set_flat_pin;
+    if (!aura::core::lifetime::wire_general_object_create_pair_or_required_fail(
+            set_pool_pin, set_flat_pin, static_cast<void*>(pool_ptr),
+            static_cast<void*>(flat_ptr))) {
+        ev.workspace_pool_ = saved_pool;
+        ev.workspace_flat_ = saved_flat;
+        ok = false;
+        return mev("general-object-pin-required",
+                   "set-code: GeneralObjectPin required under production (#2891)");
+    }
+    bool fresh_alloc = true;
+
+    auto pr = aura::parser::parse_to_flat(src, *flat_ptr, *pool_ptr);
+    if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+        // Return structured parse error: ("parse" "message")
+        std::string err;
+        if (!pr.errors.empty()) {
+            for (auto& e : pr.errors) {
+                if (!err.empty())
+                    err += "; ";
+                err += e.format();
             }
-            tc.inject_type_sigs(sig_map, mod_src_map);
-        }
-
-        aura::diag::DiagnosticCollector diag;
-
-        auto result =
-            tc.infer_flat(*ev.workspace_flat_, *ev.workspace_pool_, ev.workspace_flat_->root, diag);
-        // Issue #3081: copy infer authority so query:type / query-type-of
-        // never surface a half-solved TIMEOUT cone as truth.
-        // Issue #3082: do not grant_type_export_authority over mid/nested
-        // provisional inflight (copy_infer refuses; persist still still).
-        // Issue #3294 AC4: previous gate on tc.last_type_export_authoritative()
-        // did NOT fix AC4 — the typechecker's flag is true for trivial
-        // (solve returns SOLVED, line 4704 sets field=true) so the gate
-        // was a no-op. AC4 was failing because face was being cleared
-        // elsewhere (guard-destructor !success branch / depth-branch /
-        // else-branch of copy_infer at typecheck-current). Always pass
-        // true here: typecheck-current is a *re-arm* point (only on
-        // outermost SOLVED success does the persist+grant path in
-        // em.cpp grant; we just keep face alive on the trivial path).
-        // TIMEOUT/CONFLICT face stays refused via the typechecker's own
-        // last_type_export_authoritative_=false (line 4709) which the
-        // AC1 explicit copy_infer(false) test exercises directly.
-        ev.copy_infer_type_export_authority(true);
-
-        // TypeChecker now writes back normalized types via synthesize_flat + infer_flat,
-        // and clears per-node dirty flags. No need for post-pass cache sync.
-        // Safety clear for any nodes that may have been missed.
-        ev.workspace_flat_->clear_all_dirty();
-
-        WorkspaceTypecheckResult st;
-        st.report = "type: " + treg.format_type(result) + "\n";
-        auto all_diags = diag.diagnostics();
-        if (all_diags.empty()) {
-            st.report += "no errors\n";
-            st.ok = true;
+        } else if (!pr.error.empty()) {
+            err = pr.error;
         } else {
-            st.report += "diagnostics:\n";
-            for (auto& d : all_diags) {
-                st.report +=
-                    "  [" + std::to_string(static_cast<int>(d.kind)) + "] " + d.format() + "\n";
+            err = "parse error";
+        }
+        // Store error for eval-current/eval-current-output to propagate
+        ev.last_set_code_error_kind_ = "parse";
+        ev.last_set_code_error_msg_ = err;
+        std::atomic_ref<std::uint64_t>(ev.coverage_counters_[5])
+            .fetch_sub(1, std::memory_order_relaxed);
+        ev.workspace_pool_ = saved_pool;
+        ev.workspace_flat_ = saved_flat;
+        ok = false;
+        return mev("parse", err);
+    }
+    flat_ptr->root = pr.root;
+    ev.workspace_flat_ = flat_ptr;
+    ev.workspace_pool_ = pool_ptr;
+    // Issue #2220: set-code replaces workspace — drop long-lived
+    // TypeChecker so the next typecheck rebuilds against new AST.
+    ev.invalidate_persistent_typechecker();
+    // Issue #1381 / #2920: stamp source cache (valid until next mutate).
+    set_code_src = src;
+    ev.note_workspace_source_text(set_code_src);
+    // Issue #211: invalidate the (tag, arity) index
+    // when the workspace changes. (The set_workspace_flat
+    // hook would do this, but set-code assigns directly
+    // here, so we invalidate inline.)
+    ev.invalidate_tag_arity_index();
+    // Issue #490: optional eager rebuild after workspace swap.
+    ev.maybe_eager_rebuild_pattern_index_after_cow();
+    ev.update_shared_tree_root();
+    // Invalidate def-use index (new workspace)
+    // (ASAN fix #107 leak) delete the old index; without this,
+    // each set-code leaks the previous DefUseIndex (~3KB each).
+    destroy_defuse_index();
+    // Issue #2731: persist:load is set-code of the saved source.
+    // function_sources_ still names the post-save rebind until
+    // this publish, so eval-current specialises the mutated body.
+    republish_workspace_define_sources();
+    // Phase 2: a fresh workspace means every cached define is potentially
+    // changed. Mark all dirty so the next (eval-current) re-evaluates.
+    // Issue #4360: this replace drops stale closure ids. An add does not.
+    {
+        aura::compiler::MarkAllClearsIrOwners clear_ir_owners;
+        if (ev.mark_all_defines_dirty_fn_)
+            ev.mark_all_defines_dirty_fn_();
+    }
+    // Pre-populate the v2 IR cache from the new workspace's defines.
+    // For unchanged defines, this is a cache hit (skip lowering).
+    // For new/changed defines, this lowers them once and stores the result.
+    if (ev.pre_cache_workspace_defines_fn_)
+        ev.pre_cache_workspace_defines_fn_();
+    // Issue #165 follow-up: extract MacroDef nodes from the new
+    // workspace and register them in the runtime `ev.macros_` registry.
+    // Without this, subsequent eval("(m)") parses a fresh FlatAST
+    // that has no MacroDef node, so macro_expand_all finds nothing
+    // and the call resolves to an undefined variable. The fix
+    // walks the workspace and inserts every MacroDef (defmacro /
+    // define-hygienic-macro) into ev.macros_, mirroring what eval_flat
+    // would have done if the workspace had been evaluated inline.
+    {
+        // set-code is single-threaded at this point (we hold
+        // ev.workspace_mtx_ above), so a plain unsynchronized
+        // write to ev.macros_ is fine. If concurrent set-code
+        // becomes a real scenario, add a ev.macros_mtx_ in
+        // evaluator.ixx alongside ev.closures_mtx_.
+        //
+        // Issue #230 #3: DON'T clear ev.macros_ on set-code.
+        // The loop below adds/overrides macros from the new
+        // workspace, but the macros registered BEFORE this
+        // set-code (e.g. via (require "std/test" all:))
+        // need to survive so they can still be invoked
+        // after the workspace is replaced. The new
+        // pool/flat pointers are fresh, but the OLD
+        // pool/flat (referenced by the surviving macros)
+        // is still in the arena and untouched (we no
+        // longer reuse/clear it on set-code), so the
+        // stored MacroDef::flat/::pool pointers are
+        // valid and the macro bodies can still be cloned
+        // and expanded.
+        for (aura::ast::NodeId id = 0; id < flat_ptr->size(); ++id) {
+            auto v = flat_ptr->get(id);
+            if (v.tag != aura::ast::NodeTag::MacroDef)
+                continue;
+            auto macro_name = std::string(pool_ptr->resolve(v.sym_id));
+            if (macro_name.empty())
+                continue;
+            std::vector<std::string> param_names;
+            param_names.reserve(v.params.size());
+            for (auto pid : v.params)
+                param_names.emplace_back(pool_ptr->resolve(pid));
+            auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
+            bool is_dotted = (v.int_value & 1) != 0;
+            bool is_hygienic = (v.int_value & 2) != 0;
+            // Issue #230 #2: bit 2 of int_val_ flags the
+            // `define-hygienic-macro*` (preserved-params) variant.
+            bool is_preserved = (v.int_value & 4) != 0;
+            ev.macros_epoch_4894_.fetch_add(1,
+                                            std::memory_order_acq_rel); // Issue #4894
+            ev.macros_[macro_name] = MacroDef{std::move(param_names),
+                                              is_dotted,
+                                              is_hygienic,
+                                              is_preserved,
+                                              flat_ptr,
+                                              pool_ptr,
+                                              body_id};
+            ev.note_macro_def_4901(macro_name); // Issue #4901
+            ev.macros_epoch_4894_.fetch_add(1, std::memory_order_acq_rel);
+        }
+    }
+    return std::nullopt;
+}
+
+// Issue #5032: the #4598 dirty-focus IR bind of (eval-current) — rebind
+// only the dirty roots when the dirty set is small, else run the full
+// specialize. Peeled out of the registration for the 300-line ceiling;
+// the body is the former inline block verbatim.
+void RegSplitParts::eval_current_bind_dirty_lambdas(Evaluator& ev) {
+    if (!ev.workspace_flat_ || !ev.workspace_pool_ || !ev.is_define_dirty_fn_) {
+        ev.bind_workspace_lambda_via_ir("");
+    } else {
+        auto* bind_flat = ev.workspace_flat_;
+        auto* bind_pool = ev.workspace_pool_;
+        std::vector<std::string> dirty;
+        std::size_t define_count = 0;
+        for (aura::ast::NodeId id = 0; id < bind_flat->size(); ++id) {
+            if (bind_flat->is_free_slot(id))
+                continue;
+            if (bind_flat->tag(id) != aura::ast::NodeTag::Define)
+                continue;
+            const auto sym = bind_flat->sym_id(id);
+            if (sym == aura::ast::INVALID_SYM)
+                continue;
+            ++define_count;
+            auto name = std::string(bind_pool->resolve(sym));
+            if (name.empty() || name[0] == '_')
+                continue;
+            if (ev.is_define_dirty_fn_(name))
+                dirty.push_back(std::move(name));
+        }
+        constexpr std::size_t kDirtyFocusMax = 16;
+        if (dirty.empty() || dirty.size() > kDirtyFocusMax || dirty.size() * 2 > define_count) {
+            ev.bind_workspace_lambda_via_ir("");
+        } else {
+            std::unordered_set<std::string> dirty_set(dirty.begin(), dirty.end());
+            std::unordered_set<std::string> is_caller;
+            if (ev.get_dependents_fn_) {
+                for (const auto& n : dirty) {
+                    for (const auto& c : ev.get_dependents_fn_(n)) {
+                        if (!c.empty() && dirty_set.count(c) != 0)
+                            is_caller.insert(c);
+                    }
+                }
+            }
+            bool bound_root = false;
+            for (const auto& n : dirty) {
+                if (is_caller.count(n) != 0)
+                    continue;
+                bound_root = true;
+                ev.bind_workspace_lambda_via_ir(n);
+            }
+            if (!bound_root) {
+                for (const auto& n : dirty)
+                    ev.bind_workspace_lambda_via_ir(n);
             }
         }
+    }
+}
 
-        // Phase 5: cache the result for the next clean-workspace call —
-        // report and structured status in parity (#4266).
-        ev.last_typecheck_result_ = st.report;
-        ev.last_typecheck_ok_ = st.ok;
-        return st;
-    };
+// Issue #5032: the reader-syntax printer of (datum->string), peeled out of
+// the local DatumIo struct so the datum I/O registration stays under the
+// 300-line ceiling. Body verbatim; recursion goes through this member.
+std::optional<std::string> RegSplitParts::datum_print(Evaluator& ev, const EvalValue& v,
+                                                      int depth) {
+    if (depth > kDatumIoMaxDepth)
+        return std::string("...");
+    if (types::is_void(v))
+        return std::string("()");
+    if (types::is_bool(v))
+        return std::string(types::as_bool(v) ? "#t" : "#f");
+    if (types::is_int(v))
+        return std::to_string(types::as_int(v));
+    if (types::is_float(v)) {
+        const auto d = types::as_float(v);
+        // R7RS spellings; the reader has no non-finite literal, so
+        // this is the one float shape that does not read back.
+        if (!std::isfinite(d))
+            return std::string(std::isnan(d) ? "+nan.0" : (d > 0 ? "+inf.0" : "-inf.0"));
+        // #4468's single decimal spelling: shortest form that
+        // reads back as the same double, with the ".0" guard that
+        // keeps an integer-valued float inexact.
+        return aura::compiler::format_float_shortest(d);
+    }
+    if (types::is_string(v)) {
+        const auto idx = types::as_string_idx(v);
+        if (idx >= ev.string_heap_.size())
+            return std::nullopt;
+        const std::string text(ev.string_at(idx));
+        std::string out = "\"";
+        for (const unsigned char c : text) {
+            switch (c) {
+                case '"':
+                    out += "\\\"";
+                    break;
+                case '\\':
+                    out += "\\\\";
+                    break;
+                case '\n':
+                    out += "\\n";
+                    break;
+                case '\t':
+                    out += "\\t";
+                    break;
+                case '\r':
+                    out += "\\r";
+                    break;
+                default:
+                    if (c < 0x20 || c == 0x7f) {
+                        out += std::format("\\x{:02x}", static_cast<unsigned>(c));
+                    } else {
+                        out += static_cast<char>(c);
+                    }
+                    break;
+            }
+        }
+        out += '"';
+        return out;
+    }
+    if (types::is_symbol(v)) {
+        const auto idx = types::as_symbol_idx(v);
+        std::scoped_lock lock(ev.symbol_table_mtx_);
+        if (idx >= ev.symbol_table_.size())
+            return std::nullopt;
+        return ev.symbol_table_[idx];
+    }
+    if (types::is_keyword(v)) {
+        const auto idx = types::as_keyword_idx(v);
+        std::scoped_lock lock(ev.keyword_table_mtx_);
+        if (idx >= ev.keyword_table_.size())
+            return std::nullopt;
+        // keyword_table_ entries keep their leading ':'.
+        return ev.keyword_table_[idx];
+    }
+    if (types::is_pair(v)) {
+        std::vector<std::string> parts;
+        EvalValue cur = v;
+        for (;;) {
+            if (!types::is_pair(cur))
+                break;
+            if (parts.size() >= kDatumIoMaxListLen)
+                return std::nullopt;
+            EvalValue car_v{};
+            EvalValue cdr_v{};
+            {
+                std::scoped_lock lock(ev.alloc_storage_lock_);
+                const auto idx = types::as_pair_idx(cur);
+                if (idx >= ev.pairs_.size())
+                    return std::nullopt;
+                car_v = ev.pairs_[idx].car;
+                cdr_v = ev.pairs_[idx].cdr;
+            }
+            auto car_s = datum_print(ev, car_v, depth + 1);
+            if (!car_s)
+                return std::nullopt;
+            parts.push_back(std::move(*car_s));
+            cur = cdr_v;
+        }
+        std::string out = "(";
+        for (std::size_t i = 0; i < parts.size(); ++i) {
+            if (i > 0)
+                out += ' ';
+            out += parts[i];
+        }
+        if (!types::is_void(cur)) {
+            auto tail_s = datum_print(ev, cur, depth + 1);
+            if (!tail_s)
+                return std::nullopt;
+            if (!parts.empty())
+                out += " . ";
+            out += *tail_s;
+        }
+        out += ')';
+        return out;
+    }
+    if (types::is_vector(v)) {
+        std::vector<EvalValue> elems;
+        {
+            std::scoped_lock lock(ev.alloc_storage_lock_);
+            const auto idx = types::as_vector_idx(v);
+            if (idx >= ev.vector_heap_.size())
+                return std::nullopt;
+            elems = ev.vector_heap_[idx];
+        }
+        std::string out = "#(";
+        for (std::size_t i = 0; i < elems.size(); ++i) {
+            if (i > 0)
+                out += ' ';
+            auto s = datum_print(ev, elems[i], depth + 1);
+            if (!s)
+                return std::nullopt;
+            out += *s;
+        }
+        out += ')';
+        return out;
+    }
+    // Closures, hashes, cells, errors: not reader syntax.
+    return std::nullopt;
+}
 
-
+// (set-code code-string) — Install a new workspace source. The install
+// phase itself lives in set_code_install_workspace (Issue #5032).
+void RegSplitParts::register_set_code_primitive(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev,
+                                                std::function<void()> destroy_defuse_index) {
     add(aura::compiler::prim::kSetCode,
         [&ev, mev, destroy_defuse_index](const auto& a) -> EvalValue {
             // Issue #4400: lookup() callers (deserialize-workspace, gc,
@@ -395,7 +761,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                     return mev("internal", "no arena allocator available");
                 }
 
-                // Issue #230 #3: allocate fresh pool/flat on every set-code
+                // Issue #230 #3: mint a fresh pool/flat on every set-code
                 // (don't reuse the old one). Reason: registered macros
                 // (via defmacro / define-hygienic-macro) hold raw pointers
                 // into the old pool/flat for their body. Reusing the same
@@ -414,164 +780,11 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 // practice test scripts do < 10 set-codes and the arena
                 // size stays bounded. The correctness win (macros
                 // survive set-code) is worth the small arena growth.
-                auto alloc = ev.arena_->allocator();
-                // Issue #4322: production required refuses both-null create
-                // (#3420), so the Restricted CLI never installed a workspace
-                // and the later mutate saw a session-less mid. Cover the
-                // long-lived workspace members, same as CompilerService::set_code.
-                // Soft: the slot register stays behind required-active.
-                auto* saved_pool = ev.workspace_pool_;
-                auto* saved_flat = ev.workspace_flat_;
-                auto* pool_ptr = ev.arena_->create_with_cover<aura::ast::StringPool>(
-                    reinterpret_cast<void**>(&ev.workspace_pool_), nullptr, alloc);
-                auto* flat_ptr = ev.arena_->create_with_cover<aura::ast::FlatAST>(
-                    reinterpret_cast<void**>(&ev.workspace_flat_), nullptr, alloc);
-                if (!pool_ptr || !flat_ptr) {
-                    ev.workspace_pool_ = saved_pool;
-                    ev.workspace_flat_ = saved_flat;
-                    ok = false;
-                    return mev("general-object-pin-required",
-                               "set-code: GeneralObjectPin required under production (#2891)");
-                }
-                // Issue #2891: GeneralObjectPin adopt on set-code create (agent
-                // self-modify path). The fresh pool/flat becomes the workspace
-                // (workspace_flat_ / workspace_pool_ below) — a densify-tracked
-                // intermediate. Under production required mode, pin failure must
-                // fail the create path closed, not just set sticky breach.
-                aura::core::lifetime::GeneralObjectPin set_pool_pin;
-                aura::core::lifetime::GeneralObjectPin set_flat_pin;
-                if (!aura::core::lifetime::wire_general_object_create_pair_or_required_fail(
-                        set_pool_pin, set_flat_pin, static_cast<void*>(pool_ptr),
-                        static_cast<void*>(flat_ptr))) {
-                    ev.workspace_pool_ = saved_pool;
-                    ev.workspace_flat_ = saved_flat;
-                    ok = false;
-                    return mev("general-object-pin-required",
-                               "set-code: GeneralObjectPin required under production (#2891)");
-                }
-                bool fresh_alloc = true;
-
-                auto pr = aura::parser::parse_to_flat(ev.string_at(idx), *flat_ptr, *pool_ptr);
-                if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-                    // Return structured parse error: ("parse" "message")
-                    std::string err;
-                    if (!pr.errors.empty()) {
-                        for (auto& e : pr.errors) {
-                            if (!err.empty())
-                                err += "; ";
-                            err += e.format();
-                        }
-                    } else if (!pr.error.empty()) {
-                        err = pr.error;
-                    } else {
-                        err = "parse error";
-                    }
-                    // Store error for eval-current/eval-current-output to propagate
-                    ev.last_set_code_error_kind_ = "parse";
-                    ev.last_set_code_error_msg_ = err;
-                    std::atomic_ref<std::uint64_t>(ev.coverage_counters_[5])
-                        .fetch_sub(1, std::memory_order_relaxed);
-                    ev.workspace_pool_ = saved_pool;
-                    ev.workspace_flat_ = saved_flat;
-                    ok = false;
-                    return mev("parse", err);
-                }
-                flat_ptr->root = pr.root;
-                ev.workspace_flat_ = flat_ptr;
-                ev.workspace_pool_ = pool_ptr;
-                // Issue #2220: set-code replaces workspace — drop long-lived
-                // TypeChecker so the next typecheck rebuilds against new AST.
-                ev.invalidate_persistent_typechecker();
-                // Issue #1381 / #2920: stamp source cache (valid until next mutate).
-                set_code_src = ev.string_at(idx);
-                ev.note_workspace_source_text(set_code_src);
-                // Issue #211: invalidate the (tag, arity) index
-                // when the workspace changes. (The set_workspace_flat
-                // hook would do this, but set-code assigns directly
-                // here, so we invalidate inline.)
-                ev.invalidate_tag_arity_index();
-                // Issue #490: optional eager rebuild after workspace swap.
-                ev.maybe_eager_rebuild_pattern_index_after_cow();
-                ev.update_shared_tree_root();
-                // Invalidate def-use index (new workspace)
-                // (ASAN fix #107 leak) delete the old index; without this,
-                // each set-code leaks the previous DefUseIndex (~3KB each).
-                destroy_defuse_index();
-                // Issue #2731: persist:load is set-code of the saved source.
-                // function_sources_ still names the post-save rebind until
-                // this publish, so eval-current specialises the mutated body.
-                republish_workspace_define_sources();
-                // Phase 2: a fresh workspace means every cached define is potentially
-                // changed. Mark all dirty so the next (eval-current) re-evaluates.
-                // Issue #4360: this replace drops stale closure ids. An add does not.
-                {
-                    aura::compiler::MarkAllClearsIrOwners clear_ir_owners;
-                    if (ev.mark_all_defines_dirty_fn_)
-                        ev.mark_all_defines_dirty_fn_();
-                }
-                // Pre-populate the v2 IR cache from the new workspace's defines.
-                // For unchanged defines, this is a cache hit (skip lowering).
-                // For new/changed defines, this lowers them once and stores the result.
-                if (ev.pre_cache_workspace_defines_fn_)
-                    ev.pre_cache_workspace_defines_fn_();
-                // Issue #165 follow-up: extract MacroDef nodes from the new
-                // workspace and register them in the runtime `ev.macros_` registry.
-                // Without this, subsequent eval("(m)") parses a fresh FlatAST
-                // that has no MacroDef node, so macro_expand_all finds nothing
-                // and the call resolves to an undefined variable. The fix
-                // walks the workspace and inserts every MacroDef (defmacro /
-                // define-hygienic-macro) into ev.macros_, mirroring what eval_flat
-                // would have done if the workspace had been evaluated inline.
-                {
-                    // set-code is single-threaded at this point (we hold
-                    // ev.workspace_mtx_ above), so a plain unsynchronized
-                    // write to ev.macros_ is fine. If concurrent set-code
-                    // becomes a real scenario, add a ev.macros_mtx_ in
-                    // evaluator.ixx alongside ev.closures_mtx_.
-                    //
-                    // Issue #230 #3: DON'T clear ev.macros_ on set-code.
-                    // The loop below adds/overrides macros from the new
-                    // workspace, but the macros registered BEFORE this
-                    // set-code (e.g. via (require "std/test" all:))
-                    // need to survive so they can still be invoked
-                    // after the workspace is replaced. The new
-                    // pool/flat pointers are fresh, but the OLD
-                    // pool/flat (referenced by the surviving macros)
-                    // is still in the arena and untouched (we no
-                    // longer reuse/clear it on set-code), so the
-                    // stored MacroDef::flat/::pool pointers are
-                    // valid and the macro bodies can still be cloned
-                    // and expanded.
-                    for (aura::ast::NodeId id = 0; id < flat_ptr->size(); ++id) {
-                        auto v = flat_ptr->get(id);
-                        if (v.tag != aura::ast::NodeTag::MacroDef)
-                            continue;
-                        auto macro_name = std::string(pool_ptr->resolve(v.sym_id));
-                        if (macro_name.empty())
-                            continue;
-                        std::vector<std::string> param_names;
-                        param_names.reserve(v.params.size());
-                        for (auto pid : v.params)
-                            param_names.emplace_back(pool_ptr->resolve(pid));
-                        auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
-                        bool is_dotted = (v.int_value & 1) != 0;
-                        bool is_hygienic = (v.int_value & 2) != 0;
-                        // Issue #230 #2: bit 2 of int_val_ flags the
-                        // `define-hygienic-macro*` (preserved-params) variant.
-                        bool is_preserved = (v.int_value & 4) != 0;
-                        ev.macros_epoch_4894_.fetch_add(1,
-                                                        std::memory_order_acq_rel); // Issue #4894
-                        ev.macros_[macro_name] = MacroDef{std::move(param_names),
-                                                          is_dotted,
-                                                          is_hygienic,
-                                                          is_preserved,
-                                                          flat_ptr,
-                                                          pool_ptr,
-                                                          body_id};
-                        ev.note_macro_def_4901(macro_name); // Issue #4901
-                        ev.macros_epoch_4894_.fetch_add(1, std::memory_order_acq_rel);
-                    }
-                }
+                auto install_r = RegSplitParts::set_code_install_workspace(
+                    ev, mev, ev.string_at(idx), ok, set_code_src, destroy_defuse_index,
+                    republish_workspace_define_sources);
+                if (install_r)
+                    return *install_r;
             } // ~MutationBoundaryGuard (may abort-restore empty enter snapshot
               // onto the replacement flat under production — #3618 CI)
             // If root has no children after Guard, enter snapshot was applied
@@ -662,7 +875,11 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             ev.restamp_usable_closure_bridge_epochs();
             return make_bool(true);
         });
+}
 
+// (ir-cache-v2:dirty? name) / (ir-cache-v2:dependents name).
+void RegSplitParts::register_ir_cache_primitives(PrimRegistrar add, Evaluator& ev,
+                                                 MakeErrorVal mev) {
     // (ir-cache-v2:dirty? name) — #t if the named define's IR cache entry is
     // marked dirty.
     add("ir-cache-v2:dirty?", [&ev, mev](const auto& a) -> EvalValue {
@@ -698,7 +915,11 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         }
         return list;
     });
+}
 
+// (eval code) — parse + evaluate a string. The (current-source) comment
+// block below has always travelled with this registration.
+void RegSplitParts::register_eval_primitive(PrimRegistrar add, Evaluator& ev) {
     // (current-source) — Return the current workspace AST as source code string
     // Implemented inline to avoid circular dependency with lowering module.
     // (eval code) — Parse and evaluate a string of Aura code
@@ -920,7 +1141,11 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         return make_primitive_error(ev.string_heap_, ev.error_values_, result.error().format(),
                                     ev.primitive_error_counter_ptr());
     });
+}
 
+// (load filename) — read + set-code + eval-current a file.
+void RegSplitParts::register_load_primitive(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev,
+                                            std::function<void()> destroy_defuse_index) {
     // (load filename) — Load and evaluate a file of Aura code
     // Uses set-code + eval-current internally so definitions persist
     // in the workspace and closures are properly rooted.
@@ -1069,7 +1294,10 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             return *result;
         return make_void();
     });
+}
 
+// (eval-expr value) + (current-source) — source inspection helpers.
+void RegSplitParts::register_source_inspection_primitives(PrimRegistrar add, Evaluator& ev) {
     // (eval-expr value) — Evaluate any Aura value (not just strings)
     // Useful for evaluating stored expressions (e.g., from pipeline steps)
     add("eval-expr", [&ev](std::span<const EvalValue> a) -> EvalValue {
@@ -1153,7 +1381,10 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         const auto id = static_cast<std::uint64_t>(ev.push_string_heap(std::move(src)));
         return make_string(id);
     });
+}
 
+// (api-reference) — registered primitive table for LLM reference (#1434).
+void RegSplitParts::register_api_reference_primitive(PrimRegistrar add, Evaluator& ev) {
     // (api-reference) — Return all registered primitives as a string for LLM reference
     // Issue #1434: list *deprecated* section (prefer engine:metrics) separately.
     add("api-reference", [&ev](const auto&) -> EvalValue {
@@ -1183,7 +1414,12 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         const auto id = static_cast<std::uint64_t>(ev.push_string_heap(std::move(out)));
         return make_string(id);
     });
+}
 
+// (eval-current) — evaluate the workspace AST. The #4598 dirty-focus IR
+// bind lives in eval_current_bind_dirty_lambdas (Issue #5032).
+void RegSplitParts::register_eval_current_primitive(PrimRegistrar add, Evaluator& ev,
+                                                    MakeErrorVal mev) {
     // (eval-current) — Evaluate the current workspace AST
     //
     // Issue #2686: hold WorkspaceFlatPin for the FULL eval_flat walk so
@@ -1371,61 +1607,12 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // walks transitive called_by, so a caller of the direct caller
         // (chain2) does not keep an inlined body. Empty or large dirty
         // sets keep the full specialize, which no-ops above
-        // kWorkspaceSpecializeCap. Inlined here: register_eval_primitives
-        // is the Evaluator friend, and a file-scope helper cannot see
-        // the private workspace fields.
-        if (result) {
-            if (!ev.workspace_flat_ || !ev.workspace_pool_ || !ev.is_define_dirty_fn_) {
-                ev.bind_workspace_lambda_via_ir("");
-            } else {
-                auto* bind_flat = ev.workspace_flat_;
-                auto* bind_pool = ev.workspace_pool_;
-                std::vector<std::string> dirty;
-                std::size_t define_count = 0;
-                for (aura::ast::NodeId id = 0; id < bind_flat->size(); ++id) {
-                    if (bind_flat->is_free_slot(id))
-                        continue;
-                    if (bind_flat->tag(id) != aura::ast::NodeTag::Define)
-                        continue;
-                    const auto sym = bind_flat->sym_id(id);
-                    if (sym == aura::ast::INVALID_SYM)
-                        continue;
-                    ++define_count;
-                    auto name = std::string(bind_pool->resolve(sym));
-                    if (name.empty() || name[0] == '_')
-                        continue;
-                    if (ev.is_define_dirty_fn_(name))
-                        dirty.push_back(std::move(name));
-                }
-                constexpr std::size_t kDirtyFocusMax = 16;
-                if (dirty.empty() || dirty.size() > kDirtyFocusMax ||
-                    dirty.size() * 2 > define_count) {
-                    ev.bind_workspace_lambda_via_ir("");
-                } else {
-                    std::unordered_set<std::string> dirty_set(dirty.begin(), dirty.end());
-                    std::unordered_set<std::string> is_caller;
-                    if (ev.get_dependents_fn_) {
-                        for (const auto& n : dirty) {
-                            for (const auto& c : ev.get_dependents_fn_(n)) {
-                                if (!c.empty() && dirty_set.count(c) != 0)
-                                    is_caller.insert(c);
-                            }
-                        }
-                    }
-                    bool bound_root = false;
-                    for (const auto& n : dirty) {
-                        if (is_caller.count(n) != 0)
-                            continue;
-                        bound_root = true;
-                        ev.bind_workspace_lambda_via_ir(n);
-                    }
-                    if (!bound_root) {
-                        for (const auto& n : dirty)
-                            ev.bind_workspace_lambda_via_ir(n);
-                    }
-                }
-            }
-        }
+        // kWorkspaceSpecializeCap. The body lives in the
+        // RegSplitParts::eval_current_bind_dirty_lambdas part helper
+        // (Issue #5032), an Evaluator friend, so the private workspace
+        // fields stay reachable.
+        if (result)
+            RegSplitParts::eval_current_bind_dirty_lambdas(ev);
 
         // Cache + clear dirty only if workspace still same generation.
         if (ev.workspace_flat_ == flat && ev.workspace_flat_generation() == pin_gen) {
@@ -1471,7 +1658,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 const auto rv = flat->get(expanded);
                 if (rv.tag == aura::ast::NodeTag::Define) {
                     if (rv.sym_id != aura::ast::INVALID_SYM) {
-                        // #4682 B: probe with the view; allocate only on a hit.
+                        // #4682 B: probe with the view; mint only on a hit.
                         const auto nm = pool->resolve(rv.sym_id);
                         if (!nm.empty() && ev.top_env().lookup_primitive(nm))
                             ws_prim_defines.emplace_back(std::string(nm), rv.sym_id);
@@ -1505,7 +1692,11 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         }
         return *result;
     });
+}
 
+// (eval-current-output) — evaluate the workspace, return captured display output.
+void RegSplitParts::register_eval_current_output_primitive(PrimRegistrar add, Evaluator& ev,
+                                                           MakeErrorVal mev) {
     // (eval-current-output) — Evaluate workspace, return display output as string
     // Captures all display output during eval via fd-level redirection.
     // Wave1 B-03: same short-pin then unlock pattern as eval-current.
@@ -1582,7 +1773,10 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         const auto sidx = static_cast<std::uint64_t>(ev.push_string_heap(captured));
         return make_string(sidx);
     });
+}
 
+// (eval:async code) — evaluate on the thread pool when one is live.
+void RegSplitParts::register_eval_async_primitive(PrimRegistrar add, Evaluator& ev) {
     // (eval:async code) — Evaluate code asynchronously on the thread pool.
     // Returns the result as a string, or error message.
     // In serve-async mode, the eval runs on a background thread and the
@@ -1612,8 +1806,11 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         const auto ris = static_cast<std::uint64_t>(ev.push_string_heap(std::move(formatted)));
         return make_string(ris);
     });
+}
 
-    // ── Issue #4888: offload:* — background verification of a freeze snapshot.
+// Issue #4888: offload:* — background verification of a freeze snapshot.
+void RegSplitParts::register_offload_primitives(PrimRegistrar add, Evaluator& ev,
+                                                MakeErrorVal mev) {
     // (offload:snapshot)                → snapshot handle (current workspace source)
     // (offload:submit snap '(stages) :class 'compile) → ticket handle
     // (offload:await ticket [:timeout-ms n]) → result hash
@@ -1797,8 +1994,10 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             return make_bool(false);
         return make_bool(aura::messaging::g_offload_cancel(static_cast<int>(as_int(a[0]))));
     });
+}
 
-
+// (typecheck-current) / (typecheck-status) — both ride run_workspace_typecheck.
+void RegSplitParts::register_typecheck_primitives(PrimRegistrar add, Evaluator& ev) {
     // (typecheck-current) — Type check the workspace AST
     // Uses a persistent TypeRegistry across calls so type IDs are stable.
     //
@@ -1848,7 +2047,11 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         const auto sidx = static_cast<std::uint64_t>(ev.push_string_heap(st->report));
         return make_string(sidx);
     });
+}
 
+// (mutate:check name define-source) — Issue #4742 dry-run gate.
+void RegSplitParts::register_mutate_check_primitive(PrimRegistrar add, Evaluator& ev,
+                                                    MakeErrorVal mev) {
     // ── Issue #4742: (mutate:check name define-source) — dry-run gate ──
     // Parses the candidate define STRICTLY (parse_to_flat has no auto-close)
     // and typechecks it against the current workspace without installing
@@ -1943,11 +2146,11 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
 
         // (1) Strict parse of the candidate on its own.
         std::pmr::monotonic_buffer_resource scratch;
-        const auto alloc = std::pmr::polymorphic_allocator<std::byte>{&scratch};
+        const auto pmr_alloc = std::pmr::polymorphic_allocator<std::byte>{&scratch};
         std::string workspace_src;
         {
-            aura::ast::StringPool cpool(alloc);
-            aura::ast::FlatAST cflat(alloc);
+            aura::ast::StringPool cpool(pmr_alloc);
+            aura::ast::FlatAST cflat(pmr_alloc);
             auto pr = aura::parser::parse_to_flat(candidate, cflat, cpool);
             if (!pr.success || pr.root == aura::ast::NULL_NODE) {
                 std::string msg = pr.error.empty() ? std::string("parse error") : pr.error;
@@ -2023,7 +2226,10 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             report += "  " + msg + "\n";
         return tagged("type-error", report);
     });
+}
 
+// (typecheck-incremental) — Issue #159 Phase 1 incremental typecheck.
+void RegSplitParts::register_typecheck_incremental_primitive(PrimRegistrar add, Evaluator& ev) {
     // Issue #159 Phase 1: (typecheck-incremental) — incremental
     // typecheck using the most recent MutationRecord from the
     // mutation log. Routes through TypeChecker::infer_flat_partial
@@ -2093,7 +2299,11 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         const auto ridx = static_cast<std::uint64_t>(ev.push_string_heap(out));
         return make_string(ridx);
     });
+}
 
+// Issue #104: AuraQuery type-introspection primitives.
+void RegSplitParts::register_type_introspection_primitives(PrimRegistrar add, Evaluator& ev,
+                                                           MakeErrorVal mev) {
     // ── Issue #104: AuraQuery type-introspection primitives ───────────
     // These are the LLM-facing surface for "let me ask the type
     // system what it thinks". All four read from the same cache
@@ -2260,7 +2470,12 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         const auto sidx = static_cast<std::uint64_t>(ev.push_string_heap(suggestion));
         return make_string(sidx);
     });
+}
 
+// Issue #105: the "Infer & Suggest Annotations" pass.
+// (query-annotate-functions [filter])
+void RegSplitParts::register_annotate_functions_primitive(PrimRegistrar add, Evaluator& ev,
+                                                          MakeErrorVal mev) {
     // ── Issue #105: "Infer & Suggest Annotations" pass ──────────────────
     // (query-annotate-functions [filter])
     //
@@ -2441,8 +2656,13 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         }
         return result;
     });
+}
 
-    // ── Issue #4746: string -> datum reader + round-tripping printer ──
+// Issue #4746: string -> datum reader + round-tripping printer —
+// (read-from-string s [start]) / (read-all-from-string s [start]) /
+// (datum->string d).
+void RegSplitParts::register_datum_io_primitives(PrimRegistrar add, Evaluator& ev,
+                                                 MakeErrorVal mev) {
     //
     // (eval s) runs a string as a program, and the parser desugars special
     // forms on the way in — a (define ...) never stays a plain list. Code
@@ -2454,9 +2674,11 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
     // numbers keep int/float, strings keep escapes, and
     // (equal? (read-from-string (datum->string d)) d) holds for data.
     //
-    // The reader/printer live in a local struct rather than captured
-    // lambdas: a primitive outlives register_eval_primitives(), so it may
-    // capture only the Evaluator reference (never a sibling local closure).
+    //
+    // The reader lives in a local struct rather than captured lambdas: a
+    // primitive outlives register_eval_primitives(), so it may capture only
+    // the Evaluator reference (never a sibling local closure). The printer is
+    // RegSplitParts::datum_print (Issue #5032) under the same rule.
     {
         struct DatumIo {
             Evaluator& ev;
@@ -2690,143 +2912,6 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 }
                 return out;
             }
-
-            [[nodiscard]] std::optional<std::string> print(const EvalValue& v, int depth) const {
-                if (depth > kDatumIoMaxDepth)
-                    return std::string("...");
-                if (types::is_void(v))
-                    return std::string("()");
-                if (types::is_bool(v))
-                    return std::string(types::as_bool(v) ? "#t" : "#f");
-                if (types::is_int(v))
-                    return std::to_string(types::as_int(v));
-                if (types::is_float(v)) {
-                    const auto d = types::as_float(v);
-                    // R7RS spellings; the reader has no non-finite literal, so
-                    // this is the one float shape that does not read back.
-                    if (!std::isfinite(d))
-                        return std::string(std::isnan(d) ? "+nan.0"
-                                                         : (d > 0 ? "+inf.0" : "-inf.0"));
-                    // #4468's single decimal spelling: shortest form that
-                    // reads back as the same double, with the ".0" guard that
-                    // keeps an integer-valued float inexact.
-                    return aura::compiler::format_float_shortest(d);
-                }
-                if (types::is_string(v)) {
-                    const auto idx = types::as_string_idx(v);
-                    if (idx >= ev.string_heap_.size())
-                        return std::nullopt;
-                    const std::string text(ev.string_at(idx));
-                    std::string out = "\"";
-                    for (const unsigned char c : text) {
-                        switch (c) {
-                            case '"':
-                                out += "\\\"";
-                                break;
-                            case '\\':
-                                out += "\\\\";
-                                break;
-                            case '\n':
-                                out += "\\n";
-                                break;
-                            case '\t':
-                                out += "\\t";
-                                break;
-                            case '\r':
-                                out += "\\r";
-                                break;
-                            default:
-                                if (c < 0x20 || c == 0x7f) {
-                                    out += std::format("\\x{:02x}", static_cast<unsigned>(c));
-                                } else {
-                                    out += static_cast<char>(c);
-                                }
-                                break;
-                        }
-                    }
-                    out += '"';
-                    return out;
-                }
-                if (types::is_symbol(v)) {
-                    const auto idx = types::as_symbol_idx(v);
-                    std::scoped_lock lock(ev.symbol_table_mtx_);
-                    if (idx >= ev.symbol_table_.size())
-                        return std::nullopt;
-                    return ev.symbol_table_[idx];
-                }
-                if (types::is_keyword(v)) {
-                    const auto idx = types::as_keyword_idx(v);
-                    std::scoped_lock lock(ev.keyword_table_mtx_);
-                    if (idx >= ev.keyword_table_.size())
-                        return std::nullopt;
-                    // keyword_table_ entries keep their leading ':'.
-                    return ev.keyword_table_[idx];
-                }
-                if (types::is_pair(v)) {
-                    std::vector<std::string> parts;
-                    EvalValue cur = v;
-                    for (;;) {
-                        if (!types::is_pair(cur))
-                            break;
-                        if (parts.size() >= kDatumIoMaxListLen)
-                            return std::nullopt;
-                        EvalValue car_v{};
-                        EvalValue cdr_v{};
-                        {
-                            std::scoped_lock lock(ev.alloc_storage_lock_);
-                            const auto idx = types::as_pair_idx(cur);
-                            if (idx >= ev.pairs_.size())
-                                return std::nullopt;
-                            car_v = ev.pairs_[idx].car;
-                            cdr_v = ev.pairs_[idx].cdr;
-                        }
-                        auto car_s = print(car_v, depth + 1);
-                        if (!car_s)
-                            return std::nullopt;
-                        parts.push_back(std::move(*car_s));
-                        cur = cdr_v;
-                    }
-                    std::string out = "(";
-                    for (std::size_t i = 0; i < parts.size(); ++i) {
-                        if (i > 0)
-                            out += ' ';
-                        out += parts[i];
-                    }
-                    if (!types::is_void(cur)) {
-                        auto tail_s = print(cur, depth + 1);
-                        if (!tail_s)
-                            return std::nullopt;
-                        if (!parts.empty())
-                            out += " . ";
-                        out += *tail_s;
-                    }
-                    out += ')';
-                    return out;
-                }
-                if (types::is_vector(v)) {
-                    std::vector<EvalValue> elems;
-                    {
-                        std::scoped_lock lock(ev.alloc_storage_lock_);
-                        const auto idx = types::as_vector_idx(v);
-                        if (idx >= ev.vector_heap_.size())
-                            return std::nullopt;
-                        elems = ev.vector_heap_[idx];
-                    }
-                    std::string out = "#(";
-                    for (std::size_t i = 0; i < elems.size(); ++i) {
-                        if (i > 0)
-                            out += ' ';
-                        auto s = print(elems[i], depth + 1);
-                        if (!s)
-                            return std::nullopt;
-                        out += *s;
-                    }
-                    out += ')';
-                    return out;
-                }
-                // Closures, hashes, cells, errors: not reader syntax.
-                return std::nullopt;
-            }
         };
 
         const DatumIo datum_io{ev};
@@ -2853,13 +2938,34 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         add("datum->string", [datum_io, mev](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty())
                 return mev("bad-arg", "usage: (datum->string datum)");
-            auto printed = datum_io.print(a[0], 0);
+            auto printed = RegSplitParts::datum_print(datum_io.ev, a[0], 0);
             if (!printed)
                 return mev("bad-arg", "datum->string: unsupported datum (pairs, vectors, symbols, "
                                       "keywords, numbers, strings and booleans round-trip)");
             return datum_io.mk_string(*printed);
         });
     }
+}
+
+// Issue #5032: registration order is the original single-function order.
+void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev,
+                              std::function<void()> destroy_defuse_index) {
+    RegSplitParts::register_set_code_primitive(add, ev, mev, destroy_defuse_index);
+    RegSplitParts::register_ir_cache_primitives(add, ev, mev);
+    RegSplitParts::register_eval_primitive(add, ev);
+    RegSplitParts::register_load_primitive(add, ev, mev, destroy_defuse_index);
+    RegSplitParts::register_source_inspection_primitives(add, ev);
+    RegSplitParts::register_api_reference_primitive(add, ev);
+    RegSplitParts::register_eval_current_primitive(add, ev, mev);
+    RegSplitParts::register_eval_current_output_primitive(add, ev, mev);
+    RegSplitParts::register_eval_async_primitive(add, ev);
+    RegSplitParts::register_offload_primitives(add, ev, mev);
+    RegSplitParts::register_typecheck_primitives(add, ev);
+    RegSplitParts::register_mutate_check_primitive(add, ev, mev);
+    RegSplitParts::register_typecheck_incremental_primitive(add, ev);
+    RegSplitParts::register_type_introspection_primitives(add, ev, mev);
+    RegSplitParts::register_annotate_functions_primitive(add, ev, mev);
+    RegSplitParts::register_datum_io_primitives(add, ev, mev);
 }
 
 } // namespace aura::compiler::primitives_detail

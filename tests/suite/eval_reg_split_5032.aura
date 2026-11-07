@@ -1,0 +1,60 @@
+;; Issue #5032: the eval / typecheck / EDSL registrations that used to live in
+;; one register_eval_primitives are now RegSplitParts parts, and (set-code)'s
+;; install phase, (eval-current)'s #4598 dirty-focus bind and the
+;; (datum->string) printer are part helpers. Names, registration order and
+;; values must not move.
+(define fails 0)
+(define (check pred msg)
+  (if pred
+      #t
+      (begin (set! fails (+ fails 1)) (display (format "FAIL ~a\n" msg)))))
+
+;; ── set-code / current-source / eval-current ──
+(check (set-code "(define (f x) (+ x 1))") "set-code")
+(check (string? (current-source :workspace)) "current-source :workspace")
+(eval-current)
+(check (= 3 (f 2)) "eval-current walked the workspace define")
+
+;; ── eval / eval-expr ──
+(check (= 7 (eval "(+ 3 4)")) "eval string")
+;; eval-expr builds a temp arena + pins: under the production pack the pin
+;; wire fails closed and it returns (), under sandbox=off it returns the value,
+;; so assert it stays callable and correct in both modes.
+(define ex (eval-expr (read-from-string "(* 2 3)")))
+(check (or (void? ex) (= 6 ex)) "eval-expr callable")
+
+;; ── ir-cache-v2 group ──
+(check (boolean? (ir-cache-v2:dirty? "f")) "ir-cache-v2:dirty?")
+(check (list? (ir-cache-v2:dependents "f")) "ir-cache-v2:dependents")
+
+;; ── api-reference ──
+(check (string? (api-reference)) "api-reference string")
+
+;; ── typecheck group ──
+(check (string? (typecheck-current)) "typecheck-current")
+(check (eq? (typecheck-status) #t) "typecheck-status clean")
+(check (string? (get-inferred-type 0)) "get-inferred-type")
+(check (string? (query-type-of "f")) "query-type-of")
+(check (string? (query-expected-type "param:x")) "query-expected-type")
+(check (string? (suggest-annotation-at 0)) "suggest-annotation-at")
+(check (list? (query-annotate-functions)) "query-annotate-functions")
+(check (string? (typecheck-incremental)) "typecheck-incremental no-op report")
+
+;; ── mutate:check dry-run gate ──
+(define ws-before (current-source :workspace))
+(check (eq? (mutate:check "f" "(define (f x) (* x 2))") #t) "mutate:check clean")
+(check (pair? (mutate:check "f" "(define (f x")) "mutate:check parse error")
+(check (equal? ws-before (current-source :workspace)) "mutate:check wrote nothing")
+
+;; ── datum I/O group ──
+(check (= 42 (read-from-string "42")) "read-from-string int")
+(check (equal? (read-all-from-string "1 2 3") (list 1 2 3)) "read-all-from-string")
+(check (equal? (read-from-string (datum->string (list 1 2 3))) (list 1 2 3)) "datum round-trip")
+
+;; ── eval:async / offload:snapshot ──
+(check (equal? (eval:async "(+ 2 3)") "5") "eval:async")
+(check (integer? (offload:snapshot)) "offload:snapshot handle")
+
+(if (> fails 0)
+    (error "eval split regression")
+    (begin (display "eval split ok") (newline)))
