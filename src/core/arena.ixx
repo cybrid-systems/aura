@@ -5189,13 +5189,15 @@ public:
     }
 
     // Get or create an arena for a module
-    ASTArena& module_arena(const std::string& name, std::size_t initial_size = 8uz * 1024 * 1024)
+    ASTArena& module_arena(std::string_view name, std::size_t initial_size = 8uz * 1024 * 1024)
         pre(!name.empty()) pre(initial_size >= 1024) {
         std::unique_lock<std::shared_mutex> lock(arenas_mtx_);
         auto it = arenas_.find(name);
         if (it != arenas_.end())
             return *it->second;
-        auto [inserted, ok] = arenas_.emplace(name, std::make_unique<ASTArena>(initial_size));
+        // The map key owns its characters. string(string_view) is explicit.
+        auto [inserted, ok] =
+            arenas_.emplace(std::string(name), std::make_unique<ASTArena>(initial_size));
         // #1554: new module arenas inherit group default quota owner.
         if (default_owner_ && default_allow_fn_)
             inserted->second->set_arena_owner(default_owner_, default_allow_fn_);
@@ -5208,7 +5210,7 @@ public:
     }
 
     // Reset a specific module's arena
-    void reset_module(const std::string& name) {
+    void reset_module(std::string_view name) {
         std::unique_lock<std::shared_mutex> lock(arenas_mtx_);
         auto it = arenas_.find(name);
         if (it != arenas_.end())
@@ -5356,7 +5358,7 @@ public:
 
     // Issue #187 (P0): compact a specific module's arena. Returns
     // bytes reclaimed, or 0 if the module isn't found.
-    [[nodiscard]] std::size_t compact_module(const std::string& name) {
+    [[nodiscard]] std::size_t compact_module(std::string_view name) {
         std::unique_lock<std::shared_mutex> lock(arenas_mtx_);
         auto it = arenas_.find(name);
         if (it == arenas_.end())
@@ -5577,7 +5579,7 @@ public:
         return auto_compact_skip_count_.load(std::memory_order_relaxed);
     }
     // The current per-module savings EMA (for diagnostics).
-    [[nodiscard]] double savings_ema_for(const std::string& name) const {
+    [[nodiscard]] double savings_ema_for(std::string_view name) const {
         auto it = savings_ema_.find(name);
         return (it == savings_ema_.end()) ? 0.0 : it->second;
     }
@@ -5745,7 +5747,7 @@ private:
     // Issue #335: helper — compute the adaptive threshold
     // for a specific module. Mirrors should_auto_compact's
     // formula so the two stay in sync.
-    [[nodiscard]] double threshold_for(const std::string& name) const {
+    [[nodiscard]] double threshold_for(std::string_view name) const {
         const double ema = savings_ema_for(name);
         return std::clamp(compact_threshold_ - ema * kEmaGain, kMinThreshold, kMaxThreshold);
     }
@@ -5766,7 +5768,7 @@ private:
         return total;
     }
 
-    [[nodiscard]] std::size_t adaptive_compact_unlocked_(const std::string& name) {
+    [[nodiscard]] std::size_t adaptive_compact_unlocked_(std::string_view name) {
         auto it = arenas_.find(name);
         if (it == arenas_.end())
             return 0;
@@ -5781,12 +5783,18 @@ private:
         // Update the per-module savings EMA. Newer savings
         // weight more (alpha = 0.3) so a single large
         // compaction shifts the next trigger sooner but
-        // the effect decays over time.
-        const double& ema_ref = savings_ema_[name];
+        // the effect decays over time. operator[] would
+        // need an owning key; a missing entry is still
+        // seeded from 0 and an existing entry is updated.
+        auto ema_it = savings_ema_.find(name);
+        const double ema_ref = ema_it == savings_ema_.end() ? 0.0 : ema_it->second;
         const double new_ema =
             (ema_ref == 0.0) ? static_cast<double>(saved)
                              : kEmaAlpha * static_cast<double>(saved) + (1.0 - kEmaAlpha) * ema_ref;
-        savings_ema_[name] = new_ema;
+        if (ema_it == savings_ema_.end())
+            savings_ema_.emplace(std::string(name), new_ema);
+        else
+            ema_it->second = new_ema;
         auto_compact_trigger_count_.fetch_add(1, std::memory_order_relaxed);
         return saved;
     }
