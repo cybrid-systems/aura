@@ -3233,6 +3233,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     }
                     ReemitEvalOwnerGuard(const ReemitEvalOwnerGuard&) = delete;
                     ReemitEvalOwnerGuard& operator=(const ReemitEvalOwnerGuard&) = delete;
+                    ReemitEvalOwnerGuard(ReemitEvalOwnerGuard&&) = delete;
+                    ReemitEvalOwnerGuard& operator=(ReemitEvalOwnerGuard&&) = delete;
                 } owner_guard(static_cast<void*>(this));
                 // Issue #3059: BoundaryExit drain uses the Registry
                 // facade (decide_and_reemit → aura_reemit_aot_for_dirty).
@@ -8022,6 +8024,8 @@ void Evaluator::run_hot_update_recovery_if_needed(bool success,
         }
         ReemitEvalOwnerGuard(const ReemitEvalOwnerGuard&) = delete;
         ReemitEvalOwnerGuard& operator=(const ReemitEvalOwnerGuard&) = delete;
+        ReemitEvalOwnerGuard(ReemitEvalOwnerGuard&&) = delete;
+        ReemitEvalOwnerGuard& operator=(ReemitEvalOwnerGuard&&) = delete;
     } owner_guard(static_cast<void*>(this));
     // Issue #3059: recovery reemit uses the Registry facade
     // (decide_and_reemit → aura_reemit_aot_for_dirty).

@@ -3143,6 +3143,8 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
                 }
                 CoopReg(const CoopReg&) = delete;
                 CoopReg& operator=(const CoopReg&) = delete;
+                CoopReg(CoopReg&&) = delete;
+                CoopReg& operator=(CoopReg&&) = delete;
                 ~CoopReg() { unregister_agent_coop(fid); }
             } coop_reg(coop);
 
@@ -5737,6 +5739,8 @@ agent_reply(AgentHandle& self, std::uint64_t corr_id, std::string_view body,
         }
         AskReplyAttach(const AskReplyAttach&) = delete;
         AskReplyAttach& operator=(const AskReplyAttach&) = delete;
+        AskReplyAttach(AskReplyAttach&&) = delete;
+        AskReplyAttach& operator=(AskReplyAttach&&) = delete;
     } reply_attach{reply_mb.get(), asker_fiber};
     // Issue #4384: the ask target is the replier. Stamp its scope so a
     // later reply push notes that gauge. Empty stays unset (production

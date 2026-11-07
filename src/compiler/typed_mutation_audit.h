@@ -3482,6 +3482,8 @@ struct AbortAuthorityHold {
     }
     AbortAuthorityHold(const AbortAuthorityHold&) = delete;
     AbortAuthorityHold& operator=(const AbortAuthorityHold&) = delete;
+    AbortAuthorityHold(AbortAuthorityHold&&) = delete;
+    AbortAuthorityHold& operator=(AbortAuthorityHold&&) = delete;
 
 private:
     bool held_;
@@ -5201,6 +5203,8 @@ struct ReemitCapturedSessionMidGuard {
     ~ReemitCapturedSessionMidGuard() noexcept { g_tls_reemit_captured_session_mid = prev_; }
     ReemitCapturedSessionMidGuard(const ReemitCapturedSessionMidGuard&) = delete;
     ReemitCapturedSessionMidGuard& operator=(const ReemitCapturedSessionMidGuard&) = delete;
+    ReemitCapturedSessionMidGuard(ReemitCapturedSessionMidGuard&&) = delete;
+    ReemitCapturedSessionMidGuard& operator=(ReemitCapturedSessionMidGuard&&) = delete;
 };
 
 // Issue #3532: named join for SE emit callers. join_audit_and_se_mid

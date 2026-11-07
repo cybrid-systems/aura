@@ -1558,6 +1558,8 @@ public:
 
     MultiFiberMailbox(const MultiFiberMailbox&) = delete;
     MultiFiberMailbox& operator=(const MultiFiberMailbox&) = delete;
+    MultiFiberMailbox(MultiFiberMailbox&&) = delete;
+    MultiFiberMailbox& operator=(MultiFiberMailbox&&) = delete;
     ~MultiFiberMailbox() { close(); }
 
     void set_high_water(std::size_t n) noexcept { high_water_ = n == 0 ? 1 : n; }

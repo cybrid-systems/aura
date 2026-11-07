@@ -200,6 +200,8 @@ struct EvalMutexWaitLockGuard {
     }
     EvalMutexWaitLockGuard(const EvalMutexWaitLockGuard&) = delete;
     EvalMutexWaitLockGuard& operator=(const EvalMutexWaitLockGuard&) = delete;
+    EvalMutexWaitLockGuard(EvalMutexWaitLockGuard&&) = delete;
+    EvalMutexWaitLockGuard& operator=(EvalMutexWaitLockGuard&&) = delete;
 };
 
 struct DensenessBodyLockWaitGuard {
@@ -218,6 +220,8 @@ struct DensenessBodyLockWaitGuard {
     }
     DensenessBodyLockWaitGuard(const DensenessBodyLockWaitGuard&) = delete;
     DensenessBodyLockWaitGuard& operator=(const DensenessBodyLockWaitGuard&) = delete;
+    DensenessBodyLockWaitGuard(DensenessBodyLockWaitGuard&&) = delete;
+    DensenessBodyLockWaitGuard& operator=(DensenessBodyLockWaitGuard&&) = delete;
 };
 
 // Issue #4356: RAII for the CLI main thread. Constructed around oneshot
@@ -235,6 +239,8 @@ struct CliMainEvalBodyLock {
     }
     CliMainEvalBodyLock(const CliMainEvalBodyLock&) = delete;
     CliMainEvalBodyLock& operator=(const CliMainEvalBodyLock&) = delete;
+    CliMainEvalBodyLock(CliMainEvalBodyLock&&) = delete;
+    CliMainEvalBodyLock& operator=(CliMainEvalBodyLock&&) = delete;
 };
 
 // Issue #4887: single bridge to the isolated offload pool. The runtime

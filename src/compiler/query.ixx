@@ -176,6 +176,8 @@ public:
     QueryEngine(aura::ast::FlatAST& ast, aura::ast::StringPool& pool);
     QueryEngine(const QueryEngine&) = delete;
     QueryEngine& operator=(const QueryEngine&) = delete;
+    QueryEngine(QueryEngine&&) = delete;
+    QueryEngine& operator=(QueryEngine&&) = delete;
     ~QueryEngine();
 
     // Parse a query S-expression into a QueryExpr tree
@@ -467,7 +469,7 @@ ReplaceTemplate parse_rt(TokenStream& ts) {
     }
     // Single token
     try {
-        std::size_t pos;
+        std::size_t pos = 0;
         auto v = std::stoll(tok, &pos);
         if (pos == tok.size()) {
             ReplaceTemplate r;

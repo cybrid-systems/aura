@@ -485,6 +485,8 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         ~SymInternPoolReset() noexcept { ev.clear_sym_intern(); }
         SymInternPoolReset(const SymInternPoolReset&) = delete;
         SymInternPoolReset& operator=(const SymInternPoolReset&) = delete;
+        SymInternPoolReset(SymInternPoolReset&&) = delete;
+        SymInternPoolReset& operator=(SymInternPoolReset&&) = delete;
     } sym_intern_pool_reset(*this);
     // 1. Resolve path. Active policy already produced the only path
     // the rest of this load may touch (Issue #4399).
@@ -691,6 +693,8 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         ~RequireInjectGuard() noexcept { ev.require_inject_env_ = prev; }
         RequireInjectGuard(const RequireInjectGuard&) = delete;
         RequireInjectGuard& operator=(const RequireInjectGuard&) = delete;
+        RequireInjectGuard(RequireInjectGuard&&) = delete;
+        RequireInjectGuard& operator=(RequireInjectGuard&&) = delete;
     };
     RequireInjectGuard inject_guard(*this, mod_env);
     // Issue #4918: "./x" / "../x" inside this module resolve against
@@ -710,6 +714,8 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         }
         ModuleBaseDirGuard(const ModuleBaseDirGuard&) = delete;
         ModuleBaseDirGuard& operator=(const ModuleBaseDirGuard&) = delete;
+        ModuleBaseDirGuard(ModuleBaseDirGuard&&) = delete;
+        ModuleBaseDirGuard& operator=(ModuleBaseDirGuard&&) = delete;
     } base_dir_guard(*this, resolved);
 
     auto expanded = aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, flat_ptr->root);

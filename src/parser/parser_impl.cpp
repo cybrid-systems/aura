@@ -474,6 +474,8 @@ namespace {
         }
         QqLevelScope4760(const QqLevelScope4760&) = delete;
         QqLevelScope4760& operator=(const QqLevelScope4760&) = delete;
+        QqLevelScope4760(QqLevelScope4760&&) = delete;
+        QqLevelScope4760& operator=(QqLevelScope4760&&) = delete;
         ~QqLevelScope4760() {
             t_qq_level_4760 = saved_level;
             qdepth = saved_qdepth;

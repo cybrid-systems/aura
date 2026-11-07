@@ -240,6 +240,8 @@ struct EvalMutexWaitPublishScope {
     std::recursive_mutex& mtx;
     EvalMutexWaitPublishScope(const EvalMutexWaitPublishScope&) = delete;
     EvalMutexWaitPublishScope& operator=(const EvalMutexWaitPublishScope&) = delete;
+    EvalMutexWaitPublishScope(EvalMutexWaitPublishScope&&) = delete;
+    EvalMutexWaitPublishScope& operator=(EvalMutexWaitPublishScope&&) = delete;
     explicit EvalMutexWaitPublishScope(std::recursive_mutex& m)
         : mtx(m) {
         prev_mtx = t_eval_mutex_wait_tls.mtx;
@@ -260,6 +262,8 @@ struct ExecMutexWaitPublishScope {
     std::recursive_mutex& mtx;
     ExecMutexWaitPublishScope(const ExecMutexWaitPublishScope&) = delete;
     ExecMutexWaitPublishScope& operator=(const ExecMutexWaitPublishScope&) = delete;
+    ExecMutexWaitPublishScope(ExecMutexWaitPublishScope&&) = delete;
+    ExecMutexWaitPublishScope& operator=(ExecMutexWaitPublishScope&&) = delete;
     explicit ExecMutexWaitPublishScope(std::recursive_mutex& m)
         : mtx(m) {
         t_eval_mutex_wait_tls.exec_holds.push_back({&m, 1});
@@ -377,6 +381,8 @@ struct ExecUnderGate4765 {
     }
     ExecUnderGate4765(const ExecUnderGate4765&) = delete;
     ExecUnderGate4765& operator=(const ExecUnderGate4765&) = delete;
+    ExecUnderGate4765(ExecUnderGate4765&&) = delete;
+    ExecUnderGate4765& operator=(ExecUnderGate4765&&) = delete;
     ~ExecUnderGate4765() {
         if (owned)
             m.unlock();
@@ -404,6 +410,8 @@ struct ExecRunLock4765 {
     }
     ExecRunLock4765(const ExecRunLock4765&) = delete;
     ExecRunLock4765& operator=(const ExecRunLock4765&) = delete;
+    ExecRunLock4765(ExecRunLock4765&&) = delete;
+    ExecRunLock4765& operator=(ExecRunLock4765&&) = delete;
     ~ExecRunLock4765() { m.unlock(); }
 };
 
@@ -899,6 +907,8 @@ namespace {
         }
         JitDeoptHostArm(const JitDeoptHostArm&) = delete;
         JitDeoptHostArm& operator=(const JitDeoptHostArm&) = delete;
+        JitDeoptHostArm(JitDeoptHostArm&&) = delete;
+        JitDeoptHostArm& operator=(JitDeoptHostArm&&) = delete;
         ~JitDeoptHostArm() {
             t_jit_deopt_host = prev;
             if (!prev.mod) {
@@ -1680,6 +1690,8 @@ public:
                 }
                 CompactBumpOwnerGuard(const CompactBumpOwnerGuard&) = delete;
                 CompactBumpOwnerGuard& operator=(const CompactBumpOwnerGuard&) = delete;
+                CompactBumpOwnerGuard(CompactBumpOwnerGuard&&) = delete;
+                CompactBumpOwnerGuard& operator=(CompactBumpOwnerGuard&&) = delete;
             } owner_guard(static_cast<void*>(&s->evaluator_));
             // Issue #3680: freeze process clocks when the facade predicate
             // says the table bump would be owner-scoped anyway (production
@@ -3650,6 +3662,8 @@ public:
             }
             MacroViewPin4901(const MacroViewPin4901&) = delete;
             MacroViewPin4901& operator=(const MacroViewPin4901&) = delete;
+            MacroViewPin4901(MacroViewPin4901&&) = delete;
+            MacroViewPin4901& operator=(MacroViewPin4901&&) = delete;
 
         private:
             aura::ast::FlatAST* flat_ast_;
@@ -7121,6 +7135,8 @@ public:
                 }
                 ReemitEvalOwnerGuard(const ReemitEvalOwnerGuard&) = delete;
                 ReemitEvalOwnerGuard& operator=(const ReemitEvalOwnerGuard&) = delete;
+                ReemitEvalOwnerGuard(ReemitEvalOwnerGuard&&) = delete;
+                ReemitEvalOwnerGuard& operator=(ReemitEvalOwnerGuard&&) = delete;
             } owner_guard(static_cast<void*>(&evaluator_));
             aura_production_dirty_ring_push(name.c_str(), 0, 0);
             (void)hot_update_registry().decide_and_reemit(aura_get_aot_defuse_version(),
@@ -12157,6 +12173,8 @@ public:
         TierWorker4682() = default;
         TierWorker4682(const TierWorker4682&) = delete;
         TierWorker4682& operator=(const TierWorker4682&) = delete;
+        TierWorker4682(TierWorker4682&&) = delete;
+        TierWorker4682& operator=(TierWorker4682&&) = delete;
         ~TierWorker4682() { stop_and_join(); }
         // Issue #4705: stop the worker AND join it. join() waits for an
         // in-flight compile to finish, so once this returns no background
@@ -12903,6 +12921,8 @@ public:
             }
             PendingOwnerErase4904(const PendingOwnerErase4904&) = delete;
             PendingOwnerErase4904& operator=(const PendingOwnerErase4904&) = delete;
+            PendingOwnerErase4904(PendingOwnerErase4904&&) = delete;
+            PendingOwnerErase4904& operator=(PendingOwnerErase4904&&) = delete;
 
         private:
             CompilerService* service_;
@@ -15827,6 +15847,8 @@ public:
         }
         PostEvalAutoInvokeGuard(const PostEvalAutoInvokeGuard&) = delete;
         PostEvalAutoInvokeGuard& operator=(const PostEvalAutoInvokeGuard&) = delete;
+        PostEvalAutoInvokeGuard(PostEvalAutoInvokeGuard&&) = delete;
+        PostEvalAutoInvokeGuard& operator=(PostEvalAutoInvokeGuard&&) = delete;
     };
 
     // Issue #169: incremental-strictness setter/getter.
@@ -16248,6 +16270,8 @@ public:
                 , saved_top(e.top_env().pool()) {}
             DetachScratchPool(const DetachScratchPool&) = delete;
             DetachScratchPool& operator=(const DetachScratchPool&) = delete;
+            DetachScratchPool(DetachScratchPool&&) = delete;
+            DetachScratchPool& operator=(DetachScratchPool&&) = delete;
             ~DetachScratchPool() {
                 if (!scratch)
                     return;
@@ -17777,6 +17801,8 @@ private:
         }
         IrCacheGate(const IrCacheGate&) = delete;
         IrCacheGate& operator=(const IrCacheGate&) = delete;
+        IrCacheGate(IrCacheGate&&) = delete;
+        IrCacheGate& operator=(IrCacheGate&&) = delete;
         ~IrCacheGate() { m.unlock(); }
     };
 
@@ -18822,6 +18848,8 @@ public:
     // children_snapshot copies do not race ~workspace_flat_.
     CompilerService(const CompilerService&) = delete;
     CompilerService& operator=(const CompilerService&) = delete;
+    CompilerService(CompilerService&&) = delete;
+    CompilerService& operator=(CompilerService&&) = delete;
     ~CompilerService() {
         evaluator_.set_tw_tier_hook_4682(nullptr, nullptr);
         evaluator_.set_exit_quiesce_hook(nullptr, nullptr);
@@ -20587,6 +20615,8 @@ public:
             }
             CascadeEvalOwnerGuard(const CascadeEvalOwnerGuard&) = delete;
             CascadeEvalOwnerGuard& operator=(const CascadeEvalOwnerGuard&) = delete;
+            CascadeEvalOwnerGuard(CascadeEvalOwnerGuard&&) = delete;
+            CascadeEvalOwnerGuard& operator=(CascadeEvalOwnerGuard&&) = delete;
         } cascade_owner_guard(static_cast<void*>(&evaluator_));
         // Keep AOT table epoch in lockstep for dual-check aura_closure_call
         // (or owner-scoped residual under multi-eval production — #2841).

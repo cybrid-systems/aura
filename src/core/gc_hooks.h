@@ -117,6 +117,8 @@ public:
     }
     ScopedSafepoint(const ScopedSafepoint&) = delete;
     ScopedSafepoint& operator=(const ScopedSafepoint&) = delete;
+    ScopedSafepoint(ScopedSafepoint&&) = delete;
+    ScopedSafepoint& operator=(ScopedSafepoint&&) = delete;
 
 private:
     bool prev_ = false;

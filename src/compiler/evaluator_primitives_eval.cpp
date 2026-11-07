@@ -295,6 +295,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                     , saved(t.pool()) {}
                 RestoreTopPool(const RestoreTopPool&) = delete;
                 RestoreTopPool& operator=(const RestoreTopPool&) = delete;
+                RestoreTopPool(RestoreTopPool&&) = delete;
+                RestoreTopPool& operator=(RestoreTopPool&&) = delete;
                 ~RestoreTopPool() {
                     if (saved && saved != top.pool())
                         top.set_pool(saved);
@@ -840,6 +842,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 , keep(k) {}
             RestoreTopPool(const RestoreTopPool&) = delete;
             RestoreTopPool& operator=(const RestoreTopPool&) = delete;
+            RestoreTopPool(RestoreTopPool&&) = delete;
+            RestoreTopPool& operator=(RestoreTopPool&&) = delete;
             ~RestoreTopPool() {
                 std::vector<std::pair<std::string, EvalValue>> kept;
                 if (top.bindings().size() > binds) {
@@ -1052,6 +1056,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 , saved(t.pool()) {}
             RestoreTopPool(const RestoreTopPool&) = delete;
             RestoreTopPool& operator=(const RestoreTopPool&) = delete;
+            RestoreTopPool(RestoreTopPool&&) = delete;
+            RestoreTopPool& operator=(RestoreTopPool&&) = delete;
             ~RestoreTopPool() {
                 if (saved && saved != top.pool())
                     top.set_pool(saved);
@@ -1247,6 +1253,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             }
             EvalCurrentExclusiveTls(const EvalCurrentExclusiveTls&) = delete;
             EvalCurrentExclusiveTls& operator=(const EvalCurrentExclusiveTls&) = delete;
+            EvalCurrentExclusiveTls(EvalCurrentExclusiveTls&&) = delete;
+            EvalCurrentExclusiveTls& operator=(EvalCurrentExclusiveTls&&) = delete;
             ~EvalCurrentExclusiveTls() {
                 if (owns)
                     Evaluator::note_eval_current_shared_exit();
@@ -1339,6 +1347,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 , saved(t.pool()) {}
             RestoreTopPool(const RestoreTopPool&) = delete;
             RestoreTopPool& operator=(const RestoreTopPool&) = delete;
+            RestoreTopPool(RestoreTopPool&&) = delete;
+            RestoreTopPool& operator=(RestoreTopPool&&) = delete;
             ~RestoreTopPool() {
                 if (saved && saved != top.pool())
                     top.set_pool(saved);

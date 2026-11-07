@@ -1649,6 +1649,8 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         }
         Active(const Active&) = delete;
         Active& operator=(const Active&) = delete;
+        Active(Active&&) = delete;
+        Active& operator=(Active&&) = delete;
         ~Active() { flag = false; }
     } active(file_reclaim_active_);
 
@@ -2021,6 +2023,8 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         }
         Active(const Active&) = delete;
         Active& operator=(const Active&) = delete;
+        Active(Active&&) = delete;
+        Active& operator=(Active&&) = delete;
         ~Active() { flag = false; }
     } active(file_reclaim_active_);
 

@@ -156,6 +156,8 @@ public:
     virtual ~CompletionSink() = default;
     CompletionSink(const CompletionSink&) = delete;
     CompletionSink& operator=(const CompletionSink&) = delete;
+    CompletionSink(CompletionSink&&) = delete;
+    CompletionSink& operator=(CompletionSink&&) = delete;
     virtual void on_complete(std::shared_ptr<Ticket> ticket) noexcept = 0;
 };
 

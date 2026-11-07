@@ -1634,6 +1634,8 @@ private:
         [[nodiscard]] bool denied_hard() const noexcept { return hard_denied; }
         ScopeEnterGuard(const ScopeEnterGuard&) = delete;
         ScopeEnterGuard& operator=(const ScopeEnterGuard&) = delete;
+        ScopeEnterGuard(ScopeEnterGuard&&) = delete;
+        ScopeEnterGuard& operator=(ScopeEnterGuard&&) = delete;
     };
 
     // Returns true if this thread holds ownership (caller must leave).

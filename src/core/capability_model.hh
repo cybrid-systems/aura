@@ -520,6 +520,8 @@ struct AtomicEffectSandboxMode {
     }
     AtomicEffectSandboxMode(const AtomicEffectSandboxMode&) = delete;
     AtomicEffectSandboxMode& operator=(const AtomicEffectSandboxMode&) = delete;
+    AtomicEffectSandboxMode(AtomicEffectSandboxMode&&) = delete;
+    AtomicEffectSandboxMode& operator=(AtomicEffectSandboxMode&&) = delete;
     ~AtomicEffectSandboxMode() = default;
     // Writers: release store (Issue #2427 AC1/AC3).
     AtomicEffectSandboxMode& operator=(EffectSandboxMode m) noexcept {
@@ -545,6 +547,8 @@ struct AtomicTenantId {
     explicit AtomicTenantId(TenantId t) noexcept { v.store(t, std::memory_order_relaxed); }
     AtomicTenantId(const AtomicTenantId&) = delete;
     AtomicTenantId& operator=(const AtomicTenantId&) = delete;
+    AtomicTenantId(AtomicTenantId&&) = delete;
+    AtomicTenantId& operator=(AtomicTenantId&&) = delete;
     ~AtomicTenantId() = default;
     AtomicTenantId& operator=(TenantId t) noexcept {
         v.store(t, std::memory_order_release);

@@ -25,6 +25,8 @@ struct MarkAllClearsIrOwners {
     ~MarkAllClearsIrOwners() noexcept { mark_all_clears_ir_owners_flag() = prev_; }
     MarkAllClearsIrOwners(const MarkAllClearsIrOwners&) = delete;
     MarkAllClearsIrOwners& operator=(const MarkAllClearsIrOwners&) = delete;
+    MarkAllClearsIrOwners(MarkAllClearsIrOwners&&) = delete;
+    MarkAllClearsIrOwners& operator=(MarkAllClearsIrOwners&&) = delete;
 };
 
 } // namespace aura::compiler
