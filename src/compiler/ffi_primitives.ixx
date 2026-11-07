@@ -192,6 +192,21 @@ public:
                              std::vector<void*>* opaque_heap,
                              std::array<std::uint64_t, 16>* coverage_counters = nullptr);
 
+    // Issue #5033: peeled register_primitives parts. Each one owns a single FFI
+    // responsibility group and needs this class's private tables, so they stay
+    // members; register_primitives calls them in the original registration
+    // order (defined in ffi_primitives_impl.cpp).
+    void register_library_primitives(RegisterFn add, ::aura::compiler::LockedStringHeap* sh,
+                                     std::vector<void*>* oh,
+                                     std::array<std::uint64_t, 16>* coverage_counters);
+    void register_opaque_primitives(RegisterFn add, ::aura::compiler::LockedStringHeap* sh,
+                                    std::vector<void*>* oh,
+                                    std::array<std::uint64_t, 16>* coverage_counters);
+    void register_struct_primitives(RegisterFn add, ::aura::compiler::LockedStringHeap* sh,
+                                    std::vector<void*>* oh,
+                                    std::array<std::uint64_t, 16>* coverage_counters);
+    void register_pin_primitives(RegisterFn add);
+
     // Accessors for the FFI state (for tests / debug).
     std::size_t lib_count() const { return libs_.size(); }
     std::size_t func_count() const { return funcs_.size(); }
