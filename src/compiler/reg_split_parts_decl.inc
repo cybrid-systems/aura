@@ -231,4 +231,23 @@ struct RegSplitParts {
     static void register_annotate_functions_primitive(PrimRegistrar add, Evaluator& ev,
                                                       MakeErrorVal mev);
     static void register_datum_io_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev);
+
+    // Issue #5033: read / write / probe / entry / exec / listing registration
+    // parts for the file+process primitive TU, plus the IO policy helpers they
+    // share (defined in evaluator_primitives_file.cpp).
+    static EvalValue file_deny_io(Evaluator& ev, std::string_view cap, std::string_view msg);
+    static EvalValue file_deny_exec(Evaluator& ev, std::string_view msg);
+    static bool file_is_regular(const std::string& path);
+    static bool file_path_is_denied(std::string_view path);
+    static EvalValue file_io_fail(Evaluator& ev, std::string_view op, std::string_view path,
+                                  std::string_view why);
+    static std::string file_errno_reason(int e);
+    static EvalValue file_deny_write_scope(Evaluator& ev, std::string_view op,
+                                           std::string_view path, std::string_view resolved);
+    static void register_file_read_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_file_write_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_file_probe_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_file_entry_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_exec_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_directory_list_primitive(PrimRegistrar add, Evaluator& ev);
 };

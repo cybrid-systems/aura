@@ -1,0 +1,53 @@
+;; Issue #5033: the file / runtime / ffi / compile registrations moved into
+;; peeled parts (RegSplitParts members and FFIRuntime members). Primitive
+;; names, registration order and behavior must not move.
+(require "std/io" all:)
+(require "std/process" all:)
+(require "std/ffi" all:)
+
+(define fails 0)
+(define (check pred msg)
+  (if pred
+      #t
+      (begin (set! fails (+ fails 1)) (display (format "FAIL ~a\n" msg)))))
+
+;; runtime parts: exit / equal? / symbols / apply / print / format / error
+(check (equal? (list 1 2) (list 1 2)) "equal? structure")
+(check (equal? 3 3) "equal? ints")
+(check (string? (gensym)) "gensym")
+(check (equal? "ab" (symbol-append "a" "b")) "symbol-append")
+(check (= 6 (apply + (list 1 2 3))) "apply")
+(check (equal? "x 1 y" (format "~a ~s ~a" "x" 1 "y")) "format")
+(check (error? (error "boom")) "error value")
+(check (eq? #t (check-success "\"ok\"" (list "ok"))) "check-success hit")
+(check (eq? #f (check-success "\"nope\"" (list "ok"))) "check-success miss")
+
+;; file parts: read / write / probe / entry / exec / listing
+(define p "/tmp/aura-5033-reg-split.txt")
+(check (= 1 (write-file p "42")) "write-file")
+(check (equal? "42" (read-file p)) "read-file")
+(check (eq? #t (file-exists? p)) "file-exists?")
+(check (= 2 (file-size p)) "file-size")
+(check (= 1 (file-copy p "/tmp/aura-5033-reg-split-copy.txt")) "file-copy")
+(check (>= (length (directory-list "/tmp")) 0) "directory-list")
+(check (= 7 (shell "exit 7")) "shell exit code")
+(check (equal? "hi" (command-output "echo hi")) "command-output")
+(check (>= (length (command-line)) 0) "command-line")
+(check (= 1 (file-delete "/tmp/aura-5033-reg-split-copy.txt")) "file-delete")
+
+;; compile parts: the three stats queries of p27 (the instruction-dirty
+;; markers are #3172-sunk Lisp names; tests/compiler pins those instead)
+(check (not (error? (engine:metrics "query:compiler-incremental-stats"))) "incremental stats")
+(check (hash? (engine:metrics "query:compile-primitive-guard-stats")) "guard stats")
+(check (hash? (engine:metrics "query:mutation-systemic-guard-stats")) "mutation guard stats")
+(check (hash? (engine:metrics "query:raw-pointer-safety-stats")) "pointer safety stats")
+
+;; ffi parts: library / opaque / struct / pin
+(check (= 12 (c-struct-size 4 8)) "c-struct-size")
+(check (= 0 (c-load "/nonexistent-lib-5033.so")) "c-load failure")
+(check (eq? #f (c-opaque? 0)) "c-opaque?")
+(check (integer? (engine:metrics "ffi:opaque-stats")) "ffi opaque stats")
+
+(if (> fails 0)
+    (error "prims reg split 5033 regression")
+    (begin (display "prims reg split 5033 ok") (newline)))

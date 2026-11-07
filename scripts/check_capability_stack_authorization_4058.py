@@ -109,8 +109,14 @@ def main() -> int:
 
     # ── AC6: body gates keep the oracle ──
     fp = read("src/compiler/evaluator_primitives_file.cpp")
-    must("const auto deny_io" in fp and "ev.has_capability(cap)" in fp, "AC6: deny_io lambda consults has_capability")
-    must("deny_io(aura::compiler::security::kCapIoRead" in fp, "AC6: read-file routes kCapIoRead through deny_io")
+    # Issue #5033: the io gate is a shared static helper (file_deny_io) rather
+    # than a per-registration lambda; the oracle and the read-file route stay.
+    must(
+        ("const auto deny_io" in fp or "EvalValue RegSplitParts::file_deny_io" in fp)
+        and "ev.has_capability(cap)" in fp,
+        "AC6: deny_io lambda consults has_capability",
+    )
+    must("deny_io(ev, aura::compiler::security::kCapIoRead" in fp, "AC6: read-file routes kCapIoRead through deny_io")
     oj = read("src/compiler/evaluator_primitives_obs_jit.cpp")
     must("kCapExceptionControl" in oj, "AC6: jit:exception-fibers-clear exception-control gate intact")
 

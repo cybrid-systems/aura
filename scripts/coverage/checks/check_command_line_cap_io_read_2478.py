@@ -55,8 +55,9 @@ def main() -> int:
     must("capability denied", "AC2", test.lower())
 
     must("deny_io", "AC3", body)
-    # Capture deny_io in lambda (not bare [&ev])
-    must("deny_io]", "AC3", body)  # [&ev, deny_io]
+    # Issue #5033: the gate is a shared static helper (file_deny_io) called by
+    # the deferred body instead of a lambda copied into its capture list.
+    must("file_deny_io(ev,", "AC3", body)
 
     must("test_command_line_cap_io_read", "AC4", test)
     must("kCapIoRead", "AC4", test)
