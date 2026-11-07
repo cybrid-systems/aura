@@ -2222,6 +2222,7 @@ namespace primitives_detail {
     // Issue #909: friend structs holding peeled register parts (≤300 lines each).
 #include "compiler/observability_prims_decl.inc"
 #include "compiler/compile_prims_decl.inc"
+#include "compiler/reg_split_parts_decl.inc"
 } // namespace primitives_detail
 
 void defuse_index_destroy(void** slot);
@@ -2362,6 +2363,7 @@ export class Evaluator {
     // Issue #909: peeled register structs access private Evaluator state.
     friend struct primitives_detail::ObservabilityPrims;
     friend struct primitives_detail::CompilePrims;
+    friend struct primitives_detail::RegSplitParts;
     friend void primitives_detail::register_verify_tool_primitives(
         std::function<void(std::string, std::function<aura::compiler::types::EvalValue(
                                             std::span<const aura::compiler::types::EvalValue>)>)>
