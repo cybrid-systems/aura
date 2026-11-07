@@ -110,6 +110,589 @@ using types::make_void;
     return true;
 }
 
+// Values the evolution-audit-decision query loads before it publishes keys.
+// The in-memory face and the durable WAL face fill this; the registrar
+// publishes it. Strings stay in this object so the WAL face can append
+// without a second allocation.
+struct EvolutionAuditDecisionFace {
+    std::uint64_t proof_mid = 0;
+    bool filt_mid = false;
+    std::uint64_t join_mid = 0;
+    std::int64_t last_se_denied = 0;
+    std::int64_t last_se_reason_code = 0;
+    std::string last_se_reason_str;
+    std::string last_se_op_str;
+    int se_mid_miss = 0;
+    bool typed_hit = false;
+    int typed_miss = 0;
+    std::int64_t typed_outcome = 0;
+    std::int64_t forensic_source = 0;
+    bool se_ring_has_mid = false;
+    bool wal_enabled = false;
+    aura::compiler::typed_audit::LastProofFace proof_face{};
+    ReloadRecoveryPlaybookResult pb{};
+    decltype(::aura::core::moving_densify_health::snapshot()) densify{};
+    bool posture_degraded = false;
+    bool wrap_risk = false;
+    std::int64_t durable_hit = 0;
+    std::int64_t wal_lookup_window_miss = 0;
+    std::int64_t wal_full_scan_hit = 0;
+    std::int64_t wal_full_scan_exhausted = 0;
+    std::int64_t wal_segments_scanned = 0;
+    std::int64_t typed_summary_from_wal = 0;
+    std::int64_t typed_kind = 0;
+};
+
+// In-memory evolution-audit face: join mid, same-mid SE ring row, typed
+// trail, forensic-source priority, proof / playbook / densify, posture.
+// No WAL I/O. The durable face runs after this returns.
+template <class Ev, class Args>
+static EvolutionAuditDecisionFace load_evolution_audit_memory_face(Ev& ev, const Args& args) {
+    using aura::compiler::typed_audit::AuditOutcome;
+    using aura::compiler::typed_audit::AuditStrategy;
+    using aura::compiler::typed_audit::LastProofFace;
+    using aura::compiler::typed_audit::last_proof_face_v_read;
+    using aura::compiler::typed_audit::g_last_stamped_audit_mid;
+    using aura::compiler::typed_audit::g_tls_boundary_audit_mid;
+    using aura::compiler::typed_audit::g_tls_boundary_audit_noted;
+    using aura::compiler::typed_audit::get_strategy;
+    using aura::compiler::typed_audit::kEvolutionAuditDecisionDurableIssue;
+    using aura::compiler::typed_audit::kEvolutionAuditDecisionIssue;
+    using aura::compiler::typed_audit::kTypedMutationAuditTrailSize;
+    using aura::compiler::typed_audit::kTypedSummaryWalIssue;
+    using aura::compiler::typed_audit::kTypedTrailWrapMissIssue;
+    using aura::compiler::typed_audit::production_defaults_active;
+    using aura::compiler::typed_audit::trail_find_by_mutation_id;
+    using aura::compiler::typed_audit::trail_seq;
+    using aura::compiler::typed_audit::TypedMutationAuditEvent;
+    using aura::core::security_event::g_security_event_ring;
+    using aura::core::security_event::kSecurityEventRingSize;
+    const std::uint64_t last_stamped =
+        g_last_stamped_audit_mid.load(std::memory_order_relaxed);
+    const std::uint64_t proof_mid =
+        g_tls_boundary_audit_noted ? g_tls_boundary_audit_mid : last_stamped;
+    // Issue #3738: explicit 0 is a legal join key (refuse class,
+    // same as query:security-audit #3462).
+    // Issue #4302: omitted arg joins THIS evaluator's last completed
+    // action mid, including sticky 0. join==0 with that slot valid
+    // is a real same-mid filter, not "any row".
+    // Issue #4661: before any completion the default join uses the
+    // mid the in-flight action used — the boundary-noted mid when
+    // one is noted (the proof_mid expression), else last_stamped.
+    const bool filt_mid = !args.empty() && is_int(args[0]);
+    const bool completed_valid = ev.has_last_completed_audit_mid();
+    const std::uint64_t want_mid =
+        filt_mid ? static_cast<std::uint64_t>(as_int(args[0]))
+                 : (completed_valid ? ev.last_completed_audit_mid() : proof_mid);
+    const std::uint64_t join_mid = want_mid;
+    // #3284 pins the prefix `filt_mid || join_mid != 0`. Completed
+    // mid 0 (#4302) still filters; it is an extra term, not a
+    // replacement of that pin.
+    // #4661: the no-arg pre-completion default filters too — the
+    // join is the boundary mid / last_stamped, or 0 refusing every
+    // non-0 row when no mid source exists at all (se-mid-miss=1
+    // instead of folding an arbitrary M-mid reason beside join 0).
+    const bool no_arg = !filt_mid && !completed_valid; // #4661
+    const bool se_filter_by_mid = filt_mid || join_mid != 0 || completed_valid || no_arg;
+
+    std::int64_t last_se_denied = 0;
+    std::int64_t last_se_reason_code = 0; // 0=none; else SecurityEventKind+1
+    std::string last_se_reason_str;       // Issue #3149: SE reason[64] string snapshot
+    std::string last_se_op_str;           // Issue #4303: e.op[40], empty if no same-mid row
+    // Issue #3284: SE match discipline — when a join mid is in
+    // scope (explicit arg or default last-stamped path), ONLY
+    // accept SE rows with e.mutation_id == join_mid; never publish
+    // SE fields from a different mid beside a typed hit for mid M
+    // (residual of #3114/#3280 — previously the filter was gated
+    // on filt_mid, so the default path bound the latest SE row of
+    // ANY mid). If no same-mid SE row exists → additive
+    // se-mid-miss=1 (mirror typed-trail-miss), SE fields stay
+    // 0/"" (AC1). Explicit mid=0 (#3738) filters refuse rows.
+    // Pure load — no should_audit, no WAL I/O, no mutate.
+    // Soft/Off zero-cost preserved.
+    int se_mid_miss = 0;
+    {
+        const auto& ring = g_security_event_ring();
+        const auto head = ring.seq.load(std::memory_order_relaxed);
+        bool se_mid_hit = false;
+        for (std::size_t i = 0; i < kSecurityEventRingSize; ++i) {
+            if (head <= i)
+                break;
+            const auto& e = ring.ring[(head - 1 - i) % kSecurityEventRingSize];
+            if (se_filter_by_mid && e.mutation_id != join_mid)
+                continue;
+            se_mid_hit = true;
+            last_se_denied = e.denied ? 1 : 0;
+            last_se_reason_code = static_cast<std::int64_t>(e.kind) + 1;
+            // Issue #3149: NUL-safe truncation from e.reason[64].
+            // Empty reason (no event / kind=0) → empty string
+            // (matches AC3: empty string == last-se-reason-code == 0).
+            // Pure load — no should_audit, no WAL I/O, no mutate.
+            if (e.reason[0] != '\0') {
+                const auto n = strnlen(e.reason, sizeof(e.reason) - 1);
+                last_se_reason_str.assign(e.reason, n);
+            }
+            // Issue #4303: reason[64] keeps 63 bytes. op[40] still
+            // holds the operator the formatter put in the cut tail.
+            // Do not rewrite last-se-reason.
+            if (e.op[0] != '\0') {
+                const auto n = strnlen(e.op, sizeof(e.op) - 1);
+                last_se_op_str.assign(e.op, n);
+            }
+            break;
+        }
+        se_mid_miss = (se_filter_by_mid && !se_mid_hit) ? 1 : 0;
+    }
+
+    TypedMutationAuditEvent te{};
+    const bool typed_hit = join_mid != 0 && trail_find_by_mutation_id(join_mid, te);
+    const int typed_miss = (join_mid != 0 && !typed_hit) ? 1 : 0;
+    // 0=unknown (miss / no mid) 1=Success 2=Rollback 3=Error
+    std::int64_t typed_outcome = 0;
+    if (typed_hit) {
+        switch (te.outcome) {
+            case AuditOutcome::Success:
+                typed_outcome = 1;
+                break;
+            case AuditOutcome::Rollback:
+                typed_outcome = 2;
+                break;
+            case AuditOutcome::Error:
+                typed_outcome = 3;
+                break;
+        }
+    }
+
+    // Issue #3152 / #3371: forensic-source enum — maps typed-trail-miss
+    // to the next forensic step. Pure loads only: one extra
+    // O(kSecurityEventRingSize) scan when typed miss + mid, plus
+    // two WAL is_enabled() bool probes. No file I/O, no mutate,
+    // no shadow writes. Soft / Off zero-cost preserved.
+    //   0 = no mid / no evidence (join_mid == 0)
+    //   1 = typed trail hit (details within window)
+    //   2 = typed miss + SE ring still has same mid (use
+    //       query:security-audit)
+    //   3 = typed miss + mutation/SE WAL enabled (need durable
+    //       forensic — crash / wrap-around cannot recover from
+    //       typed trail alone)
+    //
+    // #3371 fix: SE ring (source=2) precedes the WAL flag. The
+    // previous `< 3 → 3` bump overwrote a confirmed ring hit just
+    // because WAL was on, which broke the Agent decision tree
+    // (production WAL-on force-set forensic-source=3, but the
+    // default query path doesn't read WAL — ring-internal reason
+    // was already available and cheaper). New order:
+    //   typed_hit   → 1
+    //   ring hit    → 2
+    //   WAL enabled → 3
+    //   else        → 0
+    std::int64_t forensic_source = 0;
+    bool se_ring_has_mid = false;
+    if (se_filter_by_mid && !typed_hit) {
+        const auto& ring2 = g_security_event_ring();
+        const auto head2 = ring2.seq.load(std::memory_order_relaxed);
+        const auto max_i = std::min<std::size_t>(head2, kSecurityEventRingSize);
+        for (std::size_t i = 0; i < max_i; ++i) {
+            const auto& e2 = ring2.ring[(head2 - 1 - i) % kSecurityEventRingSize];
+            if (e2.mutation_id == join_mid) {
+                se_ring_has_mid = true;
+                break;
+            }
+        }
+    }
+    using ::aura::core::audit_wal::g_mutation_audit_wal;
+    using ::aura::core::security_event_wal::g_security_event_wal;
+    const bool wal_enabled =
+        g_mutation_audit_wal().is_enabled() || g_security_event_wal().is_enabled();
+    // Issue #3371: priority order — typed > ring > WAL > 0.
+    if (typed_hit) {
+        forensic_source = 1;
+    } else if (se_ring_has_mid) {
+        forensic_source = 2;
+    } else if (wal_enabled) {
+        forensic_source = 3;
+    }
+
+    // Issue #4647: observe-only fold - publish the LAST STAMPED
+    // proof face (published at commit by publish_last_proof_face +
+    // the #4534 scalar stamps). The previous body called the live
+    // commit mutator (commit_readiness /
+    // commit_readiness_live_policy) - a MUTATOR behind an
+    // "observe-only=1" facade:
+    //   * commit_readiness_live_policy always calls
+    //     aura_force_residual_castop_undermark_into_cone -> the
+    //     #3347 remirror dirties the type-union-IR cone (added>0)
+    //     or latches note_pending_full_solve_residual(hard=true)
+    //     (#4154), and bumps the DeadCoercion decision-invalidate
+    //     gen through note_residual_castop_undermark_pending.
+    //   * commit_readiness on a latched truncate / outside-drop /
+    //     occurrence / refined face calls
+    //     aura_typed_audit_try_occurrence_hard_face_full_solve_recover
+    //     -> ConstraintSystem::solve + truncation clear + face
+    //     consume, and bumps the recover-attempt / recover-fail /
+    //     reject totals on EVERY poll.
+    // The commit already stamped the face - the fold only READS it.
+    // No remirror, no full solve, no face consume, no counter bump.
+    // The #3347 commit-time remirror on the live readiness surface
+    // (query:type-linear-commit-health) is unchanged.
+    const LastProofFace proof_face = last_proof_face_v_read();
+
+    ReloadRecoveryPlaybookResult pb{};
+    aura_hot_update_reload_recovery_playbook_get(&pb);
+
+    const auto densify = ::aura::core::moving_densify_health::snapshot();
+
+    // Issue #4028: typed trail wrap is forensic degrade (forensic-source=3 /
+    // WAL point-query), NOT permanent posture deny. posture_degraded
+    // only reflects WAL SLO would_arm_degraded; wrap stays observe-only
+    // via typed-trail-wrap-risk (kept below). Soft: zero extra cost.
+    bool posture_degraded = false;
+    bool wrap_risk = false;
+    {
+        using ::aura::core::audit_wal::g_mutation_audit_wal;
+        using ::aura::core::audit_wal::snapshot_audit_wal_stats;
+        using ::aura::core::security_event_wal::g_security_event_wal;
+        using ::aura::core::security_event_wal::snapshot_security_event_wal_stats;
+        using ::aura::core::wal_slo::evaluate_wal_append_fail_slo;
+        using ::aura::core::wal_slo::make_wal_append_fail_slo_input;
+        const auto mut = snapshot_audit_wal_stats();
+        const auto se = snapshot_security_event_wal_stats();
+        const bool prod = production_defaults_active();
+        const char* sb = std::getenv("AURA_SANDBOX");
+        const bool sandbox_off = sb && sb[0] && (sb[0] == 'o' || sb[0] == 'O') &&
+                                 (sb[1] == 'f' || sb[1] == 'F' || sb[1] == '\0');
+        const auto d = evaluate_wal_append_fail_slo(make_wal_append_fail_slo_input(
+            mut.append_fail, se.append_fail, mut.persisted, se.persisted,
+            g_mutation_audit_wal().is_enabled() || g_security_event_wal().is_enabled(),
+            prod, !prod || sandbox_off));
+        const auto tseq = trail_seq();
+        const auto se_total = g_security_event_ring().total.load(std::memory_order_relaxed);
+        wrap_risk = tseq > kTypedMutationAuditTrailSize && se_total > 0;
+        posture_degraded = d.would_arm_degraded; // #4028: NOT wrap_risk
+    }
+
+    // Issue #3205: optional :durable mid point-query. Join key is join_mid
+    // (explicit mid or last stamped) — never a synthetic process-origin mid.
+    // Soft / Off refuse I/O even with :durable.
+    // Issue #3674: the default path is no longer an unconditional
+    // no-scan under production/Full — after the typed (256) + SE
+    // (1024) rings wrap, a still-durable mid must not read as "no
+    // evidence" on the one-query Agent fold (auto_durable below;
+    // query:security-audit already auto-scans the same face,
+    // #3498/#3603). Soft / Off default keeps zero WAL I/O.
+    std::int64_t durable_hit = 0;
+    // Issue #3603: durable scan ran + explicit mid + every
+    // find_recent_* missed → the mid likely lives beyond the lookup
+    // window (wal_mid_lookup_segments(), bounded; retention
+    // AURA_WAL_MAX_SEGMENTS 0 = unbounded files). Additive face —
+    // typed-trail-miss / forensic-source semantics unchanged.
+    std::int64_t wal_lookup_window_miss = 0;
+    // Issue #3970: cheap-window miss continues with a named full
+    // scan (production/Full + explicit mid / :durable only).
+    std::int64_t wal_full_scan_hit = 0;
+    // Issue #4240: a scan-all ran over every retained segment and
+    // still missed the mid — the durable face is exhausted
+    // (retention may have unlinked the only segment that held it).
+    // Only ever set inside the production/Full durable block below,
+    // so Soft / WAL-off keeps 0 (zero-cost contract preserved).
+    std::int64_t wal_full_scan_exhausted = 0;
+    std::int64_t wal_segments_scanned = 0;
+    std::int64_t typed_summary_from_wal = 0;
+    std::int64_t typed_kind = 0;
+    if (typed_hit)
+        typed_kind = static_cast<std::int64_t>(te.kind);
+    EvolutionAuditDecisionFace face;
+    face.proof_mid = proof_mid;
+    face.filt_mid = filt_mid;
+    face.join_mid = join_mid;
+    face.last_se_denied = last_se_denied;
+    face.last_se_reason_code = last_se_reason_code;
+    face.last_se_reason_str = std::move(last_se_reason_str);
+    face.last_se_op_str = std::move(last_se_op_str);
+    face.se_mid_miss = se_mid_miss;
+    face.typed_hit = typed_hit;
+    face.typed_miss = typed_miss;
+    face.typed_outcome = typed_outcome;
+    face.forensic_source = forensic_source;
+    face.se_ring_has_mid = se_ring_has_mid;
+    face.wal_enabled = wal_enabled;
+    face.proof_face = proof_face;
+    face.pb = pb;
+    face.densify = densify;
+    face.posture_degraded = posture_degraded;
+    face.wrap_risk = wrap_risk;
+    face.durable_hit = durable_hit;
+    face.wal_lookup_window_miss = wal_lookup_window_miss;
+    face.wal_full_scan_hit = wal_full_scan_hit;
+    face.wal_full_scan_exhausted = wal_full_scan_exhausted;
+    face.wal_segments_scanned = wal_segments_scanned;
+    face.typed_summary_from_wal = typed_summary_from_wal;
+    face.typed_kind = typed_kind;
+    return face;
+}
+
+// Durable evolution-audit face. Runs only after the memory face, and only
+// takes the production/Full WAL path the memory face already decided.
+// Mutates the same strings the memory face filled (no extra copy).
+template <class Ev, class Args, class Heap>
+static void load_evolution_audit_durable_face(Ev& ev, const Args& args,
+                                             EvolutionAuditDecisionFace& face,
+                                             Heap& string_heap) {
+    using aura::compiler::typed_audit::AuditOutcome;
+    using aura::compiler::typed_audit::AuditStrategy;
+    using aura::compiler::typed_audit::LastProofFace;
+    using aura::compiler::typed_audit::last_proof_face_v_read;
+    using aura::compiler::typed_audit::g_last_stamped_audit_mid;
+    using aura::compiler::typed_audit::g_tls_boundary_audit_mid;
+    using aura::compiler::typed_audit::g_tls_boundary_audit_noted;
+    using aura::compiler::typed_audit::get_strategy;
+    using aura::compiler::typed_audit::kEvolutionAuditDecisionDurableIssue;
+    using aura::compiler::typed_audit::kEvolutionAuditDecisionIssue;
+    using aura::compiler::typed_audit::kTypedMutationAuditTrailSize;
+    using aura::compiler::typed_audit::kTypedSummaryWalIssue;
+    using aura::compiler::typed_audit::kTypedTrailWrapMissIssue;
+    using aura::compiler::typed_audit::production_defaults_active;
+    using aura::compiler::typed_audit::trail_find_by_mutation_id;
+    using aura::compiler::typed_audit::trail_seq;
+    using aura::compiler::typed_audit::TypedMutationAuditEvent;
+    using aura::core::security_event::g_security_event_ring;
+    using aura::core::security_event::kSecurityEventRingSize;
+    auto& join_mid = face.join_mid;
+    auto& last_se_denied = face.last_se_denied;
+    auto& last_se_reason_code = face.last_se_reason_code;
+    auto& last_se_reason_str = face.last_se_reason_str;
+    auto& last_se_op_str = face.last_se_op_str;
+    auto& typed_hit = face.typed_hit;
+    auto& typed_miss = face.typed_miss;
+    auto& typed_outcome = face.typed_outcome;
+    auto& forensic_source = face.forensic_source;
+    auto& se_ring_has_mid = face.se_ring_has_mid;
+    auto& wal_enabled = face.wal_enabled;
+    auto& durable_hit = face.durable_hit;
+    auto& wal_lookup_window_miss = face.wal_lookup_window_miss;
+    auto& wal_full_scan_hit = face.wal_full_scan_hit;
+    auto& wal_full_scan_exhausted = face.wal_full_scan_exhausted;
+    auto& wal_segments_scanned = face.wal_segments_scanned;
+    auto& typed_summary_from_wal = face.typed_summary_from_wal;
+    auto& typed_kind = face.typed_kind;
+    bool want_durable = false;
+    for (const auto& arg : args) {
+        if (is_keyword(arg)) {
+            const auto kidx = as_keyword_idx(arg);
+            const auto& kt = ev.keyword_table();
+            if (kidx >= kt.size())
+                continue;
+            std::string_view k = kt[kidx];
+            if (!k.empty() && k.front() == ':')
+                k.remove_prefix(1);
+            if (k == "durable")
+                want_durable = true;
+        } else if (is_string(arg)) {
+            const auto sidx = as_string_idx(arg);
+            if (sidx >= string_heap.size())
+                continue;
+            const auto& s = ev.string_at(sidx);
+            if (s == "durable" || s == ":durable")
+                want_durable = true;
+        }
+    }
+    // Issue #3674: production/Full auto-durable fold. When BOTH
+    // in-memory faces miss (typed_hit==false && !se_ring_has_mid)
+    // and WAL is enabled, run the same bounded find_recent_* scan
+    // query:security-audit already uses (#3498/#3603) instead of
+    // publishing forensic-source=3 / durable-hit=0 with an empty
+    // reason (the wrap lie). Soft / Off: auto_durable is false
+    // (production/Full term) → no WAL I/O, contract unchanged.
+    // :durable stays an explicit force; typed-trail-miss is never
+    // rewritten into a typed hit (#3498 rule — WAL is not the
+    // typed trail; sidecar fill stays additive).
+    const bool auto_durable =
+        (production_defaults_active() || get_strategy() == AuditStrategy::Full) &&
+        join_mid != 0 && !typed_hit && !se_ring_has_mid && wal_enabled;
+    if ((want_durable || auto_durable) && join_mid != 0 &&
+        (production_defaults_active() || get_strategy() == AuditStrategy::Full)) {
+        using ::aura::core::audit_wal::g_mutation_audit_wal;
+        using ::aura::core::security_event_wal::g_security_event_wal;
+        auto& se_wal = g_security_event_wal();
+        auto& mut_wal = g_mutation_audit_wal();
+        if (se_wal.is_enabled() || mut_wal.is_enabled()) {
+            const auto win = ::aura::core::wal_slo::wal_mid_lookup_segments();
+            auto rec = se_wal.find_recent_by_mutation_id(join_mid, win);
+            if (rec) {
+                wal_segments_scanned = static_cast<std::int64_t>(win);
+            } else if (se_wal.is_enabled()) {
+                rec = se_wal.find_by_mutation_id_scan_all_segments(join_mid);
+                wal_segments_scanned =
+                    static_cast<std::int64_t>(se_wal.retained_segment_count());
+                if (rec)
+                    wal_full_scan_hit = 1;
+                else
+                    wal_full_scan_exhausted = 1; // #4240: scanned all, still missed
+            }
+            if (rec) {
+                if (rec->reason[0] != '\0') {
+                    const auto n = strnlen(rec->reason, sizeof(rec->reason) - 1);
+                    last_se_reason_str.assign(rec->reason, n);
+                }
+                last_se_denied = rec->denied ? 1 : 0;
+                last_se_reason_code = static_cast<std::int64_t>(rec->kind) + 1;
+                // Issue #4508: durable fill keeps the operator. The
+                // ring arm copies e.op (#4303); the WAL arm must not
+                // drop it once the ring wraps. last-se-reason stays
+                // the reason[64] cut; se-mid-miss stays the ring
+                // miss (#3284) — this is the durable hit, not a
+                // ring hit.
+                if (rec->op[0] != '\0') {
+                    const auto n = strnlen(rec->op, sizeof(rec->op) - 1);
+                    last_se_op_str.assign(rec->op, n);
+                }
+                        if (forensic_source < 3)
+                            forensic_source = 3;
+                durable_hit = 1;
+            } else {
+                auto mrec = mut_wal.find_recent_by_provenance_mutation_id(join_mid, win);
+                if (mrec) {
+                    if (wal_segments_scanned == 0)
+                        wal_segments_scanned = static_cast<std::int64_t>(win);
+                } else if (mut_wal.is_enabled()) {
+                    mrec =
+                        mut_wal.find_by_provenance_mutation_id_scan_all_segments(join_mid);
+                    if (wal_segments_scanned == 0)
+                        wal_segments_scanned =
+                            static_cast<std::int64_t>(mut_wal.retained_segment_count());
+                    if (mrec)
+                        wal_full_scan_hit = 1;
+                    else
+                        wal_full_scan_exhausted = 1; // #4240: scanned all, still missed
+                }
+                if (mrec) {
+                    last_se_denied = mrec->effect_denied ? 1 : 0;
+                    if (last_se_reason_str.empty() && mrec->op[0] != '\0') {
+                        const auto n = strnlen(mrec->op, sizeof(mrec->op) - 1);
+                        last_se_reason_str.assign(mrec->op, n);
+                    }
+                    // Issue #4508: mutation-WAL fallback keeps the
+                    // operator too (provenance join, op[48]) — same
+                    // drop as the SE WAL arm above.
+                    if (mrec->op[0] != '\0') {
+                        const auto n = strnlen(mrec->op, sizeof(mrec->op) - 1);
+                        last_se_op_str.assign(mrec->op, n);
+                    }
+                    if (forensic_source < 3)
+                        forensic_source = 3;
+                    durable_hit = 1;
+                }
+            }
+            // Issue #3242: typed-trail-miss + :durable → typed summary sidecar.
+            if (typed_miss && mut_wal.is_enabled()) {
+                auto ts = mut_wal.find_recent_typed_summary_by_mid(join_mid, win);
+                if (!ts) {
+                    ts = mut_wal.find_typed_summary_by_mid_scan_all_segments(join_mid);
+                    if (ts)
+                        wal_full_scan_hit = 1;
+                }
+                if (ts) {
+                    typed_summary_from_wal = 1;
+                    typed_kind = static_cast<std::int64_t>(ts->kind);
+                    if (typed_outcome == 0) {
+                        switch (ts->outcome) {
+                            case 0:
+                                typed_outcome = 1;
+                                break;
+                            case 1:
+                                typed_outcome = 2;
+                                break;
+                            case 2:
+                                typed_outcome = 3;
+                                break;
+                            default:
+                                break;
+                        }
+                    }
+                    if (forensic_source < 3)
+                        forensic_source = 3;
+                }
+            }
+            if (wal_segments_scanned == 0) {
+                wal_segments_scanned = static_cast<std::int64_t>(
+                    se_wal.is_enabled() ? se_wal.retained_segment_count()
+                                        : mut_wal.retained_segment_count());
+            }
+            // Issue #3603: all three find_recent_* missed within the
+            // lookup window → additive face (the row may still exist
+            // on disk beyond it). Soft / observe-only / no durable
+            // scan keeps 0 — no extra I/O either way.
+            wal_lookup_window_miss =
+                (durable_hit == 0 && typed_summary_from_wal == 0) ? 1 : 0;
+            // Issue #3734 / #3780: emit_mutation_audit production
+            // WAL miss never hit disk; overflow ring is the join
+            // key for the deny/observe face. Under #3780 the
+            // Guard denies before Occurrence persist, so a
+            // committed success should not rely on overflow alone.
+            // Fill last-se-reason so :durable is not empty while
+            // wal-lookup-window-miss stays 1 (overflow is not WAL).
+            // In-memory scan only; this block is production/Full.
+            if (durable_hit == 0 && last_se_reason_str.empty()) {
+                if (const auto* ovr =
+                        ::aura::core::security_event_wal::wal_overflow_find_by_mid(
+                            join_mid)) {
+                    if (!ovr->reason.empty())
+                        last_se_reason_str = ovr->reason;
+                    // Issue #4508: overflow fallback keeps the
+                    // operator as well — same WAL-shape record.
+                    if (!ovr->op.empty())
+                        last_se_op_str = ovr->op;
+                } else if (::aura::core::audit_wal::g_audit_wal_metrics()
+                                   .audit_wal_segment_prune_total.load(
+                                       std::memory_order_relaxed) +
+                               ::aura::core::security_event_wal::
+                                   g_security_event_wal_metrics()
+                                       .security_event_wal_segment_prune_total.load(
+                                           std::memory_order_relaxed) >
+                           0) {
+                    // Issue #4240: AURA_WAL_MAX_SEGMENTS retention
+                    // unlinked segments after the ring wrap — the
+                    // mid's durable audit row was forensically
+                    // thinned by prune, never "never audited".
+                    // Counters are read lazily inside this
+                    // production/Full block (Soft: zero-cost).
+                    last_se_reason_str = "wal-segment-pruned";
+                } else if (::aura::core::security_event_wal::wal_overflow_ring_wrap_total()
+                               .load(std::memory_order_relaxed) > 0) {
+                    // Issue #3838: wrap storm — Agent face distinguishes
+                    // wrap-evicted mid joins from never-emitted (empty).
+                    last_se_reason_str = "overflow_wrap_evicted";
+                }
+            }
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #1020: capability-gated sandbox admin surface.
@@ -6226,431 +6809,33 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     overflowed = true;
             };
 
-            const std::uint64_t last_stamped =
-                g_last_stamped_audit_mid.load(std::memory_order_relaxed);
-            const std::uint64_t proof_mid =
-                g_tls_boundary_audit_noted ? g_tls_boundary_audit_mid : last_stamped;
-            // Issue #3738: explicit 0 is a legal join key (refuse class,
-            // same as query:security-audit #3462).
-            // Issue #4302: omitted arg joins THIS evaluator's last completed
-            // action mid, including sticky 0. join==0 with that slot valid
-            // is a real same-mid filter, not "any row".
-            // Issue #4661: before any completion the default join uses the
-            // mid the in-flight action used — the boundary-noted mid when
-            // one is noted (the proof_mid expression), else last_stamped.
-            const bool filt_mid = !args.empty() && is_int(args[0]);
-            const bool completed_valid = ev.has_last_completed_audit_mid();
-            const std::uint64_t want_mid =
-                filt_mid ? static_cast<std::uint64_t>(as_int(args[0]))
-                         : (completed_valid ? ev.last_completed_audit_mid() : proof_mid);
-            const std::uint64_t join_mid = want_mid;
-            // #3284 pins the prefix `filt_mid || join_mid != 0`. Completed
-            // mid 0 (#4302) still filters; it is an extra term, not a
-            // replacement of that pin.
-            // #4661: the no-arg pre-completion default filters too — the
-            // join is the boundary mid / last_stamped, or 0 refusing every
-            // non-0 row when no mid source exists at all (se-mid-miss=1
-            // instead of folding an arbitrary M-mid reason beside join 0).
-            const bool no_arg = !filt_mid && !completed_valid; // #4661
-            const bool se_filter_by_mid = filt_mid || join_mid != 0 || completed_valid || no_arg;
+            auto face = load_evolution_audit_memory_face(ev, args);
+            load_evolution_audit_durable_face(ev, args, face, ev.string_heap_);
+            const auto proof_mid = face.proof_mid;
+            const auto filt_mid = face.filt_mid;
+            const auto join_mid = face.join_mid;
+            const auto last_se_denied = face.last_se_denied;
+            const auto last_se_reason_code = face.last_se_reason_code;
+            const auto& last_se_reason_str = face.last_se_reason_str;
+            const auto& last_se_op_str = face.last_se_op_str;
+            const auto se_mid_miss = face.se_mid_miss;
+            const auto typed_outcome = face.typed_outcome;
+            const auto typed_miss = face.typed_miss;
+            const auto typed_hit = face.typed_hit;
+            const auto forensic_source = face.forensic_source;
+            const auto& proof_face = face.proof_face;
+            const auto& pb = face.pb;
+            const auto& densify = face.densify;
+            const auto posture_degraded = face.posture_degraded;
+            const auto wrap_risk = face.wrap_risk;
+            const auto durable_hit = face.durable_hit;
+            const auto wal_lookup_window_miss = face.wal_lookup_window_miss;
+            const auto wal_full_scan_hit = face.wal_full_scan_hit;
+            const auto wal_full_scan_exhausted = face.wal_full_scan_exhausted;
+            const auto wal_segments_scanned = face.wal_segments_scanned;
+            const auto typed_summary_from_wal = face.typed_summary_from_wal;
+            const auto typed_kind = face.typed_kind;
 
-            std::int64_t last_se_denied = 0;
-            std::int64_t last_se_reason_code = 0; // 0=none; else SecurityEventKind+1
-            std::string last_se_reason_str;       // Issue #3149: SE reason[64] string snapshot
-            std::string last_se_op_str;           // Issue #4303: e.op[40], empty if no same-mid row
-            // Issue #3284: SE match discipline — when a join mid is in
-            // scope (explicit arg or default last-stamped path), ONLY
-            // accept SE rows with e.mutation_id == join_mid; never publish
-            // SE fields from a different mid beside a typed hit for mid M
-            // (residual of #3114/#3280 — previously the filter was gated
-            // on filt_mid, so the default path bound the latest SE row of
-            // ANY mid). If no same-mid SE row exists → additive
-            // se-mid-miss=1 (mirror typed-trail-miss), SE fields stay
-            // 0/"" (AC1). Explicit mid=0 (#3738) filters refuse rows.
-            // Pure load — no should_audit, no WAL I/O, no mutate.
-            // Soft/Off zero-cost preserved.
-            int se_mid_miss = 0;
-            {
-                const auto& ring = g_security_event_ring();
-                const auto head = ring.seq.load(std::memory_order_relaxed);
-                bool se_mid_hit = false;
-                for (std::size_t i = 0; i < kSecurityEventRingSize; ++i) {
-                    if (head <= i)
-                        break;
-                    const auto& e = ring.ring[(head - 1 - i) % kSecurityEventRingSize];
-                    if (se_filter_by_mid && e.mutation_id != join_mid)
-                        continue;
-                    se_mid_hit = true;
-                    last_se_denied = e.denied ? 1 : 0;
-                    last_se_reason_code = static_cast<std::int64_t>(e.kind) + 1;
-                    // Issue #3149: NUL-safe truncation from e.reason[64].
-                    // Empty reason (no event / kind=0) → empty string
-                    // (matches AC3: empty string == last-se-reason-code == 0).
-                    // Pure load — no should_audit, no WAL I/O, no mutate.
-                    if (e.reason[0] != '\0') {
-                        const auto n = strnlen(e.reason, sizeof(e.reason) - 1);
-                        last_se_reason_str.assign(e.reason, n);
-                    }
-                    // Issue #4303: reason[64] keeps 63 bytes. op[40] still
-                    // holds the operator the formatter put in the cut tail.
-                    // Do not rewrite last-se-reason.
-                    if (e.op[0] != '\0') {
-                        const auto n = strnlen(e.op, sizeof(e.op) - 1);
-                        last_se_op_str.assign(e.op, n);
-                    }
-                    break;
-                }
-                se_mid_miss = (se_filter_by_mid && !se_mid_hit) ? 1 : 0;
-            }
-
-            TypedMutationAuditEvent te{};
-            const bool typed_hit = join_mid != 0 && trail_find_by_mutation_id(join_mid, te);
-            const int typed_miss = (join_mid != 0 && !typed_hit) ? 1 : 0;
-            // 0=unknown (miss / no mid) 1=Success 2=Rollback 3=Error
-            std::int64_t typed_outcome = 0;
-            if (typed_hit) {
-                switch (te.outcome) {
-                    case AuditOutcome::Success:
-                        typed_outcome = 1;
-                        break;
-                    case AuditOutcome::Rollback:
-                        typed_outcome = 2;
-                        break;
-                    case AuditOutcome::Error:
-                        typed_outcome = 3;
-                        break;
-                }
-            }
-
-            // Issue #3152 / #3371: forensic-source enum — maps typed-trail-miss
-            // to the next forensic step. Pure loads only: one extra
-            // O(kSecurityEventRingSize) scan when typed miss + mid, plus
-            // two WAL is_enabled() bool probes. No file I/O, no mutate,
-            // no shadow writes. Soft / Off zero-cost preserved.
-            //   0 = no mid / no evidence (join_mid == 0)
-            //   1 = typed trail hit (details within window)
-            //   2 = typed miss + SE ring still has same mid (use
-            //       query:security-audit)
-            //   3 = typed miss + mutation/SE WAL enabled (need durable
-            //       forensic — crash / wrap-around cannot recover from
-            //       typed trail alone)
-            //
-            // #3371 fix: SE ring (source=2) precedes the WAL flag. The
-            // previous `< 3 → 3` bump overwrote a confirmed ring hit just
-            // because WAL was on, which broke the Agent decision tree
-            // (production WAL-on force-set forensic-source=3, but the
-            // default query path doesn't read WAL — ring-internal reason
-            // was already available and cheaper). New order:
-            //   typed_hit   → 1
-            //   ring hit    → 2
-            //   WAL enabled → 3
-            //   else        → 0
-            std::int64_t forensic_source = 0;
-            bool se_ring_has_mid = false;
-            if (se_filter_by_mid && !typed_hit) {
-                const auto& ring2 = g_security_event_ring();
-                const auto head2 = ring2.seq.load(std::memory_order_relaxed);
-                const auto max_i = std::min<std::size_t>(head2, kSecurityEventRingSize);
-                for (std::size_t i = 0; i < max_i; ++i) {
-                    const auto& e2 = ring2.ring[(head2 - 1 - i) % kSecurityEventRingSize];
-                    if (e2.mutation_id == join_mid) {
-                        se_ring_has_mid = true;
-                        break;
-                    }
-                }
-            }
-            using ::aura::core::audit_wal::g_mutation_audit_wal;
-            using ::aura::core::security_event_wal::g_security_event_wal;
-            const bool wal_enabled =
-                g_mutation_audit_wal().is_enabled() || g_security_event_wal().is_enabled();
-            // Issue #3371: priority order — typed > ring > WAL > 0.
-            if (typed_hit) {
-                forensic_source = 1;
-            } else if (se_ring_has_mid) {
-                forensic_source = 2;
-            } else if (wal_enabled) {
-                forensic_source = 3;
-            }
-
-            // Issue #4647: observe-only fold - publish the LAST STAMPED
-            // proof face (published at commit by publish_last_proof_face +
-            // the #4534 scalar stamps). The previous body called the live
-            // commit mutator (commit_readiness /
-            // commit_readiness_live_policy) - a MUTATOR behind an
-            // "observe-only=1" facade:
-            //   * commit_readiness_live_policy always calls
-            //     aura_force_residual_castop_undermark_into_cone -> the
-            //     #3347 remirror dirties the type-union-IR cone (added>0)
-            //     or latches note_pending_full_solve_residual(hard=true)
-            //     (#4154), and bumps the DeadCoercion decision-invalidate
-            //     gen through note_residual_castop_undermark_pending.
-            //   * commit_readiness on a latched truncate / outside-drop /
-            //     occurrence / refined face calls
-            //     aura_typed_audit_try_occurrence_hard_face_full_solve_recover
-            //     -> ConstraintSystem::solve + truncation clear + face
-            //     consume, and bumps the recover-attempt / recover-fail /
-            //     reject totals on EVERY poll.
-            // The commit already stamped the face - the fold only READS it.
-            // No remirror, no full solve, no face consume, no counter bump.
-            // The #3347 commit-time remirror on the live readiness surface
-            // (query:type-linear-commit-health) is unchanged.
-            const LastProofFace proof_face = last_proof_face_v_read();
-
-            ReloadRecoveryPlaybookResult pb{};
-            aura_hot_update_reload_recovery_playbook_get(&pb);
-
-            const auto densify = ::aura::core::moving_densify_health::snapshot();
-
-            // Issue #4028: typed trail wrap is forensic degrade (forensic-source=3 /
-            // WAL point-query), NOT permanent posture deny. posture_degraded
-            // only reflects WAL SLO would_arm_degraded; wrap stays observe-only
-            // via typed-trail-wrap-risk (kept below). Soft: zero extra cost.
-            bool posture_degraded = false;
-            bool wrap_risk = false;
-            {
-                using ::aura::core::audit_wal::g_mutation_audit_wal;
-                using ::aura::core::audit_wal::snapshot_audit_wal_stats;
-                using ::aura::core::security_event_wal::g_security_event_wal;
-                using ::aura::core::security_event_wal::snapshot_security_event_wal_stats;
-                using ::aura::core::wal_slo::evaluate_wal_append_fail_slo;
-                using ::aura::core::wal_slo::make_wal_append_fail_slo_input;
-                const auto mut = snapshot_audit_wal_stats();
-                const auto se = snapshot_security_event_wal_stats();
-                const bool prod = production_defaults_active();
-                const char* sb = std::getenv("AURA_SANDBOX");
-                const bool sandbox_off = sb && sb[0] && (sb[0] == 'o' || sb[0] == 'O') &&
-                                         (sb[1] == 'f' || sb[1] == 'F' || sb[1] == '\0');
-                const auto d = evaluate_wal_append_fail_slo(make_wal_append_fail_slo_input(
-                    mut.append_fail, se.append_fail, mut.persisted, se.persisted,
-                    g_mutation_audit_wal().is_enabled() || g_security_event_wal().is_enabled(),
-                    prod, !prod || sandbox_off));
-                const auto tseq = trail_seq();
-                const auto se_total = g_security_event_ring().total.load(std::memory_order_relaxed);
-                wrap_risk = tseq > kTypedMutationAuditTrailSize && se_total > 0;
-                posture_degraded = d.would_arm_degraded; // #4028: NOT wrap_risk
-            }
-
-            // Issue #3205: optional :durable mid point-query. Join key is join_mid
-            // (explicit mid or last stamped) — never a synthetic process-origin mid.
-            // Soft / Off refuse I/O even with :durable.
-            // Issue #3674: the default path is no longer an unconditional
-            // no-scan under production/Full — after the typed (256) + SE
-            // (1024) rings wrap, a still-durable mid must not read as "no
-            // evidence" on the one-query Agent fold (auto_durable below;
-            // query:security-audit already auto-scans the same face,
-            // #3498/#3603). Soft / Off default keeps zero WAL I/O.
-            std::int64_t durable_hit = 0;
-            // Issue #3603: durable scan ran + explicit mid + every
-            // find_recent_* missed → the mid likely lives beyond the lookup
-            // window (wal_mid_lookup_segments(), bounded; retention
-            // AURA_WAL_MAX_SEGMENTS 0 = unbounded files). Additive face —
-            // typed-trail-miss / forensic-source semantics unchanged.
-            std::int64_t wal_lookup_window_miss = 0;
-            // Issue #3970: cheap-window miss continues with a named full
-            // scan (production/Full + explicit mid / :durable only).
-            std::int64_t wal_full_scan_hit = 0;
-            // Issue #4240: a scan-all ran over every retained segment and
-            // still missed the mid — the durable face is exhausted
-            // (retention may have unlinked the only segment that held it).
-            // Only ever set inside the production/Full durable block below,
-            // so Soft / WAL-off keeps 0 (zero-cost contract preserved).
-            std::int64_t wal_full_scan_exhausted = 0;
-            std::int64_t wal_segments_scanned = 0;
-            std::int64_t typed_summary_from_wal = 0;
-            std::int64_t typed_kind = 0;
-            if (typed_hit)
-                typed_kind = static_cast<std::int64_t>(te.kind);
-            bool want_durable = false;
-            for (const auto& arg : args) {
-                if (is_keyword(arg)) {
-                    const auto kidx = as_keyword_idx(arg);
-                    const auto& kt = ev.keyword_table();
-                    if (kidx >= kt.size())
-                        continue;
-                    std::string_view k = kt[kidx];
-                    if (!k.empty() && k.front() == ':')
-                        k.remove_prefix(1);
-                    if (k == "durable")
-                        want_durable = true;
-                } else if (is_string(arg)) {
-                    const auto sidx = as_string_idx(arg);
-                    if (sidx >= ev.string_heap_.size())
-                        continue;
-                    const auto& s = ev.string_at(sidx);
-                    if (s == "durable" || s == ":durable")
-                        want_durable = true;
-                }
-            }
-            // Issue #3674: production/Full auto-durable fold. When BOTH
-            // in-memory faces miss (typed_hit==false && !se_ring_has_mid)
-            // and WAL is enabled, run the same bounded find_recent_* scan
-            // query:security-audit already uses (#3498/#3603) instead of
-            // publishing forensic-source=3 / durable-hit=0 with an empty
-            // reason (the wrap lie). Soft / Off: auto_durable is false
-            // (production/Full term) → no WAL I/O, contract unchanged.
-            // :durable stays an explicit force; typed-trail-miss is never
-            // rewritten into a typed hit (#3498 rule — WAL is not the
-            // typed trail; sidecar fill stays additive).
-            const bool auto_durable =
-                (production_defaults_active() || get_strategy() == AuditStrategy::Full) &&
-                join_mid != 0 && !typed_hit && !se_ring_has_mid && wal_enabled;
-            if ((want_durable || auto_durable) && join_mid != 0 &&
-                (production_defaults_active() || get_strategy() == AuditStrategy::Full)) {
-                using ::aura::core::audit_wal::g_mutation_audit_wal;
-                using ::aura::core::security_event_wal::g_security_event_wal;
-                auto& se_wal = g_security_event_wal();
-                auto& mut_wal = g_mutation_audit_wal();
-                if (se_wal.is_enabled() || mut_wal.is_enabled()) {
-                    const auto win = ::aura::core::wal_slo::wal_mid_lookup_segments();
-                    auto rec = se_wal.find_recent_by_mutation_id(join_mid, win);
-                    if (rec) {
-                        wal_segments_scanned = static_cast<std::int64_t>(win);
-                    } else if (se_wal.is_enabled()) {
-                        rec = se_wal.find_by_mutation_id_scan_all_segments(join_mid);
-                        wal_segments_scanned =
-                            static_cast<std::int64_t>(se_wal.retained_segment_count());
-                        if (rec)
-                            wal_full_scan_hit = 1;
-                        else
-                            wal_full_scan_exhausted = 1; // #4240: scanned all, still missed
-                    }
-                    if (rec) {
-                        if (rec->reason[0] != '\0') {
-                            const auto n = strnlen(rec->reason, sizeof(rec->reason) - 1);
-                            last_se_reason_str.assign(rec->reason, n);
-                        }
-                        last_se_denied = rec->denied ? 1 : 0;
-                        last_se_reason_code = static_cast<std::int64_t>(rec->kind) + 1;
-                        // Issue #4508: durable fill keeps the operator. The
-                        // ring arm copies e.op (#4303); the WAL arm must not
-                        // drop it once the ring wraps. last-se-reason stays
-                        // the reason[64] cut; se-mid-miss stays the ring
-                        // miss (#3284) — this is the durable hit, not a
-                        // ring hit.
-                        if (rec->op[0] != '\0') {
-                            const auto n = strnlen(rec->op, sizeof(rec->op) - 1);
-                            last_se_op_str.assign(rec->op, n);
-                        }
-                        if (forensic_source < 3)
-                            forensic_source = 3;
-                        durable_hit = 1;
-                    } else {
-                        auto mrec = mut_wal.find_recent_by_provenance_mutation_id(join_mid, win);
-                        if (mrec) {
-                            if (wal_segments_scanned == 0)
-                                wal_segments_scanned = static_cast<std::int64_t>(win);
-                        } else if (mut_wal.is_enabled()) {
-                            mrec =
-                                mut_wal.find_by_provenance_mutation_id_scan_all_segments(join_mid);
-                            if (wal_segments_scanned == 0)
-                                wal_segments_scanned =
-                                    static_cast<std::int64_t>(mut_wal.retained_segment_count());
-                            if (mrec)
-                                wal_full_scan_hit = 1;
-                            else
-                                wal_full_scan_exhausted = 1; // #4240: scanned all, still missed
-                        }
-                        if (mrec) {
-                            last_se_denied = mrec->effect_denied ? 1 : 0;
-                            if (last_se_reason_str.empty() && mrec->op[0] != '\0') {
-                                const auto n = strnlen(mrec->op, sizeof(mrec->op) - 1);
-                                last_se_reason_str.assign(mrec->op, n);
-                            }
-                            // Issue #4508: mutation-WAL fallback keeps the
-                            // operator too (provenance join, op[48]) — same
-                            // drop as the SE WAL arm above.
-                            if (mrec->op[0] != '\0') {
-                                const auto n = strnlen(mrec->op, sizeof(mrec->op) - 1);
-                                last_se_op_str.assign(mrec->op, n);
-                            }
-                            if (forensic_source < 3)
-                                forensic_source = 3;
-                            durable_hit = 1;
-                        }
-                    }
-                    // Issue #3242: typed-trail-miss + :durable → typed summary sidecar.
-                    if (typed_miss && mut_wal.is_enabled()) {
-                        auto ts = mut_wal.find_recent_typed_summary_by_mid(join_mid, win);
-                        if (!ts) {
-                            ts = mut_wal.find_typed_summary_by_mid_scan_all_segments(join_mid);
-                            if (ts)
-                                wal_full_scan_hit = 1;
-                        }
-                        if (ts) {
-                            typed_summary_from_wal = 1;
-                            typed_kind = static_cast<std::int64_t>(ts->kind);
-                            if (typed_outcome == 0) {
-                                switch (ts->outcome) {
-                                    case 0:
-                                        typed_outcome = 1;
-                                        break;
-                                    case 1:
-                                        typed_outcome = 2;
-                                        break;
-                                    case 2:
-                                        typed_outcome = 3;
-                                        break;
-                                    default:
-                                        break;
-                                }
-                            }
-                            if (forensic_source < 3)
-                                forensic_source = 3;
-                        }
-                    }
-                    if (wal_segments_scanned == 0) {
-                        wal_segments_scanned = static_cast<std::int64_t>(
-                            se_wal.is_enabled() ? se_wal.retained_segment_count()
-                                                : mut_wal.retained_segment_count());
-                    }
-                    // Issue #3603: all three find_recent_* missed within the
-                    // lookup window → additive face (the row may still exist
-                    // on disk beyond it). Soft / observe-only / no durable
-                    // scan keeps 0 — no extra I/O either way.
-                    wal_lookup_window_miss =
-                        (durable_hit == 0 && typed_summary_from_wal == 0) ? 1 : 0;
-                    // Issue #3734 / #3780: emit_mutation_audit production
-                    // WAL miss never hit disk; overflow ring is the join
-                    // key for the deny/observe face. Under #3780 the
-                    // Guard denies before Occurrence persist, so a
-                    // committed success should not rely on overflow alone.
-                    // Fill last-se-reason so :durable is not empty while
-                    // wal-lookup-window-miss stays 1 (overflow is not WAL).
-                    // In-memory scan only; this block is production/Full.
-                    if (durable_hit == 0 && last_se_reason_str.empty()) {
-                        if (const auto* ovr =
-                                ::aura::core::security_event_wal::wal_overflow_find_by_mid(
-                                    join_mid)) {
-                            if (!ovr->reason.empty())
-                                last_se_reason_str = ovr->reason;
-                            // Issue #4508: overflow fallback keeps the
-                            // operator as well — same WAL-shape record.
-                            if (!ovr->op.empty())
-                                last_se_op_str = ovr->op;
-                        } else if (::aura::core::audit_wal::g_audit_wal_metrics()
-                                           .audit_wal_segment_prune_total.load(
-                                               std::memory_order_relaxed) +
-                                       ::aura::core::security_event_wal::
-                                           g_security_event_wal_metrics()
-                                               .security_event_wal_segment_prune_total.load(
-                                                   std::memory_order_relaxed) >
-                                   0) {
-                            // Issue #4240: AURA_WAL_MAX_SEGMENTS retention
-                            // unlinked segments after the ring wrap — the
-                            // mid's durable audit row was forensically
-                            // thinned by prune, never "never audited".
-                            // Counters are read lazily inside this
-                            // production/Full block (Soft: zero-cost).
-                            last_se_reason_str = "wal-segment-pruned";
-                        } else if (::aura::core::security_event_wal::wal_overflow_ring_wrap_total()
-                                       .load(std::memory_order_relaxed) > 0) {
-                            // Issue #3838: wrap storm — Agent face distinguishes
-                            // wrap-evicted mid joins from never-emitted (empty).
-                            last_se_reason_str = "overflow_wrap_evicted";
-                        }
-                    }
-                }
-            }
 
             insert_kv("last-audit-mid", static_cast<std::int64_t>(join_mid));
             insert_kv("proof-audit-mid",
