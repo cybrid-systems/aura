@@ -27,7 +27,19 @@ cp -r "$ROOT/lib" "$STAGE/lib"
 ldd "$BUILD/aura" | awk '$2 == "=>" && $3 ~ /^\// { print $3 }' | while read -r so; do
   cp -L "$so" "$STAGE/rt/"
 done
-cp -L "$(patchelf --print-interpreter "$BUILD/aura")" "$STAGE/rt/ld.so"
+# Issue #5000: the arm64 CI image ships no patchelf. The interpreter path is
+# already in the ELF program header, so read it with readelf (binutils, part of
+# the toolchain) and keep patchelf only as a fallback.
+INTERP=$(readelf -l "$BUILD/aura" 2>/dev/null \
+  | sed -n 's/.*Requesting program interpreter: \(.*\)]/\1/p' | head -1)
+if [ -z "$INTERP" ] && command -v patchelf >/dev/null 2>&1; then
+  INTERP=$(patchelf --print-interpreter "$BUILD/aura")
+fi
+if [ -z "$INTERP" ]; then
+  echo "bundle: cannot determine the ELF interpreter of $BUILD/aura (need readelf or patchelf)" >&2
+  exit 1
+fi
+cp -L "$INTERP" "$STAGE/rt/ld.so"
 cat > "$STAGE/bin/aura" <<'EOF'
 #!/bin/sh
 # aura launcher (#4907): runs libexec/aura on the bundled loader and libraries
