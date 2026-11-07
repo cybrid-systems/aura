@@ -273,19 +273,8 @@ namespace {
 
 } // namespace
 
-void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
-#if !AURA_ENABLE_GIT
-    // Issue #1970: integration vertical disabled for this build.
-    (void)add;
-    (void)ev;
-    return;
-#else
-    // ── Git integration (Issue #96) ─────────────────────────────
-    // Backed by libgit2 (in-process) when available, with popen fallback
-    // for systems without libgit2. Much faster than fork+exec per call,
-    // and avoids shell escape issues for commit messages and paths.
-    // Issue #1970: commercial/integration vertical (AURA_ENABLE_GIT).
-
+#if AURA_ENABLE_GIT
+static void register_git_inspect_primitives(Evaluator& ev) {
     // (git-status) → short status string (like "git status --short")
     ev.defer_std_host_prim("git-status", [&ev](const auto&) -> EvalValue {
         // Issue #4381: Restricted+MT / Strict tenant FS jail — the shared
@@ -431,7 +420,9 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
         auto sid = ev.string_heap_.mint(std::move(result));
         return make_string(sid);
     });
+}
 
+static void register_git_index_primitives(Evaluator& ev) {
     // (git-commit "message") → exit code (0 = ok, no shell escape needed)
     ev.defer_std_host_prim("git-commit", [&ev](std::span<const EvalValue> a) -> EvalValue {
         // Issue #2072: force git-commit through capability effect check
@@ -635,7 +626,9 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         return make_int(rc);
     });
+}
 
+static void register_git_rev_parse_primitive(Evaluator& ev) {
     // (git-rev-parse) → current HEAD sha (short, 7 chars)
     ev.defer_std_host_prim("git-rev-parse", [&ev](const auto&) -> EvalValue {
         // Issue #4381: tenant FS jail — same fence family; jailed child
@@ -673,6 +666,25 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
         auto sid = ev.string_heap_.mint(std::move(result));
         return make_string(sid);
     });
+}
+#endif
+
+void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
+#if !AURA_ENABLE_GIT
+    // Issue #1970: integration vertical disabled for this build.
+    (void)add;
+    (void)ev;
+    return;
+#else
+    // ── Git integration (Issue #96) ─────────────────────────────
+    // Backed by libgit2 (in-process) when available, with popen fallback
+    // for systems without libgit2. Much faster than fork+exec per call,
+    // and avoids shell escape issues for commit messages and paths.
+    // Issue #1970: commercial/integration vertical (AURA_ENABLE_GIT).
+
+    register_git_inspect_primitives(ev);
+    register_git_index_primitives(ev);
+    register_git_rev_parse_primitive(ev);
 #endif // AURA_ENABLE_GIT
 }
 
