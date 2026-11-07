@@ -25,6 +25,7 @@
 #include <mutex>
 #include <shared_mutex>
 #include <string>
+#include <concepts>
 #include <type_traits>
 #include <vector>
 #include "shape.h"
@@ -600,7 +601,7 @@ private:
             return counts[id <= SHAPE_REF ? static_cast<std::size_t>(id) : kHistogramBuckets - 1];
         }
 
-        template <typename F> void for_each(F&& f) const {
+        template <std::invocable<const ShapeRecord&> F> void for_each(F&& f) const {
             if (count == 0)
                 return;
             if (count < slots.size()) {
