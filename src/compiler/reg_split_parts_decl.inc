@@ -27,14 +27,28 @@ struct RegSplitParts {
                                                 std::vector<EvalValue>& error_values,
                                                 std::atomic<std::uint64_t>* primitive_error_counter,
                                                 Evaluator& ev);
-    static void register_math_integer_primitives(PrimRegistrar add,
-                                                 ::aura::compiler::LockedStringHeap& string_heap,
-                                                 std::vector<EvalValue>& error_values,
-                                                 std::atomic<std::uint64_t>* primitive_error_counter,
-                                                 Evaluator& ev);
+    static void register_math_integer_primitives(
+        PrimRegistrar add, ::aura::compiler::LockedStringHeap& string_heap,
+        std::vector<EvalValue>& error_values, std::atomic<std::uint64_t>* primitive_error_counter,
+        Evaluator& ev);
     static void register_math_minmax_primitives(PrimRegistrar add,
                                                 ::aura::compiler::LockedStringHeap& string_heap,
                                                 std::vector<EvalValue>& error_values,
                                                 std::atomic<std::uint64_t>* primitive_error_counter,
                                                 Evaluator& ev);
+    static void register_json_evo_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                             ::aura::compiler::LockedStringHeap& string_heap,
+                                             std::vector<EvalValue>& error_values,
+                                             std::atomic<std::uint64_t>* primitive_error_counter,
+                                             Evaluator& ev);
+    static void register_json_codec_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                               ::aura::compiler::LockedStringHeap& string_heap,
+                                               std::vector<EvalValue>& error_values,
+                                               std::atomic<std::uint64_t>* primitive_error_counter,
+                                               Evaluator& ev);
+    static void register_json_parse_primitive(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                              ::aura::compiler::LockedStringHeap& string_heap,
+                                              std::vector<EvalValue>& error_values,
+                                              std::atomic<std::uint64_t>* primitive_error_counter,
+                                              Evaluator& ev);
 };
