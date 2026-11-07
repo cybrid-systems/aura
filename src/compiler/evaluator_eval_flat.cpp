@@ -10147,18 +10147,18 @@ Evaluator::FlatStep Evaluator::eval_flat_on_begin(EvalFlatCursor& cur, const aur
         for (std::size_t i = 0; i < count; ++i) {
             auto cid = v.child(i);
             if (cid == aura::ast::NULL_NODE)
-                return FlatStep::cont();
+                continue;
             const auto ctag = f->tag(cid);
             if (ctag != aura::ast::NodeTag::Export && ctag != aura::ast::NodeTag::Call)
-                return FlatStep::cont();
+                continue;
             if (!is_module_prologue(f->get(cid)))
-                return FlatStep::cont();
+                continue;
             last_module_load_failure_.clear();
             auto raw = eval_flat(*f, *p, cid, eval_env);
             if (ctag == aura::ast::NodeTag::Call && phase0_resolve_miss(cid, raw)) {
                 last_module_load_failure_.clear();
                 deferred_requires.push_back({i, cid});
-                return FlatStep::cont();
+                continue;
             }
             auto r = finish_begin_child(std::move(raw), cid, file_root, f);
             if (!r || (is_error(*r) && !is_string(*r)))
@@ -10831,9 +10831,9 @@ Evaluator::FlatStep Evaluator::eval_flat_on_begin_letrec(
     for (std::size_t i = 0; i < letrec_defs.size(); ++i) {
         auto rhs = letrec_defs[i].second;
         if (rhs == aura::ast::NULL_NODE)
-            return FlatStep::cont();
+            continue;
         if (f->tag(rhs) != aura::ast::NodeTag::Lambda)
-            return FlatStep::cont();
+            continue;
         lambda_def[i] = 1;
         if (cell_ids[i] < cells_.size())
             pre_lambda_cell[i] = cells_[cell_ids[i]];
@@ -10861,9 +10861,9 @@ Evaluator::FlatStep Evaluator::eval_flat_on_begin_letrec(
     for (std::size_t i = 0; i < letrec_defs.size(); ++i) {
         auto& d = letrec_defs[i];
         if (d.second == aura::ast::NULL_NODE)
-            return FlatStep::cont();
+            continue;
         if (f->tag(d.second) != aura::ast::NodeTag::Lambda)
-            return FlatStep::cont();
+            continue;
         // Issue #4679: a clean top-level lambda whose cell
         // still holds the closure built from this very node
         // is reused instead of re-allocating a closure + env
@@ -10890,7 +10890,7 @@ Evaluator::FlatStep Evaluator::eval_flat_on_begin_letrec(
             }
             if (reuse) {
                 ++closure_reuse_4679_count_;
-                return FlatStep::cont();
+                continue;
             }
         }
         auto val = eval_flat(*f, *p, d.second, eval_env);
@@ -10903,9 +10903,9 @@ Evaluator::FlatStep Evaluator::eval_flat_on_begin_letrec(
     for (std::size_t i = 0; i < letrec_defs.size(); ++i) {
         auto& d = letrec_defs[i];
         if (d.second == aura::ast::NULL_NODE)
-            return FlatStep::cont();
+            continue;
         if (f->tag(d.second) == aura::ast::NodeTag::Lambda)
-            return FlatStep::cont();
+            continue;
         // Issue #4818: a deferred require written before
         // this define runs before its value.
         if (auto dr = run_deferred_before(letrec_idx[i]);
@@ -10922,7 +10922,7 @@ Evaluator::FlatStep Evaluator::eval_flat_on_begin_letrec(
             EvalValue snap = make_void();
             for (std::size_t j = 0; j < letrec_defs.size(); ++j) {
                 if (!lambda_def[j] || letrec_defs[j].first != vname)
-                    return FlatStep::cont();
+                    continue;
                 if (j < i) {
                     earlier_lambda = true;
                 } else if (j > i) {
@@ -10932,7 +10932,7 @@ Evaluator::FlatStep Evaluator::eval_flat_on_begin_letrec(
             }
             if (later_lambda && !earlier_lambda) {
                 cells_[cell_ids[i]] = snap;
-                return FlatStep::cont();
+                continue;
             }
         }
         auto val = eval_flat(*f, *p, d.second, eval_env);
@@ -10958,15 +10958,15 @@ Evaluator::FlatStep Evaluator::eval_flat_on_begin_letrec(
     for (std::size_t i = 0; i < count - 1; ++i) {
         auto cid = v.child(i);
         if (cid == aura::ast::NULL_NODE)
-            return FlatStep::cont();
+            continue;
         if (f->tag(cid) == aura::ast::NodeTag::Define)
-            return FlatStep::cont();
+            continue;
         if (is_module_prologue(f->get(cid))) {
             // #2766 Phase 0 already ran it, unless it was
             // deferred (#4818): run it here, in order.
             if (auto dr = run_deferred_before(i + 1); !dr || (is_error(*dr) && !is_string(*dr)))
                 return FlatStep::ret(dr);
-            return FlatStep::cont();
+            continue;
         }
         if (auto dr = run_deferred_before(i); !dr || (is_error(*dr) && !is_string(*dr)))
             return FlatStep::ret(dr);
