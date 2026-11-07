@@ -65,11 +65,12 @@ jobs:
 )AURA"},
     {"evolve", "README.md", R"AURA(# {{name}}
 
-A program that evolves itself: each step proposes new `params`, rewrites the
-live AST with `mutate:rebind`, keeps the change only if `gate.aura` says it is
-better, and otherwise rolls back with `ast:restore`.
+A program that evolves itself: each step proposes a new definition, rewrites
+the live AST with `mutate:rebind`, keeps the change only if `gate.aura` says
+it is better, and otherwise rolls back with `ast:restore`. The terminal shows
+each KEEP and ROLLBACK with the live source after the decision.
 
-    aura run     # writes out/report.html and out/audit.tsv
+    aura run
     aura test
 )AURA"},
     {"evolve", "aura.toml", R"AURA(name = "{{name}}"
@@ -101,86 +102,59 @@ jobs:
           path: out/
           if-no-files-found: ignore
 )AURA"},
-    {"evolve", "evolve.aura", R"AURA(;; evolve.aura — propose → ast:snapshot → mutate:rebind → gate → KEEP or ast:restore
-(define seed 1)
-(define (rand3!)
-  (set! seed (modulo (+ (* seed 1103515245) 12345) 2147483648))
-  (- (modulo (quotient seed 65536) 3) 1))
-(define (propose p) (list (+ (car p) (rand3!)) (+ (cadr p) (rand3!))))
-(define (params->src p) (format "(quote (~a ~a))" (car p) (cadr p)))
-
-;; Returns a list of rows (step decision params fitness), newest first.
-(define (evolve! steps)
-  (let loop ((i 1) (rows '()))
-    (if (> i steps)
-        rows
-        (let* ((cur (live-params))
-               (cand (propose cur))
-               (snap (ast:snapshot (format "step-~a" i)))
-               (ok (mutate:rebind "params" (params->src cand) "evolve")))
-          (eval-current)
-          (if (and (eq? ok #t) (keep? cur cand))
-              (loop (+ i 1) (cons (list i "KEEP" cand (fitness cand)) rows))
-              (begin
-                (ast:restore snap)
-                (eval-current)
-                (loop (+ i 1) (cons (list i "ROLLBACK" cand (fitness cand)) rows))))))))
-)AURA"},
     {"evolve", "gate.aura", R"AURA(;; gate.aura — what counts as progress. Edit fitness / keep? to change it.
-;; Target: params near (3 -2). Fitness is the negated squared distance.
-(define (fitness p)
-  (let ((a (car p)) (b (cadr p)))
-    (- 0 (+ (* (- a 3) (- a 3)) (* (+ b 2) (+ b 2))))))
-(define (keep? cur cand) (> (fitness cand) (fitness cur)))
+;; The demo asks for 42: a candidate must be closer to it than the live
+;; definition, and it must land on a multiple of 7.
+(define (fitness guess) (abs (- guess 42)))
+(define (keep? live cand)
+  (and (< (fitness cand) (fitness live)) (= 0 (modulo cand 7))))
 )AURA"},
-    {"evolve", "main.aura", R"AURA(;; main.aura — live-AST self-evolution with a gate and an HTML report (aura run).
+    {"evolve", "main.aura", R"AURA(;; main.aura — one live definition, four fixed candidates. Each step snapshots
+;; the live AST, rebinds `guess`, evaluates, then keeps the change or restores
+;; the snapshot. Open this file to see the whole loop; gate.aura holds the rule.
 (require "gate")
-(require "evolve")
-(require "report")
 
-;; The evolving program lives in the live AST; mutate:rebind rewrites it.
-(set-code "(define params (quote (0 0)))")
+(set-code "(define (guess) 0)")
 (eval-current)
-(define (live-params) params)
 
-(define rows (reverse (evolve! 40)))
-(define keeps (length (filter (lambda (r) (equal? (cadr r) "KEEP")) rows)))
-(write-report! "out" rows (live-params))
-(display (format "evolved ~a steps: ~a KEEP, ~a ROLLBACK\n" (length rows) keeps (- (length rows) keeps)))
-(display (format "params ~a fitness ~a\n" (live-params) (fitness (live-params))))
-(display "report: out/report.html (audit: out/audit.tsv)\n")
-)AURA"},
-    {"evolve", "report.aura", R"AURA(;; report.aura — out/report.html and out/audit.tsv
-(define (row->tsv r) (format "~a\t~a\t~a\t~a\n" (car r) (cadr r) (caddr r) (list-ref r 3)))
-(define (row->html r)
-  (format "<tr class=~a><td>~a</td><td>~a</td><td>~a</td><td>~a</td></tr>\n"
-          (cadr r) (car r) (cadr r) (caddr r) (list-ref r 3)))
-(define (join strs) (if (null? strs) "" (string-append (car strs) (join (cdr strs)))))
-(define (write-report! dir rows final)
-  (make-directory dir)
-  (write-file (string-append dir "/audit.tsv")
-              (string-append "step\tdecision\tparams\tfitness\n" (join (map row->tsv rows))))
-  (write-file (string-append dir "/report.html")
-              (string-append
-               "<!doctype html><meta charset=utf-8><title>evolution report</title>"
-               "<style>body{font-family:sans-serif}td{padding:2px 8px}"
-               ".KEEP{background:#dfd}.ROLLBACK{color:#999}</style>"
-               (format "<h1>evolution report</h1><p>final params ~a, fitness ~a</p>"
-                       final (fitness final))
-               "<table><tr><th>step</th><th>decision</th><th>params</th><th>fitness</th></tr>\n"
-               (join (map row->html rows)) "</table>\n")))
+(define (live) (current-source :workspace :define-fn-sugar))
+
+;; Pad a column so the record lines up like a table.
+(define spaces "                    ")
+(define (pad s n)
+  (let ((k (- n (string-length s))))
+    (if (<= k 0) s (string-append s (substring spaces 0 k)))))
+
+(define (step i cand)
+  (let* ((live-value (guess))
+         (src (format "(define (guess) ~a)" cand))
+         (snap (ast:snapshot (format "step-~a" i)))
+         (ok (mutate:rebind "guess" src "evolve")))
+    (eval-current)
+    (if (and (eq? ok #t) (keep? live-value cand))
+        (display (format "~a ~a~a   live ~a\n" i (pad "KEEP" 10) (pad src 19) (live)))
+        (begin
+          (ast:restore snap)
+          (eval-current)
+          (display (format "~a ~a~a   live ~a\n" i (pad "ROLLBACK" 10) (pad src 19) (live)))))))
+
+(for-each (lambda (p) (step (car p) (cadr p)))
+          (list (list 1 10) (list 2 7) (list 3 2) (list 4 42)))
+(display (format "(guess) => ~a\n" (guess)))
 )AURA"},
     {"evolve", "tests/gate_test.aura", R"AURA((require "gate")
-(display (list (fitness (list 3 -2)) (keep? (list 0 0) (list 1 0)) (keep? (list 3 -2) (list 4 -2))))
+(display (list (fitness 42) (keep? 0 7) (keep? 7 2) (keep? 7 42)))
 (newline)
 )AURA"},
-    {"evolve", "tests/gate_test.golden", R"AURA((0 #t #f)
+    {"evolve", "tests/gate_test.golden", R"AURA((0 #t #f #t)
 )AURA"},
     {"agent", ".gitignore", R"AURA(out/
 )AURA"},
     {"agent", "README.md", R"AURA(# {{name}}
 
-An orch workflow: `workflow.aura` defines the stages, `main.aura` runs them.
+Two roles in an orch workflow: `workflow.aura` holds the proposer and the
+checker, `main.aura` wires them stage by stage and prints the dialogue. The
+checker's rejected definition never reaches the live AST.
 
     aura run
     aura test
@@ -214,28 +188,72 @@ jobs:
           path: out/
           if-no-files-found: ignore
 )AURA"},
-    {"agent", "main.aura", R"AURA(;; main.aura — an orch workflow (aura run). Stages run in order; the tasks
-;; inside one stage run in parallel, each on its own region key (keys must not
-;; overlap, otherwise the stage is refused as "missing-or-overlap-keys").
+    {"agent", "main.aura", R"AURA(;; main.aura — run the two roles as workflow stages, collect their lines, then
+;; install the definition the checker kept into the live AST.
 (require "workflow")
 
-(define r
-  (orch:run-workflow
-   (vector (hash "tasks" (vector (lambda () (square 1)) (lambda () (square 2)) (lambda () (square 3)))
-                 "region-keys" (vector 1 2 3))
-           (hash "tasks" (vector (lambda () (summarize (list 1 4 9))))))))
-(display (format "stages ok ~a, failed ~a\n" (hash-ref r "stages-ok") (hash-ref r "stages-failed")))
+(set-code "(define (double x) 0)")
+(eval-current)
+
+(define out (channel:create 16))
+(define (stage thunk) (hash "tasks" (vector thunk)))
+
+(orch:run-workflow
+ (vector
+  (stage (lambda () (propose 0 out)))
+  (stage (lambda () (check 0 out)))
+  (stage (lambda () (propose 1 out)))
+  (stage (lambda () (check 1 out)))))
+
+;; Stages may interleave their sends; collect them and print in order.
+(define rows
+  (let loop ((acc '()))
+    (let ((m (channel:try-recv out)))
+      (if (equal? m "") (reverse acc) (loop (cons m acc))))))
+
+(for-each
+ (lambda (row)
+   (if (equal? (caddr row) "propose")
+       (display (format "propose  ~a\n" (cadr row)))
+       (display (format "check    (double 21) => ~a\n" (list-ref row 3)))))
+ rows)
+
+;; The rejected definition never reaches the live AST; install the kept one.
+(define kept
+  (car (filter (lambda (row) (and (equal? (caddr row) "check")
+                                  (string-index (list-ref row 3) "KEEP")))
+               rows)))
+(mutate:rebind "double" (cadr kept) "keep")
+(eval-current)
+(display (format "live     ~a\n" (current-source :workspace :define-fn-sugar)))
 )AURA"},
     {"agent", "tests/workflow_test.aura", R"AURA((require "workflow")
-(define r (orch:run-workflow (vector (hash "tasks" (vector (lambda () (square 2)) (lambda () (square 3)))
-                                           "region-keys" (vector 1 2)))))
-(display (list (hash-ref r "stages-ok") (hash-ref r "stages-failed") (summarize (list 1 2))))
+(define out (channel:create 8))
+(propose 0 out)
+(check 0 out)
+(define p (channel:try-recv out))
+(define c (channel:try-recv out))
+(display (list (cadr p) (caddr c) (list-ref c 3)))
 (newline)
 )AURA"},
-    {"agent", "tests/workflow_test.golden", R"AURA((1 0 2 results)
+    {"agent", "tests/workflow_test.golden", R"AURA(((define (double x) (+ x x)) check 42  KEEP)
 )AURA"},
-    {"agent", "workflow.aura", R"AURA(;; workflow.aura — the work each task does.
-(define (square n) (* n n))
-(define (summarize xs) (format "~a results" (length xs)))
+    {"agent", "workflow.aura", R"AURA(;; workflow.aura — the two roles in the dialogue.
+;;
+;; The proposer writes candidate definitions; the checker runs each one
+;; against (double 21) and says whether it may stay.
+(define (candidate i)
+  (if (= i 0)
+      (list "(define (double x) (+ x x))" (lambda (x) (+ x x)))
+      (list "(define (double x) (+ x 1))" (lambda (x) (+ x 1)))))
+
+(define (propose i out)
+  (channel:send out (list i (car (candidate i)) "propose" "")))
+
+(define (check i out)
+  (let* ((src (car (candidate i)))
+         (got ((cadr (candidate i)) 21)))
+    (channel:send out (list i src "check"
+                           (format "~a  ~a" got (if (= got 42) "KEEP" "REJECT"))))))
 )AURA"},
 };

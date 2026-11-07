@@ -1,1 +1,1 @@
-(1 0 2 results)
+((define (double x) (+ x x)) check 42  KEEP)

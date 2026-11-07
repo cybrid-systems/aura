@@ -132,22 +132,38 @@ class FrontDoor(unittest.TestCase):
             r = run(["run", "--quiet"], p)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
-    def test_evolve_report_under_5s(self) -> None:
+    def test_evolve_worldline_under_5s(self) -> None:
         p = self.new("evolve", "demo")
         t0 = time.monotonic()
         r = run(["run"], p)
         self.assertLess(time.monotonic() - t0, 5.0)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("preset=dev", r.stderr)
-        self.assertIn("KEEP", r.stdout)
-        self.assertIn("<table>", (p / "out" / "report.html").read_text())
-        self.assertTrue((p / "out" / "audit.tsv").is_file())
+        self.assertEqual(
+            r.stdout,
+            "1 ROLLBACK  (define (guess) 10)   live (define (guess) 0)\n"
+            "2 KEEP      (define (guess) 7)    live (define (guess) 7)\n"
+            "3 ROLLBACK  (define (guess) 2)    live (define (guess) 7)\n"
+            "4 KEEP      (define (guess) 42)   live (define (guess) 42)\n"
+            "(guess) => 42\n",
+        )
+        self.assertFalse((p / "report.aura").exists())
+        self.assertFalse((p / "out" / "report.html").exists())
+        self.assertFalse((p / "out" / "audit.tsv").exists())
         self.assertEqual(run(["test"], p).returncode, 0)
 
     def test_agent(self) -> None:
         p = self.new("agent", "demo")
         r = run(["run"], p)
-        self.assertIn("stages ok 2, failed 0", r.stdout, r.stderr)
+        self.assertEqual(
+            r.stdout,
+            "propose  (define (double x) (+ x x))\n"
+            "check    (double 21) => 42  KEEP\n"
+            "propose  (define (double x) (+ x 1))\n"
+            "check    (double 21) => 22  REJECT\n"
+            "live     (define (double x) (+ x x))\n",
+            r.stderr,
+        )
         self.assertEqual(run(["test"], p).returncode, 0)
 
     def test_default_template_and_errors(self) -> None:
@@ -178,6 +194,7 @@ class FrontDoor(unittest.TestCase):
         r = run(["help", "--all"], self.d)  # #4935: --help is the short overview
         for w in (
             "new",
+            "demo",
             "run",
             "test",
             "--fmt",

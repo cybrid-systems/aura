@@ -1,3 +1,17 @@
-;; workflow.aura — the work each task does.
-(define (square n) (* n n))
-(define (summarize xs) (format "~a results" (length xs)))
+;; workflow.aura — the two roles in the dialogue.
+;;
+;; The proposer writes candidate definitions; the checker runs each one
+;; against (double 21) and says whether it may stay.
+(define (candidate i)
+  (if (= i 0)
+      (list "(define (double x) (+ x x))" (lambda (x) (+ x x)))
+      (list "(define (double x) (+ x 1))" (lambda (x) (+ x 1)))))
+
+(define (propose i out)
+  (channel:send out (list i (car (candidate i)) "propose" "")))
+
+(define (check i out)
+  (let* ((src (car (candidate i)))
+         (got ((cadr (candidate i)) 21)))
+    (channel:send out (list i src "check"
+                           (format "~a  ~a" got (if (= got 42) "KEEP" "REJECT"))))))

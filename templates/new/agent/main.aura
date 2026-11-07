@@ -1,11 +1,38 @@
-;; main.aura — an orch workflow (aura run). Stages run in order; the tasks
-;; inside one stage run in parallel, each on its own region key (keys must not
-;; overlap, otherwise the stage is refused as "missing-or-overlap-keys").
+;; main.aura — run the two roles as workflow stages, collect their lines, then
+;; install the definition the checker kept into the live AST.
 (require "workflow")
 
-(define r
-  (orch:run-workflow
-   (vector (hash "tasks" (vector (lambda () (square 1)) (lambda () (square 2)) (lambda () (square 3)))
-                 "region-keys" (vector 1 2 3))
-           (hash "tasks" (vector (lambda () (summarize (list 1 4 9))))))))
-(display (format "stages ok ~a, failed ~a\n" (hash-ref r "stages-ok") (hash-ref r "stages-failed")))
+(set-code "(define (double x) 0)")
+(eval-current)
+
+(define out (channel:create 16))
+(define (stage thunk) (hash "tasks" (vector thunk)))
+
+(orch:run-workflow
+ (vector
+  (stage (lambda () (propose 0 out)))
+  (stage (lambda () (check 0 out)))
+  (stage (lambda () (propose 1 out)))
+  (stage (lambda () (check 1 out)))))
+
+;; Stages may interleave their sends; collect them and print in order.
+(define rows
+  (let loop ((acc '()))
+    (let ((m (channel:try-recv out)))
+      (if (equal? m "") (reverse acc) (loop (cons m acc))))))
+
+(for-each
+ (lambda (row)
+   (if (equal? (caddr row) "propose")
+       (display (format "propose  ~a\n" (cadr row)))
+       (display (format "check    (double 21) => ~a\n" (list-ref row 3)))))
+ rows)
+
+;; The rejected definition never reaches the live AST; install the kept one.
+(define kept
+  (car (filter (lambda (row) (and (equal? (caddr row) "check")
+                                  (string-index (list-ref row 3) "KEEP")))
+               rows)))
+(mutate:rebind "double" (cadr kept) "keep")
+(eval-current)
+(display (format "live     ~a\n" (current-source :workspace :define-fn-sugar)))
