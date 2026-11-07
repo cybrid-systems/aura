@@ -1,7 +1,10 @@
 name: Install clang-scan-deps 23.1.5
 description: >-
-  Official LLVM 23.1.5 clang-scan-deps, the same commit as aura-ci's clang++.
-  Not clang-tools-22 and not the old dev image.
+  Use clang-scan-deps when it is already installed and reports LLVM 23.1.5,
+  the same release as aura-ci's clang++. The actions cache and the official
+  llvmorg-23.1.5 tarball run only when that binary is missing or is a
+  different version. A matching image binary is not replaced. Not
+  clang-tools-22.
 
 runs:
   using: composite
