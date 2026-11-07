@@ -10,6 +10,10 @@ struct AstRestoreCapture;
 // evaluator_primitives_messaging.cpp; only a forward declaration is needed here.
 struct MessagingChannelCodec;
 
+// Issue #5033: synthesize:optimize phase state (defined in
+// evaluator_primitives_agent.cpp).
+struct SynthesizeOptimizeState;
+
 // Peeled register parts. The struct is a friend of Evaluator, same as
 // CompilePrims. Each function is one responsibility group.
 struct RegSplitParts {
@@ -414,4 +418,17 @@ struct RegSplitParts {
     static void register_strategy_controller_primitives(Evaluator& ev, AddFn& add);
     template <typename AddFn>
     static void register_strategy_evolution_stats_primitives(Evaluator& ev, AddFn& add);
+    template <typename AddFn>
+    static void register_synthesize_template_primitives(Evaluator& ev, AddFn& add);
+    template <typename AddFn>
+    static void register_synthesize_template_query_primitives(Evaluator& ev, AddFn& add);
+    template <typename AddFn>
+    static void register_synthesize_define_primitives(Evaluator& ev, AddFn& add);
+    template <typename AddFn>
+    static void register_synthesize_optimize_primitives(Evaluator& ev, AddFn& add,
+                                                        std::function<void()> destroy_defuse_index);
+    static std::string synth_optimize_classify_probe(Evaluator& ev, const EvalValue& v);
+    static double synth_optimize_compute_fitness(Evaluator& ev, SynthesizeOptimizeState& st,
+                                                 const std::string& src);
+    static void synth_optimize_evolve(Evaluator& ev, SynthesizeOptimizeState& st);
 };
