@@ -50,6 +50,73 @@ def _read(rel: str) -> str:
     return p.read_text(encoding="utf-8", errors="replace")
 
 
+def _function_body(text: str, signature: str) -> str:
+    start = text.find(signature)
+    if start < 0:
+        return ""
+    i = text.find("{", start)
+    if i < 0:
+        return ""
+    depth = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == "/" and i + 1 < n and text[i + 1] == "/":
+            i = text.find("\n", i)
+            if i < 0:
+                break
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":
+            end = text.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+            continue
+        if c in "\"'":
+            q = c
+            i += 1
+            while i < n:
+                if text[i] == "\\":
+                    i += 2
+                    continue
+                if text[i] == q:
+                    i += 1
+                    break
+                i += 1
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+        i += 1
+    return ""
+
+
+def _set_tag_window(blame_body: str) -> str | None:
+    """The affected-name tag list inside the blame helper, or None if the shape moved."""
+    reserve = blame_body.find("affected_names.reserve(st.affected.size())")
+    if reserve < 0:
+        return None
+    insert = blame_body.find("affected_names.insert(std::string(nm));", reserve)
+    if insert < 0:
+        return None
+    return blame_body[reserve:insert]
+
+
+def _set_tags_ok(window: str) -> str | None:
+    for tag in (
+        "NodeTag::Set",
+        "NodeTag::Variable",
+        "NodeTag::Define",
+        "NodeTag::Let",
+        "NodeTag::LetRec",
+        "NodeTag::Lambda",
+    ):
+        if tag not in window:
+            return tag
+    return None
+
+
 def main() -> int:
     fails: list[str] = []
 
@@ -136,44 +203,34 @@ def main() -> int:
                     "with the expected context type)"
                 )
 
-    # AC3: NodeTag::Set must be in the infer_flat_partial affected_names
-    # tag list. Use a unique anchor: the `affected_names.reserve(affected.size())`
-    # line (only infer_flat_partial has this specific reserve + insert combo).
-    aff_reserve_pos = tci.find("affected_names.reserve(st.affected.size())")
-    if aff_reserve_pos == -1:
-        # #2646/#3408 follow-up: infer_flat_partial was split into
-        # partial_* helpers that carry the locals on InferFlatPartialState.
-        aff_reserve_pos = tci.find("affected_names.reserve(affected.size())")
-    if aff_reserve_pos == -1:
+    # AC3: NodeTag::Set stays in the affected-name tag list. That list now
+    # lives in partial_blame_and_selective_invalidate, which infer_flat_partial
+    # must call. A reserve anywhere else in the file, or the pre-split
+    # `affected.size()` spelling alone, does not satisfy this.
+    blame = _function_body(tci, "void partial_blame_and_selective_invalidate(")
+    orch = _function_body(tci, "std::span<const aura::ast::MutationRecord> extra_recs)")
+    window = _set_tag_window(blame)
+    if window is None:
         fails.append(
-            "AC3: infer_flat_partial affected_names.reserve(affected.size()) "
+            "AC3: partial_blame_and_selective_invalidate affected_names.reserve(st.affected.size()) "
             "block not found — shape changed unexpectedly"
         )
     else:
-        # Scope the tag list: from the reserve line to the insert line.
-        aff_insert_pos = tci.find("affected_names.insert(std::string(nm));", aff_reserve_pos)
-        if aff_insert_pos == -1:
+        missing = _set_tags_ok(window)
+        if missing == "NodeTag::Set":
             fails.append(
-                "AC3: affected_names.insert(std::string(nm)) not found after reserve — shape changed unexpectedly"
+                "AC3: affected_names tag list does NOT include NodeTag::Set — "
+                "Set node's v.sym_id is invisible to invalidate_predicate_memo_for_var_names "
+                "unless a Variable use of the same name is also in the cone"
             )
-        else:
-            tag_list = tci[aff_reserve_pos:aff_insert_pos]
-            if "NodeTag::Set" not in tag_list:
-                fails.append(
-                    "AC3: infer_flat_partial affected_names tag list does NOT "
-                    "include NodeTag::Set — Set node's v.sym_id is invisible to "
-                    "invalidate_predicate_memo_for_var_names unless a Variable "
-                    "use of the same name is also in the cone"
-                )
-            if "NodeTag::Variable" not in tag_list:
-                fails.append(
-                    "AC3: NodeTag::Variable missing from affected_names tag list "
-                    "(regression — Variable was the baseline)"
-                )
-            if "NodeTag::Define" not in tag_list:
-                fails.append(
-                    "AC3: NodeTag::Define missing from affected_names tag list (regression — Define was the baseline)"
-                )
+        elif missing:
+            fails.append(
+                f"AC3: {missing} missing from affected_names tag list (regression — it was in the baseline list)"
+            )
+    if "partial_blame_and_selective_invalidate(st, engine)" not in orch:
+        fails.append("AC3: infer_flat_partial does not call partial_blame_and_selective_invalidate")
+    if window is not None and _set_tags_ok(window.replace("NodeTag::Set", "NodeTag::Gone")) is None:
+        fails.append("AC3 negative: a tag list without NodeTag::Set was accepted")
 
     if "set_node_error" not in synth_after:
         fails.append(

@@ -1607,13 +1607,29 @@ static void ac2646_outside_cone_invalidate_source_cite() {
     CHECK(impl.find("outside_cone_conds.empty()") != std::string::npos,
           "#2646 AC3: empty outside set → no extra call");
 
-    // AC4: #2622 diverge metric ordering — outside invalidate fires AFTER
-    // the existing #2622 sync_occurrence_after_dirty call.
-    const auto pos_2622 = impl.find("sync_occurrence_after_dirty(\n"
-                                    "            std::span<const NodeId>(memo_targets.data(),");
-    const auto pos_2646 = impl.find("Issue #2646: cone-truncate must drop goals/memo");
+    // AC4: inside partial_blame_and_selective_invalidate, the #2646
+    // outside-cone sync is after the #2622 memo_targets sync. infer_flat_partial
+    // stores the truncate flag before it calls that helper.
+    const auto blame = impl.find("void partial_blame_and_selective_invalidate(");
+    const auto blame_end = impl.find("void partial_renarrow_and_seed_adt(", blame);
+    const auto blame_body =
+        (blame == std::string::npos || blame_end == std::string::npos || blame_end < blame)
+            ? std::string{}
+            : impl.substr(blame, blame_end - blame);
+    const auto pos_2622 = blame_body.find("memo_targets.data()");
+    const auto pos_2646 = blame_body.find("Issue #2646: cone-truncate must drop goals/memo");
     CHECK(pos_2622 != std::string::npos && pos_2646 != std::string::npos && pos_2646 > pos_2622,
           "#2646 AC4: outside invalidate wired AFTER #2622 sync (ordering preserved)");
+    const auto orch = impl.find("std::span<const aura::ast::MutationRecord> extra_recs)");
+    const auto orch_end = impl.find("return st.re_inferred;", orch);
+    const auto orch_body = (orch == std::string::npos || orch_end == std::string::npos)
+                               ? std::string{}
+                               : impl.substr(orch, orch_end - orch);
+    const auto trunc_call = orch_body.find("partial_truncate_cone_and_invalidate(st)");
+    const auto blame_call = orch_body.find("partial_blame_and_selective_invalidate(st, engine)");
+    CHECK(trunc_call != std::string::npos && blame_call != std::string::npos &&
+              trunc_call < blame_call,
+          "#2646 AC4: truncate runs before the blame helper");
 
     // Counters in observability_metrics.h
     CHECK(obs.find("occurrence_cone_outside_invalidate_total") != std::string::npos,

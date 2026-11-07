@@ -27,6 +27,70 @@ def _read(rel: str) -> str:
     return p.read_text(encoding="utf-8", errors="replace")
 
 
+def _function_body(text: str, signature: str) -> str:
+    """Brace-matched body of the first function whose header contains signature.
+
+    Comments and string/character literals do not move the brace depth, so a
+    comment that mentions another function cannot steal the span.
+    """
+    start = text.find(signature)
+    if start < 0:
+        return ""
+    i = text.find("{", start)
+    if i < 0:
+        return ""
+    depth = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == "/" and i + 1 < n and text[i + 1] == "/":
+            i = text.find("\n", i)
+            if i < 0:
+                break
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":
+            end = text.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+            continue
+        if c in "\"'":
+            q = c
+            i += 1
+            while i < n:
+                if text[i] == "\\":
+                    i += 2
+                    continue
+                if text[i] == q:
+                    i += 1
+                    break
+                i += 1
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+        i += 1
+    return ""
+
+
+def _outside_after_sync(blame_body: str) -> str | None:
+    """#2646 outside-cone invalidate must follow the #2622 memo sync in this body."""
+    sync = blame_body.find("sync_occurrence_after_dirty(")
+    memo = blame_body.find("memo_targets.data()", sync if sync >= 0 else 0)
+    mark = blame_body.find("Issue #2646: cone-truncate must drop goals/memo")
+    gate = blame_body.find("if (st.tc.last_partial_cone_truncated_)")
+    nonempty = blame_body.find("if (!outside_cone_conds.empty())")
+    second = blame_body.find("outside_cone_conds.data()")
+    if sync < 0 or memo < 0 or not (sync < memo < sync + 600):
+        return "missing #2622 sync_occurrence_after_dirty(memo_targets)"
+    if mark < 0 or gate < 0 or nonempty < 0 or second < 0:
+        return "missing #2646 truncated gate, empty short-circuit, or outside sync"
+    if not (memo < mark < gate < nonempty < second):
+        return "#2646 outside-invalidate is not after the #2622 memo sync"
+    return None
+
+
 def main() -> int:
     fails: list[str] = []
 
@@ -46,29 +110,47 @@ def main() -> int:
     must("engine.sync_occurrence_after_dirty", "AC1", impl)
     must("last_partial_cone_truncated_", "AC2", impl)
 
-    # AC3: gate on truncated + empty-set short-circuit
-    if "if (st.tc.last_partial_cone_truncated_)" not in impl and "if (last_partial_cone_truncated_)" not in impl:
+    # AC3+AC4 are scoped to the helper that owns the invalidate, and to the
+    # orchestrator that runs cone truncate (which stores the flag) before it.
+    # A file-wide string hit is not enough: the old `if (last_partial_cone_truncated_)`
+    # shape is a substring of the new one and would pass even if the gate moved.
+    blame = _function_body(impl, "void partial_blame_and_selective_invalidate(")
+    trunc = _function_body(impl, "void partial_truncate_cone_and_invalidate(")
+    # The one-argument overload only forwards. The orchestration lives on the
+    # extra_recs overload.
+    orch = _function_body(impl, "std::span<const aura::ast::MutationRecord> extra_recs)")
+    if not blame:
+        fails.append("AC3: partial_blame_and_selective_invalidate body missing")
+    else:
+        why = _outside_after_sync(blame)
+        if why:
+            fails.append(f"AC3/AC4: {why}")
+        if "outside_cone_conds.empty()" not in blame:
+            fails.append("AC3: empty outside set is not the short-circuit inside the blame helper")
+    if "st.tc.last_partial_cone_truncated_ = truncated;" not in trunc:
+        fails.append("AC3: truncate helper no longer stores last_partial_cone_truncated_")
+    trunc_call = orch.find("partial_truncate_cone_and_invalidate(st)")
+    blame_call = orch.find("partial_blame_and_selective_invalidate(st, engine)")
+    if trunc_call < 0 or blame_call < 0 or not (trunc_call < blame_call):
         fails.append(
-            "AC3: missing if (last_partial_cone_truncated_) (or the st.tc.-scoped shape the partial_* helpers use)"
+            "AC4: infer_flat_partial must call partial_truncate_cone_and_invalidate "
+            "before partial_blame_and_selective_invalidate"
         )
-    must("outside_cone_conds.empty()", "AC3", impl)
-
-    # AC4: ordering — #2646 fires AFTER #2622 sync
-    # (text-position check: #2646 marker appears AFTER #2622 sync marker)
-    def _sync_pos_with_memo(text: str) -> int:
-        start = 0
-        while True:
-            p = text.find("sync_occurrence_after_dirty(", start)
-            if p == -1:
-                return -1
-            if "memo_targets.data()" in text[p : p + 600]:
-                return p
-            start = p + 1
-
-    pos_2622 = _sync_pos_with_memo(impl)
-    pos_2646 = impl.find("Issue #2646: cone-truncate must drop goals/memo")
-    if pos_2622 == -1 or pos_2646 == -1 or pos_2646 <= pos_2622:
-        fails.append("AC4: #2646 outside-invalidate position must be AFTER #2622 sync_occurrence_after_dirty")
+    # Counterexample: the same predicate must reject a body that runs the
+    # outside-cone sync before the #2622 memo sync, and one that drops the gate.
+    # The marker is placed before the memo sync on purpose.
+    reversed_body = (
+        "// Issue #2646: cone-truncate must drop goals/memo\n"
+        "if (st.tc.last_partial_cone_truncated_) {\n"
+        "  if (!outside_cone_conds.empty()) sync(outside_cone_conds.data());\n"
+        "}\n"
+        "sync_occurrence_after_dirty(memo_targets.data());\n"
+    )
+    if _outside_after_sync(reversed_body) is None:
+        fails.append("AC4 negative: reversed #2646-before-#2622 body was accepted")
+    ungated = blame.replace("if (st.tc.last_partial_cone_truncated_)", "if (true)", 1)
+    if blame and _outside_after_sync(ungated) is None:
+        fails.append("AC3 negative: dropping the truncated gate was accepted")
 
     # AC5: source-cite + counters + linter registration
     must("#2646", "AC5", impl)
