@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <span>
 #include <string>
 #include <vector>
 
@@ -68,7 +69,7 @@ public:
     int commit(const std::string& message);
 
     // Stage files. Returns 0 on success.
-    int stage(const std::vector<std::string>& paths);
+    int stage(std::span<const std::string> paths);
 
 private:
 #ifdef AURA_HAVE_LIBGIT2

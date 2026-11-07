@@ -590,8 +590,11 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
                 r.error = name.empty() ? "task-failed" : ("task-failed:" + name);
 
             const bool ok = r.ok;
-            const std::string value = r.value;
-            const std::string error = r.error;
+            // The result slot owns r. Copy a mailbox payload only when a
+            // mailbox is attached; the view of r dies at the move below.
+            std::string mailbox_payload;
+            if (mb)
+                mailbox_payload = ok ? r.value : (std::string("err:") + r.error);
             {
                 std::scoped_lock lock(sh->results_mu);
                 if (i < sh->results.size())
@@ -635,7 +638,7 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
                 msg.to_fiber = 0;
                 msg.priority =
                     ok ? mf_mailbox::MailPriority::Normal : mf_mailbox::MailPriority::High;
-                msg.payload = ok ? value : (std::string("err:") + error);
+                msg.payload = std::move(mailbox_payload);
                 if (mb->push(std::move(msg)) == mf_mailbox::PushStatus::Ok)
                     g_parallel_orch_stats.mailbox_posts.fetch_add(1, std::memory_order_relaxed);
             }

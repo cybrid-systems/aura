@@ -8,6 +8,64 @@ namespace aura::parser::detail {
 
 using namespace aura::ast;
 
+namespace {
+
+    // One allocation for prefix + text + suffix. Token text is already a view.
+    [[nodiscard]] std::string concat3(std::string_view a, std::string_view b, std::string_view c) {
+        std::string out;
+        out.reserve(a.size() + b.size() + c.size());
+        out.append(a);
+        out.append(b);
+        out.append(c);
+        return out;
+    }
+
+    // Integer and float tokens are the whole lexeme. from_chars does not allocate
+    // and does not throw; a partial match or a value outside the type is a miss.
+    // Past int64, parse_number falls through to the float reader (#4462).
+    [[nodiscard]] constexpr std::optional<std::int64_t>
+    parse_i64_token(std::string_view text) noexcept {
+        if (text.empty())
+            return std::nullopt;
+        std::int64_t value{};
+        const char* const first = text.data();
+        const char* const last = first + text.size();
+        const std::from_chars_result res = std::from_chars(first, last, value);
+        if (res.ec != std::errc{} || res.ptr != last)
+            return std::nullopt;
+        return value;
+    }
+
+    [[nodiscard]] std::optional<double> parse_f64_token(std::string_view text) noexcept {
+        if (text.empty())
+            return std::nullopt;
+        double value{};
+        const char* const first = text.data();
+        const char* const last = first + text.size();
+        const std::from_chars_result res = std::from_chars(first, last, value);
+        if (res.ec != std::errc{} || res.ptr != last)
+            return std::nullopt;
+        return value;
+    }
+
+    static_assert(parse_i64_token("0") == 0);
+    static_assert(parse_i64_token("1") == 1);
+    static_assert(parse_i64_token("-42") == -42);
+    static_assert(parse_i64_token("9223372036854775807") == 9223372036854775807LL);
+    static_assert(!parse_i64_token("").has_value());
+    static_assert(!parse_i64_token("-").has_value());
+    static_assert(!parse_i64_token("1.5").has_value());
+    static_assert(!parse_i64_token("9223372036854775808").has_value());
+
+    // resolve() aliases the pool buffer. intern() may reallocate it, so the
+    // name is copied before the call. Do not pass the view straight through.
+    [[nodiscard]] SymId reintern_resolved(StringPool& pool, SymId id) {
+        const std::string owned(pool.resolve(id));
+        return pool.intern(owned);
+    }
+
+} // namespace
+
 FlatParseResult parse(ParserState& s, std::string_view src) {
     FlatParseResult r;
     try {
@@ -18,17 +76,17 @@ FlatParseResult parse(ParserState& s, std::string_view src) {
         auto token_desc = [&](const Token& t) -> std::string {
             switch (t.kind) {
                 case TokenKind::Identifier:
-                    return "identifier '" + std::string(t.text) + "'";
+                    return concat3("identifier '", t.text, "'");
                 case TokenKind::Integer:
-                    return "integer '" + std::string(t.text) + "'";
+                    return concat3("integer '", t.text, "'");
                 case TokenKind::Float:
-                    return "float '" + std::string(t.text) + "'";
+                    return concat3("float '", t.text, "'");
                 case TokenKind::String:
-                    return "string literal '" + std::string(t.text) + "'";
+                    return concat3("string literal '", t.text, "'");
                 case TokenKind::Bool:
-                    return "boolean '" + std::string(t.text) + "'";
+                    return concat3("boolean '", t.text, "'");
                 case TokenKind::Character: // Issue #4129
-                    return "character literal (code point " + std::string(t.text) + ")";
+                    return concat3("character literal (code point ", t.text, ")");
                 case TokenKind::LParen:
                     return "'('";
                 case TokenKind::RParen:
@@ -49,8 +107,8 @@ FlatParseResult parse(ParserState& s, std::string_view src) {
                     // Issue #4498: 1/2 lexes as one Error token.
                     if (!t.text.empty() && t.text.find('/') != std::string_view::npos &&
                         (std::isdigit(static_cast<unsigned char>(t.text[0])) || t.text[0] == '-'))
-                        return "unsupported rational literal '" + std::string(t.text) +
-                               "' (write a float such as 0.5, or (/ 1.0 2))";
+                        return concat3("unsupported rational literal '", t.text,
+                                       "' (write a float such as 0.5, or (/ 1.0 2))");
                     return "invalid character";
                 default:
                     return "token";
@@ -58,14 +116,13 @@ FlatParseResult parse(ParserState& s, std::string_view src) {
         };
 
         // Record structured parse error with token location
-        auto record_error = [&](const std::string& msg,
-                                std::optional<Token> err_tok = std::nullopt) {
+        auto record_error = [&](std::string_view msg, std::optional<Token> err_tok = std::nullopt) {
             auto loc = err_tok ? aura::diag::SourceLocation{err_tok->line, err_tok->column, 0}
                                : aura::diag::SourceLocation{};
             auto formatted = loc.valid() ? std::format("{}: {}", loc.format(), msg) : msg;
             if (r.error.empty())
                 r.error = formatted;
-            r.errors.push_back({msg, loc});
+            r.errors.push_back(ParseError{std::string(msg), loc});
             // Skip tokens until we can try parsing again
             int depth = 0;
             while (!s.lex.eof()) {
@@ -139,8 +196,8 @@ FlatParseResult parse(ParserState& s, std::string_view src) {
             if (next.kind == TokenKind::Error && s.deferred_error.empty() &&
                 next.text.find('/') != std::string_view::npos && !next.text.empty() &&
                 (std::isdigit(static_cast<unsigned char>(next.text[0])) || next.text[0] == '-'))
-                s.deferred_error = "rational literal '" + std::string(next.text) +
-                                   "' is not supported; write a float (0.5) or (/ 1.0 2)";
+                s.deferred_error = concat3("rational literal '", next.text,
+                                           "' is not supported; write a float (0.5) or (/ 1.0 2)");
             flush_deferred_char_error();
             r.success = r.root != NULL_NODE;
             return r;
@@ -159,11 +216,11 @@ FlatParseResult parse(ParserState& s, std::string_view src) {
             // secondary error.
             flush_deferred_char_error();
             auto loc = aura::diag::SourceLocation{tok.line, tok.column, 0};
-            auto msg = std::string("unexpected ')'");
+            const std::string_view msg = "unexpected ')'";
             auto formatted = loc.valid() ? std::format("{}: {}", loc.format(), msg) : msg;
             if (r.error.empty())
                 r.error = formatted;
-            r.errors.push_back({msg, loc});
+            r.errors.push_back(ParseError{std::string(msg), loc});
             r.root = NULL_NODE;
             r.success = false;
         };
@@ -248,8 +305,10 @@ NodeId parse_expr(ParserState& s) {
             return parse_number(s, s.lex.consume());
         case TokenKind::Bool: {
             auto tok = s.lex.consume();
-            auto v = std::stoll(std::string(tok.text));
-            auto id = s.flat.add_literal(v);
+            const auto v = parse_i64_token(tok.text);
+            if (!v)
+                return NULL_NODE;
+            auto id = s.flat.add_literal(*v);
             s.flat.set_marker(id, aura::ast::SyntaxMarker::BoolLiteral);
             s.flat.set_loc(id, tok.line, tok.column);
             return id;
@@ -274,7 +333,7 @@ NodeId parse_expr(ParserState& s) {
             // double-unescaped sequences: "a\\\\b" (4) came out a\\b (3),
             // "x\\\\\"y" (4) came out x\"y (3). Use the lexer value
             // directly — one unescape per nesting level.
-            auto id = s.flat.add_literalstring(s.pool.intern(std::string(tok.text)));
+            auto id = s.flat.add_literalstring(s.pool.intern(tok.text));
             s.flat.set_loc(id, tok.line, tok.column);
             return id;
         }
@@ -284,7 +343,7 @@ NodeId parse_expr(ParserState& s) {
         }
         case TokenKind::Identifier: {
             auto tok = s.lex.consume();
-            auto text = std::string(tok.text);
+            const std::string_view text = tok.text;
             // M4 &mut-x reader macro: &mut-x → (mut-borrow x). Issue #4807: must be
             // tested before the shorter &x prefix, which used to read it as
             // (borrow mut-x).
@@ -299,7 +358,7 @@ NodeId parse_expr(ParserState& s) {
             // M4 &x reader macro: &x → (borrow x). Issue #4805: a name made
             // only of '&' (`&&`, `&&&`) is an ordinary symbol, not (borrow &).
             if (!tok.quoted && text.size() > 1 && text[0] == '&' &&
-                text.find_first_not_of('&') != std::string::npos) {
+                text.find_first_not_of('&') != std::string_view::npos) {
                 auto var_name = text.substr(1);
                 auto inner = s.flat.add_variable(s.pool.intern(var_name));
                 auto id = s.flat.add_borrow(inner);
@@ -404,13 +463,13 @@ NodeId parse_expr(ParserState& s) {
                 s.deferred_column = tok.column;
             }
             if (tok.text.starts_with("#\\") && s.deferred_error.empty())
-                s.deferred_error = "malformed character literal '" + std::string(tok.text) + "'";
+                s.deferred_error = concat3("malformed character literal '", tok.text, "'");
             // Issue #4498: 1/2 — exact rationals are not supported.
             if (tok.text.find('/') != std::string_view::npos && !tok.text.empty() &&
                 (std::isdigit(static_cast<unsigned char>(tok.text[0])) || tok.text[0] == '-') &&
                 s.deferred_error.empty()) {
-                s.deferred_error = "rational literal '" + std::string(tok.text) +
-                                   "' is not supported; write a float (0.5) or (/ 1.0 2)";
+                s.deferred_error = concat3("rational literal '", tok.text,
+                                           "' is not supported; write a float (0.5) or (/ 1.0 2)");
                 // Issue #4799: stamp the literal's own position (the token is
                 // already consumed, so s.defer() would point past it).
                 s.deferred_line = tok.line;
@@ -423,31 +482,20 @@ NodeId parse_expr(ParserState& s) {
 }
 
 NodeId parse_number(ParserState& s, Token tok) {
-    const std::string text(tok.text);
-    try {
-        auto v = std::stoll(text);
-        return s.flat.add_literal(v);
-    } catch (const std::out_of_range&) {
-        // Issue #4462: past int64 is still a number. Store a float so the
-        // reader does not drop the token. Values inside int64 stay integers
-        // here; eval promotes the ones outside the fixnum domain.
-        try {
-            return s.flat.add_literal_float(std::stod(text));
-        } catch (...) {
-            return NULL_NODE;
-        }
-    } catch (...) {
-        return NULL_NODE;
-    }
+    if (const auto v = parse_i64_token(tok.text))
+        return s.flat.add_literal(*v);
+    // Issue #4462: past int64 is still a number. Store a float so the
+    // reader does not drop the token. Values inside int64 stay integers
+    // here; eval promotes the ones outside the fixnum domain.
+    if (const auto f = parse_f64_token(tok.text))
+        return s.flat.add_literal_float(*f);
+    return NULL_NODE;
 }
 
 NodeId parse_float(ParserState& s, Token tok) {
-    try {
-        auto v = std::stod(std::string(tok.text));
-        return s.flat.add_literal_float(v);
-    } catch (...) {
-        return NULL_NODE;
-    }
+    if (const auto v = parse_f64_token(tok.text))
+        return s.flat.add_literal_float(*v);
+    return NULL_NODE;
 }
 
 // Issue #4760: quasiquote nesting level of the template being read. 0 = not
@@ -757,7 +805,7 @@ NodeId parse_lambda(ParserState& s) {
         auto rest = s.lex.consume();
         std::vector<SymId> params;
         std::vector<NodeId> annots;
-        params.push_back(s.pool.intern(std::string(rest.text)));
+        params.push_back(s.pool.intern(rest.text));
         annots.push_back(NULL_NODE);
         std::vector<NodeId> body_exprs;
         while (s.lex.peek().kind != TokenKind::RParen && !s.lex.eof()) {
@@ -808,7 +856,7 @@ NodeId parse_lambda(ParserState& s) {
             auto rest = s.lex.consume();
             if (rest.kind != TokenKind::Identifier)
                 return NULL_NODE;
-            params.push_back(s.pool.intern(std::string(rest.text)));
+            params.push_back(s.pool.intern(rest.text));
             annots.push_back(NULL_NODE);
             dotted = true;
             break;
@@ -842,16 +890,16 @@ NodeId parse_lambda(ParserState& s) {
             // (regular `x` followed by `y` → two params).
             auto next = s.lex.peek();
             if (next.kind == TokenKind::Identifier && (next.text == ":?" || next.text == "_")) {
-                auto hole_text = std::string(next.text);
+                const std::string_view hole_text = next.text;
                 s.lex.consume(); // :? or _
-                auto var_node = s.flat.add_variable(s.pool.intern(std::string(t.text)));
+                auto var_node = s.flat.add_variable(s.pool.intern(t.text));
                 auto hole_sym = s.pool.intern(hole_text);
                 auto annot_node = s.flat.add_type_annotation(hole_sym, var_node);
                 s.flat.set_loc(annot_node, tok.line, tok.column);
-                params.push_back(s.pool.intern(std::string(t.text)));
+                params.push_back(s.pool.intern(t.text));
                 annots.push_back(annot_node);
             } else {
-                params.push_back(s.pool.intern(std::string(t.text)));
+                params.push_back(s.pool.intern(t.text));
                 annots.push_back(NULL_NODE);
             }
         }
@@ -926,7 +974,7 @@ NodeId parse_define(ParserState& s) {
                     skip_rparen(s);
                     return NULL_NODE;
                 }
-                params.push_back(s.pool.intern(std::string(rest.text)));
+                params.push_back(s.pool.intern(rest.text));
                 annots.push_back(NULL_NODE);
                 dotted = true;
                 break;
@@ -949,7 +997,7 @@ NodeId parse_define(ParserState& s) {
                     skip_rparen(s);
                     return NULL_NODE;
                 }
-                params.push_back(s.pool.intern(std::string(p.text)));
+                params.push_back(s.pool.intern(p.text));
                 annots.push_back(NULL_NODE);
             }
         }
@@ -980,7 +1028,7 @@ NodeId parse_define(ParserState& s) {
         // (define-lookup name) reports (id line col) for editor goto-def,
         // and a Define without set_loc reads 0:0. Same head-token position
         // convention as parse_list (1-based).
-        auto did = s.flat.add_define(s.pool.intern(std::string(fn.text)), lambda);
+        auto did = s.flat.add_define(s.pool.intern(fn.text), lambda);
         s.flat.set_loc(did, tok.line, tok.column);
         return did;
     }
@@ -1001,7 +1049,7 @@ NodeId parse_define(ParserState& s) {
     }
     s.lex.consume(); // ')'
     // Issue #4347: same parse-location face for (define name value).
-    auto did = s.flat.add_define(s.pool.intern(std::string(n.text)), v);
+    auto did = s.flat.add_define(s.pool.intern(n.text), v);
     s.flat.set_loc(did, tok.line, tok.column);
     return did;
 }
@@ -1186,7 +1234,7 @@ NodeId parse_let(ParserState& s, bool rec) {
         auto v = parse_expr(s);
         if (v == NULL_NODE)
             return NULL_NODE;
-        bs.push_back({s.pool.intern(std::string(n.text)), v});
+        bs.push_back({s.pool.intern(n.text), v});
         if (s.lex.consume().kind != TokenKind::RParen)
             return NULL_NODE;
     }
@@ -1241,7 +1289,7 @@ NodeId parse_named_let(ParserState& s) {
     if (name_tok.kind != TokenKind::Identifier)
         return NULL_NODE;
     s.lex.consume(); // consume the name
-    auto name = s.pool.intern(std::string(name_tok.text));
+    auto name = s.pool.intern(name_tok.text);
 
     // Expect '(' for binding list
     if (s.lex.consume().kind != TokenKind::LParen)
@@ -1262,7 +1310,7 @@ NodeId parse_named_let(ParserState& s) {
         auto v = parse_expr(s);
         if (v == NULL_NODE)
             return NULL_NODE;
-        bs.push_back({s.pool.intern(std::string(n.text)), v});
+        bs.push_back({s.pool.intern(n.text), v});
         if (s.lex.consume().kind != TokenKind::RParen)
             return NULL_NODE;
     }
@@ -1323,7 +1371,7 @@ NodeId parse_let_star(ParserState& s) {
         auto v = parse_expr(s);
         if (v == NULL_NODE)
             return NULL_NODE;
-        bs.push_back({s.pool.intern(std::string(n.text)), v});
+        bs.push_back({s.pool.intern(n.text), v});
         if (s.lex.consume().kind != TokenKind::RParen)
             return NULL_NODE;
     }
@@ -1358,8 +1406,10 @@ NodeId parse_val(ParserState& s) {
             return parse_number(s, s.lex.consume());
         case TokenKind::Bool: {
             auto tok = s.lex.consume();
-            auto v = std::stoll(std::string(tok.text));
-            auto id = s.flat.add_literal(v);
+            const auto v = parse_i64_token(tok.text);
+            if (!v)
+                return NULL_NODE;
+            auto id = s.flat.add_literal(*v);
             s.flat.set_marker(id, aura::ast::SyntaxMarker::BoolLiteral);
             s.flat.set_loc(id, tok.line, tok.column);
             return id;
@@ -1373,10 +1423,10 @@ NodeId parse_val(ParserState& s) {
             // double-unescaped the data/quasiquote path, so the same
             // literal decoded differently from parse_expr (#4348). Use the
             // lexer value directly — one unescape per nesting level.
-            return s.flat.add_literalstring(s.pool.intern(std::string(tok2.text)));
+            return s.flat.add_literalstring(s.pool.intern(tok2.text));
         }
         case TokenKind::Identifier:
-            return s.flat.add_variable(s.pool.intern(std::string(s.lex.consume().text)));
+            return s.flat.add_variable(s.pool.intern(s.lex.consume().text));
         case TokenKind::LParen:
             s.lex.consume();
             return parse_list(s);
@@ -1427,7 +1477,7 @@ NodeId parse_set(ParserState& s) {
         return NULL_NODE;
     }
     s.lex.consume(); // ')'
-    auto sid = s.flat.add_set(s.pool.intern(std::string(n.text)), v);
+    auto sid = s.flat.add_set(s.pool.intern(n.text), v);
     s.flat.set_loc(sid, tok.line, tok.column);
     return sid;
 }
@@ -1535,7 +1585,7 @@ NodeId parse_defmacro(ParserState& s, bool hygienic, bool preserve_dotted) {
                 s.lex.consume(); // consume '&name'
                 preserved_macro = true;
                 // Strip the leading '&' and intern the rest.
-                params.push_back(s.pool.intern(std::string(ptext.substr(1))));
+                params.push_back(s.pool.intern(ptext.substr(1)));
                 continue;
             }
         }
@@ -1545,7 +1595,7 @@ NodeId parse_defmacro(ParserState& s, bool hygienic, bool preserve_dotted) {
             if (s.lex.peek().kind != TokenKind::Identifier)
                 break;
             auto rest = s.lex.consume();
-            params.push_back(s.pool.intern(std::string(rest.text)));
+            params.push_back(s.pool.intern(rest.text));
             dotted = true;
             break;
         }
@@ -1554,7 +1604,7 @@ NodeId parse_defmacro(ParserState& s, bool hygienic, bool preserve_dotted) {
             skip_rparen(s);
             return NULL_NODE;
         }
-        params.push_back(s.pool.intern(std::string(p.text)));
+        params.push_back(s.pool.intern(p.text));
     }
     s.lex.consume(); // ')'
     // Issue #137: macro body may be a multi-form block (e.g. (define ...)
@@ -1585,8 +1635,8 @@ NodeId parse_defmacro(ParserState& s, bool hygienic, bool preserve_dotted) {
         s.lex.consume();
     if (body_exprs.size() > 1)
         body = s.flat.add_begin(body_exprs);
-    auto mid = s.flat.add_macrodef(s.pool.intern(std::string(name.text)), params, body, dotted,
-                                   hygienic, preserved_macro);
+    auto mid = s.flat.add_macrodef(s.pool.intern(name.text), params, body, dotted, hygienic,
+                                   preserved_macro);
     s.flat.set_loc(mid, tok.line, tok.column);
     return mid;
 }
@@ -1939,13 +1989,13 @@ NodeId parse_check(ParserState& s) {
     // `(check x :?)` or `(check x _)` interchangeably.
     if (s.lex.peek().kind == TokenKind::Identifier &&
         (s.lex.peek().text == ":" || s.lex.peek().text == ":?" || s.lex.peek().text == "_")) {
-        auto type_text = std::string(s.lex.peek().text);
+        std::string_view type_text = s.lex.peek().text;
         if (type_text == ":") {
             s.lex.consume(); // ':'
             // Now read the actual type name token.
             auto type_tok = s.lex.peek();
             if (type_tok.kind == TokenKind::Identifier) {
-                type_text = std::string(type_tok.text);
+                type_text = type_tok.text;
                 s.lex.consume(); // TypeName
             }
         } else {
@@ -1964,7 +2014,7 @@ NodeId parse_check(ParserState& s) {
     // form; the hole-only form is the LLM-friendly form.
     if (s.lex.peek().kind == TokenKind::Identifier &&
         (s.lex.peek().text == ":?" || s.lex.peek().text == "_")) {
-        auto type_text = std::string(s.lex.peek().text);
+        const std::string_view type_text = s.lex.peek().text;
         s.lex.consume(); // the `:?` or `_` token
         if (s.lex.peek().kind == TokenKind::RParen)
             s.lex.consume();
@@ -2287,7 +2337,7 @@ static bool is_unquote(const aura::ast::FlatAST& flat, const aura::ast::StringPo
     if (v.tag != NodeTag::Call || v.children.empty())
         return false;
     auto callee = flat.get(v.child(0));
-    return callee.tag == NodeTag::Variable && std::string(pool.resolve(callee.sym_id)) == "unquote";
+    return callee.tag == NodeTag::Variable && pool.resolve(callee.sym_id) == "unquote";
 }
 
 // Check if a node is (unquote-splicing ...)
@@ -2299,8 +2349,7 @@ static bool is_unquote_splicing(const aura::ast::FlatAST& flat, const aura::ast:
     if (v.tag != NodeTag::Call || v.children.empty())
         return false;
     auto callee = flat.get(v.child(0));
-    return callee.tag == NodeTag::Variable &&
-           std::string(pool.resolve(callee.sym_id)) == "unquote-splicing";
+    return callee.tag == NodeTag::Variable && pool.resolve(callee.sym_id) == "unquote-splicing";
 }
 
 // Check if a node is (quasiquote ...)
@@ -2312,8 +2361,7 @@ static bool is_quasiquote(const aura::ast::FlatAST& flat, const aura::ast::Strin
     if (v.tag != NodeTag::Call || v.children.empty())
         return false;
     auto callee = flat.get(v.child(0));
-    return callee.tag == NodeTag::Variable &&
-           std::string(pool.resolve(callee.sym_id)) == "quasiquote";
+    return callee.tag == NodeTag::Variable && pool.resolve(callee.sym_id) == "quasiquote";
 }
 
 // Issue #4760: code for the two-element list (<head> <elem>).
@@ -2321,7 +2369,7 @@ static NodeId qq_list_4760(ParserState& s, std::string_view head, NodeId elem) {
     auto tail = s.flat.add_call(
         s.flat.add_variable(s.pool.intern("cons")),
         std::vector<aura::ast::NodeId>{elem, s.flat.add_quote(s.flat.add_literal(0))});
-    auto hq = s.flat.add_quote(s.flat.add_variable(s.pool.intern(std::string(head))));
+    auto hq = s.flat.add_quote(s.flat.add_variable(s.pool.intern(head)));
     return s.flat.add_call(s.flat.add_variable(s.pool.intern("cons")),
                            std::vector<aura::ast::NodeId>{hq, tail});
 }
@@ -2388,8 +2436,7 @@ NodeId expand_qq(ParserState& s, NodeId expr, int depth) {
             if (v.tag == NodeTag::Lambda) {
                 NodeId params_list = s.flat.add_quote(s.flat.add_literal(0)); // (quote ())
                 for (int pi = static_cast<int>(v.params.size()) - 1; pi >= 0; --pi) {
-                    auto param_var = s.flat.add_variable(
-                        s.pool.intern(std::string(s.pool.resolve(v.params[pi]))));
+                    auto param_var = s.flat.add_variable(reintern_resolved(s.pool, v.params[pi]));
                     auto param_quoted = s.flat.add_quote(param_var);
                     auto cv = s.flat.add_variable(s.pool.intern("cons"));
                     params_list = s.flat.add_call(
@@ -2405,13 +2452,12 @@ NodeId expand_qq(ParserState& s, NodeId expr, int depth) {
                 auto child_v = s.flat.get(v.child(0));
                 if (child_v.tag == NodeTag::Lambda) {
                     // Build (fn params) list
-                    auto fn_var =
-                        s.flat.add_variable(s.pool.intern(std::string(s.pool.resolve(v.sym_id))));
+                    auto fn_var = s.flat.add_variable(reintern_resolved(s.pool, v.sym_id));
                     auto fn_quoted = s.flat.add_quote(fn_var);
                     NodeId fn_params_list = s.flat.add_quote(s.flat.add_literal(0));
                     for (int pi = static_cast<int>(child_v.params.size()) - 1; pi >= 0; --pi) {
-                        auto pvar = s.flat.add_variable(
-                            s.pool.intern(std::string(s.pool.resolve(child_v.params[pi]))));
+                        auto pvar =
+                            s.flat.add_variable(reintern_resolved(s.pool, child_v.params[pi]));
                         auto pquoted = s.flat.add_quote(pvar);
                         auto cv = s.flat.add_variable(s.pool.intern("cons"));
                         fn_params_list = s.flat.add_call(
@@ -2622,7 +2668,7 @@ NodeId parse_do(ParserState& s) {
         auto n = s.lex.consume();
         if (n.kind != TokenKind::Identifier)
             return NULL_NODE;
-        auto var = s.pool.intern(std::string(n.text));
+        auto var = s.pool.intern(n.text);
         auto init = parse_expr(s);
         if (init == NULL_NODE)
             return NULL_NODE;
@@ -2687,7 +2733,7 @@ NodeId parse_let_values(ParserState& s) {
             return NULL_NODE;
         Group g;
         while (s.lex.peek().kind == TokenKind::Identifier)
-            g.formals.push_back(s.pool.intern(std::string(s.lex.consume().text)));
+            g.formals.push_back(s.pool.intern(s.lex.consume().text));
         if (s.lex.consume().kind != TokenKind::RParen)
             return NULL_NODE; // dotted rest formals are not supported
         g.expr = parse_expr(s);
