@@ -2133,10 +2133,11 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
     return std::nullopt;
 }
 
-std::optional<EvalValue> Evaluator::apply_closure_tw(
-    ClosureId cid, std::span<const EvalValue> args, Closure& cl_copy,
-    const aura::ast::FlatAST* snap_flat_4765, const aura::ast::StringPool* snap_pool_4765,
-    CompilerMetrics* metrics) {
+std::optional<EvalValue> Evaluator::apply_closure_tw(ClosureId cid, std::span<const EvalValue> args,
+                                                     Closure& cl_copy,
+                                                     const aura::ast::FlatAST* snap_flat_4765,
+                                                     const aura::ast::StringPool* snap_pool_4765,
+                                                     CompilerMetrics* metrics) {
     if (metrics)
         metrics->closure_tw_calls.fetch_add(1, std::memory_order_relaxed);
     // Issue #2129: apply dual-check when closure carries linear_state.
@@ -2151,11 +2152,10 @@ std::optional<EvalValue> Evaluator::apply_closure_tw(
                 frame_ver = env_frames_[cl_copy.env_id].version_;
         }
         const bool lin_ok = validate_linear_ownership_state(
-            cl_copy.linear_state, frame_ver, cur_ver, cl_copy.bridge_epoch,
-            current_bridge_epoch(), &metrics->linear_validate_bridge_epoch_drift_total);
+            cl_copy.linear_state, frame_ver, cur_ver, cl_copy.bridge_epoch, current_bridge_epoch(),
+            &metrics->linear_validate_bridge_epoch_drift_total);
         if (!lin_ok) {
-            metrics->linear_apply_dual_check_reject_total.fetch_add(1,
-                                                                    std::memory_order_relaxed);
+            metrics->linear_apply_dual_check_reject_total.fetch_add(1, std::memory_order_relaxed);
             metrics->linear_runtime_violation_total.fetch_add(1, std::memory_order_relaxed);
             metrics->linear_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
             metrics->linear_deopt_on_mismatch_total.fetch_add(1, std::memory_order_relaxed);
@@ -2194,8 +2194,7 @@ bool Evaluator::apply_closure_must_deopt(ClosureId cid, std::span<const EvalValu
         if (production_apply_closure_densify_hard_refuse(arena_, cl_copy,
                                                          static_cast<const void*>(this))) {
             if (metrics)
-                metrics->compiler_closure_safe_fallbacks.fetch_add(1,
-                                                                   std::memory_order_relaxed);
+                metrics->compiler_closure_safe_fallbacks.fetch_add(1, std::memory_order_relaxed);
             note_apply_closure_densify_hard_refuse(metrics, *this);
             out = std::nullopt;
             return true;
@@ -2213,8 +2212,7 @@ bool Evaluator::apply_closure_must_deopt(ClosureId cid, std::span<const EvalValu
         // production probe; zero extra when it reads 0).
         if (aura::compiler::typed_audit::production_defaults_active()) {
             if (metrics) {
-                metrics->compiler_closure_safe_fallbacks.fetch_add(1,
-                                                                   std::memory_order_relaxed);
+                metrics->compiler_closure_safe_fallbacks.fetch_add(1, std::memory_order_relaxed);
                 metrics->closure_safe_fallback_apply_count_total.fetch_add(
                     1, std::memory_order_relaxed);
             }
@@ -2272,12 +2270,10 @@ bool Evaluator::apply_closure_must_deopt(ClosureId cid, std::span<const EvalValu
             // (apply_closure_must_deopt_soft_2581). Washing version_
             // then materialize_call_env would eval_flat the old capture.
             if (metrics) {
-                metrics->must_deopt_force_deopt_success_total.fetch_add(
-                    1, std::memory_order_relaxed);
-                metrics->live_closure_epoch_restamp_total.fetch_add(1,
-                                                                    std::memory_order_relaxed);
-                metrics->compiler_closure_safe_fallbacks.fetch_add(1,
-                                                                   std::memory_order_relaxed);
+                metrics->must_deopt_force_deopt_success_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                metrics->live_closure_epoch_restamp_total.fetch_add(1, std::memory_order_relaxed);
+                metrics->compiler_closure_safe_fallbacks.fetch_add(1, std::memory_order_relaxed);
             }
             // Fall through to materialize + eval_flat with restamped epochs.
         } else {
@@ -2301,8 +2297,7 @@ bool Evaluator::apply_closure_must_deopt(ClosureId cid, std::span<const EvalValu
                 }
             }
             if (metrics) {
-                metrics->compiler_closure_safe_fallbacks.fetch_add(1,
-                                                                   std::memory_order_relaxed);
+                metrics->compiler_closure_safe_fallbacks.fetch_add(1, std::memory_order_relaxed);
                 metrics->closure_safe_fallback_apply_count_total.fetch_add(
                     1, std::memory_order_relaxed);
             }
@@ -2312,8 +2307,7 @@ bool Evaluator::apply_closure_must_deopt(ClosureId cid, std::span<const EvalValu
                 return true;
             }
             if (metrics)
-                metrics->must_deopt_force_deopt_fail_total.fetch_add(1,
-                                                                     std::memory_order_relaxed);
+                metrics->must_deopt_force_deopt_fail_total.fetch_add(1, std::memory_order_relaxed);
             out = std::nullopt;
             return true;
         }
@@ -2327,117 +2321,115 @@ bool Evaluator::apply_closure_safe_fallback(ClosureId cid, std::span<const EvalV
                                             std::optional<EvalValue>& out) {
     // Issue #681: epoch + EnvFrame version pre-check before
     // materialize_call_env (live closure across post-mutate inval).
+    if (metrics) {
+        metrics->compiler_closure_safe_fallbacks.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1509: safe fallback apply (bridge re-path or refuse).
+        metrics->closure_safe_fallback_apply_count_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1525: multi-fiber safe fallback tally.
+        metrics->multifiber_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #2569: soft-recover unimpacted tree-walker closures after
+    // global bridge/defuse epoch bumps from mutate:rebind / set-code of
+    // *other* defines. If flat/pool/body are still addressable and the
+    // EnvFrame is not terminally INVALID, re-stamp epochs and proceed
+    // with eval_flat — do not require IR bridge (top-level helpers
+    // often have none). Missing flat still goes through bridge/refuse.
+    // Do not require flat->is_valid(gen): workspace COW gen bumps must
+    // not kill unrelated eval-arena closures.
+    // Issue #3421: production + densify-old is not recoverable —
+    // restamp is not remap. Soft / no-move keep the recover below.
+    if (production_apply_closure_densify_hard_refuse(arena_, cl_copy,
+                                                     static_cast<const void*>(this))) {
+        note_apply_closure_densify_hard_refuse(metrics, *this);
+        out = std::nullopt;
+        return true;
+    }
+    // Issue #3681: production + this closure's define was dirtied
+    // this epoch (v2 dirty flag via is_define_dirty_fn_ — the same
+    // surface the production facade publishes for set-body/rebind)
+    // → epoch-stale must not recover onto the pre-reemit body
+    // either. Rebind of *other* defines keeps the #2569/#2578
+    // recover below (AC2); lambdas (empty name) are not
+    // define-bound and keep the recover.
+    if (aura::compiler::typed_audit::production_defaults_active() && !cl_copy.name.empty() &&
+        is_define_dirty_fn_ && is_define_dirty_fn_(cl_copy.name)) {
         if (metrics) {
             metrics->compiler_closure_safe_fallbacks.fetch_add(1, std::memory_order_relaxed);
-            // Issue #1509: safe fallback apply (bridge re-path or refuse).
-            metrics->closure_safe_fallback_apply_count_total.fetch_add(
-                1, std::memory_order_relaxed);
-            // Issue #1525: multi-fiber safe fallback tally.
-            metrics->multifiber_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
+            metrics->closure_safe_fallback_apply_count_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
         }
-        // Issue #2569: soft-recover unimpacted tree-walker closures after
-        // global bridge/defuse epoch bumps from mutate:rebind / set-code of
-        // *other* defines. If flat/pool/body are still addressable and the
-        // EnvFrame is not terminally INVALID, re-stamp epochs and proceed
-        // with eval_flat — do not require IR bridge (top-level helpers
-        // often have none). Missing flat still goes through bridge/refuse.
-        // Do not require flat->is_valid(gen): workspace COW gen bumps must
-        // not kill unrelated eval-arena closures.
-        // Issue #3421: production + densify-old is not recoverable —
-        // restamp is not remap. Soft / no-move keep the recover below.
-        if (production_apply_closure_densify_hard_refuse(arena_, cl_copy,
-                                                         static_cast<const void*>(this))) {
-            note_apply_closure_densify_hard_refuse(metrics, *this);
-            out = std::nullopt;
+        if (auto bridged = invoke_closure_bridge_checked(*this, closure_bridge_, cid, args, metrics,
+                                                         &cl_copy)) {
+            out = bridged;
             return true;
         }
-        // Issue #3681: production + this closure's define was dirtied
-        // this epoch (v2 dirty flag via is_define_dirty_fn_ — the same
-        // surface the production facade publishes for set-body/rebind)
-        // → epoch-stale must not recover onto the pre-reemit body
-        // either. Rebind of *other* defines keeps the #2569/#2578
-        // recover below (AC2); lambdas (empty name) are not
-        // define-bound and keep the recover.
-        if (aura::compiler::typed_audit::production_defaults_active() &&
-            !cl_copy.name.empty() && is_define_dirty_fn_ && is_define_dirty_fn_(cl_copy.name)) {
-            if (metrics) {
-                metrics->compiler_closure_safe_fallbacks.fetch_add(1,
-                                                                   std::memory_order_relaxed);
-                metrics->closure_safe_fallback_apply_count_total.fetch_add(
-                    1, std::memory_order_relaxed);
-            }
-            if (auto bridged = invoke_closure_bridge_checked(*this, closure_bridge_, cid, args,
-                                                             metrics, &cl_copy)) {
-                out = bridged;
-                return true;
-            }
-            if (metrics)
-                metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
-            bump_compiler_root_dangling_prevented();
-            out = std::nullopt;
-            return true;
-        }
-        const bool body_live = cl_copy.flat && cl_copy.pool &&
-                               cl_copy.body_id != aura::ast::NULL_NODE &&
-                               cl_copy.body_id < cl_copy.flat->size();
-        // Terminal = OOB/NULL frame id, or frame.version_ == INVALID_VERSION.
-        // Version-stale alone is refreshable (refresh_stale_frame_in_walk).
-        bool env_terminal = false;
-        if (cl_copy.env_id != NULL_ENV_ID) {
-            if (!is_valid_env_id(cl_copy.env_id))
+        if (metrics)
+            metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
+        bump_compiler_root_dangling_prevented();
+        out = std::nullopt;
+        return true;
+    }
+    const bool body_live = cl_copy.flat && cl_copy.pool &&
+                           cl_copy.body_id != aura::ast::NULL_NODE &&
+                           cl_copy.body_id < cl_copy.flat->size();
+    // Terminal = OOB/NULL frame id, or frame.version_ == INVALID_VERSION.
+    // Version-stale alone is refreshable (refresh_stale_frame_in_walk).
+    bool env_terminal = false;
+    if (cl_copy.env_id != NULL_ENV_ID) {
+        if (!is_valid_env_id(cl_copy.env_id))
+            env_terminal = true;
+        else {
+            std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+            if (cl_copy.env_id < env_frames_.size() &&
+                env_frames_[cl_copy.env_id].version_ == INVALID_VERSION)
                 env_terminal = true;
-            else {
-                std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
-                if (cl_copy.env_id < env_frames_.size() &&
-                    env_frames_[cl_copy.env_id].version_ == INVALID_VERSION)
-                    env_terminal = true;
+        }
+    }
+    // Issue #2578: allow soft-recover even when must_deopt was set —
+    // clear it and restamp (module free-vars survive unimpacted rebind).
+    if (body_live && !env_terminal) {
+        {
+            std::unique_lock<std::shared_mutex> wlock(
+                closures_shards_[closures_shard_index(cid)].mu);
+            bump_closures_apply_epoch(); // Issue #3832
+            auto it = closures_shards_[closures_shard_index(cid)].map.find(cid);
+            if (it != closures_shards_[closures_shard_index(cid)].map.end()) {
+                it->second.must_deopt_before_next_call = false;
+                stamp_closure_bridge_epoch(it->second);
+                cl_copy = it->second;
+            } else {
+                cl_copy.must_deopt_before_next_call = false;
+                stamp_closure_bridge_epoch(cl_copy);
             }
         }
-        // Issue #2578: allow soft-recover even when must_deopt was set —
-        // clear it and restamp (module free-vars survive unimpacted rebind).
-        if (body_live && !env_terminal) {
-            {
-                std::unique_lock<std::shared_mutex> wlock(
-                    closures_shards_[closures_shard_index(cid)].mu);
-                bump_closures_apply_epoch(); // Issue #3832
-                auto it = closures_shards_[closures_shard_index(cid)].map.find(cid);
-                if (it != closures_shards_[closures_shard_index(cid)].map.end()) {
-                    it->second.must_deopt_before_next_call = false;
-                    stamp_closure_bridge_epoch(it->second);
-                    cl_copy = it->second;
-                } else {
-                    cl_copy.must_deopt_before_next_call = false;
-                    stamp_closure_bridge_epoch(cl_copy);
-                }
-            }
-            // Issue #4072: do not refresh_stale_frame_in_walk
-            // (apply_closure_soft_recover_2569). materialize_call_env
-            // returns an empty Env while version_ stays behind defuse.
-            if (metrics) {
-                metrics->live_closure_epoch_restamp_total.fetch_add(1,
-                                                                    std::memory_order_relaxed);
-            }
-            // Fall through to materialize + eval_flat with restamped epochs.
-        } else {
-            // Issue #1511: dual-check + EnvFrame re-stamp at bridge entry.
-            if (auto bridged = invoke_closure_bridge_checked(*this, closure_bridge_, cid, args,
-                                                             metrics, &cl_copy)) {
-                out = bridged;
-                return true;
-            }
-            if (metrics)
-                metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
-            bump_compiler_root_dangling_prevented();
-            out = std::nullopt;
+        // Issue #4072: do not refresh_stale_frame_in_walk
+        // (apply_closure_soft_recover_2569). materialize_call_env
+        // returns an empty Env while version_ stays behind defuse.
+        if (metrics) {
+            metrics->live_closure_epoch_restamp_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        // Fall through to materialize + eval_flat with restamped epochs.
+    } else {
+        // Issue #1511: dual-check + EnvFrame re-stamp at bridge entry.
+        if (auto bridged = invoke_closure_bridge_checked(*this, closure_bridge_, cid, args, metrics,
+                                                         &cl_copy)) {
+            out = bridged;
             return true;
         }
+        if (metrics)
+            metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
+        bump_compiler_root_dangling_prevented();
+        out = std::nullopt;
+        return true;
+    }
     return false;
 }
 
-std::optional<EvalValue> Evaluator::apply_closure_eval_body(
-    ClosureId cid, std::span<const EvalValue> args, Closure& cl_copy,
-    const aura::ast::FlatAST* snap_flat_4765, const aura::ast::StringPool* snap_pool_4765,
-    CompilerMetrics* metrics) {
+std::optional<EvalValue>
+Evaluator::apply_closure_eval_body(ClosureId cid, std::span<const EvalValue> args, Closure& cl_copy,
+                                   const aura::ast::FlatAST* snap_flat_4765,
+                                   const aura::ast::StringPool* snap_pool_4765,
+                                   CompilerMetrics* metrics) {
     // Issue #145 Phase 2.3 — materialize the call env from
     // the SoA arena (env_frames_[cl.env_id]) -- legacy cl.env pointer path removed in P0.
     // materialize_call_env now takes env_frames_mtx_
@@ -2463,8 +2455,8 @@ std::optional<EvalValue> Evaluator::apply_closure_eval_body(
     // extras. nullopt stays InvalidClosure; the pending message is
     // the arity diagnostic for a caller that has a source location.
     if (user_arity_mismatch(cl_copy.params.size(), cl_copy.dotted, args.size())) {
-        set_pending_user_arity(user_arity_message(cl_copy.name, cl_copy.params.size(),
-                                                  cl_copy.dotted, args.size()));
+        set_pending_user_arity(
+            user_arity_message(cl_copy.name, cl_copy.params.size(), cl_copy.dotted, args.size()));
         return std::nullopt;
     }
     if (cl_copy.dotted) {
@@ -2543,15 +2535,15 @@ std::optional<EvalValue> Evaluator::apply_closure_eval_body(
             }
             if (!restamped_4765 && !revalidate_closure_snapshot(cid, cl_copy)) {
                 if (metrics) {
-                    metrics->compiler_closure_safe_fallbacks.fetch_add(
-                        1, std::memory_order_relaxed);
+                    metrics->compiler_closure_safe_fallbacks.fetch_add(1,
+                                                                       std::memory_order_relaxed);
                     metrics->closure_view_dangling_prevented_total.store(
                         g_closure_view_dangling_prevented_total.load(std::memory_order_relaxed),
                         std::memory_order_relaxed);
-                    metrics->closure_stale_apply_count_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                    metrics->closure_race_caught_count_total.fetch_add(
-                        1, std::memory_order_relaxed);
+                    metrics->closure_stale_apply_count_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                    metrics->closure_race_caught_count_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
                 }
                 bump_stale_closure_prevented();
                 bump_compiler_root_dangling_prevented();
@@ -2559,23 +2551,22 @@ std::optional<EvalValue> Evaluator::apply_closure_eval_body(
             }
             if (closure_is_epoch_stale(*this, cl_copy)) {
                 if (metrics) {
-                    metrics->compiler_closure_safe_fallbacks.fetch_add(
-                        1, std::memory_order_relaxed);
+                    metrics->compiler_closure_safe_fallbacks.fetch_add(1,
+                                                                       std::memory_order_relaxed);
                     metrics->closure_bridge_epoch_safety_enforced.fetch_add(
                         1, std::memory_order_relaxed);
                     if (env_stale)
                         metrics->compiler_closure_envframe_stale_total.fetch_add(
                             1, std::memory_order_relaxed);
-                    metrics->closure_stale_apply_count_total.fetch_add(
-                        1, std::memory_order_relaxed);
+                    metrics->closure_stale_apply_count_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
                     metrics->closure_safe_fallback_apply_count_total.fetch_add(
                         1, std::memory_order_relaxed);
-                    metrics->closure_race_caught_count_total.fetch_add(
-                        1, std::memory_order_relaxed);
+                    metrics->closure_race_caught_count_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
                     metrics->multifiber_mutate_races_detected_total.fetch_add(
                         1, std::memory_order_relaxed);
-                    metrics->multifiber_safe_fallback_total.fetch_add(
-                        1, std::memory_order_relaxed);
+                    metrics->multifiber_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
                     record_epoch_stale_steal_caught(metrics);
                 }
                 // Issue #1485 / #1558 / #1632: race-window safety net for dual-epoch.
@@ -2586,8 +2577,8 @@ std::optional<EvalValue> Evaluator::apply_closure_eval_body(
                 // (same policy as pre-materialize path).
                 // Issue #3421: production densify-old must not restamp here
                 // either — race recover would re-enter eval_flat.
-                if (production_apply_closure_densify_hard_refuse(
-                        arena_, cl_copy, static_cast<const void*>(this))) {
+                if (production_apply_closure_densify_hard_refuse(arena_, cl_copy,
+                                                                 static_cast<const void*>(this))) {
                     note_apply_closure_densify_hard_refuse(metrics, *this);
                     return std::nullopt;
                 }
@@ -2628,8 +2619,8 @@ std::optional<EvalValue> Evaluator::apply_closure_eval_body(
                     // Continue to eval_flat below.
                 } else {
                     // Issue #1511: dual-check + EnvFrame re-stamp at bridge entry.
-                    if (auto bridged = invoke_closure_bridge_checked(
-                            *this, closure_bridge_, cid, args, metrics, &cl_copy))
+                    if (auto bridged = invoke_closure_bridge_checked(*this, closure_bridge_, cid,
+                                                                     args, metrics, &cl_copy))
                         return bridged;
                     if (metrics)
                         metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
@@ -2655,8 +2646,7 @@ std::optional<EvalValue> Evaluator::apply_closure_eval_body(
         {
             const auto nnote =
                 std::min(args.size(), static_cast<std::size_t>(feedback::kMaxUserArgs));
-            feedback_enter_call(cid, cl_copy.name, args.data(),
-                                static_cast<std::uint32_t>(nnote));
+            feedback_enter_call(cid, cl_copy.name, args.data(), static_cast<std::uint32_t>(nnote));
         }
         auto r = eval_flat(*cl_copy.flat, *cl_copy.pool, cl_copy.body_id, ne,
                            /*allow_file_diag_arm=*/false);
