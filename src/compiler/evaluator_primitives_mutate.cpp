@@ -1023,6 +1023,10 @@ namespace {
             e.set_validate_schema_on_commit(v);
         }
         ~ValidateSchemaGuard() { ev.set_validate_schema_on_commit(prev); }
+        ValidateSchemaGuard(const ValidateSchemaGuard&) = delete;
+        ValidateSchemaGuard& operator=(const ValidateSchemaGuard&) = delete;
+        ValidateSchemaGuard(ValidateSchemaGuard&&) = delete;
+        ValidateSchemaGuard& operator=(ValidateSchemaGuard&&) = delete;
     };
 
     // Issue #2859: parse `:validate-schema-on-commit? #t` from a
@@ -1294,6 +1298,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             struct Depth {
                 Depth() { ++g_evo_depth_4910; }
                 ~Depth() { --g_evo_depth_4910; }
+                Depth(const Depth&) = delete;
+                Depth& operator=(const Depth&) = delete;
+                Depth(Depth&&) = delete;
+                Depth& operator=(Depth&&) = delete;
             } depth;
             auto str_arg = [&ev](const EvalValue& v) -> std::string {
                 if (!is_string(v))
@@ -4228,6 +4236,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 e.boundary_prep_batch(true);
             }
             ~RebindPrepBatch() { e.boundary_prep_batch(false); }
+            RebindPrepBatch(const RebindPrepBatch&) = delete;
+            RebindPrepBatch& operator=(const RebindPrepBatch&) = delete;
+            RebindPrepBatch(RebindPrepBatch&&) = delete;
+            RebindPrepBatch& operator=(RebindPrepBatch&&) = delete;
         } rebind_prep_batch(ev);
         aura::compiler::phase_stats::Scope phase_rebind_prim(
             aura::compiler::phase_stats::RebindPrim);
@@ -4247,15 +4259,23 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         struct RebindLightDisarm {
             Evaluator& ev;
             bool keep = false;
+            explicit RebindLightDisarm(Evaluator& e)
+                : ev(e) {}
             ~RebindLightDisarm() {
                 if (!keep)
                     ev.disarm_rebind_light_path();
             }
-        } rebind_light_disarm{ev};
+            RebindLightDisarm(const RebindLightDisarm&) = delete;
+            RebindLightDisarm& operator=(const RebindLightDisarm&) = delete;
+            RebindLightDisarm(RebindLightDisarm&&) = delete;
+            RebindLightDisarm& operator=(RebindLightDisarm&&) = delete;
+        } rebind_light_disarm(ev);
         // Issue #4363: Guard dtor restores the flat, then this rebinds top_env.
         struct RebindAfterRejected {
             Evaluator& ev;
             bool failed = false;
+            explicit RebindAfterRejected(Evaluator& e)
+                : ev(e) {}
             ~RebindAfterRejected() {
                 if (failed) {
                     ev.rebind_workspace_defines_after_rollback();
@@ -4269,7 +4289,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     rebind_rollback_cascade_pending() = true;
                 }
             }
-        } rebind_after_rejected{ev};
+            RebindAfterRejected(const RebindAfterRejected&) = delete;
+            RebindAfterRejected& operator=(const RebindAfterRejected&) = delete;
+            RebindAfterRejected(RebindAfterRejected&&) = delete;
+            RebindAfterRejected& operator=(RebindAfterRejected&&) = delete;
+        } rebind_after_rejected(ev);
         // Issue #1556: typed try_acquire so mutation quota rejects as
         // resource-quota-exceeded (Agents can back-off) instead of silent
         // unlimited legacy Guard ctor.
@@ -4979,6 +5003,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     if (saved && saved != top.pool())
                         top.set_pool(saved);
                 }
+                RestoreTopPool(const RestoreTopPool&) = delete;
+                RestoreTopPool& operator=(const RestoreTopPool&) = delete;
+                RestoreTopPool(RestoreTopPool&&) = delete;
+                RestoreTopPool& operator=(RestoreTopPool&&) = delete;
             } restore_top_pool(ev.top_env());
             flat.mark_subtree_dirty(old_define);
             flat.force_align_subtree_gen(old_define);
@@ -5403,6 +5431,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                             if (saved && saved != top.pool())
                                 top.set_pool(saved);
                         }
+                        RestoreTopPool(const RestoreTopPool&) = delete;
+                        RestoreTopPool& operator=(const RestoreTopPool&) = delete;
+                        RestoreTopPool(RestoreTopPool&&) = delete;
+                        RestoreTopPool& operator=(RestoreTopPool&&) = delete;
                     } restore_top_pool(ev.top_env());
                     // Issue #4541: mirror rebind's refresh — eval the whole
                     // Define node (full sym binding + closure registration).
@@ -6891,13 +6923,19 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             struct RebindAfterFailedBatch {
                 Evaluator& ev;
                 bool failed = false;
+                explicit RebindAfterFailedBatch(Evaluator& e)
+                    : ev(e) {}
                 ~RebindAfterFailedBatch() {
                     if (failed) {
                         ev.rebind_workspace_defines_after_rollback();
                         ev.defines_bound_flat_ = ev.workspace_flat_;
                     }
                 }
-            } rebind_after_failed_batch{ev};
+                RebindAfterFailedBatch(const RebindAfterFailedBatch&) = delete;
+                RebindAfterFailedBatch& operator=(const RebindAfterFailedBatch&) = delete;
+                RebindAfterFailedBatch(RebindAfterFailedBatch&&) = delete;
+                RebindAfterFailedBatch& operator=(RebindAfterFailedBatch&&) = delete;
+            } rebind_after_failed_batch(ev);
             // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
             auto guard_r =
                 aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &guard_ok);
@@ -11399,6 +11437,10 @@ void Evaluator::refresh_define_env_publication(aura::ast::FlatAST& flat, const s
             if (saved && saved != top.pool())
                 top.set_pool(saved);
         }
+        RestoreTopPool(const RestoreTopPool&) = delete;
+        RestoreTopPool& operator=(const RestoreTopPool&) = delete;
+        RestoreTopPool(RestoreTopPool&&) = delete;
+        RestoreTopPool& operator=(RestoreTopPool&&) = delete;
     } restore_top_pool(top_env());
     // Issue #4541: mark before eval, or the pre-mutate closure wins the cache.
     flat.mark_subtree_dirty(define_id);
@@ -11504,6 +11546,10 @@ void Evaluator::drain_cascade_bfs_invalidate() noexcept {
                 if (fn)
                     fn(false);
             }
+            DirtyBatch(const DirtyBatch&) = delete;
+            DirtyBatch& operator=(const DirtyBatch&) = delete;
+            DirtyBatch(DirtyBatch&&) = delete;
+            DirtyBatch& operator=(DirtyBatch&&) = delete;
         } dirty_batch(dirty_batch_fn_);
         aura::compiler::phase_stats::Scope phase_restamp(aura::compiler::phase_stats::Restamp);
         std::unordered_set<std::string> restamped;
@@ -11617,6 +11663,10 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
             if (fn)
                 fn(false);
         }
+        CascadeDirtyBatch(const CascadeDirtyBatch&) = delete;
+        CascadeDirtyBatch& operator=(const CascadeDirtyBatch&) = delete;
+        CascadeDirtyBatch(CascadeDirtyBatch&&) = delete;
+        CascadeDirtyBatch& operator=(CascadeDirtyBatch&&) = delete;
     } cascade_dirty_batch(dirty_batch_fn_);
     const auto t0 = std::chrono::steady_clock::now();
     auto& flat = *workspace_flat_;
