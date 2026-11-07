@@ -19880,6 +19880,45 @@ public:
         void guard_phase5_pin_contract(bool& success, const bool& outermost, int*& slot,
                                        bool& linear_ops_present_local);
 
+        struct GuardDtorState {
+            bool cancel_forced_fail = false;
+            bool macro_hygiene_forced_fail = false;
+            bool success = false;
+            bool outermost = false;
+            int* slot = nullptr;
+            bool render_fast_candidate = false;
+            bool linear_ops_present_local = false;
+            bool match_sites_present_local = false;
+            std::uint64_t nodes_changed_local = 0;
+            bool heap_slot_quiet = false;
+            bool strict_sandbox_local = false;
+            bool hard_gate_local = false;
+            bool linear_or_match_suppress = false;
+            bool render_fast = false;
+            bool render_fast_audit_hard = false;
+            bool render_fast_effective = false;
+            bool linear_pre_exit_enforced = false;
+            MutationCheckpoint exited_cp{};
+            bool did_exit_boundary = false;
+            bool linear_fast_path_force_revalidated = false;
+            bool exit_fence_pushed = false;
+            bool panic_handled = false;
+        };
+        void linear_fast_path_maybe_force_dirty_revalidate(bool late, bool outermost, bool success,
+                                                          bool& linear_fast_path_force_revalidated);
+        void guard_dtor_seg_0(GuardDtorState& gs);
+        void guard_dtor_seg_1(GuardDtorState& gs);
+        void guard_dtor_seg_2(GuardDtorState& gs);
+        void guard_dtor_seg_3(GuardDtorState& gs);
+        void guard_dtor_seg_4(GuardDtorState& gs);
+        void guard_dtor_seg_5(GuardDtorState& gs);
+        void guard_dtor_seg_6(GuardDtorState& gs);
+        void guard_phase5_part_0(GuardDtorState& gs);
+        void guard_phase5_part_1(GuardDtorState& gs);
+        void guard_phase5_part_2(GuardDtorState& gs);
+        void guard_phase5_part_3(GuardDtorState& gs);
+
+
         Evaluator* ev_;
         // Heap-mutate auto-guard (#3235) heap-allocates the Guard past the
         // acquire frame. A stack bool UAR's in ~Guard (asan-verify). When
