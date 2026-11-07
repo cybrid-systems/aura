@@ -2197,6 +2197,33 @@ namespace primitives_detail {
                                     Evaluator& ev);
     void register_security_primitives(std::function_ref<void(std::string, PrimFn)> add,
                                       Evaluator& ev);
+    void register_security_set_sandbox_mode(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_security_grant_capability(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_query_audit_mid_fallback_slo(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_query_capability_effect_stats(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_security_set_tenant_principal(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_query_nested_guard_atomic_stats(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_query_irsoa_incremental_stats(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_query_primitives_governance_stats(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_query_primitives_ai_native_stats(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_query_sv_structured_edsl_stats(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_query_sv_node_stats(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_query_hardware_backend_stats(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_query_sv_defuse_stats(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_query_work_steal_stats(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_query_hardware_backend_sv_closedloop_stats(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_query_linear_ownership_typed_mutate_stats(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_query_linear_ownership_enforcement_stats(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_query_shape_value_pass_stats(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_query_audit_wal_stats(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_query_mutation_audit_log(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_query_security_audit(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_query_security_audit_stats(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_query_security_posture(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_query_security_correlated_trail(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    void register_query_evolution_audit_decision(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    types::EvalValue build_capability_effect_stats(Evaluator& ev,
+                                                   std::span<const types::EvalValue> args);
     void
     register_eval_primitives(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev,
                              std::function<EvalValue(const std::string&, const std::string&)> mev,
@@ -2417,6 +2444,58 @@ export class Evaluator {
                                                   Evaluator& ev);
     friend void primitives_detail::register_security_primitives(
         std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_security_set_sandbox_mode(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_security_grant_capability(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_query_audit_mid_fallback_slo(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_query_capability_effect_stats(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_security_set_tenant_principal(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_query_nested_guard_atomic_stats(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_query_irsoa_incremental_stats(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_query_primitives_governance_stats(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_query_primitives_ai_native_stats(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_query_sv_structured_edsl_stats(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_query_sv_node_stats(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_query_hardware_backend_stats(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_query_sv_defuse_stats(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_query_work_steal_stats(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_query_hardware_backend_sv_closedloop_stats(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_query_linear_ownership_typed_mutate_stats(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_query_linear_ownership_enforcement_stats(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_query_shape_value_pass_stats(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_query_audit_wal_stats(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_query_mutation_audit_log(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_query_security_audit(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_query_security_audit_stats(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_query_security_posture(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_query_security_correlated_trail(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend void primitives_detail::register_query_evolution_audit_decision(
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend types::EvalValue primitives_detail::build_capability_effect_stats(
+        Evaluator& ev, std::span<const types::EvalValue> args);
     friend void primitives_detail::register_eval_primitives(
         std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev,
         std::function<EvalValue(const std::string&, const std::string&)> mev,
