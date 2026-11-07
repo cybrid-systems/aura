@@ -69,7 +69,25 @@ using types::make_vector;
 using types::make_void;
 
 void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
+    // Issue #5033: registration order is the original single-function order.
+    // One part per responsibility group; every part body is unchanged.
+    RegSplitParts::register_mutation_counter_primitives(add, ev);
+    RegSplitParts::register_mutation_log_compact_primitive(add, ev);
+    RegSplitParts::register_mutation_log_pressure_primitives(add, ev);
+    RegSplitParts::register_mutation_history_primitive(add, ev);
+    RegSplitParts::register_mutation_rollback_primitives(add, ev);
+    RegSplitParts::register_mutation_log_summary_primitive(add, ev);
+    RegSplitParts::register_mutation_log_diff_primitive(add, ev);
+    RegSplitParts::register_atomic_batch_stats_primitive(add, ev);
+    RegSplitParts::register_atomic_batch_sv_stats_primitive(add, ev);
+    RegSplitParts::register_atomic_batch_snapshot_stats_primitive(add, ev);
 
+    // typed-mutate-atomic is registered in evaluator_primitives_mutate.cpp
+    // (Issue #1415/#1442) — list + varargs forms. Do not re-register here.
+}
+
+// Issue #5033: mutation-count and mutation x GC safepoint telemetry.
+void RegSplitParts::register_mutation_counter_primitives(PrimRegistrar add, Evaluator& ev) {
     ObservabilityPrims::register_stats_impl("mutation-count", [&ev](const auto&) {
         if (!ev.workspace_flat_)
             return make_int(0);
@@ -135,7 +153,10 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             }
             return make_hash(hidx);
         });
+}
 
+// Issue #5033: mutation-log-compact (#1362/#2201).
+void RegSplitParts::register_mutation_log_compact_primitive(PrimRegistrar add, Evaluator& ev) {
     // Issue #1362 / #2201: compact committed mutation log prefix.
     // (mutation-log-compact [keep-recent=1000] [keep-rolledback?=true]) → dropped
     // AC3: capability-gated like mutate ops (kEffectMutate).
@@ -203,7 +224,10 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
         meta.doc = "mutation-log-compact (#1362/#2201); requires Mutate effect";
         ev.primitives().set_meta_for_name("mutation-log-compact", std::move(meta));
     }
+}
 
+// Issue #5033: compaction pressure observability hashes.
+void RegSplitParts::register_mutation_log_pressure_primitives(PrimRegistrar add, Evaluator& ev) {
     // Issue #1362 / #2201: compaction + pressure observability hash.
     // Do NOT reuse query:mutation-log-stats — that name is the #553
     // integer sum of atomic-batch + steal/rollback counters.
@@ -319,6 +343,10 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
     // Agent-discoverable alias (issue names mutation-log-pressure).
     ObservabilityPrims::register_stats_impl("query:mutation-log-pressure",
                                             mutation_log_pressure_stats);
+}
+
+// Issue #5033: mutation-history (#1054/#3792).
+void RegSplitParts::register_mutation_history_primitive(PrimRegistrar add, Evaluator& ev) {
     // Issue #1054: bad-arg and empty-history both return void (list-or-void
     // contract). Never return make_int(0) on bad args (truthy, wrong type).
     ObservabilityPrims::register_stats_impl(
@@ -379,7 +407,10 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             }
             return result;
         });
+}
 
+// Issue #5033: rollback / rollback-since (#3722/#3790).
+void RegSplitParts::register_mutation_rollback_primitives(PrimRegistrar add, Evaluator& ev) {
     // Issue #3722: rollback / rollback-since are FlatAST writes — under
     // Restricted/Strict they MUST take the same Mutate + isolation join as
     // mutate:* BEFORE any topology write. Issue #3790: then acquire
@@ -461,7 +492,10 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
         const auto n = ev.workspace_flat_->rollback_since(since_id);
         return make_int(static_cast<std::int64_t>(n));
     });
+}
 
+// Issue #5033: mutation-log:summary (#278).
+void RegSplitParts::register_mutation_log_summary_primitive(PrimRegistrar add, Evaluator& ev) {
     // (mutation-log:summary) — Issue #278: aggregate stats over the
     // workspace mutation log. Returns a hash with:
     //   total                — total mutations recorded
@@ -646,7 +680,10 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         return make_hash(hidx);
     });
+}
 
+// Issue #5033: mutation-log:diff (#278 follow-up).
+void RegSplitParts::register_mutation_log_diff_primitive(PrimRegistrar add, Evaluator& ev) {
     // Issue #278 follow-up #1: (mutation-log:diff from-id to-id) —
     // return a list of MutationRecords with mutation_id in the
     // half-open range [from_id, to_id]. Returns () if from_id > to_id
@@ -754,7 +791,10 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         return result;
     });
+}
 
+// Issue #5033: query:atomic-batch-stats-hash (#622).
+void RegSplitParts::register_atomic_batch_stats_primitive(PrimRegistrar add, Evaluator& ev) {
     // Issue #622: high-level Aura primitives for atomic / batched
     // mutates. **IMPORTANT — discovery before this PR:
     // (mutate:atomic-batch ops-list "summary") already exists
@@ -951,7 +991,10 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             }
             return make_hash(hidx);
         });
+}
 
+// Issue #5033: query:atomic-batch-sv-stats-hash (#632).
+void RegSplitParts::register_atomic_batch_sv_stats_primitive(PrimRegistrar add, Evaluator& ev) {
     // Issue #632: query:atomic-batch-sv-stats-hash — Agent-
     // discoverable structured SV-specific observability dashboard
     // for the atomic batch layer. Companion / extension of the
@@ -1072,7 +1115,11 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             }
             return make_hash(hidx);
         });
+}
 
+// Issue #5033: query:atomic-batch-snapshot-stats-hash (#737).
+void RegSplitParts::register_atomic_batch_snapshot_stats_primitive(PrimRegistrar add,
+                                                                   Evaluator& ev) {
     // Issue #737: query:atomic-batch-snapshot-stats-hash — end-to-end
     // atomic batch + snapshot + StableNodeRef pinning observability
     // for multi-round AI Agent edit loops. Complements #622 (per-
@@ -1137,9 +1184,6 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             }
             return make_hash(hidx);
         });
-
-    // typed-mutate-atomic is registered in evaluator_primitives_mutate.cpp
-    // (Issue #1415/#1442) — list + varargs forms. Do not re-register here.
 }
 
 } // namespace aura::compiler::primitives_detail
