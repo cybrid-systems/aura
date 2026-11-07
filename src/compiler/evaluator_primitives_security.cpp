@@ -693,7 +693,7 @@ static void load_evolution_audit_durable_face(Ev& ev, const Args& args,
 
 
 
-void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
+void register_security_set_sandbox_mode(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #1020: capability-gated sandbox admin surface.
     // - Enabling sandbox from open mode is always allowed.
@@ -901,6 +901,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         "security:sandbox-mode?",
         [&ev](const auto&) -> EvalValue { return make_bool(ev.sandbox_mode()); });
 
+}
+
+void register_security_grant_capability(PrimRegistrar add, Evaluator& ev) {
     // Issue #1020: granting capabilities while sandboxed requires wildcard
     // (otherwise any code can self-elevate).
     add("security:grant-capability!", [&ev](std::span<const EvalValue> a) -> EvalValue {
@@ -1154,6 +1157,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 
+}
+
+void register_query_audit_mid_fallback_slo(PrimRegistrar add, Evaluator& ev) {
     // Issue #2594: query:audit-mid-fallback-slo — pure gate derived
     // from typed_mutation_audit.h counters (#2493 mid resolve:
     // fallback_gen / contextual_total). Production + rate > SLO →
@@ -1301,600 +1307,644 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 
+}
+
+void register_query_capability_effect_stats(PrimRegistrar add, Evaluator& ev) {
     // Issue #1565 / #1876: query:capability-effect-stats
     // #1876 folds sandbox-status fields into this existing surface
     // (no new public query name — primitive freeze #1448).
     ObservabilityPrims::register_stats_impl(
         "query:capability-effect-stats", [&ev](const auto& args) -> EvalValue {
-            using namespace aura::core::capability;
-            using namespace aura::core::sandbox;
-            const auto snap = snapshot_capability_effect_stats();
-            const auto& ss = g_sandbox_state();
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                m->capability_effect_enforced_total.store(snap.enforced, std::memory_order_relaxed);
-                m->capability_effect_denied_total.store(snap.denied, std::memory_order_relaxed);
-                m->capability_provenance_mismatch_total.store(snap.provenance_mismatch,
-                                                              std::memory_order_relaxed);
-                m->capability_effect_grant_total.store(snap.grants, std::memory_order_relaxed);
-                m->capability_effect_check_total.store(snap.checks, std::memory_order_relaxed);
-            }
-            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
-            // 1565 + 1876 + #2023 MacroSelfEvo + #2052 mutate-force keys
-            // Issue #4141 / #4285: planned_keys >= live insert_kv + 8
-            // (#3339 Agent decision headroom). #4141 raised this from 186
-            // after live 177 (+2 stamps = 179) left headroom 9. #4285
-            // re-counted the handler: 179 live insert_kv, so live+16 =
-            // 195 and planned 192 is short of that buffer. Raise to 208
-            // (live+16 holds; query_hash_capacity_for stays at cap 512).
-            // No appended keys. Later batches still raise planned with
-            // the keys. Capability-effect stays on the #3339 pin list.
-            constexpr std::size_t kCapabilityEffectStatsPlannedKeys = 208;
-            auto* ht =
-                FlatHashTable::create(query_hash_capacity_for(kCapabilityEffectStatsPlannedKeys));
-            if (!ht)
-                return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
+            return build_capability_effect_stats(ev, args);
+        });
+}
 
-                overflowed = true;
-            };
-            insert_kv("schema", 1565);
-            insert_kv("active", 1);
-            insert_kv("phase", snap.phase);
-            insert_kv("enforced", static_cast<std::int64_t>(snap.enforced));
-            insert_kv("denied", static_cast<std::int64_t>(snap.denied));
-            insert_kv("provenance-mismatch", static_cast<std::int64_t>(snap.provenance_mismatch));
-            // Issue #2707: fail-closed mid join zero-deny under Restricted/Strict.
-            insert_kv("mid-join-zero-deny", static_cast<std::int64_t>(snap.mid_join_zero_deny));
-            insert_kv("mid-join-fail-closed-armed",
-                      snap.sandbox_mode != 0 ? 1 : 0); // Restricted/Strict → armed
-            insert_kv("schema-2707", 2707);
-            insert_kv("issue-2707", 2707);
-            // Issue #3143: query:audit-replay-join(mutation_id) — joined audit
-            // trail surface (typed_audit + SE + WAL + grants + isolation)
-            // keyed on a single mutation_id so Agent debug time is O(1)
-            // instead of 5 manual joins. Surface additive on existing
-            // query:capability-effect-stats (no new public query key per
-            // primitive freeze #1448). Falls through silently when args
-            // is empty (returns current typed_audit last_mid surface).
-            {
-                std::uint64_t mid = 0;
-                // Issue #3738/#4120: explicit 0 is a legal join key (refuse
-                // class, same as query:security-audit #3462). Omitted /
-                // non-int defaults to the session/TypedMid join key SSOT
-                // g_last_stamped_audit_mid — the TypeLinear proof stamp is
-                // NOT the SE/grant/trail join key (#4098/#3778; sibling
-                // evolution-audit-decision #3284/#3738). typed-mid-current
-                // below still publishes the proof stamp (typed-face
-                // observability, unchanged).
-                const bool filt_mid = !args.empty() && is_int(args[0]);
-                if (filt_mid)
-                    mid = static_cast<std::uint64_t>(as_int(args[0]));
-                else {
-                    mid = typed_audit::g_last_stamped_audit_mid.load(std::memory_order_relaxed);
-                    if (mid == 0)
-                        mid = ::aura::core::current_mutation_epoch();
+// Base capability counters plus the #3143 audit-replay join.
+template <class Snap, class Metrics, class Sandbox, class Insert>
+static void publish_capability_effect_replay_join(Evaluator& ev, const Snap& snap, Metrics* m, const Sandbox& ss,
+                    std::span<const EvalValue> args, Insert& insert_kv) {
+    using namespace aura::core::capability;
+    using namespace aura::core::sandbox;
+    insert_kv("schema", 1565);
+    insert_kv("active", 1);
+    insert_kv("phase", snap.phase);
+    insert_kv("enforced", static_cast<std::int64_t>(snap.enforced));
+    insert_kv("denied", static_cast<std::int64_t>(snap.denied));
+    insert_kv("provenance-mismatch", static_cast<std::int64_t>(snap.provenance_mismatch));
+    // Issue #2707: fail-closed mid join zero-deny under Restricted/Strict.
+    insert_kv("mid-join-zero-deny", static_cast<std::int64_t>(snap.mid_join_zero_deny));
+    insert_kv("mid-join-fail-closed-armed",
+              snap.sandbox_mode != 0 ? 1 : 0); // Restricted/Strict → armed
+    insert_kv("schema-2707", 2707);
+    insert_kv("issue-2707", 2707);
+    // Issue #3143: query:audit-replay-join(mutation_id) — joined audit
+    // trail surface (typed_audit + SE + WAL + grants + isolation)
+    // keyed on a single mutation_id so Agent debug time is O(1)
+    // instead of 5 manual joins. Surface additive on existing
+    // query:capability-effect-stats (no new public query key per
+    // primitive freeze #1448). Falls through silently when args
+    // is empty (returns current typed_audit last_mid surface).
+    {
+        std::uint64_t mid = 0;
+        // Issue #3738/#4120: explicit 0 is a legal join key (refuse
+        // class, same as query:security-audit #3462). Omitted /
+        // non-int defaults to the session/TypedMid join key SSOT
+        // g_last_stamped_audit_mid — the TypeLinear proof stamp is
+        // NOT the SE/grant/trail join key (#4098/#3778; sibling
+        // evolution-audit-decision #3284/#3738). typed-mid-current
+        // below still publishes the proof stamp (typed-face
+        // observability, unchanged).
+        const bool filt_mid = !args.empty() && is_int(args[0]);
+        if (filt_mid)
+            mid = static_cast<std::uint64_t>(as_int(args[0]));
+        else {
+            mid = typed_audit::g_last_stamped_audit_mid.load(std::memory_order_relaxed);
+            if (mid == 0)
+                mid = ::aura::core::current_mutation_epoch();
+        }
+        // Issue #3599: stop at the epoch — 0 is legal under production
+        // refuse (mid-fallback-refused rows carry mid=0); the ring scan
+        // below then selects exactly the refuse class (same filter as
+        // query:security-audit mid=0, #3462). No phantom mid=1 join.
+        std::size_t se_count = 0;
+        std::size_t se_deny_count = 0;
+        auto& se_ring = ::aura::core::security_event::g_security_event_ring();
+        for (const auto& e : se_ring.ring) {
+            if (e.mutation_id != mid)
+                continue;
+            ++se_count;
+            if (e.denied)
+                ++se_deny_count;
+        }
+        // Issue #4118: ring miss → SE WAL (lookup window, then
+        // scan-all retained segments) + overflow join — same mid
+        // semantics as query:security-audit (#3498/#3674/#3970).
+        // Gated on the #3556 hard face: Soft / WAL-off stays
+        // ring-only with zero extra I/O (AC2, one is_enabled()
+        // load max). Count truth: one durable row found for the
+        // mid; deny truth: rec->denied, and overflow rows join as
+        // denies for the #3879 mutation_wal_append_miss stamp or a
+        // #4695 denial-class reason (no kind/denied field on the
+        // overflow row). No new query key.
+        const bool se_join_durable =
+            ::aura::compiler::typed_audit::production_hard_face_active();
+        if (se_count == 0 && se_join_durable) {
+            auto& se_wal = ::aura::core::security_event_wal::g_security_event_wal();
+            if (se_wal.is_enabled()) {
+                const auto win = ::aura::core::wal_slo::wal_mid_lookup_segments();
+                auto rec = se_wal.find_recent_by_mutation_id(mid, win);
+                if (rec) {
+                    se_count = 1; // wal-window join
+                } else {
+                    rec = se_wal.find_by_mutation_id_scan_all_segments(mid);
+                    if (rec)
+                        se_count = 1; // wal-full-scan join
                 }
-                // Issue #3599: stop at the epoch — 0 is legal under production
-                // refuse (mid-fallback-refused rows carry mid=0); the ring scan
-                // below then selects exactly the refuse class (same filter as
-                // query:security-audit mid=0, #3462). No phantom mid=1 join.
-                std::size_t se_count = 0;
-                std::size_t se_deny_count = 0;
-                auto& se_ring = ::aura::core::security_event::g_security_event_ring();
-                for (const auto& e : se_ring.ring) {
-                    if (e.mutation_id != mid)
-                        continue;
-                    ++se_count;
-                    if (e.denied)
+                if (rec && rec->denied)
+                    ++se_deny_count;
+            }
+            if (se_count == 0) {
+                if (const auto* ovr =
+                        ::aura::core::security_event_wal::wal_overflow_find_by_mid(mid)) {
+                    se_count = 1; // overflow join (#3109/#3780)
+                    if (ovr->reason ==
+                            ::aura::core::security_event::kMutationWalAppendMissReason ||
+                        ::aura::core::security_event_wal::se_wal_reason_names_deny_class(
+                            ovr->reason))
                         ++se_deny_count;
                 }
-                // Issue #4118: ring miss → SE WAL (lookup window, then
-                // scan-all retained segments) + overflow join — same mid
-                // semantics as query:security-audit (#3498/#3674/#3970).
-                // Gated on the #3556 hard face: Soft / WAL-off stays
-                // ring-only with zero extra I/O (AC2, one is_enabled()
-                // load max). Count truth: one durable row found for the
-                // mid; deny truth: rec->denied, and overflow rows join as
-                // denies for the #3879 mutation_wal_append_miss stamp or a
-                // #4695 denial-class reason (no kind/denied field on the
-                // overflow row). No new query key.
-                const bool se_join_durable =
-                    ::aura::compiler::typed_audit::production_hard_face_active();
-                if (se_count == 0 && se_join_durable) {
-                    auto& se_wal = ::aura::core::security_event_wal::g_security_event_wal();
-                    if (se_wal.is_enabled()) {
-                        const auto win = ::aura::core::wal_slo::wal_mid_lookup_segments();
-                        auto rec = se_wal.find_recent_by_mutation_id(mid, win);
-                        if (rec) {
-                            se_count = 1; // wal-window join
-                        } else {
-                            rec = se_wal.find_by_mutation_id_scan_all_segments(mid);
-                            if (rec)
-                                se_count = 1; // wal-full-scan join
-                        }
-                        if (rec && rec->denied)
-                            ++se_deny_count;
-                    }
-                    if (se_count == 0) {
-                        if (const auto* ovr =
-                                ::aura::core::security_event_wal::wal_overflow_find_by_mid(mid)) {
-                            se_count = 1; // overflow join (#3109/#3780)
-                            if (ovr->reason ==
-                                    ::aura::core::security_event::kMutationWalAppendMissReason ||
-                                ::aura::core::security_event_wal::se_wal_reason_names_deny_class(
-                                    ovr->reason))
-                                ++se_deny_count;
-                        }
-                    }
-                }
-                insert_kv("replay-mid", static_cast<std::int64_t>(mid));
-                insert_kv("typed-mid-current",
-                          static_cast<std::int64_t>(
-                              typed_audit::last_type_linear_commit_proof_stamp_v_read()));
-                insert_kv("se-count", static_cast<std::int64_t>(se_count));
-                insert_kv("se-deny-count", static_cast<std::int64_t>(se_deny_count));
-                insert_kv("wal-enabled",
-                          ::aura::core::audit_wal::g_mutation_audit_wal().is_enabled() ? 1 : 0);
-                insert_kv("wal-last-seq",
-                          static_cast<std::int64_t>(
-                              ::aura::core::audit_wal::g_mutation_audit_wal().last_seq_persisted));
-                insert_kv("schema-3143", 3143);
-                insert_kv("issue-3143", 3143);
-                // Issue #3877: last matching SE wins; any
-                // mutation_wal_append_miss Deny on the same mid forces
-                // Deny (Agents must not stop at a preceding EffectAllow).
-                insert_kv("last-se-wins-verdict",
-                          static_cast<std::int64_t>(
-                              ::aura::core::security_event::forensic_effect_verdict_for_mid(
-                                  mid, se_join_durable)));
-                insert_kv("wal-miss-deny",
-                          ::aura::core::security_event::forensic_mid_has_wal_append_miss(
-                              mid, se_join_durable)
-                              ? 1
-                              : 0);
-                insert_kv("issue-3877", 3877);
             }
-            // Issue #3090: production grant refused when prov.mutation_id == 0
-            // under Restricted/Strict (same refuse semantics as
-            // resolve_audit_mutation_id #2836). Additive on
-            // query:capability-effect-stats surface (no new primitive name,
-            // primitive freeze #1448).
-            insert_kv("grant-mid-refused-total", static_cast<std::int64_t>(snap.grant_mid_refused));
-            insert_kv("schema-3090", 3090);
-            insert_kv("issue-3090", 3090);
-            insert_kv("grants", static_cast<std::int64_t>(snap.grants));
-            insert_kv("revokes", static_cast<std::int64_t>(snap.revokes));
-            insert_kv("checks", static_cast<std::int64_t>(snap.checks));
-            insert_kv("audits", static_cast<std::int64_t>(snap.audits));
-            insert_kv("sandbox-mode", snap.sandbox_mode);
-            insert_kv("tenant-id", static_cast<std::int64_t>(ev.capability_tenant_id()));
-            // Issue #1876: sandbox-status fields (folded, no new query name).
-            insert_kv("sandbox-status-schema", 1876);
-            insert_kv("sandbox-active", is_sandbox_active() || ev.sandbox_mode() ? 1 : 0);
-            insert_kv("sandbox-strict", is_strict() || ev.effect_sandbox_mode() == 2 ? 1 : 0);
-            insert_kv("effect-checks", static_cast<std::int64_t>(ss.effect_checks));
-            insert_kv("effect-denials", static_cast<std::int64_t>(ss.effect_denials));
-            insert_kv("sandbox-violations",
-                      m ? static_cast<std::int64_t>(
-                              m->sandbox_violations_total.load(std::memory_order_relaxed))
-                        : 0);
-            insert_kv("denials-by-effect",
-                      m ? static_cast<std::int64_t>(
-                              m->capability_denials_by_effect.load(std::memory_order_relaxed))
-                        : 0);
-            insert_kv("denial-mutate",
-                      m ? static_cast<std::int64_t>(
-                              m->capability_denial_mutate_total.load(std::memory_order_relaxed))
-                        : 0);
-            insert_kv("denial-ffi",
-                      m ? static_cast<std::int64_t>(
-                              m->capability_denial_ffi_total.load(std::memory_order_relaxed))
-                        : 0);
-            // Issue #2136: Render effect deny / grant (batch + FFI matrix)
-            insert_kv("denial-render",
-                      m ? static_cast<std::int64_t>(
-                              m->effect_denied_render_total.load(std::memory_order_relaxed))
-                        : 0);
-            insert_kv("render-effect-granted",
-                      m ? static_cast<std::int64_t>(
-                              m->render_effect_granted_total.load(std::memory_order_relaxed))
-                        : 0);
-            insert_kv("provenance-records",
-                      m ? static_cast<std::int64_t>(
-                              m->sandbox_provenance_records_total.load(std::memory_order_relaxed))
-                        : 0);
-            // Issue #2023: MacroSelfEvo expand gate observability
-            insert_kv("macro-self-evo-checks",
-                      static_cast<std::int64_t>(snap.macro_self_evo_checks));
-            insert_kv("macro-self-evo-allowed",
-                      static_cast<std::int64_t>(snap.macro_self_evo_allowed));
-            insert_kv("macro-self-evo-denied",
-                      static_cast<std::int64_t>(snap.macro_self_evo_denied));
-            insert_kv("macro-self-evo-depth-clamps",
-                      static_cast<std::int64_t>(snap.macro_self_evo_depth_clamps));
-            insert_kv("macro-self-evo-pass-clamps",
-                      static_cast<std::int64_t>(snap.macro_self_evo_pass_clamps));
-            insert_kv("macro-self-evo-wired", 1);
-            insert_kv("macro-self-evo-schema", 2023);
-            // Issue #2052: force capability + isolation on every mutate:* entry
-            insert_kv("mutate-force-checks",
-                      m ? static_cast<std::int64_t>(
-                              m->mutate_force_effect_check_total.load(std::memory_order_relaxed))
-                        : 0);
-            insert_kv("mutate-force-denied",
-                      m ? static_cast<std::int64_t>(
-                              m->mutate_force_effect_denied_total.load(std::memory_order_relaxed))
-                        : 0);
-            insert_kv("mutate-force-isolation-denied",
-                      m ? static_cast<std::int64_t>(m->mutate_force_isolation_denied_total.load(
-                              std::memory_order_relaxed))
-                        : 0);
-            insert_kv("mutate-force-allowed",
-                      m ? static_cast<std::int64_t>(
-                              m->mutate_force_effect_allowed_total.load(std::memory_order_relaxed))
-                        : 0);
-            insert_kv(
-                "mutate-force-wired",
-                m ? static_cast<std::int64_t>(m->mutate_force_wired.load(std::memory_order_relaxed))
-                  : 1);
-            insert_kv("schema-2052", 2052);
-            insert_kv("issue-2052", 2052);
-            // Issue #2053: production security defaults visibility
-            {
-                using namespace aura::compiler::typed_audit;
-                using namespace aura::core::audit_wal;
-                using namespace aura::core::sandbox;
-                insert_kv("production-defaults-active", production_defaults_active() ? 1 : 0);
-                insert_kv("typed-audit-strategy",
-                          static_cast<std::int64_t>(static_cast<std::uint32_t>(get_strategy())));
-                insert_kv("typed-audit-sample-ratio",
-                          static_cast<std::int64_t>(get_sample_ratio()));
-                insert_kv(
-                    "process-sandbox-mode",
-                    static_cast<std::int64_t>(static_cast<std::uint8_t>(g_sandbox_state().mode)));
-                insert_kv("wal-process-enabled", g_mutation_audit_wal().is_enabled() ? 1 : 0);
-                insert_kv("schema-2053", 2053);
-                insert_kv("issue-2053", 2053);
-                insert_kv("production-security-wired", 1);
-                // Issue #2150: forced WAL under multi-tenant / Strict
-                {
-                    const auto wsnap = snapshot_audit_wal_stats();
-                    insert_kv("audit-wal-forced",
-                              static_cast<std::int64_t>(wsnap.forced_by_multi_tenant > 0 ? 1 : 0));
-                    insert_kv("audit-wal-forced-total",
-                              static_cast<std::int64_t>(wsnap.forced_by_multi_tenant));
-                    insert_kv("audit-wal-enabled", static_cast<std::int64_t>(wsnap.enabled));
-                    insert_kv("audit-wal-default-dir",
-                              static_cast<std::int64_t>(wsnap.using_default_dir));
-                    insert_kv("schema-2150", kAuditWalForceMultiTenantIssue);
-                    insert_kv("issue-2150", kAuditWalForceMultiTenantIssue);
-                    insert_kv("audit-wal-force-wired", 1);
-                }
-            }
-            // Issue #2055: grant/revoke WorkspaceEpoch + fiber bind surface
-            {
-                using aura::core::capability::kGrantEpochFiberBindIssue;
-                insert_kv("schema-2055", kGrantEpochFiberBindIssue);
-                insert_kv("issue-2055", kGrantEpochFiberBindIssue);
-                insert_kv("grant-epoch-bound", static_cast<std::int64_t>(snap.grant_epoch_bound));
-                insert_kv("revoke-epoch-bound", static_cast<std::int64_t>(snap.revoke_epoch_bound));
-                insert_kv("grant-fiber-bound", static_cast<std::int64_t>(snap.grant_fiber_bound));
-                insert_kv("fiber-mismatch", static_cast<std::int64_t>(snap.fiber_mismatch));
-                insert_kv("epoch-fence-hits", static_cast<std::int64_t>(snap.epoch_fence_hits));
-                insert_kv("grant-epoch-fiber-wired", 1);
-            }
-            // Issue #2149: effect-check stamps Mutation epoch (not Bridge)
-            {
-                using aura::core::capability::kEffectEpochUnifyIssue;
-                insert_kv("schema-2149", kEffectEpochUnifyIssue);
-                insert_kv("issue-2149", kEffectEpochUnifyIssue);
-                insert_kv("mutation-bridge-split-total",
-                          static_cast<std::int64_t>(snap.mutation_bridge_split));
-                insert_kv("effect-epoch-mutation-wired", 1);
-                // Issue #3335: mutation audit ring.epoch is Mutation (not
-                // Bridge). Additive; schema-2149 keys unchanged.
-                using aura::core::capability::kMutationAuditEpochUnifyIssue;
-                insert_kv("schema-3335", kMutationAuditEpochUnifyIssue);
-                insert_kv("issue-3335", kMutationAuditEpochUnifyIssue);
-                insert_kv("mutation-audit-epoch-mutation-wired", 1);
-            }
-            // Issue #2151: optional hard-deny on grant_fiber_id mismatch
-            // (fiber-mismatch count already exposed under schema-2055).
-            {
-                using aura::core::capability::kHardFiberIsolationIssue;
-                insert_kv("schema-2151", kHardFiberIsolationIssue);
-                insert_kv("issue-2151", kHardFiberIsolationIssue);
-                insert_kv("hard-fiber-isolation",
-                          static_cast<std::int64_t>(snap.hard_fiber_isolation));
-                insert_kv("fiber-hard-deny", static_cast<std::int64_t>(snap.fiber_hard_deny));
-                insert_kv("hard-fiber-isolation-wired", 1);
-                // Issue #3076: fiber-mismatch Soft observe is not Hard deny
-                // (#2536 Restricted share). Agents must read fiber-hard-deny.
-                insert_kv("soft-observe-not-hard-guarantee", 1);
-                insert_kv("schema-3076", 3076);
-                insert_kv("issue-3076", 3076);
-                // Issue #2943: production multi-tenant/Strict hard default
-                // (query:capability-effect-stats surface; lineage #2151).
-                insert_kv("schema-2943", 2943);
-                insert_kv("issue-2943", 2943);
-                insert_kv("production-hard-fiber-default-wired", 1);
-            }
-            // Issue #2154: sliding grant_min_valid_epoch retain window
-            {
-                using aura::core::capability::kGrantEpochRetainWindowIssue;
-                insert_kv("schema-2154", kGrantEpochRetainWindowIssue);
-                insert_kv("issue-2154", kGrantEpochRetainWindowIssue);
-                insert_kv("grant-min-valid-epoch",
-                          static_cast<std::int64_t>(snap.grant_min_valid_epoch));
-                insert_kv("grant-epoch-retain-window",
-                          static_cast<std::int64_t>(snap.grant_epoch_retain_window));
-                insert_kv("grant-epoch-window-advance",
-                          static_cast<std::int64_t>(snap.grant_epoch_window_advance));
-                insert_kv("grant-epoch-window-wired", 1);
-            }
-            // Issue #2586: single-use / mutation-bound grant (auto-revoke
-            // after first successful check_and_record_effect that uses the
-            // grant's bits; deny path does NOT consume).
-            {
-                insert_kv("schema-2586", 2586);
-                insert_kv("issue-2586", 2586);
-                insert_kv("capability-single-use-consumed-total",
-                          static_cast<std::int64_t>(snap.capability_single_use_consumed));
-                insert_kv("capability-single-use-consumed-wired", 1);
-            }
-            // Issue #2944: mutation-session grant lifecycle.
-            {
-                insert_kv("schema-2944", 2944);
-                insert_kv("issue-2944", 2944);
-                insert_kv("mutation-session-grant-wired", 1);
-                insert_kv("capability-session-grant-total",
-                          static_cast<std::int64_t>(snap.capability_session_grant));
-                insert_kv("capability-session-revoke-total",
-                          static_cast<std::int64_t>(snap.capability_session_revoke));
-                insert_kv("capability-live-session-grants",
-                          static_cast<std::int64_t>(snap.capability_live_session_grants));
-            }
-            // Issue #3048: session-grant steal / abort residual revoke.
-            {
-                insert_kv("schema-3048", 3048);
-                insert_kv("issue-3048", 3048);
-                insert_kv("session-grant-steal-abort-wired", 1);
-                insert_kv("capability-session-revoke-steal-total",
-                          static_cast<std::int64_t>(snap.capability_session_revoke_steal));
-                insert_kv("capability-session-revoke-abort-total",
-                          static_cast<std::int64_t>(snap.capability_session_revoke_abort));
-            }
-            // Issue #2882: production default single-use for high-risk
-            // grants (Exec | Mutate | MacroSelfEvo | TenantAdmin | Syscall;
-            // Exec per #4234) under Restricted/Strict. Default
-            // `grant_effect_capability` surface force-promotes high-risk
-            // grants to single_use=true; explicit `grant_effect_durable`
-            // admin path stays sticky (audited via
-            // capability_durable_high_risk_grant counter).
-            {
-                using aura::compiler::security::kEffectExec;
-                using aura::compiler::security::kEffectMacroSelfEvo;
-                using aura::compiler::security::kEffectMutate;
-                using aura::compiler::security::kEffectSyscall;
-                using aura::compiler::security::kEffectTenantAdmin;
-                constexpr std::uint16_t kHighRiskMask =
-                    static_cast<std::uint16_t>(kEffectExec | kEffectMutate | kEffectMacroSelfEvo |
-                                               kEffectTenantAdmin | kEffectSyscall);
-                insert_kv("schema-2882", 2882);
-                insert_kv("issue-2882", 2882);
-                insert_kv("production-default-single-use-wired", 1);
-                insert_kv("high-risk-default-single-use-mask",
-                          static_cast<std::int64_t>(kHighRiskMask));
-                insert_kv("capability-high-risk-forced-single-use-total",
-                          static_cast<std::int64_t>(snap.capability_high_risk_forced_single_use));
-                insert_kv("capability-durable-high-risk-grant-total",
-                          static_cast<std::int64_t>(snap.capability_durable_high_risk_grant));
-            }
-            // Issue #2967: durable high-risk grant call-site gate — caller
-            // must hold TenantAdmin (or "tenant-admin" / "capability" string
-            // caps mapped to TenantAdmin) AND pass a non-empty audit reason
-            // under production. Deny → SE reason durable-grant-needs-
-            // tenant-admin / durable-grant-reason-required + deny counter.
-            {
-                insert_kv("schema-2967", 2967);
-                insert_kv("issue-2967", 2967);
-                insert_kv("durable-grant-tenant-admin-wired", 1);
-                insert_kv("durable-grant-reason-wired", 1);
-                insert_kv("capability-durable-grant-deny-total",
-                          static_cast<std::int64_t>(snap.capability_durable_grant_deny));
-            }
-            // Issue #3177: durable high-risk grant production force —
-            // session_bound=true by default under Restricted/Strict so
-            // outermost MutationBoundaryGuard exit / TenantScope dtor /
-            // steal-abort revokes them (#2944/#3048/#3142 path). Closes
-            // the last privilege-sticky surface for self-modifying Agents
-            // under long-running multi-tenant loads. Sticky escape via
-            // grant_effect_durable_sticky + AURA_ALLOW_DURABLE_STICKY=1
-            // env gate stays opt-in. Additive keys only (AC4); no schema
-            // change to existing query keys.
-            {
-                insert_kv("schema-3177", 3177);
-                insert_kv("issue-3177", 3177);
-                insert_kv("production-durable-session-bound-wired", 1);
-                insert_kv("durable-sticky-escape-wired", 1);
-                insert_kv("capability-durable-session-bound-total",
-                          static_cast<std::int64_t>(snap.capability_durable_session_bound));
-            }
-            // Issue #3029: grant_macro_self_evo TenantAdmin fence.
-            {
-                insert_kv("schema-3029", 3029);
-                insert_kv("issue-3029", 3029);
-                insert_kv("macro-self-evo-grant-tenant-admin-wired", 1);
-                insert_kv("capability-macro-self-evo-grant-deny-total",
-                          static_cast<std::int64_t>(snap.capability_macro_self_evo_grant_deny));
-            }
-            // Issue #3542: mutate MacroIntroduced :allow-macro? opt-out
-            // requires MacroSelfEvo (wildcard strip). Additive keys.
-            {
-                insert_kv("schema-3542", 3542);
-                insert_kv("issue-3542", 3542);
-                insert_kv("macro-mutate-capability-fence-wired", 1);
-                insert_kv("macro-mutate-capability-deny-total",
-                          static_cast<std::int64_t>(snap.macro_mutate_capability_deny));
-            }
-            // Issue #2968: cross-tenant grant write path gate —
-            // grant_cross_tenant_access + foreign-tenant grant_effect_
-            // capability require TenantAdmin under production. Deny → SE
-            // reason cross-tenant-grant-needs-tenant-admin + deny counter.
-            {
-                using ::aura::core::workspace_isolation::snapshot_tenant_isolation_stats;
-                const auto iso = snapshot_tenant_isolation_stats();
-                insert_kv("schema-2968", 2968);
-                insert_kv("issue-2968", 2968);
-                insert_kv("cross-tenant-grant-tenant-admin-wired", 1);
-                insert_kv("cross-tenant-grant-deny-total",
-                          static_cast<std::int64_t>(iso.cross_tenant_grant_deny));
-            }
-            // Issue #2969: registry write-fence — grant/revoke targeting a
-            // foreign tenant id under production requires TenantAdmin.
-            // Deny → SE reason grant-foreign-tenant-needs-tenant-admin + deny
-            // counter (capability_grant_foreign_tenant_deny_total). Additive
-            // keys only (AC5).
-            {
-                using aura::core::capability::snapshot_capability_effect_stats;
-                const auto cap = snapshot_capability_effect_stats();
-                insert_kv("schema-2969", 2969);
-                insert_kv("issue-2969", 2969);
-                insert_kv("capability-grant-write-fence-wired", 1);
-                insert_kv("capability-grant-foreign-tenant-deny-total",
-                          static_cast<std::int64_t>(cap.capability_grant_foreign_tenant_deny));
-            }
-            // Issue #3010: allow_cross_tenant_ write gate — production
-            // same-tenant self-grant of the isolation-bypass flag requires
-            // TenantAdmin / wildcard. Deny → SE reason
-            // allow-cross-needs-tenant-admin + deny counter.
-            {
-                using ::aura::core::workspace_isolation::snapshot_tenant_isolation_stats;
-                const auto iso = snapshot_tenant_isolation_stats();
-                insert_kv("schema-3010", 3010);
-                insert_kv("issue-3010", 3010);
-                insert_kv("allow-cross-tenant-admin-wired", 1);
-                insert_kv("allow-cross-tenant-deny-total",
-                          static_cast<std::int64_t>(iso.allow_cross_tenant_deny));
-            }
-            // Issue #3040: residual compile:/verify:/syntax: NodeId writers
-            // gate via require_effect_for_node_id / on_ref before Guard.
-            {
-                using ::aura::core::workspace_isolation::snapshot_tenant_isolation_stats;
-                const auto iso = snapshot_tenant_isolation_stats();
-                insert_kv("schema-3040", 3040);
-                insert_kv("issue-3040", 3040);
-                insert_kv(
-                    "nodeid-only-entry-prevented-wired",
-                    static_cast<std::int64_t>(::aura::compiler::kNodeIdOnlyEntryPreventedWired));
-                insert_kv("nodeid-only-entry-prevented-total",
-                          static_cast<std::int64_t>(iso.nodeid_only_entry_prevented));
-                // Issue #3630: undeclared multi-tenant autodetect posture.
-                insert_kv("undeclared-multi-tenant-detected-total",
-                          static_cast<std::int64_t>(iso.undeclared_multi_tenant_detected));
-                insert_kv("undeclared-mt-autodetect-armed",
-                          ::aura::core::provenance::undeclared_mt_autodetect_armed() ? 1 : 0);
-            }
-            // Issue #3011: IsolationDeny SecurityEvent carries live fiber
-            // (effect_fiber_id_or). query:security-audit filters by fiber.
-            {
-                insert_kv("schema-3011", 3011);
-                insert_kv("issue-3011", 3011);
-                insert_kv("isolation-deny-fiber-wired", 1);
-            }
-            // Issue #2883: production hard principal check on fiber
-            // resume/steal handoff. Under production/Restricted, if the
-            // current fiber resume had a hard principal mismatch (ambient
-            // worker principal diverged from fiber `assigned_tenant_id_`),
-            // side-effect entry points (`require_effect*` /
-            // `check_and_record_effect`) deny the call with SE reason
-            // `fiber-principal-mismatch` rather than silently letting an
-            // ambient principal escape through. Off / Soft path: flag stays
-            // false, existing soft metric-only behaviour preserved.
-            {
-                insert_kv("schema-2883", 2883);
-                insert_kv("issue-2883", 2883);
-                insert_kv("fiber-principal-mismatch-hard-deny-wired", 1);
-                insert_kv("capability-fiber-principal-mismatch-hard-deny-total",
-                          static_cast<std::int64_t>(snap.fiber_principal_mismatch_hard_deny));
-                insert_kv("tenant-scope-mismatch-hard-total",
-                          static_cast<std::int64_t>(
-                              aura::serve::Fiber::tenant_scope_mismatch_hard_total()));
-            }
-            // Issue #2152: dispatch-level non-bypassable required_effects
-            {
-                using aura::compiler::kDispatchRequiredEffectsIssue;
-                insert_kv("schema-2152", kDispatchRequiredEffectsIssue);
-                insert_kv("issue-2152", kDispatchRequiredEffectsIssue);
-                insert_kv(
-                    "dispatch-required-effects-check",
-                    m ? static_cast<std::int64_t>(m->dispatch_required_effects_check_total.load(
-                            std::memory_order_relaxed))
+        }
+        insert_kv("replay-mid", static_cast<std::int64_t>(mid));
+        insert_kv("typed-mid-current",
+                  static_cast<std::int64_t>(
+                      typed_audit::last_type_linear_commit_proof_stamp_v_read()));
+        insert_kv("se-count", static_cast<std::int64_t>(se_count));
+        insert_kv("se-deny-count", static_cast<std::int64_t>(se_deny_count));
+        insert_kv("wal-enabled",
+                  ::aura::core::audit_wal::g_mutation_audit_wal().is_enabled() ? 1 : 0);
+        insert_kv("wal-last-seq",
+                  static_cast<std::int64_t>(
+                      ::aura::core::audit_wal::g_mutation_audit_wal().last_seq_persisted));
+        insert_kv("schema-3143", 3143);
+        insert_kv("issue-3143", 3143);
+        // Issue #3877: last matching SE wins; any
+        // mutation_wal_append_miss Deny on the same mid forces
+        // Deny (Agents must not stop at a preceding EffectAllow).
+        insert_kv("last-se-wins-verdict",
+                  static_cast<std::int64_t>(
+                      ::aura::core::security_event::forensic_effect_verdict_for_mid(
+                          mid, se_join_durable)));
+        insert_kv("wal-miss-deny",
+                  ::aura::core::security_event::forensic_mid_has_wal_append_miss(
+                      mid, se_join_durable)
+                      ? 1
                       : 0);
-                insert_kv(
-                    "dispatch-required-effects-deny",
-                    m ? static_cast<std::int64_t>(
-                            m->dispatch_required_effects_deny_total.load(std::memory_order_relaxed))
-                      : 0);
-                insert_kv(
-                    "dispatch-required-effects-inferred",
-                    m ? static_cast<std::int64_t>(m->dispatch_required_effects_inferred_total.load(
-                            std::memory_order_relaxed))
-                      : 0);
-                insert_kv("dispatch-required-effects-wired", 1);
-            }
-            // Issue #3971: process-level skip/refuse SE tenant=0 count.
-            // Additive at hash END. query:security-audit already has tenant=.
-            {
-                using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
-                using aura::compiler::typed_audit::kProcessSeTenantJoinIssue;
-                insert_kv("process-se-tenant-unset-total",
-                          static_cast<std::int64_t>(
-                              g_typed_mutation_audit_counters.process_se_tenant_unset_total.load(
-                                  std::memory_order_relaxed)));
-                insert_kv("schema-3971", kProcessSeTenantJoinIssue);
-                insert_kv("issue-3971", kProcessSeTenantJoinIssue);
-            }
-            // Issue #4141: planned headroom pin joins the #3339 CI
-            // (check_agent_decision_facade_headroom_3339.py). Additive
-            // stamps at handler end only — no key renames.
-            insert_kv("schema-4141", 4141);
-            insert_kv("issue-4141", 4141);
-            // Issue #4575: Soft auto-grant on the existing stats surface.
-            // Planned stays 208 (live+16 still fits). No new query name.
-            {
-                using ::aura::core::capability::g_capability_registry;
-                auto& reg = g_capability_registry();
-                std::scoped_lock<std::mutex> lock(reg.mtx);
-                insert_kv("soft-auto-grant", reg.soft_session_active_ ? 1 : 0);
-                insert_kv("soft-auto-grant-workspace",
-                          static_cast<std::int64_t>(reg.soft_session_workspace_));
-            }
-            insert_kv("schema-4575", 4575);
-            insert_kv("issue-4575", 4575);
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
-        });
+        insert_kv("issue-3877", 3877);
+    }
+}
 
+// Sandbox status, effect denies, and production-default counters.
+template <class Snap, class Metrics, class Sandbox, class Insert>
+static void publish_capability_effect_sandbox_face(Evaluator& ev, const Snap& snap, Metrics* m, const Sandbox& ss,
+                    std::span<const EvalValue> args, Insert& insert_kv) {
+    using namespace aura::core::capability;
+    using namespace aura::core::sandbox;
+    // Issue #3090: production grant refused when prov.mutation_id == 0
+    // under Restricted/Strict (same refuse semantics as
+    // resolve_audit_mutation_id #2836). Additive on
+    // query:capability-effect-stats surface (no new primitive name,
+    // primitive freeze #1448).
+    insert_kv("grant-mid-refused-total", static_cast<std::int64_t>(snap.grant_mid_refused));
+    insert_kv("schema-3090", 3090);
+    insert_kv("issue-3090", 3090);
+    insert_kv("grants", static_cast<std::int64_t>(snap.grants));
+    insert_kv("revokes", static_cast<std::int64_t>(snap.revokes));
+    insert_kv("checks", static_cast<std::int64_t>(snap.checks));
+    insert_kv("audits", static_cast<std::int64_t>(snap.audits));
+    insert_kv("sandbox-mode", snap.sandbox_mode);
+    insert_kv("tenant-id", static_cast<std::int64_t>(ev.capability_tenant_id()));
+    // Issue #1876: sandbox-status fields (folded, no new query name).
+    insert_kv("sandbox-status-schema", 1876);
+    insert_kv("sandbox-active", is_sandbox_active() || ev.sandbox_mode() ? 1 : 0);
+    insert_kv("sandbox-strict", is_strict() || ev.effect_sandbox_mode() == 2 ? 1 : 0);
+    insert_kv("effect-checks", static_cast<std::int64_t>(ss.effect_checks));
+    insert_kv("effect-denials", static_cast<std::int64_t>(ss.effect_denials));
+    insert_kv("sandbox-violations",
+              m ? static_cast<std::int64_t>(
+                      m->sandbox_violations_total.load(std::memory_order_relaxed))
+                : 0);
+    insert_kv("denials-by-effect",
+              m ? static_cast<std::int64_t>(
+                      m->capability_denials_by_effect.load(std::memory_order_relaxed))
+                : 0);
+    insert_kv("denial-mutate",
+              m ? static_cast<std::int64_t>(
+                      m->capability_denial_mutate_total.load(std::memory_order_relaxed))
+                : 0);
+    insert_kv("denial-ffi",
+              m ? static_cast<std::int64_t>(
+                      m->capability_denial_ffi_total.load(std::memory_order_relaxed))
+                : 0);
+    // Issue #2136: Render effect deny / grant (batch + FFI matrix)
+    insert_kv("denial-render",
+              m ? static_cast<std::int64_t>(
+                      m->effect_denied_render_total.load(std::memory_order_relaxed))
+                : 0);
+    insert_kv("render-effect-granted",
+              m ? static_cast<std::int64_t>(
+                      m->render_effect_granted_total.load(std::memory_order_relaxed))
+                : 0);
+    insert_kv("provenance-records",
+              m ? static_cast<std::int64_t>(
+                      m->sandbox_provenance_records_total.load(std::memory_order_relaxed))
+                : 0);
+    // Issue #2023: MacroSelfEvo expand gate observability
+    insert_kv("macro-self-evo-checks",
+              static_cast<std::int64_t>(snap.macro_self_evo_checks));
+    insert_kv("macro-self-evo-allowed",
+              static_cast<std::int64_t>(snap.macro_self_evo_allowed));
+    insert_kv("macro-self-evo-denied",
+              static_cast<std::int64_t>(snap.macro_self_evo_denied));
+    insert_kv("macro-self-evo-depth-clamps",
+              static_cast<std::int64_t>(snap.macro_self_evo_depth_clamps));
+    insert_kv("macro-self-evo-pass-clamps",
+              static_cast<std::int64_t>(snap.macro_self_evo_pass_clamps));
+    insert_kv("macro-self-evo-wired", 1);
+    insert_kv("macro-self-evo-schema", 2023);
+    // Issue #2052: force capability + isolation on every mutate:* entry
+    insert_kv("mutate-force-checks",
+              m ? static_cast<std::int64_t>(
+                      m->mutate_force_effect_check_total.load(std::memory_order_relaxed))
+                : 0);
+    insert_kv("mutate-force-denied",
+              m ? static_cast<std::int64_t>(
+                      m->mutate_force_effect_denied_total.load(std::memory_order_relaxed))
+                : 0);
+    insert_kv("mutate-force-isolation-denied",
+              m ? static_cast<std::int64_t>(m->mutate_force_isolation_denied_total.load(
+                      std::memory_order_relaxed))
+                : 0);
+    insert_kv("mutate-force-allowed",
+              m ? static_cast<std::int64_t>(
+                      m->mutate_force_effect_allowed_total.load(std::memory_order_relaxed))
+                : 0);
+    insert_kv(
+        "mutate-force-wired",
+        m ? static_cast<std::int64_t>(m->mutate_force_wired.load(std::memory_order_relaxed))
+          : 1);
+    insert_kv("schema-2052", 2052);
+    insert_kv("issue-2052", 2052);
+    // Issue #2053: production security defaults visibility
+    {
+        using namespace aura::compiler::typed_audit;
+        using namespace aura::core::audit_wal;
+        using namespace aura::core::sandbox;
+        insert_kv("production-defaults-active", production_defaults_active() ? 1 : 0);
+        insert_kv("typed-audit-strategy",
+                  static_cast<std::int64_t>(static_cast<std::uint32_t>(get_strategy())));
+        insert_kv("typed-audit-sample-ratio",
+                  static_cast<std::int64_t>(get_sample_ratio()));
+        insert_kv(
+            "process-sandbox-mode",
+            static_cast<std::int64_t>(static_cast<std::uint8_t>(g_sandbox_state().mode)));
+        insert_kv("wal-process-enabled", g_mutation_audit_wal().is_enabled() ? 1 : 0);
+        insert_kv("schema-2053", 2053);
+        insert_kv("issue-2053", 2053);
+        insert_kv("production-security-wired", 1);
+        // Issue #2150: forced WAL under multi-tenant / Strict
+        {
+            const auto wsnap = snapshot_audit_wal_stats();
+            insert_kv("audit-wal-forced",
+                      static_cast<std::int64_t>(wsnap.forced_by_multi_tenant > 0 ? 1 : 0));
+            insert_kv("audit-wal-forced-total",
+                      static_cast<std::int64_t>(wsnap.forced_by_multi_tenant));
+            insert_kv("audit-wal-enabled", static_cast<std::int64_t>(wsnap.enabled));
+            insert_kv("audit-wal-default-dir",
+                      static_cast<std::int64_t>(wsnap.using_default_dir));
+            insert_kv("schema-2150", kAuditWalForceMultiTenantIssue);
+            insert_kv("issue-2150", kAuditWalForceMultiTenantIssue);
+            insert_kv("audit-wal-force-wired", 1);
+        }
+    }
+    // Issue #2055: grant/revoke WorkspaceEpoch + fiber bind surface
+    {
+        using aura::core::capability::kGrantEpochFiberBindIssue;
+        insert_kv("schema-2055", kGrantEpochFiberBindIssue);
+        insert_kv("issue-2055", kGrantEpochFiberBindIssue);
+        insert_kv("grant-epoch-bound", static_cast<std::int64_t>(snap.grant_epoch_bound));
+        insert_kv("revoke-epoch-bound", static_cast<std::int64_t>(snap.revoke_epoch_bound));
+        insert_kv("grant-fiber-bound", static_cast<std::int64_t>(snap.grant_fiber_bound));
+        insert_kv("fiber-mismatch", static_cast<std::int64_t>(snap.fiber_mismatch));
+        insert_kv("epoch-fence-hits", static_cast<std::int64_t>(snap.epoch_fence_hits));
+        insert_kv("grant-epoch-fiber-wired", 1);
+    }
+    // Issue #2149: effect-check stamps Mutation epoch (not Bridge)
+    {
+        using aura::core::capability::kEffectEpochUnifyIssue;
+        insert_kv("schema-2149", kEffectEpochUnifyIssue);
+        insert_kv("issue-2149", kEffectEpochUnifyIssue);
+        insert_kv("mutation-bridge-split-total",
+                  static_cast<std::int64_t>(snap.mutation_bridge_split));
+        insert_kv("effect-epoch-mutation-wired", 1);
+        // Issue #3335: mutation audit ring.epoch is Mutation (not
+        // Bridge). Additive; schema-2149 keys unchanged.
+        using aura::core::capability::kMutationAuditEpochUnifyIssue;
+        insert_kv("schema-3335", kMutationAuditEpochUnifyIssue);
+        insert_kv("issue-3335", kMutationAuditEpochUnifyIssue);
+        insert_kv("mutation-audit-epoch-mutation-wired", 1);
+    }
+    // Issue #2151: optional hard-deny on grant_fiber_id mismatch
+    // (fiber-mismatch count already exposed under schema-2055).
+    {
+        using aura::core::capability::kHardFiberIsolationIssue;
+        insert_kv("schema-2151", kHardFiberIsolationIssue);
+        insert_kv("issue-2151", kHardFiberIsolationIssue);
+        insert_kv("hard-fiber-isolation",
+                  static_cast<std::int64_t>(snap.hard_fiber_isolation));
+        insert_kv("fiber-hard-deny", static_cast<std::int64_t>(snap.fiber_hard_deny));
+        insert_kv("hard-fiber-isolation-wired", 1);
+        // Issue #3076: fiber-mismatch Soft observe is not Hard deny
+        // (#2536 Restricted share). Agents must read fiber-hard-deny.
+        insert_kv("soft-observe-not-hard-guarantee", 1);
+        insert_kv("schema-3076", 3076);
+        insert_kv("issue-3076", 3076);
+        // Issue #2943: production multi-tenant/Strict hard default
+        // (query:capability-effect-stats surface; lineage #2151).
+        insert_kv("schema-2943", 2943);
+        insert_kv("issue-2943", 2943);
+        insert_kv("production-hard-fiber-default-wired", 1);
+    }
+    // Issue #2154: sliding grant_min_valid_epoch retain window
+    {
+        using aura::core::capability::kGrantEpochRetainWindowIssue;
+        insert_kv("schema-2154", kGrantEpochRetainWindowIssue);
+        insert_kv("issue-2154", kGrantEpochRetainWindowIssue);
+        insert_kv("grant-min-valid-epoch",
+                  static_cast<std::int64_t>(snap.grant_min_valid_epoch));
+        insert_kv("grant-epoch-retain-window",
+                  static_cast<std::int64_t>(snap.grant_epoch_retain_window));
+        insert_kv("grant-epoch-window-advance",
+                  static_cast<std::int64_t>(snap.grant_epoch_window_advance));
+        insert_kv("grant-epoch-window-wired", 1);
+    }
+}
+
+// Single-use, session, and durable grant lifecycle counters.
+template <class Snap, class Metrics, class Sandbox, class Insert>
+static void publish_capability_effect_grant_lifecycle(Evaluator& ev, const Snap& snap, Metrics* m, const Sandbox& ss,
+                    std::span<const EvalValue> args, Insert& insert_kv) {
+    using namespace aura::core::capability;
+    using namespace aura::core::sandbox;
+    // Issue #2586: single-use / mutation-bound grant (auto-revoke
+    // after first successful check_and_record_effect that uses the
+    // grant's bits; deny path does NOT consume).
+    {
+        insert_kv("schema-2586", 2586);
+        insert_kv("issue-2586", 2586);
+        insert_kv("capability-single-use-consumed-total",
+                  static_cast<std::int64_t>(snap.capability_single_use_consumed));
+        insert_kv("capability-single-use-consumed-wired", 1);
+    }
+    // Issue #2944: mutation-session grant lifecycle.
+    {
+        insert_kv("schema-2944", 2944);
+        insert_kv("issue-2944", 2944);
+        insert_kv("mutation-session-grant-wired", 1);
+        insert_kv("capability-session-grant-total",
+                  static_cast<std::int64_t>(snap.capability_session_grant));
+        insert_kv("capability-session-revoke-total",
+                  static_cast<std::int64_t>(snap.capability_session_revoke));
+        insert_kv("capability-live-session-grants",
+                  static_cast<std::int64_t>(snap.capability_live_session_grants));
+    }
+    // Issue #3048: session-grant steal / abort residual revoke.
+    {
+        insert_kv("schema-3048", 3048);
+        insert_kv("issue-3048", 3048);
+        insert_kv("session-grant-steal-abort-wired", 1);
+        insert_kv("capability-session-revoke-steal-total",
+                  static_cast<std::int64_t>(snap.capability_session_revoke_steal));
+        insert_kv("capability-session-revoke-abort-total",
+                  static_cast<std::int64_t>(snap.capability_session_revoke_abort));
+    }
+    // Issue #2882: production default single-use for high-risk
+    // grants (Exec | Mutate | MacroSelfEvo | TenantAdmin | Syscall;
+    // Exec per #4234) under Restricted/Strict. Default
+    // `grant_effect_capability` surface force-promotes high-risk
+    // grants to single_use=true; explicit `grant_effect_durable`
+    // admin path stays sticky (audited via
+    // capability_durable_high_risk_grant counter).
+    {
+        using aura::compiler::security::kEffectExec;
+        using aura::compiler::security::kEffectMacroSelfEvo;
+        using aura::compiler::security::kEffectMutate;
+        using aura::compiler::security::kEffectSyscall;
+        using aura::compiler::security::kEffectTenantAdmin;
+        constexpr std::uint16_t kHighRiskMask =
+            static_cast<std::uint16_t>(kEffectExec | kEffectMutate | kEffectMacroSelfEvo |
+                                       kEffectTenantAdmin | kEffectSyscall);
+        insert_kv("schema-2882", 2882);
+        insert_kv("issue-2882", 2882);
+        insert_kv("production-default-single-use-wired", 1);
+        insert_kv("high-risk-default-single-use-mask",
+                  static_cast<std::int64_t>(kHighRiskMask));
+        insert_kv("capability-high-risk-forced-single-use-total",
+                  static_cast<std::int64_t>(snap.capability_high_risk_forced_single_use));
+        insert_kv("capability-durable-high-risk-grant-total",
+                  static_cast<std::int64_t>(snap.capability_durable_high_risk_grant));
+    }
+    // Issue #2967: durable high-risk grant call-site gate — caller
+    // must hold TenantAdmin (or "tenant-admin" / "capability" string
+    // caps mapped to TenantAdmin) AND pass a non-empty audit reason
+    // under production. Deny → SE reason durable-grant-needs-
+    // tenant-admin / durable-grant-reason-required + deny counter.
+    {
+        insert_kv("schema-2967", 2967);
+        insert_kv("issue-2967", 2967);
+        insert_kv("durable-grant-tenant-admin-wired", 1);
+        insert_kv("durable-grant-reason-wired", 1);
+        insert_kv("capability-durable-grant-deny-total",
+                  static_cast<std::int64_t>(snap.capability_durable_grant_deny));
+    }
+    // Issue #3177: durable high-risk grant production force —
+    // session_bound=true by default under Restricted/Strict so
+    // outermost MutationBoundaryGuard exit / TenantScope dtor /
+    // steal-abort revokes them (#2944/#3048/#3142 path). Closes
+    // the last privilege-sticky surface for self-modifying Agents
+    // under long-running multi-tenant loads. Sticky escape via
+    // grant_effect_durable_sticky + AURA_ALLOW_DURABLE_STICKY=1
+    // env gate stays opt-in. Additive keys only (AC4); no schema
+    // change to existing query keys.
+    {
+        insert_kv("schema-3177", 3177);
+        insert_kv("issue-3177", 3177);
+        insert_kv("production-durable-session-bound-wired", 1);
+        insert_kv("durable-sticky-escape-wired", 1);
+        insert_kv("capability-durable-session-bound-total",
+                  static_cast<std::int64_t>(snap.capability_durable_session_bound));
+    }
+    // Issue #3029: grant_macro_self_evo TenantAdmin fence.
+    {
+        insert_kv("schema-3029", 3029);
+        insert_kv("issue-3029", 3029);
+        insert_kv("macro-self-evo-grant-tenant-admin-wired", 1);
+        insert_kv("capability-macro-self-evo-grant-deny-total",
+                  static_cast<std::int64_t>(snap.capability_macro_self_evo_grant_deny));
+    }
+    // Issue #3542: mutate MacroIntroduced :allow-macro? opt-out
+    // requires MacroSelfEvo (wildcard strip). Additive keys.
+    {
+        insert_kv("schema-3542", 3542);
+        insert_kv("issue-3542", 3542);
+        insert_kv("macro-mutate-capability-fence-wired", 1);
+        insert_kv("macro-mutate-capability-deny-total",
+                  static_cast<std::int64_t>(snap.macro_mutate_capability_deny));
+    }
+}
+
+// Cross-tenant, fiber, and dispatch fence counters.
+template <class Snap, class Metrics, class Sandbox, class Insert>
+static void publish_capability_effect_tenant_fences(Evaluator& ev, const Snap& snap, Metrics* m, const Sandbox& ss,
+                    std::span<const EvalValue> args, Insert& insert_kv) {
+    using namespace aura::core::capability;
+    using namespace aura::core::sandbox;
+    // Issue #2968: cross-tenant grant write path gate —
+    // grant_cross_tenant_access + foreign-tenant grant_effect_
+    // capability require TenantAdmin under production. Deny → SE
+    // reason cross-tenant-grant-needs-tenant-admin + deny counter.
+    {
+        using ::aura::core::workspace_isolation::snapshot_tenant_isolation_stats;
+        const auto iso = snapshot_tenant_isolation_stats();
+        insert_kv("schema-2968", 2968);
+        insert_kv("issue-2968", 2968);
+        insert_kv("cross-tenant-grant-tenant-admin-wired", 1);
+        insert_kv("cross-tenant-grant-deny-total",
+                  static_cast<std::int64_t>(iso.cross_tenant_grant_deny));
+    }
+    // Issue #2969: registry write-fence — grant/revoke targeting a
+    // foreign tenant id under production requires TenantAdmin.
+    // Deny → SE reason grant-foreign-tenant-needs-tenant-admin + deny
+    // counter (capability_grant_foreign_tenant_deny_total). Additive
+    // keys only (AC5).
+    {
+        using aura::core::capability::snapshot_capability_effect_stats;
+        const auto cap = snapshot_capability_effect_stats();
+        insert_kv("schema-2969", 2969);
+        insert_kv("issue-2969", 2969);
+        insert_kv("capability-grant-write-fence-wired", 1);
+        insert_kv("capability-grant-foreign-tenant-deny-total",
+                  static_cast<std::int64_t>(cap.capability_grant_foreign_tenant_deny));
+    }
+    // Issue #3010: allow_cross_tenant_ write gate — production
+    // same-tenant self-grant of the isolation-bypass flag requires
+    // TenantAdmin / wildcard. Deny → SE reason
+    // allow-cross-needs-tenant-admin + deny counter.
+    {
+        using ::aura::core::workspace_isolation::snapshot_tenant_isolation_stats;
+        const auto iso = snapshot_tenant_isolation_stats();
+        insert_kv("schema-3010", 3010);
+        insert_kv("issue-3010", 3010);
+        insert_kv("allow-cross-tenant-admin-wired", 1);
+        insert_kv("allow-cross-tenant-deny-total",
+                  static_cast<std::int64_t>(iso.allow_cross_tenant_deny));
+    }
+    // Issue #3040: residual compile:/verify:/syntax: NodeId writers
+    // gate via require_effect_for_node_id / on_ref before Guard.
+    {
+        using ::aura::core::workspace_isolation::snapshot_tenant_isolation_stats;
+        const auto iso = snapshot_tenant_isolation_stats();
+        insert_kv("schema-3040", 3040);
+        insert_kv("issue-3040", 3040);
+        insert_kv(
+            "nodeid-only-entry-prevented-wired",
+            static_cast<std::int64_t>(::aura::compiler::kNodeIdOnlyEntryPreventedWired));
+        insert_kv("nodeid-only-entry-prevented-total",
+                  static_cast<std::int64_t>(iso.nodeid_only_entry_prevented));
+        // Issue #3630: undeclared multi-tenant autodetect posture.
+        insert_kv("undeclared-multi-tenant-detected-total",
+                  static_cast<std::int64_t>(iso.undeclared_multi_tenant_detected));
+        insert_kv("undeclared-mt-autodetect-armed",
+                  ::aura::core::provenance::undeclared_mt_autodetect_armed() ? 1 : 0);
+    }
+    // Issue #3011: IsolationDeny SecurityEvent carries live fiber
+    // (effect_fiber_id_or). query:security-audit filters by fiber.
+    {
+        insert_kv("schema-3011", 3011);
+        insert_kv("issue-3011", 3011);
+        insert_kv("isolation-deny-fiber-wired", 1);
+    }
+    // Issue #2883: production hard principal check on fiber
+    // resume/steal handoff. Under production/Restricted, if the
+    // current fiber resume had a hard principal mismatch (ambient
+    // worker principal diverged from fiber `assigned_tenant_id_`),
+    // side-effect entry points (`require_effect*` /
+    // `check_and_record_effect`) deny the call with SE reason
+    // `fiber-principal-mismatch` rather than silently letting an
+    // ambient principal escape through. Off / Soft path: flag stays
+    // false, existing soft metric-only behaviour preserved.
+    {
+        insert_kv("schema-2883", 2883);
+        insert_kv("issue-2883", 2883);
+        insert_kv("fiber-principal-mismatch-hard-deny-wired", 1);
+        insert_kv("capability-fiber-principal-mismatch-hard-deny-total",
+                  static_cast<std::int64_t>(snap.fiber_principal_mismatch_hard_deny));
+        insert_kv("tenant-scope-mismatch-hard-total",
+                  static_cast<std::int64_t>(
+                      aura::serve::Fiber::tenant_scope_mismatch_hard_total()));
+    }
+    // Issue #2152: dispatch-level non-bypassable required_effects
+    {
+        using aura::compiler::kDispatchRequiredEffectsIssue;
+        insert_kv("schema-2152", kDispatchRequiredEffectsIssue);
+        insert_kv("issue-2152", kDispatchRequiredEffectsIssue);
+        insert_kv(
+            "dispatch-required-effects-check",
+            m ? static_cast<std::int64_t>(m->dispatch_required_effects_check_total.load(
+                    std::memory_order_relaxed))
+              : 0);
+        insert_kv(
+            "dispatch-required-effects-deny",
+            m ? static_cast<std::int64_t>(
+                    m->dispatch_required_effects_deny_total.load(std::memory_order_relaxed))
+              : 0);
+        insert_kv(
+            "dispatch-required-effects-inferred",
+            m ? static_cast<std::int64_t>(m->dispatch_required_effects_inferred_total.load(
+                    std::memory_order_relaxed))
+              : 0);
+        insert_kv("dispatch-required-effects-wired", 1);
+    }
+    // Issue #3971: process-level skip/refuse SE tenant=0 count.
+    // Additive at hash END. query:security-audit already has tenant=.
+    {
+        using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+        using aura::compiler::typed_audit::kProcessSeTenantJoinIssue;
+        insert_kv("process-se-tenant-unset-total",
+                  static_cast<std::int64_t>(
+                      g_typed_mutation_audit_counters.process_se_tenant_unset_total.load(
+                          std::memory_order_relaxed)));
+        insert_kv("schema-3971", kProcessSeTenantJoinIssue);
+        insert_kv("issue-3971", kProcessSeTenantJoinIssue);
+    }
+    // Issue #4141: planned headroom pin joins the #3339 CI
+    // (check_agent_decision_facade_headroom_3339.py). Additive
+    // stamps at handler end only — no key renames.
+    insert_kv("schema-4141", 4141);
+    insert_kv("issue-4141", 4141);
+    // Issue #4575: Soft auto-grant on the existing stats surface.
+    // Planned stays 208 (live+16 still fits). No new query name.
+    {
+        using ::aura::core::capability::g_capability_registry;
+        auto& reg = g_capability_registry();
+        std::scoped_lock<std::mutex> lock(reg.mtx);
+        insert_kv("soft-auto-grant", reg.soft_session_active_ ? 1 : 0);
+        insert_kv("soft-auto-grant-workspace",
+                  static_cast<std::int64_t>(reg.soft_session_workspace_));
+    }
+    insert_kv("schema-4575", 4575);
+    insert_kv("issue-4575", 4575);
+}
+
+EvalValue build_capability_effect_stats(Evaluator& ev, std::span<const EvalValue> args) {
+    using namespace aura::core::sandbox;
+    const auto snap = snapshot_capability_effect_stats();
+    const auto& ss = g_sandbox_state();
+    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+        m->capability_effect_enforced_total.store(snap.enforced, std::memory_order_relaxed);
+        m->capability_effect_denied_total.store(snap.denied, std::memory_order_relaxed);
+        m->capability_provenance_mismatch_total.store(snap.provenance_mismatch,
+                                                      std::memory_order_relaxed);
+        m->capability_effect_grant_total.store(snap.grants, std::memory_order_relaxed);
+        m->capability_effect_check_total.store(snap.checks, std::memory_order_relaxed);
+    }
+    auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    // 1565 + 1876 + #2023 MacroSelfEvo + #2052 mutate-force keys
+    // Issue #4141 / #4285: planned_keys >= live insert_kv + 8
+    // (#3339 Agent decision headroom). #4141 raised this from 186
+    // after live 177 (+2 stamps = 179) left headroom 9. #4285
+    // re-counted the handler: 179 live insert_kv, so live+16 =
+    // 195 and planned 192 is short of that buffer. Raise to 208
+    // (live+16 holds; query_hash_capacity_for stays at cap 512).
+    // No appended keys. Later batches still raise planned with
+    // the keys. Capability-effect stays on the #3339 pin list.
+    constexpr std::size_t kCapabilityEffectStatsPlannedKeys = 208;
+    auto* ht =
+        FlatHashTable::create(query_hash_capacity_for(kCapabilityEffectStatsPlannedKeys));
+    if (!ht)
+        return make_void();
+    bool overflowed = false;
+    auto meta = ht->metadata();
+    auto keys = ht->keys();
+    auto vals = ht->values();
+    auto hcap = ht->capacity;
+    auto insert_kv = [&](const char* k_str, std::int64_t v) {
+        std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+        for (const char* p = k_str; *p; ++p)
+            h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+        const auto fp = ::aura::compiler::hash::fingerprint(h);
+        for (std::size_t at = 0; at < hcap; ++at) {
+            auto idx = ((h >> 1) + at) & (hcap - 1);
+            if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
+                meta[idx] = fp;
+                auto kidx = ev.string_heap_.mint(k_str);
+                keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                vals[idx] = make_int(v).val;
+                ht->size++;
+                return;
+            }
+        }
+
+        overflowed = true;
+    };
+    publish_capability_effect_replay_join(ev, snap, m, ss, args, insert_kv);
+    publish_capability_effect_sandbox_face(ev, snap, m, ss, args, insert_kv);
+    publish_capability_effect_grant_lifecycle(ev, snap, m, ss, args, insert_kv);
+    publish_capability_effect_tenant_fences(ev, snap, m, ss, args, insert_kv);
+    return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+}
+
+void register_security_set_tenant_principal(PrimRegistrar add, Evaluator& ev) {
     // Issue #2023: MacroSelfEvo grant/revoke is C++ API
     // (g_capability_registry().grant_macro_self_evo / revoke_macro_self_evo)
     // to avoid SlimSurface public-name growth. security:grant-effect! with
@@ -2154,6 +2204,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 
+}
+
+void register_query_nested_guard_atomic_stats(PrimRegistrar add, Evaluator& ev) {
     // Issue #678: PCV span lifetime observability for concurrent
     // query/mutate loops (unsafe raw span vs safe-view hits).
     // Issue #679: nested Guard + atomic-batch rollback alignment stats.
@@ -2372,6 +2425,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 
+}
+
+void register_query_irsoa_incremental_stats(PrimRegistrar add, Evaluator& ev) {
     // Issue #684: IRSoA full wiring incremental stats hash.
     ObservabilityPrims::register_stats_impl(
         "query:irsoa-incremental-stats", [&ev](const auto&) -> EvalValue {
@@ -2631,6 +2687,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 
+}
+
+void register_query_primitives_governance_stats(PrimRegistrar add, Evaluator& ev) {
     // Issue #567: Primitive registry governance + stdlib layering closing metrics.
     ObservabilityPrims::register_stats_impl(
         "query:primitives-governance-stats", [&ev](const auto&) -> EvalValue {
@@ -2887,6 +2946,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         });
 
 
+}
+
+void register_query_primitives_ai_native_stats(PrimRegistrar add, Evaluator& ev) {
     // Issue #587: AI-native primitives development support observability hash.
     // Synthesizes registry metadata coverage, skeleton generation, and
     // introspection activity (#498/#617/#697) for Agent-friendly extension.
@@ -3119,6 +3181,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 
+}
+
+void register_query_sv_structured_edsl_stats(PrimRegistrar add, Evaluator& ev) {
     // Issue #578: EDA-SV-review closing hash for structured SV IR +
     // query/mutate primitives + dirty propagation completion.
     ObservabilityPrims::register_stats_impl(
@@ -3338,6 +3403,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 
+}
+
+void register_query_sv_node_stats(PrimRegistrar add, Evaluator& ev) {
     // Issue #496: query:sv-node-stats — native SV NodeTag census +
     // mutate counters for verification closed-loop tuning.
     ObservabilityPrims::register_stats_impl("query:sv-node-stats", [&ev](const auto&) -> EvalValue {
@@ -3566,6 +3634,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 
+}
+
+void register_query_hardware_backend_stats(PrimRegistrar add, Evaluator& ev) {
     // Issue #580: Hardware backend emit maturity + commercial interop
     // observability (compatibility pass rate, PPA refresh, incremental
     // emit win, simulator parse success).
@@ -3821,6 +3892,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 
+}
+
+void register_query_sv_defuse_stats(PrimRegistrar add, Evaluator& ev) {
     // Issue #664: query:sv-defuse-stats — SV DefUse incremental
     // observability (P1 EDA-SV).
     //
@@ -4099,6 +4173,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 
+}
+
+void register_query_work_steal_stats(PrimRegistrar add, Evaluator& ev) {
     // Issue #500: query:work-steal-stats — consolidated work-stealing +
     // MutationBoundary outermost-depth observability for Agent loops.
     ObservabilityPrims::register_stats_impl(
@@ -4365,6 +4442,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 
+}
+
+void register_query_hardware_backend_sv_closedloop_stats(PrimRegistrar add, Evaluator& ev) {
     // Issue #693: Hardware backend SV commercial closed-loop stats.
     ObservabilityPrims::register_stats_impl(
         "query:hardware-backend-sv-closedloop-stats", [&ev](const auto&) -> EvalValue {
@@ -4611,6 +4691,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 
+}
+
+void register_query_linear_ownership_typed_mutate_stats(PrimRegistrar add, Evaluator& ev) {
     // Issue #688: linear OwnershipEnv post-mutate typed-mutation stats.
     ObservabilityPrims::register_stats_impl(
         "query:linear-ownership-typed-mutate-stats", [&ev](const auto&) -> EvalValue {
@@ -4791,6 +4874,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 
+}
+
+void register_query_linear_ownership_enforcement_stats(PrimRegistrar add, Evaluator& ev) {
     // Issue #672: query:linear-ownership-enforcement-stats
     // — P0 runtime invariant enforcement observability for
     // Linear ownership + GuardShape under concurrent fiber
@@ -5041,6 +5127,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 
+}
+
+void register_query_shape_value_pass_stats(PrimRegistrar add, Evaluator& ev) {
     // Issue #686: ShapeProfiler ring history + Value v2 dispatch +
     // DirtyAware pass short-circuit synergy stats.
     ObservabilityPrims::register_stats_impl(
@@ -5316,6 +5405,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_bool(ev.enable_mutation_audit_wal(path));
     });
 
+}
+
+void register_query_audit_wal_stats(PrimRegistrar add, Evaluator& ev) {
     // Issue #1567 / #2150: query:audit-wal-stats
     ObservabilityPrims::register_stats_impl(
         "query:audit-wal-stats", [&ev](const auto&) -> EvalValue {
@@ -5487,6 +5579,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         });
 
 
+}
+
+void register_query_mutation_audit_log(PrimRegistrar add, Evaluator& ev) {
     // Issue #676/#1567: (query:mutation-audit-log [limit] [tenant] [effect] [mutation-id])
     // Filters: tenant>=0, effect!=0, mutation-id!=0 match when provided.
     // Lines include effect/tenant/provenance/epoch for post-mortem.
@@ -5664,6 +5759,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return result;
         });
 
+}
+
+void register_query_security_audit(PrimRegistrar add, Evaluator& ev) {
     // Issue #2054: (query:security-audit [limit] [tenant] [fiber] [since-seq] [mutation-id]
     // [reason]) Single Agent-facing forensic surface joining SecurityEvent + TypedMutationAudit
     // trail by mutation_id. Positional filters (same style as query:mutation-audit-log):
@@ -6010,6 +6108,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return result;
         });
 
+}
+
+void register_query_security_audit_stats(PrimRegistrar add, Evaluator& ev) {
     // Issue #2054: query:security-audit-stats — SlimSurface counters for
     // the unified trail (schema-2054 + ring head/total + typed trail size).
     // Issue #3113: additive typed-trail-window (=256 capacity), se-ring-size
@@ -6228,6 +6329,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 
+}
+
+void register_query_security_posture(PrimRegistrar add, Evaluator& ev) {
     // Issue #2534 / Issue #3881: query:security-posture — single Agent posture
     // snapshot (mode / wal / ring fill / retain window / hard fiber /
     // mismatch rates). Pure/read-only; additive to query:security-health
@@ -6579,6 +6683,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 
+}
+
+void register_query_security_correlated_trail(PrimRegistrar add, Evaluator& ev) {
     // Issue #2534: query:security-correlated-trail — join SE + TypedMutation +
     // capability audit by mutation_id (isolation mid when present).
     ObservabilityPrims::register_stats_impl(
@@ -6738,6 +6845,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
 
+}
+
+void register_query_evolution_audit_decision(PrimRegistrar add, Evaluator& ev) {
     // Issue #3114: query:evolution-audit-decision — observe-only fold of
     // last mid + SE reason + typed outcome + commit readiness + playbook +
     // densify + posture. Decision observation, not an auto-executor
@@ -7021,6 +7131,34 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("issue-3970", ::aura::core::wal_slo::kWalFullScanMidIssue);
             return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
+}
+
+void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
+    register_security_set_sandbox_mode(add, ev);
+    register_security_grant_capability(add, ev);
+    register_query_audit_mid_fallback_slo(add, ev);
+    register_query_capability_effect_stats(add, ev);
+    register_security_set_tenant_principal(add, ev);
+    register_query_nested_guard_atomic_stats(add, ev);
+    register_query_irsoa_incremental_stats(add, ev);
+    register_query_primitives_governance_stats(add, ev);
+    register_query_primitives_ai_native_stats(add, ev);
+    register_query_sv_structured_edsl_stats(add, ev);
+    register_query_sv_node_stats(add, ev);
+    register_query_hardware_backend_stats(add, ev);
+    register_query_sv_defuse_stats(add, ev);
+    register_query_work_steal_stats(add, ev);
+    register_query_hardware_backend_sv_closedloop_stats(add, ev);
+    register_query_linear_ownership_typed_mutate_stats(add, ev);
+    register_query_linear_ownership_enforcement_stats(add, ev);
+    register_query_shape_value_pass_stats(add, ev);
+    register_query_audit_wal_stats(add, ev);
+    register_query_mutation_audit_log(add, ev);
+    register_query_security_audit(add, ev);
+    register_query_security_audit_stats(add, ev);
+    register_query_security_posture(add, ev);
+    register_query_security_correlated_trail(add, ev);
+    register_query_evolution_audit_decision(add, ev);
 }
 
 } // namespace aura::compiler::primitives_detail
