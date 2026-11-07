@@ -20,6 +20,16 @@ struct ScopeJoinAllState;
 struct SuperviseBatchState;
 struct SuperviseTally;
 
+// Issue #5033: mutate:query-and-replace predicate state (defined in
+// evaluator_primitives_mutate.cpp).
+struct QueryReplacePredicate;
+struct QueryReplacePartialFail;
+
+// Issue #5033: mutate:replace-pattern phase state (defined in
+// evaluator_primitives_mutate.cpp).
+struct ReplacePatternOptions;
+struct ReplacePatternMatch;
+
 // Peeled register parts. The struct is a friend of Evaluator, same as
 // CompilePrims. Each function is one responsibility group.
 struct RegSplitParts {
@@ -618,15 +628,103 @@ struct RegSplitParts {
     template <typename Ctx> static void register_mutate_replace_value_primitives(Ctx& cx);
     template <typename Ctx> static void register_mutate_record_patch_primitive(Ctx& cx);
     template <typename Ctx> static void register_mutate_query_replace_primitive(Ctx& cx);
+    // Issue #5033: mutate:query-and-replace phases + shared node->source printer.
+    static std::string mutate_node_source(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                          aura::ast::NodeId root_id);
+    static std::optional<EvalValue> query_replace_collect_matches(
+        Evaluator& ev, aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+        const std::vector<QueryReplacePredicate>& predicates,
+        std::vector<aura::ast::FlatAST::StableNodeRef>& matches, bool& ok,
+        const MakeErrorVal& mev);
+    static std::optional<EvalValue> query_replace_apply_matches(
+        Evaluator& ev, aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+        std::vector<aura::ast::FlatAST::StableNodeRef>& matches,
+        const std::string& repl_template, std::size_t dot_count, const std::string& summary,
+        bool allow_macro_qar, bool no_auto_restamp_qar, const MakeErrorVal& mev, bool& ok,
+        int& replaced, std::vector<aura::ast::NodeId>& replaced_roots,
+        std::uint64_t initial_mutation_id);
     template <typename Ctx> static void register_mutate_query_replace_batch_primitive(Ctx& cx);
+    static std::optional<EvalValue> query_replace_batch_apply_matches(
+        Evaluator& ev, aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+        std::vector<aura::ast::FlatAST::StableNodeRef>& matches,
+        std::vector<QueryReplacePartialFail>& partial_fails, const std::string& repl_template,
+        std::size_t dot_count, const std::string& summary, const std::string& hygiene_keep_mode,
+        bool allow_macro_batch, bool no_auto_restamp_batch, const MakeErrorVal& mev, bool& ok,
+        int& replaced, std::vector<aura::ast::NodeId>& replaced_roots, std::size_t& hygiene_kept,
+        std::uint64_t initial_mutation_id, std::size_t size_before_batch);
     template <typename Ctx> static void register_mutate_stable_ref_policy_primitives(Ctx& cx);
     template <typename Ctx> static void register_mutate_pattern_index_policy_primitives(Ctx& cx);
     template <typename Ctx> static void register_mutate_as_stable_ref_primitive(Ctx& cx);
     template <typename Ctx> static void register_mutate_rebind_primitive(Ctx& cx);
+    // Issue #5033: mutate:rebind phases (preflight / target / parse / link / dirty /
+    // invalidate / typecheck+gate / env refresh).
+    template <typename Guard>
+    static std::optional<EvalValue> rebind_preflight(Evaluator& ev, std::span<const EvalValue> a,
+                                                     const MakeErrorVal& mev, Guard& guard,
+                                                     bool& ok);
+    static std::optional<EvalValue> rebind_find_target(
+        Evaluator& ev, aura::ast::FlatAST& flat, const std::string& name, aura::ast::SymId sym,
+        std::span<const EvalValue> a, const MakeErrorVal& mev, bool& ok,
+        aura::ast::NodeId& old_define);
+    static EvalValue rebind_add_new_define(Evaluator& ev, aura::ast::FlatAST& flat,
+                                           const std::string& name, aura::ast::SymId sym,
+                                           std::uint64_t code_idx, std::span<const EvalValue> a,
+                                           const MakeErrorVal& mev, bool& ok);
+    static std::optional<EvalValue> rebind_parse_value(
+        Evaluator& ev, aura::ast::FlatAST& flat, aura::ast::SymId sym,
+        aura::ast::NodeId& old_define, std::uint64_t code_idx, const MakeErrorVal& mev, bool& ok,
+        aura::ast::NodeId& new_value, std::size_t& size_before_parse);
+    static std::optional<EvalValue> rebind_shape_and_hygiene(
+        Evaluator& ev, aura::ast::FlatAST& flat, aura::ast::NodeId old_define,
+        aura::ast::NodeId new_value, std::span<const EvalValue> a, const std::string& name,
+        std::size_t size_before_parse, const MakeErrorVal& mev, bool& ok);
+    static std::optional<EvalValue> rebind_link_new_body(
+        Evaluator& ev, aura::ast::FlatAST& flat, aura::ast::NodeId old_define,
+        aura::ast::NodeId new_value, std::span<const EvalValue> a, const std::string& name,
+        const MakeErrorVal& mev, bool& ok, bool& rejected_failed, std::uint64_t& cone_log_before,
+        std::size_t size_before_parse);
+    static void rebind_propagate_and_source(Evaluator& ev, aura::ast::FlatAST& flat,
+                                            const std::string& name, aura::ast::SymId sym,
+                                            const std::vector<aura::ast::NodeId>& dep_callers,
+                                            aura::ast::NodeId new_value, std::uint64_t code_idx);
+    static void rebind_invalidate_ir(Evaluator& ev, aura::ast::FlatAST& flat,
+                                     const std::string& name, aura::ast::NodeId old_define,
+                                     aura::ast::SymId sym, std::uint64_t cone_log_before);
+    template <typename Guard>
+    static std::optional<EvalValue> rebind_typecheck_and_gate(
+        Evaluator& ev, aura::ast::FlatAST& flat, Guard& guard, aura::ast::NodeId old_define,
+        const std::vector<aura::ast::NodeId>& dep_callers, const std::string& name,
+        const MakeErrorVal& mev, bool& ok);
+    static void rebind_refresh_env(Evaluator& ev, aura::ast::FlatAST& flat,
+                                   const std::string& name, aura::ast::NodeId new_value,
+                                   aura::ast::NodeId old_define);
     template <typename Ctx> static void register_mutate_set_body_primitive(Ctx& cx);
+    // Issue #5033: mutate:set-body phases (rewrite Define / validate+gate).
+    static std::optional<EvalValue> set_body_rewrite_define(
+        Evaluator& ev, aura::ast::FlatAST& flat, aura::ast::NodeId& id, const std::string& name,
+        aura::ast::SymId sym, std::uint64_t code_idx, std::span<const EvalValue> a,
+        const std::vector<aura::ast::NodeId>& dep_callers, const MakeErrorVal& mev, bool& ok);
+    template <typename Guard>
+    static std::optional<EvalValue> set_body_typecheck_and_validate(
+        Evaluator& ev, Guard& guard, aura::ast::FlatAST& flat, aura::ast::NodeId id,
+        const std::string& name, const std::vector<aura::ast::NodeId>& dep_callers,
+        const MakeErrorVal& mev, bool& ok);
     template <typename Ctx> static void register_mutate_node_surface_primitives(Ctx& cx);
     template <typename Ctx> static void register_mutate_tweak_literal_primitive(Ctx& cx);
     template <typename Ctx> static void register_mutate_replace_pattern_primitive(Ctx& cx);
+    // Issue #5033: mutate:replace-pattern phases (kw parse / source printer / apply).
+    static std::optional<EvalValue> replace_pattern_parse_options(
+        Evaluator& ev, std::span<const EvalValue> a, const MakeErrorVal& mev, bool& ok,
+        ReplacePatternOptions& opt);
+    static std::string replace_pattern_node_source(Evaluator& ev, aura::ast::FlatAST& flat,
+                                                   aura::ast::StringPool* pat_pool,
+                                                   aura::ast::NodeId root_id);
+    static std::optional<EvalValue> replace_pattern_apply_matches(
+        Evaluator& ev, aura::ast::FlatAST& flat, std::vector<ReplacePatternMatch>& matches,
+        const std::string& repl_template, int expected_captures, bool nested_arity,
+        bool allow_macro_all, bool no_auto_restamp_rp, aura::ast::StringPool* pat_pool,
+        std::uint32_t end_id, const MakeErrorVal& mev, bool& ok, int& replaced_count,
+        std::vector<aura::ast::NodeId>& dirty_parents);
     template <typename Ctx> static void register_mutate_replace_subtree_primitive(Ctx& cx);
     template <typename Ctx> static void register_mutate_atomic_batch_primitive(Ctx& cx);
     template <typename Ctx> static void register_mutate_structural_insert_primitives(Ctx& cx);
@@ -636,6 +734,12 @@ struct RegSplitParts {
     template <typename Ctx> static void register_mutate_move_node_primitive(Ctx& cx);
     template <typename Ctx> static void register_mutate_extract_function_primitive(Ctx& cx);
     template <typename Ctx> static void register_mutate_inline_call_primitive(Ctx& cx);
+    // Issue #5033: mutate:inline-call DFS clone + child reconnect pass.
+    static void inline_call_clone_subtree(Evaluator& ev, aura::ast::FlatAST& flat,
+                                          aura::ast::NodeId func_body_node,
+                                          const std::vector<aura::ast::SymId>& formal_params,
+                                          const std::vector<aura::ast::NodeId>& actual_args,
+                                          std::vector<std::uint32_t>& old_to_new);
     template <typename Ctx> static void register_mutate_hygiene_checkpoint_primitives(Ctx& cx);
     template <typename Ctx> static void register_mutate_dispatch_primitive(Ctx& cx);
     template <typename Ctx> static void register_mutate_typed_audit_stats_primitives(Ctx& cx);
