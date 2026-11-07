@@ -429,6 +429,24 @@ private:
     }
 };
 
+// The move relocates the allocation pointer. It does not move or copy
+// elements, so it stays noexcept when T's move is potentially throwing.
+namespace gap_buffer_p3 {
+    struct PotentiallyThrowingMove {
+        PotentiallyThrowingMove() = default;
+        ~PotentiallyThrowingMove() = default;
+        PotentiallyThrowingMove(const PotentiallyThrowingMove&) = default;
+        PotentiallyThrowingMove& operator=(const PotentiallyThrowingMove&) = default;
+        PotentiallyThrowingMove(PotentiallyThrowingMove&&) noexcept(false) = default;
+        PotentiallyThrowingMove& operator=(PotentiallyThrowingMove&&) noexcept(false) = default;
+    };
+} // namespace gap_buffer_p3
+static_assert(
+    std::is_nothrow_move_constructible_v<GapBuffer<gap_buffer_p3::PotentiallyThrowingMove>>);
+static_assert(std::is_nothrow_move_assignable_v<GapBuffer<gap_buffer_p3::PotentiallyThrowingMove>>);
+static_assert(!std::is_nothrow_move_constructible_v<gap_buffer_p3::PotentiallyThrowingMove>);
+static_assert(std::is_nothrow_swappable_v<GapBuffer<std::uint32_t>>);
+
 } // namespace aura::ast
 
 #endif // AURA_CORE_GAP_BUFFER_HH
