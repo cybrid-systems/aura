@@ -7443,7 +7443,7 @@ public:
     // contain MacroDef / DefineType / etc. don't affect
     // the current eval's fallback decision; only the
     // reachable-from-root subgraph does.
-    template <typename Visitor>
+    template <std::invocable<NodeId&> Visitor>
     std::size_t walk_subtree(NodeId root, Visitor&& visit, std::size_t max_nodes = 1024) const {
         if (root == NULL_NODE || root >= tag_.size())
             return 0;
@@ -11222,7 +11222,8 @@ public:
     // each non-NULL child is delivered as a layout-only StableNodeRef.
     // Prefer children_stable() when storing refs across mutation boundaries;
     // production Agent paths must stamp via Evaluator (#2759 / #2960).
-    template <typename Fn> void for_each_stable_child(NodeId id, Fn&& fn) const {
+    template <std::invocable<StableNodeRef> Fn>
+    void for_each_stable_child(NodeId id, Fn&& fn) const {
         // Issue #2036 / #2614: pin via SafePCVSpan; force ChildColumnar walk.
         auto safe = children_columnar(id);
         using Col = decltype(safe);
