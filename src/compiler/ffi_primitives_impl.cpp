@@ -119,9 +119,17 @@ void FFIRuntime::register_primitives(RegisterFn add,
                                      std::array<std::uint64_t, 16>* coverage_counters) {
     // Issue #3176: Evaluator ctor wraps `add` so c-* names go to
     // defer_std_host_prim (installed on require std/ffi + kEffectFfi).
-    auto* sh = string_heap;
-    auto* oh = opaque_heap;
+    // Issue #5033: registration order is the original single-function order.
+    register_library_primitives(add, string_heap, opaque_heap, coverage_counters);
+    register_opaque_primitives(add, string_heap, opaque_heap, coverage_counters);
+    register_struct_primitives(add, string_heap, opaque_heap, coverage_counters);
+    register_pin_primitives(add);
+}
 
+// Issue #5033: c-load / c-func — library and symbol resolution.
+void FFIRuntime::register_library_primitives(RegisterFn add, ::aura::compiler::LockedStringHeap* sh,
+                                             std::vector<void*>* oh,
+                                             std::array<std::uint64_t, 16>* coverage_counters) {
     add("c-load", [this, sh, coverage_counters](std::span<const EvalValue> a) -> EvalValue {
         FfiRenderHotpathGuard hp;
         if (coverage_counters)
@@ -252,7 +260,12 @@ void FFIRuntime::register_primitives(RegisterFn add,
         auto closure_id = types::make_ffi_closure_id(static_cast<std::uint64_t>(fidx));
         return types::make_closure(closure_id);
     });
+}
 
+// Issue #5033: c-opaque* / c-alloc / c-free plus the opaque-stats probe.
+void FFIRuntime::register_opaque_primitives(RegisterFn add, ::aura::compiler::LockedStringHeap* sh,
+                                            std::vector<void*>* oh,
+                                            std::array<std::uint64_t, 16>* coverage_counters) {
     add("c-opaque", [this, oh, coverage_counters](std::span<const EvalValue> a) -> EvalValue {
         FfiRenderHotpathGuard hp;
         if (coverage_counters)
@@ -399,7 +412,12 @@ void FFIRuntime::register_primitives(RegisterFn add,
             return make_int(static_cast<std::int64_t>(opaque_count()));
         });
     }
+}
 
+// Issue #5033: c-struct-size / c-struct-set! / c-struct-ref field access.
+void FFIRuntime::register_struct_primitives(RegisterFn add, ::aura::compiler::LockedStringHeap* sh,
+                                            std::vector<void*>* oh,
+                                            std::array<std::uint64_t, 16>* coverage_counters) {
     add("c-struct-size", [this](std::span<const EvalValue> a) -> EvalValue {
         FfiRenderHotpathGuard hp;
         std::size_t total = 0;
@@ -615,7 +633,10 @@ void FFIRuntime::register_primitives(RegisterFn add,
         }
         return make_int(0);
     });
+}
 
+// Issue #5033: ffi:pin-buffer / ffi:unpin-buffer / query:ffi-pin-count.
+void FFIRuntime::register_pin_primitives(RegisterFn add) {
     // Issue #2626: c-render-* / c-present / c-ansi-emit removed.
 
     // Issue #2005 / #2048: shared FFI pin registry (single static — pin/unpin
