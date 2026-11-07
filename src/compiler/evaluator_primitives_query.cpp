@@ -539,10 +539,510 @@ namespace {
 
 } // namespace
 
-void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
-                               ::aura::compiler::LockedStringHeap& string_heap,
-                               void*& type_registry, ModulePathResolver resolve_module_path,
-                               Evaluator& ev) {
+// --- Issue #5031: register_query_primitives phases ---------------------------
+// The single registration body outgrew the 300-line ceiling. Each phase below is
+// one responsibility family; register_query_primitives keeps the ordered delegation
+// so registration order, primitive names and lambda capture lifetimes are unchanged.
+
+// Issue #5031: query:ai-closedloop-readiness-stats phase state. The consolidated
+// readiness probe outgrew the 300-line ceiling; each phase below is one responsibility
+// and they run in the original order:
+//   collect -> score_health -> orchestration -> score_slo -> emit.
+// Member names match the original locals so the moved slices stay verbatim.
+struct ClosedloopReadiness {
+    Evaluator& ev;
+    ::aura::compiler::LockedStringHeap& string_heap;
+    // Issue #1470 / #1499: process-wide trend / SLO sampling state.
+    inline static std::atomic<std::int64_t> s_prev_health{100};
+    inline static std::atomic<std::uint64_t> s_samples{0};
+    inline static std::atomic<std::uint64_t> s_slo_breach_total{0};
+    inline static std::atomic<std::uint64_t> s_adaptive_soft_triggers{0};
+    // Issue #1593: health below this (or a severe action) is an SLO breach.
+    static constexpr std::int64_t kSloThreshold = 70;
+
+    CompilerMetrics* m = nullptr;
+    std::uint64_t wraps = 0;
+    std::uint64_t invalidations = 0;
+    std::uint64_t batch_commits = 0;
+    std::uint64_t dirty_prunes = 0;
+    std::uint64_t hygiene_skips = 0;
+    std::uint64_t linear_enforce = 0;
+    std::uint64_t linear_enforce_per = 0;
+    std::uint64_t linear_gc_audit = 0;
+    std::uint64_t linear_live_scans = 0;
+    std::uint64_t mut_depth_hist_sum = 0;
+    std::uint64_t cascade_max = 0;
+    std::uint64_t cascade_total = 0;
+    std::uint64_t protocol = 0;
+    std::uint64_t steal_refresh = 0;
+    std::uint64_t boundary_refresh = 0;
+    std::uint64_t live_stale = 0;
+    std::uint64_t rollbacks = 0;
+    std::uint64_t quota_rejects = 0;
+    std::uint64_t relower_blocks = 0;
+    std::uint64_t full_relower = 0;
+    std::uint64_t per_fn_relower = 0;
+    std::uint64_t fiber_depth_max = 0;
+    std::uint64_t live_depth = 0;
+    std::uint64_t bridge_bumps = 0;
+    std::uint64_t safepoint_wait_us = 0;
+    std::uint64_t safe_yield_skip = 0;
+    std::uint64_t post_steal_refresh = 0;
+    std::uint64_t steal_mitigated = 0;
+    std::uint64_t hold_total = 0;
+    std::uint64_t hold_samples = 0;
+    std::uint64_t macro_viol = 0;
+    std::uint64_t naked_macro = 0;
+    std::uint64_t macro_stale_refs = 0;
+    std::uint64_t reflect_macro_rej = 0;
+    std::uint64_t macro_query_skips = 0;
+    std::uint64_t macro_audit_blocked = 0;
+    std::uint64_t join_n = 0;
+    std::uint64_t join_wait_us = 0;
+    std::uint64_t join_wait_max = 0;
+    std::uint64_t join_timeouts = 0;
+    std::uint64_t join_hist_sum = 0;
+    std::uint64_t join_hist_b0 = 0;
+    std::uint64_t join_hist_b1 = 0;
+    std::uint64_t join_hist_b2 = 0;
+    std::uint64_t join_hist_b3 = 0;
+    std::uint64_t join_hist_b4 = 0;
+    std::uint64_t mb_pushes = 0;
+    std::uint64_t mb_bp = 0;
+    std::uint64_t mb_recv_waits = 0;
+    std::uint64_t mb_recv_timeouts = 0;
+    std::uint64_t po_joined = 0;
+    std::uint64_t po_ok = 0;
+    std::uint64_t po_err = 0;
+    std::uint64_t po_ff = 0;
+    std::uint64_t po_to = 0;
+    std::uint64_t po_elapsed = 0;
+    std::uint64_t orch_starvation_mitigated = 0;
+    std::int64_t rec_int = 0;
+    std::int64_t cascade_avg_x100 = 0;
+    std::int64_t relower_partial_bp = 0;
+    std::int64_t health = 0;
+    std::int64_t macro_health = 0;
+    std::int64_t avg_hold_us = 0;
+    std::int64_t avg_join_us = 0;
+    std::int64_t mailbox_backpressure_p99 = 0;
+    std::int64_t parallel_throughput_mtps = 0;
+    std::int64_t orch_health = 0;
+    std::int64_t action = 0;
+    std::int64_t prev = 0;
+    std::int64_t health_trend = 0;
+    std::int64_t adaptive_recommended = 0;
+    std::int64_t adaptive_concurrency_recommended = 0;
+    bool slo_breach = false;
+    bool overflowed = false;
+
+    ClosedloopReadiness(Evaluator& e, ::aura::compiler::LockedStringHeap& sh)
+        : ev(e)
+        , string_heap(sh) {}
+
+    std::uint64_t load(std::atomic<std::uint64_t> CompilerMetrics::* field) const;
+    void penalize(std::int64_t pts);
+    void collect();
+    void score_health();
+    void orchestration();
+    void score_slo();
+    EvalValue emit();
+};
+
+std::uint64_t ClosedloopReadiness::load(std::atomic<std::uint64_t> CompilerMetrics::* field) const {
+    if (!m)
+        return 0;
+    return (m->*field).load(std::memory_order_relaxed);
+}
+
+void ClosedloopReadiness::penalize(std::int64_t pts) {
+    health -= pts;
+    if (health < 0)
+        health = 0;
+}
+
+void ClosedloopReadiness::collect() {
+    wraps = 0;
+    invalidations = 0;
+    batch_commits = 0;
+    dirty_prunes = 0;
+    if (auto* ws = ev.workspace_flat()) {
+        wraps = ws->generation_wrap_count();
+        invalidations = ws->stable_ref_invalidations();
+        batch_commits = ws->atomic_batch_commits();
+        dirty_prunes = ws->mark_dirty_boundary_prune_count();
+    }
+    hygiene_skips = ir_inline_hygiene_skipped(&ev);
+    rec_int = 0;
+    if (wraps > 0)
+        rec_int = 1;
+    else if (invalidations >= 10)
+        rec_int = 2;
+    else if (hygiene_skips >= 100)
+        rec_int = 3;
+    else if (dirty_prunes >= 50)
+        rec_int = 4;
+
+    // Issue #1499: production counters from CompilerMetrics.
+    m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    linear_enforce = load(&CompilerMetrics::linear_post_mutate_enforcements_total);
+    linear_enforce_per = load(&CompilerMetrics::linear_post_mutate_enforcements);
+    // #1599: linear GC root audit + live-closure scan linkage.
+    linear_gc_audit = load(&CompilerMetrics::linear_gc_root_audit_checks_total);
+    linear_live_scans = load(&CompilerMetrics::linear_live_closure_scans_total);
+    mut_depth_hist_sum = 0;
+    if (m) {
+        for (std::size_t i = 0; i < CompilerMetrics::kMutationStackDepthHistBuckets; ++i)
+            mut_depth_hist_sum +=
+                m->mutation_stack_depth_histogram[i].load(std::memory_order_relaxed);
+    }
+    cascade_max = load(&CompilerMetrics::invalidate_cascade_depth_max);
+    cascade_total = load(&CompilerMetrics::invalidate_cascade_depth_total);
+    protocol = load(&CompilerMetrics::unified_invalidation_protocol_total);
+    steal_refresh = load(&CompilerMetrics::stable_ref_steal_auto_refresh_total);
+    boundary_refresh = load(&CompilerMetrics::boundary_pinned_refresh_count);
+    live_stale = load(&CompilerMetrics::compiler_live_closure_stale_prevented_total);
+    rollbacks = load(&CompilerMetrics::mutation_boundary_yield_rollback_total);
+    quota_rejects = load(&CompilerMetrics::resource_quota_rejects_total);
+    relower_blocks = load(&CompilerMetrics::incremental_relower_blocks_total);
+    full_relower = load(&CompilerMetrics::relower_full_called_count);
+    per_fn_relower = load(&CompilerMetrics::relower_per_function_called_count);
+    fiber_depth_max = ev.get_per_fiber_mutation_stack_depth_max();
+    live_depth = static_cast<std::uint64_t>(Evaluator::mutation_boundary_depth());
+    bridge_bumps = load(&CompilerMetrics::bridge_epoch_bumps_total);
+
+    // #1593 sibling linkage (#1591 fairness / #1592 post-steal).
+    safepoint_wait_us = aura::gc_hooks::safepoint_wait_while_mutation_held_us();
+    safe_yield_skip = ev.get_safe_yield_skipped_held_total();
+    post_steal_refresh = ev.get_post_steal_refresh_count();
+    auto& steal_s = ::aura::serve::metrics::adaptive_steal_stats();
+    steal_mitigated =
+        steal_s.steal_inner_deferred_starvation_mitigated_count.load(std::memory_order_relaxed);
+    hold_total = load(&CompilerMetrics::mutation_boundary_hold_time_total_us);
+    hold_samples = load(&CompilerMetrics::mutation_boundary_holds_total);
+    avg_hold_us = hold_samples > 0 ? static_cast<std::int64_t>(hold_total / hold_samples) : 0;
+
+    // Cascade avg (bp for integer: total*100 / protocol when >0).
+    cascade_avg_x100 = 0;
+    if (protocol > 0)
+        cascade_avg_x100 = static_cast<std::int64_t>((cascade_total * 100u) / protocol);
+
+    // Relower partial ratio in basis points (partial / (partial+full)).
+    relower_partial_bp = 10000;
+    {
+        const auto sum = per_fn_relower + full_relower;
+        if (sum > 0)
+            relower_partial_bp = static_cast<std::int64_t>((per_fn_relower * 10000u) / sum);
+    }
+}
+
+void ClosedloopReadiness::score_health() {
+    // Health score 0..100 (higher is better). Start at 100 and
+    // apply capped penalties so agents get a single ordinal signal.
+    health = 100;
+    if (wraps > 0)
+        penalize(20);
+    if (invalidations >= 10)
+        penalize(std::min<std::int64_t>(20, static_cast<std::int64_t>(invalidations / 5)));
+    if (rollbacks >= 5)
+        penalize(std::min<std::int64_t>(20, static_cast<std::int64_t>(rollbacks / 5)));
+    if (cascade_max >= 8)
+        penalize(std::min<std::int64_t>(15, static_cast<std::int64_t>(cascade_max)));
+    if (quota_rejects >= 5)
+        penalize(std::min<std::int64_t>(15, static_cast<std::int64_t>(quota_rejects / 5)));
+    if (relower_partial_bp < 5000 && (full_relower + per_fn_relower) >= 10)
+        penalize(10); // mostly full re-lower under load
+    if (hygiene_skips >= 100)
+        penalize(10);
+    if (dirty_prunes >= 50)
+        penalize(5);
+    // #1613: macro hygiene submodule pressure on overall health.
+    macro_viol = static_cast<std::uint64_t>(ev.get_hygiene_violation_count());
+    naked_macro = load(&CompilerMetrics::naked_macro_mutate_attempt);
+    macro_stale_refs = ev.get_macro_stale_ref_prevented();
+    reflect_macro_rej = load(&CompilerMetrics::reflect_macro_hygiene_rejects_total);
+    macro_query_skips =
+        ev.get_macro_introduced_skipped_in_query() + ev.get_pattern_recursive_macro_skipped();
+    macro_audit_blocked = typed_audit::g_typed_mutation_audit_counters.macro_hygiene_blocked.load(
+        std::memory_order_relaxed);
+    // Macro health subscore 0..100 (mirrored on macro-hygiene-stats).
+    macro_health = 100;
+    auto macro_pen = [&](std::int64_t pts) {
+        macro_health -= pts;
+        if (macro_health < 0)
+            macro_health = 0;
+    };
+    if (macro_viol > 0)
+        macro_pen(std::min<std::int64_t>(40, static_cast<std::int64_t>(macro_viol) * 5));
+    if (naked_macro > 0)
+        macro_pen(std::min<std::int64_t>(25, static_cast<std::int64_t>(naked_macro) * 3));
+    if (reflect_macro_rej > 0)
+        macro_pen(std::min<std::int64_t>(15, static_cast<std::int64_t>(reflect_macro_rej) * 2));
+    if (macro_stale_refs > 20)
+        macro_pen(std::min<std::int64_t>(10, static_cast<std::int64_t>(macro_stale_refs) / 10));
+    if (macro_health < 80)
+        penalize(std::min<std::int64_t>(15, (80 - macro_health) / 2));
+    // #1593: long holds / safepoint wait under mutation pressure.
+    if (avg_hold_us >= 5000)
+        penalize(std::min<std::int64_t>(10, avg_hold_us / 5000));
+    if (safepoint_wait_us >= 100000)
+        penalize(5);
+    if (safe_yield_skip >= 50)
+        penalize(5);
+}
+
+void ClosedloopReadiness::orchestration() {
+    // ── #1597: parallel orchestration health ─────────────────
+    using aura::serve::Fiber;
+    using aura::serve::mf_mailbox::g_mf_mailbox_stats;
+    using aura::serve::parallel_orch::g_parallel_orch_stats;
+    join_n = Fiber::join_total();
+    join_wait_us = Fiber::join_wait_us_total();
+    join_wait_max = Fiber::join_wait_us_max();
+    join_timeouts = Fiber::join_timeout_total();
+    avg_join_us = join_n > 0 ? static_cast<std::int64_t>(join_wait_us / join_n) : 0;
+    // Coarse histogram bucket counts (exported as sum + b0..b4).
+    join_hist_sum = Fiber::join_latency_hist_sum();
+    join_hist_b0 = Fiber::join_latency_hist(0);
+    join_hist_b1 = Fiber::join_latency_hist(1);
+    join_hist_b2 = Fiber::join_latency_hist(2);
+    join_hist_b3 = Fiber::join_latency_hist(3);
+    join_hist_b4 = Fiber::join_latency_hist(4);
+
+    mb_pushes = g_mf_mailbox_stats.pushes.load(std::memory_order_relaxed);
+    mb_bp = g_mf_mailbox_stats.backpressure_rejects.load(std::memory_order_relaxed);
+    mb_recv_waits = g_mf_mailbox_stats.recv_waits.load(std::memory_order_relaxed);
+    mb_recv_timeouts = g_mf_mailbox_stats.recv_timeouts.load(std::memory_order_relaxed);
+    // Pseudo-p99 backpressure pressure (ms): 0 when no rejects; else
+    // scales with reject rate (capped). Agents use as pressure gauge.
+    mailbox_backpressure_p99 = 0;
+    if (mb_bp > 0) {
+        const auto denom = mb_pushes + mb_bp;
+        const auto rate_bp = ::aura::compiler::basis_points(mb_bp, denom);
+        mailbox_backpressure_p99 =
+            std::min<std::int64_t>(10000, 50 + rate_bp + static_cast<std::int64_t>(mb_bp));
+    }
+
+    po_joined = g_parallel_orch_stats.tasks_joined.load(std::memory_order_relaxed);
+    po_ok = g_parallel_orch_stats.tasks_ok.load(std::memory_order_relaxed);
+    po_err = g_parallel_orch_stats.tasks_err.load(std::memory_order_relaxed);
+    po_ff = g_parallel_orch_stats.fail_fast_aborts.load(std::memory_order_relaxed);
+    po_to = g_parallel_orch_stats.timeouts.load(std::memory_order_relaxed);
+    po_elapsed = g_parallel_orch_stats.parallel_elapsed_us.load(std::memory_order_relaxed);
+    // Throughput (tasks/s ×1000 as milli-tps integer for EDSL int fields).
+    parallel_throughput_mtps = 0;
+    if (po_elapsed > 0 && po_ok > 0)
+        parallel_throughput_mtps =
+            static_cast<std::int64_t>((po_ok * 1000000ull) / po_elapsed); // tasks/s
+
+    // Orchestration subscore 0..100 (higher better).
+    orch_health = 100;
+    auto orch_pen = [&](std::int64_t pts) {
+        orch_health -= pts;
+        if (orch_health < 0)
+            orch_health = 0;
+    };
+    if (avg_join_us >= 1000)
+        orch_pen(std::min<std::int64_t>(20, avg_join_us / 1000));
+    if (join_timeouts >= 3)
+        orch_pen(std::min<std::int64_t>(15, static_cast<std::int64_t>(join_timeouts) * 3));
+    if (mb_bp >= 5)
+        orch_pen(std::min<std::int64_t>(20, static_cast<std::int64_t>(mb_bp) / 2));
+    if (po_joined > 0 && po_err * 5 >= po_joined)
+        orch_pen(15); // ≥20% error rate
+    if (po_ff >= 2)
+        orch_pen(10);
+    if (po_to >= 2)
+        orch_pen(10);
+}
+
+void ClosedloopReadiness::score_slo() {
+    using aura::serve::Fiber;
+    // Fold orch into main health (capped soft penalty).
+    if (orch_health < 80)
+        penalize(std::min<std::int64_t>(15, (80 - orch_health) / 2));
+    if (avg_join_us >= 10000)
+        penalize(5);
+    if (mailbox_backpressure_p99 >= 500)
+        penalize(5);
+
+    // Starvation mitigated = steal fairness + join-path linear enforce
+    // (join Ok after wait) + mailbox recv_waits that completed (proxy).
+    orch_starvation_mitigated = steal_mitigated + Fiber::join_linear_enforcement_total();
+
+    // Orchestration action (independent of #1470 recommendation).
+    action = 0;
+    if (quota_rejects >= 5)
+        action = 3; // raise-quota
+    else if (cascade_max >= 8)
+        action = 4; // check-cascade
+    else if (rollbacks >= 5 || invalidations >= 20 || orch_health < 50)
+        action = 2; // throttle-mutate (incl. orch pressure)
+    else if (wraps > 0 || invalidations >= 10 || boundary_refresh + steal_refresh >= 50 ||
+             mb_bp >= 10 || avg_join_us >= 5000)
+        action = 1; // investigate-refs / orch latency
+
+    // #1593 SLO: health < threshold OR severe action.
+    constexpr std::int64_t kSloThreshold = 70;
+    slo_breach = (health < kSloThreshold) || (action >= 3);
+    if (slo_breach)
+        s_slo_breach_total.fetch_add(1, std::memory_order_relaxed);
+
+    // Health trend vs previous sample (positive = improving).
+    prev = s_prev_health.exchange(health, std::memory_order_relaxed);
+    health_trend = health - prev;
+    s_samples.fetch_add(1, std::memory_order_relaxed);
+
+    // Adaptive safepoint soft linkage: on hard breach, nudge threshold
+    // (orchestrators also read adaptive-safepoint-recommended).
+    adaptive_recommended = 0;
+    if (slo_breach || live_depth > 0 || avg_hold_us >= 2000 || safe_yield_skip >= 20 ||
+        orch_health < 60)
+        adaptive_recommended = 1;
+    // #1597: recommend lowering parallel concurrency under orch pressure.
+    adaptive_concurrency_recommended = 0;
+    if (orch_health < 70 || mailbox_backpressure_p99 >= 200 || avg_join_us >= 5000 || po_ff >= 1 ||
+        po_to >= 1)
+        adaptive_concurrency_recommended = 1;
+    if (slo_breach && health < 50) {
+        s_adaptive_soft_triggers.fetch_add(1, std::memory_order_relaxed);
+        // Soft adapt: one exponential backoff step (capped in helper).
+        ev.bump_safepoint_adaptive_threshold();
+    }
+}
+
+EvalValue ClosedloopReadiness::emit() {
+    auto* ht = FlatHashTable::create(query_hash_capacity_for(88));
+    if (!ht)
+        return make_int(rec_int);
+    overflowed = false;
+    auto meta = ht->metadata();
+    auto keys = ht->keys();
+    auto vals = ht->values();
+    auto hcap = ht->capacity;
+    auto insert_kv = [&](const char* k_str, std::int64_t v) {
+        std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+        for (const char* p = k_str; *p; ++p)
+            h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+        const auto fp = ::aura::compiler::hash::fingerprint(h);
+        for (std::size_t at = 0; at < hcap; ++at) {
+            auto idx = ((h >> 1) + at) & (hcap - 1);
+            if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
+                meta[idx] = fp;
+                auto kidx = string_heap.mint(k_str);
+                keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                vals[idx] = make_int(v).val;
+                ht->size++;
+                return;
+            }
+        }
+
+        overflowed = true;
+    };
+    // #1470 fields (stable contract)
+    insert_kv("wraps", static_cast<std::int64_t>(wraps));
+    insert_kv("invalidations", static_cast<std::int64_t>(invalidations));
+    insert_kv("batch-commits", static_cast<std::int64_t>(batch_commits));
+    insert_kv("hygiene-skips", static_cast<std::int64_t>(hygiene_skips));
+    insert_kv("dirty-prunes", static_cast<std::int64_t>(dirty_prunes));
+    insert_kv("recommendation", rec_int);
+    // #1499 production health + breakdown
+    insert_kv("health-score", health);
+    insert_kv("action", action);
+    insert_kv("linear-enforcements", static_cast<std::int64_t>(linear_enforce));
+    insert_kv("linear-enforcements-per-frame", static_cast<std::int64_t>(linear_enforce_per));
+    insert_kv("cascade-depth-max", static_cast<std::int64_t>(cascade_max));
+    insert_kv("cascade-depth-avg-x100", cascade_avg_x100);
+    insert_kv("invalidation-protocol", static_cast<std::int64_t>(protocol));
+    insert_kv("bridge-epoch-bumps", static_cast<std::int64_t>(bridge_bumps));
+    insert_kv("steal-auto-refresh", static_cast<std::int64_t>(steal_refresh));
+    insert_kv("boundary-pinned-refresh", static_cast<std::int64_t>(boundary_refresh));
+    insert_kv("live-closure-stale-prevented", static_cast<std::int64_t>(live_stale));
+    insert_kv("yield-rollbacks", static_cast<std::int64_t>(rollbacks));
+    insert_kv("quota-rejects", static_cast<std::int64_t>(quota_rejects));
+    insert_kv("relower-blocks", static_cast<std::int64_t>(relower_blocks));
+    insert_kv("full-relower", static_cast<std::int64_t>(full_relower));
+    insert_kv("partial-relower", static_cast<std::int64_t>(per_fn_relower));
+    insert_kv("relower-partial-bp", relower_partial_bp);
+    insert_kv("fiber-depth-max", static_cast<std::int64_t>(fiber_depth_max));
+    insert_kv("live-mutation-depth", static_cast<std::int64_t>(live_depth));
+    // #1593: SLO + trend + sibling linkage + adaptive
+    insert_kv("slo-breach", slo_breach ? 1 : 0);
+    insert_kv("slo-threshold", kSloThreshold);
+    insert_kv("slo-breach-total",
+              static_cast<std::int64_t>(s_slo_breach_total.load(std::memory_order_relaxed)));
+    insert_kv("health-trend", health_trend);
+    insert_kv("health-prev", prev);
+    insert_kv("samples-total",
+              static_cast<std::int64_t>(s_samples.load(std::memory_order_relaxed)));
+    insert_kv("avg-hold-time-us", avg_hold_us);
+    insert_kv("safepoint-wait-while-mutation-held-us",
+              static_cast<std::int64_t>(safepoint_wait_us));
+    insert_kv("safe-yield-skipped-held", static_cast<std::int64_t>(safe_yield_skip));
+    insert_kv("post-steal-refresh-count", static_cast<std::int64_t>(post_steal_refresh));
+    insert_kv("steal-inner-deferred-starvation-mitigated-count",
+              static_cast<std::int64_t>(steal_mitigated));
+    insert_kv("adaptive-safepoint-recommended", adaptive_recommended);
+    insert_kv("adaptive-soft-triggers",
+              static_cast<std::int64_t>(s_adaptive_soft_triggers.load(std::memory_order_relaxed)));
+    insert_kv("adaptive-safepoint-threshold",
+              static_cast<std::int64_t>(ev.get_safepoint_adaptive_threshold()));
+    // #1597: parallel orchestration breakdown + SLO linkage
+    insert_kv("orch-health-score", orch_health);
+    insert_kv("avg-join-latency-us", avg_join_us);
+    insert_kv("join-latency-max-us", static_cast<std::int64_t>(join_wait_max));
+    insert_kv("join-total", static_cast<std::int64_t>(join_n));
+    insert_kv("join-timeouts", static_cast<std::int64_t>(join_timeouts));
+    insert_kv("join_latency_histogram", static_cast<std::int64_t>(join_hist_sum));
+    insert_kv("join-latency-hist-b0", static_cast<std::int64_t>(join_hist_b0));
+    insert_kv("join-latency-hist-b1", static_cast<std::int64_t>(join_hist_b1));
+    insert_kv("join-latency-hist-b2", static_cast<std::int64_t>(join_hist_b2));
+    insert_kv("join-latency-hist-b3", static_cast<std::int64_t>(join_hist_b3));
+    insert_kv("join-latency-hist-b4", static_cast<std::int64_t>(join_hist_b4));
+    insert_kv("mailbox_backpressure_p99", mailbox_backpressure_p99);
+    insert_kv("mailbox-backpressure-rejects", static_cast<std::int64_t>(mb_bp));
+    insert_kv("mailbox-pushes", static_cast<std::int64_t>(mb_pushes));
+    insert_kv("mailbox-recv-waits", static_cast<std::int64_t>(mb_recv_waits));
+    insert_kv("mailbox-recv-timeouts", static_cast<std::int64_t>(mb_recv_timeouts));
+    insert_kv("parallel_task_throughput", parallel_throughput_mtps);
+    insert_kv("parallel-tasks-ok", static_cast<std::int64_t>(po_ok));
+    insert_kv("parallel-tasks-err", static_cast<std::int64_t>(po_err));
+    insert_kv("parallel-tasks-joined", static_cast<std::int64_t>(po_joined));
+    insert_kv("parallel-fail-fast", static_cast<std::int64_t>(po_ff));
+    insert_kv("parallel-timeouts", static_cast<std::int64_t>(po_to));
+    insert_kv("parallel-elapsed-us", static_cast<std::int64_t>(po_elapsed));
+    insert_kv("orchestration_starvation_mitigated",
+              static_cast<std::int64_t>(orch_starvation_mitigated));
+    insert_kv("adaptive-concurrency-recommended", adaptive_concurrency_recommended);
+    // #1599: GC root audit + linear scan + mutation depth histogram
+    insert_kv("linear-gc-root-audit-checks", static_cast<std::int64_t>(linear_gc_audit));
+    insert_kv("linear_gc_root_audit_checks_total", static_cast<std::int64_t>(linear_gc_audit));
+    insert_kv("linear-live-closure-scans", static_cast<std::int64_t>(linear_live_scans));
+    insert_kv("mutation_stack_depth_histogram", static_cast<std::int64_t>(mut_depth_hist_sum));
+    insert_kv("mutation-stack-depth-hist-sum", static_cast<std::int64_t>(mut_depth_hist_sum));
+    // #1613: macro hygiene submodule (ai-closedloop-macro-health)
+    insert_kv("macro-health-score", macro_health);
+    insert_kv("macro-hygiene-violations", static_cast<std::int64_t>(macro_viol));
+    insert_kv("macro-naked-mutate-attempts", static_cast<std::int64_t>(naked_macro));
+    insert_kv("macro-stale-ref-prevented", static_cast<std::int64_t>(macro_stale_refs));
+    insert_kv("macro-query-skips", static_cast<std::int64_t>(macro_query_skips));
+    insert_kv("macro-reflect-rejects", static_cast<std::int64_t>(reflect_macro_rej));
+    insert_kv("macro-audit-blocked", static_cast<std::int64_t>(macro_audit_blocked));
+    insert_kv("macro-audit-events",
+              static_cast<std::int64_t>(
+                  typed_audit::g_typed_mutation_audit_counters.macro_hygiene_events.load(
+                      std::memory_order_relaxed)));
+    insert_kv("macro-hygiene-submodule-wired", 1);
+    insert_kv("issue", 1613);
+    insert_kv("schema", 1613); // lineage 1599|1597|1593|1499
+    return query_hash_finish(ht, string_heap, overflowed, ev);
+}
+
+// Issue #5031: module_export registration phase.
+void register_query_module_export_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                        ::aura::compiler::LockedStringHeap& string_heap,
+                                        void*& type_registry,
+                                        ModulePathResolver resolve_module_path, Evaluator& ev) {
 
     // Issue #1680: mtime-keyed cache; amortize re-read/re-parse of module files.
     add("query:module-exports",
@@ -686,6 +1186,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             }
             return make_int(success + macro_dirty + epoch_bump + hygiene_violation);
         });
+}
+
+// Issue #5031: ir_marker registration phase.
+void register_query_ir_marker_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                    ::aura::compiler::LockedStringHeap& string_heap,
+                                    void*& type_registry, ModulePathResolver resolve_module_path,
+                                    Evaluator& ev) {
 
     // Issue #455 / #1039 / #1644 / #1891: query:ir-marker-stats
     // Hash of SyntaxMarker counts read from the IR (per-instruction
@@ -810,6 +1317,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_int(
                 static_cast<std::int64_t>(aura_unstamp_macro_introduced_total_v_read()));
         });
+}
+
+// Issue #5031: coercion registration phase.
+void register_query_coercion_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                   ::aura::compiler::LockedStringHeap& string_heap,
+                                   void*& type_registry, ModulePathResolver resolve_module_path,
+                                   Evaluator& ev) {
 
     // Issue #3102: AC1 — CoercionMap abort rewind counter (production/Full).
     // Bumped once per abort path that successfully rewound the type-cone
@@ -889,6 +1403,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_int(static_cast<std::int64_t>(
                 typed_audit::coercion_commit_readiness_cleared_on_abort_total_v_read()));
         });
+}
+
+// Issue #5031: hygiene registration phase.
+void register_query_hygiene_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                  ::aura::compiler::LockedStringHeap& string_heap,
+                                  void*& type_registry, ModulePathResolver resolve_module_path,
+                                  Evaluator& ev) {
 
     // Issue #2098 / #2239: query:macro-schema-cache-dirty-stamp-stats.
     // Surfaces the per-cloned-subtree schema-cache + dirty/provenance
@@ -1085,6 +1606,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("nested-under-mutation-boundary", 1);
             return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
+
+// Issue #5031: dirty registration phase.
+void register_query_dirty_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                ::aura::compiler::LockedStringHeap& string_heap,
+                                void*& type_registry, ModulePathResolver resolve_module_path,
+                                Evaluator& ev) {
 
     // Issue #456 / #1036: query:dirty-subtree root-node-id
     // [reason-mask]. Walks the **subtree** rooted at root-node-id
@@ -1267,6 +1795,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("boundary-log-recommendation", recommendation);
             return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
+
+// Issue #5031: stability registration phase.
+void register_query_stability_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                    ::aura::compiler::LockedStringHeap& string_heap,
+                                    void*& type_registry, ModulePathResolver resolve_module_path,
+                                    Evaluator& ev) {
 
     // Issue #489: query:stability-stats. Hash view of StableNodeRef
     // enforcement counters for EDSL mutate/query hot paths.
@@ -1377,6 +1912,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const std::uint64_t stale = ws->node_gen_stale_access_count();
             return make_int(static_cast<std::int64_t>(wraps + invalidations + stale));
         });
+}
+
+// Issue #5031: stable_ref_hash registration phase.
+void register_query_stable_ref_hash_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                          ::aura::compiler::LockedStringHeap& string_heap,
+                                          void*& type_registry,
+                                          ModulePathResolver resolve_module_path, Evaluator& ev) {
 
     // Issue #470: query:stable-ref-stats-hash — 4-element
     // integer list for AI Agent decision-making. The
@@ -1607,7 +2149,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("pinned-across-boundaries", 0);
             return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: ai_closedloop registration phase.
+void register_query_ai_closedloop_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                        ::aura::compiler::LockedStringHeap& string_heap,
+                                        void*& type_registry,
+                                        ModulePathResolver resolve_module_path, Evaluator& ev) {
     // Issue #1470 / #1499 / #1593 / #1597 / #1599 / #1613:
     // query:ai-closedloop-readiness-stats — consolidated health for AI editing loops.
     //
@@ -1629,436 +2177,27 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // Action (#1499 orchestration hint, independent of recommendation):
     //   0 = ok  1 = investigate-refs  2 = throttle-mutate
     //   3 = raise-quota  4 = check-cascade
+    // Issue #5031: the closedloop readiness probe is one register call; its
+    // phases live on ClosedloopReadiness and run in the original order.
     ObservabilityPrims::register_stats_impl(
         "query:ai-closedloop-readiness-stats",
         [&pairs, &string_heap, &ev](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
             (void)pairs;
-            // Process-wide trend / SLO (Agent samples this primitive repeatedly).
-            static std::atomic<std::int64_t> s_prev_health{100};
-            static std::atomic<std::uint64_t> s_samples{0};
-            static std::atomic<std::uint64_t> s_slo_breach_total{0};
-            static std::atomic<std::uint64_t> s_adaptive_soft_triggers{0};
-
-            std::uint64_t wraps = 0;
-            std::uint64_t invalidations = 0;
-            std::uint64_t batch_commits = 0;
-            std::uint64_t dirty_prunes = 0;
-            if (auto* ws = ev.workspace_flat()) {
-                wraps = ws->generation_wrap_count();
-                invalidations = ws->stable_ref_invalidations();
-                batch_commits = ws->atomic_batch_commits();
-                dirty_prunes = ws->mark_dirty_boundary_prune_count();
-            }
-            const std::uint64_t hygiene_skips = ir_inline_hygiene_skipped(&ev);
-            std::int64_t rec_int = 0;
-            if (wraps > 0)
-                rec_int = 1;
-            else if (invalidations >= 10)
-                rec_int = 2;
-            else if (hygiene_skips >= 100)
-                rec_int = 3;
-            else if (dirty_prunes >= 50)
-                rec_int = 4;
-
-            // Issue #1499: production counters from CompilerMetrics.
-            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
-            const auto load =
-                [m](std::atomic<std::uint64_t> CompilerMetrics::* field) -> std::uint64_t {
-                if (!m)
-                    return 0;
-                return (m->*field).load(std::memory_order_relaxed);
-            };
-            const std::uint64_t linear_enforce =
-                load(&CompilerMetrics::linear_post_mutate_enforcements_total);
-            const std::uint64_t linear_enforce_per =
-                load(&CompilerMetrics::linear_post_mutate_enforcements);
-            // #1599: linear GC root audit + live-closure scan linkage.
-            const std::uint64_t linear_gc_audit =
-                load(&CompilerMetrics::linear_gc_root_audit_checks_total);
-            const std::uint64_t linear_live_scans =
-                load(&CompilerMetrics::linear_live_closure_scans_total);
-            std::uint64_t mut_depth_hist_sum = 0;
-            if (m) {
-                for (std::size_t i = 0; i < CompilerMetrics::kMutationStackDepthHistBuckets; ++i)
-                    mut_depth_hist_sum +=
-                        m->mutation_stack_depth_histogram[i].load(std::memory_order_relaxed);
-            }
-            const std::uint64_t cascade_max = load(&CompilerMetrics::invalidate_cascade_depth_max);
-            const std::uint64_t cascade_total =
-                load(&CompilerMetrics::invalidate_cascade_depth_total);
-            const std::uint64_t protocol =
-                load(&CompilerMetrics::unified_invalidation_protocol_total);
-            const std::uint64_t steal_refresh =
-                load(&CompilerMetrics::stable_ref_steal_auto_refresh_total);
-            const std::uint64_t boundary_refresh =
-                load(&CompilerMetrics::boundary_pinned_refresh_count);
-            const std::uint64_t live_stale =
-                load(&CompilerMetrics::compiler_live_closure_stale_prevented_total);
-            const std::uint64_t rollbacks =
-                load(&CompilerMetrics::mutation_boundary_yield_rollback_total);
-            const std::uint64_t quota_rejects =
-                load(&CompilerMetrics::resource_quota_rejects_total);
-            const std::uint64_t relower_blocks =
-                load(&CompilerMetrics::incremental_relower_blocks_total);
-            const std::uint64_t full_relower = load(&CompilerMetrics::relower_full_called_count);
-            const std::uint64_t per_fn_relower =
-                load(&CompilerMetrics::relower_per_function_called_count);
-            const std::uint64_t fiber_depth_max = ev.get_per_fiber_mutation_stack_depth_max();
-            const std::uint64_t live_depth =
-                static_cast<std::uint64_t>(Evaluator::mutation_boundary_depth());
-            const std::uint64_t bridge_bumps = load(&CompilerMetrics::bridge_epoch_bumps_total);
-
-            // #1593 sibling linkage (#1591 fairness / #1592 post-steal).
-            const std::uint64_t safepoint_wait_us =
-                aura::gc_hooks::safepoint_wait_while_mutation_held_us();
-            const std::uint64_t safe_yield_skip = ev.get_safe_yield_skipped_held_total();
-            const std::uint64_t post_steal_refresh = ev.get_post_steal_refresh_count();
-            auto& steal_s = ::aura::serve::metrics::adaptive_steal_stats();
-            const std::uint64_t steal_mitigated =
-                steal_s.steal_inner_deferred_starvation_mitigated_count.load(
-                    std::memory_order_relaxed);
-            const std::uint64_t hold_total =
-                load(&CompilerMetrics::mutation_boundary_hold_time_total_us);
-            const std::uint64_t hold_samples =
-                load(&CompilerMetrics::mutation_boundary_holds_total);
-            const std::int64_t avg_hold_us =
-                hold_samples > 0 ? static_cast<std::int64_t>(hold_total / hold_samples) : 0;
-
-            // Cascade avg (bp for integer: total*100 / protocol when >0).
-            std::int64_t cascade_avg_x100 = 0;
-            if (protocol > 0)
-                cascade_avg_x100 = static_cast<std::int64_t>((cascade_total * 100u) / protocol);
-
-            // Relower partial ratio in basis points (partial / (partial+full)).
-            std::int64_t relower_partial_bp = 10000;
-            {
-                const auto sum = per_fn_relower + full_relower;
-                if (sum > 0)
-                    relower_partial_bp = static_cast<std::int64_t>((per_fn_relower * 10000u) / sum);
-            }
-
-            // Health score 0..100 (higher is better). Start at 100 and
-            // apply capped penalties so agents get a single ordinal signal.
-            std::int64_t health = 100;
-            auto penalize = [&](std::int64_t pts) {
-                health -= pts;
-                if (health < 0)
-                    health = 0;
-            };
-            if (wraps > 0)
-                penalize(20);
-            if (invalidations >= 10)
-                penalize(std::min<std::int64_t>(20, static_cast<std::int64_t>(invalidations / 5)));
-            if (rollbacks >= 5)
-                penalize(std::min<std::int64_t>(20, static_cast<std::int64_t>(rollbacks / 5)));
-            if (cascade_max >= 8)
-                penalize(std::min<std::int64_t>(15, static_cast<std::int64_t>(cascade_max)));
-            if (quota_rejects >= 5)
-                penalize(std::min<std::int64_t>(15, static_cast<std::int64_t>(quota_rejects / 5)));
-            if (relower_partial_bp < 5000 && (full_relower + per_fn_relower) >= 10)
-                penalize(10); // mostly full re-lower under load
-            if (hygiene_skips >= 100)
-                penalize(10);
-            if (dirty_prunes >= 50)
-                penalize(5);
-            // #1613: macro hygiene submodule pressure on overall health.
-            const std::uint64_t macro_viol =
-                static_cast<std::uint64_t>(ev.get_hygiene_violation_count());
-            const std::uint64_t naked_macro = load(&CompilerMetrics::naked_macro_mutate_attempt);
-            const std::uint64_t macro_stale_refs = ev.get_macro_stale_ref_prevented();
-            const std::uint64_t reflect_macro_rej =
-                load(&CompilerMetrics::reflect_macro_hygiene_rejects_total);
-            const std::uint64_t macro_query_skips = ev.get_macro_introduced_skipped_in_query() +
-                                                    ev.get_pattern_recursive_macro_skipped();
-            const std::uint64_t macro_audit_blocked =
-                typed_audit::g_typed_mutation_audit_counters.macro_hygiene_blocked.load(
-                    std::memory_order_relaxed);
-            // Macro health subscore 0..100 (mirrored on macro-hygiene-stats).
-            std::int64_t macro_health = 100;
-            auto macro_pen = [&](std::int64_t pts) {
-                macro_health -= pts;
-                if (macro_health < 0)
-                    macro_health = 0;
-            };
-            if (macro_viol > 0)
-                macro_pen(std::min<std::int64_t>(40, static_cast<std::int64_t>(macro_viol) * 5));
-            if (naked_macro > 0)
-                macro_pen(std::min<std::int64_t>(25, static_cast<std::int64_t>(naked_macro) * 3));
-            if (reflect_macro_rej > 0)
-                macro_pen(
-                    std::min<std::int64_t>(15, static_cast<std::int64_t>(reflect_macro_rej) * 2));
-            if (macro_stale_refs > 20)
-                macro_pen(
-                    std::min<std::int64_t>(10, static_cast<std::int64_t>(macro_stale_refs) / 10));
-            if (macro_health < 80)
-                penalize(std::min<std::int64_t>(15, (80 - macro_health) / 2));
-            // #1593: long holds / safepoint wait under mutation pressure.
-            if (avg_hold_us >= 5000)
-                penalize(std::min<std::int64_t>(10, avg_hold_us / 5000));
-            if (safepoint_wait_us >= 100000)
-                penalize(5);
-            if (safe_yield_skip >= 50)
-                penalize(5);
-
-            // ── #1597: parallel orchestration health ─────────────────
-            using aura::serve::Fiber;
-            using aura::serve::mf_mailbox::g_mf_mailbox_stats;
-            using aura::serve::parallel_orch::g_parallel_orch_stats;
-            const std::uint64_t join_n = Fiber::join_total();
-            const std::uint64_t join_wait_us = Fiber::join_wait_us_total();
-            const std::uint64_t join_wait_max = Fiber::join_wait_us_max();
-            const std::uint64_t join_timeouts = Fiber::join_timeout_total();
-            const std::int64_t avg_join_us =
-                join_n > 0 ? static_cast<std::int64_t>(join_wait_us / join_n) : 0;
-            // Coarse histogram bucket counts (exported as sum + b0..b4).
-            const std::uint64_t join_hist_sum = Fiber::join_latency_hist_sum();
-            const std::uint64_t join_hist_b0 = Fiber::join_latency_hist(0);
-            const std::uint64_t join_hist_b1 = Fiber::join_latency_hist(1);
-            const std::uint64_t join_hist_b2 = Fiber::join_latency_hist(2);
-            const std::uint64_t join_hist_b3 = Fiber::join_latency_hist(3);
-            const std::uint64_t join_hist_b4 = Fiber::join_latency_hist(4);
-
-            const std::uint64_t mb_pushes =
-                g_mf_mailbox_stats.pushes.load(std::memory_order_relaxed);
-            const std::uint64_t mb_bp =
-                g_mf_mailbox_stats.backpressure_rejects.load(std::memory_order_relaxed);
-            const std::uint64_t mb_recv_waits =
-                g_mf_mailbox_stats.recv_waits.load(std::memory_order_relaxed);
-            const std::uint64_t mb_recv_timeouts =
-                g_mf_mailbox_stats.recv_timeouts.load(std::memory_order_relaxed);
-            // Pseudo-p99 backpressure pressure (ms): 0 when no rejects; else
-            // scales with reject rate (capped). Agents use as pressure gauge.
-            std::int64_t mailbox_backpressure_p99 = 0;
-            if (mb_bp > 0) {
-                const auto denom = mb_pushes + mb_bp;
-                const auto rate_bp = ::aura::compiler::basis_points(mb_bp, denom);
-                mailbox_backpressure_p99 =
-                    std::min<std::int64_t>(10000, 50 + rate_bp + static_cast<std::int64_t>(mb_bp));
-            }
-
-            const std::uint64_t po_joined =
-                g_parallel_orch_stats.tasks_joined.load(std::memory_order_relaxed);
-            const std::uint64_t po_ok =
-                g_parallel_orch_stats.tasks_ok.load(std::memory_order_relaxed);
-            const std::uint64_t po_err =
-                g_parallel_orch_stats.tasks_err.load(std::memory_order_relaxed);
-            const std::uint64_t po_ff =
-                g_parallel_orch_stats.fail_fast_aborts.load(std::memory_order_relaxed);
-            const std::uint64_t po_to =
-                g_parallel_orch_stats.timeouts.load(std::memory_order_relaxed);
-            const std::uint64_t po_elapsed =
-                g_parallel_orch_stats.parallel_elapsed_us.load(std::memory_order_relaxed);
-            // Throughput (tasks/s ×1000 as milli-tps integer for EDSL int fields).
-            std::int64_t parallel_throughput_mtps = 0;
-            if (po_elapsed > 0 && po_ok > 0)
-                parallel_throughput_mtps =
-                    static_cast<std::int64_t>((po_ok * 1000000ull) / po_elapsed); // tasks/s
-
-            // Orchestration subscore 0..100 (higher better).
-            std::int64_t orch_health = 100;
-            auto orch_pen = [&](std::int64_t pts) {
-                orch_health -= pts;
-                if (orch_health < 0)
-                    orch_health = 0;
-            };
-            if (avg_join_us >= 1000)
-                orch_pen(std::min<std::int64_t>(20, avg_join_us / 1000));
-            if (join_timeouts >= 3)
-                orch_pen(std::min<std::int64_t>(15, static_cast<std::int64_t>(join_timeouts) * 3));
-            if (mb_bp >= 5)
-                orch_pen(std::min<std::int64_t>(20, static_cast<std::int64_t>(mb_bp) / 2));
-            if (po_joined > 0 && po_err * 5 >= po_joined)
-                orch_pen(15); // ≥20% error rate
-            if (po_ff >= 2)
-                orch_pen(10);
-            if (po_to >= 2)
-                orch_pen(10);
-
-            // Fold orch into main health (capped soft penalty).
-            if (orch_health < 80)
-                penalize(std::min<std::int64_t>(15, (80 - orch_health) / 2));
-            if (avg_join_us >= 10000)
-                penalize(5);
-            if (mailbox_backpressure_p99 >= 500)
-                penalize(5);
-
-            // Starvation mitigated = steal fairness + join-path linear enforce
-            // (join Ok after wait) + mailbox recv_waits that completed (proxy).
-            const std::uint64_t orch_starvation_mitigated =
-                steal_mitigated + Fiber::join_linear_enforcement_total();
-
-            // Orchestration action (independent of #1470 recommendation).
-            std::int64_t action = 0;
-            if (quota_rejects >= 5)
-                action = 3; // raise-quota
-            else if (cascade_max >= 8)
-                action = 4; // check-cascade
-            else if (rollbacks >= 5 || invalidations >= 20 || orch_health < 50)
-                action = 2; // throttle-mutate (incl. orch pressure)
-            else if (wraps > 0 || invalidations >= 10 || boundary_refresh + steal_refresh >= 50 ||
-                     mb_bp >= 10 || avg_join_us >= 5000)
-                action = 1; // investigate-refs / orch latency
-
-            // #1593 SLO: health < threshold OR severe action.
-            constexpr std::int64_t kSloThreshold = 70;
-            const bool slo_breach = (health < kSloThreshold) || (action >= 3);
-            if (slo_breach)
-                s_slo_breach_total.fetch_add(1, std::memory_order_relaxed);
-
-            // Health trend vs previous sample (positive = improving).
-            const std::int64_t prev = s_prev_health.exchange(health, std::memory_order_relaxed);
-            const std::int64_t health_trend = health - prev;
-            s_samples.fetch_add(1, std::memory_order_relaxed);
-
-            // Adaptive safepoint soft linkage: on hard breach, nudge threshold
-            // (orchestrators also read adaptive-safepoint-recommended).
-            std::int64_t adaptive_recommended = 0;
-            if (slo_breach || live_depth > 0 || avg_hold_us >= 2000 || safe_yield_skip >= 20 ||
-                orch_health < 60)
-                adaptive_recommended = 1;
-            // #1597: recommend lowering parallel concurrency under orch pressure.
-            std::int64_t adaptive_concurrency_recommended = 0;
-            if (orch_health < 70 || mailbox_backpressure_p99 >= 200 || avg_join_us >= 5000 ||
-                po_ff >= 1 || po_to >= 1)
-                adaptive_concurrency_recommended = 1;
-            if (slo_breach && health < 50) {
-                s_adaptive_soft_triggers.fetch_add(1, std::memory_order_relaxed);
-                // Soft adapt: one exponential backoff step (capped in helper).
-                ev.bump_safepoint_adaptive_threshold();
-            }
-
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(88));
-            if (!ht)
-                return make_int(rec_int);
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
-            };
-            // #1470 fields (stable contract)
-            insert_kv("wraps", static_cast<std::int64_t>(wraps));
-            insert_kv("invalidations", static_cast<std::int64_t>(invalidations));
-            insert_kv("batch-commits", static_cast<std::int64_t>(batch_commits));
-            insert_kv("hygiene-skips", static_cast<std::int64_t>(hygiene_skips));
-            insert_kv("dirty-prunes", static_cast<std::int64_t>(dirty_prunes));
-            insert_kv("recommendation", rec_int);
-            // #1499 production health + breakdown
-            insert_kv("health-score", health);
-            insert_kv("action", action);
-            insert_kv("linear-enforcements", static_cast<std::int64_t>(linear_enforce));
-            insert_kv("linear-enforcements-per-frame",
-                      static_cast<std::int64_t>(linear_enforce_per));
-            insert_kv("cascade-depth-max", static_cast<std::int64_t>(cascade_max));
-            insert_kv("cascade-depth-avg-x100", cascade_avg_x100);
-            insert_kv("invalidation-protocol", static_cast<std::int64_t>(protocol));
-            insert_kv("bridge-epoch-bumps", static_cast<std::int64_t>(bridge_bumps));
-            insert_kv("steal-auto-refresh", static_cast<std::int64_t>(steal_refresh));
-            insert_kv("boundary-pinned-refresh", static_cast<std::int64_t>(boundary_refresh));
-            insert_kv("live-closure-stale-prevented", static_cast<std::int64_t>(live_stale));
-            insert_kv("yield-rollbacks", static_cast<std::int64_t>(rollbacks));
-            insert_kv("quota-rejects", static_cast<std::int64_t>(quota_rejects));
-            insert_kv("relower-blocks", static_cast<std::int64_t>(relower_blocks));
-            insert_kv("full-relower", static_cast<std::int64_t>(full_relower));
-            insert_kv("partial-relower", static_cast<std::int64_t>(per_fn_relower));
-            insert_kv("relower-partial-bp", relower_partial_bp);
-            insert_kv("fiber-depth-max", static_cast<std::int64_t>(fiber_depth_max));
-            insert_kv("live-mutation-depth", static_cast<std::int64_t>(live_depth));
-            // #1593: SLO + trend + sibling linkage + adaptive
-            insert_kv("slo-breach", slo_breach ? 1 : 0);
-            insert_kv("slo-threshold", kSloThreshold);
-            insert_kv("slo-breach-total", static_cast<std::int64_t>(
-                                              s_slo_breach_total.load(std::memory_order_relaxed)));
-            insert_kv("health-trend", health_trend);
-            insert_kv("health-prev", prev);
-            insert_kv("samples-total",
-                      static_cast<std::int64_t>(s_samples.load(std::memory_order_relaxed)));
-            insert_kv("avg-hold-time-us", avg_hold_us);
-            insert_kv("safepoint-wait-while-mutation-held-us",
-                      static_cast<std::int64_t>(safepoint_wait_us));
-            insert_kv("safe-yield-skipped-held", static_cast<std::int64_t>(safe_yield_skip));
-            insert_kv("post-steal-refresh-count", static_cast<std::int64_t>(post_steal_refresh));
-            insert_kv("steal-inner-deferred-starvation-mitigated-count",
-                      static_cast<std::int64_t>(steal_mitigated));
-            insert_kv("adaptive-safepoint-recommended", adaptive_recommended);
-            insert_kv("adaptive-soft-triggers",
-                      static_cast<std::int64_t>(
-                          s_adaptive_soft_triggers.load(std::memory_order_relaxed)));
-            insert_kv("adaptive-safepoint-threshold",
-                      static_cast<std::int64_t>(ev.get_safepoint_adaptive_threshold()));
-            // #1597: parallel orchestration breakdown + SLO linkage
-            insert_kv("orch-health-score", orch_health);
-            insert_kv("avg-join-latency-us", avg_join_us);
-            insert_kv("join-latency-max-us", static_cast<std::int64_t>(join_wait_max));
-            insert_kv("join-total", static_cast<std::int64_t>(join_n));
-            insert_kv("join-timeouts", static_cast<std::int64_t>(join_timeouts));
-            insert_kv("join_latency_histogram", static_cast<std::int64_t>(join_hist_sum));
-            insert_kv("join-latency-hist-b0", static_cast<std::int64_t>(join_hist_b0));
-            insert_kv("join-latency-hist-b1", static_cast<std::int64_t>(join_hist_b1));
-            insert_kv("join-latency-hist-b2", static_cast<std::int64_t>(join_hist_b2));
-            insert_kv("join-latency-hist-b3", static_cast<std::int64_t>(join_hist_b3));
-            insert_kv("join-latency-hist-b4", static_cast<std::int64_t>(join_hist_b4));
-            insert_kv("mailbox_backpressure_p99", mailbox_backpressure_p99);
-            insert_kv("mailbox-backpressure-rejects", static_cast<std::int64_t>(mb_bp));
-            insert_kv("mailbox-pushes", static_cast<std::int64_t>(mb_pushes));
-            insert_kv("mailbox-recv-waits", static_cast<std::int64_t>(mb_recv_waits));
-            insert_kv("mailbox-recv-timeouts", static_cast<std::int64_t>(mb_recv_timeouts));
-            insert_kv("parallel_task_throughput", parallel_throughput_mtps);
-            insert_kv("parallel-tasks-ok", static_cast<std::int64_t>(po_ok));
-            insert_kv("parallel-tasks-err", static_cast<std::int64_t>(po_err));
-            insert_kv("parallel-tasks-joined", static_cast<std::int64_t>(po_joined));
-            insert_kv("parallel-fail-fast", static_cast<std::int64_t>(po_ff));
-            insert_kv("parallel-timeouts", static_cast<std::int64_t>(po_to));
-            insert_kv("parallel-elapsed-us", static_cast<std::int64_t>(po_elapsed));
-            insert_kv("orchestration_starvation_mitigated",
-                      static_cast<std::int64_t>(orch_starvation_mitigated));
-            insert_kv("adaptive-concurrency-recommended", adaptive_concurrency_recommended);
-            // #1599: GC root audit + linear scan + mutation depth histogram
-            insert_kv("linear-gc-root-audit-checks", static_cast<std::int64_t>(linear_gc_audit));
-            insert_kv("linear_gc_root_audit_checks_total",
-                      static_cast<std::int64_t>(linear_gc_audit));
-            insert_kv("linear-live-closure-scans", static_cast<std::int64_t>(linear_live_scans));
-            insert_kv("mutation_stack_depth_histogram",
-                      static_cast<std::int64_t>(mut_depth_hist_sum));
-            insert_kv("mutation-stack-depth-hist-sum",
-                      static_cast<std::int64_t>(mut_depth_hist_sum));
-            // #1613: macro hygiene submodule (ai-closedloop-macro-health)
-            insert_kv("macro-health-score", macro_health);
-            insert_kv("macro-hygiene-violations", static_cast<std::int64_t>(macro_viol));
-            insert_kv("macro-naked-mutate-attempts", static_cast<std::int64_t>(naked_macro));
-            insert_kv("macro-stale-ref-prevented", static_cast<std::int64_t>(macro_stale_refs));
-            insert_kv("macro-query-skips", static_cast<std::int64_t>(macro_query_skips));
-            insert_kv("macro-reflect-rejects", static_cast<std::int64_t>(reflect_macro_rej));
-            insert_kv("macro-audit-blocked", static_cast<std::int64_t>(macro_audit_blocked));
-            insert_kv("macro-audit-events",
-                      static_cast<std::int64_t>(
-                          typed_audit::g_typed_mutation_audit_counters.macro_hygiene_events.load(
-                              std::memory_order_relaxed)));
-            insert_kv("macro-hygiene-submodule-wired", 1);
-            insert_kv("issue", 1613);
-            insert_kv("schema", 1613); // lineage 1599|1597|1593|1499
-            return query_hash_finish(ht, string_heap, overflowed, ev);
+            ClosedloopReadiness r(ev, string_heap);
+            r.collect();
+            r.score_health();
+            r.orchestration();
+            r.score_slo();
+            return r.emit();
         });
+}
 
+// Issue #5031: pin_provenance registration phase.
+void register_query_pin_provenance_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                         ::aura::compiler::LockedStringHeap& string_heap,
+                                         void*& type_registry,
+                                         ModulePathResolver resolve_module_path, Evaluator& ev) {
     // Issue #738: query:stable-ref-boundary-stats-hash — cross-COW /
     // sub-workspace pinning + boundary validity observability for
     // concurrent AI orchestration. Complements #527
@@ -2280,6 +2419,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("schema-2056", 2056);
             return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
+
+// Issue #5031: lifecycle_stats registration phase.
+void register_query_lifecycle_stats_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                          ::aura::compiler::LockedStringHeap& string_heap,
+                                          void*& type_registry,
+                                          ModulePathResolver resolve_module_path, Evaluator& ev) {
 
     // Issue #497: query:stable-ref-lifecycle-stats — long-session
     // generation/compaction/refresh observability for AI loops.
@@ -2553,6 +2699,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             (void)a;
             return make_int(static_cast<std::int64_t>(aura_gc_reclaim_off_skips_tw_total()));
         });
+}
+
+// Issue #5031: scheduler registration phase.
+void register_query_scheduler_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                    ::aura::compiler::LockedStringHeap& string_heap,
+                                    void*& type_registry, ModulePathResolver resolve_module_path,
+                                    Evaluator& ev) {
 
     // Issue #443: query:verify-tool-stats. Returns the
     // sum of the 3 external simulator tool-calling
@@ -2729,6 +2882,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("scheduler-mutation-coord-recommendation", recommendation);
             return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
+
+// Issue #5031: gc_tune registration phase.
+void register_query_gc_tune_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                  ::aura::compiler::LockedStringHeap& string_heap,
+                                  void*& type_registry, ModulePathResolver resolve_module_path,
+                                  Evaluator& ev) {
 
     // Issue #618: (orchestration:tune-gc-frequency ratio) —
     // setter for the GC safepoint frequency tuning atomic.
@@ -2786,7 +2946,30 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const std::uint64_t rebuilds = ws->tag_arity_index_rebuilds();
             return make_int(static_cast<std::int64_t>(hits + misses + rebuilds));
         });
+}
 
+void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                               ::aura::compiler::LockedStringHeap& string_heap,
+                               void*& type_registry, ModulePathResolver resolve_module_path,
+                               Evaluator& ev) {
+    // Issue #5031: ordered delegation over the peeled responsibility phases.
+    register_query_module_export_parts(add, pairs, string_heap, type_registry, resolve_module_path,
+                                       ev);
+    register_query_ir_marker_parts(add, pairs, string_heap, type_registry, resolve_module_path, ev);
+    register_query_coercion_parts(add, pairs, string_heap, type_registry, resolve_module_path, ev);
+    register_query_hygiene_parts(add, pairs, string_heap, type_registry, resolve_module_path, ev);
+    register_query_dirty_parts(add, pairs, string_heap, type_registry, resolve_module_path, ev);
+    register_query_stability_parts(add, pairs, string_heap, type_registry, resolve_module_path, ev);
+    register_query_stable_ref_hash_parts(add, pairs, string_heap, type_registry,
+                                         resolve_module_path, ev);
+    register_query_ai_closedloop_parts(add, pairs, string_heap, type_registry, resolve_module_path,
+                                       ev);
+    register_query_pin_provenance_parts(add, pairs, string_heap, type_registry, resolve_module_path,
+                                        ev);
+    register_query_lifecycle_stats_parts(add, pairs, string_heap, type_registry,
+                                         resolve_module_path, ev);
+    register_query_scheduler_parts(add, pairs, string_heap, type_registry, resolve_module_path, ev);
+    register_query_gc_tune_parts(add, pairs, string_heap, type_registry, resolve_module_path, ev);
     // Issue #547: query:pattern-index-stats. Returns
     // the sum of the 4 tag_arity_index observability
     // counters:
