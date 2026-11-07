@@ -7,7 +7,8 @@
       "path": "src/compiler/ir_executor_impl.cpp",
       "contains": [
         "Issue #4755",
-        "std::scoped_lock<std::mutex> owned_pairs(g_owned_pair_slots_mtx)",
+        "std::scoped_lock<std::mutex> owned_pairs(",
+        "g_owned_pair_slots_mtx);",
         "g_owned_pair_slots_.push_back(slot)"
       ]
     },
