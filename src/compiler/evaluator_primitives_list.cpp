@@ -129,152 +129,271 @@ namespace {
 
 } // namespace
 
-void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
-                              ::aura::compiler::LockedStringHeap& string_heap,
-                              std::vector<EvalValue>& error_values, Evaluator& ev) {
+EvalValue RegSplitParts::apply_callback(Evaluator& ev, std::uint64_t cid,
+                                        std::span<const EvalValue> args) {
+    aura_clear_apply_densify_refuse();
+    auto r = ev.apply_closure(cid, args);
+    if (r)
+        return *r;
+    if (aura_take_apply_densify_refuse())
+        return make_primitive_error(
+            ev.string_heap_, ev.error_values_,
+            "closure apply refused: Moving densify window incomplete (#4928)",
+            ev.primitive_error_counter_ptr());
+    return make_void();
+}
+
+EvalValue RegSplitParts::apply_unary(Evaluator& ev, const EvalValue& fn, const EvalValue& arg,
+                                     bool list_hotpath) {
+    // Issue #4228: deref define-cells (Soft std/math preds) before dispatch.
+    EvalValue callee = fn;
+    if (is_cell(callee)) {
+        auto ci = as_cell_id(callee);
+        if (ci < ev.cells().size())
+            callee = ev.cells()[ci];
+        else
+            return make_void();
+    }
+    if (is_primitive(callee)) {
+        auto slot = as_primitive_slot(callee);
+        ev.bump_primitives_apply_lookup_hits();
+        auto prim = ev.primitives_.slot_lookup_fast(slot);
+        if (!prim)
+            return make_void();
+        ev.bump_primitives_apply_fastpath_wins();
+        ev.bump_list_intrinsic_dispatches();
+        if (list_hotpath)
+            ev.bump_list_soa_hits();
+        // Issue #479: per-slot fast-path hit for "which prim is hottest".
+        primitives_detail::prim_record_fastpath_hit_for_slot(
+            static_cast<CompilerMetrics*>(ev.compiler_metrics()), slot);
+        return (*prim)({arg});
+    }
+    if (is_closure(callee)) {
+        auto cid = as_closure_id(callee);
+        ev.bump_primitives_apply_closure_calls();
+        if (list_hotpath)
+            ev.bump_list_estimated_cache_misses();
+        // Issue #4624: a diagnostic the callback body raises must
+        // not be swallowed — keep it as an error value.
+        const EvalValue call_args[1] = {arg};
+        return apply_callback(ev, cid, call_args);
+    }
+    return make_void();
+}
+
+EvalValue RegSplitParts::apply_pred(Evaluator& ev, const EvalValue& fn, const EvalValue& arg,
+                                    bool list_hotpath) {
+    // Issue #4228: Soft std/math exports are define-cells. Env::lookup
+    // returns the cell sentinel; Variable eval usually derefs, but
+    // list hot-path preds must tolerate a cell reaching apply_pred
+    // (same for apply_unary / apply_binary).
+    // Issue #4586: return the value. An error is not a truth test;
+    // only #f is false, so folding the error here kept the element.
+    EvalValue pred = fn;
+    if (is_cell(pred)) {
+        auto ci = as_cell_id(pred);
+        if (ci < ev.cells().size())
+            pred = ev.cells()[ci];
+        else
+            return make_bool(false);
+    }
+    if (is_primitive(pred)) {
+        auto slot = as_primitive_slot(pred);
+        ev.bump_primitives_apply_lookup_hits();
+        auto prim = ev.primitives_.slot_lookup_fast(slot);
+        if (!prim)
+            return make_bool(false);
+        ev.bump_primitives_apply_fastpath_wins();
+        ev.bump_list_intrinsic_dispatches();
+        if (list_hotpath)
+            ev.bump_list_soa_hits();
+        primitives_detail::prim_record_fastpath_hit_for_slot(
+            static_cast<CompilerMetrics*>(ev.compiler_metrics()), slot);
+        return (*prim)({arg});
+    }
+    if (is_closure(pred)) {
+        auto cid = as_closure_id(pred);
+        ev.bump_primitives_apply_closure_calls();
+        if (list_hotpath)
+            ev.bump_list_estimated_cache_misses();
+        // Issue #4624: same as map — a diagnostic the callback body
+        // raises must not be swallowed.
+        const EvalValue call_args[1] = {arg};
+        return apply_callback(ev, cid, call_args);
+    }
+    return make_bool(false);
+}
+
+EvalValue RegSplitParts::apply_binary(Evaluator& ev, const EvalValue& fn, const EvalValue& acc,
+                                      const EvalValue& arg, bool list_hotpath) {
+    // Issue #4228: deref define-cells before dispatch.
+    EvalValue callee = fn;
+    if (is_cell(callee)) {
+        auto ci = as_cell_id(callee);
+        if (ci < ev.cells().size())
+            callee = ev.cells()[ci];
+        else
+            return make_void();
+    }
+    if (is_primitive(callee)) {
+        auto slot = as_primitive_slot(callee);
+        ev.bump_primitives_apply_lookup_hits();
+        auto prim = ev.primitives_.slot_lookup_fast(slot);
+        if (!prim)
+            return make_void();
+        ev.bump_primitives_apply_fastpath_wins();
+        ev.bump_list_intrinsic_dispatches();
+        if (list_hotpath)
+            ev.bump_list_soa_hits();
+        primitives_detail::prim_record_fastpath_hit_for_slot(
+            static_cast<CompilerMetrics*>(ev.compiler_metrics()), slot);
+        return (*prim)({acc, arg});
+    }
+    if (is_closure(callee)) {
+        auto cid = as_closure_id(callee);
+        ev.bump_primitives_apply_closure_calls();
+        if (list_hotpath)
+            ev.bump_list_estimated_cache_misses();
+        // Issue #4624: same as map — a diagnostic the callback body
+        // raises must not be swallowed.
+        const EvalValue call_args[2] = {acc, arg};
+        return apply_callback(ev, cid, call_args);
+    }
+    return make_void();
+}
+
+EvalValue RegSplitParts::apply_n(Evaluator& ev, const EvalValue& fn,
+                                 std::span<const EvalValue> args, bool list_hotpath) {
+    // Issue #4228: deref define-cells before dispatch.
+    EvalValue callee = fn;
+    if (is_cell(callee)) {
+        auto ci = as_cell_id(callee);
+        if (ci < ev.cells().size())
+            callee = ev.cells()[ci];
+        else
+            return make_void();
+    }
+    if (is_primitive(callee)) {
+        auto slot = as_primitive_slot(callee);
+        ev.bump_primitives_apply_lookup_hits();
+        auto prim = ev.primitives_.slot_lookup_fast(slot);
+        if (!prim)
+            return make_void();
+        ev.bump_primitives_apply_fastpath_wins();
+        ev.bump_list_intrinsic_dispatches();
+        if (list_hotpath)
+            ev.bump_list_soa_hits();
+        primitives_detail::prim_record_fastpath_hit_for_slot(
+            static_cast<CompilerMetrics*>(ev.compiler_metrics()), slot);
+        return (*prim)(args);
+    }
+    if (is_closure(callee)) {
+        auto cid = as_closure_id(callee);
+        ev.bump_primitives_apply_closure_calls();
+        if (list_hotpath)
+            ev.bump_list_estimated_cache_misses();
+        // Issue #4624: a diagnostic the callback body raises must
+        // not be swallowed — keep it as an error value.
+        return apply_callback(ev, cid, args);
+    }
+    return make_void();
+}
+// Snapshot the cars of every list argument, then apply the procedure to
+// the k-th tuple. Returns the mapped list (collect) or void (for-each).
+EvalValue RegSplitParts::walk_lists(Evaluator& ev, std::pmr::vector<Pair>& pairs,
+                                    ::aura::compiler::LockedStringHeap& string_heap,
+                                    std::vector<EvalValue>& error_values,
+                                    std::span<const EvalValue> a, const char* op, bool collect) {
+    if (a.size() < 2) {
+        return make_primitive_error(string_heap, error_values, std::string(op) + ": too few args",
+                                    ev.primitive_error_counter_ptr());
+    }
+    const std::size_t nlists = a.size() - 1;
+    // Issue #2997: snapshot every list under one lock, apply outside.
+    // Issue #4505: deny before the snapshot copies a foreign car.
+    std::vector<EvalValue> flat;
+    std::vector<std::size_t> offs(nlists + 1, 0);
+    {
+        Evaluator::ListCtorLockHold hold(ev);
+        for (std::size_t i = 0; i < nlists; ++i) {
+            auto current = a[i + 1];
+            if (!is_end_of_list(current) && !is_pair(current)) {
+                return make_primitive_error(string_heap, error_values,
+                                            std::string(op) + ": argument " +
+                                                std::to_string(i + 2) + " is not a list",
+                                            ev.primitive_error_counter_ptr());
+            }
+            while (is_pair(current)) {
+                auto idx = as_pair_idx(current);
+                if (idx >= pairs.size())
+                    break;
+                if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
+                                                   /*required_effects=*/0, op)) {
+                    return make_primitive_error(string_heap, error_values,
+                                                std::string(op) +
+                                                    ": cross-tenant pair slot read denied (#4505)",
+                                                ev.primitive_error_counter_ptr());
+                }
+                flat.push_back(pairs[idx].car);
+                current = pairs[idx].cdr;
+                ev.bump_list_chain_traversals();
+                ev.bump_list_estimated_cache_misses();
+            }
+            offs[i + 1] = flat.size();
+        }
+    }
+    std::size_t n = offs[1];
+    for (std::size_t i = 1; i < nlists; ++i)
+        n = std::min(n, offs[i + 1] - offs[i]);
+    std::vector<EvalValue> tuple(nlists);
+    std::vector<EvalValue> mapped;
+    if (collect)
+        mapped.reserve(n);
+    // Issue #4480: flat/tuple/mapped are the only roots for the row
+    // results while the callback runs; pin them across the call.
+    const Evaluator::TwVecPin pin_flat(flat);
+    const Evaluator::TwVecPin pin_tuple(tuple);
+    const Evaluator::TwVecPin pin_mapped(mapped);
+    for (std::size_t k = 0; k < n; ++k) {
+        for (std::size_t i = 0; i < nlists; ++i)
+            tuple[i] = flat[offs[i] + k];
+        // Issue #4586: a callback error must leave the walk.
+        auto one = apply_n(ev, a[0], tuple, true);
+        if (is_error(one))
+            return one;
+        if (collect)
+            mapped.push_back(std::move(one));
+    }
+    if (!collect || n == 0)
+        return make_void();
+    Evaluator::ListCtorLockHold hold(ev);
+    // Issue #4473: per-mint quota inside mint_pair (freelist hits do
+    // not count) replaces the pairs.size()+n pre-check.
+    pairs.reserve(monotonic_pairs_reserve_cap(pairs.size(), pairs.capacity(), n));
+    EvalValue result = make_void();
+    for (auto it = mapped.rbegin(); it != mapped.rend(); ++it) {
+        const auto id = ev.mint_pair(*it, result, /*check_quota=*/true);
+        if (id == Evaluator::kFileHeapMintDenied) {
+            return make_primitive_error(
+                string_heap, error_values,
+                std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                ev.primitive_error_counter_ptr());
+        }
+        result = make_pair(id);
+    }
+    ev.bump_pair_alloc_count_n(static_cast<std::uint64_t>(n));
+    return result;
+}
+
+void RegSplitParts::register_list_basics(PrimRegistrar add, Evaluator& ev,
+                                         std::pmr::vector<Pair>& pairs,
+                                         ::aura::compiler::LockedStringHeap& string_heap,
+                                         std::vector<EvalValue>& error_values) {
     using aura::compiler::impure_general;
     using aura::compiler::pure_general;
     using aura::compiler::register_prim;
 
-    // Issue #4624: apply a callback closure and keep a diagnostic the
-    // body raises. Evaluator::apply_closure surfaces that diagnostic as
-    // an error value (the #4586 shape), so the caller propagates it and
-    // try can catch it. A nullopt is a REFUSED apply (a stale closure, an
-    // arity miss, a densify refuse): it stays no value.
-    // Issue #4928: a densify hard-refuse is not "no value" — the closure
-    // never ran. Surface it as an error value so map / filter / for-each
-    // fail closed instead of consing () for every element.
-    auto apply_callback = [&ev](std::uint64_t cid, std::span<const EvalValue> args) -> EvalValue {
-        aura_clear_apply_densify_refuse();
-        auto r = ev.apply_closure(cid, args);
-        if (r)
-            return *r;
-        if (aura_take_apply_densify_refuse())
-            return make_primitive_error(
-                ev.string_heap_, ev.error_values_,
-                "closure apply refused: Moving densify window incomplete (#4928)",
-                ev.primitive_error_counter_ptr());
-        return make_void();
-    };
-
-    auto apply_unary = [&ev, apply_callback](const EvalValue& fn, const EvalValue& arg,
-                                             bool list_hotpath = false) -> EvalValue {
-        // Issue #4228: deref define-cells (Soft std/math preds) before dispatch.
-        EvalValue callee = fn;
-        if (is_cell(callee)) {
-            auto ci = as_cell_id(callee);
-            if (ci < ev.cells().size())
-                callee = ev.cells()[ci];
-            else
-                return make_void();
-        }
-        if (is_primitive(callee)) {
-            auto slot = as_primitive_slot(callee);
-            ev.bump_primitives_apply_lookup_hits();
-            auto prim = ev.primitives_.slot_lookup_fast(slot);
-            if (!prim)
-                return make_void();
-            ev.bump_primitives_apply_fastpath_wins();
-            ev.bump_list_intrinsic_dispatches();
-            if (list_hotpath)
-                ev.bump_list_soa_hits();
-            // Issue #479: per-slot fast-path hit for "which prim is hottest".
-            primitives_detail::prim_record_fastpath_hit_for_slot(
-                static_cast<CompilerMetrics*>(ev.compiler_metrics()), slot);
-            return (*prim)({arg});
-        }
-        if (is_closure(callee)) {
-            auto cid = as_closure_id(callee);
-            ev.bump_primitives_apply_closure_calls();
-            if (list_hotpath)
-                ev.bump_list_estimated_cache_misses();
-            // Issue #4624: a diagnostic the callback body raises must
-            // not be swallowed — keep it as an error value.
-            const EvalValue call_args[1] = {arg};
-            return apply_callback(cid, call_args);
-        }
-        return make_void();
-    };
-    auto apply_pred = [&ev, apply_callback](const EvalValue& fn, const EvalValue& arg,
-                                            bool list_hotpath = false) -> EvalValue {
-        // Issue #4228: Soft std/math exports are define-cells. Env::lookup
-        // returns the cell sentinel; Variable eval usually derefs, but
-        // list hot-path preds must tolerate a cell reaching apply_pred
-        // (same for apply_unary / apply_binary).
-        // Issue #4586: return the value. An error is not a truth test;
-        // only #f is false, so folding the error here kept the element.
-        EvalValue pred = fn;
-        if (is_cell(pred)) {
-            auto ci = as_cell_id(pred);
-            if (ci < ev.cells().size())
-                pred = ev.cells()[ci];
-            else
-                return make_bool(false);
-        }
-        if (is_primitive(pred)) {
-            auto slot = as_primitive_slot(pred);
-            ev.bump_primitives_apply_lookup_hits();
-            auto prim = ev.primitives_.slot_lookup_fast(slot);
-            if (!prim)
-                return make_bool(false);
-            ev.bump_primitives_apply_fastpath_wins();
-            ev.bump_list_intrinsic_dispatches();
-            if (list_hotpath)
-                ev.bump_list_soa_hits();
-            primitives_detail::prim_record_fastpath_hit_for_slot(
-                static_cast<CompilerMetrics*>(ev.compiler_metrics()), slot);
-            return (*prim)({arg});
-        }
-        if (is_closure(pred)) {
-            auto cid = as_closure_id(pred);
-            ev.bump_primitives_apply_closure_calls();
-            if (list_hotpath)
-                ev.bump_list_estimated_cache_misses();
-            // Issue #4624: same as map — a diagnostic the callback body
-            // raises must not be swallowed.
-            const EvalValue call_args[1] = {arg};
-            return apply_callback(cid, call_args);
-        }
-        return make_bool(false);
-    };
-    auto apply_binary = [&ev, apply_callback](const EvalValue& fn, const EvalValue& acc,
-                                              const EvalValue& arg,
-                                              bool list_hotpath = false) -> EvalValue {
-        // Issue #4228: deref define-cells before dispatch.
-        EvalValue callee = fn;
-        if (is_cell(callee)) {
-            auto ci = as_cell_id(callee);
-            if (ci < ev.cells().size())
-                callee = ev.cells()[ci];
-            else
-                return make_void();
-        }
-        if (is_primitive(callee)) {
-            auto slot = as_primitive_slot(callee);
-            ev.bump_primitives_apply_lookup_hits();
-            auto prim = ev.primitives_.slot_lookup_fast(slot);
-            if (!prim)
-                return make_void();
-            ev.bump_primitives_apply_fastpath_wins();
-            ev.bump_list_intrinsic_dispatches();
-            if (list_hotpath)
-                ev.bump_list_soa_hits();
-            primitives_detail::prim_record_fastpath_hit_for_slot(
-                static_cast<CompilerMetrics*>(ev.compiler_metrics()), slot);
-            return (*prim)({acc, arg});
-        }
-        if (is_closure(callee)) {
-            auto cid = as_closure_id(callee);
-            ev.bump_primitives_apply_closure_calls();
-            if (list_hotpath)
-                ev.bump_list_estimated_cache_misses();
-            // Issue #4624: same as map — a diagnostic the callback body
-            // raises must not be swallowed.
-            const EvalValue call_args[2] = {acc, arg};
-            return apply_callback(cid, call_args);
-        }
-        return make_void();
-    };
     register_prim(
         add, ev, "list",
         [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
@@ -456,6 +575,16 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         pure_general(2, "(list int) -> any", "Element at index in a list."));
     // (member val list) — Find val in list using content equality (equal?)
     // Not-found is #f (R7RS, Issue #4491). Malformed input is an error (#2998).
+}
+
+void RegSplitParts::register_list_higher_order(PrimRegistrar add, Evaluator& ev,
+                                               std::pmr::vector<Pair>& pairs,
+                                               ::aura::compiler::LockedStringHeap& string_heap,
+                                               std::vector<EvalValue>& error_values) {
+    using aura::compiler::impure_general;
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
+
     register_prim(
         add, ev, "member",
         [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
@@ -669,6 +798,16 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return result;
         },
         pure_general(255, "(...lists) -> list", "Concatenate lists into one proper list."));
+}
+
+void RegSplitParts::register_list_extra(PrimRegistrar add, Evaluator& ev,
+                                        std::pmr::vector<Pair>& pairs,
+                                        ::aura::compiler::LockedStringHeap& string_heap,
+                                        std::vector<EvalValue>& error_values) {
+    using aura::compiler::impure_general;
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
+
     register_prim(
         add, ev, "reverse",
         [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
@@ -736,138 +875,28 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // std/list as a two-parameter closure and raised an arity error on the
     // second list. Both walk every list in lockstep and stop at the
     // shortest one (R7RS).
-    auto apply_n = [&ev, apply_callback](const EvalValue& fn, std::span<const EvalValue> args,
-                                         bool list_hotpath = false) -> EvalValue {
-        // Issue #4228: deref define-cells before dispatch.
-        EvalValue callee = fn;
-        if (is_cell(callee)) {
-            auto ci = as_cell_id(callee);
-            if (ci < ev.cells().size())
-                callee = ev.cells()[ci];
-            else
-                return make_void();
-        }
-        if (is_primitive(callee)) {
-            auto slot = as_primitive_slot(callee);
-            ev.bump_primitives_apply_lookup_hits();
-            auto prim = ev.primitives_.slot_lookup_fast(slot);
-            if (!prim)
-                return make_void();
-            ev.bump_primitives_apply_fastpath_wins();
-            ev.bump_list_intrinsic_dispatches();
-            if (list_hotpath)
-                ev.bump_list_soa_hits();
-            primitives_detail::prim_record_fastpath_hit_for_slot(
-                static_cast<CompilerMetrics*>(ev.compiler_metrics()), slot);
-            return (*prim)(args);
-        }
-        if (is_closure(callee)) {
-            auto cid = as_closure_id(callee);
-            ev.bump_primitives_apply_closure_calls();
-            if (list_hotpath)
-                ev.bump_list_estimated_cache_misses();
-            // Issue #4624: a diagnostic the callback body raises must
-            // not be swallowed — keep it as an error value.
-            return apply_callback(cid, args);
-        }
-        return make_void();
-    };
-    // Snapshot the cars of every list argument, then apply the procedure to
-    // the k-th tuple. Returns the mapped list (collect) or void (for-each).
-    auto walk_lists = [&pairs, &string_heap, &error_values, apply_n, &ev](
-                          std::span<const EvalValue> a, const char* op, bool collect) -> EvalValue {
-        if (a.size() < 2) {
-            return make_primitive_error(string_heap, error_values,
-                                        std::string(op) + ": too few args",
-                                        ev.primitive_error_counter_ptr());
-        }
-        const std::size_t nlists = a.size() - 1;
-        // Issue #2997: snapshot every list under one lock, apply outside.
-        // Issue #4505: deny before the snapshot copies a foreign car.
-        std::vector<EvalValue> flat;
-        std::vector<std::size_t> offs(nlists + 1, 0);
-        {
-            Evaluator::ListCtorLockHold hold(ev);
-            for (std::size_t i = 0; i < nlists; ++i) {
-                auto current = a[i + 1];
-                if (!is_end_of_list(current) && !is_pair(current)) {
-                    return make_primitive_error(string_heap, error_values,
-                                                std::string(op) + ": argument " +
-                                                    std::to_string(i + 2) + " is not a list",
-                                                ev.primitive_error_counter_ptr());
-                }
-                while (is_pair(current)) {
-                    auto idx = as_pair_idx(current);
-                    if (idx >= pairs.size())
-                        break;
-                    if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,
-                                                       /*required_effects=*/0, op)) {
-                        return make_primitive_error(
-                            string_heap, error_values,
-                            std::string(op) + ": cross-tenant pair slot read denied (#4505)",
-                            ev.primitive_error_counter_ptr());
-                    }
-                    flat.push_back(pairs[idx].car);
-                    current = pairs[idx].cdr;
-                    ev.bump_list_chain_traversals();
-                    ev.bump_list_estimated_cache_misses();
-                }
-                offs[i + 1] = flat.size();
-            }
-        }
-        std::size_t n = offs[1];
-        for (std::size_t i = 1; i < nlists; ++i)
-            n = std::min(n, offs[i + 1] - offs[i]);
-        std::vector<EvalValue> tuple(nlists);
-        std::vector<EvalValue> mapped;
-        if (collect)
-            mapped.reserve(n);
-        // Issue #4480: flat/tuple/mapped are the only roots for the row
-        // results while the callback runs; pin them across the call.
-        const Evaluator::TwVecPin pin_flat(flat);
-        const Evaluator::TwVecPin pin_tuple(tuple);
-        const Evaluator::TwVecPin pin_mapped(mapped);
-        for (std::size_t k = 0; k < n; ++k) {
-            for (std::size_t i = 0; i < nlists; ++i)
-                tuple[i] = flat[offs[i] + k];
-            // Issue #4586: a callback error must leave the walk.
-            auto one = apply_n(a[0], tuple, true);
-            if (is_error(one))
-                return one;
-            if (collect)
-                mapped.push_back(std::move(one));
-        }
-        if (!collect || n == 0)
-            return make_void();
-        Evaluator::ListCtorLockHold hold(ev);
-        // Issue #4473: per-mint quota inside mint_pair (freelist hits do
-        // not count) replaces the pairs.size()+n pre-check.
-        pairs.reserve(monotonic_pairs_reserve_cap(pairs.size(), pairs.capacity(), n));
-        EvalValue result = make_void();
-        for (auto it = mapped.rbegin(); it != mapped.rend(); ++it) {
-            const auto id = ev.mint_pair(*it, result, /*check_quota=*/true);
-            if (id == Evaluator::kFileHeapMintDenied) {
-                return make_primitive_error(
-                    string_heap, error_values,
-                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
-                    ev.primitive_error_counter_ptr());
-            }
-            result = make_pair(id);
-        }
-        ev.bump_pair_alloc_count_n(static_cast<std::uint64_t>(n));
-        return result;
-    };
+}
+
+void RegSplitParts::register_list_walk(PrimRegistrar add, Evaluator& ev,
+                                       std::pmr::vector<Pair>& pairs,
+                                       ::aura::compiler::LockedStringHeap& string_heap,
+                                       std::vector<EvalValue>& error_values) {
+    using aura::compiler::impure_general;
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
+
     register_prim(
         add, ev, "map",
-        [walk_lists](std::span<const EvalValue> a) {
-            return walk_lists(a, "map", /*collect=*/true);
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+            return walk_lists(ev, pairs, string_heap, error_values, a, "map", /*collect=*/true);
         },
         pure_general(255, "(fn list ...) -> list",
                      "Apply fn to the k-th element of every list; stop at the shortest."));
     register_prim(
         add, ev, "for-each",
-        [walk_lists](std::span<const EvalValue> a) {
-            return walk_lists(a, "for-each", /*collect=*/false);
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+            return walk_lists(ev, pairs, string_heap, error_values, a, "for-each",
+                              /*collect=*/false);
         },
         // Issue #4616: for-each invokes fn for its effects; impure_general keeps
         // the pure_general discovery defaults minus purity (no IO/mutation flags).
@@ -876,7 +905,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                        "stop at the shortest."));
     register_prim(
         add, ev, "filter",
-        [&pairs, &string_heap, &error_values, apply_pred, &ev](std::span<const EvalValue> a) {
+        [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
             // (filter pred list) — keep elements where pred returns truthy
             // Issue #4228: snapshot cars under lock (same shape as map), then
             // apply Soft/native preds outside. Walking pairs_ live while
@@ -930,7 +959,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             for (const auto& car : cars) {
                 // Issue #4586: same as map. The error used to be truthy,
                 // so filter kept the element and try did not catch it.
-                auto pred_v = apply_pred(a[0], car, true);
+                auto pred_v = apply_pred(ev, a[0], car, true);
                 if (is_error(pred_v))
                     return pred_v;
                 if (aura::compiler::pure::is_truthy(pred_v))
@@ -1046,6 +1075,16 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return final;
         },
         pure_general(2, "(list int) -> list", "Prefix of n elements from a list."));
+}
+
+void RegSplitParts::register_list_sort(PrimRegistrar add, Evaluator& ev,
+                                       std::pmr::vector<Pair>& pairs,
+                                       ::aura::compiler::LockedStringHeap& string_heap,
+                                       std::vector<EvalValue>& error_values) {
+    using aura::compiler::impure_general;
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
+
     register_prim(
         add, ev, "drop",
         [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
@@ -1089,7 +1128,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         pure_general(2, "(list int) -> list", "List after dropping n elements."));
     register_prim(
         add, ev, "foldl",
-        [&pairs, apply_binary, &ev](std::span<const EvalValue> a) {
+        [&pairs, &ev](std::span<const EvalValue> a) {
             if (a.size() < 3)
                 return make_void();
             auto acc = a[1];
@@ -1104,7 +1143,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     break;
                 ev.bump_list_chain_traversals();
                 ev.bump_list_estimated_cache_misses();
-                acc = apply_binary(a[0], acc, pairs[idx].car, true);
+                acc = apply_binary(ev, a[0], acc, pairs[idx].car, true);
                 lst = pairs[idx].cdr;
                 ++steps;
             }
@@ -1127,8 +1166,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // error, never a silent ().
     register_prim(
         add, ev, "list-sort",
-        [&pairs, &string_heap, &error_values, &ev,
-         apply_binary](std::span<const EvalValue> a) -> EvalValue {
+        [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) -> EvalValue {
             auto fail = [&](std::string msg) -> EvalValue {
                 return make_primitive_error(string_heap, error_values, std::move(msg),
                                             ev.primitive_error_counter_ptr());
@@ -1190,7 +1228,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 auto before = [&](const EvalValue& x, const EvalValue& y) -> bool {
                     if (failed)
                         return false;
-                    auto r = apply_binary(less, x, y);
+                    auto r = apply_binary(ev, less, x, y);
                     if (is_error(r)) {
                         failed = true;
                         cmp_error = r;
@@ -1296,6 +1334,16 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         pure_general(255, "(list [less?]) -> list",
                      "Sort a list: numbers numerically, strings lexicographically, or by a "
                      "(less? a b) comparator (stable)."));
+}
+
+void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                              ::aura::compiler::LockedStringHeap& string_heap,
+                              std::vector<EvalValue>& error_values, Evaluator& ev) {
+    RegSplitParts::register_list_basics(add, ev, pairs, string_heap, error_values);
+    RegSplitParts::register_list_higher_order(add, ev, pairs, string_heap, error_values);
+    RegSplitParts::register_list_extra(add, ev, pairs, string_heap, error_values);
+    RegSplitParts::register_list_walk(add, ev, pairs, string_heap, error_values);
+    RegSplitParts::register_list_sort(add, ev, pairs, string_heap, error_values);
 }
 
 } // namespace aura::compiler::primitives_detail
