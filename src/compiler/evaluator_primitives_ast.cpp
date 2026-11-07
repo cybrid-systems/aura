@@ -283,132 +283,562 @@ template <class F> auto evo_wrap_restore_4910(F body) {
     };
 }
 
-void register_ast_primitives(PrimRegistrar add_in, Evaluator& ev,
-                             std::function<void()> destroy_defuse_index,
-                             std::function<DefUseSummaryStats()> defuse_summary_stats) {
-    // Issue #4936: this function rebinds the registrar around ast:restore
-    // (#4910) and then restores it. std::function_ref assignment from a
-    // lambda is deleted, and a rebound reference would not own the wrapper.
-    // `add` is therefore an owning std::function for this body only. It
-    // type-erases a copy of add_in; that copy is used before this function
-    // returns and is not stored on Evaluator. The caller's registrar still
-    // owns the original callback.
-    std::function<void(std::string, PrimFn)> add(add_in);
 
-    // Issue #2918 / #2922: unparse workspace_flat_ via library (no primitive
-    // re-entry). Dual-workspace: bare (current-source) is current_flat_;
-    // checkpoints/diff must unparse workspace_flat_ (set-code / mutate target).
-    // Call under MutationBoundaryGuard is safe — unparse_to_string is pure.
-    auto workspace_source_string = [&ev]() -> std::optional<std::string> {
-        if (!ev.workspace_flat_ || !ev.workspace_pool_)
-            return std::nullopt;
-        // Issue #4598: set-code / restore stamp the full workspace text.
-        // A generation match is the snapshot string. Do not call
-        // authoritative_workspace_source() — that prefers the unparse hook.
-        // unparse_to_string stays on the miss so a stale stamp cannot hide
-        // a structural edit (#2920).
-        if (ev.workspace_source_text_valid_ && !ev.workspace_source_text_.empty() &&
-            ev.workspace_source_text_generation_ == ev.workspace_flat_->generation()) {
-            return ev.workspace_source_text_;
+// Issue #5032: ast:restore phase state, carried across the peeled phases so
+// the precheck / capture / publish / finalize order of the original single
+// lambda is preserved without one 480-line body.
+struct AstRestoreState {
+    std::size_t id = 0;
+    bool dep_graph_synced_pre = false;
+    bool dep_graph_synced_post = false;
+    // Issue #4729: a restore used to only TRUNCATE the log back to the
+    // snapshot copy, so a rolled-back mutation left no trace at all.
+    std::uint64_t pre_next_mutation_id = 0;
+    std::uint64_t rolled_first = 0;
+    std::uint64_t rolled_last = 0;
+    std::uint64_t rolled_count = 0;
+};
+
+struct AstRestoreCapture {
+    std::shared_ptr<FlatSnapshotDefineStamps> stamps;
+    bool have_stamps = false;
+    std::unordered_map<std::string, std::pair<aura::ast::NodeId, std::uint64_t>> live_stamp_defs;
+    std::unordered_map<std::string, std::string> live_defs;
+};
+
+// Issue #2918 / #2922: unparse workspace_flat_ via library (no primitive
+// re-entry). Dual-workspace: bare (current-source) is current_flat_;
+// checkpoints/diff must unparse workspace_flat_ (set-code / mutate target).
+// Call under MutationBoundaryGuard is safe — unparse_to_string is pure.
+std::optional<std::string> RegSplitParts::workspace_source_string(Evaluator& ev) {
+    if (!ev.workspace_flat_ || !ev.workspace_pool_)
+        return std::nullopt;
+    // Issue #4598: set-code / restore stamp the full workspace text.
+    // A generation match is the snapshot string. Do not call
+    // authoritative_workspace_source() — that prefers the unparse hook.
+    // unparse_to_string stays on the miss so a stale stamp cannot hide
+    // a structural edit (#2920).
+    if (ev.workspace_source_text_valid_ && !ev.workspace_source_text_.empty() &&
+        ev.workspace_source_text_generation_ == ev.workspace_flat_->generation()) {
+        return ev.workspace_source_text_;
+    }
+    return aura::ast::unparse_to_string(*ev.workspace_flat_, *ev.workspace_pool_,
+                                        ev.workspace_flat_->root, {});
+}
+
+// Helper: line-based LCS diff (Myers-like, simplified)
+// Returns list of (tag . line) entries
+EvalValue RegSplitParts::line_diff(Evaluator& ev, const std::string& old_text,
+                                   const std::string& new_text) {
+    // Split into lines
+    auto split_lines = [](const std::string& s) -> std::vector<std::string> {
+        std::vector<std::string> lines;
+        std::string cur;
+        for (auto c : s) {
+            if (c == '\n') {
+                lines.push_back(std::move(cur));
+                cur.clear();
+            } else {
+                cur += c;
+            }
         }
-        return aura::ast::unparse_to_string(*ev.workspace_flat_, *ev.workspace_pool_,
-                                            ev.workspace_flat_->root, {});
+        if (!cur.empty())
+            lines.push_back(std::move(cur));
+        if (lines.empty())
+            lines.push_back("");
+        return lines;
     };
 
-    // Helper: line-based LCS diff (Myers-like, simplified)
-    // Returns list of (tag . line) entries
-    auto line_diff = [&ev](const std::string& old_text, const std::string& new_text) -> EvalValue {
-        // Split into lines
-        auto split_lines = [](const std::string& s) -> std::vector<std::string> {
-            std::vector<std::string> lines;
-            std::string cur;
-            for (auto c : s) {
-                if (c == '\n') {
-                    lines.push_back(std::move(cur));
-                    cur.clear();
-                } else {
-                    cur += c;
+    auto a = split_lines(old_text);
+    auto b = split_lines(new_text);
+    int m = static_cast<int>(a.size()), n = static_cast<int>(b.size());
+
+    // Build LCS table (2 rows for memory efficiency)
+    // Use short int to keep table small; m,n rarely exceed 500
+    std::vector<int> prev(n + 1, 0), cur(n + 1, 0);
+    for (int i = 1; i <= m; ++i) {
+        cur[0] = i;
+        for (int j = 1; j <= n; ++j) {
+            if (a[i - 1] == b[j - 1])
+                cur[j] = prev[j - 1];
+            else
+                cur[j] = 1 + std::min({prev[j], cur[j - 1], prev[j - 1]});
+        }
+        std::swap(prev, cur);
+    }
+
+    // Backtrack to produce diff
+    std::vector<std::tuple<char, std::string>> diff_entries; // '=', '-', '+'
+    int i = m, j = n;
+    auto saved_prev = prev;
+    (void)saved_prev;
+    // We need the full table for backtracking. Build it.
+    std::vector<std::vector<int>> table(m + 1, std::vector<int>(n + 1, 0));
+    for (int i2 = 1; i2 <= m; ++i2) {
+        for (int j2 = 1; j2 <= n; ++j2) {
+            if (a[i2 - 1] == b[j2 - 1])
+                table[i2][j2] = table[i2 - 1][j2 - 1] + 1;
+            else
+                table[i2][j2] = std::max(table[i2 - 1][j2], table[i2][j2 - 1]);
+        }
+    }
+
+    while (i > 0 || j > 0) {
+        if (i > 0 && j > 0 && a[i - 1] == b[j - 1]) {
+            diff_entries.push_back({'=', a[i - 1]});
+            --i;
+            --j;
+        } else if (j > 0 && (i == 0 || table[i][j - 1] >= table[i - 1][j])) {
+            diff_entries.push_back({'+', b[j - 1]});
+            --j;
+        } else {
+            diff_entries.push_back({'-', a[i - 1]});
+            --i;
+        }
+    }
+    std::reverse(diff_entries.begin(), diff_entries.end());
+
+    // Convert to Aura list
+    EvalValue result = make_void();
+    for (auto it = diff_entries.rbegin(); it != diff_entries.rend(); ++it) {
+        auto [tag, line] = *it;
+        std::string kw_str = ":same";
+        if (tag == '-')
+            kw_str = ":removed";
+        else if (tag == '+')
+            kw_str = ":added";
+
+        // Lookup or create keyword
+        auto kw_idx = ev.intern_keyword_slot(kw_str);
+
+        auto line_idx = ev.string_heap_.mint(line);
+        auto line_pair = ev.pairs_.size();
+        ev.pairs_.push_back({make_keyword(kw_idx), make_string(line_idx)});
+        auto cons_pair = ev.pairs_.size();
+        ev.pairs_.push_back({make_pair(line_pair), result});
+        result = make_pair(cons_pair);
+    }
+    return result;
+}
+
+// Issue #5032: pre-assign capture phase of ast:restore. Reads the live
+// workspace and the snapshot entry; writes nothing but the phase state.
+void RegSplitParts::ast_restore_capture(Evaluator& ev, AstRestoreState& state,
+                                        AstRestoreCapture& cap) {
+    auto& pre_next_mutation_id = state.pre_next_mutation_id;
+    auto& rolled_first = state.rolled_first;
+    auto& rolled_last = state.rolled_last;
+    auto& rolled_count = state.rolled_count;
+    auto& dep_graph_synced_pre = state.dep_graph_synced_pre;
+    // Issue #4598: diff reachable defines before the flat
+    // assign (live) and after it (snapshot). A small cone
+    // republishes only the rows that changed and drops IR
+    // owners of those names plus called_by (#4349 / #4360).
+    // Production and a large replace keep mark-all + pre-cache
+    // so #4577 bundle-erase and the IR warm still run.
+    // Issue #4598 phase 3: stamp-based diff. The live
+    // side is captured pre-assign as (name → root, gen16)
+    // with NO unparse; the snapshot side comes from the
+    // stamps captured at ast:snapshot. A define whose
+    // subtree_gen_ cell still equals its stamp is unchanged
+    // — one integer compare instead of a full unparse.
+    // mark_dirty_upward's note_subtree_content_write keeps
+    // the cells sound for every guard-window content change.
+    const auto& snap_entry = ev.snapshot_flats_[state.id];
+    // Issue #4729: audit identity of the discarded records
+    // (ids >= the snapshot's own counter — the log is a
+    // monotonic append, so everything from there on is the
+    // delta this restore rolls back).
+    pre_next_mutation_id = ev.workspace_flat_->next_mutation_id();
+    const std::uint64_t snap_next_mutation_id = snap_entry.flat->shell->next_mutation_id();
+    rolled_first = 0;
+    rolled_last = 0;
+    rolled_count = 0;
+    // Issue #4777: the stamps compare subtree_gen_ cells of
+    // the SAME flat lineage. A workspace :merge installs a
+    // fresh FlatAST via set-code (gens restart, so a merged
+    // define can carry the snapshot's gen16 again) and a
+    // plain set-code resets the log below the snapshot's
+    // counter. Either way the stamp diff reports "unchanged"
+    // and f kept the merged binding; use the source diff.
+    // Any flat swap since the capture (stamps->live_flat
+    // differs) is the general form of the same break.
+    bool stamp_lineage_broken_4777 = pre_next_mutation_id < snap_next_mutation_id;
+    for (const auto& rec : ev.workspace_flat_->all_mutations()) {
+        if (rec.mutation_id < snap_next_mutation_id)
+            continue;
+        if (rec.operator_name == "workspace:merge")
+            stamp_lineage_broken_4777 = true;
+        if (rolled_count == 0)
+            rolled_first = rec.mutation_id;
+        rolled_last = rec.mutation_id;
+        ++rolled_count;
+    }
+    const std::shared_ptr<FlatSnapshotDefineStamps> stamps = snap_entry.stamps;
+    if (stamps && stamps->live_flat != ev.workspace_flat_)
+        stamp_lineage_broken_4777 = true;
+    // Issue #4782: a restore since the capture swapped
+    // content under the (unmirrored) subtree_gen_ cells, so
+    // equal gen16 no longer implies equal content. Use the
+    // source diff (sound) for this restore.
+    // Issue #4792: no longer a lineage break. The diff
+    // compares define_ver_ cells, which assign_from_image
+    // restores together with the content and which are
+    // minted from a never-reused counter, so equal
+    // (root, ver) means equal content in every epoch.
+    const bool cross_epoch_4792 = snap_entry.restore_epoch != ev.ast_restore_epoch_;
+    // Kill switch / A-B bench: AURA_RESTORE_EPOCH_SOURCE_DIFF=1
+    // restores the pre-#4792 rule (cross-epoch -> source diff).
+    static const bool epoch_source_diff_4792 = [] {
+        const char* e = std::getenv("AURA_RESTORE_EPOCH_SOURCE_DIFF");
+        return e && e[0] == '1';
+    }();
+    if (cross_epoch_4792 && epoch_source_diff_4792)
+        stamp_lineage_broken_4777 = true;
+    // Issue #4772: a lazy holder takes the stamp path (an
+    // empty resolved set reports every live define as
+    // removed — what the source diff reported too) unless
+    // the #4777 lineage check sends it to the source diff.
+    const bool have_stamps =
+        stamps && (stamps->lazy || !stamps->by_name.empty()) && !stamp_lineage_broken_4777;
+    if (have_stamps && cross_epoch_4792)
+        ++ev.ast_restore_cross_epoch_stamp_total_;
+    auto& live_stamp_defs = cap.live_stamp_defs;
+    auto& live_defs = cap.live_defs;
+    if (ev.workspace_flat_ && ev.workspace_pool_) {
+        if (have_stamps)
+            live_stamp_defs =
+                collect_define_change_stamps(*ev.workspace_flat_, *ev.workspace_pool_);
+        else
+            live_defs = collect_reachable_define_sources(*ev.workspace_flat_, *ev.workspace_pool_);
+    }
+    dep_graph_synced_pre = ev.restore_dep_graph_synced_fn_ && ev.restore_dep_graph_synced_fn_();
+    cap.stamps = stamps;
+    cap.have_stamps = have_stamps;
+}
+
+// Issue #5032: post-swap publish phase of ast:restore — source republish,
+// cache/IR invalidation, dep-graph upkeep and the #4937 rebase, in the
+// exact order the single-lambda body used.
+void RegSplitParts::ast_restore_publish(Evaluator& ev, AstRestoreState& state,
+                                        AstRestoreCapture& cap,
+                                        const std::function<void()>& destroy_defuse_index) {
+    const auto& snap_entry = ev.snapshot_flats_[state.id];
+    const std::shared_ptr<FlatSnapshotDefineStamps>& stamps = cap.stamps;
+    const bool have_stamps = cap.have_stamps;
+    const bool dep_graph_synced_pre = state.dep_graph_synced_pre;
+    auto& dep_graph_synced_post = state.dep_graph_synced_post;
+    auto& live_stamp_defs = cap.live_stamp_defs;
+    auto& live_defs = cap.live_defs;
+    if (stamps && stamps->lazy)
+        resolve_lazy_define_stamps(*ev.workspace_flat_, *ev.workspace_pool_, *snap_entry.flat,
+                                   *stamps);
+    // Issue #4772: no recycle_dead_nodes() here. The restored
+    // flat IS the image (its size is the capture's, so restore
+    // iterations cannot grow it — the #261 concern), and an
+    // O(workspace) sweep that frees slots would make the live
+    // flat diverge from the image it was just restored from
+    // (the next snapshot could no longer share it). The next
+    // mutation's own recycle (#4583) reclaims dead slots.
+    ev.update_shared_tree_root();
+    // Issue #263: verify generation/span consistency after restore.
+    ev.last_post_restore_report_ = ev.workspace_flat_->validate_post_restore();
+    ev.last_post_restore_violations_ = ev.last_post_restore_report_.violations;
+    // Issue #4349: mutate:rebind publishes function_sources_
+    // for the new body and does not roll that table back.
+    // eval-current specialises from it, so a restore that only
+    // swaps the tree reinstalls the mutated lambda.
+    std::vector<std::string> changed;
+    std::vector<std::string> added;
+    std::vector<std::string> removed;
+    std::unordered_map<std::string, std::string> snap_defs;
+    // Issue #4772: the workspace now holds the snapshot's
+    // content, so its defines are the snapshot's defines.
+    if (!have_stamps)
+        snap_defs = collect_reachable_define_sources(*ev.workspace_flat_, *ev.workspace_pool_);
+    changed.reserve(4);
+    if (have_stamps) {
+        for (const auto& [nm, st] : stamps->by_name) {
+            auto it = live_stamp_defs.find(nm);
+            if (it == live_stamp_defs.end())
+                added.push_back(nm);
+            // Issue #4792: unchanged only when the same
+            // define node carries the same minted content
+            // version; an unknown (0) version is changed.
+            else if (it->second.first != st.root || it->second.second != st.ver || st.ver == 0)
+                changed.push_back(nm);
+        }
+        for (const auto& [nm, _] : live_stamp_defs) {
+            if (!stamps->by_name.contains(nm))
+                removed.push_back(nm);
+        }
+    } else {
+        for (const auto& [nm, src] : snap_defs) {
+            auto it = live_defs.find(nm);
+            if (it == live_defs.end())
+                added.push_back(nm);
+            else if (it->second != src)
+                changed.push_back(nm);
+        }
+        for (const auto& [nm, _] : live_defs) {
+            if (!snap_defs.contains(nm))
+                removed.push_back(nm);
+        }
+    }
+    // Issue #4598 phase 3: stamp-mode source lookup — lazily
+    // unparse a define ONCE from the frozen capture (node ids
+    // align with the stamp roots), memoized on the shared
+    // stamps so repeated restores of the same id pay once.
+    auto snap_source_of = [&](const std::string& nm) -> const std::string* {
+        if (!have_stamps) {
+            auto it = snap_defs.find(nm);
+            return it == snap_defs.end() ? nullptr : &it->second;
+        }
+        auto it = stamps->by_name.find(nm);
+        if (it == stamps->by_name.end())
+            return nullptr;
+        auto& st = it->second;
+        if (!st.has_source) {
+            // Issue #4772: unparse from the restored workspace
+            // (bit-identical to the image; node ids align).
+            if (st.root != aura::ast::NULL_NODE && st.root < ev.workspace_flat_->size() &&
+                !ev.workspace_flat_->is_free_slot(st.root)) {
+                st.source =
+                    aura::ast::unparse_to_string(*ev.workspace_flat_, *ev.workspace_pool_, st.root);
+                ++ev.ast_restore_stamp_unparse_total_;
+            }
+            st.has_source = true;
+        }
+        return &st.source;
+    };
+    constexpr std::size_t kRestoreDiffCap = 48;
+    const std::size_t diff_n = changed.size() + added.size() + removed.size();
+    const bool small_diff =
+        !aura::compiler::typed_audit::production_defaults_active() && diff_n <= kRestoreDiffCap;
+    if (ev.update_function_source_fn_) {
+        if (small_diff) {
+            auto publish = [&](const std::string& nm) {
+                const std::string* src = snap_source_of(nm);
+                if (src && !src->empty()) {
+                    ev.update_function_source_fn_(nm, *src);
+                    ++ev.ast_restore_stamp_republish_total_;
+                }
+            };
+            for (const auto& nm : changed)
+                publish(nm);
+            for (const auto& nm : added)
+                publish(nm);
+            // Empty source erases the row (removed define).
+            for (const auto& nm : removed)
+                ev.update_function_source_fn_(nm, "");
+        } else {
+            if (have_stamps) {
+                for (const auto& [nm, _] : stamps->by_name) {
+                    const std::string* src = snap_source_of(nm);
+                    if (src && !src->empty()) {
+                        ev.update_function_source_fn_(nm, *src);
+                        ++ev.ast_restore_stamp_republish_total_;
+                    }
+                }
+            } else {
+                for (const auto& [nm, src] : snap_defs) {
+                    if (!src.empty())
+                        ev.update_function_source_fn_(nm, src);
                 }
             }
-            if (!cur.empty())
-                lines.push_back(std::move(cur));
-            if (lines.empty())
-                lines.push_back("");
-            return lines;
-        };
-
-        auto a = split_lines(old_text);
-        auto b = split_lines(new_text);
-        int m = static_cast<int>(a.size()), n = static_cast<int>(b.size());
-
-        // Build LCS table (2 rows for memory efficiency)
-        // Use short int to keep table small; m,n rarely exceed 500
-        std::vector<int> prev(n + 1, 0), cur(n + 1, 0);
-        for (int i = 1; i <= m; ++i) {
-            cur[0] = i;
-            for (int j = 1; j <= n; ++j) {
-                if (a[i - 1] == b[j - 1])
-                    cur[j] = prev[j - 1];
-                else
-                    cur[j] = 1 + std::min({prev[j], cur[j - 1], prev[j - 1]});
-            }
-            std::swap(prev, cur);
         }
-
-        // Backtrack to produce diff
-        std::vector<std::tuple<char, std::string>> diff_entries; // '=', '-', '+'
-        int i = m, j = n;
-        auto saved_prev = prev;
-        (void)saved_prev;
-        // We need the full table for backtracking. Build it.
-        std::vector<std::vector<int>> table(m + 1, std::vector<int>(n + 1, 0));
-        for (int i2 = 1; i2 <= m; ++i2) {
-            for (int j2 = 1; j2 <= n; ++j2) {
-                if (a[i2 - 1] == b[j2 - 1])
-                    table[i2][j2] = table[i2 - 1][j2 - 1] + 1;
-                else
-                    table[i2][j2] = std::max(table[i2 - 1][j2], table[i2][j2 - 1]);
+    }
+    // Invalidate caches (same as set-code)
+    // (ASAN fix #107 leak) delete the old index.
+    destroy_defuse_index();
+    ev.defuse_affected_syms_.clear();
+    if (small_diff && diff_n > 0) {
+        // Drop owners of the replaced names and every
+        // transitive caller. mark_define_dirty cascades
+        // the dirty bit but does not clear owners, so a
+        // pre-eval-current call of the caller would still
+        // return the inlined post-rebind value (#4349).
+        std::unordered_set<std::string> drop;
+        std::vector<std::string> q;
+        q.insert(q.end(), changed.begin(), changed.end());
+        q.insert(q.end(), removed.begin(), removed.end());
+        q.insert(q.end(), added.begin(), added.end());
+        for (std::size_t qi = 0; qi < q.size(); ++qi) {
+            if (!drop.insert(q[qi]).second)
+                continue;
+            if (!ev.get_dependents_fn_)
+                continue;
+            for (const auto& c : ev.get_dependents_fn_(q[qi])) {
+                if (!c.empty())
+                    q.push_back(c);
             }
         }
-
-        while (i > 0 || j > 0) {
-            if (i > 0 && j > 0 && a[i - 1] == b[j - 1]) {
-                diff_entries.push_back({'=', a[i - 1]});
-                --i;
-                --j;
-            } else if (j > 0 && (i == 0 || table[i][j - 1] >= table[i - 1][j])) {
-                diff_entries.push_back({'+', b[j - 1]});
-                --j;
-            } else {
-                diff_entries.push_back({'-', a[i - 1]});
-                --i;
+        for (const auto& nm : drop) {
+            // Issue #4349 / #4753: a restore is a workspace
+            // REPLACE, not a supersede-by-new-publication.
+            // The #4753 deferral (cell still advertises the
+            // id) would keep the replaced workspace's
+            // publication dispatchable and a stale call
+            // would answer with the rolled-back body, so the
+            // cone takes the strict invalidate face.
+            if (ev.invalidate_ir_define_binding_fn_)
+                ev.invalidate_ir_define_binding_fn_(nm);
+            else if (ev.drop_ir_define_binding_fn_)
+                ev.drop_ir_define_binding_fn_(nm);
+        }
+        if (ev.mark_define_dirty_fn_) {
+            for (const auto& nm : changed)
+                ev.mark_define_dirty_fn_(nm);
+            for (const auto& nm : removed)
+                ev.mark_define_dirty_fn_(nm);
+            for (const auto& nm : added)
+                ev.mark_define_dirty_fn_(nm);
+        }
+        if (!added.empty() || !removed.empty() || !changed.empty()) {
+            // The stamp diff names every define whose content
+            // differs, so with a graph in sync before the swap
+            // only the drop cone needs a re-walk (the full
+            // rebuild is additive: defines outside the cone
+            // re-record the edges they already have). An added define
+            // can turn a free Variable in an unchanged body
+            // into an edge, and the source diff is not exact
+            // (#4777/#4782 lineage breaks) - both rebuild.
+            // Kill switch: AURA_RESTORE_DEP_GRAPH_FULL=1.
+            // Read per restore (not cached) so an in-process
+            // A/B (the regression test) can flip it.
+            const char* dep_full_env = std::getenv("AURA_RESTORE_DEP_GRAPH_FULL");
+            const bool dep_graph_full_env = dep_full_env && dep_full_env[0] == '1';
+            if (have_stamps && added.empty() && dep_graph_synced_pre && !dep_graph_full_env &&
+                ev.restore_dep_graph_names_fn_) {
+                // The drop cone above erased the edges of every
+                // changed define AND of its transitive callers
+                // (invalidate_function), so re-walk the whole
+                // cone, not just `changed`.
+                std::unordered_set<std::string> gone(removed.begin(), removed.end());
+                std::vector<std::string> walk;
+                walk.reserve(drop.size());
+                for (const auto& nm : drop)
+                    if (!gone.count(nm))
+                        walk.push_back(nm);
+                ev.restore_dep_graph_names_fn_(walk);
+                ++ev.ast_restore_dep_graph_incremental_total_;
+                dep_graph_synced_post = true;
+            } else if (ev.repopulate_workspace_dep_graph_fn_) {
+                ev.repopulate_workspace_dep_graph_fn_();
+                ++ev.ast_restore_dep_graph_full_total_;
+                dep_graph_synced_post = true;
             }
         }
-        std::reverse(diff_entries.begin(), diff_entries.end());
-
-        // Convert to Aura list
-        EvalValue result = make_void();
-        for (auto it = diff_entries.rbegin(); it != diff_entries.rend(); ++it) {
-            auto [tag, line] = *it;
-            std::string kw_str = ":same";
-            if (tag == '-')
-                kw_str = ":removed";
-            else if (tag == '+')
-                kw_str = ":added";
-
-            // Lookup or create keyword
-            auto kw_idx = ev.intern_keyword_slot(kw_str);
-
-            auto line_idx = ev.string_heap_.mint(line);
-            auto line_pair = ev.pairs_.size();
-            ev.pairs_.push_back({make_keyword(kw_idx), make_string(line_idx)});
-            auto cons_pair = ev.pairs_.size();
-            ev.pairs_.push_back({make_pair(line_pair), result});
-            result = make_pair(cons_pair);
+    } else if (!small_diff) {
+        aura::compiler::MarkAllClearsIrOwners clear_ir_owners;
+        if (ev.mark_all_defines_dirty_fn_)
+            ev.mark_all_defines_dirty_fn_();
+        if (ev.pre_cache_workspace_defines_fn_) {
+            ev.pre_cache_workspace_defines_fn_();
+            ++ev.ast_restore_dep_graph_full_total_;
+            dep_graph_synced_post = true;
         }
+    } else {
+        // Empty diff: the graph stays as in sync as before.
+        dep_graph_synced_post = dep_graph_synced_pre;
+    }
+    // Issue #4937: the image is the live tree now. The
+    // boundary checkpoint still holds the pre-replace
+    // children_; rebase before any exit-gate abort.
+    ev.rebase_open_mutation_checkpoint_after_flat_replace();
+}
+
+// Issue #5032: post-guard finalize phase of ast:restore (#4782 epoch, #4729
+// rollback entry, dep-graph advance, #2920 text restamp).
+void RegSplitParts::ast_restore_finalize(Evaluator& ev, AstRestoreState& state) {
+    const std::size_t id = state.id;
+    const std::uint64_t pre_next_mutation_id = state.pre_next_mutation_id;
+    const std::uint64_t rolled_first = state.rolled_first;
+    const std::uint64_t rolled_last = state.rolled_last;
+    const std::uint64_t rolled_count = state.rolled_count;
+    const bool dep_graph_synced_post = state.dep_graph_synced_post;
+    ++ev.ast_restore_epoch_; // Issue #4782
+    // Issue #4598 phase 3 re-stamped the share identity of every entry
+    // aliasing this copy here. Issue #4772: share hits are now exact
+    // by construction (the assign leaves the workspace's dirty bits
+    // relative to this image), so there is nothing to re-stamp.
+    // Issue #4729: the direct assign mirrored the snapshot's log,
+    // so the rolled-back suffix disappeared silently. Keep the id
+    // counter monotonic across the swap and append one rollback
+    // entry naming what was discarded — an external auditor must be
+    // able to see the rollback in Aura's own log.
+    if (ev.workspace_flat_) {
+        ev.workspace_flat_->ensure_next_mutation_id(pre_next_mutation_id);
+        if (rolled_count > 0) {
+            ev.workspace_flat_->add_mutation(aura::ast::NULL_NODE, "ast:restore", "", "",
+                                             "restore snapshot-" + std::to_string(id) +
+                                                 " rolled-back=" + std::to_string(rolled_count) +
+                                                 " ids=" + std::to_string(rolled_first) + ".." +
+                                                 std::to_string(rolled_last));
+        }
+        // The rollback entry changes no define: a graph in sync just
+        // before it stays in sync after it, so the next restore (or a
+        // single rebind, #4682) keeps its incremental path.
+        if (dep_graph_synced_post && ev.restore_dep_graph_advance_fn_)
+            ev.restore_dep_graph_advance_fn_();
+    }
+    // Issue #2920: restamp text cache *after* Guard exit (exit may
+    // invalidate on log growth). Snapshot source is workspace unparse
+    // at snapshot time (#2918).
+    // Issue #4772: a lazy entry has no text yet — drop the stale
+    // stamp instead (current-source unparses on demand).
+    if (id < ev.snapshot_sources_.size()) {
+        if (id < ev.snapshot_flats_.size() && ev.snapshot_flats_[id].source_lazy)
+            ev.invalidate_workspace_source_text();
+        else
+            ev.note_workspace_source_text(ev.snapshot_sources_[id]);
+    }
+}
+
+// Issue #5032: set-code fallback phase of ast:restore, with the #4729
+// carried mutation log.
+EvalValue RegSplitParts::ast_restore_source_fallback(Evaluator& ev, std::size_t id) {
+    // Source-based fallback (existing behavior). Holds its own
+    // unique_lock inside set-code; we must not be holding ours
+    // (we released above by scope).
+    const std::string source = ev.snapshot_source_at(id); // Issue #4772: lazy
+    auto source_idx = ev.string_heap_.mint(source);
+
+    auto set_fn = ev.primitives_.lookup("set-code");
+    if (!set_fn)
+        return make_bool(false);
+    // Issue #4729: set-code installs a FRESH FlatAST — capture the live
+    // audit log + id counter first so the rollback stays visible and
+    // mutation ids stay monotonic across the swap.
+    std::pmr::vector<aura::ast::MutationRecord> carried_log(std::pmr::get_default_resource());
+    std::uint64_t carried_next = 1;
+    if (ev.workspace_flat_) {
+        const auto& live_log = ev.workspace_flat_->all_mutations();
+        carried_log.assign(live_log.begin(), live_log.end());
+        carried_next = ev.workspace_flat_->next_mutation_id();
+    }
+    auto result = (*set_fn)({make_string(source_idx)});
+    // Issue #4400: set-code already returned the effect-deny string.
+    // Surface it. Parse merr pairs stay #f.
+    if (is_error(result))
         return result;
-    };
+    const bool ok_fallback = is_bool(result) ? as_bool(result) : false;
+    if (ok_fallback)
+        ++ev.ast_restore_epoch_; // Issue #4782
+    if (ok_fallback && ev.workspace_flat_) {
+        ev.workspace_flat_->adopt_mutation_log(carried_log, carried_next);
+        if (!carried_log.empty()) {
+            ev.workspace_flat_->add_mutation(
+                aura::ast::NULL_NODE, "ast:restore", "", "",
+                "restore snapshot-" + std::to_string(id) +
+                    " rolled-back=" + std::to_string(carried_log.size()) + " source-fallback=1");
+        }
+    }
+    return make_bool(ok_fallback);
+}
 
+// Issue #5032: ast:snapshot (workspace checkpoint, #2918 / #2966 / #4772).
+void RegSplitParts::register_ast_snapshot_primitive(PrimRegistrar add, Evaluator& ev) {
     // (ast:snapshot ["name"])
     //   → integer snapshot ID (or -1 on failure)
     //   Stores the persistent EDSL **workspace** source (set-code / mutate
@@ -439,8 +869,11 @@ void register_ast_primitives(PrimRegistrar add_in, Evaluator& ev,
     (void)kSnapFailNone;
 
     add("ast:snapshot",
-        [&ev, workspace_source_string, kSnapFailGuard, kSnapFailNoWorkspace,
+        [&ev, kSnapFailGuard, kSnapFailNoWorkspace,
          kSnapFailEmptySource](std::span<const EvalValue> a) -> EvalValue {
+            // Issue #2918: the checkpoint text comes from
+            // RegSplitParts::workspace_source_string(ev) — the workspace
+            // unparse — never from bare current-source.
             // Issue #1904: MutationBoundaryGuard RAII owns workspace_mtx_ +
             // defuse_version_ + rollback. ok = false on every error path so
             // the Guard's dtor triggers rollback consistently.
@@ -507,7 +940,7 @@ void register_ast_primitives(PrimRegistrar add_in, Evaluator& ev,
                 ev.workspace_source_text_generation_ == ev.workspace_flat_->generation()) {
                 source = ev.workspace_source_text_;
             } else if (ev.workspace_flat_->size() == 0) {
-                auto source_opt = workspace_source_string();
+                auto source_opt = workspace_source_string(ev);
                 if (!source_opt) {
                     ok = false;
                     ev.note_ast_snapshot_fail(kSnapFailEmptySource);
@@ -592,7 +1025,7 @@ void register_ast_primitives(PrimRegistrar add_in, Evaluator& ev,
                 fs.stamps.reset();
                 ++ev.ast_snapshot_share_misses_total_;
                 if (source_lazy) {
-                    if (auto s = workspace_source_string())
+                    if (auto s = workspace_source_string(ev))
                         source = std::move(*s);
                     source_lazy = false;
                 }
@@ -618,7 +1051,10 @@ void register_ast_primitives(PrimRegistrar add_in, Evaluator& ev,
             ev.note_ast_snapshot_ok();
             return make_int(static_cast<std::int64_t>(id));
         });
+}
 
+// Issue #5032: ast:snapshot-fail-reason (#2966).
+void RegSplitParts::register_ast_snapshot_fail_reason_primitive(PrimRegistrar add, Evaluator& ev) {
     // (ast:snapshot-fail-reason)
     //   → keyword of last ast:snapshot failure (#2966).
     //   :none | :guard-reject | :no-workspace | :empty-source
@@ -642,7 +1078,11 @@ void register_ast_primitives(PrimRegistrar add_in, Evaluator& ev,
         }
         return make_keyword(ev.intern_keyword_slot(kw));
     });
+}
 
+// Issue #5032: workspace introspection prims (#107 part 3, #2737, ast:defs /
+// ast:nodes / ast:list-snapshots). Read-only workspace walks.
+void RegSplitParts::register_ast_introspection_primitives(PrimRegistrar add, Evaluator& ev) {
     // ── Issue #107 part 3: AST versioning protocol primitive ──────────
     // (ast:version) — return a snapshot of the AST's current versioning
     // state under the ev.workspace_mtx_ (shared lock).
@@ -820,6 +1260,20 @@ void register_ast_primitives(PrimRegistrar add_in, Evaluator& ev,
         }
         return result;
     });
+}
+
+// Issue #5032: ast:restore registration. The directive body is the phase
+// orchestrator; the phases themselves live in the ast_restore_* helpers.
+void RegSplitParts::register_ast_restore_primitive(PrimRegistrar add_in, Evaluator& ev,
+                                                   std::function<void()> destroy_defuse_index) {
+    // Issue #4936: this function rebinds the registrar around ast:restore
+    // (#4910) and then restores it. std::function_ref assignment from a
+    // lambda is deleted, and a rebound reference would not own the wrapper.
+    // `add` is therefore an owning std::function for this body only. It
+    // type-erases a copy of add_in; that copy is used before this function
+    // returns and is not stored on Evaluator. The caller's registrar still
+    // owns the original callback.
+    std::function<void(std::string, PrimFn)> add(add_in);
 
     // (ast:restore id)
     //   → true on success
@@ -889,17 +1343,13 @@ void register_ast_primitives(PrimRegistrar add_in, Evaluator& ev,
         // restore path — SymIds, mutation_log_, type_id_, value_cache_
         // are all preserved bit-for-bit.
         bool did_direct = false;
-        bool dep_graph_synced_pre = false;
-        bool dep_graph_synced_post = false;
+        AstRestoreState state;
+        state.id = id;
         // Issue #4729: a restore used to only TRUNCATE the log back to the
         // snapshot copy, so a rolled-back mutation left no trace at all.
         // These capture the audit identity of the records the restore
         // discards (and the live id counter) so one rollback entry can be
         // appended afterwards.
-        std::uint64_t pre_next_mutation_id = 0;
-        std::uint64_t rolled_first = 0;
-        std::uint64_t rolled_last = 0;
-        std::uint64_t rolled_count = 0;
         {
             // Issue #1904: MutationBoundaryGuard RAII owns the lock + version bump.
             bool ok = true;
@@ -916,91 +1366,8 @@ void register_ast_primitives(PrimRegistrar add_in, Evaluator& ev,
             }
             if (can_direct) {
                 try {
-                    // Issue #4598: diff reachable defines before the flat
-                    // assign (live) and after it (snapshot). A small cone
-                    // republishes only the rows that changed and drops IR
-                    // owners of those names plus called_by (#4349 / #4360).
-                    // Production and a large replace keep mark-all + pre-cache
-                    // so #4577 bundle-erase and the IR warm still run.
-                    // Issue #4598 phase 3: stamp-based diff. The live
-                    // side is captured pre-assign as (name → root, gen16)
-                    // with NO unparse; the snapshot side comes from the
-                    // stamps captured at ast:snapshot. A define whose
-                    // subtree_gen_ cell still equals its stamp is unchanged
-                    // — one integer compare instead of a full unparse.
-                    // mark_dirty_upward's note_subtree_content_write keeps
-                    // the cells sound for every guard-window content change.
-                    const auto& snap_entry = ev.snapshot_flats_[id];
-                    // Issue #4729: audit identity of the discarded records
-                    // (ids >= the snapshot's own counter — the log is a
-                    // monotonic append, so everything from there on is the
-                    // delta this restore rolls back).
-                    pre_next_mutation_id = ev.workspace_flat_->next_mutation_id();
-                    const std::uint64_t snap_next_mutation_id =
-                        snap_entry.flat->shell->next_mutation_id();
-                    rolled_first = 0;
-                    rolled_last = 0;
-                    rolled_count = 0;
-                    // Issue #4777: the stamps compare subtree_gen_ cells of
-                    // the SAME flat lineage. A workspace :merge installs a
-                    // fresh FlatAST via set-code (gens restart, so a merged
-                    // define can carry the snapshot's gen16 again) and a
-                    // plain set-code resets the log below the snapshot's
-                    // counter. Either way the stamp diff reports "unchanged"
-                    // and f kept the merged binding; use the source diff.
-                    // Any flat swap since the capture (stamps->live_flat
-                    // differs) is the general form of the same break.
-                    bool stamp_lineage_broken_4777 = pre_next_mutation_id < snap_next_mutation_id;
-                    for (const auto& rec : ev.workspace_flat_->all_mutations()) {
-                        if (rec.mutation_id < snap_next_mutation_id)
-                            continue;
-                        if (rec.operator_name == "workspace:merge")
-                            stamp_lineage_broken_4777 = true;
-                        if (rolled_count == 0)
-                            rolled_first = rec.mutation_id;
-                        rolled_last = rec.mutation_id;
-                        ++rolled_count;
-                    }
-                    const std::shared_ptr<FlatSnapshotDefineStamps> stamps = snap_entry.stamps;
-                    if (stamps && stamps->live_flat != ev.workspace_flat_)
-                        stamp_lineage_broken_4777 = true;
-                    // Issue #4782: a restore since the capture swapped
-                    // content under the (unmirrored) subtree_gen_ cells, so
-                    // equal gen16 no longer implies equal content. Use the
-                    // source diff (sound) for this restore.
-                    // Issue #4792: no longer a lineage break. The diff
-                    // compares define_ver_ cells, which assign_from_image
-                    // restores together with the content and which are
-                    // minted from a never-reused counter, so equal
-                    // (root, ver) means equal content in every epoch.
-                    const bool cross_epoch_4792 = snap_entry.restore_epoch != ev.ast_restore_epoch_;
-                    // Kill switch / A-B bench: AURA_RESTORE_EPOCH_SOURCE_DIFF=1
-                    // restores the pre-#4792 rule (cross-epoch -> source diff).
-                    static const bool epoch_source_diff_4792 = [] {
-                        const char* e = std::getenv("AURA_RESTORE_EPOCH_SOURCE_DIFF");
-                        return e && e[0] == '1';
-                    }();
-                    if (cross_epoch_4792 && epoch_source_diff_4792)
-                        stamp_lineage_broken_4777 = true;
-                    // Issue #4772: a lazy holder takes the stamp path (an
-                    // empty resolved set reports every live define as
-                    // removed — what the source diff reported too) unless
-                    // the #4777 lineage check sends it to the source diff.
-                    const bool have_stamps = stamps && (stamps->lazy || !stamps->by_name.empty()) &&
-                                             !stamp_lineage_broken_4777;
-                    if (have_stamps && cross_epoch_4792)
-                        ++ev.ast_restore_cross_epoch_stamp_total_;
-                    std::unordered_map<std::string, std::pair<aura::ast::NodeId, std::uint64_t>>
-                        live_stamp_defs;
-                    std::unordered_map<std::string, std::string> live_defs;
-                    if (ev.workspace_flat_ && ev.workspace_pool_) {
-                        if (have_stamps)
-                            live_stamp_defs = collect_define_change_stamps(*ev.workspace_flat_,
-                                                                           *ev.workspace_pool_);
-                        else
-                            live_defs = collect_reachable_define_sources(*ev.workspace_flat_,
-                                                                         *ev.workspace_pool_);
-                    }
+                    AstRestoreCapture cap;
+                    RegSplitParts::ast_restore_capture(ev, state, cap);
                     // Issue #4772: delta assign from the image — chunks the
                     // workspace has not written since its own image base and
                     // that the snapshot shares with that base are skipped.
@@ -1009,231 +1376,10 @@ void register_ast_primitives(PrimRegistrar add_in, Evaluator& ev,
                     // workspace (every unchanged define's edges are then
                     // already recorded). Sampled before the swap replaces
                     // the log.
-                    dep_graph_synced_pre =
-                        ev.restore_dep_graph_synced_fn_ && ev.restore_dep_graph_synced_fn_();
+                    const auto& snap_entry = ev.snapshot_flats_[id];
                     ev.workspace_flat_->assign_from_image(snap_entry.flat);
                     ev.workspace_pool_->assign_from_image(snap_entry.pool);
-                    if (stamps && stamps->lazy)
-                        resolve_lazy_define_stamps(*ev.workspace_flat_, *ev.workspace_pool_,
-                                                   *snap_entry.flat, *stamps);
-                    // Issue #4772: no recycle_dead_nodes() here. The restored
-                    // flat IS the image (its size is the capture's, so restore
-                    // iterations cannot grow it — the #261 concern), and an
-                    // O(workspace) sweep that frees slots would make the live
-                    // flat diverge from the image it was just restored from
-                    // (the next snapshot could no longer share it). The next
-                    // mutation's own recycle (#4583) reclaims dead slots.
-                    ev.update_shared_tree_root();
-                    // Issue #263: verify generation/span consistency after restore.
-                    ev.last_post_restore_report_ = ev.workspace_flat_->validate_post_restore();
-                    ev.last_post_restore_violations_ = ev.last_post_restore_report_.violations;
-                    // Issue #4349: mutate:rebind publishes function_sources_
-                    // for the new body and does not roll that table back.
-                    // eval-current specialises from it, so a restore that only
-                    // swaps the tree reinstalls the mutated lambda.
-                    std::vector<std::string> changed;
-                    std::vector<std::string> added;
-                    std::vector<std::string> removed;
-                    std::unordered_map<std::string, std::string> snap_defs;
-                    // Issue #4772: the workspace now holds the snapshot's
-                    // content, so its defines are the snapshot's defines.
-                    if (!have_stamps)
-                        snap_defs = collect_reachable_define_sources(*ev.workspace_flat_,
-                                                                     *ev.workspace_pool_);
-                    changed.reserve(4);
-                    if (have_stamps) {
-                        for (const auto& [nm, st] : stamps->by_name) {
-                            auto it = live_stamp_defs.find(nm);
-                            if (it == live_stamp_defs.end())
-                                added.push_back(nm);
-                            // Issue #4792: unchanged only when the same
-                            // define node carries the same minted content
-                            // version; an unknown (0) version is changed.
-                            else if (it->second.first != st.root || it->second.second != st.ver ||
-                                     st.ver == 0)
-                                changed.push_back(nm);
-                        }
-                        for (const auto& [nm, _] : live_stamp_defs) {
-                            if (!stamps->by_name.contains(nm))
-                                removed.push_back(nm);
-                        }
-                    } else {
-                        for (const auto& [nm, src] : snap_defs) {
-                            auto it = live_defs.find(nm);
-                            if (it == live_defs.end())
-                                added.push_back(nm);
-                            else if (it->second != src)
-                                changed.push_back(nm);
-                        }
-                        for (const auto& [nm, _] : live_defs) {
-                            if (!snap_defs.contains(nm))
-                                removed.push_back(nm);
-                        }
-                    }
-                    // Issue #4598 phase 3: stamp-mode source lookup — lazily
-                    // unparse a define ONCE from the frozen capture (node ids
-                    // align with the stamp roots), memoized on the shared
-                    // stamps so repeated restores of the same id pay once.
-                    auto snap_source_of = [&](const std::string& nm) -> const std::string* {
-                        if (!have_stamps) {
-                            auto it = snap_defs.find(nm);
-                            return it == snap_defs.end() ? nullptr : &it->second;
-                        }
-                        auto it = stamps->by_name.find(nm);
-                        if (it == stamps->by_name.end())
-                            return nullptr;
-                        auto& st = it->second;
-                        if (!st.has_source) {
-                            // Issue #4772: unparse from the restored workspace
-                            // (bit-identical to the image; node ids align).
-                            if (st.root != aura::ast::NULL_NODE &&
-                                st.root < ev.workspace_flat_->size() &&
-                                !ev.workspace_flat_->is_free_slot(st.root)) {
-                                st.source = aura::ast::unparse_to_string(
-                                    *ev.workspace_flat_, *ev.workspace_pool_, st.root);
-                                ++ev.ast_restore_stamp_unparse_total_;
-                            }
-                            st.has_source = true;
-                        }
-                        return &st.source;
-                    };
-                    constexpr std::size_t kRestoreDiffCap = 48;
-                    const std::size_t diff_n = changed.size() + added.size() + removed.size();
-                    const bool small_diff =
-                        !aura::compiler::typed_audit::production_defaults_active() &&
-                        diff_n <= kRestoreDiffCap;
-                    if (ev.update_function_source_fn_) {
-                        if (small_diff) {
-                            auto publish = [&](const std::string& nm) {
-                                const std::string* src = snap_source_of(nm);
-                                if (src && !src->empty()) {
-                                    ev.update_function_source_fn_(nm, *src);
-                                    ++ev.ast_restore_stamp_republish_total_;
-                                }
-                            };
-                            for (const auto& nm : changed)
-                                publish(nm);
-                            for (const auto& nm : added)
-                                publish(nm);
-                            // Empty source erases the row (removed define).
-                            for (const auto& nm : removed)
-                                ev.update_function_source_fn_(nm, "");
-                        } else {
-                            if (have_stamps) {
-                                for (const auto& [nm, _] : stamps->by_name) {
-                                    const std::string* src = snap_source_of(nm);
-                                    if (src && !src->empty()) {
-                                        ev.update_function_source_fn_(nm, *src);
-                                        ++ev.ast_restore_stamp_republish_total_;
-                                    }
-                                }
-                            } else {
-                                for (const auto& [nm, src] : snap_defs) {
-                                    if (!src.empty())
-                                        ev.update_function_source_fn_(nm, src);
-                                }
-                            }
-                        }
-                    }
-                    // Invalidate caches (same as set-code)
-                    // (ASAN fix #107 leak) delete the old index.
-                    destroy_defuse_index();
-                    ev.defuse_affected_syms_.clear();
-                    if (small_diff && diff_n > 0) {
-                        // Drop owners of the replaced names and every
-                        // transitive caller. mark_define_dirty cascades
-                        // the dirty bit but does not clear owners, so a
-                        // pre-eval-current call of the caller would still
-                        // return the inlined post-rebind value (#4349).
-                        std::unordered_set<std::string> drop;
-                        std::vector<std::string> q;
-                        q.insert(q.end(), changed.begin(), changed.end());
-                        q.insert(q.end(), removed.begin(), removed.end());
-                        q.insert(q.end(), added.begin(), added.end());
-                        for (std::size_t qi = 0; qi < q.size(); ++qi) {
-                            if (!drop.insert(q[qi]).second)
-                                continue;
-                            if (!ev.get_dependents_fn_)
-                                continue;
-                            for (const auto& c : ev.get_dependents_fn_(q[qi])) {
-                                if (!c.empty())
-                                    q.push_back(c);
-                            }
-                        }
-                        for (const auto& nm : drop) {
-                            // Issue #4349 / #4753: a restore is a workspace
-                            // REPLACE, not a supersede-by-new-publication.
-                            // The #4753 deferral (cell still advertises the
-                            // id) would keep the replaced workspace's
-                            // publication dispatchable and a stale call
-                            // would answer with the rolled-back body, so the
-                            // cone takes the strict invalidate face.
-                            if (ev.invalidate_ir_define_binding_fn_)
-                                ev.invalidate_ir_define_binding_fn_(nm);
-                            else if (ev.drop_ir_define_binding_fn_)
-                                ev.drop_ir_define_binding_fn_(nm);
-                        }
-                        if (ev.mark_define_dirty_fn_) {
-                            for (const auto& nm : changed)
-                                ev.mark_define_dirty_fn_(nm);
-                            for (const auto& nm : removed)
-                                ev.mark_define_dirty_fn_(nm);
-                            for (const auto& nm : added)
-                                ev.mark_define_dirty_fn_(nm);
-                        }
-                        if (!added.empty() || !removed.empty() || !changed.empty()) {
-                            // The stamp diff names every define whose content
-                            // differs, so with a graph in sync before the swap
-                            // only the drop cone needs a re-walk (the full
-                            // rebuild is additive: defines outside the cone
-                            // re-record the edges they already have). An added define
-                            // can turn a free Variable in an unchanged body
-                            // into an edge, and the source diff is not exact
-                            // (#4777/#4782 lineage breaks) - both rebuild.
-                            // Kill switch: AURA_RESTORE_DEP_GRAPH_FULL=1.
-                            // Read per restore (not cached) so an in-process
-                            // A/B (the regression test) can flip it.
-                            const char* dep_full_env = std::getenv("AURA_RESTORE_DEP_GRAPH_FULL");
-                            const bool dep_graph_full_env = dep_full_env && dep_full_env[0] == '1';
-                            if (have_stamps && added.empty() && dep_graph_synced_pre &&
-                                !dep_graph_full_env && ev.restore_dep_graph_names_fn_) {
-                                // The drop cone above erased the edges of every
-                                // changed define AND of its transitive callers
-                                // (invalidate_function), so re-walk the whole
-                                // cone, not just `changed`.
-                                std::unordered_set<std::string> gone(removed.begin(),
-                                                                     removed.end());
-                                std::vector<std::string> walk;
-                                walk.reserve(drop.size());
-                                for (const auto& nm : drop)
-                                    if (!gone.count(nm))
-                                        walk.push_back(nm);
-                                ev.restore_dep_graph_names_fn_(walk);
-                                ++ev.ast_restore_dep_graph_incremental_total_;
-                                dep_graph_synced_post = true;
-                            } else if (ev.repopulate_workspace_dep_graph_fn_) {
-                                ev.repopulate_workspace_dep_graph_fn_();
-                                ++ev.ast_restore_dep_graph_full_total_;
-                                dep_graph_synced_post = true;
-                            }
-                        }
-                    } else if (!small_diff) {
-                        aura::compiler::MarkAllClearsIrOwners clear_ir_owners;
-                        if (ev.mark_all_defines_dirty_fn_)
-                            ev.mark_all_defines_dirty_fn_();
-                        if (ev.pre_cache_workspace_defines_fn_) {
-                            ev.pre_cache_workspace_defines_fn_();
-                            ++ev.ast_restore_dep_graph_full_total_;
-                            dep_graph_synced_post = true;
-                        }
-                    } else {
-                        // Empty diff: the graph stays as in sync as before.
-                        dep_graph_synced_post = dep_graph_synced_pre;
-                    }
-                    // Issue #4937: the image is the live tree now. The
-                    // boundary checkpoint still holds the pre-replace
-                    // children_; rebase before any exit-gate abort.
-                    ev.rebase_open_mutation_checkpoint_after_flat_replace();
+                    RegSplitParts::ast_restore_publish(ev, state, cap, destroy_defuse_index);
                     did_direct = true;
                 } catch (...) {
                     // [SILENCE-PRIM-#615] Fall through to
@@ -1243,91 +1389,26 @@ void register_ast_primitives(PrimRegistrar add_in, Evaluator& ev,
             }
         }
         if (did_direct) {
-            ++ev.ast_restore_epoch_; // Issue #4782
-            // Issue #4598 phase 3 re-stamped the share identity of every entry
-            // aliasing this copy here. Issue #4772: share hits are now exact
-            // by construction (the assign leaves the workspace's dirty bits
-            // relative to this image), so there is nothing to re-stamp.
-            // Issue #4729: the direct assign mirrored the snapshot's log,
-            // so the rolled-back suffix disappeared silently. Keep the id
-            // counter monotonic across the swap and append one rollback
-            // entry naming what was discarded — an external auditor must be
-            // able to see the rollback in Aura's own log.
-            if (ev.workspace_flat_) {
-                ev.workspace_flat_->ensure_next_mutation_id(pre_next_mutation_id);
-                if (rolled_count > 0) {
-                    ev.workspace_flat_->add_mutation(
-                        aura::ast::NULL_NODE, "ast:restore", "", "",
-                        "restore snapshot-" + std::to_string(id) + " rolled-back=" +
-                            std::to_string(rolled_count) + " ids=" + std::to_string(rolled_first) +
-                            ".." + std::to_string(rolled_last));
-                }
-                // The rollback entry changes no define: a graph in sync just
-                // before it stays in sync after it, so the next restore (or a
-                // single rebind, #4682) keeps its incremental path.
-                if (dep_graph_synced_post && ev.restore_dep_graph_advance_fn_)
-                    ev.restore_dep_graph_advance_fn_();
-            }
-            // Issue #2920: restamp text cache *after* Guard exit (exit may
-            // invalidate on log growth). Snapshot source is workspace unparse
-            // at snapshot time (#2918).
-            // Issue #4772: a lazy entry has no text yet — drop the stale
-            // stamp instead (current-source unparses on demand).
-            if (id < ev.snapshot_sources_.size()) {
-                if (id < ev.snapshot_flats_.size() && ev.snapshot_flats_[id].source_lazy)
-                    ev.invalidate_workspace_source_text();
-                else
-                    ev.note_workspace_source_text(ev.snapshot_sources_[id]);
-            }
+            RegSplitParts::ast_restore_finalize(ev, state);
             return make_bool(true);
         }
 
         // Source-based fallback (existing behavior). Holds its own
         // unique_lock inside set-code; we must not be holding ours
         // (we released above by scope).
-        const std::string source = ev.snapshot_source_at(id); // Issue #4772: lazy
-        auto source_idx = ev.string_heap_.mint(source);
-
-        auto set_fn = ev.primitives_.lookup("set-code");
-        if (!set_fn)
-            return make_bool(false);
-        // Issue #4729: set-code installs a FRESH FlatAST — capture the live
-        // audit log + id counter first so the rollback stays visible and
-        // mutation ids stay monotonic across the swap.
-        std::pmr::vector<aura::ast::MutationRecord> carried_log(std::pmr::get_default_resource());
-        std::uint64_t carried_next = 1;
-        if (ev.workspace_flat_) {
-            const auto& live_log = ev.workspace_flat_->all_mutations();
-            carried_log.assign(live_log.begin(), live_log.end());
-            carried_next = ev.workspace_flat_->next_mutation_id();
-        }
-        auto result = (*set_fn)({make_string(source_idx)});
-        // Issue #4400: set-code already returned the effect-deny string.
-        // Surface it. Parse merr pairs stay #f.
-        if (is_error(result))
-            return result;
-        const bool ok_fallback = is_bool(result) ? as_bool(result) : false;
-        if (ok_fallback)
-            ++ev.ast_restore_epoch_; // Issue #4782
-        if (ok_fallback && ev.workspace_flat_) {
-            ev.workspace_flat_->adopt_mutation_log(carried_log, carried_next);
-            if (!carried_log.empty()) {
-                ev.workspace_flat_->add_mutation(
-                    aura::ast::NULL_NODE, "ast:restore", "", "",
-                    "restore snapshot-" + std::to_string(id) + " rolled-back=" +
-                        std::to_string(carried_log.size()) + " source-fallback=1");
-            }
-        }
-        return make_bool(ok_fallback);
+        return RegSplitParts::ast_restore_source_fallback(ev, state.id);
     });
     add = add_plain_4910; // Issue #4910: restore the plain registrar
+}
 
+// Issue #5032: ast:diff (workspace source vs snapshot, #2918).
+void RegSplitParts::register_ast_diff_primitive(PrimRegistrar add, Evaluator& ev) {
     // (ast:diff [id])
     //   → ((tag . line) ...)
     //   Compares **workspace** source vs a snapshot (#2918 dual-workspace).
     //   If no id given, compares versus the most recent snapshot.
     //   Tags: :same / :removed / :added
-    add("ast:diff", [&ev, line_diff, workspace_source_string](const auto& a) -> EvalValue {
+    add("ast:diff", [&ev](const auto& a) -> EvalValue {
         if (!ev.workspace_flat_ || !ev.workspace_pool_)
             return make_void();
 
@@ -1346,23 +1427,19 @@ void register_ast_primitives(PrimRegistrar add_in, Evaluator& ev,
         const std::string old_source = ev.snapshot_source_at(id); // Issue #4772: lazy
 
         // Issue #2918: workspace unparse only (not current_flat_ / bare current-source).
-        auto new_opt = workspace_source_string();
+        auto new_opt = workspace_source_string(ev);
         if (!new_opt)
             return make_void();
 
-        return line_diff(old_source, *new_opt);
+        return line_diff(ev, old_source, *new_opt);
     });
-    auto str_list_to_pairs = [&ev](std::span<const std::string> items) -> EvalValue {
-        EvalValue list = make_void();
-        for (auto it = items.rbegin(); it != items.rend(); ++it) {
-            auto idx = ev.string_heap_.mint(*it);
-            auto pid = ev.pairs_.size();
-            ev.pairs_.push_back({make_string(idx), list});
-            list = make_pair(pid);
-        }
-        return list;
-    };
+}
 
+// Issue #5032: ast:summary structural report.
+void RegSplitParts::register_ast_summary_primitive(
+    PrimRegistrar add, Evaluator& ev,
+    std::function<std::optional<std::tuple<std::uint64_t, std::uint64_t, std::uint64_t>>()>
+        defuse_summary_stats) {
     // (ast:summary)
     //   → ((:key value) ...)  association list
     //   Returns structural summary of the current workspace:
@@ -1374,9 +1451,7 @@ void register_ast_primitives(PrimRegistrar add_in, Evaluator& ev,
     //     :uses           — total tracked variable uses
     //     :source-length  — source code character count
     ObservabilityPrims::register_stats_impl(
-        "ast:summary",
-        [&ev, str_list_to_pairs, defuse_summary_stats,
-         workspace_source_string](const auto&) -> EvalValue {
+        "ast:summary", [&ev, defuse_summary_stats](const auto&) -> EvalValue {
             if (!ev.workspace_flat_ || !ev.workspace_pool_)
                 return make_void();
 
@@ -1491,7 +1566,7 @@ void register_ast_primitives(PrimRegistrar add_in, Evaluator& ev,
 
             // Issue #2918: source length of workspace unparse (not current_flat_).
             std::uint64_t source_len = 0;
-            if (auto ws = workspace_source_string())
+            if (auto ws = workspace_source_string(ev))
                 source_len = ws->size();
 
             // Build by-tag list: ((tag-name . count) ...)
@@ -1540,7 +1615,10 @@ void register_ast_primitives(PrimRegistrar add_in, Evaluator& ev,
             }
             return result;
         });
+}
 
+// Issue #5032: ast:validate-ownership / ast:validate-nodes.
+void RegSplitParts::register_ast_validate_primitives(PrimRegistrar add, Evaluator& ev) {
     // (ast:validate-ownership) — Validate ownership invariants after mutations
     // Returns an alist: ((:pass true/false) (:notes (...)))
     // Each note has: (:node <id> :message <str> :kind <str>)
@@ -1692,6 +1770,11 @@ void register_ast_primitives(PrimRegistrar add_in, Evaluator& ev,
         }
         return result;
     });
+}
+
+// Issue #5032: ast:stable-ref / ref-valid? / ref-get / ref-serialize family
+// (#191 / #291 / #2198 / #278 / #3772).
+void RegSplitParts::register_ast_ref_primitives(PrimRegistrar add, Evaluator& ev) {
     // (ast:stable-ref node-id) — Issue #191: capture a StableNodeRef
     // (id + current generation) for the given node. Returns a
     // 2-element pair (id . gen) that can be passed to
@@ -1925,6 +2008,11 @@ void register_ast_primitives(PrimRegistrar add_in, Evaluator& ev,
             }
             return result;
         });
+}
+
+// Issue #5032: ast:generation + NodeId lifecycle / post-restore stats (#261,
+// #263, #490, #4349).
+void RegSplitParts::register_ast_node_maintenance_primitives(PrimRegistrar add, Evaluator& ev) {
     // (ast:generation) — Issue #191: return the current
     // generation counter. Used to inspect when a structural
     // mutation has happened (compare the returned value to
@@ -2041,6 +2129,22 @@ void register_ast_primitives(PrimRegistrar add_in, Evaluator& ev,
             };
             return ev.build_ast_lifecycle_hash(kv);
         });
+}
+
+void register_ast_primitives(PrimRegistrar add_in, Evaluator& ev,
+                             std::function<void()> destroy_defuse_index,
+                             std::function<DefUseSummaryStats()> defuse_summary_stats) {
+    // Issue #5032: registration ORDER is part of the surface contract; the
+    // parts are called in the order the primitives were always added.
+    RegSplitParts::register_ast_snapshot_primitive(add_in, ev);
+    RegSplitParts::register_ast_snapshot_fail_reason_primitive(add_in, ev);
+    RegSplitParts::register_ast_introspection_primitives(add_in, ev);
+    RegSplitParts::register_ast_restore_primitive(add_in, ev, std::move(destroy_defuse_index));
+    RegSplitParts::register_ast_diff_primitive(add_in, ev);
+    RegSplitParts::register_ast_summary_primitive(add_in, ev, std::move(defuse_summary_stats));
+    RegSplitParts::register_ast_validate_primitives(add_in, ev);
+    RegSplitParts::register_ast_ref_primitives(add_in, ev);
+    RegSplitParts::register_ast_node_maintenance_primitives(add_in, ev);
 }
 
 } // namespace aura::compiler::primitives_detail

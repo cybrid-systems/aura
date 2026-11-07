@@ -1,0 +1,37 @@
+;; Issue #5032: the ast registrations moved into RegSplitParts parts, and the
+;; ast:restore body into capture/publish/finalize/fallback phases. Names,
+;; registration order and values must not move.
+(define fails 0)
+(define (check pred msg)
+  (if pred
+      #t
+      (begin (set! fails (+ fails 1)) (display (format "FAIL ~a\n" msg)))))
+
+;; ast:snapshot / ast:snapshot-fail-reason on a workspace-less process
+(define pre (ast:snapshot "pre-workspace"))
+(check (= -1 pre) "snapshot without workspace -> -1")
+(check (equal? :no-workspace (ast:snapshot-fail-reason)) "fail-reason :no-workspace")
+
+;; ast:snapshot / ast:diff / ast:restore on a live workspace
+(set-code "(define (f x) (+ x 1))")
+(define ws-before (current-source :workspace))
+(define sid (ast:snapshot "r5032"))
+(check (>= sid 0) "snapshot id")
+(check (list? (ast:diff sid)) "diff is a list")
+(check (>= (length (stats:get "ast:list-snapshots")) 1) "list-snapshots")
+
+(set-code "(define (g y) (* y 3))")
+(check (ast:restore sid) "restore")
+(check (equal? ws-before (current-source :workspace)) "restored workspace source")
+(check (>= (ast:generation) 0) "generation after restore")
+
+;; validate / ownership / ref / node-maintenance groups
+(check (pair? (ast:validate-ownership)) "validate-ownership")
+(define ref (ast:stable-ref 0))
+(check (pair? ref) "stable-ref pair")
+(ast:compact-nodes)
+(ast:validate-post-restore)
+
+(if (> fails 0)
+    (error "ast split regression")
+    (begin (display "ast split ok") (newline)))

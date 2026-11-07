@@ -142,7 +142,9 @@ def main() -> int:
     )
     must("it->second.second != st.ver", "AC4", prim)  # #4792: define_ver_ replaces gen16
     must("auto snap_source_of = [&](const std::string& nm) -> const std::string* {", "AC4", prim)
-    must("st.source = aura::ast::unparse_to_string(", "AC4", prim)
+    # Issue #5032: the call moved into the ast_restore_publish helper, so the
+    # formatter may wrap it after the '='. Match on whitespace-normalised text.
+    must("st.source = aura::ast::unparse_to_string(", "AC4", " ".join(prim.split()))
     must("++ev.ast_restore_stamp_unparse_total_;", "AC4", prim)
     must("st.has_source = true;", "AC4", prim)
     must("[[nodiscard]] std::uint64_t ast_restore_stamp_unparse_total() const noexcept", "AC4", evixx)
