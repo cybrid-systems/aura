@@ -41,9 +41,11 @@ def check_ac1(src: str) -> tuple[bool, str]:
         return False, "source must cite #3674"
     if "const bool auto_durable" not in src:
         return False, "auto_durable arm missing"
-    if ARM not in src:
+    # clang-format may wrap these expressions; compare on collapsed whitespace.
+    flat = " ".join(src.split())
+    if " ".join(ARM.split()) not in flat:
         return False, "auto_durable must require both rings miss + WAL enabled"
-    if GATE not in src:
+    if " ".join(GATE.split()) not in flat:
         return False, "scan gate must admit (want_durable || auto_durable)"
     return True, "auto_durable arm gated on rings miss + WAL, admitted beside :durable"
 
