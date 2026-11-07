@@ -90,9 +90,13 @@ jobs:
           start=$(date +%s)
           AURA_VERSION=$VER AURA_DOWNLOAD_BASE=$PWD/dist sh install.sh
           export PATH=$HOME/.local/bin:$PATH
-          cd "$RUNNER_TEMP" && aura new evolve demo && cd demo && aura run && aura test
-          test -s out/report.html
-          echo "install → report: $(( $(date +%s) - start )) s"
+          cd "$RUNNER_TEMP" && aura new evolve demo && cd demo
+          aura run | tee run.out
+          grep -q '^1 ROLLBACK' run.out
+          grep -q '^(guess) => 42$' run.out
+          test ! -e out/report.html
+          aura test
+          echo "install → worldline: $(( $(date +%s) - start )) s"
       - name: Clean containers (Ubuntu 24.04, Ubuntu 26.10, Debian 12, Rocky 9, openEuler 24.03 LTS SP4)
         # #4934: v0.1 supported distros. Stock images, nothing installed: install.sh
         # needs only sh, tar+gzip, sha256sum (all in the base images), and the
@@ -108,7 +112,8 @@ jobs:
               $a --version | grep -Eq "^aura ${AURA_VERSION#v} \([0-9a-f]{9}\)$"
               test "$($a /src/dist/smoke.aura)" = 3
               cd /tmp && $a new evolve demo && cd demo
-              $a run && $a test && test -s out/report.html'
+              $a run > run.out && grep -q "^(guess) => 42$" run.out &&
+              $a test && test ! -e out/report.html'
             echo "::endgroup::"
           done
       - name: Runtime image
