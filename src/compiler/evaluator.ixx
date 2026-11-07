@@ -6907,6 +6907,21 @@ private:
         const std::string& summary, std::span<const types::EvalValue> a, aura::ast::NodeId end_id);
     [[nodiscard]] FlatStep eval_flat_publish_functor_instance(const std::string& cache_key,
                                                               Env& mod_env);
+    // apply_closure split. out is set only when the bool is true.
+    [[nodiscard]] std::optional<EvalValue> apply_closure_tw(
+        ClosureId cid, std::span<const EvalValue> args, Closure& cl_copy,
+        const aura::ast::FlatAST* snap_flat_4765, const aura::ast::StringPool* snap_pool_4765,
+        CompilerMetrics* metrics);
+    [[nodiscard]] bool apply_closure_must_deopt(ClosureId cid, std::span<const EvalValue> args,
+                                                Closure& cl_copy, CompilerMetrics* metrics,
+                                                std::optional<EvalValue>& out);
+    [[nodiscard]] bool apply_closure_safe_fallback(ClosureId cid, std::span<const EvalValue> args,
+                                                   Closure& cl_copy, CompilerMetrics* metrics,
+                                                   std::optional<EvalValue>& out);
+    [[nodiscard]] std::optional<EvalValue> apply_closure_eval_body(
+        ClosureId cid, std::span<const EvalValue> args, Closure& cl_copy,
+        const aura::ast::FlatAST* snap_flat_4765, const aura::ast::StringPool* snap_pool_4765,
+        CompilerMetrics* metrics);
     Env* copy_env(const Env& env, ast::ASTArena* target = nullptr)
         pre(target != nullptr); // arena_ is private; impl also asserts via contract_assert
     void init_pair_primitives();
