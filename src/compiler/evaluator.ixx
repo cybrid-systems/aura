@@ -160,8 +160,8 @@ public:
     Primitives();
     // Issue #914: string_view primary API (string& converts implicitly).
     [[nodiscard]] std::optional<PrimFn> lookup(std::string_view n) const pre(!n.empty());
-    void add(const std::string& name, PrimFn fn) { add(name, std::move(fn), PrimMeta{}); }
-    void add(const std::string& name, PrimFn fn, PrimMeta meta) {
+    void add(std::string name, PrimFn fn) { add(std::move(name), std::move(fn), PrimMeta{}); }
+    void add(std::string name, PrimFn fn, PrimMeta meta) {
         // Issue #2152: construction-time auto-stamp required_effects from the
         // primitive name when unset. Closes the residual gap where a new
         // effectful prim skips PrimMeta / add_mutate but still matches a
@@ -11530,7 +11530,7 @@ public:
     // verify_tool.cpp's lambdas, which don't get
     // friend access because they're not class members).
     [[nodiscard]] std::optional<std::string>
-    lookup_verify_tool_cache(const std::string& cmd) const noexcept {
+    lookup_verify_tool_cache(std::string_view cmd) const noexcept {
         auto* ws = workspace_flat();
         if (!ws)
             return std::nullopt;
@@ -11542,12 +11542,14 @@ public:
         }
         return std::nullopt;
     }
-    void insert_verify_tool_cache(const std::string& cmd, const std::string& result) {
+    void insert_verify_tool_cache(std::string_view cmd, std::string_view result) {
         auto* ws = workspace_flat();
         if (!ws)
             return;
         const auto gen = ws->generation();
-        verify_tool_cache_.push_back({cmd, gen, result});
+        // Both fields own their characters. string(string_view) is explicit.
+        verify_tool_cache_.push_back(
+            VerifyToolCacheEntry{std::string(cmd), gen, std::string(result)});
         while (verify_tool_cache_.size() > kVerifyToolCacheMax) {
             verify_tool_cache_.pop_front();
         }
