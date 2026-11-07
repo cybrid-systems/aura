@@ -59,4 +59,38 @@ struct RegSplitParts {
     static void register_view_consistent_primitive(PrimRegistrar add, Evaluator& ev);
     static void register_f64vector_bulk_primitives(PrimRegistrar add, Evaluator& ev);
     static void register_handle_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_string_basics(PrimRegistrar add, Evaluator& ev,
+                                       std::pmr::vector<Pair>& pairs,
+                                       ::aura::compiler::LockedStringHeap& string_heap,
+                                       std::vector<EvalValue>& error_values,
+                                       std::atomic<std::uint64_t>* primitive_error_counter);
+    static void register_pair_constructor(PrimRegistrar add, Evaluator& ev,
+                                          std::pmr::vector<Pair>& pairs,
+                                          ::aura::compiler::LockedStringHeap& string_heap,
+                                          std::vector<EvalValue>& error_values,
+                                          std::atomic<std::uint64_t>* primitive_error_counter);
+    static void register_pair_shorthands_first(PrimRegistrar add, Evaluator& ev,
+                                               std::pmr::vector<Pair>& pairs,
+                                               ::aura::compiler::LockedStringHeap& string_heap,
+                                               std::vector<EvalValue>& error_values,
+                                               std::atomic<std::uint64_t>* primitive_error_counter);
+    static void register_pair_shorthands_rest(PrimRegistrar add, Evaluator& ev,
+                                              std::pmr::vector<Pair>& pairs,
+                                              ::aura::compiler::LockedStringHeap& string_heap,
+                                              std::vector<EvalValue>& error_values,
+                                              std::atomic<std::uint64_t>* primitive_error_counter);
+    static void register_mutable_pair_ops(PrimRegistrar add, Evaluator& ev,
+                                          std::pmr::vector<Pair>& pairs,
+                                          ::aura::compiler::LockedStringHeap& string_heap,
+                                          std::vector<EvalValue>& error_values,
+                                          std::atomic<std::uint64_t>* primitive_error_counter);
+    static void register_string_ops(PrimRegistrar add, Evaluator& ev, std::pmr::vector<Pair>& pairs,
+                                    ::aura::compiler::LockedStringHeap& string_heap,
+                                    std::vector<EvalValue>& error_values,
+                                    std::atomic<std::uint64_t>* primitive_error_counter);
+    static void register_string_number_ops(PrimRegistrar add, Evaluator& ev,
+                                           std::pmr::vector<Pair>& pairs,
+                                           ::aura::compiler::LockedStringHeap& string_heap,
+                                           std::vector<EvalValue>& error_values,
+                                           std::atomic<std::uint64_t>* primitive_error_counter);
 };
