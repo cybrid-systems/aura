@@ -727,7 +727,13 @@ jobs:
       if: success() && steps.issues-build.outputs.empty != 'true'
       run: |
         set -euo pipefail
-        src=.aura-compiler/build
+        # upload-artifact@v7 with several paths stores them relative to their
+        # least common ancestor (build/), so the archive root holds aura and
+        # the two .so files. Accept either layout.
+        src=.aura-compiler
+        if [ ! -f "$src/aura" ] && [ -f "$src/build/aura" ]; then
+          src=$src/build
+        fi
         test -f "$src/aura"
         install -m 0755 "$src/aura" build/aura
         for so in libaura-reflect.so libaura_tl_arena.so; do
