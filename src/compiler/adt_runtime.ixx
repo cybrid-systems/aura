@@ -68,7 +68,7 @@ public:
                                int arity, std::size_t slot);
 
     // Lookup a constructor by name (used from Env::lookup etc.).
-    std::optional<std::size_t> find_ctor(const std::string& name) const;
+    std::optional<std::size_t> find_ctor(std::string_view name) const;
 
     // Accessors for tests / debug.
     std::size_t ctor_count() const { return ctors_.size(); }

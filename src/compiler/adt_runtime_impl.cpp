@@ -42,7 +42,7 @@ void AdtRuntime::register_dynamic_ctor(RegisterFn add, const std::string& name, 
     ctor_slots_[name] = slot;
 }
 
-std::optional<std::size_t> AdtRuntime::find_ctor(const std::string& name) const {
+std::optional<std::size_t> AdtRuntime::find_ctor(std::string_view name) const {
     auto it = ctor_slots_.find(name);
     if (it == ctor_slots_.end())
         return std::nullopt;

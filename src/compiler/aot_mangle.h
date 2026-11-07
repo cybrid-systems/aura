@@ -267,7 +267,7 @@ inline std::string mangle_aot_name(std::string_view original, std::uint32_t disa
 // link names and the LLVM-side mangle identity stay symmetric.
 // Defaults preserve the pre-#2091 behavior (env=0, lin=0 → no
 // `_e_l` suffix unless the force flag is on).
-inline std::string aot_link_name(const std::string& original, std::uint32_t disambiguator,
+inline std::string aot_link_name(std::string_view original, std::uint32_t disambiguator,
                                  std::uint64_t defuse_version = 0,
                                  std::uint64_t env_frame_version = 0,
                                  std::uint8_t linear_state = 0) {

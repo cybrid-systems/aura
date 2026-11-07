@@ -299,7 +299,7 @@ void SpecJITController::maybe_evict_() {
     }
 }
 
-bool SpecJITController::has_specialization(const std::string& fn_name, ShapeID shape) const {
+bool SpecJITController::has_specialization(std::string_view fn_name, ShapeID shape) const {
     auto it = specializations_.find(fn_name);
     if (it == specializations_.end())
         return false;
@@ -319,7 +319,7 @@ bool SpecJITController::has_specialization(const std::string& fn_name, ShapeID s
     return false;
 }
 
-aura::jit::ScalarFn SpecJITController::get_specialized(const std::string& fn_name,
+aura::jit::ScalarFn SpecJITController::get_specialized(std::string_view fn_name,
                                                        ShapeID shape) const {
     auto it = specializations_.find(fn_name);
     if (it == specializations_.end())
@@ -341,11 +341,14 @@ aura::jit::ScalarFn SpecJITController::get_specialized(const std::string& fn_nam
 // Issue #2276 / #2370: install stamps with effective_shape_version() so
 // PerEval isolation uses the controller-local epoch and Global/PerRegion
 // keeps process-global shape_version pairing with storm enter bumps.
-void SpecJITController::install_specialization(const std::string& fn_name, ShapeID shape,
+void SpecJITController::install_specialization(std::string_view fn_name, ShapeID shape,
                                                aura::jit::ScalarFn fn_ptr) {
     if (!fn_ptr)
         return;
-    auto& entries = specializations_[fn_name];
+    auto it = specializations_.find(fn_name);
+    if (it == specializations_.end())
+        it = specializations_.emplace(std::string(fn_name), std::vector<SpecEntry>{}).first;
+    auto& entries = it->second;
     const auto cur_ver = effective_shape_version();
     for (auto& e : entries) {
         if (e.shape == shape) {
@@ -359,7 +362,7 @@ void SpecJITController::install_specialization(const std::string& fn_name, Shape
         SpecEntry{shape, fn_ptr, static_cast<std::uint32_t>(cur_ver), ++access_clock_});
 }
 
-void SpecJITController::invalidate(const std::string& fn_name) {
+void SpecJITController::invalidate(std::string_view fn_name) {
     auto it = specializations_.find(fn_name);
     if (it != specializations_.end()) {
         global_version_++;
