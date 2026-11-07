@@ -859,6 +859,21 @@ private:
     void record_truncated_partial_blame(std::size_t scanned, std::size_t candidates);
     void update_blame_chain_completeness_rate() noexcept;
     bool reverify_clean_constraints_for_touched();
+    // Dependency closure for reverify_clean_constraints_for_touched.
+    // Fills last_reverify_truncated_ / last_reverify_unscanned_ and the
+    // closure metrics. Returns the clean constraints to reverify.
+    std::unordered_set<std::size_t> collect_reverify_closure(std::size_t scan_limit);
+    struct DeltaWorklist {
+        std::vector<std::size_t> worklist;
+        std::vector<bool> seen;
+        std::size_t pruned = 0;
+        bool have_local_roots = false;
+    };
+    DeltaWorklist build_delta_worklist();
+    // nullopt: the worklist passes finished and the caller should reverify.
+    // CONFLICT: unify failed and the caller returns it.
+    std::optional<SolveResult> run_delta_worklist(DeltaWorklist& work,
+                                                  std::vector<Constraint>* unresolved_out);
     void clear_touched_roots() { touched_roots_.clear(); }
     // Issue #3169: production fail-closed after TIMEOUT / instance-repair
     // failure — clears any partial goal / unresolved state that would
