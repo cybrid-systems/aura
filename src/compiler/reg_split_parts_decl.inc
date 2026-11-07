@@ -6,6 +6,10 @@ struct WorkspaceMergeReport;
 struct AstRestoreState;
 struct AstRestoreCapture;
 
+// Issue #5033: the messaging channel payload codec is defined in
+// evaluator_primitives_messaging.cpp; only a forward declaration is needed here.
+struct MessagingChannelCodec;
+
 // Peeled register parts. The struct is a friend of Evaluator, same as
 // CompilePrims. Each function is one responsibility group.
 struct RegSplitParts {
@@ -328,4 +332,22 @@ struct RegSplitParts {
     static void register_workspace_conflict_primitives(PrimRegistrar add, Evaluator& ev);
     static void register_workspace_dispatch_primitive(PrimRegistrar add, Evaluator& ev,
                                                       std::shared_ptr<ImplTable> w_impls);
+
+    // Issue #5033: inter-agent messaging registration parts (defined in
+    // evaluator_primitives_messaging.cpp). The channel payload codec is built
+    // once per registration and passed to the channel part, so the #4763
+    // encode/decode bodies keep their shape.
+    static MessagingChannelCodec messaging_channel_codec(Evaluator& ev);
+    static void register_messaging_core_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_messaging_mailbox_stats_primitive(Evaluator& ev);
+    static void register_messaging_parallel_orch_stats_primitive(Evaluator& ev);
+    static void register_messaging_fiber_spawn_primitive(PrimRegistrar add, Evaluator& ev);
+    static void register_messaging_fiber_lifecycle_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_messaging_fiber_join_primitive(PrimRegistrar add, Evaluator& ev);
+    static EvalValue fiber_join_publish_result(Evaluator& ev, std::int64_t fid);
+    static std::optional<EvalValue> fiber_join_cached_result(Evaluator& ev, std::int64_t fid);
+    static void register_messaging_scheduler_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_messaging_channel_primitives(PrimRegistrar add, Evaluator& ev,
+                                                      const MessagingChannelCodec& codec);
+    static void register_messaging_agent_list_primitive(PrimRegistrar add, Evaluator& ev);
 };
