@@ -46,7 +46,10 @@ def main() -> int:
     t = _read("tests/compiler/test_solve_delta_unresolved_export.cpp")
     build = _read("build.py")
 
-    start = impl.find("SolveResult ConstraintSystem::solve_delta_impl(")
+    start = impl.find("ConstraintSystem::DeltaWorklist ConstraintSystem::build_delta_worklist()")
+    if start < 0:
+        # Pre-#5021 shape: the pending offer still sat inside solve_delta_impl.
+        start = impl.find("SolveResult ConstraintSystem::solve_delta_impl(")
     if start < 0:
         fails.append("AC1: solve_delta_impl missing")
         win = ""
