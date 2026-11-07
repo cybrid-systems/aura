@@ -74,7 +74,7 @@
       "contains": [
         "const_symbol_cache_",
         "ops[2] == 2",
-        "context_.evaluator->intern_symbol(content)"
+        "evaluator->intern_symbol(content)"
       ]
     },
     {
