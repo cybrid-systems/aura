@@ -364,9 +364,25 @@ int aura_issue_1413_run() {
             }();
             CHECK(impl.find("TypeChecker::infer_flat_partial") != std::string::npos,
                   "ac3430_2_partial_entry");
-            CHECK(impl.find("engine.set_gradual_permissiveness(gradual_permissiveness_)") !=
+            const auto bind = impl.find("void partial_bind_partial_engine(");
+            const auto bind_end = impl.find("void partial_blame_and_selective_invalidate(", bind);
+            const auto bind_body =
+                (bind == std::string::npos || bind_end == std::string::npos || bind_end < bind)
+                    ? std::string{}
+                    : impl.substr(bind, bind_end - bind);
+            CHECK(bind_body.find("engine.set_gradual_permissiveness(st.gradual_permissiveness)") !=
                       std::string::npos,
                   "ac3430_2_partial_plumbs_knob");
+            const auto orch = impl.find("std::span<const aura::ast::MutationRecord> extra_recs)");
+            const auto orch_end = impl.find("return st.re_inferred;", orch);
+            const auto orch_body = (orch == std::string::npos || orch_end == std::string::npos)
+                                       ? std::string{}
+                                       : impl.substr(orch, orch_end - orch);
+            const auto bind_call = orch_body.find("partial_bind_partial_engine(st, engine)");
+            const auto reinfer = orch_body.find("partial_reinfer_affected_roots(st, engine)");
+            CHECK(bind_call != std::string::npos && reinfer != std::string::npos &&
+                      bind_call < reinfer,
+                  "ac3430_2_bind_before_reinfer");
             CHECK(ixx.find("if (aura::compiler::typed_audit::production_defaults_active())") !=
                           std::string::npos &&
                       ixx.find("return GradualPermissiveness::Strict;") != std::string::npos,
