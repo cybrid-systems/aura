@@ -142,8 +142,12 @@ def main() -> int:
             fails.append(f"AC6: docs/design/{f.name} present (forbidden #1655)")
 
     # AC7 — packed resolve keeps stamp; no occupancy restamp.
-    resolve = mut.find("auto resolve_mutate_node_arg")
-    packed = mut.find("if (auto packed = unpack_stable_ref_arg", resolve) if resolve >= 0 else -1
+    # Issue #5033: the resolver body moved into RegSplitParts::mutate_resolve_node_arg
+    # (the local lambda is now a thin delegation), so anchor on the helper.
+    resolve = mut.find("RegSplitParts::mutate_resolve_node_arg(")
+    if resolve < 0:
+        resolve = mut.find("auto resolve_mutate_node_arg")
+    packed = mut.find("if (auto packed = RegSplitParts::mutate_unpack_stable_ref_arg", resolve) if resolve >= 0 else -1
     int_br = mut.find("if (is_int(arg))", packed) if packed >= 0 else -1
     packed_body = mut[packed:int_br] if packed >= 0 and int_br > packed else ""
     must("Issue #3415", "AC7 packed", packed_body)

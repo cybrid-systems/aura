@@ -29,6 +29,48 @@ def _read(rel: str) -> str:
     return p.read_text(encoding="utf-8", errors="replace")
 
 
+def _peeled(mut: str, names: tuple[str, ...]) -> str:
+    """Brace-matched bodies of peeled RegSplitParts helpers (Issue #5033).
+
+    The per-prim body was split into part helpers, so a window that used to
+    span the registration must follow the delegation to keep the same row.
+    """
+    out = ""
+    for name in names:
+        idx = mut.find(f"RegSplitParts::{name}(")
+        if idx < 0:
+            continue
+        start = mut.find("{", idx)
+        if start < 0:
+            continue
+        depth = 0
+        i = start
+        while i < len(mut):
+            c = mut[i]
+            if c == '"' or c == "'":
+                q = c
+                i += 1
+                while i < len(mut):
+                    if mut[i] == "\\":
+                        i += 2
+                        continue
+                    if mut[i] == q:
+                        break
+                    i += 1
+            elif c == "/" and i + 1 < len(mut) and mut[i + 1] == "/":
+                j = mut.find("\n", i)
+                i = len(mut) if j < 0 else j
+            elif c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    out += mut[start : i + 1]
+                    break
+            i += 1
+    return out
+
+
 def main() -> int:
     fails: list[str] = []
 
@@ -52,6 +94,11 @@ def main() -> int:
         if rend < 0:
             rend = rpos + 7000
         rwin = mut[rpos:rend]
+        # Issue #5033: the rebind body was peeled into phase helpers.
+        rwin += _peeled(
+            mut,
+            ("rebind_parse_value", "rebind_shape_and_hygiene", "rebind_link_new_body"),
+        )
 
     # AC1
     must("Issue #2791", "AC1", rwin)
@@ -71,6 +118,8 @@ def main() -> int:
         if send < 0:
             send = spos + 5000
         swin = mut[spos:send]
+        # Issue #5033: the set-body rewrite was peeled into a phase helper.
+        swin += _peeled(mut, ("set_body_rewrite_define",))
     must("Issue #2791", "AC2", swin)
     must("free_orphan_nodes_from", "AC2", swin)
     must("free_set_body_parse_orphans", "AC2", swin)

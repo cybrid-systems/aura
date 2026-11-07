@@ -108,6 +108,16 @@ def main() -> int:
         lam_win = _brace_block(mut, lam)
         if not lam_win:
             fails.append("AC1: add_mutate lambda body unterminated")
+        # Issue #5033: the wrapped body (effect gate / RO fence / acquire /
+        # belt / fn(a)) was peeled into RegSplitParts helpers. Follow that
+        # delegation in body order so the assertions stay on the wrapper's
+        # own implementation instead of only its registration site.
+        for peeled in ("mutate_wrapper_enter", "mutate_post_body_belt", "mutate_wrapped_call"):
+            idx = mut.find(f"RegSplitParts::{peeled}(")
+            if idx < 0:
+                fails.append(f"AC1: peeled wrapper helper {peeled} missing (#5033)")
+                continue
+            lam_win += _brace_block(mut, idx)
 
     must("mutate_dispatch_try_acquire", "AC1 wrapper acquire", lam_win)
     acq = lam_win.find("mutate_dispatch_try_acquire")

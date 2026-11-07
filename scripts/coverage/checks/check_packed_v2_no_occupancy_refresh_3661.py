@@ -45,9 +45,15 @@ def main() -> int:
     ten = _read("tests/compiler/test_stable_ref_tenant_mandate.cpp")
     build = _read("build.py")
 
-    rmut = mut.find("auto resolve_mutate_node_arg")
-    mwin = mut[rmut : rmut + 9000] if rmut >= 0 else ""
-    packed = mwin.find("if (auto packed = unpack_stable_ref_arg")
+    # Issue #5033: the resolver moved into RegSplitParts::mutate_resolve_node_arg;
+    # the local lambda is a thin delegation. Anchor on the helper definition.
+    rmut = mut.find("RegSplitParts::mutate_resolve_node_arg(")
+    if rmut < 0:
+        rmut = mut.find("auto resolve_mutate_node_arg")
+    mwin = mut[rmut : rmut + 12000] if rmut >= 0 else ""
+    packed = mwin.find("if (auto packed = RegSplitParts::mutate_unpack_stable_ref_arg")
+    if packed < 0:
+        packed = mwin.find("if (auto packed = unpack_stable_ref_arg")
     pint = mwin.find("if (is_int(arg))")
     pwin = mwin[packed:pint] if packed >= 0 and pint > packed else ""
 

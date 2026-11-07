@@ -126,7 +126,8 @@ def main() -> int:
     must("mutable std::uint32_t agent_fiber_id_ = 0", "AC2 per-Evaluator cache member", ixx)
 
     # ── AC3: resolve sites wired ─────────────────────────────────────────
-    mres = window(mut, "auto resolve_mutate_node_arg", "is_int(arg))", "AC3 mutate resolve")
+    # Issue #5033: the resolver moved into RegSplitParts::mutate_resolve_node_arg.
+    mres = window(mut, "RegSplitParts::mutate_resolve_node_arg(", "is_int(arg))", "AC3 mutate resolve")
     must("ev.agent_scoped_fiber_id()", "AC3 resolve_mutate_node_arg Agent-scoped", mres)
     hits = qws.count("ev.agent_scoped_fiber_id()")
     if hits < 2:

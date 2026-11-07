@@ -50,8 +50,16 @@ def main() -> int:
     if "make_stamped_ref" in dec:
         fails.append("AC1: hash decode must not call make_stamped_ref (occupancy)")
 
-    mut_res = mut.find("auto resolve_mutate_node_arg")
-    mut_win = mut[mut_res : mut_res + 2500] if mut_res >= 0 else ""
+    # Issue #5033: the resolver is a peeled RegSplitParts member now; locate
+    # either shape and window to the end of its definition.
+    mut_res = mut.find("RegSplitParts::mutate_resolve_node_arg(")
+    if mut_res == -1:
+        mut_res = mut.find("auto resolve_mutate_node_arg")
+    if mut_res >= 0:
+        mut_close = mut.find("\n}\n", mut_res)
+        mut_win = mut[mut_res : mut_close + 3 if mut_close >= 0 else mut_res + 2500]
+    else:
+        mut_win = ""
     must("is_hash(arg)", "AC1 mutate is_hash", mut_win)
     must("resolve_query_result_match", "AC1 mutate shared", mut_win)
     must("query_result_is_fresh_with_refs", "AC1 mutate freshness cite", mut)

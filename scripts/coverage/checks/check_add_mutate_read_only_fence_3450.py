@@ -106,6 +106,15 @@ def main() -> int:
     win = _brace_block(mut, lam) if lam >= 0 else ""
     if lam >= 0 and not win:
         fails.append("AC1: add_mutate lambda body unterminated")
+    # Issue #5033: the RO fence / acquire / fn(a) sequence was peeled into
+    # RegSplitParts helpers. Follow that delegation in body order so the
+    # ordering assertions stay on the wrapper implementation.
+    for peeled in ("mutate_wrapper_enter", "mutate_post_body_belt", "mutate_wrapped_call"):
+        idx = mut.find(f"RegSplitParts::{peeled}(")
+        if idx < 0:
+            fails.append(f"AC1: peeled wrapper helper {peeled} missing (#5033)")
+            continue
+        win += _brace_block(mut, idx)
     must("kAddMutateReadOnlyFenceIssue", "AC1 stamp", disp)
     must("Issue #3450", "AC1 wrapper cite", win)
     must("workspace_read_only_", "AC1 RO load", win)

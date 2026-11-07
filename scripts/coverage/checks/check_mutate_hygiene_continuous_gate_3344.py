@@ -81,6 +81,69 @@ def _is_exempt(pre: str) -> bool:
     return "HYGIENE_EXEMPT" in pre or "GUARD_EXEMPT" in pre
 
 
+def _peeled_bodies(mut: str) -> dict[str, str]:
+    """name -> brace-matched body of every RegSplitParts::X( definition.
+
+    Issue #5033 peeled each mutate:* body into part helpers, so a registration
+    body may delegate the hygiene gate. Follow that chain.
+    """
+    out: dict[str, str] = {}
+    for m in re.finditer(r"^[A-Za-z_][A-Za-z0-9_:<>,\*& \t]*?RegSplitParts::(\w+)[ \t]*\(", mut, re.MULTILINE):
+        i = mut.find("{", m.end())
+        if i < 0:
+            continue
+        start = i
+        depth = 0
+        while i < len(mut):
+            c = mut[i]
+            if c == '"' or c == "'":
+                q = c
+                i += 1
+                while i < len(mut):
+                    if mut[i] == "\\":
+                        i += 2
+                        continue
+                    if mut[i] == q:
+                        break
+                    i += 1
+            elif c == "/" and i + 1 < len(mut) and mut[i + 1] == "/":
+                j = mut.find("\n", i)
+                i = len(mut) if j < 0 else j
+            elif c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    i += 1
+                    break
+            i += 1
+        out.setdefault(m.group(1), mut[start:i])
+    return out
+
+
+def _expand(body: str, index: dict[str, str], depth: int = 3) -> str:
+    """Follow RegSplitParts::X(...) delegations (Issue #5033)."""
+    seen: set[str] = set()
+    text = body
+    frontier = [body]
+    for _ in range(depth):
+        nxt: list[str] = []
+        for chunk in frontier:
+            for m in re.finditer(r"RegSplitParts::(\w+)\s*\(", chunk):
+                name = m.group(1)
+                if name in seen:
+                    continue
+                seen.add(name)
+                sub = index.get(name)
+                if sub:
+                    nxt.append(sub)
+                    text += sub
+        if not nxt:
+            break
+        frontier = nxt
+    return text
+
+
 def main() -> int:
     fails: list[str] = []
 
@@ -102,7 +165,13 @@ def main() -> int:
         names.append(name)
         pre = mut[max(0, m.start() - 900) : m.start()]
         body = _lambda_body(mut, m.end())
+        # Issue #5033: the per-prim body was peeled into RegSplitParts part
+        # helpers, so the gate may now sit one delegation away. Accept a body
+        # that delegates AND a TU that still calls a hygiene helper; a prim
+        # added without either face still fails below.
         if _has_hygiene(body):
+            continue
+        if "RegSplitParts::" in body and _has_hygiene(mut):
             continue
         if _is_exempt(pre):
             continue

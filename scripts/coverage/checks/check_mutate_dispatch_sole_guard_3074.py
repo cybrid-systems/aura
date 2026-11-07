@@ -88,12 +88,19 @@ def main() -> int:
         "mutate:set-body",
         "mutate:rebind",
     ):
+        occurrences = []
         pos = mut.find(f'"{name}"')
-        if pos < 0:
+        while pos >= 0:
+            occurrences.append(pos)
+            pos = mut.find(f'"{name}"', pos + 1)
+        if not occurrences:
             fails.append(f"AC3452: missing {name}")
             continue
-        look = mut[max(0, pos - 80) : pos]
-        if "add_mutate" not in look:
+        # Issue #5033: the prim name now also appears in the peeled part
+        # helpers (e.g. finish_mutate_hard_gate("mutate:rebind")), which can
+        # precede the registration. Accept any occurrence registered through
+        # add_mutate instead of only the first textual one.
+        if not any("add_mutate" in mut[max(0, p - 80) : p] for p in occurrences):
             fails.append(f"AC3452: {name} is not registered through add_mutate")
     must("MutateRegKind", "AC3452 kind", hh)
     must("kMutateRegKindIssue = 3452", "AC3452 stamp", hh)
