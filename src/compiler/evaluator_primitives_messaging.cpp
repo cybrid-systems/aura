@@ -949,7 +949,22 @@ namespace {
 
 } // namespace
 
-void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
+// Issue #5033: inter-agent messaging registration parts. The
+// registration is peeled by responsibility; the channel payload codec
+// keeps its #4763 shape and is built once by messaging_channel_codec.
+
+constexpr auto kChannelDatumKind4763 = static_cast<ChannelMessage::Kind>(2);
+
+// Issue #4763: the structured-payload codec shared by the channel:send /
+// channel:recv parts. The lambdas only name the evaluator, so the codec is
+// rebuilt per registration and never outlives it.
+struct MessagingChannelCodec {
+    std::function<bool(const EvalValue&, std::string&, std::string&)> channel_encode_4763;
+    std::function<EvalValue(const std::string&)> channel_decode_4763;
+    std::function<EvalValue(ChannelMessage&&)> channel_recv_value_4763;
+};
+
+MessagingChannelCodec RegSplitParts::messaging_channel_codec(Evaluator& ev) {
     // ── Issue #4763: structured channel payloads ─────────────────────────
     // A list / vector / hash payload (nested, with string and immediate
     // leaves) is DEEP-COPIED on channel:send: the sender serializes it into
@@ -960,11 +975,11 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
     // a value beyond kImmediate, local to this TU.
     //   'I' u64 raw | 'S' u64 n bytes | 'L' u64 n elems... tail
     //   'V' u64 n elems... | 'H' u64 n (key value)...
-    constexpr auto kChannelDatumKind4763 = static_cast<ChannelMessage::Kind>(2);
     constexpr int kChannelDatumMaxDepth4763 = 256;
     constexpr std::size_t kChannelDatumMaxNodes4763 = 4'000'000;
-    auto channel_encode_4763 = [&ev](const EvalValue& root, std::string& out,
-                                     std::string& why) -> bool {
+    MessagingChannelCodec codec;
+    codec.channel_encode_4763 = [&ev](const EvalValue& root, std::string& out,
+                                      std::string& why) -> bool {
         auto vref = ev.primitives_.lookup("vector-ref");
         auto vlen = ev.primitives_.lookup("vector-length");
         auto hkeys = ev.primitives_.lookup("hash-keys");
@@ -1056,7 +1071,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         };
         return enc(enc, root, 0);
     };
-    auto channel_decode_4763 = [&ev](const std::string& in) -> EvalValue {
+    codec.channel_decode_4763 = [&ev](const std::string& in) -> EvalValue {
         auto l2v = ev.primitives_.lookup("list->vector");
         auto mkhash = ev.primitives_.lookup("hash"); // (hash) = an empty table
         auto hset = ev.primitives_.lookup("hash-set!");
@@ -1126,23 +1141,16 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         };
         return dec(dec);
     };
-    auto channel_recv_value_4763 = [&ev, channel_decode_4763](ChannelMessage&& msg) -> EvalValue {
+    const auto channel_decode_4763 = codec.channel_decode_4763;
+    codec.channel_recv_value_4763 = [&ev, channel_decode_4763](ChannelMessage&& msg) -> EvalValue {
         if (msg.kind == kChannelDatumKind4763)
             return channel_decode_4763(msg.text);
         return channel_message_to_value(ev.string_heap_, std::move(msg));
     };
+    return codec;
+}
 
-    // Issue #4710: install the fiber:join result-root provider so the
-    // evaluator's reclaims (tree-walker + file-mode) mark the values of
-    // finished-but-unjoined fibers. Registration is idempotent (first
-    // install wins) and process-global, like the registry itself: a
-    // serve session's later Evaluators reuse it.
-    fiber_result_roots::install(&collect_fiber_result_roots);
-
-    // Issue #4053: ensure denseness body unlock hooks are live for http-post
-    // (module static ctor alone is not reliable across Soft --serve-async).
-    wire_denseness_body_lock_hooks();
-
+void RegSplitParts::register_messaging_core_primitives(PrimRegistrar add, Evaluator& ev) {
     // ═══════════════════════════════════════════════════════════════
 
     // P14: Inter-Agent Messaging (P0)
@@ -1309,7 +1317,258 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_int(0);
         return make_int(static_cast<std::int64_t>(aura::messaging::g_mailbox_count(svc)));
     });
+}
 
+// Issue #1585: the mailbox stats dashboard is one flat insert sequence; the
+// phases below are the issue groups it appends, so no function exceeds the
+// 300-line ceiling. Order is unchanged (helpers run in issue order).
+namespace {
+    // Issue #2511 / #2551: mailbox hold-exit drain + starvation fields.
+    template <typename InsertKv> void mf_mailbox_hold_exit_fields(InsertKv& insert_kv) {
+        using namespace aura::serve::mf_mailbox;
+        // Issue #2511: outermost Guard exit forced deferred drain under budget.
+        insert_kv("mailbox-hold-exit-drain-total",
+                  static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_hold_exit_drain_total.load(
+                      std::memory_order_relaxed)));
+        insert_kv(
+            "mailbox-hold-exit-drain-us-total",
+            static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_hold_exit_drain_us_total.load(
+                std::memory_order_relaxed)));
+        insert_kv("mailbox-hold-exit-drain-us-max",
+                  static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_hold_exit_drain_us_max.load(
+                      std::memory_order_relaxed)));
+        insert_kv(
+            "mailbox-hold-exit-starvation-total",
+            static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_hold_exit_starvation_total.load(
+                std::memory_order_relaxed)));
+        insert_kv("mailbox-hold-exit-force-resolved-total",
+                  static_cast<std::int64_t>(
+                      g_mf_mailbox_stats.mailbox_hold_exit_force_resolved_total.load(
+                          std::memory_order_relaxed)));
+        insert_kv("mailbox-hold-exit-drain-budget-us",
+                  static_cast<std::int64_t>(mailbox_hold_drain_budget_us()));
+        insert_kv("mailbox-hold-exit-drain-wired", 1);
+        insert_kv("schema-2511", 2511);
+        insert_kv("issue-2511", 2511);
+        // Issue #2551: production hard starvation + Agent throttle flag.
+        insert_kv(
+            "mailbox-hold-starvation-hard-total",
+            static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_hold_starvation_hard_total.load(
+                std::memory_order_relaxed)));
+        insert_kv(
+            "agent-throttle-for-mailbox-starvation",
+            static_cast<std::int64_t>(g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.load(
+                std::memory_order_relaxed)));
+        insert_kv("mailbox-hold-starvation-hard-wired", 1);
+        insert_kv("schema-2551", 2551);
+        insert_kv("issue-2551", 2551);
+    }
+
+    // Issue #2680 / #2849 / #2903: shared-evaluator mid-mutation gate + wait histogram.
+    template <typename InsertKv> void mf_mailbox_boundary_fields(InsertKv& insert_kv) {
+        using namespace aura::serve::mf_mailbox;
+        // Issue #2680 / #2849: shared-Evaluator mid-mutation delivery gate.
+        // under_boundary_* are the Agent-facing #2849 names (same authority
+        // as shared_evaluator_*). Production: hard-total under Strict /
+        // production defaults; Soft: soft_observe. Always Backpressure —
+        // never mid-mutation enqueue.
+        insert_kv("mailbox-shared-evaluator-deferred-total",
+                  static_cast<std::int64_t>(
+                      g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_total.load(
+                          std::memory_order_relaxed)));
+        insert_kv("mailbox-shared-evaluator-deferred-hard-total",
+                  static_cast<std::int64_t>(
+                      g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_hard_total.load(
+                          std::memory_order_relaxed)));
+        insert_kv("mailbox-shared-evaluator-deferred-soft-observe-total",
+                  static_cast<std::int64_t>(
+                      g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_soft_observe_total.load(
+                          std::memory_order_relaxed)));
+        insert_kv(
+            "mailbox-under-boundary-deferred-total",
+            static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_under_boundary_deferred_total.load(
+                std::memory_order_relaxed)));
+        insert_kv("mailbox-under-boundary-deferred-hard-total",
+                  static_cast<std::int64_t>(
+                      g_mf_mailbox_stats.mailbox_under_boundary_deferred_hard_total.load(
+                          std::memory_order_relaxed)));
+        insert_kv("mailbox-under-boundary-deferred-soft-observe-total",
+                  static_cast<std::int64_t>(
+                      g_mf_mailbox_stats.mailbox_under_boundary_deferred_soft_observe_total.load(
+                          std::memory_order_relaxed)));
+        insert_kv("mailbox-under-boundary-gate-wired", 1);
+        insert_kv("schema-2680", 2680);
+        insert_kv("issue-2680", 2680);
+        insert_kv("schema-2849", 2849);
+        insert_kv("issue-2849", 2849);
+        // Issue #2903: deferred-under-boundary wait histogram + p50/p99/max.
+        // Agents poll wait latency without stitching multiple queries.
+        // Soft / zero-defer path: counters stay 0 (no hist noise).
+        insert_kv(
+            "mailbox-under-boundary-wait-us-total",
+            static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_under_boundary_wait_us_total.load(
+                std::memory_order_relaxed)));
+        insert_kv(
+            "mailbox-under-boundary-wait-samples",
+            static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_under_boundary_wait_samples.load(
+                std::memory_order_relaxed)));
+        insert_kv(
+            "mailbox-under-boundary-wait-us-max",
+            static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_under_boundary_wait_us_max.load(
+                std::memory_order_relaxed)));
+        insert_kv(
+            "mailbox-under-boundary-wait-us-p50",
+            static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p50.load(
+                std::memory_order_relaxed)));
+        insert_kv(
+            "mailbox-under-boundary-wait-us-p99",
+            static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.load(
+                std::memory_order_relaxed)));
+        insert_kv("mailbox-under-boundary-wait-drop-total",
+                  static_cast<std::int64_t>(
+                      g_mf_mailbox_stats.mailbox_under_boundary_wait_drop_total.load(
+                          std::memory_order_relaxed)));
+        insert_kv(
+            "mailbox-under-boundary-wait-hist-lt-100us",
+            static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[0].load(
+                std::memory_order_relaxed)));
+        insert_kv(
+            "mailbox-under-boundary-wait-hist-lt-1ms",
+            static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[1].load(
+                std::memory_order_relaxed)));
+        insert_kv(
+            "mailbox-under-boundary-wait-hist-lt-10ms",
+            static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[2].load(
+                std::memory_order_relaxed)));
+        insert_kv(
+            "mailbox-under-boundary-wait-hist-lt-100ms",
+            static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[3].load(
+                std::memory_order_relaxed)));
+        insert_kv(
+            "mailbox-under-boundary-wait-hist-ge-100ms",
+            static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[4].load(
+                std::memory_order_relaxed)));
+        insert_kv("mailbox-under-boundary-wait-wired", 1);
+        insert_kv("schema-2903", 2903);
+        insert_kv("issue-2903", 2903);
+    }
+
+    // Issue #2958 / #3002 / #2987 / #3036 / #2587 / #2347 / #2972: SLO, delivery and mutation
+    // fields.
+    template <typename InsertKv> void mf_mailbox_slo_fields(InsertKv& insert_kv) {
+        using namespace aura::serve::mf_mailbox;
+        // Issue #2958: production hold-budget cancel on wait SLO breach.
+        insert_kv(
+            "mailbox-defer-slo-hold-cancel-total",
+            static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(
+                std::memory_order_relaxed)));
+        insert_kv(
+            "mailbox-defer-slo-soft-observe-total",
+            static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_defer_slo_soft_observe_total.load(
+                std::memory_order_relaxed)));
+        insert_kv("mailbox-defer-slo-breach-observe-total",
+                  static_cast<std::int64_t>(
+                      g_mf_mailbox_stats.mailbox_defer_slo_breach_observe_total.load(
+                          std::memory_order_relaxed)));
+        insert_kv(
+            "mailbox-defer-slo-no-holder-total",
+            static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_defer_slo_no_holder_total.load(
+                std::memory_order_relaxed)));
+        insert_kv(
+            "mailbox-defer-slo-hold-cancel-wired",
+            static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_wired.load(
+                std::memory_order_relaxed)));
+        insert_kv("schema-2958", 2958);
+        insert_kv("issue-2958", 2958);
+        // Issue #3002: SSOT live p99 sample feeds #2947 deny + #2958 cancel.
+        insert_kv("mailbox-hold-slo-ssot-wired",
+                  static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_hold_slo_ssot_wired.load(
+                      std::memory_order_relaxed)));
+        insert_kv("schema-3002", 3002);
+        insert_kv("issue-3002", 3002);
+        // Issue #2987: mailbox delivery residual hard-AND (steal table).
+        insert_kv("mailbox-delivery-reject-layout-stamp-total",
+                  static_cast<std::int64_t>(
+                      g_mf_mailbox_stats.mailbox_delivery_reject_layout_stamp_total.load(
+                          std::memory_order_relaxed)));
+        insert_kv("mailbox-delivery-reject-ticket-stale-total",
+                  static_cast<std::int64_t>(
+                      g_mf_mailbox_stats.mailbox_delivery_reject_ticket_stale_total.load(
+                          std::memory_order_relaxed)));
+        insert_kv("mailbox-delivery-reject-residual-total",
+                  static_cast<std::int64_t>(
+                      g_mf_mailbox_stats.mailbox_delivery_reject_residual_total.load(
+                          std::memory_order_relaxed)));
+        insert_kv(
+            "mailbox-delivery-reject-hard-total",
+            static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_delivery_reject_hard_total.load(
+                std::memory_order_relaxed)));
+        insert_kv("mailbox-delivery-reject-soft-observe-total",
+                  static_cast<std::int64_t>(
+                      g_mf_mailbox_stats.mailbox_delivery_reject_soft_observe_total.load(
+                          std::memory_order_relaxed)));
+        insert_kv("mailbox-delivery-safety-wired",
+                  static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_delivery_safety_wired.load(
+                      std::memory_order_relaxed)));
+        insert_kv("schema-2987", 2987);
+        insert_kv("issue-2987", 2987);
+        // Issue #3036: production residual RejectHard (no Soft escape).
+        insert_kv(
+            "mailbox-residual-hard-reject-total",
+            static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_residual_hard_reject_total.load(
+                std::memory_order_relaxed)));
+        insert_kv(
+            "mailbox-residual-hard-reject-wired",
+            static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_residual_hard_reject_wired.load(
+                std::memory_order_relaxed)));
+        insert_kv("schema-3036", 3036);
+        insert_kv("issue-3036", 3036);
+        // Issue #2587: mutate admission gate counter (hard reject
+        // vs metric-only soft path; AC1 / AC2). Zero cost when
+        // agent-throttle flag == 0 — single relaxed load at every
+        // gate site (try_acquire + try_acquire_for_region +
+        // public mutate prims + TransactionGuard host callback
+        // transitively).
+        insert_kv("mutate-rejected-mailbox-starvation-total",
+                  static_cast<std::int64_t>(
+                      g_mf_mailbox_stats.mutate_rejected_mailbox_starvation_total.load(
+                          std::memory_order_relaxed)));
+        insert_kv("mutate-rejected-mailbox-starvation-wired", 1);
+        insert_kv("schema-2587", 2587);
+        insert_kv("issue-2587", 2587);
+        // Issue #2347: Strict hard audit + optional Guard-window force-rollback.
+        // Soft path leaves hard-total / force-rollback-total at 0; Policy A
+        // soft reject remains on recv-rejected-in-mutation-boundary.
+        // Capacity 48 holds pre-#2347 keys + these additive rows without drop.
+        const auto hard_tot = g_mf_mailbox_stats.recv_rejected_in_mutation_boundary_hard_total.load(
+            std::memory_order_relaxed);
+        const auto force_rb =
+            g_mf_mailbox_stats.recv_boundary_force_rollback_total.load(std::memory_order_relaxed);
+        insert_kv("recv-rejected-in-mutation-boundary-hard-total",
+                  static_cast<std::int64_t>(hard_tot));
+        insert_kv("recv_rejected_in_mutation_boundary_hard_total",
+                  static_cast<std::int64_t>(hard_tot));
+        insert_kv("recv-boundary-force-rollback-total", static_cast<std::int64_t>(force_rb));
+        insert_kv("recv_boundary_force_rollback_total", static_cast<std::int64_t>(force_rb));
+        insert_kv("mutate-mailbox-strict-wired", 1);
+        insert_kv("recv-boundary-hard-wired", 1);
+        insert_kv("schema-2347", 2347);
+        insert_kv("issue-2347", 2347);
+        // Issue #2972: per-mailbox inflight credit (additive).
+        insert_kv("mailbox-credit-bp-total",
+                  static_cast<std::int64_t>(
+                      g_mf_mailbox_stats.mailbox_credit_bp_total.load(std::memory_order_relaxed)));
+        insert_kv("mailbox-inflight-hwm",
+                  static_cast<std::int64_t>(
+                      g_mf_mailbox_stats.mailbox_inflight_hwm.load(std::memory_order_relaxed)));
+        insert_kv("mailbox-credit-wired", 1);
+        insert_kv("schema-2972", kMailboxCreditInflightIssue);
+        insert_kv("issue-2972", kMailboxCreditInflightIssue);
+    }
+
+} // namespace
+
+void RegSplitParts::register_messaging_mailbox_stats_primitive(Evaluator& ev) {
     // Issue #1585: process-global MultiFiberMailbox stats surface.
     // Full attach/broadcast/recv API is C++ (multi_fiber_mailbox.h);
     // agent frameworks bind via this dashboard + serve hooks.
@@ -1428,239 +1687,9 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("mailbox-defer-drain-sla-wired", 1);
             insert_kv("schema-2378", 2378);
             insert_kv("issue-2378", 2378);
-            // Issue #2511: outermost Guard exit forced deferred drain under budget.
-            insert_kv(
-                "mailbox-hold-exit-drain-total",
-                static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_hold_exit_drain_total.load(
-                    std::memory_order_relaxed)));
-            insert_kv(
-                "mailbox-hold-exit-drain-us-total",
-                static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_hold_exit_drain_us_total.load(
-                    std::memory_order_relaxed)));
-            insert_kv(
-                "mailbox-hold-exit-drain-us-max",
-                static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_hold_exit_drain_us_max.load(
-                    std::memory_order_relaxed)));
-            insert_kv("mailbox-hold-exit-starvation-total",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_hold_exit_starvation_total.load(
-                              std::memory_order_relaxed)));
-            insert_kv("mailbox-hold-exit-force-resolved-total",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_hold_exit_force_resolved_total.load(
-                              std::memory_order_relaxed)));
-            insert_kv("mailbox-hold-exit-drain-budget-us",
-                      static_cast<std::int64_t>(mailbox_hold_drain_budget_us()));
-            insert_kv("mailbox-hold-exit-drain-wired", 1);
-            insert_kv("schema-2511", 2511);
-            insert_kv("issue-2511", 2511);
-            // Issue #2551: production hard starvation + Agent throttle flag.
-            insert_kv("mailbox-hold-starvation-hard-total",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_hold_starvation_hard_total.load(
-                              std::memory_order_relaxed)));
-            insert_kv("agent-throttle-for-mailbox-starvation",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.load(
-                              std::memory_order_relaxed)));
-            insert_kv("mailbox-hold-starvation-hard-wired", 1);
-            insert_kv("schema-2551", 2551);
-            insert_kv("issue-2551", 2551);
-            // Issue #2680 / #2849: shared-Evaluator mid-mutation delivery gate.
-            // under_boundary_* are the Agent-facing #2849 names (same authority
-            // as shared_evaluator_*). Production: hard-total under Strict /
-            // production defaults; Soft: soft_observe. Always Backpressure —
-            // never mid-mutation enqueue.
-            insert_kv("mailbox-shared-evaluator-deferred-total",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_total.load(
-                              std::memory_order_relaxed)));
-            insert_kv("mailbox-shared-evaluator-deferred-hard-total",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_hard_total.load(
-                              std::memory_order_relaxed)));
-            insert_kv(
-                "mailbox-shared-evaluator-deferred-soft-observe-total",
-                static_cast<std::int64_t>(
-                    g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_soft_observe_total.load(
-                        std::memory_order_relaxed)));
-            insert_kv("mailbox-under-boundary-deferred-total",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_under_boundary_deferred_total.load(
-                              std::memory_order_relaxed)));
-            insert_kv("mailbox-under-boundary-deferred-hard-total",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_under_boundary_deferred_hard_total.load(
-                              std::memory_order_relaxed)));
-            insert_kv(
-                "mailbox-under-boundary-deferred-soft-observe-total",
-                static_cast<std::int64_t>(
-                    g_mf_mailbox_stats.mailbox_under_boundary_deferred_soft_observe_total.load(
-                        std::memory_order_relaxed)));
-            insert_kv("mailbox-under-boundary-gate-wired", 1);
-            insert_kv("schema-2680", 2680);
-            insert_kv("issue-2680", 2680);
-            insert_kv("schema-2849", 2849);
-            insert_kv("issue-2849", 2849);
-            // Issue #2903: deferred-under-boundary wait histogram + p50/p99/max.
-            // Agents poll wait latency without stitching multiple queries.
-            // Soft / zero-defer path: counters stay 0 (no hist noise).
-            insert_kv("mailbox-under-boundary-wait-us-total",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_under_boundary_wait_us_total.load(
-                              std::memory_order_relaxed)));
-            insert_kv("mailbox-under-boundary-wait-samples",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_under_boundary_wait_samples.load(
-                              std::memory_order_relaxed)));
-            insert_kv("mailbox-under-boundary-wait-us-max",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_under_boundary_wait_us_max.load(
-                              std::memory_order_relaxed)));
-            insert_kv("mailbox-under-boundary-wait-us-p50",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p50.load(
-                              std::memory_order_relaxed)));
-            insert_kv("mailbox-under-boundary-wait-us-p99",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.load(
-                              std::memory_order_relaxed)));
-            insert_kv("mailbox-under-boundary-wait-drop-total",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_under_boundary_wait_drop_total.load(
-                              std::memory_order_relaxed)));
-            insert_kv("mailbox-under-boundary-wait-hist-lt-100us",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[0].load(
-                              std::memory_order_relaxed)));
-            insert_kv("mailbox-under-boundary-wait-hist-lt-1ms",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[1].load(
-                              std::memory_order_relaxed)));
-            insert_kv("mailbox-under-boundary-wait-hist-lt-10ms",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[2].load(
-                              std::memory_order_relaxed)));
-            insert_kv("mailbox-under-boundary-wait-hist-lt-100ms",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[3].load(
-                              std::memory_order_relaxed)));
-            insert_kv("mailbox-under-boundary-wait-hist-ge-100ms",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[4].load(
-                              std::memory_order_relaxed)));
-            insert_kv("mailbox-under-boundary-wait-wired", 1);
-            insert_kv("schema-2903", 2903);
-            insert_kv("issue-2903", 2903);
-            // Issue #2958: production hold-budget cancel on wait SLO breach.
-            insert_kv("mailbox-defer-slo-hold-cancel-total",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(
-                              std::memory_order_relaxed)));
-            insert_kv("mailbox-defer-slo-soft-observe-total",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_defer_slo_soft_observe_total.load(
-                              std::memory_order_relaxed)));
-            insert_kv("mailbox-defer-slo-breach-observe-total",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_defer_slo_breach_observe_total.load(
-                              std::memory_order_relaxed)));
-            insert_kv(
-                "mailbox-defer-slo-no-holder-total",
-                static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_defer_slo_no_holder_total.load(
-                    std::memory_order_relaxed)));
-            insert_kv("mailbox-defer-slo-hold-cancel-wired",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_wired.load(
-                              std::memory_order_relaxed)));
-            insert_kv("schema-2958", 2958);
-            insert_kv("issue-2958", 2958);
-            // Issue #3002: SSOT live p99 sample feeds #2947 deny + #2958 cancel.
-            insert_kv("mailbox-hold-slo-ssot-wired",
-                      static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_hold_slo_ssot_wired.load(
-                          std::memory_order_relaxed)));
-            insert_kv("schema-3002", 3002);
-            insert_kv("issue-3002", 3002);
-            // Issue #2987: mailbox delivery residual hard-AND (steal table).
-            insert_kv("mailbox-delivery-reject-layout-stamp-total",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_delivery_reject_layout_stamp_total.load(
-                              std::memory_order_relaxed)));
-            insert_kv("mailbox-delivery-reject-ticket-stale-total",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_delivery_reject_ticket_stale_total.load(
-                              std::memory_order_relaxed)));
-            insert_kv("mailbox-delivery-reject-residual-total",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_delivery_reject_residual_total.load(
-                              std::memory_order_relaxed)));
-            insert_kv("mailbox-delivery-reject-hard-total",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_delivery_reject_hard_total.load(
-                              std::memory_order_relaxed)));
-            insert_kv("mailbox-delivery-reject-soft-observe-total",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_delivery_reject_soft_observe_total.load(
-                              std::memory_order_relaxed)));
-            insert_kv(
-                "mailbox-delivery-safety-wired",
-                static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_delivery_safety_wired.load(
-                    std::memory_order_relaxed)));
-            insert_kv("schema-2987", 2987);
-            insert_kv("issue-2987", 2987);
-            // Issue #3036: production residual RejectHard (no Soft escape).
-            insert_kv("mailbox-residual-hard-reject-total",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_residual_hard_reject_total.load(
-                              std::memory_order_relaxed)));
-            insert_kv("mailbox-residual-hard-reject-wired",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_residual_hard_reject_wired.load(
-                              std::memory_order_relaxed)));
-            insert_kv("schema-3036", 3036);
-            insert_kv("issue-3036", 3036);
-            // Issue #2587: mutate admission gate counter (hard reject
-            // vs metric-only soft path; AC1 / AC2). Zero cost when
-            // agent-throttle flag == 0 — single relaxed load at every
-            // gate site (try_acquire + try_acquire_for_region +
-            // public mutate prims + TransactionGuard host callback
-            // transitively).
-            insert_kv("mutate-rejected-mailbox-starvation-total",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mutate_rejected_mailbox_starvation_total.load(
-                              std::memory_order_relaxed)));
-            insert_kv("mutate-rejected-mailbox-starvation-wired", 1);
-            insert_kv("schema-2587", 2587);
-            insert_kv("issue-2587", 2587);
-            // Issue #2347: Strict hard audit + optional Guard-window force-rollback.
-            // Soft path leaves hard-total / force-rollback-total at 0; Policy A
-            // soft reject remains on recv-rejected-in-mutation-boundary.
-            // Capacity 48 holds pre-#2347 keys + these additive rows without drop.
-            const auto hard_tot =
-                g_mf_mailbox_stats.recv_rejected_in_mutation_boundary_hard_total.load(
-                    std::memory_order_relaxed);
-            const auto force_rb = g_mf_mailbox_stats.recv_boundary_force_rollback_total.load(
-                std::memory_order_relaxed);
-            insert_kv("recv-rejected-in-mutation-boundary-hard-total",
-                      static_cast<std::int64_t>(hard_tot));
-            insert_kv("recv_rejected_in_mutation_boundary_hard_total",
-                      static_cast<std::int64_t>(hard_tot));
-            insert_kv("recv-boundary-force-rollback-total", static_cast<std::int64_t>(force_rb));
-            insert_kv("recv_boundary_force_rollback_total", static_cast<std::int64_t>(force_rb));
-            insert_kv("mutate-mailbox-strict-wired", 1);
-            insert_kv("recv-boundary-hard-wired", 1);
-            insert_kv("schema-2347", 2347);
-            insert_kv("issue-2347", 2347);
-            // Issue #2972: per-mailbox inflight credit (additive).
-            insert_kv("mailbox-credit-bp-total",
-                      static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_credit_bp_total.load(
-                          std::memory_order_relaxed)));
-            insert_kv("mailbox-inflight-hwm",
-                      static_cast<std::int64_t>(
-                          g_mf_mailbox_stats.mailbox_inflight_hwm.load(std::memory_order_relaxed)));
-            insert_kv("mailbox-credit-wired", 1);
-            insert_kv("schema-2972", kMailboxCreditInflightIssue);
-            insert_kv("issue-2972", kMailboxCreditInflightIssue);
+            mf_mailbox_hold_exit_fields(insert_kv);
+            mf_mailbox_boundary_fields(insert_kv);
+            mf_mailbox_slo_fields(insert_kv);
             std::size_t hidx = 0;
             {
                 // Issue #4860: unlocked size()+push_back raced a concurrent publish
@@ -1672,7 +1701,9 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             }
             return make_hash(hidx);
         });
+}
 
+void RegSplitParts::register_messaging_parallel_orch_stats_primitive(Evaluator& ev) {
     // Issue #1586 / #1881: process-global parallel_orch / parallel_intend stats.
     // Full spawn/join/aggregate API is C++ (parallel_orch.h); agent EDSL
     // surface for (parallel-intend ...) is #1587.
@@ -1755,7 +1786,9 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             }
             return make_hash(hidx);
         });
+}
 
+void RegSplitParts::register_messaging_fiber_spawn_primitive(PrimRegistrar add, Evaluator& ev) {
     // (fiber:spawn fn) — Spawn a fiber (async).
     // fn is a 0-arg closure. Result retrievable via (fiber:join fid).
     //
@@ -2001,7 +2034,10 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         return make_bool(false);
     });
+}
 
+void RegSplitParts::register_messaging_fiber_lifecycle_primitives(PrimRegistrar add,
+                                                                  Evaluator& ev) {
     // Issue #2656: which backend (fiber:spawn) will use right now.
     // "scheduler" | "thread" — denseness hosts can assert concurrent path.
     add("fiber:spawn-backend", [](const auto&) -> EvalValue {
@@ -2155,7 +2191,9 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         // the *agents* registry when g_session_create is unavailable.
         return ev.make_merr("no-serve", "agent:spawn requires serve mode or a local handler");
     });
+}
 
+void RegSplitParts::register_messaging_fiber_join_primitive(PrimRegistrar add, Evaluator& ev) {
     // (fiber:join fiber-id) — Wait for a fiber to complete and return its result.
     //
     // Issue #119: replaces the previous 200k-iteration spin-wait
@@ -2187,41 +2225,11 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         auto fid = static_cast<int64_t>(as_int(a[0]));
 
-        // Issue #4839: already joined once? Return the cached value (a
-        // raised value is cached as that Error value, so a second join
-        // re-raises it). Checked under the same mutex as registration.
-        //
-        // Issue #4872: a fid that is in neither the result registry nor the
-        // bounded repeat-join cache can never be published: fiber:spawn
-        // registers s_fiber_results[fid] before it returns the fid, and a
-        // join erases it. So it is an older repeat join whose cache entry
-        // the FIFO evicted (more than kFiberJoinedCacheCap other joins
-        // since), or a fid fiber:spawn never returned. Both answer void at
-        // once -- the stdin/thread wait paths below would otherwise poll for
-        // a result that cannot arrive (the 200 s deadline, or forever on a
-        // scheduler joiner). The one exception is a live scheduler fiber
-        // that has no fiber:spawn result slot (serve-async join on a raw
-        // fiber id): that keeps the wait-for-done path below.
-        {
-            bool unknown = false;
-            {
-                std::scoped_lock<std::mutex> lock(s_fiber_results_mtx);
-                if (s_fiber_results.find(fid) == s_fiber_results.end()) {
-                    auto oit = s_fiber_joined.find(static_cast<const void*>(&ev));
-                    if (oit != s_fiber_joined.end()) {
-                        auto jit = oit->second.find(fid);
-                        if (jit != oit->second.end())
-                            return jit->second;
-                    }
-                    unknown = true;
-                }
-            }
-            if (unknown) {
-                if (!(aura::messaging::g_fiber_yield && aura::messaging::g_fiber_lookup &&
-                      aura::messaging::g_fiber_lookup(fid) != nullptr))
-                    return make_void();
-            }
-        }
+        // Issue #4839 / #4872: an already-joined fid (or one that can never be
+        // published) answers at once; see fiber_join_cached_result.
+        if (auto cached = fiber_join_cached_result(ev, fid))
+            return *cached;
+
 
         // Issue #4697: release the pending body root once this join has
         // consumed the fiber (the body has run). The root is the
@@ -2460,94 +2468,138 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                 }
             }
         }
+        return fiber_join_publish_result(ev, fid);
+    });
+}
 
-        // Result is ready (or timed out). Fetch and return.
-        std::shared_ptr<std::optional<EvalValue>> result_ptr;
+EvalValue RegSplitParts::fiber_join_publish_result(Evaluator& ev, std::int64_t fid) {
+    // Result is ready (or timed out). Fetch and return.
+    std::shared_ptr<std::optional<EvalValue>> result_ptr;
+    {
+        std::scoped_lock<std::mutex> lock(s_fiber_results_mtx);
+        auto it = s_fiber_results.find(fid);
+        if (it == s_fiber_results.end())
+            return make_void();
+        if (!it->second.ready || !it->second.value || !it->second.value->has_value()) {
+            s_fiber_results.erase(it);
+            return make_void();
+        }
+        result_ptr = std::move(it->second.value);
+        s_fiber_results.erase(it);
+        // Issue #4839: remember the published value for later joins.
+        // Issue #4854: bounded FIFO — the cache is a convenience, not an
+        // ownership record; retaining every fiber was a linear leak and
+        // made each (gc-heap) walk the whole history.
+        {
+            auto* owner = static_cast<const void*>(&ev);
+            auto& joined = s_fiber_joined[owner];
+            auto& order = s_fiber_joined_order[owner];
+            joined[fid] = **result_ptr;
+            order.push_back(fid);
+            while (order.size() > kFiberJoinedCacheCap) {
+                joined.erase(order.front());
+                order.pop_front();
+            }
+        }
+        // Issue #4708: the fiber is joined -- drop its cancel state.
+        fiber_cancel_forget(fid);
+    }
+
+    // Issue #3394: join the thread-backend worker now that its body
+    // has published (registry miss = scheduler backend, no-op).
+    // Extract under the registry mutex, join outside it so a slow
+    // body tail cannot hold the registry hostage.
+    {
+        std::thread worker;
+        {
+            std::scoped_lock<std::mutex> lock(s_thread_fiber_threads_mtx);
+            auto it = s_thread_fiber_threads.find(fid);
+            if (it != s_thread_fiber_threads.end()) {
+                worker = std::move(it->second.second);
+                s_thread_fiber_threads.erase(it);
+            }
+        }
+        if (worker.joinable())
+            worker.join();
+    }
+
+    // Issue #164 sub-fix #4: re-validate ev.defuse_version_ after
+    // wakeup. While the joiner was blocked (via the proper-
+    // blocking path OR the cv-degradation path), mutate:*
+    // primitives in OTHER fibers may have incremented
+    // ev.defuse_version_ (twice per mutation: once before and
+    // once after, with a yield_mutation_boundary between).
+    //
+    // A mismatch between the version we observed at join start
+    // and the version we observe at join wakeup means the
+    // workspace mutated during the join — which is the
+    // transient inconsistency the issue calls out.
+    //
+    // The fix: capture the version at the start of the wait,
+    // re-check at the end. On mismatch, emit a loud warning
+    // (stderr) so the operator sees the inconsistency. We
+    // do NOT abort — the result is still valid; the warning
+    // is for observability. Future work could surface this
+    // as a structured diagnostic.
+    //
+    // The captured version is updated only when the wait
+    // actually happened (i.e., the joiner didn't fast-path
+    // the already-done target). For fast-path joins, there's
+    // no wait, so no re-validation needed.
+    auto dv_now = ev.defuse_version_.load(std::memory_order_acquire);
+    if (ev.defuse_version_at_wait_ != dv_now && ev.defuse_version_at_wait_ != 0) {
+        std::println(std::cerr,
+                     "[fiber:join] WARN: workspace mutated during join "
+                     "(defuse_version {} -> {}). The joiner resumed after "
+                     "concurrent mutate:* primitives. Result is still valid; "
+                     "re-validate callers if they depend on workspace state.",
+                     ev.defuse_version_at_wait_, dv_now);
+    }
+    ev.defuse_version_at_wait_ = 0; // reset for next join
+
+    return std::move(**result_ptr);
+}
+
+std::optional<EvalValue> RegSplitParts::fiber_join_cached_result(Evaluator& ev, std::int64_t fid) {
+    // Issue #4839: already joined once? Return the cached value (a
+    // raised value is cached as that Error value, so a second join
+    // re-raises it). Checked under the same mutex as registration.
+    //
+    // Issue #4872: a fid that is in neither the result registry nor the
+    // bounded repeat-join cache can never be published: fiber:spawn
+    // registers s_fiber_results[fid] before it returns the fid, and a
+    // join erases it. So it is an older repeat join whose cache entry
+    // the FIFO evicted (more than kFiberJoinedCacheCap other joins
+    // since), or a fid fiber:spawn never returned. Both answer void at
+    // once -- the stdin/thread wait paths below would otherwise poll for
+    // a result that cannot arrive (the 200 s deadline, or forever on a
+    // scheduler joiner). The one exception is a live scheduler fiber
+    // that has no fiber:spawn result slot (serve-async join on a raw
+    // fiber id): that keeps the wait-for-done path below.
+    {
+        bool unknown = false;
         {
             std::scoped_lock<std::mutex> lock(s_fiber_results_mtx);
-            auto it = s_fiber_results.find(fid);
-            if (it == s_fiber_results.end())
-                return make_void();
-            if (!it->second.ready || !it->second.value || !it->second.value->has_value()) {
-                s_fiber_results.erase(it);
-                return make_void();
-            }
-            result_ptr = std::move(it->second.value);
-            s_fiber_results.erase(it);
-            // Issue #4839: remember the published value for later joins.
-            // Issue #4854: bounded FIFO — the cache is a convenience, not an
-            // ownership record; retaining every fiber was a linear leak and
-            // made each (gc-heap) walk the whole history.
-            {
-                auto* owner = static_cast<const void*>(&ev);
-                auto& joined = s_fiber_joined[owner];
-                auto& order = s_fiber_joined_order[owner];
-                joined[fid] = **result_ptr;
-                order.push_back(fid);
-                while (order.size() > kFiberJoinedCacheCap) {
-                    joined.erase(order.front());
-                    order.pop_front();
+            if (s_fiber_results.find(fid) == s_fiber_results.end()) {
+                auto oit = s_fiber_joined.find(static_cast<const void*>(&ev));
+                if (oit != s_fiber_joined.end()) {
+                    auto jit = oit->second.find(fid);
+                    if (jit != oit->second.end())
+                        return jit->second;
                 }
+                unknown = true;
             }
-            // Issue #4708: the fiber is joined -- drop its cancel state.
-            fiber_cancel_forget(fid);
         }
-
-        // Issue #3394: join the thread-backend worker now that its body
-        // has published (registry miss = scheduler backend, no-op).
-        // Extract under the registry mutex, join outside it so a slow
-        // body tail cannot hold the registry hostage.
-        {
-            std::thread worker;
-            {
-                std::scoped_lock<std::mutex> lock(s_thread_fiber_threads_mtx);
-                auto it = s_thread_fiber_threads.find(fid);
-                if (it != s_thread_fiber_threads.end()) {
-                    worker = std::move(it->second.second);
-                    s_thread_fiber_threads.erase(it);
-                }
-            }
-            if (worker.joinable())
-                worker.join();
+        if (unknown) {
+            if (!(aura::messaging::g_fiber_yield && aura::messaging::g_fiber_lookup &&
+                  aura::messaging::g_fiber_lookup(fid) != nullptr))
+                return make_void();
         }
+    }
+    return std::nullopt;
+}
 
-        // Issue #164 sub-fix #4: re-validate ev.defuse_version_ after
-        // wakeup. While the joiner was blocked (via the proper-
-        // blocking path OR the cv-degradation path), mutate:*
-        // primitives in OTHER fibers may have incremented
-        // ev.defuse_version_ (twice per mutation: once before and
-        // once after, with a yield_mutation_boundary between).
-        //
-        // A mismatch between the version we observed at join start
-        // and the version we observe at join wakeup means the
-        // workspace mutated during the join — which is the
-        // transient inconsistency the issue calls out.
-        //
-        // The fix: capture the version at the start of the wait,
-        // re-check at the end. On mismatch, emit a loud warning
-        // (stderr) so the operator sees the inconsistency. We
-        // do NOT abort — the result is still valid; the warning
-        // is for observability. Future work could surface this
-        // as a structured diagnostic.
-        //
-        // The captured version is updated only when the wait
-        // actually happened (i.e., the joiner didn't fast-path
-        // the already-done target). For fast-path joins, there's
-        // no wait, so no re-validation needed.
-        auto dv_now = ev.defuse_version_.load(std::memory_order_acquire);
-        if (ev.defuse_version_at_wait_ != dv_now && ev.defuse_version_at_wait_ != 0) {
-            std::println(std::cerr,
-                         "[fiber:join] WARN: workspace mutated during join "
-                         "(defuse_version {} -> {}). The joiner resumed after "
-                         "concurrent mutate:* primitives. Result is still valid; "
-                         "re-validate callers if they depend on workspace state.",
-                         ev.defuse_version_at_wait_, dv_now);
-        }
-        ev.defuse_version_at_wait_ = 0; // reset for next join
-
-        return std::move(**result_ptr);
-    });
-
+void RegSplitParts::register_messaging_scheduler_primitives(PrimRegistrar add, Evaluator& ev) {
     // ── orch:metrics — scheduler metrics (Issue #32) ─────────────
     // (orch:metrics) → Returns a JSON string with scheduler counters.
     // Fields: fibers_spawned, fibers_completed, io_events,
@@ -2597,7 +2649,12 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         return types::make_bool(false);
     });
+}
 
+void RegSplitParts::register_messaging_channel_primitives(PrimRegistrar add, Evaluator& ev,
+                                                          const MessagingChannelCodec& codec) {
+    const auto& channel_encode_4763 = codec.channel_encode_4763;
+    const auto& channel_recv_value_4763 = codec.channel_recv_value_4763;
     // (channel:create [buffer-size]) — Create a new channel
     // Returns channel-id (fixnum) or error.
     // buffer-size defaults to 0 (rendezvous/synchronous).
@@ -2855,7 +2912,9 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         return make_bool(true);
     });
+}
 
+void RegSplitParts::register_messaging_agent_list_primitive(PrimRegistrar add, Evaluator& ev) {
     // (_agent:list) — List all active agent sessions (internal primitive)
     // Called by the Aura-level agent:list wrapper.
     add("_agent:list", [&ev](const auto&) -> EvalValue {
@@ -2871,6 +2930,31 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         return result;
     });
+}
+
+void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
+    const auto codec = RegSplitParts::messaging_channel_codec(ev);
+
+    // Issue #4710: install the fiber:join result-root provider so the
+    // evaluator's reclaims (tree-walker + file-mode) mark the values of
+    // finished-but-unjoined fibers. Registration is idempotent (first
+    // install wins) and process-global, like the registry itself: a
+    // serve session's later Evaluators reuse it.
+    fiber_result_roots::install(&collect_fiber_result_roots);
+
+    // Issue #4053: ensure denseness body unlock hooks are live for http-post
+    // (module static ctor alone is not reliable across Soft --serve-async).
+    wire_denseness_body_lock_hooks();
+
+    RegSplitParts::register_messaging_core_primitives(add, ev);
+    RegSplitParts::register_messaging_mailbox_stats_primitive(ev);
+    RegSplitParts::register_messaging_parallel_orch_stats_primitive(ev);
+    RegSplitParts::register_messaging_fiber_spawn_primitive(add, ev);
+    RegSplitParts::register_messaging_fiber_lifecycle_primitives(add, ev);
+    RegSplitParts::register_messaging_fiber_join_primitive(add, ev);
+    RegSplitParts::register_messaging_scheduler_primitives(add, ev);
+    RegSplitParts::register_messaging_channel_primitives(add, ev, codec);
+    RegSplitParts::register_messaging_agent_list_primitive(add, ev);
 }
 
 } // namespace aura::compiler::primitives_detail
