@@ -121,7 +121,10 @@ static void ac3_soft_zero_cost() {
           "existing snapshot_audit_wal still present (no new file-scan API)");
     CHECK(src.find("forensic_source = 0") != std::string::npos,
           "forensic_source initialized to 0 (mid==0 short-circuit)");
-    const auto compute_pos = src.find("std::int64_t forensic_source = 0;");
+    // Two declarations: the legacy pre-fold face and the #3371 face
+    // block. Anchor on the last one so the 1500-char window still covers
+    // the order guard + WAL probe after #4647 extracted the fold.
+    const auto compute_pos = src.rfind("std::int64_t forensic_source = 0;");
     CHECK(compute_pos != std::string::npos, "forensic_source declaration present");
     if (compute_pos != std::string::npos) {
         const auto window_end = std::min<std::size_t>(compute_pos + 1500, src.size());
@@ -276,8 +279,11 @@ static void ac10_wal_fold_autoscan_3674() {
     CHECK(!src.empty(), "evaluator_primitives_security.cpp readable");
     CHECK(src.find("Issue #3674") != std::string::npos, "cites #3674");
     CHECK(src.find("const bool auto_durable") != std::string::npos, "auto_durable arm present");
-    CHECK(src.find("join_mid != 0 && !typed_hit && !se_ring_has_mid && wal_enabled") !=
-              std::string::npos,
+    // clang-format wraps this condition across lines; match whitespace-
+    // insensitively so the AC pins the semantics, not the wrap.
+    static const std::regex auto_durable_re(
+        R"(join_mid\s*!=\s*0\s*&&\s*!typed_hit\s*&&\s*!se_ring_has_mid\s*&&\s*wal_enabled)");
+    CHECK(std::regex_search(src, auto_durable_re),
           "auto_durable gated on both rings miss + WAL enabled");
     CHECK(src.find("if ((want_durable || auto_durable) && join_mid != 0 &&") != std::string::npos,
           "durable gate admits auto_durable beside :durable");
@@ -600,13 +606,22 @@ static void ac4647_4_source_no_commit_mutator() {
     CHECK(!src.empty(), "evaluator_primitives_security.cpp readable");
     const auto reg = src.find("\"query:evolution-audit-decision\", [&ev](const auto& args)");
     CHECK(reg != std::string::npos, "4647 AC4: handler registration found");
-    const auto face = src.find("last_proof_face_v_read()");
+    // #4647 split the fold body into load_evolution_audit_memory_face()
+    // and the handler now calls it. The read lives in that helper, so
+    // anchor there and keep the negative window on the fold body.
+    const auto helper = src.find("load_evolution_audit_memory_face(Ev& ev");
+    CHECK(helper != std::string::npos, "4647 AC4: fold helper extracted");
+    const auto face = helper == std::string::npos ? std::string::npos
+                                                  : src.find("last_proof_face_v_read()", helper);
     CHECK(face != std::string::npos, "4647 AC4: the fold reads the last stamped proof face");
-    if (reg != std::string::npos && face != std::string::npos) {
-        CHECK(face > reg, "4647 AC4: the proof-face read sits inside the handler");
-        const auto tail = src.find("} // namespace aura::compiler::primitives_detail", reg);
+    if (reg != std::string::npos && face != std::string::npos && helper != std::string::npos) {
+        CHECK(face > helper, "4647 AC4: the proof-face read sits inside the fold helper");
+        CHECK(src.find("auto face = load_evolution_audit_memory_face(ev, args)", reg) !=
+                  std::string::npos,
+              "4647 AC4: the handler calls the extracted fold helper");
+        const auto tail = src.find("} // namespace aura::compiler::primitives_detail", helper);
         const auto window_end = (tail == std::string::npos) ? src.size() : tail;
-        const std::string window(src, reg, window_end - reg);
+        const std::string window(src, helper, window_end - helper);
         CHECK(window.find("commit_readiness(") == std::string::npos,
               "4647 AC4: the fold never calls commit_readiness / commit_readiness_live_policy");
         CHECK(window.find("aura_force_residual_castop_undermark_into_cone()") == std::string::npos,

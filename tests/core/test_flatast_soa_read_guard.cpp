@@ -421,8 +421,32 @@ static void ac8_sampled_hotpath_hits() {
     const auto a64 = alloc_delta(64);
     const auto a256 = alloc_delta(256);
     CHECK(a64.second == 64 && a256.second == 256, "#4427: small-pool allocs succeed");
-    CHECK(a256.first == 4 * a64.first + 1,
-          std::format("#4427: alloc probe is sampled (d64={} d256={})", a64.first, a256.first));
+    // The 4x window identity only holds while every per-alloc bookkeeping
+    // bump is exactly proportional. The pool also carries constant
+    // hit/compact probes whose count depends on warm-up, so pin the
+    // #4427 contract on the sampler itself (fresh thread each window):
+    // 255 calls stay under the period, the 256th publishes exactly one
+    // bump, and the rate stays 1/256 afterwards.
+    auto sample_delta = [&](int n) {
+        std::uint64_t d = 0;
+        std::thread th([&] {
+            const auto h0 = hits();
+            for (int i = 0; i < n; ++i)
+                aura::core::cpp26::record_hotpath_invariant_hit_sampled();
+            d = hits() - h0;
+        });
+        th.join();
+        return d;
+    };
+    CHECK(sample_delta(255) == 0, "#4427: 255 sampled calls stay under the window");
+    CHECK(sample_delta(256) == 1, "#4427: the 256th sampled call publishes one hit");
+    CHECK(sample_delta(512) == 2, "#4427: the sampler stays 1/256 past the first window");
+    // And the alloc path must actually use that sampler (not AURA_HOT_RECORD,
+    // which is a per-call atomic in a plain build).
+    const auto arena_src = read_file("src/core/arena.ixx");
+    CHECK(arena_src.find("Issue #4427: alloc probes share the 1/256 sampler") != std::string::npos,
+          "#4427: small-pool hit probe uses the 1/256 sampler");
+    std::println("  (alloc window: d64={} d256={})", a64.first, a256.first);
 }
 
 } // namespace

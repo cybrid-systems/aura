@@ -421,7 +421,11 @@ public:
                         --free_count_;
                     allocated_from_small_ += c.obj_sz;
                     ++recycle_hits_;
-                    AURA_HOT_RECORD(); // Issue #2142 freelist hit
+                    // Issue #4427: alloc probes share the 1/256 sampler.
+                    // AURA_HOT_RECORD() is a per-call atomic under
+                    // AURA_HOT_MODE_ENFORCE, which broke the sampling AC
+                    // (and the hot-path budget) on the issue lane.
+                    aura::core::cpp26::record_hotpath_invariant_hit_sampled();
                     return ptr;
                 }
             }
@@ -439,7 +443,8 @@ public:
                 }
                 c.bump = next;
                 allocated_from_small_ += c.obj_sz;
-                AURA_HOT_RECORD(); // Issue #2142 bump hit
+                // Issue #4427: sampled alloc probe (see freelist hit).
+                aura::core::cpp26::record_hotpath_invariant_hit_sampled();
                 return ptr;
             }
             // This tier is exhausted — signal overflow (no bump advance).

@@ -435,6 +435,11 @@ def _eff_timeout(bin_name: str, timeout: int) -> int:
     # *4 (240s) killed the suite while later members were still passing.
     if bin_name == "test_orch_agent_batch":
         return timeout * 10  # 600s
+    # #4791 added 20 simultaneous-spawn rounds x 200k churn mints on top of
+    # the 10 sibling rounds; at jobs=4 on a loaded runner even the serial
+    # re-run blew the 240s cap (0 lines printed before the kill).
+    if bin_name == "test_fibers_serve_ir_sibling_collector":
+        return timeout * 10  # 600s
     if bin_name in _VERY_HEAVY:
         return timeout * 4  # 240s; isolate alarm is 90s/member
     if is_heavy:
