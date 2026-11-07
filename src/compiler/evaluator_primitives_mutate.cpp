@@ -1929,6 +1929,337 @@ template <typename Ctx> void RegSplitParts::register_mutate_record_patch_primiti
         });
 }
 
+// Issue #5033: mutate:query-and-replace phases.
+struct QueryReplacePredicate {
+    std::string field;
+    std::string value;
+};
+
+std::optional<EvalValue> RegSplitParts::query_replace_collect_matches(
+    Evaluator& ev, aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+    const std::vector<QueryReplacePredicate>& predicates, std::vector<StableNodeRef>& matches,
+    bool& ok, const MakeErrorVal& mev) {
+
+    // Collect matches. Snapshot flat.size() so set_child during replacement
+    // (which grows flat) doesn't extend the match scan. (#110 fix: bug
+    // exposed by re-evaluating flat.size() each iteration.)
+    // Issue #270: store StableNodeRef so apply can validate each match.
+    const auto end_id = flat.size();
+    for (aura::ast::NodeId id = 0; id < end_id; ++id) {
+        auto v = flat.get(id);
+        bool match = true;
+        for (auto& p : predicates) {
+            if (p.field == ":node-type" || p.field == ":tag") {
+                bool found = false;
+                for (auto& m : aura::ast::kNodeMeta) {
+                    if (m.name == p.value && m.name != "<gap>") {
+                        if (v.tag == m.tag)
+                            found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    match = false;
+                    break;
+                }
+            } else if (p.field == ":callee") {
+                if (v.tag != aura::ast::NodeTag::Call || v.children.empty()) {
+                    match = false;
+                    break;
+                }
+                auto callee = flat.get(v.child(0));
+                if (callee.tag != aura::ast::NodeTag::Variable ||
+                    pool.resolve(callee.sym_id) != p.value) {
+                    match = false;
+                    break;
+                }
+            } else if (p.field == ":defined-by" || p.field == ":defines") {
+                if (v.tag != aura::ast::NodeTag::Define) {
+                    match = false;
+                    break;
+                }
+                if (pool.resolve(v.sym_id) != p.value) {
+                    match = false;
+                    break;
+                }
+            } else if (p.field == ":has-param") {
+                bool found_param = false;
+                for (auto pid : v.params) {
+                    if (pool.resolve(pid) == p.value) {
+                        found_param = true;
+                        break;
+                    }
+                }
+                if (!found_param) {
+                    match = false;
+                    break;
+                }
+            } else if (p.field == ":has-child") {
+                aura::ast::NodeTag child_tag = static_cast<aura::ast::NodeTag>(-1);
+                bool found_tag = false;
+                for (auto& m : aura::ast::kNodeMeta) {
+                    if (m.name == p.value && m.name != "<gap>") {
+                        child_tag = m.tag;
+                        found_tag = true;
+                        break;
+                    }
+                }
+                if (!found_tag) {
+                    match = false;
+                    break;
+                }
+                bool has_child = false;
+                for (auto cid : v.children) {
+                    if (cid != aura::ast::NULL_NODE && flat.get(cid).tag == child_tag) {
+                        has_child = true;
+                        break;
+                    }
+                }
+                if (!has_child) {
+                    match = false;
+                    break;
+                }
+            } else if (p.field == ":marker" || p.field == ":syntax-marker") {
+                auto m = flat.marker(id);
+                const char* mname = nullptr;
+                switch (m) {
+                    case aura::ast::SyntaxMarker::User:
+                        mname = "User";
+                        break;
+                    case aura::ast::SyntaxMarker::MacroIntroduced:
+                        mname = "MacroIntroduced";
+                        break;
+                    case aura::ast::SyntaxMarker::BoolLiteral:
+                        mname = "BoolLiteral";
+                        break;
+                    case aura::ast::SyntaxMarker::EmptyList:
+                        mname = "EmptyList";
+                        break;
+                }
+                if (!mname || p.value != mname) {
+                    match = false;
+                    break;
+                }
+            } else {
+                // Issue #4652: a typo in the predicate is a rejected
+                // edit - fail the nested Guard (see the block above).
+                ok = false;
+                return mev("unknown-field",
+                           std::string("unknown where field: \"") + p.field + "\"");
+            }
+        }
+        if (match) {
+            // Issue #2759: Evaluator stamp on match handles (sole
+            // production isolation authority; Soft global is residual).
+            auto mref = flat.make_ref_layout(id);
+            ev.stamp_stable_ref(mref);
+            matches.push_back(mref);
+        }
+    }
+    return std::nullopt;
+}
+
+// Issue #5033: node -> source text (shared by query-and-replace / replace-pattern).
+std::string RegSplitParts::mutate_node_source(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                              aura::ast::NodeId root_id) {
+    auto node_to_source = [&](this auto&& self, aura::ast::NodeId id) -> std::string {
+        if (id >= flat.size() || id == aura::ast::NULL_NODE)
+            return "";
+        auto v = flat.get(id);
+        switch (v.tag) {
+            case aura::ast::NodeTag::LiteralInt:
+                return std::to_string(v.int_value);
+            case aura::ast::NodeTag::LiteralFloat:
+                return std::to_string(v.float_value);
+            case aura::ast::NodeTag::LiteralString:
+                return std::string("\"") + std::string(pool.resolve(v.sym_id)) + "\"";
+            case aura::ast::NodeTag::Variable:
+                return std::string(pool.resolve(v.sym_id));
+            case aura::ast::NodeTag::Call: {
+                std::string s = "(";
+                for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
+                    if (ci > 0)
+                        s += " ";
+                    s += self(v.child(ci));
+                }
+                return s + ")";
+            }
+            case aura::ast::NodeTag::Lambda: {
+                std::string s = "(lambda (";
+                for (std::size_t pi = 0; pi < v.params.size(); ++pi) {
+                    if (pi > 0)
+                        s += " ";
+                    s += pool.resolve(v.params[pi]);
+                }
+                s += ")";
+                if (!v.children.empty())
+                    s += " " + self(v.child(0));
+                return s + ")";
+            }
+            case aura::ast::NodeTag::IfExpr: {
+                std::string s = "(if";
+                for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
+                    if (ci < 3)
+                        s += " " + self(v.child(ci));
+                }
+                return s + ")";
+            }
+            case aura::ast::NodeTag::Begin: {
+                std::string s = "(begin";
+                for (auto c : v.children)
+                    s += " " + self(c);
+                return s + ")";
+            }
+            case aura::ast::NodeTag::Define: {
+                std::string s = "(define " + std::string(pool.resolve(v.sym_id));
+                if (!v.children.empty()) {
+                    auto val_node = flat.get(v.child(0));
+                    if (val_node.tag == aura::ast::NodeTag::Lambda) {
+                        s += " (";
+                        for (std::size_t pi = 0; pi < val_node.params.size(); ++pi) {
+                            if (pi > 0)
+                                s += " ";
+                            s += pool.resolve(val_node.params[pi]);
+                        }
+                        s += ")";
+                        if (!val_node.children.empty())
+                            s += " " + self(val_node.child(0));
+                        s += ")";
+                    } else {
+                        s += " " + self(v.child(0));
+                    }
+                }
+                return s + ")";
+            }
+            default:
+                return std::string("#<node-") + std::to_string(static_cast<int>(v.tag)) + ">";
+        }
+    };
+    return node_to_source(root_id);
+}
+
+std::optional<EvalValue> RegSplitParts::query_replace_apply_matches(
+    Evaluator& ev, aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+    std::vector<StableNodeRef>& matches, const std::string& repl_template, std::size_t dot_count,
+    const std::string& summary, bool allow_macro_qar, bool no_auto_restamp_qar,
+    const MakeErrorVal& mev, bool& ok, int& replaced,
+    std::vector<aura::ast::NodeId>& replaced_roots, std::uint64_t initial_mutation_id) {
+    for (auto& match_ref : matches) {
+        if (!stable_match_still_attached(flat, match_ref))
+            continue;
+        auto match_id = match_ref.id;
+        bool was_macro = false;
+        if (auto err = enforce_macro_hygiene_mutate_hotpath(
+                ev, flat, match_id, &match_ref, allow_macro_qar, false, mev, &was_macro)) {
+            flat.rollback_since(initial_mutation_id);
+            flat.rollback_atomic_batch();
+            ok = false;
+            return *err;
+        }
+        match_id = match_ref.id;
+        auto child_idx_opt = parent_child_index_if_attached(flat, match_id);
+        if (!child_idx_opt)
+            continue;
+        auto parent_id = flat.parent_of(match_id);
+
+        std::vector<std::string> capture_sources;
+        capture_sources.push_back(RegSplitParts::mutate_node_source(flat, pool, match_id));
+        auto mv = flat.get(match_id);
+        for (auto cid : mv.children) {
+            if (cid != aura::ast::NULL_NODE)
+                capture_sources.push_back(RegSplitParts::mutate_node_source(flat, pool, cid));
+            if (capture_sources.size() >= dot_count)
+                break;
+        }
+
+        std::string filled;
+        if (dot_count == 0) {
+            filled = repl_template;
+        } else {
+            std::size_t cap_idx = 0;
+            std::size_t pos = 0;
+            while (pos < repl_template.size()) {
+                auto dot_pos = repl_template.find("...", pos);
+                if (dot_pos == std::string::npos) {
+                    filled += repl_template.substr(pos);
+                    break;
+                }
+                filled += repl_template.substr(pos, dot_pos - pos);
+                if (cap_idx < capture_sources.size()) {
+                    filled += capture_sources[cap_idx++];
+                }
+                pos = dot_pos + 3;
+            }
+        }
+
+        // Issue #1685 / #1687: re-validate parent/slot after parse.
+        const auto size_before_parse = static_cast<std::size_t>(flat.size());
+        // Issue #4652: the parse appends nodes to the SoA columns
+        // before it can fail (the literal is parsed, then the extra
+        // ")" hard-fails). rollback_atomic_batch restores the METADATA
+        // snapshot only - the appended rows stay live slots, so the
+        // next query:pattern / flat scan could see the unlinked parse
+        // nodes. Free them on every post-parse reject (same shape as
+        // mutate:replace-pattern, #2798).
+        auto free_repl_parse_orphans = [&flat, size_before_parse]() {
+            if (size_before_parse < flat.size())
+                (void)flat.free_orphan_nodes_from(
+                    static_cast<aura::ast::NodeId>(size_before_parse));
+        };
+        auto repl_pr = aura::parser::parse_to_flat(filled, flat, pool);
+        if (!repl_pr.success || repl_pr.root == aura::ast::NULL_NODE) {
+            // Issue #1265: parse failure → full atomic rollback.
+            // Never commit a partial match set (self-evolution
+            // correctness: agent must not see silent skips).
+            flat.rollback_since(initial_mutation_id);
+            flat.rollback_atomic_batch();
+            free_repl_parse_orphans();
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->query_and_replace_parse_abort.fetch_add(1, std::memory_order_relaxed);
+            // Issue #4652: the edit was rejected - fail the nested
+            // Guard so the abort path owns the dual-topology restore
+            // (the Agent sees this error only AFTER the restore).
+            ok = false;
+            return mev("parse-failure",
+                       "mutate:query-and-replace: template parse failed on a match "
+                       "(all-or-nothing; batch rolled back)");
+        }
+        if (parent_id == aura::ast::NULL_NODE ||
+            static_cast<std::size_t>(parent_id) >= size_before_parse || parent_id >= flat.size() ||
+            flat.is_free_slot(parent_id)) {
+            flat.rollback_since(initial_mutation_id);
+            flat.rollback_atomic_batch();
+            free_repl_parse_orphans();
+            ok = false;
+            return mev("stale-ref", "mutate:query-and-replace: parent invalid after parse");
+        }
+        {
+            auto pv = flat.get(parent_id);
+            if (*child_idx_opt >= pv.children.size() || pv.child(*child_idx_opt) != match_id) {
+                flat.rollback_since(initial_mutation_id);
+                flat.rollback_atomic_batch();
+                free_repl_parse_orphans();
+                ok = false;
+                return mev("stale-ref", "mutate:query-and-replace: child slot invalid after parse");
+            }
+        }
+
+        flat.set_child(parent_id, *child_idx_opt, repl_pr.root);
+        // Issue #2906: set_child → set_child_locked moves
+        // children_[parent] out, cow_set exclusive in-place when
+        // sole holder, then moves back (canonical PCV exclusive
+        // path). SafePCVSpan / snapshot holders force COW.
+        // Issue #2037 + #2858: propagate MacroIntroduced marker
+        // on allowed mutates (root + descendant cascade +
+        // kMacroExpansion dirty + provenance origin).
+        if (was_macro)
+            propagate_macro_introduced_marker(ev, flat, repl_pr.root, no_auto_restamp_qar);
+        replaced_roots.push_back(repl_pr.root);
+        flat.add_mutation(repl_pr.root, "query-and-replace", "matched", "template", summary);
+        ++replaced;
+    }
+    return std::nullopt;
+}
 template <typename Ctx> void RegSplitParts::register_mutate_query_replace_primitive(Ctx& cx) {
     auto& mev = cx.mev_ref;
     auto& safe_str = cx.safe_str_ref;
@@ -2008,11 +2339,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_query_replace_primit
                 pred_end = a.size() - 2;
             }
 
-            struct Predicate {
-                std::string field;
-                std::string value;
-            };
-            std::vector<Predicate> predicates;
+            std::vector<QueryReplacePredicate> predicates;
             for (std::size_t ai = 0; ai < pred_end; ++ai) {
                 if (!is_pair(a[ai])) {
                     ok = false;
@@ -2041,202 +2368,15 @@ template <typename Ctx> void RegSplitParts::register_mutate_query_replace_primit
                 return mev("bad-arg", "at least one predicate required");
             }
 
-            // Collect matches. Snapshot flat.size() so set_child during replacement
-            // (which grows flat) doesn't extend the match scan. (#110 fix: bug
-            // exposed by re-evaluating flat.size() each iteration.)
-            // Issue #270: store StableNodeRef so apply can validate each match.
-            const auto end_id = flat.size();
             std::vector<StableNodeRef> matches;
-            for (aura::ast::NodeId id = 0; id < end_id; ++id) {
-                auto v = flat.get(id);
-                bool match = true;
-                for (auto& p : predicates) {
-                    if (p.field == ":node-type" || p.field == ":tag") {
-                        bool found = false;
-                        for (auto& m : aura::ast::kNodeMeta) {
-                            if (m.name == p.value && m.name != "<gap>") {
-                                if (v.tag == m.tag)
-                                    found = true;
-                                break;
-                            }
-                        }
-                        if (!found) {
-                            match = false;
-                            break;
-                        }
-                    } else if (p.field == ":callee") {
-                        if (v.tag != aura::ast::NodeTag::Call || v.children.empty()) {
-                            match = false;
-                            break;
-                        }
-                        auto callee = flat.get(v.child(0));
-                        if (callee.tag != aura::ast::NodeTag::Variable ||
-                            pool.resolve(callee.sym_id) != p.value) {
-                            match = false;
-                            break;
-                        }
-                    } else if (p.field == ":defined-by" || p.field == ":defines") {
-                        if (v.tag != aura::ast::NodeTag::Define) {
-                            match = false;
-                            break;
-                        }
-                        if (pool.resolve(v.sym_id) != p.value) {
-                            match = false;
-                            break;
-                        }
-                    } else if (p.field == ":has-param") {
-                        bool found_param = false;
-                        for (auto pid : v.params) {
-                            if (pool.resolve(pid) == p.value) {
-                                found_param = true;
-                                break;
-                            }
-                        }
-                        if (!found_param) {
-                            match = false;
-                            break;
-                        }
-                    } else if (p.field == ":has-child") {
-                        aura::ast::NodeTag child_tag = static_cast<aura::ast::NodeTag>(-1);
-                        bool found_tag = false;
-                        for (auto& m : aura::ast::kNodeMeta) {
-                            if (m.name == p.value && m.name != "<gap>") {
-                                child_tag = m.tag;
-                                found_tag = true;
-                                break;
-                            }
-                        }
-                        if (!found_tag) {
-                            match = false;
-                            break;
-                        }
-                        bool has_child = false;
-                        for (auto cid : v.children) {
-                            if (cid != aura::ast::NULL_NODE && flat.get(cid).tag == child_tag) {
-                                has_child = true;
-                                break;
-                            }
-                        }
-                        if (!has_child) {
-                            match = false;
-                            break;
-                        }
-                    } else if (p.field == ":marker" || p.field == ":syntax-marker") {
-                        auto m = flat.marker(id);
-                        const char* mname = nullptr;
-                        switch (m) {
-                            case aura::ast::SyntaxMarker::User:
-                                mname = "User";
-                                break;
-                            case aura::ast::SyntaxMarker::MacroIntroduced:
-                                mname = "MacroIntroduced";
-                                break;
-                            case aura::ast::SyntaxMarker::BoolLiteral:
-                                mname = "BoolLiteral";
-                                break;
-                            case aura::ast::SyntaxMarker::EmptyList:
-                                mname = "EmptyList";
-                                break;
-                        }
-                        if (!mname || p.value != mname) {
-                            match = false;
-                            break;
-                        }
-                    } else {
-                        // Issue #4652: a typo in the predicate is a rejected
-                        // edit - fail the nested Guard (see the block above).
-                        ok = false;
-                        return mev("unknown-field",
-                                   std::string("unknown where field: \"") + p.field + "\"");
-                    }
-                }
-                if (match) {
-                    // Issue #2759: Evaluator stamp on match handles (sole
-                    // production isolation authority; Soft global is residual).
-                    auto mref = flat.make_ref_layout(id);
-                    ev.stamp_stable_ref(mref);
-                    matches.push_back(mref);
-                }
-            }
+            if (auto err = RegSplitParts::query_replace_collect_matches(ev, flat, pool, predicates,
+                                                                        matches, ok, mev))
+                return *err;
 
             if (matches.empty())
                 return make_bool(false);
 
             // Source reconstruction
-            auto node_to_source = [&](this auto&& self, aura::ast::NodeId id) -> std::string {
-                if (id >= flat.size() || id == aura::ast::NULL_NODE)
-                    return "";
-                auto v = flat.get(id);
-                switch (v.tag) {
-                    case aura::ast::NodeTag::LiteralInt:
-                        return std::to_string(v.int_value);
-                    case aura::ast::NodeTag::LiteralFloat:
-                        return std::to_string(v.float_value);
-                    case aura::ast::NodeTag::LiteralString:
-                        return std::string("\"") + std::string(pool.resolve(v.sym_id)) + "\"";
-                    case aura::ast::NodeTag::Variable:
-                        return std::string(pool.resolve(v.sym_id));
-                    case aura::ast::NodeTag::Call: {
-                        std::string s = "(";
-                        for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
-                            if (ci > 0)
-                                s += " ";
-                            s += self(v.child(ci));
-                        }
-                        return s + ")";
-                    }
-                    case aura::ast::NodeTag::Lambda: {
-                        std::string s = "(lambda (";
-                        for (std::size_t pi = 0; pi < v.params.size(); ++pi) {
-                            if (pi > 0)
-                                s += " ";
-                            s += pool.resolve(v.params[pi]);
-                        }
-                        s += ")";
-                        if (!v.children.empty())
-                            s += " " + self(v.child(0));
-                        return s + ")";
-                    }
-                    case aura::ast::NodeTag::IfExpr: {
-                        std::string s = "(if";
-                        for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
-                            if (ci < 3)
-                                s += " " + self(v.child(ci));
-                        }
-                        return s + ")";
-                    }
-                    case aura::ast::NodeTag::Begin: {
-                        std::string s = "(begin";
-                        for (auto c : v.children)
-                            s += " " + self(c);
-                        return s + ")";
-                    }
-                    case aura::ast::NodeTag::Define: {
-                        std::string s = "(define " + std::string(pool.resolve(v.sym_id));
-                        if (!v.children.empty()) {
-                            auto val_node = flat.get(v.child(0));
-                            if (val_node.tag == aura::ast::NodeTag::Lambda) {
-                                s += " (";
-                                for (std::size_t pi = 0; pi < val_node.params.size(); ++pi) {
-                                    if (pi > 0)
-                                        s += " ";
-                                    s += pool.resolve(val_node.params[pi]);
-                                }
-                                s += ")";
-                                if (!val_node.children.empty())
-                                    s += " " + self(val_node.child(0));
-                                s += ")";
-                            } else {
-                                s += " " + self(v.child(0));
-                            }
-                        }
-                        return s + ")";
-                    }
-                    default:
-                        return std::string("#<node-") + std::to_string(static_cast<int>(v.tag)) +
-                               ">";
-                }
-            };
 
             // Count "..." occurrences
             std::size_t dot_count = 0;
@@ -2284,123 +2424,10 @@ template <typename Ctx> void RegSplitParts::register_mutate_query_replace_primit
             // mutation (e.g. a prior tweak-literal scalar) out of the log.
             const std::uint64_t initial_mutation_id = flat.next_mutation_id();
             flat.begin_atomic_batch();
-            for (auto& match_ref : matches) {
-                if (!stable_match_still_attached(flat, match_ref))
-                    continue;
-                auto match_id = match_ref.id;
-                bool was_macro = false;
-                if (auto err = enforce_macro_hygiene_mutate_hotpath(
-                        ev, flat, match_id, &match_ref, allow_macro_qar, false, mev, &was_macro)) {
-                    flat.rollback_since(initial_mutation_id);
-                    flat.rollback_atomic_batch();
-                    ok = false;
-                    return *err;
-                }
-                match_id = match_ref.id;
-                auto child_idx_opt = parent_child_index_if_attached(flat, match_id);
-                if (!child_idx_opt)
-                    continue;
-                auto parent_id = flat.parent_of(match_id);
-
-                std::vector<std::string> capture_sources;
-                capture_sources.push_back(node_to_source(match_id));
-                auto mv = flat.get(match_id);
-                for (auto cid : mv.children) {
-                    if (cid != aura::ast::NULL_NODE)
-                        capture_sources.push_back(node_to_source(cid));
-                    if (capture_sources.size() >= dot_count)
-                        break;
-                }
-
-                std::string filled;
-                if (dot_count == 0) {
-                    filled = repl_template;
-                } else {
-                    std::size_t cap_idx = 0;
-                    std::size_t pos = 0;
-                    while (pos < repl_template.size()) {
-                        auto dot_pos = repl_template.find("...", pos);
-                        if (dot_pos == std::string::npos) {
-                            filled += repl_template.substr(pos);
-                            break;
-                        }
-                        filled += repl_template.substr(pos, dot_pos - pos);
-                        if (cap_idx < capture_sources.size()) {
-                            filled += capture_sources[cap_idx++];
-                        }
-                        pos = dot_pos + 3;
-                    }
-                }
-
-                // Issue #1685 / #1687: re-validate parent/slot after parse.
-                const auto size_before_parse = static_cast<std::size_t>(flat.size());
-                // Issue #4652: the parse appends nodes to the SoA columns
-                // before it can fail (the literal is parsed, then the extra
-                // ")" hard-fails). rollback_atomic_batch restores the METADATA
-                // snapshot only - the appended rows stay live slots, so the
-                // next query:pattern / flat scan could see the unlinked parse
-                // nodes. Free them on every post-parse reject (same shape as
-                // mutate:replace-pattern, #2798).
-                auto free_repl_parse_orphans = [&flat, size_before_parse]() {
-                    if (size_before_parse < flat.size())
-                        (void)flat.free_orphan_nodes_from(
-                            static_cast<aura::ast::NodeId>(size_before_parse));
-                };
-                auto repl_pr = aura::parser::parse_to_flat(filled, flat, pool);
-                if (!repl_pr.success || repl_pr.root == aura::ast::NULL_NODE) {
-                    // Issue #1265: parse failure → full atomic rollback.
-                    // Never commit a partial match set (self-evolution
-                    // correctness: agent must not see silent skips).
-                    flat.rollback_since(initial_mutation_id);
-                    flat.rollback_atomic_batch();
-                    free_repl_parse_orphans();
-                    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                        m->query_and_replace_parse_abort.fetch_add(1, std::memory_order_relaxed);
-                    // Issue #4652: the edit was rejected - fail the nested
-                    // Guard so the abort path owns the dual-topology restore
-                    // (the Agent sees this error only AFTER the restore).
-                    ok = false;
-                    return mev("parse-failure",
-                               "mutate:query-and-replace: template parse failed on a match "
-                               "(all-or-nothing; batch rolled back)");
-                }
-                if (parent_id == aura::ast::NULL_NODE ||
-                    static_cast<std::size_t>(parent_id) >= size_before_parse ||
-                    parent_id >= flat.size() || flat.is_free_slot(parent_id)) {
-                    flat.rollback_since(initial_mutation_id);
-                    flat.rollback_atomic_batch();
-                    free_repl_parse_orphans();
-                    ok = false;
-                    return mev("stale-ref", "mutate:query-and-replace: parent invalid after parse");
-                }
-                {
-                    auto pv = flat.get(parent_id);
-                    if (*child_idx_opt >= pv.children.size() ||
-                        pv.child(*child_idx_opt) != match_id) {
-                        flat.rollback_since(initial_mutation_id);
-                        flat.rollback_atomic_batch();
-                        free_repl_parse_orphans();
-                        ok = false;
-                        return mev("stale-ref",
-                                   "mutate:query-and-replace: child slot invalid after parse");
-                    }
-                }
-
-                flat.set_child(parent_id, *child_idx_opt, repl_pr.root);
-                // Issue #2906: set_child → set_child_locked moves
-                // children_[parent] out, cow_set exclusive in-place when
-                // sole holder, then moves back (canonical PCV exclusive
-                // path). SafePCVSpan / snapshot holders force COW.
-                // Issue #2037 + #2858: propagate MacroIntroduced marker
-                // on allowed mutates (root + descendant cascade +
-                // kMacroExpansion dirty + provenance origin).
-                if (was_macro)
-                    propagate_macro_introduced_marker(ev, flat, repl_pr.root, no_auto_restamp_qar);
-                replaced_roots.push_back(repl_pr.root);
-                flat.add_mutation(repl_pr.root, "query-and-replace", "matched", "template",
-                                  summary);
-                ++replaced;
-            }
+            if (auto err = RegSplitParts::query_replace_apply_matches(
+                    ev, flat, pool, matches, repl_template, dot_count, summary, allow_macro_qar,
+                    no_auto_restamp_qar, mev, ok, replaced, replaced_roots, initial_mutation_id))
+                return *err;
 
             if (replaced == 0) {
                 flat.rollback_atomic_batch();
@@ -2471,6 +2498,117 @@ template <typename Ctx> void RegSplitParts::register_mutate_query_replace_primit
         });
 }
 
+// Issue #5033: per-match skip record for the batch apply phase.
+struct QueryReplacePartialFail {
+    aura::ast::NodeId id;
+    std::string reason;
+};
+
+std::optional<EvalValue> RegSplitParts::query_replace_batch_apply_matches(
+    Evaluator& ev, aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+    std::vector<StableNodeRef>& matches, std::vector<QueryReplacePartialFail>& partial_fails,
+    const std::string& repl_template, std::size_t dot_count, const std::string& summary,
+    const std::string& hygiene_keep_mode, bool allow_macro_batch, bool no_auto_restamp_batch,
+    const MakeErrorVal& mev, bool& ok, int& replaced,
+    std::vector<aura::ast::NodeId>& replaced_roots, std::size_t& hygiene_kept,
+    std::uint64_t initial_mutation_id, std::size_t size_before_batch) {
+    auto free_batch_parse_orphans = [&flat, size_before_batch]() {
+        if (size_before_batch < static_cast<std::size_t>(flat.size()))
+            (void)flat.free_orphan_nodes_from(static_cast<aura::ast::NodeId>(size_before_batch));
+    };
+    for (auto& match_ref : matches) {
+        if (!stable_match_still_attached(flat, match_ref)) {
+            partial_fails.push_back({match_ref.id, "stale-ref"});
+            continue;
+        }
+        auto match_id = match_ref.id;
+        bool was_macro = false;
+        // Issue #3509: default-deny before :hygiene-keep :none can
+        // drop the marker (that drop is the allowed-path escape).
+        if (auto err = enforce_macro_hygiene_mutate_hotpath(
+                ev, flat, match_id, &match_ref, allow_macro_batch, false, mev, &was_macro)) {
+            flat.rollback_since(initial_mutation_id);
+            flat.rollback_atomic_batch();
+            free_batch_parse_orphans();
+            ok = false;
+            return *err;
+        }
+        match_id = match_ref.id;
+        if (hygiene_keep_mode == ":none" && was_macro) {
+            // Drop MacroIntroduced marker under :none (issue #2527
+            // explicit opt-out). Marker propagation is the
+            // SAFE behavior; :none is the escape hatch. Allowed path
+            // only — default-deny already returned above.
+            flat.set_marker(match_id, aura::ast::SyntaxMarker::User);
+        }
+        auto child_idx_opt = parent_child_index_if_attached(flat, match_id);
+        if (!child_idx_opt) {
+            partial_fails.push_back({match_id, "no-parent-attached"});
+            continue;
+        }
+        auto parent_id = flat.parent_of(match_id);
+
+        std::vector<std::string> capture_sources;
+        capture_sources.push_back(RegSplitParts::mutate_node_source(flat, pool, match_id));
+        auto mv = flat.get(match_id);
+        for (auto cid : mv.children) {
+            if (cid != aura::ast::NULL_NODE)
+                capture_sources.push_back(RegSplitParts::mutate_node_source(flat, pool, cid));
+            if (capture_sources.size() >= dot_count)
+                break;
+        }
+
+        std::string filled;
+        if (dot_count == 0) {
+            filled = repl_template;
+        } else {
+            std::size_t cap_idx = 0;
+            std::size_t pos = 0;
+            while (pos < repl_template.size()) {
+                auto dot_pos = repl_template.find("...", pos);
+                if (dot_pos == std::string::npos) {
+                    filled += repl_template.substr(pos);
+                    break;
+                }
+                filled += repl_template.substr(pos, dot_pos - pos);
+                if (cap_idx < capture_sources.size()) {
+                    filled += capture_sources[cap_idx++];
+                }
+                pos = dot_pos + 3;
+            }
+        }
+
+        const auto size_before_parse = static_cast<std::size_t>(flat.size());
+        auto repl_pr = aura::parser::parse_to_flat(filled, flat, pool);
+        if (!repl_pr.success || repl_pr.root == aura::ast::NULL_NODE) {
+            partial_fails.push_back({match_id, "parse-failure"});
+            continue;
+        }
+        if (parent_id == aura::ast::NULL_NODE ||
+            static_cast<std::size_t>(parent_id) >= size_before_parse || parent_id >= flat.size() ||
+            flat.is_free_slot(parent_id)) {
+            partial_fails.push_back({match_id, "stale-ref-after-parse"});
+            continue;
+        }
+        {
+            auto pv = flat.get(parent_id);
+            if (*child_idx_opt >= pv.children.size() || pv.child(*child_idx_opt) != match_id) {
+                partial_fails.push_back({match_id, "stale-ref-child-slot"});
+                continue;
+            }
+        }
+
+        flat.set_child(parent_id, *child_idx_opt, repl_pr.root);
+        if (was_macro) {
+            propagate_macro_introduced_marker(ev, flat, repl_pr.root, no_auto_restamp_batch);
+            ++hygiene_kept;
+        }
+        replaced_roots.push_back(repl_pr.root);
+        flat.add_mutation(repl_pr.root, "query-and-replace-batch", "matched", "template", summary);
+        ++replaced;
+    }
+    return std::nullopt;
+}
 template <typename Ctx> void RegSplitParts::register_mutate_query_replace_batch_primitive(Ctx& cx) {
     auto& mev = cx.mev_ref;
     auto& safe_str = cx.safe_str_ref;
@@ -2613,11 +2751,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_query_replace_batch_
             if (pred_end < 1)
                 return mev("bad-arg", "at least one predicate required before template");
 
-            struct Predicate {
-                std::string field;
-                std::string value;
-            };
-            std::vector<Predicate> predicates;
+            std::vector<QueryReplacePredicate> predicates;
             for (std::size_t ai = 0; ai < pred_end; ++ai) {
                 if (!is_pair(a[ai]))
                     return mev("bad-arg", "each predicate must be a (query:where ...) pair");
@@ -2634,91 +2768,10 @@ template <typename Ctx> void RegSplitParts::register_mutate_query_replace_batch_
                 predicates.push_back({ev.keyword_table_[kidx2], ev.string_at(sidx2)});
             }
 
-            // Collect matches (same predicate scan as query-and-replace).
-            const auto end_id = flat.size();
             std::vector<StableNodeRef> matches;
-            for (aura::ast::NodeId id = 0; id < end_id; ++id) {
-                auto v = flat.get(id);
-                bool match = true;
-                for (auto& p : predicates) {
-                    if (p.field == ":node-type" || p.field == ":tag") {
-                        bool found = false;
-                        for (auto& m : aura::ast::kNodeMeta) {
-                            if (m.name == p.value && m.name != "<gap>") {
-                                if (v.tag == m.tag)
-                                    found = true;
-                                break;
-                            }
-                        }
-                        if (!found) {
-                            match = false;
-                            break;
-                        }
-                    } else if (p.field == ":callee") {
-                        if (v.tag != aura::ast::NodeTag::Call || v.children.empty()) {
-                            match = false;
-                            break;
-                        }
-                        auto callee = flat.get(v.child(0));
-                        if (callee.tag != aura::ast::NodeTag::Variable ||
-                            pool.resolve(callee.sym_id) != p.value) {
-                            match = false;
-                            break;
-                        }
-                    } else if (p.field == ":defined-by" || p.field == ":defines") {
-                        if (v.tag != aura::ast::NodeTag::Define) {
-                            match = false;
-                            break;
-                        }
-                        if (pool.resolve(v.sym_id) != p.value) {
-                            match = false;
-                            break;
-                        }
-                    } else if (p.field == ":has-param") {
-                        bool found_param = false;
-                        for (auto pid : v.params) {
-                            if (pool.resolve(pid) == p.value) {
-                                found_param = true;
-                                break;
-                            }
-                        }
-                        if (!found_param) {
-                            match = false;
-                            break;
-                        }
-                    } else if (p.field == ":marker" || p.field == ":syntax-marker") {
-                        auto m = flat.marker(id);
-                        const char* mname = nullptr;
-                        switch (m) {
-                            case aura::ast::SyntaxMarker::User:
-                                mname = "User";
-                                break;
-                            case aura::ast::SyntaxMarker::MacroIntroduced:
-                                mname = "MacroIntroduced";
-                                break;
-                            case aura::ast::SyntaxMarker::BoolLiteral:
-                                mname = "BoolLiteral";
-                                break;
-                            case aura::ast::SyntaxMarker::EmptyList:
-                                mname = "EmptyList";
-                                break;
-                        }
-                        if (!mname || p.value != mname) {
-                            match = false;
-                            break;
-                        }
-                    } else {
-                        return mev("unknown-field",
-                                   std::string("unknown where field: \"") + p.field + "\"");
-                    }
-                }
-                if (match) {
-                    // Issue #2759: Evaluator stamp on match handles.
-                    auto mref = flat.make_ref_layout(id);
-                    ev.stamp_stable_ref(mref);
-                    matches.push_back(mref);
-                }
-            }
+            if (auto err = RegSplitParts::query_replace_collect_matches(ev, flat, pool, predicates,
+                                                                        matches, ok, mev))
+                return *err;
 
             // No-op fast path: no matches → return {:success #t, 0/0, []}.
             // We still bump size (above) and skip partial-fail + commit.
@@ -2729,34 +2782,6 @@ template <typename Ctx> void RegSplitParts::register_mutate_query_replace_batch_
             }
 
             // Source reconstruction helper (same shape as query-and-replace).
-            auto node_to_source = [&](this auto&& self, aura::ast::NodeId id) -> std::string {
-                if (id >= flat.size() || id == aura::ast::NULL_NODE)
-                    return "";
-                auto v = flat.get(id);
-                switch (v.tag) {
-                    case aura::ast::NodeTag::LiteralInt:
-                        return std::to_string(v.int_value);
-                    case aura::ast::NodeTag::LiteralFloat:
-                        return std::to_string(v.float_value);
-                    case aura::ast::NodeTag::LiteralString:
-                        return std::string("\"") + std::string(pool.resolve(v.sym_id)) + "\"";
-                    case aura::ast::NodeTag::Variable:
-                        return std::string(pool.resolve(v.sym_id));
-                    case aura::ast::NodeTag::Call: {
-                        std::string s = "(";
-                        for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
-                            if (ci > 0)
-                                s += " ";
-                            s += self(v.child(ci));
-                        }
-                        return s + ")";
-                    }
-                    default:
-                        return std::string("#<node-") + std::to_string(static_cast<int>(v.tag)) +
-                               ">";
-                }
-            };
-
             // Count "..." occurrences in template.
             std::size_t dot_count = 0;
             {
@@ -2803,111 +2828,17 @@ template <typename Ctx> void RegSplitParts::register_mutate_query_replace_batch_
                         static_cast<aura::ast::NodeId>(size_before_batch));
             };
 
-            struct PartialFail {
-                aura::ast::NodeId id;
-                std::string reason;
-            };
-            std::vector<PartialFail> partial_fails;
+            std::vector<QueryReplacePartialFail> partial_fails;
             std::vector<aura::ast::NodeId> replaced_roots;
             std::size_t hygiene_kept = 0;
             int replaced = 0;
 
             // Apply template to each match.
-            for (auto& match_ref : matches) {
-                if (!stable_match_still_attached(flat, match_ref)) {
-                    partial_fails.push_back({match_ref.id, "stale-ref"});
-                    continue;
-                }
-                auto match_id = match_ref.id;
-                bool was_macro = false;
-                // Issue #3509: default-deny before :hygiene-keep :none can
-                // drop the marker (that drop is the allowed-path escape).
-                if (auto err = enforce_macro_hygiene_mutate_hotpath(ev, flat, match_id, &match_ref,
-                                                                    allow_macro_batch, false, mev,
-                                                                    &was_macro)) {
-                    flat.rollback_since(initial_mutation_id);
-                    flat.rollback_atomic_batch();
-                    free_batch_parse_orphans();
-                    ok = false;
-                    return *err;
-                }
-                match_id = match_ref.id;
-                if (hygiene_keep_mode == ":none" && was_macro) {
-                    // Drop MacroIntroduced marker under :none (issue #2527
-                    // explicit opt-out). Marker propagation is the
-                    // SAFE behavior; :none is the escape hatch. Allowed path
-                    // only — default-deny already returned above.
-                    flat.set_marker(match_id, aura::ast::SyntaxMarker::User);
-                }
-                auto child_idx_opt = parent_child_index_if_attached(flat, match_id);
-                if (!child_idx_opt) {
-                    partial_fails.push_back({match_id, "no-parent-attached"});
-                    continue;
-                }
-                auto parent_id = flat.parent_of(match_id);
-
-                std::vector<std::string> capture_sources;
-                capture_sources.push_back(node_to_source(match_id));
-                auto mv = flat.get(match_id);
-                for (auto cid : mv.children) {
-                    if (cid != aura::ast::NULL_NODE)
-                        capture_sources.push_back(node_to_source(cid));
-                    if (capture_sources.size() >= dot_count)
-                        break;
-                }
-
-                std::string filled;
-                if (dot_count == 0) {
-                    filled = repl_template;
-                } else {
-                    std::size_t cap_idx = 0;
-                    std::size_t pos = 0;
-                    while (pos < repl_template.size()) {
-                        auto dot_pos = repl_template.find("...", pos);
-                        if (dot_pos == std::string::npos) {
-                            filled += repl_template.substr(pos);
-                            break;
-                        }
-                        filled += repl_template.substr(pos, dot_pos - pos);
-                        if (cap_idx < capture_sources.size()) {
-                            filled += capture_sources[cap_idx++];
-                        }
-                        pos = dot_pos + 3;
-                    }
-                }
-
-                const auto size_before_parse = static_cast<std::size_t>(flat.size());
-                auto repl_pr = aura::parser::parse_to_flat(filled, flat, pool);
-                if (!repl_pr.success || repl_pr.root == aura::ast::NULL_NODE) {
-                    partial_fails.push_back({match_id, "parse-failure"});
-                    continue;
-                }
-                if (parent_id == aura::ast::NULL_NODE ||
-                    static_cast<std::size_t>(parent_id) >= size_before_parse ||
-                    parent_id >= flat.size() || flat.is_free_slot(parent_id)) {
-                    partial_fails.push_back({match_id, "stale-ref-after-parse"});
-                    continue;
-                }
-                {
-                    auto pv = flat.get(parent_id);
-                    if (*child_idx_opt >= pv.children.size() ||
-                        pv.child(*child_idx_opt) != match_id) {
-                        partial_fails.push_back({match_id, "stale-ref-child-slot"});
-                        continue;
-                    }
-                }
-
-                flat.set_child(parent_id, *child_idx_opt, repl_pr.root);
-                if (was_macro) {
-                    propagate_macro_introduced_marker(ev, flat, repl_pr.root,
-                                                      no_auto_restamp_batch);
-                    ++hygiene_kept;
-                }
-                replaced_roots.push_back(repl_pr.root);
-                flat.add_mutation(repl_pr.root, "query-and-replace-batch", "matched", "template",
-                                  summary);
-                ++replaced;
-            }
+            if (auto err = RegSplitParts::query_replace_batch_apply_matches(
+                    ev, flat, pool, matches, partial_fails, repl_template, dot_count, summary,
+                    hygiene_keep_mode, allow_macro_batch, no_auto_restamp_batch, mev, ok, replaced,
+                    replaced_roots, hygiene_kept, initial_mutation_id, size_before_batch))
+                return *err;
 
             // Optional :validate (post-batch): if any fail, rollback all.
             bool validate_pass = true;
@@ -3454,6 +3385,774 @@ template <typename Ctx> void RegSplitParts::register_mutate_as_stable_ref_primit
         /*guard_exempt=*/true);
 }
 
+// Issue #5033: mutate:rebind phases. Each helper is one responsibility and
+// keeps the original body slice verbatim; the caller keeps the RAII guards.
+template <typename Guard>
+std::optional<EvalValue>
+RegSplitParts::rebind_preflight(Evaluator& ev, std::span<const EvalValue> a,
+                                const MakeErrorVal& mev, Guard& guard, bool& ok) {
+    auto safe_str = [&ev](const EvalValue& v, std::string fallback = {}) -> std::string {
+        if (!is_string(v))
+            return fallback;
+        const auto i = as_string_idx(v);
+        if (i >= ev.string_heap_.size())
+            return fallback;
+        return ev.string_at(i);
+    };
+    // Issue #288: optional `validate: <type-name>` 4th arg.
+    // When present, run the best-effort schema shape check on
+    // the new code string before any workspace mutation. A
+    // failure returns a tagged `schema-violation` error pair
+    // and sets `ok = false` so the MutationBoundaryGuard dtor
+    // rolls back (preserves the original binding).
+    std::string validate_type;
+    if (a.size() >= 4 && is_string(a[3])) {
+        auto vidx = as_string_idx(a[3]);
+        if (vidx < ev.string_heap_.size())
+            validate_type = ev.string_at(vidx);
+    }
+    if (!validate_type.empty()) {
+        auto validate_fn = ev.primitives_.lookup("mutate:validate-against-schema");
+        if (validate_fn) {
+            auto ci = ev.string_heap_.mint(safe_str(a[1]));
+            auto ti = ev.string_heap_.mint(validate_type);
+            // Issue #1684: schema validate must not throw past Guard
+            // with ok=true (would commit an unvalidated rebind).
+            EvalValue vresult = make_void();
+            std::string threw;
+            if (!guard->run_or_rollback(
+                    [&] { vresult = (*validate_fn)({make_string(ci), make_string(ti)}); },
+                    &threw)) {
+                ok = false;
+                return mev("validate-threw", std::string("schema validate threw: ") + threw);
+            }
+            if (is_string(vresult)) {
+                // tagged schema-violation — rejected
+                ok = false;
+                return vresult; // already a "(schema-violation ...)" string
+            }
+            if (is_bool(vresult) && !as_bool(vresult)) {
+                ok = false;
+                return mev("schema-violation", "schema check returned #f (no schema registered)");
+            }
+            // is_bool(vresult) == true → proceed
+        }
+    }
+    // Issue #141 AC: lazy COW — trigger clone on first mutate, not on switch.
+    if (ev.workspace_tree_) {
+        if (!ev.trigger_lazy_cow(ev.workspace_tree_)) {
+            ok = false;
+            // Issue #4335: cow-refused must not exit the boundary as
+            // Success — clear the shared outermost flag so ~Guard
+            // takes exit_mutation_boundary(false) and the deny joins
+            // the same mid (belt for body-side returns: wrapper_guard
+            // is not in scope inside the body lambda).
+            ev.mark_outermost_mutation_failed();
+            return mev("cow-refused", "COW refused: budget exceeded or read-only");
+        }
+        // Re-read ev.workspace_flat_/pool_ in case COW created a new local flat.
+        void* new_flat = nullptr;
+        void* new_pool = nullptr;
+        if (ev.refresh_active_flat_pool(ev.workspace_tree_, &new_flat, &new_pool)) {
+            ev.workspace_flat_ = static_cast<aura::ast::FlatAST*>(new_flat);
+            ev.workspace_pool_ = static_cast<aura::ast::StringPool*>(new_pool);
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<EvalValue> RegSplitParts::rebind_find_target(Evaluator& ev, aura::ast::FlatAST& flat,
+                                                           const std::string& name,
+                                                           aura::ast::SymId sym,
+                                                           std::span<const EvalValue> a,
+                                                           const MakeErrorVal& mev, bool& ok,
+                                                           aura::ast::NodeId& old_define) {
+    // Find old Define node by name (skip free-list ghosts — #1685 / #2730).
+    // Last live match wins. SymId compare can miss after pool reset /
+    // intern_epoch (same spelling, new id) — resolve-by-name is the
+    // fallback so we rebind in place instead of the add-path duplicate.
+    old_define = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+        if (flat.is_free_slot(id))
+            continue;
+        // Column probes: no NodeView assembly per node.
+        if (flat.tag(id) != aura::ast::NodeTag::Define)
+            continue;
+        const auto v_sym = flat.sym_id(id);
+        if (v_sym == sym) {
+            old_define = id;
+            continue;
+        }
+        if (v_sym != aura::ast::INVALID_SYM && ev.workspace_pool_->resolve(v_sym) == name)
+            old_define = id;
+    }
+    // Issue #373: hygiene guard. If old_define is a
+    // MacroIntroduced node (produced by clone_macro_body
+    // from a hygienic macro expansion), reject by default.
+    // The caller can opt out via the :allow-macro? #t
+    // kwarg or by setting the global
+    // (hygiene:set-allow-macro-mutate! #t) flag.
+    if (old_define != aura::ast::NULL_NODE) {
+        aura::ast::NodeId probe_arr[1] = {old_define};
+        if (auto err = hygiene_protected_error(ev, flat, probe_arr, ev.get_allow_macro_mutate(),
+                                               parse_allow_macro_opt_out(ev, a), mev)) {
+            ok = false;
+            return *err;
+        }
+    }
+    return std::nullopt;
+}
+
+EvalValue RegSplitParts::rebind_add_new_define(Evaluator& ev, aura::ast::FlatAST& flat,
+                                               const std::string& name, aura::ast::SymId sym,
+                                               std::uint64_t code_idx, std::span<const EvalValue> a,
+                                               const MakeErrorVal& mev, bool& ok) {
+    auto safe_str = [&ev](const EvalValue& v, std::string fallback = {}) -> std::string {
+        if (!is_string(v))
+            return fallback;
+        const auto i = as_string_idx(v);
+        if (i >= ev.string_heap_.size())
+            return fallback;
+        return ev.string_at(i);
+    };
+    // Issue #165 follow-up: no matching Define adds a top-level Define
+    // and logs add_mutation("add", …) with the rest of rebind.
+    {
+        // Parse the new code first so we know what to bind.
+        // Issue #2791: snapshot size; free orphan nodes on parse failure
+        // so append-mode parse_to_flat does not leak into free_list / size.
+        const auto size_before_add_parse = static_cast<std::size_t>(flat.size());
+        auto pr_add =
+            aura::parser::parse_to_flat(ev.string_at(code_idx), flat, *ev.workspace_pool_);
+        if (!pr_add.success || pr_add.root == aura::ast::NULL_NODE) {
+            std::string parse_err;
+            if (!pr_add.errors.empty()) {
+                for (auto& e : pr_add.errors) {
+                    if (!parse_err.empty())
+                        parse_err += "; ";
+                    parse_err += e.format();
+                }
+            } else if (!pr_add.error.empty()) {
+                parse_err = pr_add.error;
+            } else {
+                parse_err = "rebind code could not be parsed";
+            }
+            // Issue #2791: free partial parse appends (Guard only rolls mutation log).
+            if (size_before_add_parse < flat.size())
+                (void)flat.free_orphan_nodes_from(
+                    static_cast<aura::ast::NodeId>(size_before_add_parse));
+            ok = false;
+            return mev("parse-error", parse_err);
+        }
+        aura::ast::NodeId new_value = pr_add.root;
+        auto root_v = flat.get(pr_add.root);
+        if (root_v.tag == aura::ast::NodeTag::Define) {
+            if (root_v.children.empty()) {
+                // Issue #2791: parsed Define is unlinked — free orphans.
+                if (size_before_add_parse < flat.size())
+                    (void)flat.free_orphan_nodes_from(
+                        static_cast<aura::ast::NodeId>(size_before_add_parse));
+                ok = false;
+                return mev("parse-error", "define form in rebind code has no body");
+            }
+            new_value = root_v.child(0);
+        }
+        // Issue #2792: hygiene on new body (add path) — walk new_value
+        // for MacroIntroduced; old_define-only probe is insufficient.
+        {
+            const bool allow_macro =
+                ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
+            if (!allow_macro) {
+                aura::ast::NodeId hit = aura::ast::NULL_NODE;
+                flat.walk_subtree(new_value, [&](aura::ast::NodeId id) {
+                    if (hit == aura::ast::NULL_NODE && flat.is_macro_introduced(id))
+                        hit = id;
+                });
+                if (hit != aura::ast::NULL_NODE) {
+                    aura::ast::NodeId probe_arr[1] = {hit};
+                    if (auto err =
+                            hygiene_protected_error(ev, flat, probe_arr, false, false, mev)) {
+                        if (size_before_add_parse < flat.size())
+                            (void)flat.free_orphan_nodes_from(
+                                static_cast<aura::ast::NodeId>(size_before_add_parse));
+                        ok = false;
+                        return *err;
+                    }
+                }
+            }
+        }
+        std::string summary = (a.size() > 2 && is_string(a[2])) ? safe_str(a[2]) : "add " + name;
+        auto new_define = flat.add_define(sym, new_value);
+        // Issue #4360: link onto flat.root (see link_added_define_onto_root).
+        if (!link_added_define_onto_root(flat, new_define)) {
+            ok = false;
+            return mev("stale-ref", "rebind add: define not on root");
+        }
+        flat.add_mutation(new_define, "add", name, summary, summary);
+        // Mark all defines dirty so cached IR for siblings gets invalidated.
+        if (ev.mark_all_defines_dirty_fn_)
+            ev.mark_all_defines_dirty_fn_();
+        // Also update dep_graph_ and IR cache (lightweight + heavy hooks).
+        if (ev.pre_cache_workspace_defines_fn_)
+            ev.pre_cache_workspace_defines_fn_();
+        return make_bool(true);
+    }
+    std::unreachable();
+}
+
+std::optional<EvalValue>
+RegSplitParts::rebind_parse_value(Evaluator& ev, aura::ast::FlatAST& flat, aura::ast::SymId sym,
+                                  aura::ast::NodeId& old_define, std::uint64_t code_idx,
+                                  const MakeErrorVal& mev, bool& ok, aura::ast::NodeId& new_value,
+                                  std::size_t& size_before_parse) {
+    // Parse new code INTO workspace flat (append mode). All new node IDs
+    // are valid in the same FlatAST and can be cross-referenced.
+    // Issue #1685: snapshot size so we re-resolve old_define only in the
+    // pre-parse range (ignore a Define form appended by this parse).
+    // Issue #2791: same snapshot bounds free_orphan_nodes_from on failure
+    // so Guard mutation-log rollback does not leave parse append orphans.
+    size_before_parse = static_cast<std::size_t>(flat.size());
+    auto free_rebind_parse_orphans = [&flat, size_before_parse]() {
+        if (size_before_parse < flat.size())
+            (void)flat.free_orphan_nodes_from(static_cast<aura::ast::NodeId>(size_before_parse));
+    };
+    auto pr = [&] {
+        aura::compiler::phase_stats::Scope phase_parse(aura::compiler::phase_stats::Parse);
+        return aura::parser::parse_to_flat(ev.string_at(code_idx), flat, *ev.workspace_pool_);
+    }();
+    if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+        std::string parse_err;
+        if (!pr.errors.empty()) {
+            for (auto& e : pr.errors) {
+                if (!parse_err.empty())
+                    parse_err += "; ";
+                parse_err += e.format();
+            }
+        } else if (!pr.error.empty()) {
+            parse_err = pr.error;
+        } else {
+            parse_err = "rebind code could not be parsed";
+        }
+        free_rebind_parse_orphans(); // Issue #2791
+        ok = false;
+        return mev("parse-error", parse_err);
+    }
+
+    // Issue #1685: re-resolve target Define after SoA growth / append.
+    old_define = resolve_define_after_parse(flat, sym, old_define, size_before_parse);
+    if (old_define == aura::ast::NULL_NODE) {
+        free_rebind_parse_orphans(); // Issue #2791: unlinked parse appends
+        ok = false;
+        return mev("not-found", "rebind: define not found after parse");
+    }
+
+    // The parsed root may be a Define (if code includes "(define (name ...) ...)")
+    // or a bare expression (just the value/lambda). Extract the value.
+    new_value = pr.root;
+    auto root_v = flat.get(pr.root);
+    if (root_v.tag == aura::ast::NodeTag::Define) {
+        // New code is a full define — extract its value child
+        if (root_v.children.empty()) {
+            free_rebind_parse_orphans(); // Issue #2791
+            ok = false;
+            return mev("parse-error", "define form in rebind code has no body");
+        }
+        new_value = root_v.child(0);
+    }
+    return std::nullopt;
+}
+
+std::optional<EvalValue> RegSplitParts::rebind_shape_and_hygiene(
+    Evaluator& ev, aura::ast::FlatAST& flat, aura::ast::NodeId old_define,
+    aura::ast::NodeId new_value, std::span<const EvalValue> a, const std::string& name,
+    std::size_t size_before_parse, const MakeErrorVal& mev, bool& ok) {
+    auto free_rebind_parse_orphans = [&flat, size_before_parse]() {
+        if (size_before_parse < static_cast<std::size_t>(flat.size()))
+            (void)flat.free_orphan_nodes_from(static_cast<aura::ast::NodeId>(size_before_parse));
+    };
+    // Issue #4579: refuse to replace a procedure define (lambda body)
+    // with a value that is provably not a procedure. The post-mutate
+    // typecheck only re-infers the mutated define, so a caller like
+    // (define (g y) (* (f y) 2)) keeps a stale closure for the old f;
+    // applying it against a literal allocated without bound in the
+    // re-specialise re-dispatch (std::bad_alloc → SIGABRT, and a host
+    // OOM kill with no cap — uncatchable by try). Literal bodies
+    // (int / float / string / quote / pair / …) and alias names that
+    // resolve to a non-lambda workspace define are both refused; lambda
+    // bodies, computed calls (may evaluate to a closure), and aliases
+    // that resolve to a lambda / a primitive / a module import stay on
+    // the existing path.
+    {
+        const auto od_v = flat.get(old_define);
+        const bool old_is_procedure = !od_v.children.empty() && od_v.child(0) < flat.size() &&
+                                      flat.get(od_v.child(0)).tag == aura::ast::NodeTag::Lambda;
+        if (old_is_procedure) {
+            const auto nv_v = flat.get(new_value);
+            bool new_is_procedure = false;
+            if (nv_v.tag == aura::ast::NodeTag::Lambda || nv_v.tag == aura::ast::NodeTag::Call) {
+                new_is_procedure = true;
+            } else if (nv_v.tag == aura::ast::NodeTag::Variable) {
+                // Alias: assume procedure unless the name provably
+                // resolves to a non-lambda workspace define. Not found
+                // (primitive / module import / parameter) → do not block.
+                new_is_procedure = true;
+                if (nv_v.sym_id != aura::ast::INVALID_SYM) {
+                    for (aura::ast::NodeId d = 0; d < flat.size(); ++d) {
+                        if (flat.is_free_slot(d) || d == old_define)
+                            continue;
+                        const auto dv = flat.get(d);
+                        if (dv.tag != aura::ast::NodeTag::Define || dv.sym_id != nv_v.sym_id)
+                            continue;
+                        new_is_procedure = !dv.children.empty() && dv.child(0) < flat.size() &&
+                                           flat.get(dv.child(0)).tag == aura::ast::NodeTag::Lambda;
+                        break;
+                    }
+                }
+            }
+            if (!new_is_procedure) {
+                free_rebind_parse_orphans(); // Issue #2791: unlinked parse appends
+                ok = false;
+                return mev("rebind-non-procedure",
+                           "rebind-non-procedure: '" + name +
+                               "' is a procedure; refusing to replace it with a non-procedure "
+                               "value (callers would apply a stale closure against it — "
+                               "unbounded allocation, #4579)");
+            }
+        }
+    }
+
+    // Issue #4357: closed one-line Soft lambda only. The eligibility
+    // walk is above this handler.
+    if (rebind_light_path_eligible(flat, old_define, new_value, ev.workspace_pool_,
+                                   ev.primitives()))
+        ev.arm_rebind_light_path();
+
+    // Issue #2792: hygiene on new body — walk the parsed new_value subtree
+    // for MacroIntroduced. The pre-parse check only probes old_define
+    // (destination); a macro-introduced body can still be rebound onto a
+    // normal Define, defeating #373. Same :allow-macro? / global opt-out.
+    {
+        const bool allow_macro = ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
+        if (!allow_macro) {
+            aura::ast::NodeId hit = aura::ast::NULL_NODE;
+            flat.walk_subtree(new_value, [&](aura::ast::NodeId id) {
+                if (hit == aura::ast::NULL_NODE && flat.is_macro_introduced(id))
+                    hit = id;
+            });
+            if (hit != aura::ast::NULL_NODE) {
+                aura::ast::NodeId probe_arr[1] = {hit};
+                if (auto err = hygiene_protected_error(ev, flat, probe_arr, false, false, mev)) {
+                    free_rebind_parse_orphans(); // Issue #2791: unlinked body
+                    ok = false;
+                    return *err;
+                }
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<EvalValue>
+RegSplitParts::rebind_link_new_body(Evaluator& ev, aura::ast::FlatAST& flat,
+                                    aura::ast::NodeId old_define, aura::ast::NodeId new_value,
+                                    std::span<const EvalValue> a, const std::string& name,
+                                    const MakeErrorVal& mev, bool& ok, bool& rejected_failed,
+                                    std::uint64_t& cone_log_before, std::size_t size_before_parse) {
+    auto safe_str = [&ev](const EvalValue& v, std::string fallback = {}) -> std::string {
+        if (!is_string(v))
+            return fallback;
+        const auto i = as_string_idx(v);
+        if (i >= ev.string_heap_.size())
+            return fallback;
+        return ev.string_at(i);
+    };
+    auto free_rebind_parse_orphans = [&flat, size_before_parse]() {
+        if (size_before_parse < static_cast<std::size_t>(flat.size()))
+            (void)flat.free_orphan_nodes_from(static_cast<aura::ast::NodeId>(size_before_parse));
+    };
+    // Issue #1441 / #2795: capture old body NodeId for rollback ONLY
+    // AFTER parse_to_flat + resolve_define_after_parse (#1685). A
+    // pre-parse capture can go stale if free-list reuses slots or the
+    // preferred Define id drifts; Guard rollback would then
+    // set_child(define, 0, stale_id) → logical corruption / UAF.
+    // field_offset=0 is the Define value child index (same slot
+    // set_child mutates).
+    std::string summary = (a.size() > 2 && is_string(a[2])) ? safe_str(a[2]) : "rebind " + name;
+    aura::ast::NodeId old_value_node = aura::ast::NULL_NODE;
+    {
+        auto old_def_v = flat.get(old_define);
+        if (!old_def_v.children.empty())
+            old_value_node = old_def_v.child(0);
+    }
+    // Issue #2795: refuse to log a non-live body NodeId into rollback data.
+    if (old_value_node != aura::ast::NULL_NODE &&
+        (old_value_node >= flat.size() || flat.is_free_slot(old_value_node) ||
+         !flat.is_live_node(old_value_node))) {
+        flat.note_rebind_rollback_stale_nodeid_prevented();
+        free_rebind_parse_orphans();
+        ok = false;
+        return mev("internal", "rebind: old body NodeId not live after parse (stale capture "
+                               "prevented; #2795)");
+    }
+    // Issue #4406: set_child unlinks old_value_node. A User Define can
+    // hold a MacroIntroduced child (expand stamps the clone, not the
+    // parent). The pre-parse probe only sees old_define; the #2792 walk
+    // only sees the new body. Same default-reject helper, !allow only.
+    {
+        const bool allow_macro_old =
+            ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
+        if (!allow_macro_old) {
+            const auto old_hit = first_macro_introduced_in_subtree(flat, old_value_node);
+            if (old_hit != aura::ast::NULL_NODE) {
+                aura::ast::NodeId probe_arr[1] = {old_hit};
+                if (auto err = hygiene_protected_error(ev, flat, probe_arr, false, false, mev)) {
+                    free_rebind_parse_orphans();
+                    ok = false;
+                    return *err;
+                }
+            }
+        }
+    }
+    const std::uint64_t cone_log_before_4682 = flat.mutation_log_size();
+    flat.add_mutation_with_rollback(old_define, "rebind", name, summary, summary,
+                                    aura::ast::MutationStatus::Committed,
+                                    /*field_offset=*/0, static_cast<std::uint64_t>(old_value_node),
+                                    static_cast<std::uint64_t>(new_value), /*has_rollback=*/true);
+
+    // Redirect old Define's value child to the new nodes
+    // This is a valid NodeId in ev.workspace_flat_ since we parsed into it.
+    // set_child also logs structural-set-child (redundant with rebind
+    // rollback data but keeps children_ mutation audit complete).
+    flat.set_child(old_define, 0, new_value);
+    // Cleared on the success return. A later ok=false rolls the body
+    // back in the Guard dtor; top_env is rebound after that.
+    rejected_failed = true;
+    // Issue #2730: set_child bumps generation_; re-align new body so
+    // post-cascade env refresh can eval_flat the new NodeIds.
+    flat.force_align_subtree_gen(new_value);
+    flat.force_align_subtree_gen(old_define);
+    return std::nullopt;
+}
+
+void RegSplitParts::rebind_propagate_and_source(Evaluator& ev, aura::ast::FlatAST& flat,
+                                                const std::string& name, aura::ast::SymId sym,
+                                                const std::vector<aura::ast::NodeId>& dep_callers,
+                                                aura::ast::NodeId new_value,
+                                                std::uint64_t code_idx) {
+    // Issue #348: auto-wire kOccurrenceDirty on
+    // every (if pred then else) in the new
+    // function body. Without this, callers
+    // would have to call
+    // (compile:mark-narrowing-dirty! ...) manually
+    // for each if-context, and the conservative
+    // fallback in find_occurrence_contexts would
+    // keep firing. The walker iterates only the
+    // new value's subtree (the old value's
+    // if-contexts are NOT auto-marked here —
+    // they're handled by the conservative path
+    // because the old body is no longer
+    // reachable via the define). For the old
+    // value's if-contexts, the post-mutation
+    // invariant check (#147) still emits the
+    // conservative note, which is the right
+    // behavior.
+    if (ev.set_occurrence_dirty_fn_) {
+        aura::compiler::auto_wire_k_occurrence_dirty_for_subtree(flat, ev.set_occurrence_dirty_fn_,
+                                                                 new_value);
+    }
+
+    // ── 依赖图驱动：dirty 所有调用者 ────────────────────────
+    // 利用从 def-use 索引预取的调用者列表，标记 dirty + 向上传播。
+    // 这样下次 typecheck-current 就知道这些节点需要重新类型推断。
+    // Issue #188: rebind changes the function body, so callers
+    // need re-inference + re-constraint-solve. Coercion markers
+    // are NOT touched (rebinds don't change type annotations),
+    // so we use kGeneralDirty | kConstraintDirty (not Coercion).
+    // Issue #262: precise def-use dirty on caller entry nodes.
+    ev.propagate_defuse_dirty(sym, name, dep_callers,
+                              aura::ast::FlatAST::kGeneralDirty |
+                                  aura::ast::FlatAST::kConstraintDirty);
+
+    // Issue #2730: publish single-define canonical source BEFORE dirty
+    // cascade so full re-lower / cascade never parses multi-define install
+    // text under this name (sibling lambdas would steal the #0 body).
+    if (ev.update_function_source_fn_) {
+        std::string body_src = ev.string_at(code_idx);
+        // Bare lambda / expr → wrap as (define name …). Full define form kept.
+        if (body_src.find("(define ") != 0 && body_src.find("(define\t") != 0 &&
+            body_src.find("(define\n") != 0) {
+            body_src = "(define " + name + " " + body_src + ")";
+        }
+        ev.update_function_source_fn_(name, body_src);
+    }
+}
+
+void RegSplitParts::rebind_invalidate_ir(Evaluator& ev, aura::ast::FlatAST& flat,
+                                         const std::string& name, aura::ast::NodeId old_define,
+                                         aura::ast::SymId sym, std::uint64_t cone_log_before) {
+    // Phase 2: mark this define's IR cache entry dirty so the next
+    // (eval-current) re-lowers it.
+    if (ev.mark_define_dirty_fn_) {
+        ev.mark_define_dirty_fn_(name);
+        // Issue #4682 step 1: this define + its caller cone are dirty;
+        // the rebind / set_child log entries need no mark-all backstop.
+        // Duplicate-name defines (last wins in eval) keep the mark-all
+        // backstop: the cone is keyed by name, not by Define node.
+        // Step 2: O(#same-name defines) via the persistent define index.
+        if (flat.defines_for_sym(sym).size() == 1)
+            ev.note_cone_cover_4682(cone_log_before, flat.mutation_log_size());
+    }
+    // Issue #3681: the closure captured before this rebind still holds
+    // the pre-reemit body. Poison it after dirty so production apply
+    // refuses; the re-eval below installs a fresh closure.
+    if (ev.drop_ir_define_binding_fn_)
+        ev.drop_ir_define_binding_fn_(name);
+    ev.must_deopt_closures_named(name);
+    must_deopt_bound_define(ev, name);
+
+    // Issue #63723: re-populate the dep_graph so subsequent
+    // public_invalidate_function(name) sees the same caller
+    // edges the original (set-code ...) recorded. Without
+    // this, post-rebind dep_graph_contains(name) returns
+    // false because the BFS cascade walks an empty graph.
+    // Lightweight (just walks the AST + records edges, no
+    // IR lowering). The original (set-code ...) path uses
+    // pre_cache_workspace_defines_fn_ which does both
+    // populate_dep_graph + populate_ir_cache_v2; we use
+    // the dep_graph-only variant to avoid the O(n^2)
+    // re-lower cost on rebind storms (mark_define_dirty
+    // already makes the IR cache dirty, so the next
+    // (eval-current) will lazily re-lower once).
+    // Issue #4357: eval-current already recorded called_by. A same-name
+    // one-line body adds no user callee, so a full rebuild is pure
+    // overhead on the timed rebind. The one-define walk still runs on the
+    // light path: it is O(body), refreshes the focus's edges (a matching-
+    // arity call is eligible, #4362) and advances the dep-graph sync log.
+    // Without the advance, the next ast:restore sees synced_pre=false and
+    // falls back to the O(W) rebuild (#4793).
+    if (ev.repopulate_dep_graph_one_fn_4682_)
+        ev.repopulate_dep_graph_one_fn_4682_(name, cone_log_before);
+    else if (ev.repopulate_workspace_dep_graph_fn_ && !ev.rebind_light_path())
+        ev.repopulate_workspace_dep_graph_fn_();
+
+    // Issue #680: precise IR/JIT/bridge invalidation for closure-heavy Defines.
+    // Pass run_full_invalidate=false: mutate:rebind uses
+    // mark_define_dirty (not invalidate_function) per the
+    // test_issue_401 AC5 contract. The closure-heavy precision
+    // invalidation is still applied via
+    // mark_dirty_upward + define_impact_scope_fn_ above, so
+    // the impact scope is correct. The next
+    // (eval-current) will re-lower lazily. Increment
+    // invalidate_function_calls would have falsely
+    // signaled "rebind is a hard invalidate" — which is
+    // not the design contract.
+    ev.finalize_define_mutate_invalidation(flat, name, old_define,
+                                           /*run_full_invalidate=*/false);
+
+    // Bump observability counters directly (without the BFS
+    // cascade) so query:jit-stats / query:hotswap-stats
+    // surface rebinds as invalidation events for AI
+    // monitoring. Counters are relaxed atomics, so the
+    // direct bump doesn't conflict with the lazy
+    // re-lower path above. Avoids running invalidate_function
+    // (which would re-do the BFS and risk over-counting in
+    // test_issue_401's per-evict assertion).
+    ev.bump_rebind_invalidate();
+}
+
+template <typename Guard>
+std::optional<EvalValue> RegSplitParts::rebind_typecheck_and_gate(
+    Evaluator& ev, aura::ast::FlatAST& flat, Guard& guard, aura::ast::NodeId old_define,
+    const std::vector<aura::ast::NodeId>& dep_callers, const std::string& name,
+    const MakeErrorVal& mev, bool& ok) {
+    // ── Auto-typecheck (Issue #107 / #526) ──────────────
+    // Selective infer_flat_partial when the mutation log
+    // has entries; full infer_flat fallback otherwise.
+    // Inline (no primitive dispatch) to avoid workspace_mtx_
+    // deadlock while the Guard holds unique_lock.
+    // Issue #1684: catch throws so Guard does not commit.
+    {
+        std::string threw;
+        if (!guard->run_or_rollback([&] { (void)ev.run_post_mutate_typecheck_no_lock(); },
+                                    &threw)) {
+            ok = false;
+            return mev("typecheck-threw", std::string("post-mutate typecheck threw: ") + threw);
+        }
+    }
+
+    // ── Ownership validation (Issue #1458 hardened) ──
+    // Pre-#1458 only tracked the rebind *function name* as
+    // the dirty set, so linear lets inside the new body were
+    // never simulated and use-after-move went undetected.
+    // Discover Linear + Move/Borrow targets under the define
+    // (and callers), stamp kOwnershipDirty, then revalidate.
+    // Issue #1684: wrap in run_or_rollback (throws → ok=false).
+    if (ev.workspace_flat_ && ev.workspace_pool_ && ev.last_mutate_error_.empty()) {
+        std::string threw;
+        if (!guard->run_or_rollback(
+                [&] {
+                    std::unordered_set<std::string> linear_bindings;
+                    aura::compiler::discover_linear_bindings_in_subtree(
+                        flat, *ev.workspace_pool_, old_define, linear_bindings);
+                    for (std::size_t ui = 0; ui < dep_callers.size(); ++ui) {
+                        if (dep_callers[ui] < flat.size()) {
+                            aura::compiler::discover_linear_bindings_in_subtree(
+                                flat, *ev.workspace_pool_, dep_callers[ui], linear_bindings);
+                        }
+                    }
+                    if (!linear_bindings.empty() && old_define < flat.size()) {
+                        flat.mark_dirty(old_define, static_cast<std::uint8_t>(
+                                                        aura::ast::FlatAST::kOwnershipDirty));
+                    }
+                    if (!linear_bindings.empty()) {
+                        std::vector<aura::compiler::OwnershipNote> onotes;
+                        bool opass = aura::compiler::OwnershipEnv::validate_ownership(
+                            flat, *ev.workspace_pool_, flat.root, linear_bindings, onotes);
+                        aura::compiler::record_linear_ownership_mutation_metrics(
+                            ev.compiler_metrics(), true, onotes, opass);
+                        if (!opass) {
+                            std::string err = "ownership validation after mutate:rebind failed:";
+                            for (auto& n : onotes)
+                                err += " [" + n.kind + " at node " + std::to_string(n.node) + "] " +
+                                       n.message + ";";
+                            ev.last_mutate_error_ = err;
+                        }
+                        // Issue #2695: unified rebind entry — routes
+                        // explicit-Agent mutate:rebind through the same
+                        // API as densify / steal. AC3 zero-cost when
+                        // no remapped roots (linear_bindings empty or
+                        // already validated above); real per-root span
+                        // wires in follow-up.
+                        // First-ship: empty remapped-root span (linear_bindings
+                        // is name set, not NodeId list). Per-root NodeId span
+                        // wires in follow-up; AC3 zero-cost short-circuit here.
+                        // Issue #2708: real per-root walk wires through this
+                        // same call site. Empty span here preserves AC3 —
+                        // Agent mutate:rebind validates by name set above
+                        // (linear_bindings), not by NodeId span; the walk
+                        // runs when callers pass a non-empty span (test /
+                        // future wiring when Agent rebind exposes a NodeId
+                        // remapped root set).
+                        (void)aura::compiler::ownership_rebind_after_remap(
+                            {}, aura::compiler::RemapReason::ExplicitAgent);
+                    }
+                },
+                &threw)) {
+            ok = false;
+            return mev("ownership-threw", std::string("ownership validation threw: ") + threw);
+        }
+    }
+
+    // ── Validation failure must not report success (#1019) ────
+    // Issue #241: when panic_auto_rollback_ is on, Guard dtor restores.
+    // Issue #1019: even without auto-rollback, never return #t when
+    // last_mutate_error_ is set — callers treat #t as "committed ok".
+    if (!ev.last_mutate_error_.empty()) {
+        ok = false; // Guard dtor: restore if panic_auto_rollback_, else clear
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->rebind_validation_fail_returns_total.fetch_add(1, std::memory_order_relaxed);
+        return mev("mutation-failed",
+                   ev.panic_auto_rollback_
+                       ? ("mutation rejected — auto-rolled back: " + ev.last_mutate_error_)
+                       : ("mutation rejected: " + ev.last_mutate_error_));
+    }
+
+    // Issue #2145: Full/Strict hard-gate before Agent sees commit.
+    // Runs invariant suite + linear enforce; on fail sets last_mutate_error_
+    // and forces Guard rollback via ok=false.
+    {
+        const std::uint64_t nchg =
+            ev.workspace_flat_
+                ? static_cast<std::uint64_t>(ev.workspace_flat_->all_mutations().size() > 0 ? 1 : 0)
+                : 0;
+        // Issue #3016: same resolve/TLS mid the Guard trail uses
+        // (not total_mutations_ volume, not nchg 0|1).
+        const std::uint64_t audit_mid = aura::compiler::typed_audit::stamp_boundary_audit_mid();
+        aura::compiler::typed_audit::note_invariant_enforcement_ran(audit_mid);
+        if (!ev.finish_mutate_hard_gate(nchg, /*linear=*/false, "mutate:rebind")) {
+            ok = false;
+            return mev("invariant-denied",
+                       ev.panic_auto_rollback_
+                           ? ("mutation rejected — auto-rolled back: " + ev.last_mutate_error_)
+                           : ("mutation rejected: " + ev.last_mutate_error_));
+        }
+    }
+
+    // Issue #1677: track render-logic rebinds for AI Native evolution stats.
+    if (aura_is_render_evolution_name(name)) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->render_evolution_rebind_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    return std::nullopt;
+}
+
+void RegSplitParts::rebind_refresh_env(Evaluator& ev, aura::ast::FlatAST& flat,
+                                       const std::string& name, aura::ast::NodeId new_value,
+                                       aura::ast::NodeId old_define) {
+    // Issue #2730: after dirty cascade, force top_env for `name` from the
+    // live new value. Dual-write string + current-pool SymId.
+    // Find the existing cell ONLY via string name — SymId is pool-local;
+    // after set-code (fresh pool) intern("verify-policy") may equal an
+    // OLD pool's intern("score"), so lookup_by_symid would steal score's
+    // cell and silent-corrupt the sibling binding (ORDER-B after ORDER-A).
+    if (ev.workspace_pool_ && new_value != aura::ast::NULL_NODE && new_value < flat.size()) {
+        // #3918 follow-up: eval the whole Define node (eval_current's
+        // root-eval semantics) — parity with the batch :rebind path.
+        // Drop the cached closure from the previous specialise. A clean
+        // Define would hand eval_flat that high-bit id back, and the
+        // outermost drain then erases its owner.
+        // Issue #4369: that eval re-keys top_ onto the child workspace
+        // pool. workspace:delete then frees it, and the next primitive
+        // lookup interns into the freed pool. Restore the caller pool
+        // the way eval-current does.
+        struct RestoreTopPool {
+            Env& top;
+            const aura::ast::StringPool* saved;
+            explicit RestoreTopPool(Env& t)
+                : top(t)
+                , saved(t.pool()) {}
+            ~RestoreTopPool() {
+                if (saved && saved != top.pool())
+                    top.set_pool(saved);
+            }
+            RestoreTopPool(const RestoreTopPool&) = delete;
+            RestoreTopPool& operator=(const RestoreTopPool&) = delete;
+            RestoreTopPool(RestoreTopPool&&) = delete;
+            RestoreTopPool& operator=(RestoreTopPool&&) = delete;
+        } restore_top_pool(ev.top_env());
+        flat.mark_subtree_dirty(old_define);
+        flat.force_align_subtree_gen(old_define);
+        auto refreshed = ev.eval_flat(flat, *ev.workspace_pool_, old_define, ev.top_env());
+        if (refreshed) {
+            auto& tenv = ev.top_env();
+            std::size_t ci = 0;
+            bool have = false;
+            if (auto existing = tenv.lookup_binding(name); existing && types::is_cell(*existing)) {
+                ci = types::as_cell_id(*existing);
+                have = true;
+            }
+            if (!have)
+                ci = ev.alloc_cell(*refreshed);
+            else if (ci < ev.cells().size()) {
+                // Issue #4715 AC2: inside a body with an open overlay the
+                // rebind must NOT overwrite the shared cell in place - the
+                // value goes to the overlay's private cell and is published
+                // by fiber:overlay-commit.
+                if (!fiber_cow_overlay_capture_define_cell(ev, name, *refreshed,
+                                                           static_cast<std::uint64_t>(ci)))
+                    ev.cells()[ci] = *refreshed;
+            }
+            // Issue #4583: eval_flat already updated this cell. Another
+            // top_ bind appends a shadow, and the next set_pool re-interns
+            // every shadow. Skip the append when the name is already bound.
+            if (!have)
+                tenv.bind(name, types::make_cell(ci));
+            // Do not bind_symid with the workspace intern onto
+            // stdin top_env — intern ids are pool-local and steal
+            // sibling stdin bindings (*h* / hbump) after rebind.
+        }
+    }
+}
 template <typename Ctx> void RegSplitParts::register_mutate_rebind_primitive(Ctx& cx) {
     auto& mev = cx.mev_ref;
     auto& safe_str = cx.safe_str_ref;
@@ -3594,66 +4293,8 @@ template <typename Ctx> void RegSplitParts::register_mutate_rebind_primitive(Ctx
                        "are not tracked; install them with (set-code \"...\") + "
                        "(eval-current) before mutate:rebind");
         }
-        // Issue #288: optional `validate: <type-name>` 4th arg.
-        // When present, run the best-effort schema shape check on
-        // the new code string before any workspace mutation. A
-        // failure returns a tagged `schema-violation` error pair
-        // and sets `ok = false` so the MutationBoundaryGuard dtor
-        // rolls back (preserves the original binding).
-        std::string validate_type;
-        if (a.size() >= 4 && is_string(a[3])) {
-            auto vidx = as_string_idx(a[3]);
-            if (vidx < ev.string_heap_.size())
-                validate_type = ev.string_at(vidx);
-        }
-        if (!validate_type.empty()) {
-            auto validate_fn = ev.primitives_.lookup("mutate:validate-against-schema");
-            if (validate_fn) {
-                auto ci = ev.string_heap_.mint(safe_str(a[1]));
-                auto ti = ev.string_heap_.mint(validate_type);
-                // Issue #1684: schema validate must not throw past Guard
-                // with ok=true (would commit an unvalidated rebind).
-                EvalValue vresult = make_void();
-                std::string threw;
-                if (!guard->run_or_rollback(
-                        [&] { vresult = (*validate_fn)({make_string(ci), make_string(ti)}); },
-                        &threw)) {
-                    ok = false;
-                    return mev("validate-threw", std::string("schema validate threw: ") + threw);
-                }
-                if (is_string(vresult)) {
-                    // tagged schema-violation — rejected
-                    ok = false;
-                    return vresult; // already a "(schema-violation ...)" string
-                }
-                if (is_bool(vresult) && !as_bool(vresult)) {
-                    ok = false;
-                    return mev("schema-violation",
-                               "schema check returned #f (no schema registered)");
-                }
-                // is_bool(vresult) == true → proceed
-            }
-        }
-        // Issue #141 AC: lazy COW — trigger clone on first mutate, not on switch.
-        if (ev.workspace_tree_) {
-            if (!ev.trigger_lazy_cow(ev.workspace_tree_)) {
-                ok = false;
-                // Issue #4335: cow-refused must not exit the boundary as
-                // Success — clear the shared outermost flag so ~Guard
-                // takes exit_mutation_boundary(false) and the deny joins
-                // the same mid (belt for body-side returns: wrapper_guard
-                // is not in scope inside the body lambda).
-                ev.mark_outermost_mutation_failed();
-                return mev("cow-refused", "COW refused: budget exceeded or read-only");
-            }
-            // Re-read ev.workspace_flat_/pool_ in case COW created a new local flat.
-            void* new_flat = nullptr;
-            void* new_pool = nullptr;
-            if (ev.refresh_active_flat_pool(ev.workspace_tree_, &new_flat, &new_pool)) {
-                ev.workspace_flat_ = static_cast<aura::ast::FlatAST*>(new_flat);
-                ev.workspace_pool_ = static_cast<aura::ast::StringPool*>(new_pool);
-            }
-        }
+        if (auto err = RegSplitParts::rebind_preflight(ev, a, mev, guard, ok))
+            return *err;
         auto name_idx = as_string_idx(a[0]);
         auto code_idx = as_string_idx(a[1]);
         if (name_idx >= ev.string_heap_.size() || code_idx >= ev.string_heap_.size()) {
@@ -3692,626 +4333,39 @@ template <typename Ctx> void RegSplitParts::register_mutate_rebind_primitive(Ctx
         // total_mutations_ bump — MutationBoundaryGuard owns the bump
         // (introduced at the function entry; lock site TBD).
 
-        // Find old Define node by name (skip free-list ghosts — #1685 / #2730).
-        // Last live match wins. SymId compare can miss after pool reset /
-        // intern_epoch (same spelling, new id) — resolve-by-name is the
-        // fallback so we rebind in place instead of the add-path duplicate.
         aura::ast::NodeId old_define = aura::ast::NULL_NODE;
-        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            if (flat.is_free_slot(id))
-                continue;
-            // Column probes: no NodeView assembly per node.
-            if (flat.tag(id) != aura::ast::NodeTag::Define)
-                continue;
-            const auto v_sym = flat.sym_id(id);
-            if (v_sym == sym) {
-                old_define = id;
-                continue;
-            }
-            if (v_sym != aura::ast::INVALID_SYM && ev.workspace_pool_->resolve(v_sym) == name)
-                old_define = id;
-        }
-        // Issue #373: hygiene guard. If old_define is a
-        // MacroIntroduced node (produced by clone_macro_body
-        // from a hygienic macro expansion), reject by default.
-        // The caller can opt out via the :allow-macro? #t
-        // kwarg or by setting the global
-        // (hygiene:set-allow-macro-mutate! #t) flag.
-        if (old_define != aura::ast::NULL_NODE) {
-            aura::ast::NodeId probe_arr[1] = {old_define};
-            if (auto err = hygiene_protected_error(ev, flat, probe_arr, ev.get_allow_macro_mutate(),
-                                                   parse_allow_macro_opt_out(ev, a), mev)) {
-                ok = false;
-                return *err;
-            }
-        }
-        // Issue #165 follow-up: no matching Define adds a top-level Define
-        // and logs add_mutation("add", …) with the rest of rebind.
-        if (old_define == aura::ast::NULL_NODE) {
-            // Parse the new code first so we know what to bind.
-            // Issue #2791: snapshot size; free orphan nodes on parse failure
-            // so append-mode parse_to_flat does not leak into free_list / size.
-            const auto size_before_add_parse = static_cast<std::size_t>(flat.size());
-            auto pr_add =
-                aura::parser::parse_to_flat(ev.string_at(code_idx), flat, *ev.workspace_pool_);
-            if (!pr_add.success || pr_add.root == aura::ast::NULL_NODE) {
-                std::string parse_err;
-                if (!pr_add.errors.empty()) {
-                    for (auto& e : pr_add.errors) {
-                        if (!parse_err.empty())
-                            parse_err += "; ";
-                        parse_err += e.format();
-                    }
-                } else if (!pr_add.error.empty()) {
-                    parse_err = pr_add.error;
-                } else {
-                    parse_err = "rebind code could not be parsed";
-                }
-                // Issue #2791: free partial parse appends (Guard only rolls mutation log).
-                if (size_before_add_parse < flat.size())
-                    (void)flat.free_orphan_nodes_from(
-                        static_cast<aura::ast::NodeId>(size_before_add_parse));
-                ok = false;
-                return mev("parse-error", parse_err);
-            }
-            aura::ast::NodeId new_value = pr_add.root;
-            auto root_v = flat.get(pr_add.root);
-            if (root_v.tag == aura::ast::NodeTag::Define) {
-                if (root_v.children.empty()) {
-                    // Issue #2791: parsed Define is unlinked — free orphans.
-                    if (size_before_add_parse < flat.size())
-                        (void)flat.free_orphan_nodes_from(
-                            static_cast<aura::ast::NodeId>(size_before_add_parse));
-                    ok = false;
-                    return mev("parse-error", "define form in rebind code has no body");
-                }
-                new_value = root_v.child(0);
-            }
-            // Issue #2792: hygiene on new body (add path) — walk new_value
-            // for MacroIntroduced; old_define-only probe is insufficient.
-            {
-                const bool allow_macro =
-                    ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
-                if (!allow_macro) {
-                    aura::ast::NodeId hit = aura::ast::NULL_NODE;
-                    flat.walk_subtree(new_value, [&](aura::ast::NodeId id) {
-                        if (hit == aura::ast::NULL_NODE && flat.is_macro_introduced(id))
-                            hit = id;
-                    });
-                    if (hit != aura::ast::NULL_NODE) {
-                        aura::ast::NodeId probe_arr[1] = {hit};
-                        if (auto err =
-                                hygiene_protected_error(ev, flat, probe_arr, false, false, mev)) {
-                            if (size_before_add_parse < flat.size())
-                                (void)flat.free_orphan_nodes_from(
-                                    static_cast<aura::ast::NodeId>(size_before_add_parse));
-                            ok = false;
-                            return *err;
-                        }
-                    }
-                }
-            }
-            std::string summary =
-                (a.size() > 2 && is_string(a[2])) ? safe_str(a[2]) : "add " + name;
-            auto new_define = flat.add_define(sym, new_value);
-            // Issue #4360: link onto flat.root (see link_added_define_onto_root).
-            if (!link_added_define_onto_root(flat, new_define)) {
-                ok = false;
-                return mev("stale-ref", "rebind add: define not on root");
-            }
-            flat.add_mutation(new_define, "add", name, summary, summary);
-            // Mark all defines dirty so cached IR for siblings gets invalidated.
-            if (ev.mark_all_defines_dirty_fn_)
-                ev.mark_all_defines_dirty_fn_();
-            // Also update dep_graph_ and IR cache (lightweight + heavy hooks).
-            if (ev.pre_cache_workspace_defines_fn_)
-                ev.pre_cache_workspace_defines_fn_();
-            return make_bool(true);
-        }
+        if (auto err =
+                RegSplitParts::rebind_find_target(ev, flat, name, sym, a, mev, ok, old_define))
+            return *err;
+        if (old_define == aura::ast::NULL_NODE)
+            return RegSplitParts::rebind_add_new_define(ev, flat, name, sym, code_idx, a, mev, ok);
 
-        // Parse new code INTO workspace flat (append mode). All new node IDs
-        // are valid in the same FlatAST and can be cross-referenced.
-        // Issue #1685: snapshot size so we re-resolve old_define only in the
-        // pre-parse range (ignore a Define form appended by this parse).
-        // Issue #2791: same snapshot bounds free_orphan_nodes_from on failure
-        // so Guard mutation-log rollback does not leave parse append orphans.
-        const auto size_before_parse = static_cast<std::size_t>(flat.size());
-        auto free_rebind_parse_orphans = [&flat, size_before_parse]() {
-            if (size_before_parse < flat.size())
-                (void)flat.free_orphan_nodes_from(
-                    static_cast<aura::ast::NodeId>(size_before_parse));
-        };
-        auto pr = [&] {
-            aura::compiler::phase_stats::Scope phase_parse(aura::compiler::phase_stats::Parse);
-            return aura::parser::parse_to_flat(ev.string_at(code_idx), flat, *ev.workspace_pool_);
-        }();
-        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-            std::string parse_err;
-            if (!pr.errors.empty()) {
-                for (auto& e : pr.errors) {
-                    if (!parse_err.empty())
-                        parse_err += "; ";
-                    parse_err += e.format();
-                }
-            } else if (!pr.error.empty()) {
-                parse_err = pr.error;
-            } else {
-                parse_err = "rebind code could not be parsed";
-            }
-            free_rebind_parse_orphans(); // Issue #2791
-            ok = false;
-            return mev("parse-error", parse_err);
-        }
+        aura::ast::NodeId new_value = aura::ast::NULL_NODE;
+        std::size_t size_before_parse = 0;
+        if (auto err = RegSplitParts::rebind_parse_value(ev, flat, sym, old_define, code_idx, mev,
+                                                         ok, new_value, size_before_parse))
+            return *err;
 
-        // Issue #1685: re-resolve target Define after SoA growth / append.
-        old_define = resolve_define_after_parse(flat, sym, old_define, size_before_parse);
-        if (old_define == aura::ast::NULL_NODE) {
-            free_rebind_parse_orphans(); // Issue #2791: unlinked parse appends
-            ok = false;
-            return mev("not-found", "rebind: define not found after parse");
-        }
+        if (auto err = RegSplitParts::rebind_shape_and_hygiene(ev, flat, old_define, new_value, a,
+                                                               name, size_before_parse, mev, ok))
+            return *err;
 
-        // The parsed root may be a Define (if code includes "(define (name ...) ...)")
-        // or a bare expression (just the value/lambda). Extract the value.
-        aura::ast::NodeId new_value = pr.root;
-        auto root_v = flat.get(pr.root);
-        if (root_v.tag == aura::ast::NodeTag::Define) {
-            // New code is a full define — extract its value child
-            if (root_v.children.empty()) {
-                free_rebind_parse_orphans(); // Issue #2791
-                ok = false;
-                return mev("parse-error", "define form in rebind code has no body");
-            }
-            new_value = root_v.child(0);
-        }
+        std::uint64_t cone_log_before_4682 = 0;
+        if (auto err = RegSplitParts::rebind_link_new_body(ev, flat, old_define, new_value, a, name,
+                                                           mev, ok, rebind_after_rejected.failed,
+                                                           cone_log_before_4682, size_before_parse))
+            return *err;
 
-        // Issue #4579: refuse to replace a procedure define (lambda body)
-        // with a value that is provably not a procedure. The post-mutate
-        // typecheck only re-infers the mutated define, so a caller like
-        // (define (g y) (* (f y) 2)) keeps a stale closure for the old f;
-        // applying it against a literal allocated without bound in the
-        // re-specialise re-dispatch (std::bad_alloc → SIGABRT, and a host
-        // OOM kill with no cap — uncatchable by try). Literal bodies
-        // (int / float / string / quote / pair / …) and alias names that
-        // resolve to a non-lambda workspace define are both refused; lambda
-        // bodies, computed calls (may evaluate to a closure), and aliases
-        // that resolve to a lambda / a primitive / a module import stay on
-        // the existing path.
-        {
-            const auto od_v = flat.get(old_define);
-            const bool old_is_procedure = !od_v.children.empty() && od_v.child(0) < flat.size() &&
-                                          flat.get(od_v.child(0)).tag == aura::ast::NodeTag::Lambda;
-            if (old_is_procedure) {
-                const auto nv_v = flat.get(new_value);
-                bool new_is_procedure = false;
-                if (nv_v.tag == aura::ast::NodeTag::Lambda ||
-                    nv_v.tag == aura::ast::NodeTag::Call) {
-                    new_is_procedure = true;
-                } else if (nv_v.tag == aura::ast::NodeTag::Variable) {
-                    // Alias: assume procedure unless the name provably
-                    // resolves to a non-lambda workspace define. Not found
-                    // (primitive / module import / parameter) → do not block.
-                    new_is_procedure = true;
-                    if (nv_v.sym_id != aura::ast::INVALID_SYM) {
-                        for (aura::ast::NodeId d = 0; d < flat.size(); ++d) {
-                            if (flat.is_free_slot(d) || d == old_define)
-                                continue;
-                            const auto dv = flat.get(d);
-                            if (dv.tag != aura::ast::NodeTag::Define || dv.sym_id != nv_v.sym_id)
-                                continue;
-                            new_is_procedure =
-                                !dv.children.empty() && dv.child(0) < flat.size() &&
-                                flat.get(dv.child(0)).tag == aura::ast::NodeTag::Lambda;
-                            break;
-                        }
-                    }
-                }
-                if (!new_is_procedure) {
-                    free_rebind_parse_orphans(); // Issue #2791: unlinked parse appends
-                    ok = false;
-                    return mev("rebind-non-procedure",
-                               "rebind-non-procedure: '" + name +
-                                   "' is a procedure; refusing to replace it with a non-procedure "
-                                   "value (callers would apply a stale closure against it — "
-                                   "unbounded allocation, #4579)");
-                }
-            }
-        }
+        RegSplitParts::rebind_propagate_and_source(ev, flat, name, sym, dep_callers, new_value,
+                                                   code_idx);
 
-        // Issue #4357: closed one-line Soft lambda only. The eligibility
-        // walk is above this handler.
-        if (rebind_light_path_eligible(flat, old_define, new_value, ev.workspace_pool_,
-                                       ev.primitives()))
-            ev.arm_rebind_light_path();
+        RegSplitParts::rebind_invalidate_ir(ev, flat, name, old_define, sym, cone_log_before_4682);
 
-        // Issue #2792: hygiene on new body — walk the parsed new_value subtree
-        // for MacroIntroduced. The pre-parse check only probes old_define
-        // (destination); a macro-introduced body can still be rebound onto a
-        // normal Define, defeating #373. Same :allow-macro? / global opt-out.
-        {
-            const bool allow_macro =
-                ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
-            if (!allow_macro) {
-                aura::ast::NodeId hit = aura::ast::NULL_NODE;
-                flat.walk_subtree(new_value, [&](aura::ast::NodeId id) {
-                    if (hit == aura::ast::NULL_NODE && flat.is_macro_introduced(id))
-                        hit = id;
-                });
-                if (hit != aura::ast::NULL_NODE) {
-                    aura::ast::NodeId probe_arr[1] = {hit};
-                    if (auto err =
-                            hygiene_protected_error(ev, flat, probe_arr, false, false, mev)) {
-                        free_rebind_parse_orphans(); // Issue #2791: unlinked body
-                        ok = false;
-                        return *err;
-                    }
-                }
-            }
-        }
+        if (auto err = RegSplitParts::rebind_typecheck_and_gate(ev, flat, guard, old_define,
+                                                                dep_callers, name, mev, ok))
+            return *err;
 
-        // Issue #1441 / #2795: capture old body NodeId for rollback ONLY
-        // AFTER parse_to_flat + resolve_define_after_parse (#1685). A
-        // pre-parse capture can go stale if free-list reuses slots or the
-        // preferred Define id drifts; Guard rollback would then
-        // set_child(define, 0, stale_id) → logical corruption / UAF.
-        // field_offset=0 is the Define value child index (same slot
-        // set_child mutates).
-        std::string summary = (a.size() > 2 && is_string(a[2])) ? safe_str(a[2]) : "rebind " + name;
-        aura::ast::NodeId old_value_node = aura::ast::NULL_NODE;
-        {
-            auto old_def_v = flat.get(old_define);
-            if (!old_def_v.children.empty())
-                old_value_node = old_def_v.child(0);
-        }
-        // Issue #2795: refuse to log a non-live body NodeId into rollback data.
-        if (old_value_node != aura::ast::NULL_NODE &&
-            (old_value_node >= flat.size() || flat.is_free_slot(old_value_node) ||
-             !flat.is_live_node(old_value_node))) {
-            flat.note_rebind_rollback_stale_nodeid_prevented();
-            free_rebind_parse_orphans();
-            ok = false;
-            return mev("internal", "rebind: old body NodeId not live after parse (stale capture "
-                                   "prevented; #2795)");
-        }
-        // Issue #4406: set_child unlinks old_value_node. A User Define can
-        // hold a MacroIntroduced child (expand stamps the clone, not the
-        // parent). The pre-parse probe only sees old_define; the #2792 walk
-        // only sees the new body. Same default-reject helper, !allow only.
-        {
-            const bool allow_macro_old =
-                ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
-            if (!allow_macro_old) {
-                const auto old_hit = first_macro_introduced_in_subtree(flat, old_value_node);
-                if (old_hit != aura::ast::NULL_NODE) {
-                    aura::ast::NodeId probe_arr[1] = {old_hit};
-                    if (auto err =
-                            hygiene_protected_error(ev, flat, probe_arr, false, false, mev)) {
-                        free_rebind_parse_orphans();
-                        ok = false;
-                        return *err;
-                    }
-                }
-            }
-        }
-        const std::uint64_t cone_log_before_4682 = flat.mutation_log_size();
-        flat.add_mutation_with_rollback(
-            old_define, "rebind", name, summary, summary, aura::ast::MutationStatus::Committed,
-            /*field_offset=*/0, static_cast<std::uint64_t>(old_value_node),
-            static_cast<std::uint64_t>(new_value), /*has_rollback=*/true);
-
-        // Redirect old Define's value child to the new nodes
-        // This is a valid NodeId in ev.workspace_flat_ since we parsed into it.
-        // set_child also logs structural-set-child (redundant with rebind
-        // rollback data but keeps children_ mutation audit complete).
-        flat.set_child(old_define, 0, new_value);
-        // Cleared on the success return. A later ok=false rolls the body
-        // back in the Guard dtor; top_env is rebound after that.
-        rebind_after_rejected.failed = true;
-        // Issue #2730: set_child bumps generation_; re-align new body so
-        // post-cascade env refresh can eval_flat the new NodeIds.
-        flat.force_align_subtree_gen(new_value);
-        flat.force_align_subtree_gen(old_define);
-
-        // Issue #348: auto-wire kOccurrenceDirty on
-        // every (if pred then else) in the new
-        // function body. Without this, callers
-        // would have to call
-        // (compile:mark-narrowing-dirty! ...) manually
-        // for each if-context, and the conservative
-        // fallback in find_occurrence_contexts would
-        // keep firing. The walker iterates only the
-        // new value's subtree (the old value's
-        // if-contexts are NOT auto-marked here —
-        // they're handled by the conservative path
-        // because the old body is no longer
-        // reachable via the define). For the old
-        // value's if-contexts, the post-mutation
-        // invariant check (#147) still emits the
-        // conservative note, which is the right
-        // behavior.
-        if (ev.set_occurrence_dirty_fn_) {
-            aura::compiler::auto_wire_k_occurrence_dirty_for_subtree(
-                flat, ev.set_occurrence_dirty_fn_, new_value);
-        }
-
-        // ── 依赖图驱动：dirty 所有调用者 ────────────────────────
-        // 利用从 def-use 索引预取的调用者列表，标记 dirty + 向上传播。
-        // 这样下次 typecheck-current 就知道这些节点需要重新类型推断。
-        // Issue #188: rebind changes the function body, so callers
-        // need re-inference + re-constraint-solve. Coercion markers
-        // are NOT touched (rebinds don't change type annotations),
-        // so we use kGeneralDirty | kConstraintDirty (not Coercion).
-        // Issue #262: precise def-use dirty on caller entry nodes.
-        ev.propagate_defuse_dirty(sym, name, dep_callers,
-                                  aura::ast::FlatAST::kGeneralDirty |
-                                      aura::ast::FlatAST::kConstraintDirty);
-
-        // Issue #2730: publish single-define canonical source BEFORE dirty
-        // cascade so full re-lower / cascade never parses multi-define install
-        // text under this name (sibling lambdas would steal the #0 body).
-        if (ev.update_function_source_fn_) {
-            std::string body_src = ev.string_at(code_idx);
-            // Bare lambda / expr → wrap as (define name …). Full define form kept.
-            if (body_src.find("(define ") != 0 && body_src.find("(define\t") != 0 &&
-                body_src.find("(define\n") != 0) {
-                body_src = "(define " + name + " " + body_src + ")";
-            }
-            ev.update_function_source_fn_(name, body_src);
-        }
-
-        // Phase 2: mark this define's IR cache entry dirty so the next
-        // (eval-current) re-lowers it.
-        if (ev.mark_define_dirty_fn_) {
-            ev.mark_define_dirty_fn_(name);
-            // Issue #4682 step 1: this define + its caller cone are dirty;
-            // the rebind / set_child log entries need no mark-all backstop.
-            // Duplicate-name defines (last wins in eval) keep the mark-all
-            // backstop: the cone is keyed by name, not by Define node.
-            // Step 2: O(#same-name defines) via the persistent define index.
-            if (flat.defines_for_sym(sym).size() == 1)
-                ev.note_cone_cover_4682(cone_log_before_4682, flat.mutation_log_size());
-        }
-        // Issue #3681: the closure captured before this rebind still holds
-        // the pre-reemit body. Poison it after dirty so production apply
-        // refuses; the re-eval below installs a fresh closure.
-        if (ev.drop_ir_define_binding_fn_)
-            ev.drop_ir_define_binding_fn_(name);
-        ev.must_deopt_closures_named(name);
-        must_deopt_bound_define(ev, name);
-
-        // Issue #63723: re-populate the dep_graph so subsequent
-        // public_invalidate_function(name) sees the same caller
-        // edges the original (set-code ...) recorded. Without
-        // this, post-rebind dep_graph_contains(name) returns
-        // false because the BFS cascade walks an empty graph.
-        // Lightweight (just walks the AST + records edges, no
-        // IR lowering). The original (set-code ...) path uses
-        // pre_cache_workspace_defines_fn_ which does both
-        // populate_dep_graph + populate_ir_cache_v2; we use
-        // the dep_graph-only variant to avoid the O(n^2)
-        // re-lower cost on rebind storms (mark_define_dirty
-        // already makes the IR cache dirty, so the next
-        // (eval-current) will lazily re-lower once).
-        // Issue #4357: eval-current already recorded called_by. A same-name
-        // one-line body adds no user callee, so a full rebuild is pure
-        // overhead on the timed rebind. The one-define walk still runs on the
-        // light path: it is O(body), refreshes the focus's edges (a matching-
-        // arity call is eligible, #4362) and advances the dep-graph sync log.
-        // Without the advance, the next ast:restore sees synced_pre=false and
-        // falls back to the O(W) rebuild (#4793).
-        if (ev.repopulate_dep_graph_one_fn_4682_)
-            ev.repopulate_dep_graph_one_fn_4682_(name, cone_log_before_4682);
-        else if (ev.repopulate_workspace_dep_graph_fn_ && !ev.rebind_light_path())
-            ev.repopulate_workspace_dep_graph_fn_();
-
-        // Issue #680: precise IR/JIT/bridge invalidation for closure-heavy Defines.
-        // Pass run_full_invalidate=false: mutate:rebind uses
-        // mark_define_dirty (not invalidate_function) per the
-        // test_issue_401 AC5 contract. The closure-heavy precision
-        // invalidation is still applied via
-        // mark_dirty_upward + define_impact_scope_fn_ above, so
-        // the impact scope is correct. The next
-        // (eval-current) will re-lower lazily. Increment
-        // invalidate_function_calls would have falsely
-        // signaled "rebind is a hard invalidate" — which is
-        // not the design contract.
-        ev.finalize_define_mutate_invalidation(flat, name, old_define,
-                                               /*run_full_invalidate=*/false);
-
-        // Bump observability counters directly (without the BFS
-        // cascade) so query:jit-stats / query:hotswap-stats
-        // surface rebinds as invalidation events for AI
-        // monitoring. Counters are relaxed atomics, so the
-        // direct bump doesn't conflict with the lazy
-        // re-lower path above. Avoids running invalidate_function
-        // (which would re-do the BFS and risk over-counting in
-        // test_issue_401's per-evict assertion).
-        ev.bump_rebind_invalidate();
-
-        // ── Auto-typecheck (Issue #107 / #526) ──────────────
-        // Selective infer_flat_partial when the mutation log
-        // has entries; full infer_flat fallback otherwise.
-        // Inline (no primitive dispatch) to avoid workspace_mtx_
-        // deadlock while the Guard holds unique_lock.
-        // Issue #1684: catch throws so Guard does not commit.
-        {
-            std::string threw;
-            if (!guard->run_or_rollback([&] { (void)ev.run_post_mutate_typecheck_no_lock(); },
-                                        &threw)) {
-                ok = false;
-                return mev("typecheck-threw", std::string("post-mutate typecheck threw: ") + threw);
-            }
-        }
-
-        // ── Ownership validation (Issue #1458 hardened) ──
-        // Pre-#1458 only tracked the rebind *function name* as
-        // the dirty set, so linear lets inside the new body were
-        // never simulated and use-after-move went undetected.
-        // Discover Linear + Move/Borrow targets under the define
-        // (and callers), stamp kOwnershipDirty, then revalidate.
-        // Issue #1684: wrap in run_or_rollback (throws → ok=false).
-        if (ev.workspace_flat_ && ev.workspace_pool_ && ev.last_mutate_error_.empty()) {
-            std::string threw;
-            if (!guard->run_or_rollback(
-                    [&] {
-                        std::unordered_set<std::string> linear_bindings;
-                        aura::compiler::discover_linear_bindings_in_subtree(
-                            flat, *ev.workspace_pool_, old_define, linear_bindings);
-                        for (std::size_t ui = 0; ui < dep_callers.size(); ++ui) {
-                            if (dep_callers[ui] < flat.size()) {
-                                aura::compiler::discover_linear_bindings_in_subtree(
-                                    flat, *ev.workspace_pool_, dep_callers[ui], linear_bindings);
-                            }
-                        }
-                        if (!linear_bindings.empty() && old_define < flat.size()) {
-                            flat.mark_dirty(old_define, static_cast<std::uint8_t>(
-                                                            aura::ast::FlatAST::kOwnershipDirty));
-                        }
-                        if (!linear_bindings.empty()) {
-                            std::vector<aura::compiler::OwnershipNote> onotes;
-                            bool opass = aura::compiler::OwnershipEnv::validate_ownership(
-                                flat, *ev.workspace_pool_, flat.root, linear_bindings, onotes);
-                            aura::compiler::record_linear_ownership_mutation_metrics(
-                                ev.compiler_metrics(), true, onotes, opass);
-                            if (!opass) {
-                                std::string err =
-                                    "ownership validation after mutate:rebind failed:";
-                                for (auto& n : onotes)
-                                    err += " [" + n.kind + " at node " + std::to_string(n.node) +
-                                           "] " + n.message + ";";
-                                ev.last_mutate_error_ = err;
-                            }
-                            // Issue #2695: unified rebind entry — routes
-                            // explicit-Agent mutate:rebind through the same
-                            // API as densify / steal. AC3 zero-cost when
-                            // no remapped roots (linear_bindings empty or
-                            // already validated above); real per-root span
-                            // wires in follow-up.
-                            // First-ship: empty remapped-root span (linear_bindings
-                            // is name set, not NodeId list). Per-root NodeId span
-                            // wires in follow-up; AC3 zero-cost short-circuit here.
-                            // Issue #2708: real per-root walk wires through this
-                            // same call site. Empty span here preserves AC3 —
-                            // Agent mutate:rebind validates by name set above
-                            // (linear_bindings), not by NodeId span; the walk
-                            // runs when callers pass a non-empty span (test /
-                            // future wiring when Agent rebind exposes a NodeId
-                            // remapped root set).
-                            (void)aura::compiler::ownership_rebind_after_remap(
-                                {}, aura::compiler::RemapReason::ExplicitAgent);
-                        }
-                    },
-                    &threw)) {
-                ok = false;
-                return mev("ownership-threw", std::string("ownership validation threw: ") + threw);
-            }
-        }
-
-        // ── Validation failure must not report success (#1019) ────
-        // Issue #241: when panic_auto_rollback_ is on, Guard dtor restores.
-        // Issue #1019: even without auto-rollback, never return #t when
-        // last_mutate_error_ is set — callers treat #t as "committed ok".
-        if (!ev.last_mutate_error_.empty()) {
-            ok = false; // Guard dtor: restore if panic_auto_rollback_, else clear
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                m->rebind_validation_fail_returns_total.fetch_add(1, std::memory_order_relaxed);
-            return mev("mutation-failed",
-                       ev.panic_auto_rollback_
-                           ? ("mutation rejected — auto-rolled back: " + ev.last_mutate_error_)
-                           : ("mutation rejected: " + ev.last_mutate_error_));
-        }
-
-        // Issue #2145: Full/Strict hard-gate before Agent sees commit.
-        // Runs invariant suite + linear enforce; on fail sets last_mutate_error_
-        // and forces Guard rollback via ok=false.
-        {
-            const std::uint64_t nchg =
-                ev.workspace_flat_ ? static_cast<std::uint64_t>(
-                                         ev.workspace_flat_->all_mutations().size() > 0 ? 1 : 0)
-                                   : 0;
-            // Issue #3016: same resolve/TLS mid the Guard trail uses
-            // (not total_mutations_ volume, not nchg 0|1).
-            const std::uint64_t audit_mid = aura::compiler::typed_audit::stamp_boundary_audit_mid();
-            aura::compiler::typed_audit::note_invariant_enforcement_ran(audit_mid);
-            if (!ev.finish_mutate_hard_gate(nchg, /*linear=*/false, "mutate:rebind")) {
-                ok = false;
-                return mev("invariant-denied",
-                           ev.panic_auto_rollback_
-                               ? ("mutation rejected — auto-rolled back: " + ev.last_mutate_error_)
-                               : ("mutation rejected: " + ev.last_mutate_error_));
-            }
-        }
-
-        // Issue #1677: track render-logic rebinds for AI Native evolution stats.
-        if (aura_is_render_evolution_name(name)) {
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                m->render_evolution_rebind_total.fetch_add(1, std::memory_order_relaxed);
-        }
-
-        // Issue #2730: after dirty cascade, force top_env for `name` from the
-        // live new value. Dual-write string + current-pool SymId.
-        // Find the existing cell ONLY via string name — SymId is pool-local;
-        // after set-code (fresh pool) intern("verify-policy") may equal an
-        // OLD pool's intern("score"), so lookup_by_symid would steal score's
-        // cell and silent-corrupt the sibling binding (ORDER-B after ORDER-A).
-        if (ev.workspace_pool_ && new_value != aura::ast::NULL_NODE && new_value < flat.size()) {
-            // #3918 follow-up: eval the whole Define node (eval_current's
-            // root-eval semantics) — parity with the batch :rebind path.
-            // Drop the cached closure from the previous specialise. A clean
-            // Define would hand eval_flat that high-bit id back, and the
-            // outermost drain then erases its owner.
-            // Issue #4369: that eval re-keys top_ onto the child workspace
-            // pool. workspace:delete then frees it, and the next primitive
-            // lookup interns into the freed pool. Restore the caller pool
-            // the way eval-current does.
-            struct RestoreTopPool {
-                Env& top;
-                const aura::ast::StringPool* saved;
-                explicit RestoreTopPool(Env& t)
-                    : top(t)
-                    , saved(t.pool()) {}
-                ~RestoreTopPool() {
-                    if (saved && saved != top.pool())
-                        top.set_pool(saved);
-                }
-                RestoreTopPool(const RestoreTopPool&) = delete;
-                RestoreTopPool& operator=(const RestoreTopPool&) = delete;
-                RestoreTopPool(RestoreTopPool&&) = delete;
-                RestoreTopPool& operator=(RestoreTopPool&&) = delete;
-            } restore_top_pool(ev.top_env());
-            flat.mark_subtree_dirty(old_define);
-            flat.force_align_subtree_gen(old_define);
-            auto refreshed = ev.eval_flat(flat, *ev.workspace_pool_, old_define, ev.top_env());
-            if (refreshed) {
-                auto& tenv = ev.top_env();
-                std::size_t ci = 0;
-                bool have = false;
-                if (auto existing = tenv.lookup_binding(name);
-                    existing && types::is_cell(*existing)) {
-                    ci = types::as_cell_id(*existing);
-                    have = true;
-                }
-                if (!have)
-                    ci = ev.alloc_cell(*refreshed);
-                else if (ci < ev.cells().size()) {
-                    // Issue #4715 AC2: inside a body with an open overlay the
-                    // rebind must NOT overwrite the shared cell in place - the
-                    // value goes to the overlay's private cell and is published
-                    // by fiber:overlay-commit.
-                    if (!fiber_cow_overlay_capture_define_cell(ev, name, *refreshed,
-                                                               static_cast<std::uint64_t>(ci)))
-                        ev.cells()[ci] = *refreshed;
-                }
-                // Issue #4583: eval_flat already updated this cell. Another
-                // top_ bind appends a shadow, and the next set_pool re-interns
-                // every shadow. Skip the append when the name is already bound.
-                if (!have)
-                    tenv.bind(name, types::make_cell(ci));
-                // Do not bind_symid with the workspace intern onto
-                // stdin top_env — intern ids are pool-local and steal
-                // sibling stdin bindings (*h* / hbump) after rebind.
-            }
-        }
+        RegSplitParts::rebind_refresh_env(ev, flat, name, new_value, old_define);
 
         // Env refresh / nested eval_flat must not fail-close a rebind
         // that already passed finish_mutate_hard_gate. Nested Guard
@@ -4331,6 +4385,292 @@ template <typename Ctx> void RegSplitParts::register_mutate_rebind_primitive(Ctx
         ev.defines_bound_flat_ = ev.workspace_flat_;
         return make_bool(true);
     });
+}
+
+// Issue #5033: mutate:set-body — rewrite the matching Define/Lambda (parse,
+// hygiene gates, structural log, def-use dirty). Returns the error to the caller.
+std::optional<EvalValue> RegSplitParts::set_body_rewrite_define(
+    Evaluator& ev, aura::ast::FlatAST& flat, aura::ast::NodeId& id, const std::string& name,
+    aura::ast::SymId sym, std::uint64_t code_idx, std::span<const EvalValue> a,
+    const std::vector<aura::ast::NodeId>& dep_callers, const MakeErrorVal& mev, bool& ok) {
+    const auto v = flat.get(id);
+    // The Define should have one child: a Lambda
+    if (v.children.size() != 1) {
+        ok = false;
+        return mev("arity-error", std::string("function \"") + name + "\" define has " +
+                                      std::to_string(v.children.size()) + " children, expected 1");
+    }
+    auto lambda_id = v.child(0);
+    auto lv = flat.get(lambda_id);
+    if (lv.tag != aura::ast::NodeTag::Lambda) {
+        ok = false;
+        return mev("type-error",
+                   std::string("function \"") + name + "\" body is not a Lambda node");
+    }
+
+    // Issue #3027: MacroIntroduced define / lambda default-reject.
+    const bool allow_macro_set_body =
+        ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
+    bool was_macro_set_body = flat.is_macro_introduced(id) || flat.is_macro_introduced(lambda_id);
+    if (auto err =
+            reject_structural_macro_hygiene(ev, flat, id, allow_macro_set_body, "set-body", mev)) {
+        ok = false;
+        return *err;
+    }
+    if (auto err = reject_structural_macro_hygiene(ev, flat, lambda_id, allow_macro_set_body,
+                                                   "set-body", mev)) {
+        ok = false;
+        return *err;
+    }
+
+    // Parse new body INTO workspace flat (all IDs stay valid).
+    // Issue #1685 / #1687: snapshot size; re-resolve BOTH Define
+    // id and lambda_id after parse_to_flat (double-stale risk).
+    // Issue #2791: free orphan appends on parse / post-parse fail.
+    const auto size_before_parse = static_cast<std::size_t>(flat.size());
+    auto free_set_body_parse_orphans = [&flat, size_before_parse]() {
+        if (size_before_parse < flat.size())
+            (void)flat.free_orphan_nodes_from(static_cast<aura::ast::NodeId>(size_before_parse));
+    };
+    auto pr = aura::parser::parse_to_flat(ev.string_at(code_idx), flat, *ev.workspace_pool_);
+    if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+        std::string parse_err;
+        if (!pr.errors.empty()) {
+            for (auto& e : pr.errors) {
+                if (!parse_err.empty())
+                    parse_err += "; ";
+                parse_err += e.format();
+            }
+        } else if (!pr.error.empty()) {
+            parse_err = pr.error;
+        } else {
+            parse_err = "new body code could not be parsed";
+        }
+        free_set_body_parse_orphans(); // Issue #2791
+        ok = false;
+        return mev("parse-error", parse_err);
+    }
+
+    // Issue #1685 / #1687: re-resolve Define + Lambda after parse
+    // so neither pre-capture NodeId is used blindly for set_child.
+    id = resolve_define_after_parse(flat, sym, id, size_before_parse);
+    if (id == aura::ast::NULL_NODE) {
+        free_set_body_parse_orphans(); // Issue #2791
+        ok = false;
+        return mev("not-found", "set-body: define not found after parse");
+    }
+    lambda_id = flat.resolve_lambda_child_of_define(id);
+    if (lambda_id == aura::ast::NULL_NODE) {
+        free_set_body_parse_orphans(); // Issue #2791
+        ok = false;
+        return mev("type-error",
+                   std::string("function \"") + name + "\" body is not a Lambda after parse");
+    }
+
+    // Issue #4406: walk the child set_child unlinks (Define's lambda,
+    // or that lambda's body). Node gates miss a User parent. !allow.
+    if (!allow_macro_set_body) {
+        auto peek = flat.get(pr.root);
+        if (peek.tag == aura::ast::NodeTag::Define && !peek.children.empty())
+            peek = flat.get(peek.child(0));
+        aura::ast::NodeId displaced = aura::ast::NULL_NODE;
+        if (peek.tag == aura::ast::NodeTag::Lambda) {
+            auto dv = flat.get(id);
+            if (!dv.children.empty())
+                displaced = dv.child(0);
+        } else if (lambda_id < flat.size() && !flat.is_free_slot(lambda_id)) {
+            auto lv = flat.get(lambda_id);
+            if (!lv.children.empty())
+                displaced = lv.child(0);
+        }
+        const auto old_hit = first_macro_introduced_in_subtree(flat, displaced);
+        if (old_hit != aura::ast::NULL_NODE) {
+            free_set_body_parse_orphans();
+            ok = false;
+            if (auto err = reject_structural_macro_hygiene(ev, flat, old_hit, /*allow=*/false,
+                                                           "set-body", mev))
+                return *err;
+            return mev("hygiene-protected", "hygiene-macro-introduced");
+        }
+    }
+
+    // Record mutation
+    // Issue #369: capture old body id for structural
+    // rollback (children_ column restore). The set-body
+    // op replaces child_idx=1 (the body slot of a
+    // Define) with pr.root.
+    aura::ast::NodeId old_body =
+        (flat.children(id).size() > 1) ? flat.children(id)[1] : aura::ast::NULL_NODE;
+    flat.add_structural_mutation_log_entry(id, 1, old_body, pr.root, "set-body");
+
+    // Issue #230 / #166 semantics: branch on the
+    // shape of the new code.
+    //
+    // - If the new code parses to a Lambda (e.g. user
+    //   supplied `(lambda (x) (+ x 100))`), replace
+    //   the Define's lambda child entirely so the
+    //   function gains the new params/body. This is
+    //   what test_issue_166 expects: after
+    //   (mutate:set-body "g" "(lambda (x) (+ x 100))")
+    //   calling (g 10) returns 110.
+    //
+    // - If the new code is a body expression (e.g.
+    //   `(+ x 2)`, `(* x y)`, `(* x 2)`), replace just
+    //   the existing lambda's body slot. This is what
+    //   test_regression expects: after
+    //   (mutate:set-body "f" "(+ x 2)") the typecheck
+    //   status is ok and the function body is now
+    //   `(+ x 2)` (with the original params).
+    //
+    // The old single-branch behavior of "always
+    // replace body[0]" returned a nested lambda as a
+    // value rather than calling it (test_166 bug);
+    // the previous fix of "always replace Define
+    // child" broke the body-expression case (3
+    // test_regression failures).
+    //
+    // Issue #1267: mirror mutate:rebind — if the parsed
+    // root is a full Define form, extract its value child
+    // first so we never nest a Define as a Lambda body
+    // (silent semantic corruption → void returns).
+    {
+        auto pr_root_v = flat.get(pr.root);
+        aura::ast::NodeId body_to_set = pr.root;
+        if (pr_root_v.tag == aura::ast::NodeTag::Define) {
+            if (pr_root_v.children.empty()) {
+                free_set_body_parse_orphans(); // Issue #2791
+                ok = false;
+                return mev("parse-error", "define form in set-body code has no body");
+            }
+            body_to_set = pr_root_v.child(0);
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->set_body_define_value_extracted.fetch_add(1, std::memory_order_relaxed);
+            pr_root_v = flat.get(body_to_set);
+        }
+        // Issue #3027: parsed body walk (parity with #2792 rebind).
+        {
+            const auto body_hit = first_macro_introduced_in_subtree(flat, body_to_set);
+            if (body_hit != aura::ast::NULL_NODE) {
+                was_macro_set_body = true;
+                if (!allow_macro_set_body) {
+                    free_set_body_parse_orphans();
+                    ok = false;
+                    if (auto err = reject_structural_macro_hygiene(
+                            ev, flat, body_hit, /*allow=*/false, "set-body", mev))
+                        return *err;
+                    return mev("hygiene-protected",
+                               "target node " + std::to_string(id) +
+                                   " was produced by a hygienic macro expansion; "
+                                   "pass :allow-macro? #t or call "
+                                   "(hygiene:set-allow-macro-mutate! #t) to opt out"); // #3683
+                }
+            }
+        }
+        if (pr_root_v.tag == aura::ast::NodeTag::Lambda) {
+            flat.set_child(id, 0, body_to_set);
+        } else if (lambda_id < flat.size() && !flat.is_free_slot(lambda_id)) {
+            flat.set_child(lambda_id, 0, body_to_set);
+        } else {
+            // No existing lambda; treat as
+            // "replace whole Define child" for
+            // consistency with the Lambda branch.
+            flat.set_child(id, 0, body_to_set);
+        }
+        if (allow_macro_set_body && was_macro_set_body)
+            propagate_macro_introduced_marker(ev, flat, body_to_set);
+    }
+
+    // 依赖图驱动：dirty 所有调用者
+    // Issue #188: set-body changes the function body
+    // (same as rebind but via the Lambda node instead
+    // of the Define node). Mark callers with
+    // kGeneralDirty | kConstraintDirty. No occurrence/
+    // ownership bits — body change doesn't add new
+    // narrowing or affect Linear state directly.
+    // Issue #262: precise def-use dirty on caller entry nodes.
+    ev.propagate_defuse_dirty(sym, name, dep_callers,
+                              aura::ast::FlatAST::kGeneralDirty |
+                                  aura::ast::FlatAST::kConstraintDirty);
+    return std::nullopt;
+}
+
+// Issue #5033: mutate:set-body — auto-typecheck, ownership validation and the
+// Full/Strict hard gate that runs before the caller observes a commit.
+template <typename Guard>
+std::optional<EvalValue> RegSplitParts::set_body_typecheck_and_validate(
+    Evaluator& ev, Guard& guard, aura::ast::FlatAST& flat, aura::ast::NodeId id,
+    const std::string& name, const std::vector<aura::ast::NodeId>& dep_callers,
+    const MakeErrorVal& mev, bool& ok) {
+    // ── Auto-typecheck (Issue #107 / #526 / #1684 / #1686) ──
+    // Issue #1684 / #3192: throws → Guard mark_failed via run_or_rollback.
+    {
+        std::string threw;
+        if (!guard->run_or_rollback([&] { (void)ev.run_post_mutate_typecheck_no_lock(); },
+                                    &threw)) {
+            ok = false;
+            return mev("typecheck-threw", std::string("post-mutate typecheck threw: ") + threw);
+        }
+    }
+
+    // ── Ownership validation (Issue #1458 / #1684 / #1686) ──
+    if (ev.workspace_flat_ && ev.workspace_pool_ && ev.last_mutate_error_.empty()) {
+        std::string threw;
+        if (!guard->run_or_rollback(
+                [&] {
+                    std::unordered_set<std::string> linear_bindings;
+                    aura::compiler::discover_linear_bindings_in_subtree(flat, *ev.workspace_pool_,
+                                                                        id, linear_bindings);
+                    for (std::size_t ui = 0; ui < dep_callers.size(); ++ui) {
+                        if (dep_callers[ui] < flat.size()) {
+                            aura::compiler::discover_linear_bindings_in_subtree(
+                                flat, *ev.workspace_pool_, dep_callers[ui], linear_bindings);
+                        }
+                    }
+                    if (!linear_bindings.empty() && id < flat.size()) {
+                        flat.mark_dirty(
+                            id, static_cast<std::uint8_t>(aura::ast::FlatAST::kOwnershipDirty));
+                    }
+                    if (!linear_bindings.empty()) {
+                        std::vector<aura::compiler::OwnershipNote> onotes;
+                        bool opass = aura::compiler::OwnershipEnv::validate_ownership(
+                            flat, *ev.workspace_pool_, flat.root, linear_bindings, onotes);
+                        aura::compiler::record_linear_ownership_mutation_metrics(
+                            ev.compiler_metrics(), true, onotes, opass);
+                        if (!opass) {
+                            std::string err = "ownership validation after mutate:set-body failed:";
+                            for (auto& n : onotes)
+                                err += " [" + n.kind + " at node " + std::to_string(n.node) + "] " +
+                                       n.message + ";";
+                            ev.last_mutate_error_ = err;
+                        }
+                    }
+                },
+                &threw)) {
+            ok = false;
+            return mev("ownership-threw", std::string("ownership validation threw: ") + threw);
+        }
+    }
+
+    // Issue #352: auto-rollback now owned by the Guard.
+    // On mutation failure, set ok = false; the Guard's
+    // dtor will call restore_panic_checkpoint() iff
+    // panic_auto_rollback_ is true. On success, leave
+    // ok = true; the Guard's dtor commits. The return
+    // value is still derived from last_mutate_error_ —
+    // we report the failure reason to the caller, but
+    // the state machine (rollback vs commit) is the
+    // Guard's responsibility, not this primitive's.
+    if (!ev.last_mutate_error_.empty()) {
+        ok = false;
+        return mev("mutation-failed", "mutation rejected: " + ev.last_mutate_error_);
+    }
+
+    // Issue #2145: Full/Strict hard-gate before Agent sees commit.
+    if (!ev.finish_mutate_hard_gate(/*nodes_changed=*/1, /*linear=*/false, "mutate:set-body")) {
+        ok = false;
+        return mev("invariant-denied", "mutation rejected: " + ev.last_mutate_error_);
+    }
+    return std::nullopt;
 }
 
 template <typename Ctx> void RegSplitParts::register_mutate_set_body_primitive(Ctx& cx) {
@@ -4399,285 +4739,12 @@ template <typename Ctx> void RegSplitParts::register_mutate_set_body_primitive(C
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             auto v = flat.get(id);
             if (v.tag == aura::ast::NodeTag::Define && v.sym_id == sym) {
-                // The Define should have one child: a Lambda
-                if (v.children.size() != 1) {
-                    ok = false;
-                    return mev("arity-error", std::string("function \"") + name + "\" define has " +
-                                                  std::to_string(v.children.size()) +
-                                                  " children, expected 1");
-                }
-                auto lambda_id = v.child(0);
-                auto lv = flat.get(lambda_id);
-                if (lv.tag != aura::ast::NodeTag::Lambda) {
-                    ok = false;
-                    return mev("type-error",
-                               std::string("function \"") + name + "\" body is not a Lambda node");
-                }
-
-                // Issue #3027: MacroIntroduced define / lambda default-reject.
-                const bool allow_macro_set_body =
-                    ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
-                bool was_macro_set_body =
-                    flat.is_macro_introduced(id) || flat.is_macro_introduced(lambda_id);
-                if (auto err = reject_structural_macro_hygiene(ev, flat, id, allow_macro_set_body,
-                                                               "set-body", mev)) {
-                    ok = false;
+                if (auto err = RegSplitParts::set_body_rewrite_define(
+                        ev, flat, id, name, sym, code_idx, a, dep_callers, mev, ok))
                     return *err;
-                }
-                if (auto err = reject_structural_macro_hygiene(
-                        ev, flat, lambda_id, allow_macro_set_body, "set-body", mev)) {
-                    ok = false;
+                if (auto err = RegSplitParts::set_body_typecheck_and_validate(
+                        ev, guard, flat, id, name, dep_callers, mev, ok))
                     return *err;
-                }
-
-                // Parse new body INTO workspace flat (all IDs stay valid).
-                // Issue #1685 / #1687: snapshot size; re-resolve BOTH Define
-                // id and lambda_id after parse_to_flat (double-stale risk).
-                // Issue #2791: free orphan appends on parse / post-parse fail.
-                const auto size_before_parse = static_cast<std::size_t>(flat.size());
-                auto free_set_body_parse_orphans = [&flat, size_before_parse]() {
-                    if (size_before_parse < flat.size())
-                        (void)flat.free_orphan_nodes_from(
-                            static_cast<aura::ast::NodeId>(size_before_parse));
-                };
-                auto pr =
-                    aura::parser::parse_to_flat(ev.string_at(code_idx), flat, *ev.workspace_pool_);
-                if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-                    std::string parse_err;
-                    if (!pr.errors.empty()) {
-                        for (auto& e : pr.errors) {
-                            if (!parse_err.empty())
-                                parse_err += "; ";
-                            parse_err += e.format();
-                        }
-                    } else if (!pr.error.empty()) {
-                        parse_err = pr.error;
-                    } else {
-                        parse_err = "new body code could not be parsed";
-                    }
-                    free_set_body_parse_orphans(); // Issue #2791
-                    ok = false;
-                    return mev("parse-error", parse_err);
-                }
-
-                // Issue #1685 / #1687: re-resolve Define + Lambda after parse
-                // so neither pre-capture NodeId is used blindly for set_child.
-                id = resolve_define_after_parse(flat, sym, id, size_before_parse);
-                if (id == aura::ast::NULL_NODE) {
-                    free_set_body_parse_orphans(); // Issue #2791
-                    ok = false;
-                    return mev("not-found", "set-body: define not found after parse");
-                }
-                lambda_id = flat.resolve_lambda_child_of_define(id);
-                if (lambda_id == aura::ast::NULL_NODE) {
-                    free_set_body_parse_orphans(); // Issue #2791
-                    ok = false;
-                    return mev("type-error", std::string("function \"") + name +
-                                                 "\" body is not a Lambda after parse");
-                }
-
-                // Issue #4406: walk the child set_child unlinks (Define's lambda,
-                // or that lambda's body). Node gates miss a User parent. !allow.
-                if (!allow_macro_set_body) {
-                    auto peek = flat.get(pr.root);
-                    if (peek.tag == aura::ast::NodeTag::Define && !peek.children.empty())
-                        peek = flat.get(peek.child(0));
-                    aura::ast::NodeId displaced = aura::ast::NULL_NODE;
-                    if (peek.tag == aura::ast::NodeTag::Lambda) {
-                        auto dv = flat.get(id);
-                        if (!dv.children.empty())
-                            displaced = dv.child(0);
-                    } else if (lambda_id < flat.size() && !flat.is_free_slot(lambda_id)) {
-                        auto lv = flat.get(lambda_id);
-                        if (!lv.children.empty())
-                            displaced = lv.child(0);
-                    }
-                    const auto old_hit = first_macro_introduced_in_subtree(flat, displaced);
-                    if (old_hit != aura::ast::NULL_NODE) {
-                        free_set_body_parse_orphans();
-                        ok = false;
-                        if (auto err = reject_structural_macro_hygiene(
-                                ev, flat, old_hit, /*allow=*/false, "set-body", mev))
-                            return *err;
-                        return mev("hygiene-protected", "hygiene-macro-introduced");
-                    }
-                }
-
-                // Record mutation
-                // Issue #369: capture old body id for structural
-                // rollback (children_ column restore). The set-body
-                // op replaces child_idx=1 (the body slot of a
-                // Define) with pr.root.
-                aura::ast::NodeId old_body =
-                    (flat.children(id).size() > 1) ? flat.children(id)[1] : aura::ast::NULL_NODE;
-                flat.add_structural_mutation_log_entry(id, 1, old_body, pr.root, "set-body");
-
-                // Issue #230 / #166 semantics: branch on the
-                // shape of the new code.
-                //
-                // - If the new code parses to a Lambda (e.g. user
-                //   supplied `(lambda (x) (+ x 100))`), replace
-                //   the Define's lambda child entirely so the
-                //   function gains the new params/body. This is
-                //   what test_issue_166 expects: after
-                //   (mutate:set-body "g" "(lambda (x) (+ x 100))")
-                //   calling (g 10) returns 110.
-                //
-                // - If the new code is a body expression (e.g.
-                //   `(+ x 2)`, `(* x y)`, `(* x 2)`), replace just
-                //   the existing lambda's body slot. This is what
-                //   test_regression expects: after
-                //   (mutate:set-body "f" "(+ x 2)") the typecheck
-                //   status is ok and the function body is now
-                //   `(+ x 2)` (with the original params).
-                //
-                // The old single-branch behavior of "always
-                // replace body[0]" returned a nested lambda as a
-                // value rather than calling it (test_166 bug);
-                // the previous fix of "always replace Define
-                // child" broke the body-expression case (3
-                // test_regression failures).
-                //
-                // Issue #1267: mirror mutate:rebind — if the parsed
-                // root is a full Define form, extract its value child
-                // first so we never nest a Define as a Lambda body
-                // (silent semantic corruption → void returns).
-                {
-                    auto pr_root_v = flat.get(pr.root);
-                    aura::ast::NodeId body_to_set = pr.root;
-                    if (pr_root_v.tag == aura::ast::NodeTag::Define) {
-                        if (pr_root_v.children.empty()) {
-                            free_set_body_parse_orphans(); // Issue #2791
-                            ok = false;
-                            return mev("parse-error", "define form in set-body code has no body");
-                        }
-                        body_to_set = pr_root_v.child(0);
-                        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                            m->set_body_define_value_extracted.fetch_add(1,
-                                                                         std::memory_order_relaxed);
-                        pr_root_v = flat.get(body_to_set);
-                    }
-                    // Issue #3027: parsed body walk (parity with #2792 rebind).
-                    {
-                        const auto body_hit = first_macro_introduced_in_subtree(flat, body_to_set);
-                        if (body_hit != aura::ast::NULL_NODE) {
-                            was_macro_set_body = true;
-                            if (!allow_macro_set_body) {
-                                free_set_body_parse_orphans();
-                                ok = false;
-                                if (auto err = reject_structural_macro_hygiene(
-                                        ev, flat, body_hit, /*allow=*/false, "set-body", mev))
-                                    return *err;
-                                return mev(
-                                    "hygiene-protected",
-                                    "target node " + std::to_string(id) +
-                                        " was produced by a hygienic macro expansion; "
-                                        "pass :allow-macro? #t or call "
-                                        "(hygiene:set-allow-macro-mutate! #t) to opt out"); // #3683
-                            }
-                        }
-                    }
-                    if (pr_root_v.tag == aura::ast::NodeTag::Lambda) {
-                        flat.set_child(id, 0, body_to_set);
-                    } else if (lambda_id < flat.size() && !flat.is_free_slot(lambda_id)) {
-                        flat.set_child(lambda_id, 0, body_to_set);
-                    } else {
-                        // No existing lambda; treat as
-                        // "replace whole Define child" for
-                        // consistency with the Lambda branch.
-                        flat.set_child(id, 0, body_to_set);
-                    }
-                    if (allow_macro_set_body && was_macro_set_body)
-                        propagate_macro_introduced_marker(ev, flat, body_to_set);
-                }
-
-                // 依赖图驱动：dirty 所有调用者
-                // Issue #188: set-body changes the function body
-                // (same as rebind but via the Lambda node instead
-                // of the Define node). Mark callers with
-                // kGeneralDirty | kConstraintDirty. No occurrence/
-                // ownership bits — body change doesn't add new
-                // narrowing or affect Linear state directly.
-                // Issue #262: precise def-use dirty on caller entry nodes.
-                ev.propagate_defuse_dirty(sym, name, dep_callers,
-                                          aura::ast::FlatAST::kGeneralDirty |
-                                              aura::ast::FlatAST::kConstraintDirty);
-
-                // ── Auto-typecheck (Issue #107 / #526 / #1684 / #1686) ──
-                // Issue #1684 / #3192: throws → Guard mark_failed via run_or_rollback.
-                {
-                    std::string threw;
-                    if (!guard->run_or_rollback(
-                            [&] { (void)ev.run_post_mutate_typecheck_no_lock(); }, &threw)) {
-                        ok = false;
-                        return mev("typecheck-threw",
-                                   std::string("post-mutate typecheck threw: ") + threw);
-                    }
-                }
-
-                // ── Ownership validation (Issue #1458 / #1684 / #1686) ──
-                if (ev.workspace_flat_ && ev.workspace_pool_ && ev.last_mutate_error_.empty()) {
-                    std::string threw;
-                    if (!guard->run_or_rollback(
-                            [&] {
-                                std::unordered_set<std::string> linear_bindings;
-                                aura::compiler::discover_linear_bindings_in_subtree(
-                                    flat, *ev.workspace_pool_, id, linear_bindings);
-                                for (std::size_t ui = 0; ui < dep_callers.size(); ++ui) {
-                                    if (dep_callers[ui] < flat.size()) {
-                                        aura::compiler::discover_linear_bindings_in_subtree(
-                                            flat, *ev.workspace_pool_, dep_callers[ui],
-                                            linear_bindings);
-                                    }
-                                }
-                                if (!linear_bindings.empty() && id < flat.size()) {
-                                    flat.mark_dirty(id, static_cast<std::uint8_t>(
-                                                            aura::ast::FlatAST::kOwnershipDirty));
-                                }
-                                if (!linear_bindings.empty()) {
-                                    std::vector<aura::compiler::OwnershipNote> onotes;
-                                    bool opass = aura::compiler::OwnershipEnv::validate_ownership(
-                                        flat, *ev.workspace_pool_, flat.root, linear_bindings,
-                                        onotes);
-                                    aura::compiler::record_linear_ownership_mutation_metrics(
-                                        ev.compiler_metrics(), true, onotes, opass);
-                                    if (!opass) {
-                                        std::string err =
-                                            "ownership validation after mutate:set-body failed:";
-                                        for (auto& n : onotes)
-                                            err += " [" + n.kind + " at node " +
-                                                   std::to_string(n.node) + "] " + n.message + ";";
-                                        ev.last_mutate_error_ = err;
-                                    }
-                                }
-                            },
-                            &threw)) {
-                        ok = false;
-                        return mev("ownership-threw",
-                                   std::string("ownership validation threw: ") + threw);
-                    }
-                }
-
-                // Issue #352: auto-rollback now owned by the Guard.
-                // On mutation failure, set ok = false; the Guard's
-                // dtor will call restore_panic_checkpoint() iff
-                // panic_auto_rollback_ is true. On success, leave
-                // ok = true; the Guard's dtor commits. The return
-                // value is still derived from last_mutate_error_ —
-                // we report the failure reason to the caller, but
-                // the state machine (rollback vs commit) is the
-                // Guard's responsibility, not this primitive's.
-                if (!ev.last_mutate_error_.empty()) {
-                    ok = false;
-                    return mev("mutation-failed", "mutation rejected: " + ev.last_mutate_error_);
-                }
-
-                // Issue #2145: Full/Strict hard-gate before Agent sees commit.
-                if (!ev.finish_mutate_hard_gate(/*nodes_changed=*/1, /*linear=*/false,
-                                                "mutate:set-body")) {
-                    ok = false;
-                    return mev("invariant-denied", "mutation rejected: " + ev.last_mutate_error_);
-                }
 
                 // Issue #1506: mark IR cache dirty so eval / eval_ir /
                 // eval-current prefer relower_define_blocks (partial)
@@ -5136,6 +5203,396 @@ template <typename Ctx> void RegSplitParts::register_mutate_tweak_literal_primit
         });
 }
 
+// Issue #5033: mutate:replace-pattern keyword/summary parse (one face with
+// query:pattern). Returns the error to the caller; ok mirrors the body contract.
+struct ReplacePatternOptions {
+    bool nested_arity = true;
+    bool nested_arity_explicit = false;
+    bool include_macro_introduced = false;
+    std::string summary = "replace-pattern";
+};
+
+std::optional<EvalValue> RegSplitParts::replace_pattern_parse_options(Evaluator& ev,
+                                                                      std::span<const EvalValue> a,
+                                                                      const MakeErrorVal& mev,
+                                                                      bool& ok,
+                                                                      ReplacePatternOptions& opt) {
+    auto safe_str = [&ev](const EvalValue& v, std::string fallback = {}) -> std::string {
+        if (!is_string(v))
+            return fallback;
+        const auto i = as_string_idx(v);
+        if (i >= ev.string_heap_.size())
+            return fallback;
+        return ev.string_at(i);
+    };
+    // Issue #482 / #1374: shared QueryMatcher with query:pattern.
+    // Keywords aligned with query:pattern:
+    //   :nested-arity [#t|#f]  — Kleene (default #t after #1374)
+    //   :strict-arity [#t]     — alias for :nested-arity #f
+    //   :allow-macro? (Issue #3793 unified primary, same face as
+    //   query:find / query:pattern / other mutate prims) /
+    //   :include-macro-introduced / :allow-macro-introduced (compat
+    //   aliases) / :exclude-macro-introduced / :respect-hygiene
+    // Summary string remains an optional trailing string arg.
+    // Default nested_arity=true matches query:pattern so AI
+    // query-then-mutate pipelines see the same node set.
+    bool nested_arity = true;
+    bool nested_arity_explicit = false;
+    bool include_macro_introduced = false;
+    std::string summary = "replace-pattern";
+    auto consume_bool = [&](bool& target, std::size_t& ai) {
+        target = true;
+        if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+            if (is_bool(a[ai + 1]))
+                target = as_bool(a[ai + 1]);
+            else
+                target = (as_int(a[ai + 1]) != 0);
+            ++ai;
+        }
+    };
+    for (std::size_t ai = 2; ai < a.size(); ++ai) {
+        if (is_keyword(a[ai])) {
+            auto kidx = as_keyword_idx(a[ai]);
+            if (kidx >= ev.keyword_table_.size()) {
+                ok = false;
+                return mev("bad-arg", "unknown keyword");
+            }
+            auto kw = ev.keyword_table_[kidx];
+            if (kw == ":nested-arity") {
+                nested_arity_explicit = true;
+                consume_bool(nested_arity, ai);
+            } else if (kw == ":strict-arity") {
+                nested_arity_explicit = true;
+                bool v = true;
+                if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                    if (is_bool(a[ai + 1]))
+                        v = as_bool(a[ai + 1]);
+                    else
+                        v = (as_int(a[ai + 1]) != 0);
+                    ++ai;
+                }
+                nested_arity = !v;
+            } else if (kw == ":include-macro-introduced" || kw == ":allow-macro-introduced" ||
+                       kw == ":allow-macro?") {
+                // Issue #3793: :allow-macro? is the unified Agent-facing
+                // keyword; the old query-side spellings remain compat
+                // aliases. All three fold into the same include + gate
+                // bool below (one face across query and mutate).
+                consume_bool(include_macro_introduced, ai);
+            } else if (kw == ":exclude-macro-introduced") {
+                bool exclude = true;
+                if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                    if (is_bool(a[ai + 1]))
+                        exclude = as_bool(a[ai + 1]);
+                    else
+                        exclude = (as_int(a[ai + 1]) != 0);
+                    ++ai;
+                }
+                include_macro_introduced = !exclude;
+            } else if (kw == ":respect-hygiene") {
+                bool v = false;
+                if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                    if (is_bool(a[ai + 1]))
+                        v = as_bool(a[ai + 1]);
+                    else
+                        v = (as_int(a[ai + 1]) != 0);
+                    ++ai;
+                }
+                include_macro_introduced = v;
+            } else {
+                ok = false;
+                return mev("bad-arg", std::string("unknown mutate:replace-pattern keyword: ") + kw);
+            }
+        } else if (is_string(a[ai])) {
+            summary = safe_str(a[ai]);
+        } else {
+            ok = false;
+            return mev("bad-arg", "usage: (mutate:replace-pattern pattern replacement"
+                                  " [:nested-arity [#t|#f]] [:strict-arity [#t]]"
+                                  " [:allow-macro? [#t]]"
+                                  " [:include-macro-introduced [#t]]"
+                                  " [:allow-macro-introduced [#t]]"
+                                  " [:exclude-macro-introduced [#t|#f]]"
+                                  " [:respect-hygiene [#t|#f]] [summary-string])");
+        }
+    }
+    // Issue #1374: one-shot stderr notice when default Kleene is used
+    // without an explicit arity keyword (pre-#1374 default was strict).
+    if (!nested_arity_explicit && nested_arity) {
+        static std::atomic<bool> s_kleene_default_warned{false};
+        if (!s_kleene_default_warned.exchange(true, std::memory_order_relaxed)) {
+            std::fprintf(stderr, "WARNING: mutate:replace-pattern now defaults to Kleene "
+                                 "(:nested-arity #t) to match query:pattern (#1374). "
+                                 "Pass :strict-arity #t for pre-#1374 single-subtree "
+                                 "wildcard behavior.\n");
+        }
+    }
+    opt.nested_arity = nested_arity;
+    opt.nested_arity_explicit = nested_arity_explicit;
+    opt.include_macro_introduced = include_macro_introduced;
+    return std::nullopt;
+}
+
+// Issue #5033: mutate:replace-pattern source printer (resolves lambda params
+// through the pattern pool, same as the original inline helper).
+std::string RegSplitParts::replace_pattern_node_source(Evaluator& ev, aura::ast::FlatAST& flat,
+                                                       aura::ast::StringPool* pat_pool,
+                                                       aura::ast::NodeId root_id) {
+    using namespace aura::ast;
+    auto node_to_source = [&](this auto&& self, NodeId id) -> std::string {
+        if (id >= flat.size() || id == NULL_NODE)
+            return "";
+        auto v = flat.get(id);
+        switch (v.tag) {
+            case NodeTag::LiteralInt:
+                return std::to_string(v.int_value);
+            case NodeTag::LiteralFloat:
+                return std::to_string(v.float_value);
+            case NodeTag::LiteralString:
+                return "\"" + std::string(ev.workspace_pool_->resolve(v.sym_id)) + "\"";
+            case NodeTag::Variable:
+                return std::string(ev.workspace_pool_->resolve(v.sym_id));
+            case NodeTag::Call: {
+                std::string s = "(";
+                for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
+                    if (ci > 0)
+                        s += " ";
+                    s += self(v.child(ci));
+                }
+                s += ")";
+                return s;
+            }
+            case NodeTag::Lambda: {
+                std::string s = "(lambda (";
+                for (std::size_t pi = 0; pi < v.params.size(); ++pi) {
+                    if (pi > 0)
+                        s += " ";
+                    s += pat_pool->resolve(v.params[pi]);
+                }
+                s += ")";
+                if (!v.children.empty())
+                    s += " " + self(v.child(0));
+                s += ")";
+                return s;
+            }
+            case NodeTag::IfExpr: {
+                std::string s = "(if";
+                if (v.children.size() > 0)
+                    s += " " + self(v.child(0));
+                if (v.children.size() > 1)
+                    s += " " + self(v.child(1));
+                if (v.children.size() > 2)
+                    s += " " + self(v.child(2));
+                s += ")";
+                return s;
+            }
+            case NodeTag::Begin: {
+                std::string s = "(begin";
+                for (auto c : v.children)
+                    s += " " + self(c);
+                s += ")";
+                return s;
+            }
+            case NodeTag::Define: {
+                std::string s = "(define " + std::string(ev.workspace_pool_->resolve(v.sym_id));
+                if (!v.children.empty()) {
+                    auto val_node = flat.get(v.child(0));
+                    if (val_node.tag == NodeTag::Lambda) {
+                        s += " (";
+                        for (std::size_t pi = 0; pi < val_node.params.size(); ++pi) {
+                            if (pi > 0)
+                                s += " ";
+                            s += ev.workspace_pool_->resolve(val_node.params[pi]);
+                        }
+                        s += ")";
+                        if (!val_node.children.empty())
+                            s += " " + self(val_node.child(0));
+                        s += ")";
+                    } else {
+                        s += " " + self(v.child(0));
+                    }
+                }
+                s += ")";
+                return s;
+            }
+            case NodeTag::Let:
+            case NodeTag::LetRec: {
+                std::string kw = (v.tag == NodeTag::LetRec) ? "letrec" : "let";
+                std::string s = "(" + kw;
+                if (v.has_name())
+                    s += " " + std::string(ev.workspace_pool_->resolve(v.sym_id));
+                // bindings: (var val) pairs
+                // Not implemented for now — just print children
+                for (auto c : v.children)
+                    s += " " + self(c);
+                s += ")";
+                return s;
+            }
+            default:
+                return std::string("#<node-") + std::to_string(static_cast<int>(v.tag)) + ">";
+        }
+    };
+    return node_to_source(root_id);
+}
+
+// Issue #5033: one match record for the pattern apply phase.
+struct ReplacePatternMatch {
+    StableNodeRef match_ref;
+    std::vector<StableNodeRef> capture_refs;
+};
+
+std::optional<EvalValue> RegSplitParts::replace_pattern_apply_matches(
+    Evaluator& ev, aura::ast::FlatAST& flat, std::vector<ReplacePatternMatch>& matches,
+    const std::string& repl_template, int expected_captures, bool nested_arity,
+    bool allow_macro_all, bool no_auto_restamp_rp, aura::ast::StringPool* pat_pool,
+    std::uint32_t end_id, const MakeErrorVal& mev, bool& ok, int& replaced_count,
+    std::vector<aura::ast::NodeId>& dirty_parents) {
+    using namespace aura::ast;
+    for (auto& match : matches) {
+        // Issue #2800: stale StableNodeRef or detached parent edge —
+        // skip set_child; bump prevent metric (parity with lockless).
+        if (!stable_match_still_attached(flat, match.match_ref)) {
+            flat.note_replace_pattern_stale_nodeid_prevented();
+            continue;
+        }
+        // Issue #482: in strict mode, capture count must equal
+        // the number of `...` wildcards in the source pattern
+        // (each consumes exactly 1 child). In Kleene mode the
+        // count varies per match (the wildcard consumes 1+
+        // children), so we don't enforce strict equality —
+        // excess captures are ignored, missing captures leave
+        // `...` placeholders in the substitution.
+        if (!nested_arity && static_cast<int>(match.capture_refs.size()) != expected_captures)
+            continue;
+        bool captures_ok = true;
+        for (auto& cap_ref : match.capture_refs) {
+            if (!cap_ref.is_valid_in(flat)) {
+                captures_ok = false;
+                break;
+            }
+        }
+        if (!captures_ok)
+            continue;
+
+        auto match_id = match.match_ref.id;
+        // Issue #2037 / #2961: stamp / FailOnStale / hygiene-protected for
+        // MacroIntroduced. Count replace_pattern_hygiene_reject on deny.
+        bool was_macro = false;
+        if (auto err = enforce_macro_hygiene_mutate_hotpath(
+                ev, flat, match_id, &match.match_ref, allow_macro_all,
+                /*per_call already folded into allow_macro_all*/ false, mev, &was_macro)) {
+            flat.note_replace_pattern_hygiene_reject();
+            aura::compiler::macro_exp::note_hygiene_last_limit_reason(
+                aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced);
+            flat.rollback_atomic_batch();
+            ok = false;
+            return *err;
+        }
+        match_id = match.match_ref.id; // may have been restamped
+        auto child_idx_opt = parent_child_index_if_attached(flat, match_id);
+        if (!child_idx_opt)
+            continue;
+        auto parent_id = flat.parent_of(match_id);
+
+        // Build the replacement string by substituting captures
+        std::string filled_repl;
+        if (expected_captures == 0) {
+            filled_repl = repl_template;
+        } else {
+            // Replace "..." with source code of each captured node
+            int cap_idx = 0;
+            std::size_t pos = 0;
+            while (pos < repl_template.size()) {
+                auto dot_pos = repl_template.find("...", pos);
+                if (dot_pos == std::string::npos) {
+                    filled_repl += repl_template.substr(pos);
+                    break;
+                }
+                filled_repl += repl_template.substr(pos, dot_pos - pos);
+                if (cap_idx < static_cast<int>(match.capture_refs.size())) {
+                    filled_repl += RegSplitParts::replace_pattern_node_source(
+                        ev, flat, pat_pool, match.capture_refs[cap_idx].id);
+                    cap_idx++;
+                }
+                pos = dot_pos + 3; // skip "..."
+            }
+        }
+
+        // Parse the filled replacement into workspace.
+        // Issue #1694 / #1685: parent_id is captured before parse_to_flat
+        // (loop may parse many times — each append can stress topology).
+        // Re-validate parent+slot after parse; re-derive from StableNodeRef
+        // if the pre-parse edge is no longer attached.
+        // Issue #2798: free unlinked parse appends on every skip after parse
+        // (rollback_atomic_batch does not free SoA nodes).
+        const auto size_before_parse = static_cast<std::size_t>(flat.size());
+        auto free_repl_parse_orphans = [&flat, size_before_parse]() {
+            if (size_before_parse < flat.size())
+                (void)flat.free_orphan_nodes_from(
+                    static_cast<aura::ast::NodeId>(size_before_parse));
+        };
+        auto repl_pr = aura::parser::parse_to_flat(filled_repl, flat, *ev.workspace_pool_);
+        if (!repl_pr.success || repl_pr.root == NULL_NODE) {
+            free_repl_parse_orphans(); // #2798
+            continue;
+        }
+        auto parent_ok = [&]() -> bool {
+            if (parent_id == NULL_NODE ||
+                static_cast<std::size_t>(parent_id) >= size_before_parse ||
+                !flat.is_live_node(parent_id))
+                return false;
+            auto pv = flat.get(parent_id);
+            return *child_idx_opt < pv.children.size() && pv.child(*child_idx_opt) == match_id;
+        };
+        if (!parent_ok()) {
+            // Re-derive edge after parse (match may still be live).
+            match_id = match.match_ref.id;
+            if (!flat.is_live_node(match_id) ||
+                static_cast<std::size_t>(match_id) >= size_before_parse) {
+                free_repl_parse_orphans(); // #2798
+                continue;
+            }
+            child_idx_opt = parent_child_index_if_attached(flat, match_id);
+            if (!child_idx_opt) {
+                free_repl_parse_orphans(); // #2798
+                continue;
+            }
+            parent_id = flat.parent_of(match_id);
+            if (!parent_ok()) {
+                free_repl_parse_orphans(); // #2798
+                continue;
+            }
+        }
+
+        // Issue #4434: a User match can unlink a MacroIntroduced child.
+        // Refuse the whole op before set_child when :allow-macro? is false.
+        if (!allow_macro_all) {
+            const auto hit = first_macro_introduced_in_subtree(flat, match_id);
+            if (hit != NULL_NODE) {
+                free_repl_parse_orphans();
+                flat.note_replace_pattern_hygiene_reject();
+                aura::ast::NodeId probe[1] = {hit};
+                if (auto err = hygiene_protected_error(ev, flat, probe, false, false, mev)) {
+                    flat.rollback_atomic_batch();
+                    if (static_cast<std::size_t>(end_id) < flat.size())
+                        (void)flat.free_orphan_nodes_from(static_cast<aura::ast::NodeId>(end_id));
+                    ok = false;
+                    return *err;
+                }
+            }
+        }
+
+        // Replace the matched node
+        flat.set_child(parent_id, *child_idx_opt, repl_pr.root);
+        dirty_parents.push_back(parent_id);
+        // Issue #2037 + #2858: propagate MacroIntroduced so re-query
+        // keeps hygiene (root + descendant cascade + dirty + provenance).
+        if (was_macro)
+            propagate_macro_introduced_marker(ev, flat, repl_pr.root, no_auto_restamp_rp);
+        replaced_count++;
+    }
+    return std::nullopt;
+}
 template <typename Ctx> void RegSplitParts::register_mutate_replace_pattern_primitive(Ctx& cx) {
     auto& mev = cx.mev_ref;
     auto& safe_str = cx.safe_str_ref;
@@ -5197,109 +5654,12 @@ template <typename Ctx> void RegSplitParts::register_mutate_replace_pattern_prim
 
         auto pattern_str = ev.string_at(pattern_idx);
         std::string repl_template = ev.string_at(repl_idx);
-        // Issue #482 / #1374: shared QueryMatcher with query:pattern.
-        // Keywords aligned with query:pattern:
-        //   :nested-arity [#t|#f]  — Kleene (default #t after #1374)
-        //   :strict-arity [#t]     — alias for :nested-arity #f
-        //   :allow-macro? (Issue #3793 unified primary, same face as
-        //   query:find / query:pattern / other mutate prims) /
-        //   :include-macro-introduced / :allow-macro-introduced (compat
-        //   aliases) / :exclude-macro-introduced / :respect-hygiene
-        // Summary string remains an optional trailing string arg.
-        // Default nested_arity=true matches query:pattern so AI
-        // query-then-mutate pipelines see the same node set.
-        bool nested_arity = true;
-        bool nested_arity_explicit = false;
-        bool include_macro_introduced = false;
-        std::string summary = "replace-pattern";
-        auto consume_bool = [&](bool& target, std::size_t& ai) {
-            target = true;
-            if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
-                if (is_bool(a[ai + 1]))
-                    target = as_bool(a[ai + 1]);
-                else
-                    target = (as_int(a[ai + 1]) != 0);
-                ++ai;
-            }
-        };
-        for (std::size_t ai = 2; ai < a.size(); ++ai) {
-            if (is_keyword(a[ai])) {
-                auto kidx = as_keyword_idx(a[ai]);
-                if (kidx >= ev.keyword_table_.size()) {
-                    ok = false;
-                    return mev("bad-arg", "unknown keyword");
-                }
-                auto kw = ev.keyword_table_[kidx];
-                if (kw == ":nested-arity") {
-                    nested_arity_explicit = true;
-                    consume_bool(nested_arity, ai);
-                } else if (kw == ":strict-arity") {
-                    nested_arity_explicit = true;
-                    bool v = true;
-                    if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
-                        if (is_bool(a[ai + 1]))
-                            v = as_bool(a[ai + 1]);
-                        else
-                            v = (as_int(a[ai + 1]) != 0);
-                        ++ai;
-                    }
-                    nested_arity = !v;
-                } else if (kw == ":include-macro-introduced" || kw == ":allow-macro-introduced" ||
-                           kw == ":allow-macro?") {
-                    // Issue #3793: :allow-macro? is the unified Agent-facing
-                    // keyword; the old query-side spellings remain compat
-                    // aliases. All three fold into the same include + gate
-                    // bool below (one face across query and mutate).
-                    consume_bool(include_macro_introduced, ai);
-                } else if (kw == ":exclude-macro-introduced") {
-                    bool exclude = true;
-                    if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
-                        if (is_bool(a[ai + 1]))
-                            exclude = as_bool(a[ai + 1]);
-                        else
-                            exclude = (as_int(a[ai + 1]) != 0);
-                        ++ai;
-                    }
-                    include_macro_introduced = !exclude;
-                } else if (kw == ":respect-hygiene") {
-                    bool v = false;
-                    if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
-                        if (is_bool(a[ai + 1]))
-                            v = as_bool(a[ai + 1]);
-                        else
-                            v = (as_int(a[ai + 1]) != 0);
-                        ++ai;
-                    }
-                    include_macro_introduced = v;
-                } else {
-                    ok = false;
-                    return mev("bad-arg",
-                               std::string("unknown mutate:replace-pattern keyword: ") + kw);
-                }
-            } else if (is_string(a[ai])) {
-                summary = safe_str(a[ai]);
-            } else {
-                ok = false;
-                return mev("bad-arg", "usage: (mutate:replace-pattern pattern replacement"
-                                      " [:nested-arity [#t|#f]] [:strict-arity [#t]]"
-                                      " [:allow-macro? [#t]]"
-                                      " [:include-macro-introduced [#t]]"
-                                      " [:allow-macro-introduced [#t]]"
-                                      " [:exclude-macro-introduced [#t|#f]]"
-                                      " [:respect-hygiene [#t|#f]] [summary-string])");
-            }
-        }
-        // Issue #1374: one-shot stderr notice when default Kleene is used
-        // without an explicit arity keyword (pre-#1374 default was strict).
-        if (!nested_arity_explicit && nested_arity) {
-            static std::atomic<bool> s_kleene_default_warned{false};
-            if (!s_kleene_default_warned.exchange(true, std::memory_order_relaxed)) {
-                std::fprintf(stderr, "WARNING: mutate:replace-pattern now defaults to Kleene "
-                                     "(:nested-arity #t) to match query:pattern (#1374). "
-                                     "Pass :strict-arity #t for pre-#1374 single-subtree "
-                                     "wildcard behavior.\n");
-            }
-        }
+        ReplacePatternOptions rp_opt;
+        if (auto err = RegSplitParts::replace_pattern_parse_options(ev, a, mev, ok, rp_opt))
+            return *err;
+        bool nested_arity = rp_opt.nested_arity;
+        bool include_macro_introduced = rp_opt.include_macro_introduced;
+        std::string summary = std::move(rp_opt.summary);
 
         // Phase 2.5.0: pat_pool stays separate from canonical_pool.
         // Same rationale as the query:pattern site above — pattern AST
@@ -5353,97 +5713,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_replace_pattern_prim
         // Given a node ID in the workspace FlatAST, reconstruct its source
         // code as a string (same as current-source but for any node)
         auto node_to_source = [&](this auto&& self, NodeId id) -> std::string {
-            if (id >= flat.size() || id == NULL_NODE)
-                return "";
-            auto v = flat.get(id);
-            switch (v.tag) {
-                case NodeTag::LiteralInt:
-                    return std::to_string(v.int_value);
-                case NodeTag::LiteralFloat:
-                    return std::to_string(v.float_value);
-                case NodeTag::LiteralString:
-                    return "\"" + std::string(ev.workspace_pool_->resolve(v.sym_id)) + "\"";
-                case NodeTag::Variable:
-                    return std::string(ev.workspace_pool_->resolve(v.sym_id));
-                case NodeTag::Call: {
-                    std::string s = "(";
-                    for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
-                        if (ci > 0)
-                            s += " ";
-                        s += self(v.child(ci));
-                    }
-                    s += ")";
-                    return s;
-                }
-                case NodeTag::Lambda: {
-                    std::string s = "(lambda (";
-                    for (std::size_t pi = 0; pi < v.params.size(); ++pi) {
-                        if (pi > 0)
-                            s += " ";
-                        s += pat_pool->resolve(v.params[pi]);
-                    }
-                    s += ")";
-                    if (!v.children.empty())
-                        s += " " + self(v.child(0));
-                    s += ")";
-                    return s;
-                }
-                case NodeTag::IfExpr: {
-                    std::string s = "(if";
-                    if (v.children.size() > 0)
-                        s += " " + self(v.child(0));
-                    if (v.children.size() > 1)
-                        s += " " + self(v.child(1));
-                    if (v.children.size() > 2)
-                        s += " " + self(v.child(2));
-                    s += ")";
-                    return s;
-                }
-                case NodeTag::Begin: {
-                    std::string s = "(begin";
-                    for (auto c : v.children)
-                        s += " " + self(c);
-                    s += ")";
-                    return s;
-                }
-                case NodeTag::Define: {
-                    std::string s = "(define " + std::string(ev.workspace_pool_->resolve(v.sym_id));
-                    if (!v.children.empty()) {
-                        auto val_node = flat.get(v.child(0));
-                        if (val_node.tag == NodeTag::Lambda) {
-                            s += " (";
-                            for (std::size_t pi = 0; pi < val_node.params.size(); ++pi) {
-                                if (pi > 0)
-                                    s += " ";
-                                s += ev.workspace_pool_->resolve(val_node.params[pi]);
-                            }
-                            s += ")";
-                            if (!val_node.children.empty())
-                                s += " " + self(val_node.child(0));
-                            s += ")";
-                        } else {
-                            s += " " + self(v.child(0));
-                        }
-                    }
-                    s += ")";
-                    return s;
-                }
-                case NodeTag::Let:
-                case NodeTag::LetRec: {
-                    std::string kw = (v.tag == NodeTag::LetRec) ? "letrec" : "let";
-                    std::string s = "(" + kw;
-                    if (v.has_name())
-                        s += " " + std::string(ev.workspace_pool_->resolve(v.sym_id));
-                    // bindings: (var val) pairs
-                    // Not implemented for now — just print children
-                    for (auto c : v.children)
-                        s += " " + self(c);
-                    s += ")";
-                    return s;
-                }
-                default:
-                    return std::string("#<node-") + std::to_string(static_cast<int>(v.tag)) + ">";
-            }
+            return RegSplitParts::replace_pattern_node_source(ev, flat, pat_pool, id);
         };
 
         // ── Match + capture ────────────────────────────────────
@@ -5458,10 +5728,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_replace_pattern_prim
         // inside an atomic batch (same two-phase contract as lockless
         // eval_flat_apply_mutate_replace_pattern — multi-match must not
         // rely on raw NodeId across parse_to_flat iterations).
-        struct PatternMatch {
-            StableNodeRef match_ref;
-            std::vector<StableNodeRef> capture_refs;
-        };
+        using PatternMatch = ReplacePatternMatch;
 
         aura::compiler::QueryMatcher matcher(&flat, ev.workspace_pool_, pat_flat, pat_pool,
                                              wildcard_sym, nested_arity, !include_macro_introduced);
@@ -5553,149 +5820,10 @@ template <typename Ctx> void RegSplitParts::register_mutate_replace_pattern_prim
         std::vector<NodeId> dirty_parents;
         dirty_parents.reserve(matches.size());
         flat.begin_atomic_batch();
-        for (auto& match : matches) {
-            // Issue #2800: stale StableNodeRef or detached parent edge —
-            // skip set_child; bump prevent metric (parity with lockless).
-            if (!stable_match_still_attached(flat, match.match_ref)) {
-                flat.note_replace_pattern_stale_nodeid_prevented();
-                continue;
-            }
-            // Issue #482: in strict mode, capture count must equal
-            // the number of `...` wildcards in the source pattern
-            // (each consumes exactly 1 child). In Kleene mode the
-            // count varies per match (the wildcard consumes 1+
-            // children), so we don't enforce strict equality —
-            // excess captures are ignored, missing captures leave
-            // `...` placeholders in the substitution.
-            if (!nested_arity && static_cast<int>(match.capture_refs.size()) != expected_captures)
-                continue;
-            bool captures_ok = true;
-            for (auto& cap_ref : match.capture_refs) {
-                if (!cap_ref.is_valid_in(flat)) {
-                    captures_ok = false;
-                    break;
-                }
-            }
-            if (!captures_ok)
-                continue;
-
-            auto match_id = match.match_ref.id;
-            // Issue #2037 / #2961: stamp / FailOnStale / hygiene-protected for
-            // MacroIntroduced. Count replace_pattern_hygiene_reject on deny.
-            bool was_macro = false;
-            if (auto err = enforce_macro_hygiene_mutate_hotpath(
-                    ev, flat, match_id, &match.match_ref, allow_macro_all,
-                    /*per_call already folded into allow_macro_all*/ false, mev, &was_macro)) {
-                flat.note_replace_pattern_hygiene_reject();
-                aura::compiler::macro_exp::note_hygiene_last_limit_reason(
-                    aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced);
-                flat.rollback_atomic_batch();
-                ok = false;
-                return *err;
-            }
-            match_id = match.match_ref.id; // may have been restamped
-            auto child_idx_opt = parent_child_index_if_attached(flat, match_id);
-            if (!child_idx_opt)
-                continue;
-            auto parent_id = flat.parent_of(match_id);
-
-            // Build the replacement string by substituting captures
-            std::string filled_repl;
-            if (expected_captures == 0) {
-                filled_repl = repl_template;
-            } else {
-                // Replace "..." with source code of each captured node
-                int cap_idx = 0;
-                std::size_t pos = 0;
-                while (pos < repl_template.size()) {
-                    auto dot_pos = repl_template.find("...", pos);
-                    if (dot_pos == std::string::npos) {
-                        filled_repl += repl_template.substr(pos);
-                        break;
-                    }
-                    filled_repl += repl_template.substr(pos, dot_pos - pos);
-                    if (cap_idx < static_cast<int>(match.capture_refs.size())) {
-                        filled_repl += node_to_source(match.capture_refs[cap_idx].id);
-                        cap_idx++;
-                    }
-                    pos = dot_pos + 3; // skip "..."
-                }
-            }
-
-            // Parse the filled replacement into workspace.
-            // Issue #1694 / #1685: parent_id is captured before parse_to_flat
-            // (loop may parse many times — each append can stress topology).
-            // Re-validate parent+slot after parse; re-derive from StableNodeRef
-            // if the pre-parse edge is no longer attached.
-            // Issue #2798: free unlinked parse appends on every skip after parse
-            // (rollback_atomic_batch does not free SoA nodes).
-            const auto size_before_parse = static_cast<std::size_t>(flat.size());
-            auto free_repl_parse_orphans = [&flat, size_before_parse]() {
-                if (size_before_parse < flat.size())
-                    (void)flat.free_orphan_nodes_from(
-                        static_cast<aura::ast::NodeId>(size_before_parse));
-            };
-            auto repl_pr = aura::parser::parse_to_flat(filled_repl, flat, *ev.workspace_pool_);
-            if (!repl_pr.success || repl_pr.root == NULL_NODE) {
-                free_repl_parse_orphans(); // #2798
-                continue;
-            }
-            auto parent_ok = [&]() -> bool {
-                if (parent_id == NULL_NODE ||
-                    static_cast<std::size_t>(parent_id) >= size_before_parse ||
-                    !flat.is_live_node(parent_id))
-                    return false;
-                auto pv = flat.get(parent_id);
-                return *child_idx_opt < pv.children.size() && pv.child(*child_idx_opt) == match_id;
-            };
-            if (!parent_ok()) {
-                // Re-derive edge after parse (match may still be live).
-                match_id = match.match_ref.id;
-                if (!flat.is_live_node(match_id) ||
-                    static_cast<std::size_t>(match_id) >= size_before_parse) {
-                    free_repl_parse_orphans(); // #2798
-                    continue;
-                }
-                child_idx_opt = parent_child_index_if_attached(flat, match_id);
-                if (!child_idx_opt) {
-                    free_repl_parse_orphans(); // #2798
-                    continue;
-                }
-                parent_id = flat.parent_of(match_id);
-                if (!parent_ok()) {
-                    free_repl_parse_orphans(); // #2798
-                    continue;
-                }
-            }
-
-            // Issue #4434: a User match can unlink a MacroIntroduced child.
-            // Refuse the whole op before set_child when :allow-macro? is false.
-            if (!allow_macro_all) {
-                const auto hit = first_macro_introduced_in_subtree(flat, match_id);
-                if (hit != NULL_NODE) {
-                    free_repl_parse_orphans();
-                    flat.note_replace_pattern_hygiene_reject();
-                    aura::ast::NodeId probe[1] = {hit};
-                    if (auto err = hygiene_protected_error(ev, flat, probe, false, false, mev)) {
-                        flat.rollback_atomic_batch();
-                        if (static_cast<std::size_t>(end_id) < flat.size())
-                            (void)flat.free_orphan_nodes_from(
-                                static_cast<aura::ast::NodeId>(end_id));
-                        ok = false;
-                        return *err;
-                    }
-                }
-            }
-
-            // Replace the matched node
-            flat.set_child(parent_id, *child_idx_opt, repl_pr.root);
-            dirty_parents.push_back(parent_id);
-            // Issue #2037 + #2858: propagate MacroIntroduced so re-query
-            // keeps hygiene (root + descendant cascade + dirty + provenance).
-            if (was_macro)
-                propagate_macro_introduced_marker(ev, flat, repl_pr.root, no_auto_restamp_rp);
-            replaced_count++;
-        }
+        if (auto err = RegSplitParts::replace_pattern_apply_matches(
+                ev, flat, matches, repl_template, expected_captures, nested_arity, allow_macro_all,
+                no_auto_restamp_rp, pat_pool, end_id, mev, ok, replaced_count, dirty_parents))
+            return *err;
 
         if (replaced_count == 0) {
             flat.rollback_atomic_batch();
@@ -8126,6 +8254,155 @@ template <typename Ctx> void RegSplitParts::register_mutate_extract_function_pri
         });
 }
 
+// Issue #5033: mutate:inline-call DFS clone + child reconnect pass.
+// Mechanical subtree copy; no early exit, every add_* may stress SoA/free-list.
+void RegSplitParts::inline_call_clone_subtree(Evaluator& ev, aura::ast::FlatAST& flat,
+                                              aura::ast::NodeId func_body_node,
+                                              const std::vector<aura::ast::SymId>& formal_params,
+                                              const std::vector<aura::ast::NodeId>& actual_args,
+                                              std::vector<std::uint32_t>& old_to_new) {
+    using aura::ast::NodeId;
+    using aura::ast::NodeTag;
+    using aura::ast::SymId;
+    old_to_new.assign(static_cast<std::size_t>(flat.size()), aura::ast::NULL_NODE);
+    {
+        std::vector<NodeId> dfs_stack;
+        dfs_stack.push_back(func_body_node);
+        while (!dfs_stack.empty()) {
+            auto cur = dfs_stack.back();
+            dfs_stack.pop_back();
+            if (cur >= old_to_new.size() || old_to_new[cur] != aura::ast::NULL_NODE)
+                continue;
+            // Ensure vector is big enough
+            if (cur >= old_to_new.size())
+                old_to_new.resize(cur + 1, aura::ast::NULL_NODE);
+            auto v = flat.get(cur);
+            NodeId new_id = aura::ast::NULL_NODE;
+            switch (v.tag) {
+                case NodeTag::LiteralInt:
+                    new_id = flat.add_literal(v.int_value);
+                    break;
+                case NodeTag::LiteralFloat:
+                    new_id = flat.add_literal_float(v.float_value);
+                    break;
+                case NodeTag::LiteralString:
+                    new_id = flat.add_literalstring(v.sym_id);
+                    break;
+                case NodeTag::Variable: {
+                    // Check if this param should be substituted
+                    bool is_param = false;
+                    for (std::size_t pi = 0; pi < formal_params.size(); ++pi) {
+                        if (formal_params[pi] == v.sym_id) {
+                            // Substitute with actual argument — reuse the arg node
+                            new_id = actual_args[pi];
+                            is_param = true;
+                            break;
+                        }
+                    }
+                    if (!is_param)
+                        new_id = flat.add_variable(v.sym_id);
+                    break;
+                }
+                case NodeTag::Call:
+                    new_id = flat.add_raw_node(v.tag);
+                    break;
+                case NodeTag::Lambda:
+                    new_id = flat.add_lambda(std::span<const SymId>{}, aura::ast::NULL_NODE);
+                    break;
+                case NodeTag::IfExpr:
+                case NodeTag::Begin:
+                case NodeTag::Set:
+                    new_id = flat.add_raw_node(v.tag);
+                    break;
+                case NodeTag::Let:
+                    new_id = flat.add_let(aura::ast::INVALID_SYM, aura::ast::NULL_NODE,
+                                          aura::ast::NULL_NODE);
+                    break;
+                case NodeTag::LetRec:
+                    new_id = flat.add_letrec(aura::ast::INVALID_SYM, aura::ast::NULL_NODE,
+                                             aura::ast::NULL_NODE);
+                    break;
+                default:
+                    new_id = flat.add_raw_node(v.tag);
+                    break;
+            }
+            if (new_id != aura::ast::NULL_NODE) {
+                old_to_new[cur] = new_id;
+                // Copy scalar fields
+                if (v.has_name())
+                    flat.sym_id(new_id) = v.sym_id;
+                flat.int_val(new_id) = v.int_value;
+                // Push children
+                for (auto c : v.children) {
+                    if (c != aura::ast::NULL_NODE)
+                        dfs_stack.push_back(c);
+                }
+            }
+        }
+    }
+
+    // Second pass: connect children in new nodes
+    for (std::size_t old_nid = 0; old_nid < old_to_new.size(); ++old_nid) {
+        auto new_id = old_to_new[old_nid];
+        if (new_id == aura::ast::NULL_NODE)
+            continue;
+        // Skip if this was a param substitution (reused arg node)
+        bool is_reused_arg = false;
+        for (auto arg : actual_args) {
+            if (arg == new_id) {
+                is_reused_arg = true;
+                break;
+            }
+        }
+        if (is_reused_arg)
+            continue;
+
+        auto old_v = flat.get(static_cast<NodeId>(old_nid));
+        // For Lambda, copy body child then params (Issue #1266).
+        if (old_v.tag == NodeTag::Lambda) {
+            // Lambda params: set body child, then copy params
+            if (!old_v.children.empty()) {
+                auto old_child = old_v.child(0);
+                if (old_child < old_to_new.size() && old_to_new[old_child] != aura::ast::NULL_NODE)
+                    flat.set_child(new_id, 0, old_to_new[old_child]);
+            }
+            // Issue #1266: the first pass created Lambda with empty
+            // params; copy original param list so nested lambdas
+            // keep formal names (no unbound variable after inline).
+            if (!old_v.params.empty()) {
+                flat.set_lambda_params(new_id, old_v.params, old_v.param_annotations);
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->inline_call_lambda_params_copied.fetch_add(1, std::memory_order_relaxed);
+            }
+            continue;
+        }
+        // Handle data params (param_data_ vector) — skip for now
+        // Connect children
+        for (std::size_t ci = 0; ci < old_v.children.size(); ++ci) {
+            auto old_child = old_v.child(ci);
+            if (old_child != aura::ast::NULL_NODE) {
+                if (old_child < old_to_new.size() &&
+                    old_to_new[old_child] != aura::ast::NULL_NODE) {
+                    flat.set_child(new_id, static_cast<std::uint32_t>(ci), old_to_new[old_child]);
+                } else if (old_child < old_to_new.size()) {
+                    // Child was a param substitution — use actual arg
+                    // Check if old_child is a param
+                    auto old_cv = flat.get(old_child);
+                    if (old_cv.tag == NodeTag::Variable) {
+                        for (std::size_t pi = 0; pi < formal_params.size(); ++pi) {
+                            if (formal_params[pi] == old_cv.sym_id) {
+                                flat.set_child(new_id, static_cast<std::uint32_t>(ci),
+                                               actual_args[pi]);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 template <typename Ctx> void RegSplitParts::register_mutate_inline_call_primitive(Ctx& cx) {
     auto& safe_str = cx.safe_str_ref;
     auto& add_mutate = cx.add_mutate_ref;
@@ -8303,147 +8580,9 @@ template <typename Ctx> void RegSplitParts::register_mutate_inline_call_primitiv
             // Walk the body subtree and replace Variable sym_ids matching params.
             // First, clone the body to new nodes to avoid cross-node contamination.
             // We do a simple DFS clone.
-            std::vector<std::uint32_t> old_to_new(flat.size(), aura::ast::NULL_NODE);
-            {
-                std::vector<NodeId> dfs_stack;
-                dfs_stack.push_back(func_body_node);
-                while (!dfs_stack.empty()) {
-                    auto cur = dfs_stack.back();
-                    dfs_stack.pop_back();
-                    if (cur >= old_to_new.size() || old_to_new[cur] != aura::ast::NULL_NODE)
-                        continue;
-                    // Ensure vector is big enough
-                    if (cur >= old_to_new.size())
-                        old_to_new.resize(cur + 1, aura::ast::NULL_NODE);
-                    auto v = flat.get(cur);
-                    NodeId new_id = aura::ast::NULL_NODE;
-                    switch (v.tag) {
-                        case NodeTag::LiteralInt:
-                            new_id = flat.add_literal(v.int_value);
-                            break;
-                        case NodeTag::LiteralFloat:
-                            new_id = flat.add_literal_float(v.float_value);
-                            break;
-                        case NodeTag::LiteralString:
-                            new_id = flat.add_literalstring(v.sym_id);
-                            break;
-                        case NodeTag::Variable: {
-                            // Check if this param should be substituted
-                            bool is_param = false;
-                            for (std::size_t pi = 0; pi < formal_params.size(); ++pi) {
-                                if (formal_params[pi] == v.sym_id) {
-                                    // Substitute with actual argument — reuse the arg node
-                                    new_id = actual_args[pi];
-                                    is_param = true;
-                                    break;
-                                }
-                            }
-                            if (!is_param)
-                                new_id = flat.add_variable(v.sym_id);
-                            break;
-                        }
-                        case NodeTag::Call:
-                            new_id = flat.add_raw_node(v.tag);
-                            break;
-                        case NodeTag::Lambda:
-                            new_id =
-                                flat.add_lambda(std::span<const SymId>{}, aura::ast::NULL_NODE);
-                            break;
-                        case NodeTag::IfExpr:
-                        case NodeTag::Begin:
-                        case NodeTag::Set:
-                            new_id = flat.add_raw_node(v.tag);
-                            break;
-                        case NodeTag::Let:
-                            new_id = flat.add_let(aura::ast::INVALID_SYM, aura::ast::NULL_NODE,
-                                                  aura::ast::NULL_NODE);
-                            break;
-                        case NodeTag::LetRec:
-                            new_id = flat.add_letrec(aura::ast::INVALID_SYM, aura::ast::NULL_NODE,
-                                                     aura::ast::NULL_NODE);
-                            break;
-                        default:
-                            new_id = flat.add_raw_node(v.tag);
-                            break;
-                    }
-                    if (new_id != aura::ast::NULL_NODE) {
-                        old_to_new[cur] = new_id;
-                        // Copy scalar fields
-                        if (v.has_name())
-                            flat.sym_id(new_id) = v.sym_id;
-                        flat.int_val(new_id) = v.int_value;
-                        // Push children
-                        for (auto c : v.children) {
-                            if (c != aura::ast::NULL_NODE)
-                                dfs_stack.push_back(c);
-                        }
-                    }
-                }
-            }
-
-            // Second pass: connect children in new nodes
-            for (std::size_t old_nid = 0; old_nid < old_to_new.size(); ++old_nid) {
-                auto new_id = old_to_new[old_nid];
-                if (new_id == aura::ast::NULL_NODE)
-                    continue;
-                // Skip if this was a param substitution (reused arg node)
-                bool is_reused_arg = false;
-                for (auto arg : actual_args) {
-                    if (arg == new_id) {
-                        is_reused_arg = true;
-                        break;
-                    }
-                }
-                if (is_reused_arg)
-                    continue;
-
-                auto old_v = flat.get(static_cast<NodeId>(old_nid));
-                // For Lambda, copy body child then params (Issue #1266).
-                if (old_v.tag == NodeTag::Lambda) {
-                    // Lambda params: set body child, then copy params
-                    if (!old_v.children.empty()) {
-                        auto old_child = old_v.child(0);
-                        if (old_child < old_to_new.size() &&
-                            old_to_new[old_child] != aura::ast::NULL_NODE)
-                            flat.set_child(new_id, 0, old_to_new[old_child]);
-                    }
-                    // Issue #1266: the first pass created Lambda with empty
-                    // params; copy original param list so nested lambdas
-                    // keep formal names (no unbound variable after inline).
-                    if (!old_v.params.empty()) {
-                        flat.set_lambda_params(new_id, old_v.params, old_v.param_annotations);
-                        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                            m->inline_call_lambda_params_copied.fetch_add(
-                                1, std::memory_order_relaxed);
-                    }
-                    continue;
-                }
-                // Handle data params (param_data_ vector) — skip for now
-                // Connect children
-                for (std::size_t ci = 0; ci < old_v.children.size(); ++ci) {
-                    auto old_child = old_v.child(ci);
-                    if (old_child != aura::ast::NULL_NODE) {
-                        if (old_child < old_to_new.size() &&
-                            old_to_new[old_child] != aura::ast::NULL_NODE) {
-                            flat.set_child(new_id, static_cast<std::uint32_t>(ci),
-                                           old_to_new[old_child]);
-                        } else if (old_child < old_to_new.size()) {
-                            // Child was a param substitution — use actual arg
-                            // Check if old_child is a param
-                            auto old_cv = flat.get(old_child);
-                            if (old_cv.tag == NodeTag::Variable) {
-                                for (std::size_t pi = 0; pi < formal_params.size(); ++pi) {
-                                    if (formal_params[pi] == old_cv.sym_id) {
-                                        flat.set_child(new_id, static_cast<std::uint32_t>(ci),
-                                                       actual_args[pi]);
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            std::vector<std::uint32_t> old_to_new;
+            RegSplitParts::inline_call_clone_subtree(ev, flat, func_body_node, formal_params,
+                                                     actual_args, old_to_new);
 
             // Replace the call with the cloned body root
             auto cloned_body = old_to_new[func_body_node];
