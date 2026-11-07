@@ -37,6 +37,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <fcntl.h>
@@ -143,7 +144,7 @@ namespace tenant_exec_detail {
         return path == "/dev/null";
     }
 
-    [[nodiscard]] inline std::string lexical_absolute(std::string path) {
+    [[nodiscard]] inline std::string lexical_absolute(std::string_view path) {
         std::vector<std::string> parts;
         std::string cur;
         auto flush = [&]() {
