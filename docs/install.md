@@ -49,8 +49,8 @@ docker run --rm -v "$PWD:/w" -w /w ghcr.io/cybrid-systems/aura:nightly main.aura
 `ghcr.io/cybrid-systems/aura` is a multi-arch image (linux/amd64, linux/arm64)
 holding only the bundle on `ubuntu:24.04`. Tags: `nightly` (newest `main`),
 the 9-character commit id, and for each `vX.Y.Z` release `X.Y.Z`, `X.Y` and
-`latest` (`latest` is only ever set by a release tag). The toolchain image
-`ghcr.io/cybrid-systems/dev` is only needed to build aura from source.
+`latest` (`latest` is only ever set by a release tag). Compiling aura from
+source uses the toolchain image `ghcr.io/cybrid-systems/aura-ci:v0.1.0`.
 
 ## Building a bundle yourself
 

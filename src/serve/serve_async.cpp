@@ -333,6 +333,8 @@ auto capture_stdout_during(Fn&& fn)
         }
         Finish(const Finish&) = delete;
         Finish& operator=(const Finish&) = delete;
+        Finish(Finish&&) = delete;
+        Finish& operator=(Finish&&) = delete;
         ~Finish() { finish(); }
     } finish(saved, fds[0], drain);
     R result = std::forward<Fn>(fn)();

@@ -1548,6 +1548,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     AdmitSessionMid() = default;
                     AdmitSessionMid(const AdmitSessionMid&) = delete;
                     AdmitSessionMid& operator=(const AdmitSessionMid&) = delete;
+                    AdmitSessionMid(AdmitSessionMid&&) = delete;
+                    AdmitSessionMid& operator=(AdmitSessionMid&&) = delete;
                 } admit_session;
                 if (!guard_exempt)
                     admit_session.arm_if_process_epoch(ev);
@@ -1816,6 +1818,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     }
                     HardReinstall(const HardReinstall&) = delete;
                     HardReinstall& operator=(const HardReinstall&) = delete;
+                    HardReinstall(HardReinstall&&) = delete;
+                    HardReinstall& operator=(HardReinstall&&) = delete;
                 } hard_reinstall{ev};
                 // Issue #3697: outermost dtor persist-reject / abort_restore
                 // must run before the EDSL return. `return result` left the
@@ -7345,6 +7349,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 }
                 BatchSeCompositeJoin(const BatchSeCompositeJoin&) = delete;
                 BatchSeCompositeJoin& operator=(const BatchSeCompositeJoin&) = delete;
+                BatchSeCompositeJoin(BatchSeCompositeJoin&&) = delete;
+                BatchSeCompositeJoin& operator=(BatchSeCompositeJoin&&) = delete;
             } batch_se_join(ev.workspace_flat_,
                             aura::compiler::typed_audit::production_defaults_active());
             // Issue #4362: blame from a rejected batch-rebind. Empty for

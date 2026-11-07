@@ -351,6 +351,8 @@ namespace {
         ~WorkspaceSwapGuard() { release(); }
         WorkspaceSwapGuard(const WorkspaceSwapGuard&) = delete;
         WorkspaceSwapGuard& operator=(const WorkspaceSwapGuard&) = delete;
+        WorkspaceSwapGuard(WorkspaceSwapGuard&&) = delete;
+        WorkspaceSwapGuard& operator=(WorkspaceSwapGuard&&) = delete;
         [[nodiscard]] bool valid() const noexcept { return valid_; }
         void release() noexcept {
             if (!valid_)
@@ -3248,6 +3250,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         }
                         RegionTls(const RegionTls&) = delete;
                         RegionTls& operator=(const RegionTls&) = delete;
+                        RegionTls(RegionTls&&) = delete;
+                        RegionTls& operator=(RegionTls&&) = delete;
                         ~RegionTls() {
                             Evaluator::clear_parallel_task_region_key();
                             Evaluator::clear_parallel_task_cone_mask();
@@ -7329,6 +7333,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 }
                 SuperviseRegionTls(const SuperviseRegionTls&) = delete;
                 SuperviseRegionTls& operator=(const SuperviseRegionTls&) = delete;
+                SuperviseRegionTls(SuperviseRegionTls&&) = delete;
+                SuperviseRegionTls& operator=(SuperviseRegionTls&&) = delete;
                 ~SuperviseRegionTls() { Evaluator::clear_parallel_task_region_key(); }
             };
             // Issue #4723: the watch arm's Phase A is empty by design

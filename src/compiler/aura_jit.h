@@ -132,6 +132,8 @@ public:
     AuraJIT();
     AuraJIT(const AuraJIT&) = delete;
     AuraJIT& operator=(const AuraJIT&) = delete;
+    AuraJIT(AuraJIT&&) = delete;
+    AuraJIT& operator=(AuraJIT&&) = delete;
     ~AuraJIT();
 
     bool available() const;

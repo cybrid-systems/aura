@@ -85,6 +85,8 @@ struct Site {
     }
     Site(const Site&) = delete;
     Site& operator=(const Site&) = delete;
+    Site(Site&&) = delete;
+    Site& operator=(Site&&) = delete;
     ~Site() = default;
 };
 

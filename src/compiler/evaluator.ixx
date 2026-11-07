@@ -2475,6 +2475,8 @@ public:
     // arena's bump-allocator doesn't run destructors).
     Evaluator(const Evaluator&) = delete;
     Evaluator& operator=(const Evaluator&) = delete;
+    Evaluator(Evaluator&&) = delete;
+    Evaluator& operator=(Evaluator&&) = delete;
     ~Evaluator();
     // Issue #1746: stable identity for thread-local maps (depth slot).
     // Never recycled; survives free-list address reuse so Guard depth
@@ -5858,6 +5860,8 @@ public:
         ~TwVecPin();
         TwVecPin(const TwVecPin&) = delete;
         TwVecPin& operator=(const TwVecPin&) = delete;
+        TwVecPin(TwVecPin&&) = delete;
+        TwVecPin& operator=(TwVecPin&&) = delete;
 
     private:
         const std::vector<types::EvalValue>* v_ = nullptr;
@@ -8878,6 +8882,8 @@ private:
         }
         TcoReuseGuard(const TcoReuseGuard&) = delete;
         TcoReuseGuard& operator=(const TcoReuseGuard&) = delete;
+        TcoReuseGuard(TcoReuseGuard&&) = delete;
+        TcoReuseGuard& operator=(TcoReuseGuard&&) = delete;
     };
     std::vector<std::string> keyword_table_; // keyword name strings (indexed by KeywordRef)
     // Issue #4727: interned symbol atoms. A quoted identifier atom evaluates
@@ -10140,6 +10146,8 @@ public:
             , on_(ev.closure_tenant_stamp_count() != 0) {}
         SweptClosureStamps(const SweptClosureStamps&) = delete;
         SweptClosureStamps& operator=(const SweptClosureStamps&) = delete;
+        SweptClosureStamps(SweptClosureStamps&&) = delete;
+        SweptClosureStamps& operator=(SweptClosureStamps&&) = delete;
         ~SweptClosureStamps() { ev_.forget_tw_closure_owners(ids_); }
         void note(ClosureId id) noexcept {
             if (!on_)
@@ -11030,6 +11038,8 @@ public:
         }
         ListCtorLockHold(const ListCtorLockHold&) = delete;
         ListCtorLockHold& operator=(const ListCtorLockHold&) = delete;
+        ListCtorLockHold(ListCtorLockHold&&) = delete;
+        ListCtorLockHold& operator=(ListCtorLockHold&&) = delete;
     };
     [[nodiscard]] bool prim_heap_quota_limited(PrimHeapDim dim) const noexcept {
         return prim_heap_quota(dim) != 0;
@@ -13243,6 +13253,8 @@ public:
         }
         RenderHotEntryGuard(const RenderHotEntryGuard&) = delete;
         RenderHotEntryGuard& operator=(const RenderHotEntryGuard&) = delete;
+        RenderHotEntryGuard(RenderHotEntryGuard&&) = delete;
+        RenderHotEntryGuard& operator=(RenderHotEntryGuard&&) = delete;
     };
     void bump_jit_fallback_to_interpreter() const noexcept {
         if (compiler_metrics_) {

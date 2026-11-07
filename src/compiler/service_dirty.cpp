@@ -203,6 +203,8 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
             }
             ReemitEvalOwnerGuard(const ReemitEvalOwnerGuard&) = delete;
             ReemitEvalOwnerGuard& operator=(const ReemitEvalOwnerGuard&) = delete;
+            ReemitEvalOwnerGuard(ReemitEvalOwnerGuard&&) = delete;
+            ReemitEvalOwnerGuard& operator=(ReemitEvalOwnerGuard&&) = delete;
         } owner_guard(static_cast<void*>(&evaluator_));
         // Issue #3059: cascade reemit goes through the Registry facade
         // (decide_and_reemit → aura_reemit_aot_for_dirty) so coverage /
@@ -389,6 +391,8 @@ void CompilerService::mark_define_dirty(const std::string& name) {
             }
             ReemitEvalOwnerGuard(const ReemitEvalOwnerGuard&) = delete;
             ReemitEvalOwnerGuard& operator=(const ReemitEvalOwnerGuard&) = delete;
+            ReemitEvalOwnerGuard(ReemitEvalOwnerGuard&&) = delete;
+            ReemitEvalOwnerGuard& operator=(ReemitEvalOwnerGuard&&) = delete;
         } owner_guard(static_cast<void*>(&evaluator_));
         if (aura::compiler::hot_update_registry().hard_invalidate_via_facade(
                 name.c_str(), HotUpdateRegistry::ReemitReason::Cascade)) {
@@ -1059,6 +1063,8 @@ void CompilerService::invalidate_function(const std::string& name) {
             }
             ReemitEvalOwnerGuard(const ReemitEvalOwnerGuard&) = delete;
             ReemitEvalOwnerGuard& operator=(const ReemitEvalOwnerGuard&) = delete;
+            ReemitEvalOwnerGuard(ReemitEvalOwnerGuard&&) = delete;
+            ReemitEvalOwnerGuard& operator=(ReemitEvalOwnerGuard&&) = delete;
         } owner_guard(static_cast<void*>(&evaluator_));
         if (aura::compiler::hot_update_registry().hard_invalidate_via_facade(
                 name.c_str(), HotUpdateRegistry::ReemitReason::Cascade)) {

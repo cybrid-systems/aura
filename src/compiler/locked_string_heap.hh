@@ -139,6 +139,8 @@ public:
     }
     StringSlotStore(const StringSlotStore&) = delete;
     StringSlotStore& operator=(const StringSlotStore&) = delete;
+    StringSlotStore(StringSlotStore&&) = delete;
+    StringSlotStore& operator=(StringSlotStore&&) = delete;
     ~StringSlotStore() { destroy_all(); }
 
     [[nodiscard]] size_type size() const noexcept { return size_.load(std::memory_order_acquire); }
@@ -342,6 +344,8 @@ public:
         , mu_(m) {}
     LockedStringHeap(const LockedStringHeap&) = delete;
     LockedStringHeap& operator=(const LockedStringHeap&) = delete;
+    LockedStringHeap(LockedStringHeap&&) = delete;
+    LockedStringHeap& operator=(LockedStringHeap&&) = delete;
     ~LockedStringHeap() = default;
 
     // Issue #4428: called under the lock with the minted index.
@@ -900,6 +904,8 @@ private:
         }
         Guard(const Guard&) = delete;
         Guard& operator=(const Guard&) = delete;
+        Guard(Guard&&) = delete;
+        Guard& operator=(Guard&&) = delete;
     };
     // Issue #4608: a slot that no live value references any more.
     // Drop the cached code-point index for one slot (the #4548

@@ -171,6 +171,8 @@ public:
     }
     FiberStringArena(const FiberStringArena&) = delete;
     FiberStringArena& operator=(const FiberStringArena&) = delete;
+    FiberStringArena(FiberStringArena&&) = delete;
+    FiberStringArena& operator=(FiberStringArena&&) = delete;
     ~FiberStringArena() { drop(); }
 
     // Fast path: no lock, fiber-local growth. Returns the local slot.
@@ -355,6 +357,8 @@ public:
         , ctx_(ctx) {}
     FiberSlabArena(const FiberSlabArena&) = delete;
     FiberSlabArena& operator=(const FiberSlabArena&) = delete;
+    FiberSlabArena(FiberSlabArena&&) = delete;
+    FiberSlabArena& operator=(FiberSlabArena&&) = delete;
     ~FiberSlabArena() = default;
 
     // Fast path: fill the next claimed slot. nullopt when this arena cannot

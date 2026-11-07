@@ -5413,6 +5413,8 @@ namespace {
         ~SeededPassMarker4682() { seeded_pass_engine_4682 = prev; }
         SeededPassMarker4682(const SeededPassMarker4682&) = delete;
         SeededPassMarker4682& operator=(const SeededPassMarker4682&) = delete;
+        SeededPassMarker4682(SeededPassMarker4682&&) = delete;
+        SeededPassMarker4682& operator=(SeededPassMarker4682&&) = delete;
     };
 } // namespace
 
