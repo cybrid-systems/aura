@@ -1272,66 +1272,39 @@ EvalResult IRInterpreter::resume_deopt_frame(const IRFunction& func, std::uint32
     return drain_call_stack(base);
 }
 
-IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
-                                                     std::vector<EvalValue>& locals,
-                                                     std::span<const EvalValue> args) {
-    if (auto blocked = ir_typed_entry_blocked_result(context_.metrics))
-        return *blocked;
-    if (func.blocks.empty())
-        return std::unexpected(Diagnostic{ErrorKind::IRNoReturn, "empty function"}.with_suggestion(
-            "the function body is empty"));
 
-    // ── Coercion helpers shared across arithmetic opcodes ────────
-    // Report CastOp blame with source location and optional NodeId
-    auto report_blame = [&](const char* expected_kind, const char* got_kind,
-                            std::uint32_t blame_loc, std::uint32_t blame_node = 0) {
-        std::string msg =
-            std::string("runtime type mismatch: expected ") + expected_kind + ", got " + got_kind;
-        if (blame_node != 0) {
-            msg += " (node " + std::to_string(blame_node) + ")";
+namespace {
+
+    struct IrFlow {
+        enum class Kind { Fall, Cont, Next, Ret };
+        Kind kind = Kind::Fall;
+        std::variant<EvalResult, PendingCall> result{};
+        static IrFlow fall() { return {}; }
+        static IrFlow cont() {
+            IrFlow f;
+            f.kind = Kind::Cont;
+            return f;
         }
-        auto diag = Diagnostic(ErrorKind::TypeError, std::move(msg))
-                        .with_blame(BlameInfo{BlameParty::Implicit, "", "runtime"});
-        if (blame_loc != 0) {
-            auto line = (blame_loc >> 16) & 0xFFFFu;
-            auto col = blame_loc & 0xFFFFu;
-            diag.location = SourceLocation{line, col, 0};
+        static IrFlow next() {
+            IrFlow f;
+            f.kind = Kind::Next;
+            return f;
         }
-        std::println(std::cerr, "{}", diag.format());
+        template <class T> static IrFlow ret_eval(T&& v) {
+            IrFlow f;
+            f.kind = Kind::Ret;
+            f.result.emplace<EvalResult>(std::forward<T>(v));
+            return f;
+        }
+        static IrFlow ret_pending(PendingCall call) {
+            IrFlow f;
+            f.kind = Kind::Ret;
+            f.result.emplace<PendingCall>(std::move(call));
+            return f;
+        }
     };
 
-    // Issue #2259: pure is_* (no classify atomics) + contracted as_*.
-    // Fixnum path is the common case under pure arithmetic microbench.
-    // Issue #4463: callers reject non-numbers before coerce. Int and float
-    // only; strings are not prefix-parsed and bools are not 0/1.
-    auto coerce_i = [&](const types::EvalValue& v) -> std::int64_t {
-        if (is_int(v))
-            return as_int(v); // AURA_HOT_CONTRACT elided under NDEBUG
-        if (is_float(v))
-            return static_cast<std::int64_t>(as_float(v));
-        return 0;
-    };
-    auto coerce_f = [&](const types::EvalValue& v) -> double {
-        if (is_float(v))
-            return as_float(v);
-        if (is_int(v))
-            return static_cast<double>(as_int(v));
-        return 0.0;
-    };
-    // Issue #4608: the evaluator's string heap is the only string store
-    // (the IR keeps no index-parallel mirror).
-    auto string_text_of = [&](const types::EvalValue& v) -> std::string_view {
-        if (!is_string(v))
-            return {};
-        const auto idx = as_string_idx(v);
-        auto& prim_heap = context_.primitives.string_heap();
-        if (idx < prim_heap.size())
-            return prim_heap[idx];
-        return {};
-    };
-    // Issue #4855: name the operation in a numeric type error, mirroring the
-    // tree-walker primitives' "(in OP, argument N)" tail.
-    auto ir_num_op_name = [](IROpcode op) -> const char* {
+    const char* ir_num_op_name(IROpcode op) {
         switch (op) {
             case IROpcode::Add:
                 return "+";
@@ -1354,68 +1327,1835 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
             default:
                 return "number";
         }
-    };
-    // Stores a primitive error. A fresh non-number also prints the legacy
-    // stderr line. False means there is no evaluator; the caller returns
-    // a TypeError diagnostic.
-    auto store_num_mismatch = [&](std::uint32_t slot, const types::EvalValue& v,
-                                  std::string_view op, std::size_t arg_index,
-                                  const IRInstruction* at) -> bool {
-        // Issue #4552: an Error operand (a callee's (error ...) returned as a
-        // value) propagates unchanged, like a tree-walker primitive argument
-        // (evaluator_eval_flat.cpp prim-arg propagation). Minting a fresh
-        // "expected Int, got Error" hid the callee's message.
-        if (is_error(v) && !is_string(v)) {
-            locals[slot] = v;
-            return true;
-        }
-        auto detail = aura::compiler::pure::numeric_type_mismatch_detail(v, string_text_of(v));
-        // Issue #4855: name the operation AND the failing operand, the same
-        // suffix the tree-walker primitives use.
-        detail += aura::compiler::pure::numeric_type_mismatch_op_suffix(op, arg_index);
-        // Issue #4535: an Error operand (fail-soft f64vector-ref OOB feeding
-        // arith inside try) must not print. A fresh non-number still prints
-        // the legacy line, matching the primitive path (#4463) and the
-        // coerce_arith / blame-add-str stderr contract.
-        // Issue #4909: the file-mode runner prints this error once, located
-        // ("error: F:L:C: type error: ..."); the plain line would report it
-        // twice. The tree-walker primitives have the same guard (#4855).
-        if (!is_error(v) &&
-            !(context_.evaluator && context_.evaluator->require_failure_is_diagnostic()))
-            std::println(std::cerr, "error: {}", detail);
-        if (!context_.evaluator)
-            return false;
-        locals[slot] = context_.evaluator->make_arith_type_error(detail);
-        ir_note_producer_4909(at, context_.evaluator, &module_, &func, locals[slot]); // #4909
-        return true;
-    };
-    auto operand_is_number = [](const types::EvalValue& v) { return is_int(v) || is_float(v); };
-    // Issue #4855: the 1-based operand position of the operand that is not a
-    // number (1 = left, 2 = right).
-    auto ir_bad_operand_index = [&](const types::EvalValue& a, const types::EvalValue& b) {
-        return operand_is_number(a) ? std::size_t{2} : std::size_t{1};
-    };
-
-    // Issue #2292: after a nested PendingCall returns, resume at the
-    // call site's block + instruction — not always entry_block with a
-    // sticky resume_instr applied to every subsequent block (that leaked
-    // the first completion's control flow / skipped Mul after recursive
-    // Call, so fact/sum returned the base-case value).
-    std::uint32_t current = func.entry_block;
-    std::size_t resume_once = 0;
-    bool have_resume = false;
-    if (!call_stack_.empty()) {
-        auto& fr = call_stack_.back();
-        if (fr.current_block < func.blocks.size())
-            current = fr.current_block;
-        resume_once = fr.resume_instr;
-        have_resume = true;
-        // Clear frame resume so a later re-entry does not re-apply a stale
-        // offset. If resume_once >= block size, the for-loop is empty and we
-        // fall through (++current) — correct when Call was last in its block.
-        fr.resume_instr = 0;
     }
 
+    bool operand_is_number(const types::EvalValue& v) {
+        return is_int(v) || is_float(v);
+    }
+
+    std::size_t ir_bad_operand_index(const types::EvalValue& a, const types::EvalValue& b) {
+        return operand_is_number(a) ? std::size_t{2} : std::size_t{1};
+    }
+
+    std::uint8_t fb_lat(const EvalValue& v) {
+        if (is_int(v))
+            return feedback::kFixnum;
+        if (is_float(v))
+            return feedback::kFloat;
+        return feedback::kOther;
+    }
+
+    void report_blame(const char* expected_kind, const char* got_kind, std::uint32_t blame_loc,
+                      std::uint32_t blame_node = 0) {
+        std::string msg =
+            std::string("runtime type mismatch: expected ") + expected_kind + ", got " + got_kind;
+        if (blame_node != 0)
+            msg += " (node " + std::to_string(blame_node) + ")";
+        auto diag = Diagnostic(ErrorKind::TypeError, std::move(msg))
+                        .with_blame(BlameInfo{BlameParty::Implicit, "", "runtime"});
+        if (blame_loc != 0) {
+            auto line = (blame_loc >> 16) & 0xFFFFu;
+            auto col = blame_loc & 0xFFFFu;
+            diag.location = SourceLocation{line, col, 0};
+        }
+        std::println(std::cerr, "{}", diag.format());
+    }
+
+    // References to the interpreter state run_function is stepping. The
+    // references are the private members; the pointer-to-member for the
+    // effect-deny diagnostic is formed inside the member function.
+    struct IrFnState {
+        using Deny = std::optional<Diagnostic> (IRInterpreter::*)(const EvalValue&) const;
+        IRInterpreter& self;
+        Deny deny;
+        const aura::ir::IRModule& module;
+        IRContext& context;
+        CompilerMetrics* metrics;
+        bool strict_mode;
+        std::deque<ExecFrame>& call_stack;
+        std::vector<ExHandler>& ex_stack;
+        std::unordered_map<std::uint64_t, IRClosure>& runtime_closures;
+        std::unordered_set<std::uint64_t>& runtime_minted_ids;
+        std::unordered_map<std::uint32_t, std::uint64_t>& empty_env_closure_by_func;
+        std::unordered_map<std::uint32_t, EvalValue>& const_string_cache;
+        std::unordered_map<std::uint32_t, EvalValue>& const_keyword_cache;
+        std::unordered_map<std::uint32_t, EvalValue>& const_symbol_cache;
+        std::vector<std::vector<std::uint8_t>>& escape_maps;
+        std::uint64_t& next_linear_id;
+        std::vector<EvalValue>& cell_heap;
+        std::uint64_t& next_cell_id;
+        bool& in_runtime_call;
+        std::uint32_t& allocs_since_reclaim;
+        const IRFunction* func = nullptr;
+        std::vector<EvalValue>* locals = nullptr;
+
+        std::int64_t coerce_i(const types::EvalValue& v) const {
+            if (is_int(v))
+                return as_int(v);
+            if (is_float(v))
+                return static_cast<std::int64_t>(as_float(v));
+            return 0;
+        }
+        double coerce_f(const types::EvalValue& v) const {
+            if (is_float(v))
+                return as_float(v);
+            if (is_int(v))
+                return static_cast<double>(as_int(v));
+            return 0.0;
+        }
+        std::string_view string_text_of(const types::EvalValue& v) const {
+            if (!is_string(v))
+                return {};
+            const auto idx = as_string_idx(v);
+            auto& prim_heap = context.primitives.string_heap();
+            if (idx < prim_heap.size())
+                return prim_heap[idx];
+            return {};
+        }
+        bool store_num_mismatch(std::uint32_t slot, const types::EvalValue& v, std::string_view op,
+                                std::size_t arg_index, const IRInstruction* at) const {
+            if (is_error(v) && !is_string(v)) {
+                (*locals)[slot] = v;
+                return true;
+            }
+            auto detail = aura::compiler::pure::numeric_type_mismatch_detail(v, string_text_of(v));
+            detail += aura::compiler::pure::numeric_type_mismatch_op_suffix(op, arg_index);
+            if (!is_error(v) &&
+                !(context.evaluator && context.evaluator->require_failure_is_diagnostic()))
+                std::println(std::cerr, "error: {}", detail);
+            if (!context.evaluator)
+                return false;
+            (*locals)[slot] = context.evaluator->make_arith_type_error(detail);
+            ir_note_producer_4909(at, context.evaluator, &module, func, (*locals)[slot]);
+            return true;
+        }
+    };
+
+    static IrFlow ir_exec_arith(IrFnState& st, const IRFunction& func,
+                                std::vector<EvalValue>& locals, const IRInstruction& instr,
+                                std::uint32_t& current, std::size_t ii, feedback::Recorder& fb) {
+        auto& ops = instr.operands;
+        auto& a = locals[ops[1]];
+        auto& b = locals[ops[2]];
+        // Issue #4461: integer zero stores an error value and continues.
+        // No evaluator (bare executor) keeps the diagnostic. Never 0.
+        auto int_div_zero = [&]() -> bool {
+            if (!st.context.evaluator)
+                return false;
+            locals[ops[0]] = st.context.evaluator->make_div_zero_error();
+            return true;
+        };
+        // Issue #2259: pure tag tests (zero atomic) + dual-fixnum
+        // fast path — single expected branch for pure arithmetic.
+        const bool a_int = is_int(a);
+        const bool b_int = is_int(b);
+        if (a_int && b_int) {
+            const auto ai = as_int(a);
+            const auto bi = as_int(b);
+            switch (instr.opcode) {
+                case IROpcode::Add:
+                case IROpcode::Sub:
+                case IROpcode::Mul: {
+                    // Issue #4462: checked int64, then the fixnum domain.
+                    // A result in [2^62, 2^63) or at/below the float bias
+                    // promotes. Signed overflow is not a wrapped integer.
+                    std::int64_t next = 0;
+                    const bool ov =
+                        instr.opcode == IROpcode::Add   ? __builtin_add_overflow(ai, bi, &next)
+                        : instr.opcode == IROpcode::Sub ? __builtin_sub_overflow(ai, bi, &next)
+                                                        : __builtin_mul_overflow(ai, bi, &next);
+                    if (ov || !fits_fixnum(next)) {
+                        // Issue #4482: fixnum overflow is an error, not a float.
+                        locals[ops[0]] = types::make_error(0);
+                    } else {
+                        locals[ops[0]] = make_int(next);
+                    }
+                    break;
+                }
+                case IROpcode::Div: {
+                    if (bi == 0) {
+                        if (int_div_zero())
+                            break;
+                        return IrFlow::ret_eval(std::unexpected(
+                            Diagnostic{ErrorKind::DivisionByZero, "division by zero"}
+                                .with_suggestion("use a non-zero denominator")));
+                    }
+                    locals[ops[0]] = make_int(ai / bi);
+                    break;
+                }
+                default:
+                    break;
+            }
+            return IrFlow::cont();
+        }
+        // Issue #4463: a bool, string, pair, or vector is not an operand.
+        if (!operand_is_number(a) || !operand_is_number(b)) {
+            const auto& bad = operand_is_number(a) ? b : a;
+            // Issue #4855: name the operation and the failing operand.
+            const auto bad_index = ir_bad_operand_index(a, b);
+            if (!st.store_num_mismatch(ops[0], bad, ir_num_op_name(instr.opcode), bad_index,
+                                       &instr)) {
+                return IrFlow::ret_eval(std::unexpected(Diagnostic{
+                    ErrorKind::TypeError, aura::compiler::pure::numeric_type_mismatch_detail(
+                                              bad, st.string_text_of(bad)) +
+                                              aura::compiler::pure::numeric_type_mismatch_op_suffix(
+                                                  ir_num_op_name(instr.opcode), bad_index)}));
+            }
+            return IrFlow::cont();
+        }
+        const bool fl = is_float(a) || is_float(b);
+        switch (instr.opcode) {
+            case IROpcode::Add:
+            case IROpcode::Sub:
+            case IROpcode::Mul: {
+                if (fl) {
+                    const double da = st.coerce_f(a);
+                    const double db = st.coerce_f(b);
+                    const double dr = instr.opcode == IROpcode::Add   ? da + db
+                                      : instr.opcode == IROpcode::Sub ? da - db
+                                                                      : da * db;
+                    locals[ops[0]] = make_float(dr);
+                    break;
+                }
+                const auto x = st.coerce_i(a);
+                const auto y = st.coerce_i(b);
+                std::int64_t next = 0;
+                const bool ov = instr.opcode == IROpcode::Add ? __builtin_add_overflow(x, y, &next)
+                                : instr.opcode == IROpcode::Sub
+                                    ? __builtin_sub_overflow(x, y, &next)
+                                    : __builtin_mul_overflow(x, y, &next);
+                if (ov || !fits_fixnum(next)) {
+                    // Issue #4482: fixnum overflow is an error, not a float.
+                    locals[ops[0]] = types::make_error(0);
+                } else {
+                    locals[ops[0]] = make_int(next);
+                }
+                break;
+            }
+            case IROpcode::Div: {
+                if (fl) {
+                    // Issue #4461: IEEE. 1.0/0.0 is +inf, 0.0/0.0 is nan.
+                    locals[ops[0]] = make_float(st.coerce_f(a) / st.coerce_f(b));
+                } else {
+                    auto y = st.coerce_i(b);
+                    if (y == 0) {
+                        if (!int_div_zero())
+                            return IrFlow::ret_eval(std::unexpected(
+                                Diagnostic{ErrorKind::DivisionByZero, "division by zero"}
+                                    .with_suggestion("use a non-zero denominator")));
+                    } else {
+                        locals[ops[0]] = make_int(st.coerce_i(a) / y);
+                    }
+                }
+                break;
+            }
+            default:
+                break;
+        }
+        // Issue #4568: operand lattice + overflow hint. Off after warmup.
+        if (fb.on) {
+            const bool ov =
+                operand_is_number(a) && operand_is_number(b) && is_error(locals[ops[0]]);
+            feedback::note_arith(fb.row, fb.site(current, static_cast<std::uint32_t>(ii)),
+                                 fb_lat(a), fb_lat(b), ov);
+        }
+        return IrFlow::cont(); // next instruction
+    }
+
+    static IrFlow ir_exec_const(IrFnState& st, const IRFunction& func,
+                                std::vector<EvalValue>& locals, std::span<const EvalValue> args,
+                                const IRInstruction& instr, std::uint32_t& current, std::size_t ii,
+                                feedback::Recorder& fb) {
+        auto& ops = instr.operands;
+        switch (instr.opcode) {
+            case IROpcode::ConstI64: {
+                std::int64_t val = (static_cast<std::int64_t>(ops[2]) << 32) | ops[1];
+                // Issue #4462: a literal outside the fixnum domain is a float.
+                locals[ops[0]] = make_int_or_promote(val);
+                break;
+            }
+            case IROpcode::ConstF64: {
+                std::uint64_t bits =
+                    static_cast<std::uint64_t>(ops[1]) | (static_cast<std::uint64_t>(ops[2]) << 32);
+                double val = std::bit_cast<double>(bits);
+                locals[ops[0]] = make_float(val);
+                break;
+            }
+            case IROpcode::ConstString: {
+                // Issue #2573: intern by module string_pool index.
+                // Previously every execution pushed a new copy into
+                // prim_heap + string_heap_ → O(iterations) growth for
+                // (display "lit") in IR-path loops. Same pool index ⇒
+                // same content for this st.module; reuse first materialize.
+                // Issue #4321: operands[2]==1 is a keyword literal.
+                const std::uint32_t pool_idx = ops[1];
+                // Issue #4727: operands[2]==2 is a symbol atom (the
+                // tree-walker's datum shape); 1 is a keyword. Both intern
+                // by NAME, which is what makes identity survive the pool
+                // that produced the text.
+                if (ops[2] == 2) {
+                    if (auto cit = st.const_symbol_cache.find(pool_idx);
+                        cit != st.const_symbol_cache.end()) {
+                        locals[ops[0]] = cit->second;
+                        break;
+                    }
+                    EvalValue val = make_void();
+                    if (st.context.evaluator) {
+                        std::string_view content;
+                        if (pool_idx < st.module.string_pool.size())
+                            content = st.module.string_pool[pool_idx];
+                        val = st.context.evaluator->intern_symbol(content);
+                    }
+                    st.const_symbol_cache.emplace(pool_idx, val);
+                    locals[ops[0]] = val;
+                    break;
+                }
+                if (ops[2] != 0) {
+                    if (auto cit = st.const_keyword_cache.find(pool_idx);
+                        cit != st.const_keyword_cache.end()) {
+                        locals[ops[0]] = cit->second;
+                        break;
+                    }
+                    EvalValue val = make_void();
+                    if (st.context.evaluator) {
+                        std::string_view content;
+                        if (pool_idx < st.module.string_pool.size())
+                            content = st.module.string_pool[pool_idx];
+                        val = st.context.evaluator->intern_keyword(content);
+                    }
+                    st.const_keyword_cache.emplace(pool_idx, val);
+                    locals[ops[0]] = val;
+                    break;
+                }
+                if (auto cit = st.const_string_cache.find(pool_idx);
+                    cit != st.const_string_cache.end()) {
+                    // Issue #4608: the reclaim may have released the
+                    // slot (and the next mint re-used it) — validate
+                    // the content before handing the cached value out
+                    // and re-materialize when it changed. (The IR's
+                    // own sweep keeps the cache in its roots; a
+                    // tree-walker sweep nested inside this IR run
+                    // does not see it.)
+                    auto& prim_heap = st.context.primitives.string_heap();
+                    const std::string content = (pool_idx < st.module.string_pool.size())
+                                                    ? st.module.string_pool[pool_idx]
+                                                    : std::string{};
+                    const auto cached_idx = as_string_idx(cit->second);
+                    if (cached_idx < prim_heap.size() && prim_heap[cached_idx] == content) {
+                        locals[ops[0]] = cit->second;
+                        break;
+                    }
+                    const auto fresh = prim_heap.mint(content);
+                    cit->second = make_string(fresh);
+                    locals[ops[0]] = cit->second;
+                    break;
+                }
+                // First hit: materialize the literal in the evaluator's
+                // string heap — the only string store (Issue #4608: the
+                // IR keeps no index-parallel mirror, so a reclaimed and
+                // re-used slot can never leave a stale copy behind).
+                auto& prim_heap = st.context.primitives.string_heap();
+                const std::string content = (pool_idx < st.module.string_pool.size())
+                                                ? st.module.string_pool[pool_idx]
+                                                : std::string{};
+                // Issue #4543: the evaluator heap only grows via mint()
+                // (locked, returns the real index).
+                const auto idx = prim_heap.mint(content);
+                auto val = make_string(idx);
+                st.const_string_cache.emplace(pool_idx, val);
+                locals[ops[0]] = val;
+                break;
+            }
+
+            case IROpcode::Local:
+                // Issue #4588: operands[2]==1 unwraps an Error to the
+                // cause the tree walker binds in catch. The flag is
+                // outside Local's operand_count, so DCE does not
+                // treat it as a slot. A plain copy leaves it 0.
+                if (ops[2] == 1 && st.context.evaluator)
+                    locals[ops[0]] = st.context.evaluator->error_cause_value(locals[ops[1]]);
+                else
+                    locals[ops[0]] = locals[ops[1]];
+                break;
+
+            case IROpcode::Arg:
+                // Issue #4568: user-arg lattice (captures sit below free_count).
+                if (fb.on)
+                    feedback::note_arg(fb.row, fb.site(current, static_cast<std::uint32_t>(ii)),
+                                       ops[1], fb.free_count,
+                                       fb_lat(ops[1] < args.size() ? args[ops[1]] : make_void()));
+                // Issue #4439: bind the caller value unchanged. A negative
+                // fixnum is that integer. Define and let emit NewCell, and
+                // st.next_cell_id starts at 1, so one cell makes
+                // st.cell_heap.size()==2. Treating make_int(-(slot+1)) as a
+                // cell loaded locals[slot], still void, and bound logical
+                // -1 and -2 as (). Cell captures arrive via Capture.
+                if (ops[1] < args.size())
+                    locals[ops[0]] = args[ops[1]];
+                else
+                    locals[ops[0]] = make_void();
+                break;
+            default:
+                break;
+        }
+        return IrFlow::fall();
+    }
+
+    static IrFlow ir_exec_compare(IrFnState& st, const IRFunction& func,
+                                  std::vector<EvalValue>& locals, std::span<const EvalValue> args,
+                                  const IRInstruction& instr, std::uint32_t& current,
+                                  std::size_t ii, feedback::Recorder& fb) {
+        auto& ops = instr.operands;
+        switch (instr.opcode) {
+            case IROpcode::Eq: {
+                if (fb.on)
+                    feedback::note_cmp(fb.row, fb.site(current, static_cast<std::uint32_t>(ii)),
+                                       fb_lat(locals[ops[1]]), fb_lat(locals[ops[2]]));
+                // Content-aware equality (not just raw pointer comparison).
+                // ops[3] == 1 is numeric `=` (Issue #4463). eq?/eqv? keep
+                // ops[3] == 0 and stay identity.
+                auto& a = locals[ops[1]];
+                auto& b = locals[ops[2]];
+                auto to_val = [](const EvalValue& v) -> double {
+                    if (is_float(v))
+                        return as_float(v);
+                    if (is_int(v))
+                        return static_cast<double>(as_int(v));
+                    return 0.0;
+                };
+                if (ops[3] != 0) {
+                    if (!operand_is_number(a) || !operand_is_number(b)) {
+                        const auto& bad = operand_is_number(a) ? b : a;
+                        // Issue #4855: name the operation and the operand.
+                        const auto bad_index = ir_bad_operand_index(a, b);
+                        if (!st.store_num_mismatch(ops[0], bad, ir_num_op_name(instr.opcode),
+                                                   bad_index, &instr)) {
+                            return IrFlow::ret_eval(std::unexpected(Diagnostic{
+                                ErrorKind::TypeError,
+                                aura::compiler::pure::numeric_type_mismatch_detail(
+                                    bad, st.string_text_of(bad)) +
+                                    aura::compiler::pure::numeric_type_mismatch_op_suffix(
+                                        ir_num_op_name(instr.opcode), bad_index)}));
+                        }
+                        break;
+                    }
+                    locals[ops[0]] = make_bool(to_val(a) == to_val(b));
+                    break;
+                }
+                // Float comparison
+                if (is_float(a) || is_float(b)) {
+                    locals[ops[0]] = make_bool(to_val(a) == to_val(b));
+                    break;
+                }
+                // String comparison by content
+                if (is_string(a) && is_string(b)) {
+                    locals[ops[0]] =
+                        make_bool(eq_str_content(a, b, st.context.primitives.string_heap()));
+                    break;
+                }
+                // Pair/list: fall back to raw equality (no pairs_ access here)
+                if (is_pair(a) && is_pair(b)) {
+                    locals[ops[0]] = make_bool(a == b);
+                    break;
+                }
+                // Default: raw EvalValue comparison
+                locals[ops[0]] = make_bool(a == b);
+                break;
+            }
+            case IROpcode::Lt:
+            case IROpcode::Gt:
+            case IROpcode::Le:
+            case IROpcode::Ge: {
+                if (fb.on)
+                    feedback::note_cmp(fb.row, fb.site(current, static_cast<std::uint32_t>(ii)),
+                                       fb_lat(locals[ops[1]]), fb_lat(locals[ops[2]]));
+                auto& a = locals[ops[1]];
+                auto& b = locals[ops[2]];
+                if (!operand_is_number(a) || !operand_is_number(b)) {
+                    const auto& bad = operand_is_number(a) ? b : a;
+                    // Issue #4855: name the operation and the operand.
+                    const auto bad_index = ir_bad_operand_index(a, b);
+                    if (!st.store_num_mismatch(ops[0], bad, ir_num_op_name(instr.opcode), bad_index,
+                                               &instr)) {
+                        return IrFlow::ret_eval(std::unexpected(
+                            Diagnostic{ErrorKind::TypeError,
+                                       aura::compiler::pure::numeric_type_mismatch_detail(
+                                           bad, st.string_text_of(bad)) +
+                                           aura::compiler::pure::numeric_type_mismatch_op_suffix(
+                                               ir_num_op_name(instr.opcode), bad_index)}));
+                    }
+                    break;
+                }
+                auto to_val = [](const EvalValue& v) -> double {
+                    return is_float(v) ? as_float(v) : static_cast<double>(as_int(v));
+                };
+                const double da = to_val(a);
+                const double db = to_val(b);
+                const bool cmp = instr.opcode == IROpcode::Lt   ? da < db
+                                 : instr.opcode == IROpcode::Gt ? da > db
+                                 : instr.opcode == IROpcode::Le ? da <= db
+                                                                : da >= db;
+                locals[ops[0]] = make_bool(cmp);
+                break;
+            }
+
+            case IROpcode::And:
+                // Issue #4491: Scheme and/or return an operand.
+                locals[ops[0]] = is_truthy(locals[ops[1]]) ? locals[ops[2]] : locals[ops[1]];
+                break;
+            case IROpcode::Or:
+                locals[ops[0]] = is_truthy(locals[ops[1]]) ? locals[ops[1]] : locals[ops[2]];
+                break;
+            case IROpcode::Not:
+                locals[ops[0]] = make_bool(!is_truthy(locals[ops[1]]));
+                break;
+            default:
+                break;
+        }
+        return IrFlow::fall();
+    }
+
+    static IrFlow ir_exec_cast(IrFnState& st, const IRFunction& func,
+                               std::vector<EvalValue>& locals, std::span<const EvalValue> args,
+                               const IRInstruction& instr, std::uint32_t& current, std::size_t ii,
+                               feedback::Recorder& fb) {
+        auto& ops = instr.operands;
+        switch (instr.opcode) {
+            case IROpcode::CastOp: {
+                // Issue #4667: per-op readiness re-sample. The #3224
+                // entry grant is entry-only: a mid-function
+                // densify/steal invalidates it, so a CastOp that
+                // runs after the flip is denied via the readiness
+                // path instead of riding the entry-era grant. Same
+                // face as the entry gate + the Move/Drop face; the
+                // refusal bumps the existing
+                // g_linear_fast_path_elide_blocked_production_total
+                // (no new counter). Soft / Off: zero-cost.
+                if (!ir_per_op_typed_entry_readiness_ok()) {
+                    if (st.context.metrics)
+                        st.context.metrics->linear_post_mutate_force_rollback_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    return IrFlow::ret_eval(std::unexpected(
+                        Diagnostic{ErrorKind::TypeError, "commit-readiness-refused"}));
+                }
+                // CastOp: result_slot=ops[0], value_slot=ops[1], type_tag=ops[2]
+                // ops[3] = blame_loc packed (line<<16)|col (or 0)
+                // instr.type_id = blame_node (AST NodeId for error reporting)
+                // type_tag: 0=Int, 1=String, 2=Bool, 3=Dynamic, 4=Float
+                // Issue #687: identity-cast fast-path. If the
+                // narrowing pass already proved source type
+                // matches target type, or if the source value
+                // is already of the target type at runtime,
+                // skip the cast entirely (Local copy). Pre-#687
+                // the interpreter always went through the
+                // 7-branch switch even for identity casts,
+                // costing 4-6 cycles per no-op. Matches the JIT
+                // fast-path at aura_jit.cpp:1435-1438.
+                if (ops[2] == 3) {
+                    // Dynamic target (type_tag == 3 = passthrough).
+                    // The CastOp default case is just `locals[ops[0]] = val`,
+                    // so do that directly. Bumps zero-overhead_savings
+                    // counter (the runtime version of the eliminated_cast_count).
+                    locals[ops[0]] = locals[ops[1]];
+                    if (st.metrics) {
+                        st.metrics->dead_coercion_post_mutate_elim_hits_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        st.metrics->dead_coercion_elision_runtime_check_savings_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                    break;
+                }
+                auto& val = locals[ops[1]];
+                auto blame_loc = ops[3];
+                auto blame_node = instr.type_id;
+                // Issue #4608: the evaluator's string heap is the only
+                // string store (the IR keeps no index-parallel mirror).
+                auto& prim_heap = st.context.primitives.string_heap();
+
+                switch (ops[2]) {
+                    case 0: { // Coerce to Int
+                        if (is_int(val)) {
+                            locals[ops[0]] = val;
+                        } else if (is_string(val)) {
+                            auto idx = as_string_idx(val);
+                            if (idx < prim_heap.size()) {
+                                try {
+                                    locals[ops[0]] = make_int_or_promote(
+                                        static_cast<std::int64_t>(std::stoll(prim_heap[idx])));
+                                } catch (...) {
+                                    // [SILENCE-PRIM-#615] string→int
+                                    // coerce fail → 0 (#1669 class A).
+                                    locals[ops[0]] = make_int(0);
+                                }
+                            } else {
+                                locals[ops[0]] = make_int(0);
+                            }
+                        } else if (is_bool(val)) {
+                            locals[ops[0]] = make_int(as_bool(val) ? 1 : 0);
+                        } else if (is_float(val)) {
+                            locals[ops[0]] =
+                                make_int_or_promote(static_cast<std::int64_t>(as_float(val)));
+                        } else {
+                            report_blame("Int", "unknown", blame_loc, blame_node);
+                            locals[ops[0]] = make_int(0);
+                        }
+                        break;
+                    }
+                    case 1: { // Coerce to String
+                        // Issue #4608: the coerced string goes into the
+                        // evaluator's string heap (the only string store),
+                        // so a dropped coercion is reclaimable and a
+                        // re-used slot never leaves a stale copy behind.
+                        if (is_string(val)) {
+                            locals[ops[0]] = val;
+                        } else if (is_int(val)) {
+                            auto s = std::to_string(as_int(val));
+                            locals[ops[0]] = make_string(prim_heap.mint(std::move(s)));
+                        } else if (is_bool(val)) {
+                            auto s = as_bool(val) ? "#t" : "#f";
+                            locals[ops[0]] = make_string(prim_heap.mint(std::move(s)));
+                        } else if (is_float(val)) {
+                            auto s = std::to_string(as_float(val));
+                            locals[ops[0]] = make_string(prim_heap.mint(std::move(s)));
+                        } else {
+                            locals[ops[0]] = val;
+                        }
+                        break;
+                    }
+                    case 2: { // Coerce to Bool
+                        locals[ops[0]] = make_bool(is_truthy(val));
+                        break;
+                    }
+                    case 4: { // Coerce to Float
+                        if (is_float(val)) {
+                            locals[ops[0]] = val;
+                        } else if (is_int(val)) {
+                            locals[ops[0]] = make_float(static_cast<double>(as_int(val)));
+                        } else if (is_string(val)) {
+                            auto idx = as_string_idx(val);
+                            if (idx < prim_heap.size()) {
+                                try {
+                                    locals[ops[0]] = make_float(std::stod(prim_heap[idx]));
+                                } catch (...) {
+                                    // [SILENCE-PRIM-#615] string→float
+                                    // coerce fail → 0.0 (#1669 class A).
+                                    locals[ops[0]] = make_float(0.0);
+                                }
+                            } else {
+                                locals[ops[0]] = make_float(0.0);
+                            }
+                        } else if (is_bool(val)) {
+                            locals[ops[0]] = make_float(as_bool(val) ? 1.0 : 0.0);
+                        } else {
+                            report_blame("Float", "unknown", 0, blame_node);
+                            locals[ops[0]] = make_float(0.0);
+                        }
+                        break;
+                    }
+                    default: // Dynamic / unknown: pass through
+                        locals[ops[0]] = val;
+                        break;
+                }
+                break;
+            }
+            default:
+                break;
+        }
+        return IrFlow::fall();
+    }
+
+    static IrFlow ir_exec_control(IrFnState& st, const IRFunction& func,
+                                  std::vector<EvalValue>& locals, std::span<const EvalValue> args,
+                                  const IRInstruction& instr, std::uint32_t& current,
+                                  std::size_t ii, feedback::Recorder& fb) {
+        auto& ops = instr.operands;
+        switch (instr.opcode) {
+            case IROpcode::Branch:
+                // Issue #4493: an error value in a test position (e.g.
+                // (< i #f)) is not "true": the error propagates as the
+                // function's result instead of running the consequent.
+                if (is_error(locals[ops[0]]))
+                    return IrFlow::ret_eval(locals[ops[0]]);
+                {
+                    const bool taken = is_truthy(locals[ops[0]]);
+                    if (fb.on) {
+                        feedback::note_branch(
+                            fb.row, fb.site(current, static_cast<std::uint32_t>(ii)), taken);
+                        const auto dest = taken ? ops[1] : ops[2];
+                        if (dest <= current)
+                            feedback::note_back(fb);
+                    }
+                    current = taken ? ops[1] : ops[2];
+                }
+                return IrFlow::next();
+
+            // Issue #61 Iter 3: lazy-deopt guard. Compares the
+            // runtime shape of ops[1] against the expected
+            // shape (ops[2]). Writes 1 to ops[0] on match, 0 on
+            // mismatch. The branch instruction that follows the
+            // guard in the IR takes the mismatch to ops[3] (the
+            // generic-trampoline block).
+            case IROpcode::GuardShape: {
+                if (st.context.evaluator)
+                    (void)st.context.evaluator->current_bridge_epoch();
+                if (instr.linear_ownership_state != 0)
+                    record_linear_jit_safety(st.metrics, IROpcode::GuardShape);
+                // Issue #684: deopt when SoA instruction_dirty_ says stale.
+                if (st.context.is_instruction_dirty_fn &&
+                    (instr.linear_ownership_state != 0 || instr.narrow_evidence != 0) &&
+                    st.context.is_instruction_dirty_fn(current, ii)) {
+                    record_linear_runtime_safety(st.metrics, true);
+                    if (st.metrics) {
+                        st.metrics->deopt_count.fetch_add(1, std::memory_order_relaxed);
+                        st.metrics->irsoa_cache_miss_reduction.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                    }
+                    locals[ops[0]] = types::make_bool(false);
+                    break;
+                }
+                auto& val = locals[ops[1]];
+                auto expected = static_cast<std::uint32_t>(ops[2]);
+                // Issue #149 Phase 4: when occurrence-narrowing
+                // has produced the branch's type statically
+                // (narrow_evidence != 0 on the GuardShape
+                // instruction), trust the narrowed type over
+                // the runtime shape check. This is the hit-
+                // rate improvement the issue calls for: a
+                // narrowed value like (number? x) → Int
+                // skips the generic shape check (which would
+                // say "Dynamic" and deopt) and accepts the
+                // specialized path. The check is conservative
+                // (only enabled when narrow_evidence is set,
+                // which today is 0 at every instruction), so
+                // no behavior change until lowering starts
+                // populating narrow_evidence from real type
+                // info (Phase 2 follow-up).
+                if (instr.narrow_evidence != 0) {
+                    // Narrowed: trust the inferred type
+                    // implicitly. (The current interpreter
+                    // doesn't track the narrowed type per-
+                    // instruction; a follow-up adds a parallel
+                    // type-table. For now, we just skip the
+                    // shape check, accepting all narrowed
+                    // values — equivalent to saying "the JIT
+                    // can fast-path this".)
+                    if (st.metrics) {
+                        st.metrics->coercion_narrow_evidence_hits_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                    locals[ops[0]] = types::make_bool(true);
+                    break;
+                }
+                auto actual = runtime_shape_of(val);
+                // Issue #638: enforce linear_ownership_state on
+                // GuardShape when post-mutate shape may be stale.
+                if (instr.linear_ownership_state != 0) {
+                    record_linear_runtime_safety(st.metrics, actual != expected);
+                }
+                if (actual != expected) {
+                    // Issue #62 Iter 1: increment the global
+                    // deopt counter so --evo-explain can report it.
+                    // Thread-safe via the atomic on the metrics
+                    // struct.
+                    if (st.metrics) {
+                        st.metrics->deopt_count.fetch_add(1, std::memory_order_relaxed);
+                    }
+                    // Issue #744: GuardShape mismatch → speculative win lost.
+                    aura::compiler::shape_jit_pass::record_speculative_win_lost();
+                    // Issue #62 Iter 2: structured JSON log.
+                    // Gated by AURA_OBS_LOG=1 (independent of the
+                    // human-readable kDeoptTrace form).
+                    const char* fn_name = "?";
+                    if (st.module.functions.size() > 0 && func.id < st.module.functions.size())
+                        fn_name = st.module.functions[func.id].name.c_str();
+                    log_event_deopt(fn_name, expected, static_cast<std::uint32_t>(actual), ops[3]);
+                    if (kDeoptTrace) {
+                        // Human-readable form (legacy)
+                        std::fprintf(stderr,
+                                     "[deopt] %s: shape mismatch (expected=%u actual=%u) "
+                                     "→ deopt to generic block %u\n",
+                                     fn_name, expected, actual, ops[3]);
+                    }
+                }
+                locals[ops[0]] =
+                    (actual == expected) ? types::make_bool(true) : types::make_bool(false);
+                break;
+            }
+
+            case IROpcode::Jump:
+                if (fb.on && ops[0] <= current)
+                    feedback::note_back(fb);
+                current = ops[0];
+                return IrFlow::next();
+            default:
+                break;
+        }
+        return IrFlow::fall();
+    }
+
+    static IrFlow ir_exec_data(IrFnState& st, const IRFunction& func,
+                               std::vector<EvalValue>& locals, std::span<const EvalValue> args,
+                               const IRInstruction& instr, std::uint32_t& current, std::size_t ii,
+                               feedback::Recorder& fb) {
+        auto& ops = instr.operands;
+        switch (instr.opcode) {
+            case IROpcode::MakePair: {
+                // Allocate pair via evaluator's cons (stores in pairs_ for
+                // format_value/display to find), then also register in
+                // g_pair_slots for arena/heap access by JIT runtime.
+                auto pfn = st.context.primitives.lookup("cons");
+                if (pfn) {
+                    locals[ops[0]] = (*pfn)({locals[ops[1]], locals[ops[2]]});
+                    // Also push to shared g_pair_slots so JIT runtime + car/cdr
+                    // fallback find this pair. Use arena alloc when non-escaping.
+                    int64_t idx = static_cast<int64_t>(types::as_pair_idx(locals[ops[0]]));
+                    bool use_arena = false;
+                    if (g_use_arena && func.id < st.escape_maps.size() &&
+                        ops[0] < st.escape_maps[func.id].size()) {
+                        use_arena = (st.escape_maps[func.id][ops[0]] == 0);
+                    }
+                    // Only push to g_pair_slots if this is a new pair ID
+                    // (cons already created it in pairs_). Ensure g_pair_slots
+                    // has enough space.
+                    while (idx >= static_cast<int64_t>(g_pair_slots.size()))
+                        g_pair_slots.push_back(nullptr);
+                    if (!g_pair_slots[idx]) {
+                        if (use_arena) {
+                            auto* slot = (PairSlot*)tl_arena_alloc(&g_tl_arena, sizeof(PairSlot),
+                                                                   alignof(PairSlot));
+                            slot->car = locals[ops[1]].val;
+                            slot->cdr = locals[ops[2]].val;
+                            g_pair_slots.store(static_cast<std::size_t>(idx), slot);
+                        } else {
+                            auto* slot =
+                                static_cast<PairSlot*>(::aura::core::c_alloc(sizeof(PairSlot)));
+                            slot->car = locals[ops[1]].val;
+                            slot->cdr = locals[ops[2]].val;
+                            g_pair_slots.store(static_cast<std::size_t>(idx), slot);
+                            // Track heap allocation for process-exit
+                            // cleanup (see g_owned_pair_slots_ in
+                            // aura_jit_runtime.cpp). Without this,
+                            // ASAN reports the slots as direct leaks
+                            // at process exit since the static
+                            // g_pair_slots vector only stores raw
+                            // pointers, not ownership.
+                            // Issue #1998 / B-024: gate push under
+                            // workspace write lock. The static
+                            // PairSlotCleanup destructor at
+                            // aura_jit_runtime.cpp:425 iterates this
+                            // vector; concurrent push_back can
+                            // reallocate the backing storage and
+                            // invalidate the iterator (UAF), or the
+                            // push can land AFTER the destructor
+                            // copied its iteration state (lost slot
+                            // -> host accounting leak). Same lock
+                            // pattern as aura_make_pair at line 1330+.
+                            aura_lock_workspace_write();
+                            {
+                                // Issue #4755: the workspace hook is
+                                // NOT a process-wide exclusion (it
+                                // binds one Evaluator, and a write
+                                // acquisition adopts a shared hold), so
+                                // two fiber bodies could realloc this
+                                // process-global vector at once. The
+                                // registry owns its own mutex.
+                                std::scoped_lock<std::mutex> owned_pairs(g_owned_pair_slots_mtx);
+                                g_owned_pair_slots_.push_back(slot);
+                            }
+                            aura_unlock_workspace_write();
+                        }
+                    }
+                } else {
+                    locals[ops[0]] = make_void();
+                }
+                break;
+            }
+            case IROpcode::Car: {
+                if (fb.on)
+                    feedback::note_recv(fb.row, fb.site(current, static_cast<std::uint32_t>(ii)),
+                                        feedback::kKindCar,
+                                        is_pair(locals[ops[1]]) ? feedback::kRecvPair
+                                                                : feedback::kRecvOther);
+                auto pfn = st.context.primitives.lookup("car");
+                if (pfn) {
+                    locals[ops[0]] = (*pfn)({locals[ops[1]]});
+                    ir_note_producer_4909(&instr, st.context.evaluator, &st.module, &func,
+                                          locals[ops[0]]);
+                } else
+                    locals[ops[0]] = make_void();
+                break;
+            }
+            case IROpcode::Cdr: {
+                if (fb.on)
+                    feedback::note_recv(fb.row, fb.site(current, static_cast<std::uint32_t>(ii)),
+                                        feedback::kKindCdr,
+                                        is_pair(locals[ops[1]]) ? feedback::kRecvPair
+                                                                : feedback::kRecvOther);
+                auto pfn = st.context.primitives.lookup("cdr");
+                if (pfn) {
+                    locals[ops[0]] = (*pfn)({locals[ops[1]]});
+                    ir_note_producer_4909(&instr, st.context.evaluator, &st.module, &func,
+                                          locals[ops[0]]);
+                } else
+                    locals[ops[0]] = make_void();
+                break;
+            }
+
+            case IROpcode::Raise: {
+                // Issue #124: unwinds to the nearest TryBegin. If
+                // none is active, propagates the error up to
+                // the runtime (caller will see it as an EvalResult
+                // error).
+                // Issue #1516: interpreter EH path participates in
+                // exception coverage observability (parity with JIT).
+                if (st.metrics)
+                    st.metrics->interpreter_exception_ops_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                if (st.ex_stack.empty()) {
+                    return IrFlow::ret_eval(std::unexpected(
+                        Diagnostic{ErrorKind::UncaughtException, "uncaught exception"}));
+                }
+                auto& top = st.ex_stack.back();
+                // Store the cause in the handler's payload slot,
+                // then jump to the handler block.
+                auto cause_slot = (ops.size() > 1) ? ops[1] : 0;
+                locals[top.payload_slot] =
+                    (cause_slot < locals.size()) ? locals[cause_slot] : make_void();
+                // The "result" slot will be filled in by the
+                // handler's own IsError/Local ops. We just set
+                // current (the local var in run_function's loop)
+                // to the handler.
+                current = top.handler_block;
+                return IrFlow::cont(); // restart the dispatch loop in the new block
+            }
+
+            case IROpcode::TryBegin: {
+                // ops[0] = handler_block
+                // ops[1] = result_slot (where to store caught value)
+                // ops[2] = payload_slot (temp slot for the cause)
+                // Issue #1516: interpreter EH coverage metric.
+                if (st.metrics)
+                    st.metrics->interpreter_exception_ops_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                ExHandler h;
+                h.handler_block = (ops.size() > 0) ? ops[0] : 0;
+                h.result_slot = (ops.size() > 1) ? ops[1] : 0;
+                h.payload_slot = (ops.size() > 2) ? ops[2] : 0;
+                st.ex_stack.push_back(h);
+                break;
+            }
+
+            case IROpcode::TryEnd: {
+                // Pop the matching TryBegin (if any). The TryEnd
+                // marks the end of the try body; control flow after
+                // TryEnd is the "normal" path (i.e., no exception).
+                // Issue #1516: interpreter EH coverage metric.
+                if (st.metrics)
+                    st.metrics->interpreter_exception_ops_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                if (!st.ex_stack.empty()) {
+                    st.ex_stack.pop_back();
+                }
+                // ops[0] is the result slot (we copy through whatever
+                // is in the matching slot if any, but for now this
+                // is mostly a no-op since the try body's result was
+                // already in a separate slot).
+                break;
+            }
+                // Create an error value by calling the raise primitive
+            case IROpcode::HashRef: {
+                if (fb.on)
+                    feedback::note_recv(fb.row, fb.site(current, static_cast<std::uint32_t>(ii)),
+                                        feedback::kKindHash, feedback::kRecvHash);
+                auto pfn = st.context.primitives.lookup("hash-ref");
+                if (pfn) {
+                    auto& hash_val = locals[ops[1]];
+                    auto& key_val = locals[ops[2]];
+                    // Read: telemetry when an owner is wired (req=0, no
+                    // Mutate). Soft/unwired keeps the raw pfn.
+                    if (st.context.evaluator) {
+                        locals[ops[0]] = st.context.evaluator->invoke_prim_with_telemetry(
+                            "hash-ref", [&]() { return (*pfn)({hash_val, key_val}); });
+                        ir_note_producer_4909(&instr, st.context.evaluator, &st.module, &func,
+                                              locals[ops[0]]);
+                    } else {
+                        locals[ops[0]] = (*pfn)({hash_val, key_val});
+                    }
+                } else {
+                    locals[ops[0]] = make_void();
+                }
+                break;
+            }
+            case IROpcode::HashSet: {
+                // Issue #3720: HashSet was a raw (*pfn) dual-track that
+                // skipped invoke_prim_with_telemetry / require_effect.
+                // Writes go through the same choke as PrimCall. Production
+                // + no owner: no silent heap write (fail-closed). Soft
+                // unwired keeps the historical raw pfn.
+                auto pfn = st.context.primitives.lookup("hash-set!");
+                EvalValue out = make_void();
+                if (pfn) {
+                    auto& hash_val = locals[ops[1]];
+                    auto& pair_val = locals[ops[2]];
+                    auto cfn = st.context.primitives.lookup("car");
+                    auto dfn = st.context.primitives.lookup("cdr");
+                    if (cfn && dfn) {
+                        auto key = (*cfn)({pair_val});
+                        auto val = (*dfn)({pair_val});
+                        if (st.context.evaluator) {
+                            out = st.context.evaluator->invoke_prim_with_telemetry(
+                                "hash-set!", [&]() { return (*pfn)({hash_val, key, val}); });
+                        } else if (!aura::compiler::typed_audit::production_defaults_active()) {
+                            (*pfn)({hash_val, key, val});
+                        }
+                    }
+                }
+                if (auto deny = (st.self.*st.deny)(out)) // #4896
+                {
+                    if (!deny->location.valid()) // Issue #4909
+                        deny->location = ir_call_arity_loc(&instr, st.context.evaluator);
+                    return IrFlow::ret_eval(std::unexpected(std::move(*deny)));
+                }
+                locals[ops[0]] = out;
+                break;
+            }
+            case IROpcode::HashRemove: {
+                auto pfn = st.context.primitives.lookup("hash-remove!");
+                if (pfn) {
+                    auto& hash_val = locals[ops[1]];
+                    auto& key_val = locals[ops[2]];
+                    if (st.context.evaluator) {
+                        locals[ops[0]] = st.context.evaluator->invoke_prim_with_telemetry(
+                            "hash-remove!", [&]() { return (*pfn)({hash_val, key_val}); });
+                    } else if (aura::compiler::typed_audit::production_defaults_active()) {
+                        locals[ops[0]] = make_void();
+                    } else {
+                        locals[ops[0]] = (*pfn)({hash_val, key_val});
+                    }
+                } else {
+                    locals[ops[0]] = make_void();
+                }
+                break;
+            }
+
+            case IROpcode::IsError: {
+                // IsError: result_slot=ops[0], value_slot=ops[1]
+                // Issue #1516: interpreter EH coverage (parity with JIT).
+                if (st.metrics)
+                    st.metrics->interpreter_exception_ops_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                locals[ops[0]] = make_bool(is_error(locals[ops[1]]));
+                break;
+            }
+            default:
+                break;
+        }
+        return IrFlow::fall();
+    }
+
+    static IrFlow ir_exec_call(IrFnState& st, const IRFunction& func,
+                               std::vector<EvalValue>& locals, std::span<const EvalValue> args,
+                               const IRInstruction& instr, std::uint32_t& current, std::size_t ii,
+                               feedback::Recorder& fb) {
+        auto& ops = instr.operands;
+        switch (instr.opcode) {
+            case IROpcode::PrimCall: {
+                // ops[0]=prim_id, ops[1]=arg_base, ops[2]=arg_count, ops[3]=result_slot
+                // Issue #891: no std::string temp; stack args for small arity;
+                // lookup_cstr avoids unordered_map key construction.
+                // Issue #1676: route through invoke_prim_with_telemetry so
+                // render-critical IR prims get the trusted fast path (and
+                // metrics) — tree-walker and IR share the same dispatch tax.
+                // Issue #3798: PrimCall was a raw (*pfn) dual-track that
+                // skipped production fail-closed when ownerless — HashSet
+                // / HashRemove (#3720) residual. Production + no owner:
+                // no silent mutate-class / FFI side effects (fail-closed).
+                // Soft/unwired keeps the historical raw pfn.
+                auto prim_id = static_cast<PrimId>(ops[0]);
+                auto arg_base = ops[1];
+                auto arg_count = ops[2];
+                auto result_slot = ops[3];
+                EvalValue stack_args[16];
+                std::vector<EvalValue> heap_args;
+                std::span<const EvalValue> pargs;
+                if (arg_count <= 16) {
+                    for (std::uint32_t pi = 0; pi < arg_count; ++pi)
+                        stack_args[pi] = locals[arg_base + pi];
+                    pargs = std::span<const EvalValue>(stack_args, arg_count);
+                } else {
+                    heap_args.reserve(arg_count);
+                    for (std::uint32_t pi = 0; pi < arg_count; ++pi)
+                        heap_args.push_back(locals[arg_base + pi]);
+                    pargs = heap_args;
+                }
+                EvalResult presult = make_int(0);
+                auto idx = static_cast<std::size_t>(prim_id);
+                if (idx < std::size(kPrimNames)) {
+                    const auto pname = kPrimNames[idx];
+                    auto pfn = st.context.primitives.lookup_cstr(pname);
+                    if (pfn) {
+                        if (st.context.evaluator) {
+                            presult = st.context.evaluator->invoke_prim_with_telemetry(
+                                pname, [&]() { return (*pfn)(pargs); });
+                        } else if (aura::compiler::typed_audit::production_defaults_active()) {
+                            // #3798 / #3720: production + null owner — void,
+                            // zero side effects (mirror HashRemove arm).
+                            presult = make_void();
+                        } else {
+                            // Soft/Off ownerless: historical raw pfn.
+                            presult = (*pfn)(pargs);
+                        }
+                    }
+                }
+                if (presult) {
+                    // Issue #4896: a Restricted dispatch deny comes back as
+                    // an error value. In statement position (top-level
+                    // `(set-car! q 5)` on the force-soa face) the local was
+                    // discarded: the write was dropped, no diagnostic, rc=0.
+                    // The tree-walker raises it; do the same when no IR
+                    // handler is open in this frame.
+                    if (auto deny = (st.self.*st.deny)(*presult)) {
+                        if (!deny->location.valid()) // Issue #4909
+                            deny->location = ir_call_arity_loc(&instr, st.context.evaluator);
+                        return IrFlow::ret_eval(std::unexpected(std::move(*deny)));
+                    }
+                    ir_note_producer_4909(&instr, st.context.evaluator, &st.module, &func,
+                                          *presult); // #4909
+                    locals[result_slot] = *presult;
+                }
+                break;
+            }
+
+            case IROpcode::Call: {
+                // Issue #252: IR path closure dispatch counter.
+                // The IR has its own st.runtime_closures map
+                // (not the tree-walker's closures_), so this
+                // is a separate counter from apply_closure's.
+                // Bump the IR-specific counter on the shared
+                // CompilerMetrics (so snapshot() can sum them).
+                if (st.context.metrics) {
+                    st.context.metrics->closure_ir_calls.fetch_add(1, std::memory_order_relaxed);
+                    st.context.metrics->closure_calls_total.fetch_add(1, std::memory_order_relaxed);
+                }
+                auto& callee_val = locals[ops[0]];
+                auto arg_base = ops[1];
+                auto arg_count = ops[2];
+
+                std::vector<EvalValue> call_args;
+                for (std::uint32_t i = 0; i < arg_count; ++i)
+                    call_args.push_back(locals[arg_base + i]);
+
+                if (is_closure(callee_val)) {
+                    auto closure_id = as_closure_id(callee_val);
+                    auto it = st.runtime_closures.find(closure_id);
+                    if (it == st.runtime_closures.end()) {
+                        // Tree-walker closure passed into IR (e.g. lambda arg
+                        // to a cached define). Delegate to evaluator bridge.
+                        if (st.context.evaluator) {
+                            if (auto tw =
+                                    st.context.evaluator->apply_closure(closure_id, call_args)) {
+                                // Issue #4624: a diagnostic the closure body
+                                // RAISED comes back as an error value; the IR
+                                // face fails loudly with the diagnostic
+                                // instead of storing the error in a local.
+                                if (types::is_error(*tw)) {
+                                    if (auto diag = st.context.evaluator->take_raised_diagnostic())
+                                        return IrFlow::ret_eval(std::unexpected(std::move(*diag)));
+                                }
+                                locals[ops[3]] = *tw;
+                            } else
+                                return IrFlow::ret_eval(std::unexpected(Diagnostic{
+                                    ErrorKind::InvalidClosure, "invalid closure reference"}));
+                            break;
+                        }
+                        return IrFlow::ret_eval(std::unexpected(
+                            Diagnostic{ErrorKind::InvalidClosure, "invalid closure reference"}
+                                .with_suggestion("the function was redefined (--hot-swap)")));
+                    }
+
+                    auto& closure = it->second;
+                    // Issue #681 / #1513: dual-check bridge_epoch + EnvFrame.
+                    if (st.context.evaluator &&
+                        ir_closure_needs_safe_fallback(closure, st.context.evaluator,
+                                                       st.context.metrics)) {
+                        // Issue #4349: private callee stays a direct call.
+                        if (closure.func_id < st.module.functions.size()) {
+                            restamp_ir_call_closure_4349(closure, st.context.evaluator,
+                                                         st.context.metrics);
+                        } else {
+                            if (auto tw =
+                                    st.context.evaluator->apply_closure(closure_id, call_args)) {
+                                // Issue #4624: a diagnostic the closure body
+                                // RAISED comes back as an error value; the IR
+                                // face fails loudly with the diagnostic
+                                // instead of storing the error in a local.
+                                if (types::is_error(*tw)) {
+                                    if (auto diag = st.context.evaluator->take_raised_diagnostic())
+                                        return IrFlow::ret_eval(std::unexpected(std::move(*diag)));
+                                }
+                                locals[ops[3]] = *tw;
+                            } else
+                                return IrFlow::ret_eval(std::unexpected(Diagnostic{
+                                    ErrorKind::InvalidClosure, "stale IR closure after mutation"}));
+                            break;
+                        }
+                    }
+                    if (closure.func_id >= st.module.functions.size())
+                        return IrFlow::ret_eval(std::unexpected(
+                            Diagnostic{ErrorKind::IRCorruption, "invalid closure function id"}
+                                .with_suggestion("internal error: IR module corrupted")));
+
+                    auto& callee_func = st.module.functions[closure.func_id];
+                    // Issue #4467: compare the call's user arguments to
+                    // arg_count. Do not subtract the capture prefix.
+                    if (auto arity = ir_user_arity_diag(&instr, callee_func, call_args.size(),
+                                                        st.context.evaluator))
+                        return IrFlow::ret_eval(std::unexpected(std::move(*arity)));
+
+                    std::vector<EvalValue> all_args;
+                    for (auto& ev : closure.env)
+                        all_args.push_back(ev);
+                    for (auto& a : call_args)
+                        all_args.push_back(a);
+
+                    // Issue #2292: stamp call-site block + next instr so
+                    // run_function resumes after the Call (not at entry).
+                    // Issue #4459: a tail call replaces the frame in drain
+                    // and never resumes here. Open try handlers block it.
+                    bool tail = false;
+                    if (!st.call_stack.empty() &&
+                        st.ex_stack.size() == st.call_stack.back().ex_depth_at_entry)
+                        tail = ir_call_is_tail(func, current, ii, ops[3]);
+                    if (!st.call_stack.empty()) {
+                        st.call_stack.back().current_block = current;
+                        // instr is block.instructions[ii]; resume after this Call.
+                        st.call_stack.back().resume_instr = ii + 1;
+                    }
+                    feedback::note_call(fb.row, fb.site(current, ii), closure.func_id);
+                    return IrFlow::ret_pending(
+                        PendingCall{&callee_func, std::move(all_args), ops[3], tail});
+                } else if (is_primitive(callee_val)) {
+                    // Primitive function call — look up and invoke.
+                    // Issue #1676: share invoke_prim_with_telemetry with the
+                    // tree-walker so render-critical get trusted fast path.
+                    // Issue #3834: Call primitive arm was a raw (*pfn) dual-track
+                    // that skipped production fail-closed when ownerless —
+                    // PrimCall (#3798) / HashRemove (#3720) residual. Production
+                    // + no owner: no silent mutate-class / FFI side effects.
+                    // Soft/unwired keeps the historical raw pfn.
+                    auto slot = as_primitive_slot(callee_val);
+                    auto prim_name = st.context.primitives.name_for_slot(slot);
+                    auto pfn = st.context.primitives.lookup(prim_name);
+                    if (pfn) {
+                        if (st.context.evaluator) {
+                            locals[ops[3]] = st.context.evaluator->invoke_prim_with_telemetry(
+                                prim_name, [&]() { return (*pfn)(call_args); });
+                            // Issue #4896: same deny raise as the PrimCall arm.
+                            if (auto deny = (st.self.*st.deny)(locals[ops[3]])) {
+                                if (!deny->location.valid()) // Issue #4909
+                                    deny->location =
+                                        ir_call_arity_loc(&instr, st.context.evaluator);
+                                return IrFlow::ret_eval(std::unexpected(std::move(*deny)));
+                            }
+                            ir_note_producer_4909(&instr, st.context.evaluator, &st.module, &func,
+                                                  locals[ops[3]]); // #4909
+                        } else if (aura::compiler::typed_audit::production_defaults_active()) {
+                            // #3834 / #3798: production + null owner — void,
+                            // zero side effects (mirror PrimCall arm).
+                            locals[ops[3]] = make_void();
+                        } else {
+                            // Soft/Off ownerless: historical raw pfn.
+                            locals[ops[3]] = (*pfn)(call_args);
+                        }
+                    } else {
+                        locals[ops[3]] = callee_val;
+                    }
+                } else {
+                    // Issue #4478: raise instead of the silent self-result.
+                    return IrFlow::ret_eval(std::unexpected(
+                        ir_cannot_call_diag(&instr, callee_val, st.context.evaluator)));
+                }
+                break;
+            }
+            default:
+                break;
+        }
+        return IrFlow::fall();
+    }
+
+    static IrFlow ir_exec_closure(IrFnState& st, const IRFunction& func,
+                                  std::vector<EvalValue>& locals, std::span<const EvalValue> args,
+                                  const IRInstruction& instr, std::uint32_t& current,
+                                  std::size_t ii, feedback::Recorder& fb) {
+        auto& ops = instr.operands;
+        switch (instr.opcode) {
+            case IROpcode::Return: {
+                // Issue #4899: a statement-position error value that
+                // escapes the entry function is turned into a located
+                // diagnostic by the service. Record the source node of
+                // the statement the escape belongs to (lowering stamps
+                // it on this Return) so the diagnostic points there.
+                const auto& ret_val = locals[ops[0]];
+                if (is_error(ret_val) && !types::is_string(ret_val) &&
+                    st.context.evaluator != nullptr && instr.source_ast_node_id != 0) {
+                    if (auto* rflat = st.context.evaluator->current_flat(); rflat != nullptr) {
+                        const auto nid = static_cast<aura::ast::NodeId>(instr.source_ast_node_id);
+                        if (nid < rflat->size()) {
+                            const auto nv = rflat->get(nid);
+                            st.context.evaluator->note_error_location(
+                                ret_val, aura::diag::SourceLocation{
+                                             nv.line == 0 ? 1u : nv.line, nv.col == 0 ? 1u : nv.col,
+                                             aura::diag::source_file_for_flat(rflat)}); // #4916
+                            // Issue #4899 follow-up: which top-level
+                            // statement escaped the entry, so main
+                            // resumes after it (a location inside an
+                            // earlier define body must not re-run forms).
+                            if (func.name == "__top__")
+                                st.context.evaluator->note_ir_entry_escape_stmt(
+                                    rflat, instr.source_ast_node_id);
+                        }
+                    }
+                }
+                return IrFlow::ret_eval(ret_val);
+            }
+
+            case IROpcode::MakeClosure: {
+                // Issue #4357: reuse an empty-env closure of this function.
+                // Capturing MakeClosure (ops[2] > 0) still allocates.
+                if (ops[2] == 0) {
+                    auto reused = st.empty_env_closure_by_func.find(ops[1]);
+                    if (reused != st.empty_env_closure_by_func.end()) {
+                        locals[ops[0]] = make_closure(reused->second);
+                        break;
+                    }
+                }
+                auto id = st.self.mint_closure_id_4764(); // #4764 shared cursor
+                IRClosure ircl;
+                ircl.func_id = ops[1];
+                ircl.env = std::vector<EvalValue>(ops[2], make_void());
+                // Copy bridge data from IRModule if available.
+                // Issue #224 Cycle 2: shared_ptr-based bridge.
+                // The copy bumps the refcount, so the closure
+                // independently keeps the FlatAST alive.
+                if (ops[1] < st.module.closure_bridge.size()) {
+                    auto& bd = st.module.closure_bridge[ops[1]];
+                    ircl.flat = bd.flat;
+                    ircl.pool = bd.pool;
+                    ircl.body_id = bd.body_id;
+                    // Issue #223: capture the bridge's epoch so the
+                    // IRClosure lifetime check can detect stale bridges.
+                    ircl.bridge_epoch = bd.bridge_epoch;
+                    // Issue #1616: SyntaxMarker + provenance from bridge.
+                    ircl.source_marker = bd.source_marker;
+                    ircl.provenance = bd.provenance;
+                    if (ops[1] < st.module.functions.size())
+                        ircl.params = st.module.functions[ops[1]].params;
+                }
+                // Prefer IRFunction.marker when bridge left marker unset.
+                if (ops[1] < st.module.functions.size()) {
+                    if (ircl.source_marker == 0)
+                        ircl.source_marker = st.module.functions[ops[1]].marker;
+                    // Also stamp from MakeClosure instruction metadata.
+                    if (instr.source_marker != 0)
+                        ircl.source_marker = instr.source_marker;
+                    if (instr.provenance != 0)
+                        ircl.provenance = instr.provenance;
+                }
+                if (st.context.metrics && ircl.source_marker == 1) {
+                    st.context.metrics->ir_provenance_stamped_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    st.context.metrics->ir_closure_macro_stamped_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                // Issue #1513: stamp EnvFrame provenance for dual-check.
+                // env_version captures current defuse_version_ so mutate
+                // / compact that bumps defuse invalidates long-lived
+                // IRClosures even when bridge_epoch was restamped.
+                if (st.context.evaluator) {
+                    ircl.env_version = st.context.evaluator->defuse_version();
+                    // Prefer current bridge epoch when bridge table
+                    // did not stamp one (legacy empty bridge slot).
+                    if (ircl.bridge_epoch == 0)
+                        ircl.bridge_epoch = st.context.evaluator->current_bridge_epoch();
+                    // Issue #2129: stamp linear_state from MakeClosure
+                    // instruction metadata, else host fingerprint.
+                    std::uint8_t lin =
+                        static_cast<std::uint8_t>(instr.linear_ownership_state & 0xFFu);
+                    if (lin == 0)
+                        lin = aura_get_aot_live_linear_state_fingerprint();
+                    ircl.linear_state = lin;
+                    if (lin != 0 && st.context.metrics)
+                        st.context.metrics->linear_closure_state_stamp_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                }
+                st.runtime_closures[id] = std::move(ircl);
+                // Issue #4450: register call-time mints for the service's
+                // runtime-mint dispatch fallback (see owns_runtime_mint).
+                if (st.in_runtime_call)
+                    st.runtime_minted_ids.insert(id);
+                if (ops[2] == 0)
+                    st.empty_env_closure_by_func[ops[1]] = id;
+                else
+                    ++st.allocs_since_reclaim; // #4459: capturing closure, not #4357 reuse
+                locals[ops[0]] = make_closure(id);
+                break;
+            }
+
+            case IROpcode::Capture: {
+                if (instr.linear_ownership_state != 0)
+                    record_linear_jit_safety(st.metrics, IROpcode::Capture);
+                auto& closure_val = locals[ops[0]];
+                if (is_closure(closure_val)) {
+                    auto closure_id = as_closure_id(closure_val);
+                    auto it = st.runtime_closures.find(closure_id);
+                    if (it != st.runtime_closures.end() && ops[1] < it->second.env.size())
+                        it->second.env[ops[1]] = locals[ops[2]];
+                }
+                break;
+            }
+
+            case IROpcode::CaptureRef: {
+                if (instr.linear_ownership_state != 0)
+                    record_linear_jit_safety(st.metrics, IROpcode::CaptureRef);
+                auto& closure_val = locals[ops[0]];
+                if (is_closure(closure_val)) {
+                    auto closure_id = as_closure_id(closure_val);
+                    auto it = st.runtime_closures.find(closure_id);
+                    if (it != st.runtime_closures.end() && ops[1] < it->second.env.size())
+                        // Store negative offset to indicate cell reference
+                        it->second.env[ops[1]] = make_int(-1 - static_cast<std::int64_t>(ops[2]));
+                }
+                break;
+            }
+            default:
+                break;
+        }
+        return IrFlow::fall();
+    }
+
+    static IrFlow ir_exec_apply(IrFnState& st, const IRFunction& func,
+                                std::vector<EvalValue>& locals, std::span<const EvalValue> args,
+                                const IRInstruction& instr, std::uint32_t& current, std::size_t ii,
+                                feedback::Recorder& fb) {
+        auto& ops = instr.operands;
+        switch (instr.opcode) {
+            case IROpcode::Apply: {
+                // Issue #4667: per-op readiness re-sample. The #3224
+                // entry grant is entry-only: a mid-function
+                // densify/steal invalidates it, so an Apply that
+                // runs after the flip is denied via the readiness
+                // path instead of riding the entry-era grant. Same
+                // face as the entry gate + the Move/Drop face; the
+                // refusal bumps the existing
+                // g_linear_fast_path_elide_blocked_production_total
+                // (no new counter). Soft / Off: zero-cost.
+                if (!ir_per_op_typed_entry_readiness_ok()) {
+                    if (st.context.metrics)
+                        st.context.metrics->linear_post_mutate_force_rollback_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    return IrFlow::ret_eval(std::unexpected(
+                        Diagnostic{ErrorKind::TypeError, "commit-readiness-refused"}));
+                }
+                // Issue #252: IR path closure dispatch counter
+                // (same as IROpcode::Call above)
+                if (st.context.metrics) {
+                    st.context.metrics->closure_ir_calls.fetch_add(1, std::memory_order_relaxed);
+                    st.context.metrics->closure_calls_total.fetch_add(1, std::memory_order_relaxed);
+                }
+                auto& closure_val = locals[ops[0]];
+                auto arg_count = ops[1];
+                std::vector<EvalValue> apply_args;
+                for (std::uint32_t i = 0; i < arg_count; ++i)
+                    apply_args.push_back(locals[ops[0] + i + 1]);
+
+                if (is_closure(closure_val)) {
+                    auto closure_id = as_closure_id(closure_val);
+                    auto it = st.runtime_closures.find(closure_id);
+                    if (it == st.runtime_closures.end()) {
+                        if (st.context.evaluator) {
+                            if (auto tw =
+                                    st.context.evaluator->apply_closure(closure_id, apply_args)) {
+                                // Issue #4624: a diagnostic the closure body
+                                // RAISED comes back as an error value; the IR
+                                // face fails loudly with the diagnostic
+                                // instead of storing the error in a local.
+                                if (types::is_error(*tw)) {
+                                    if (auto diag = st.context.evaluator->take_raised_diagnostic())
+                                        return IrFlow::ret_eval(std::unexpected(std::move(*diag)));
+                                }
+                                locals[ops[2]] = *tw;
+                            } else if (auto arity =
+                                           take_ir_apply_arity(&instr, st.context.evaluator))
+                                return IrFlow::ret_eval(std::unexpected(std::move(*arity)));
+                            else
+                                return IrFlow::ret_eval(std::unexpected(Diagnostic{
+                                    ErrorKind::InvalidClosure, "invalid closure in apply"}));
+                            break;
+                        }
+                        return IrFlow::ret_eval(std::unexpected(
+                            Diagnostic{ErrorKind::InvalidClosure, "invalid closure in apply"}
+                                .with_suggestion("the function was redefined (--hot-swap)")));
+                    }
+
+                    auto& closure = it->second;
+                    if (closure.func_id >= st.module.functions.size())
+                        return IrFlow::ret_eval(std::unexpected(
+                            Diagnostic{ErrorKind::IRCorruption, "invalid function id in apply"}
+                                .with_suggestion("internal error: IR module corrupted")));
+
+                    auto& callee_func = st.module.functions[closure.func_id];
+                    // Issue #4467: same user-arity gate as IROpcode::Call.
+                    if (auto arity = ir_user_arity_diag(&instr, callee_func, apply_args.size(),
+                                                        st.context.evaluator))
+                        return IrFlow::ret_eval(std::unexpected(std::move(*arity)));
+                    std::vector<EvalValue> all_args;
+                    for (auto& ev : closure.env)
+                        all_args.push_back(ev);
+                    for (auto& a : apply_args)
+                        all_args.push_back(a);
+
+                    // Issue #2292: stamp call-site block + next instr (Apply).
+                    // Issue #4459: same tail-frame reuse as Call.
+                    bool tail = false;
+                    if (!st.call_stack.empty() &&
+                        st.ex_stack.size() == st.call_stack.back().ex_depth_at_entry)
+                        tail = ir_call_is_tail(func, current, ii, ops[2]);
+                    if (!st.call_stack.empty()) {
+                        st.call_stack.back().current_block = current;
+                        // instr is block.instructions[ii]; resume after this Apply.
+                        st.call_stack.back().resume_instr = ii + 1;
+                    }
+                    if (fb.on)
+                        feedback::note_call(fb.row,
+                                            fb.site(current, static_cast<std::uint32_t>(ii)),
+                                            closure.func_id);
+                    return IrFlow::ret_pending(
+                        PendingCall{&callee_func, std::move(all_args), ops[2], tail});
+                } else {
+                    locals[ops[2]] = closure_val;
+                }
+                break;
+            }
+            default:
+                break;
+        }
+        return IrFlow::fall();
+    }
+
+    template <class LinearHeap>
+    static IrFlow ir_exec_linear(IrFnState& st, const IRFunction& func,
+                                 std::vector<EvalValue>& locals, std::span<const EvalValue> args,
+                                 LinearHeap& linear_heap, const IRInstruction& instr,
+                                 std::uint32_t& current, std::size_t ii, feedback::Recorder& fb) {
+        using Entry = typename LinearHeap::value_type;
+        auto& ops = instr.operands;
+        switch (instr.opcode) {
+            case IROpcode::LinearWrap: {
+                // Wrap value in a linear container with refcount=1
+                if (instr.linear_ownership_state != 0) {
+                    record_linear_runtime_safety(
+                        st.metrics,
+                        !enforce_linear_ownership_state(instr.linear_ownership_state,
+                                                        LinearOpKind::Wrap, instr.provenance, 0,
+                                                        st.context.metrics, st.context.evaluator));
+                }
+                auto inner = locals[ops[1]];
+                auto lin_id = st.next_linear_id++;
+                if (linear_heap.size() <= lin_id)
+                    linear_heap.resize(lin_id + 1);
+                linear_heap[lin_id] = Entry{inner, 1, true};
+                locals[ops[0]] = types::make_linear(lin_id);
+                break;
+            }
+            case IROpcode::MoveOp: {
+                // Issue #106: source invalidation after move (clear slot).
+                // Issue #2407: Copy / non-linear source is a no-op move
+                // (literal-as-Owned). Do not hard-fail Strict incomplete
+                // provenance on non-linear payloads — matches interpreter
+                // and AOT emit-binary elision of Move of literals.
+                auto val = locals[ops[1]];
+                if (!types::is_linear(val)) {
+                    if (instr.linear_ownership_state != 0)
+                        record_linear_runtime_safety(st.metrics, false);
+                    locals[ops[0]] = val;
+                    locals[ops[1]] = types::make_int(0);
+                    break;
+                }
+                if (instr.linear_ownership_state != 0)
+                    record_linear_jit_safety(st.metrics, IROpcode::MoveOp);
+                // State-machine gate before heap check (Issue #1515 / #2103).
+                const bool state_ok = enforce_linear_ownership_state(
+                    instr.linear_ownership_state, LinearOpKind::Move, instr.provenance, 0,
+                    st.context.metrics, st.context.evaluator);
+                // Issue #2067: pre-capture violation (always-on, not gated
+                // on linear_ownership_state != 0) so the post-mutate
+                // revalidate can correlate the violation with the
+                // MutationBoundary under Full strategy.
+                // Move ownership: decrement source refcount, pass value through
+                // Runtime check: double-move detection
+                // Issue #106: source invalidation. After a move,
+                // the source slot is zeroed so a subsequent
+                // DropOp on the source becomes a no-op (the
+                // runtime's drop pair/cell/closure helpers all
+                // bounds-check or check the IS_PAIR low-bit tag,
+                // and 0 fails both checks). For linear values
+                // the linear_heap entry is already erased /
+                // ref-count-decremented above; clearing the
+                // local slot makes the no-double-drop invariant
+                // explicit in the IR.
+                if (!state_ok) {
+                    std::println(std::cerr, "error: move of non-Owned linear_ownership_state");
+                    capture_linear_runtime_violation(st.metrics, 0, IROpcode::MoveOp, 0,
+                                                     instr.linear_ownership_state, 1);
+                    record_linear_runtime_safety(st.metrics, true);
+                    locals[ops[0]] = types::make_int(0);
+                    locals[ops[1]] = types::make_int(0);
+                    break;
+                }
+                // Linear-typed value: consume heap entry.
+                auto lin_id = types::as_linear_id(val);
+                if (lin_id < linear_heap.size() && linear_heap[lin_id].live) {
+                    auto& entry = linear_heap[lin_id];
+                    if (entry.ref_count <= 0) {
+                        std::println(std::cerr, "error: double move — value already moved");
+                        if (instr.linear_ownership_state != 0)
+                            capture_linear_runtime_violation(st.metrics, 0, IROpcode::MoveOp, 0,
+                                                             instr.linear_ownership_state, 1);
+                        record_linear_runtime_safety(st.metrics, true);
+                        locals[ops[0]] = entry.value;
+                    } else {
+                        auto result = entry.value;
+                        if (--entry.ref_count == 0)
+                            entry.live = false;
+                        if (instr.linear_ownership_state != 0)
+                            record_linear_runtime_safety(st.metrics, false);
+                        locals[ops[0]] = result;
+                    }
+                } else {
+                    // Already moved/consumed — error
+                    std::println(std::cerr, "error: use after move — value already consumed");
+                    if (instr.linear_ownership_state != 0)
+                        capture_linear_runtime_violation(st.metrics, 0, IROpcode::MoveOp, 0,
+                                                         instr.linear_ownership_state, 1);
+                    record_linear_runtime_safety(st.metrics, true);
+                    locals[ops[0]] = types::make_int(0);
+                }
+                // Source slot is now invalid — clear it so a
+                // later DropOp on this slot is a no-op.
+                locals[ops[1]] = types::make_int(0);
+                break;
+            }
+            case IROpcode::BorrowOp: {
+                if (instr.linear_ownership_state != 0)
+                    record_linear_jit_safety(st.metrics, IROpcode::MoveOp);
+                const bool state_ok = enforce_linear_ownership_state(
+                    instr.linear_ownership_state, LinearOpKind::Borrow, instr.provenance, 0,
+                    st.context.metrics, st.context.evaluator);
+                // Immutable borrow: increment refcount
+                // Runtime check: use-after-move detection
+                auto val = locals[ops[1]];
+                if (!state_ok) {
+                    // Issue #4667: the refusal can come from the
+                    // linear state machine OR from the per-op
+                    // readiness re-sample (commit-readiness-refused).
+                    std::println(std::cerr,
+                                 "error: borrow denied (linear state / commit-readiness)");
+                    capture_linear_runtime_violation(st.metrics, 0, IROpcode::BorrowOp, 0,
+                                                     instr.linear_ownership_state, 1);
+                    record_linear_runtime_safety(st.metrics, true);
+                    locals[ops[0]] = types::make_int(0);
+                    break;
+                }
+                if (types::is_linear(val)) {
+                    auto lin_id = types::as_linear_id(val);
+                    if (lin_id < linear_heap.size() && linear_heap[lin_id].live) {
+                        auto& entry = linear_heap[lin_id];
+                        if (entry.ref_count <= 0) {
+                            std::println(std::cerr, "error: double move — value already moved");
+                            if (instr.linear_ownership_state != 0)
+                                capture_linear_runtime_violation(st.metrics, 0, IROpcode::BorrowOp,
+                                                                 0, instr.linear_ownership_state,
+                                                                 1);
+                            record_linear_runtime_safety(st.metrics, true);
+                            locals[ops[0]] = entry.value;
+                        } else {
+                            entry.ref_count++;
+                            if (instr.linear_ownership_state != 0)
+                                record_linear_runtime_safety(st.metrics, false);
+                            locals[ops[0]] = entry.value;
+                        }
+                    } else {
+                        std::println(std::cerr, "error: use after move — borrow of consumed value");
+                        if (instr.linear_ownership_state != 0)
+                            capture_linear_runtime_violation(st.metrics, 0, IROpcode::BorrowOp, 0,
+                                                             instr.linear_ownership_state, 1);
+                        record_linear_runtime_safety(st.metrics, true);
+                        locals[ops[0]] = types::make_int(0);
+                    }
+                } else {
+                    if (instr.linear_ownership_state != 0)
+                        record_linear_runtime_safety(st.metrics, false);
+                    locals[ops[0]] = val;
+                }
+                break;
+            }
+            case IROpcode::MutBorrowOp: {
+                if (instr.linear_ownership_state != 0)
+                    record_linear_jit_safety(st.metrics, IROpcode::MoveOp);
+                const bool state_ok = enforce_linear_ownership_state(
+                    instr.linear_ownership_state, LinearOpKind::MutBorrow, instr.provenance, 0,
+                    st.context.metrics, st.context.evaluator);
+                // Mutable borrow: treat as move (exclusive access)
+                auto val = locals[ops[1]];
+                if (!state_ok) {
+                    // Issue #4667: the refusal can come from the
+                    // linear state machine OR from the per-op
+                    // readiness re-sample (commit-readiness-refused).
+                    std::println(std::cerr,
+                                 "error: mut-borrow denied (linear state / commit-readiness)");
+                    capture_linear_runtime_violation(st.metrics, 0, IROpcode::MutBorrowOp, 0,
+                                                     instr.linear_ownership_state, 1);
+                    record_linear_runtime_safety(st.metrics, true);
+                    locals[ops[0]] = types::make_int(0);
+                    break;
+                }
+                if (types::is_linear(val)) {
+                    auto lin_id = types::as_linear_id(val);
+                    if (lin_id < linear_heap.size() && linear_heap[lin_id].live) {
+                        auto& entry = linear_heap[lin_id];
+                        if (entry.ref_count <= 0) {
+                            std::println(std::cerr, "error: mut-borrow of moved value");
+                            if (instr.linear_ownership_state != 0)
+                                capture_linear_runtime_violation(st.metrics, 0,
+                                                                 IROpcode::MutBorrowOp, 0,
+                                                                 instr.linear_ownership_state, 1);
+                            record_linear_runtime_safety(st.metrics, true);
+                        } else {
+                            if (instr.linear_ownership_state != 0)
+                                record_linear_runtime_safety(st.metrics, false);
+                        }
+                        locals[ops[0]] = entry.value;
+                    } else {
+                        std::println(std::cerr, "error: mut-borrow of consumed value");
+                        if (instr.linear_ownership_state != 0)
+                            capture_linear_runtime_violation(st.metrics, 0, IROpcode::MutBorrowOp,
+                                                             0, instr.linear_ownership_state, 1);
+                        record_linear_runtime_safety(st.metrics, true);
+                        locals[ops[0]] = types::make_int(0);
+                    }
+                } else {
+                    if (instr.linear_ownership_state != 0)
+                        record_linear_runtime_safety(st.metrics, false);
+                    locals[ops[0]] = val;
+                }
+                break;
+            }
+            case IROpcode::DropOp: {
+                if (instr.linear_ownership_state != 0)
+                    record_linear_jit_safety(st.metrics, IROpcode::DropOp);
+                const bool state_ok = enforce_linear_ownership_state(
+                    instr.linear_ownership_state, LinearOpKind::Drop, instr.provenance, 0,
+                    st.context.metrics, st.context.evaluator);
+                // Explicit destruct: decrement refcount, erase if zero
+                // Runtime check: double-drop detection
+                auto val = locals[ops[0]];
+                if (!state_ok) {
+                    std::println(std::cerr, "error: drop of Moved/Borrowed linear state");
+                    capture_linear_runtime_violation(st.metrics, 0, IROpcode::DropOp, 0,
+                                                     instr.linear_ownership_state, 1);
+                    record_linear_runtime_safety(st.metrics, true);
+                    break;
+                }
+                if (types::is_linear(val)) {
+                    auto lin_id = types::as_linear_id(val);
+                    if (lin_id < linear_heap.size() && linear_heap[lin_id].live) {
+                        auto& entry = linear_heap[lin_id];
+                        if (entry.ref_count <= 0) {
+                            std::println(std::cerr, "error: double drop — value already dropped");
+                            if (instr.linear_ownership_state != 0)
+                                capture_linear_runtime_violation(st.metrics, 0, IROpcode::DropOp, 0,
+                                                                 instr.linear_ownership_state, 1);
+                            record_linear_runtime_safety(st.metrics, true);
+                        } else {
+                            if (--entry.ref_count == 0)
+                                entry.live = false;
+                            if (instr.linear_ownership_state != 0)
+                                record_linear_runtime_safety(st.metrics, false);
+                        }
+                    } else {
+                        std::println(std::cerr, "error: double drop — value not in heap");
+                        if (instr.linear_ownership_state != 0)
+                            capture_linear_runtime_violation(st.metrics, 0, IROpcode::DropOp, 0,
+                                                             instr.linear_ownership_state, 1);
+                        record_linear_runtime_safety(st.metrics, true);
+                    }
+                } else if (instr.linear_ownership_state != 0) {
+                    record_linear_runtime_safety(st.metrics, false);
+                }
+                break;
+            }
+            case IROpcode::RefCountOp: {
+                // Runtime refcount operation: ops[2] = 1 for inc, 0 for dec
+                auto val = locals[ops[1]];
+                if (types::is_linear(val)) {
+                    auto lin_id = types::as_linear_id(val);
+                    if (lin_id < linear_heap.size() && linear_heap[lin_id].live) {
+                        auto& entry = linear_heap[lin_id];
+                        if (ops[2] == 1)
+                            entry.ref_count++;
+                        else if (entry.ref_count > 0)
+                            entry.ref_count--;
+                    }
+                }
+                locals[ops[0]] = val;
+                break;
+            }
+
+            case IROpcode::ArenaPush: {
+                // ArenaPush(result_slot, size) — push frame, save offset
+                tl_arena_push(&g_tl_arena);
+                locals[ops[0]] = types::make_int(0);
+                break;
+            }
+            case IROpcode::ArenaPop: {
+                if (instr.linear_ownership_state != 0)
+                    record_linear_jit_safety(st.metrics, IROpcode::ArenaPop);
+                // ArenaPop(saved_slot) — pop frame
+                tl_arena_pop(&g_tl_arena);
+                break;
+            }
+            default:
+                break;
+        }
+        return IrFlow::fall();
+    }
+
+} // namespace
+
+struct IrResume {
+    std::uint32_t current = 0;
+    std::size_t resume_once = 0;
+    bool have_resume = false;
+};
+
+static IrResume ir_take_resume(std::deque<ExecFrame>& call_stack, const IRFunction& func) {
+    // Issue #2292: resume at the call site's block + instruction, then clear
+    // the frame offset so a later re-entry does not re-apply it. If the
+    // offset is past the block, the instruction loop is empty and the caller
+    // falls through — correct when Call was last in its block.
+    IrResume r{func.entry_block, 0, false};
+    if (!call_stack.empty()) {
+        auto& fr = call_stack.back();
+        if (fr.current_block < func.blocks.size())
+            r.current = fr.current_block;
+        r.resume_once = fr.resume_instr;
+        r.have_resume = true;
+        fr.resume_instr = 0;
+    }
+    return r;
+}
+
+static feedback::Recorder ir_enter_feedback(const IRFunction& func) {
     // Issue #4568: one lookup per call. After the back-edge or entry
     // budget the row is cooled and `fb.on` stays false, so the timed
     // loop only tests that flag. Writes are relaxed atomics; no
@@ -1454,13 +3194,74 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
             fb = feedback::enter_slow(info);
         }
     }
-    auto fb_lat = [](const EvalValue& v) -> std::uint8_t {
-        if (is_int(v))
-            return feedback::kFixnum;
-        if (is_float(v))
-            return feedback::kFloat;
-        return feedback::kOther;
-    };
+    return fb;
+}
+
+static std::optional<Diagnostic> ir_result_slot_oob(const IRFunction& func,
+                                                    const IRInstruction& instr,
+                                                    const std::vector<EvalValue>& locals) {
+    // Issue #217 Cycle 4: bounds-checked lookup_opcode. Issue #4620: the
+    // frame is sized to the function's own slot count. Call / PrimCall
+    // write operands[3] and Apply writes operands[2]; the opcode table's
+    // has_result_slot flag only knows the operands[0] shape.
+    auto& ops = instr.operands;
+    if (auto* info = lookup_opcode(instr.opcode)) {
+        const bool has_result = info->has_result_slot || instr.opcode == IROpcode::Call ||
+                                instr.opcode == IROpcode::Apply;
+        if (has_result) {
+            const std::uint32_t res_op = ir_result_slot_operand(instr.opcode);
+            if (ops[res_op] >= locals.size()) {
+                return Diagnostic{ErrorKind::IRCorruption,
+                                  std::format("{}: result slot {} out of bounds (function '{}')",
+                                              info->name, ops[res_op], func.name)};
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
+                                                     std::vector<EvalValue>& locals,
+                                                     std::span<const EvalValue> args) {
+    if (auto blocked = ir_typed_entry_blocked_result(context_.metrics))
+        return *blocked;
+    if (func.blocks.empty())
+        return std::unexpected(Diagnostic{ErrorKind::IRNoReturn, "empty function"}.with_suggestion(
+            "the function body is empty"));
+
+    // Issue #2292: after a nested PendingCall returns, resume at the
+    // call site's block + instruction — not always entry_block with a
+    // sticky resume_instr applied to every subsequent block (that leaked
+    // the first completion's control flow / skipped Mul after recursive
+    // Call, so fact/sum returned the base-case value).
+    IrFnState st{*this,
+                 &IRInterpreter::effect_deny_diagnostic_4896_,
+                 module_,
+                 context_,
+                 metrics_,
+                 strict_mode_,
+                 call_stack_,
+                 ex_stack_,
+                 runtime_closures_,
+                 runtime_minted_ids_,
+                 empty_env_closure_by_func_,
+                 const_string_cache_,
+                 const_keyword_cache_,
+                 const_symbol_cache_,
+                 escape_maps_,
+                 next_linear_id_,
+                 cell_heap_,
+                 next_cell_id_,
+                 in_runtime_call_,
+                 allocs_since_reclaim_};
+    st.func = &func;
+    st.locals = &locals;
+    auto resume = ir_take_resume(call_stack_, func);
+    std::uint32_t current = resume.current;
+    std::size_t resume_once = resume.resume_once;
+    bool have_resume = resume.have_resume;
+
+    feedback::Recorder fb = ir_enter_feedback(func);
 
     std::uint32_t opcode_poll_n = 0;
     while (current < func.blocks.size()) {
@@ -1510,170 +3311,20 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
             }
 
-            // ── Operand validation via lookup_opcode ────────
-            // Issue #217 Cycle 4: replaced direct kOpcodeInfo[idx]
-            // access with the bounds-checked lookup_opcode helper
-            // (declared in ir.ixx). The helper handles the bounds
-            // check + array access in one call, returning nullptr
-            // for invalid opcodes.
-            if (auto* info = lookup_opcode(instr.opcode)) {
-                // Issue #4620: the frame is sized to the function's own
-                // slot count, so a stale local_count must fail closed
-                // instead of writing out of bounds. The check has to
-                // look at the operand the opcode really writes: most
-                // opcodes write their result to operands[0], but
-                // Call / PrimCall write it to operands[3] and Apply to
-                // operands[2]. The opcode table's has_result_slot flag
-                // only knows the operands[0] shape - a PrimCall's
-                // operands[0] is a prim id, not a slot (the 64-slot
-                // frame floor used to hide that).
-                const bool has_result = info->has_result_slot || instr.opcode == IROpcode::Call ||
-                                        instr.opcode == IROpcode::Apply;
-                if (has_result) {
-                    const std::uint32_t res_op = ir_result_slot_operand(instr.opcode);
-                    if (ops[res_op] >= locals.size()) {
-                        return std::unexpected(Diagnostic{
-                            ErrorKind::IRCorruption,
-                            std::format("{}: result slot {} out of bounds (function '{}')",
-                                        info->name, ops[res_op], func.name)});
-                    }
-                }
-            }
+            if (auto oob = ir_result_slot_oob(func, instr, locals))
+                return std::unexpected(*oob);
 
-            // Issue #910 Phase 2: class-table outer dispatch for hot
-            // arithmetic/compare/logic (dense secondary switch, less
-            // branch pressure than one 54-way switch on every instr).
             const auto oclass = opcode_class(instr.opcode);
             if (oclass == IROpcodeClass::Arith) {
-                auto& a = locals[ops[1]];
-                auto& b = locals[ops[2]];
-                // Issue #4461: integer zero stores an error value and continues.
-                // No evaluator (bare executor) keeps the diagnostic. Never 0.
-                auto int_div_zero = [&]() -> bool {
-                    if (!context_.evaluator)
-                        return false;
-                    locals[ops[0]] = context_.evaluator->make_div_zero_error();
-                    return true;
-                };
-                // Issue #2259: pure tag tests (zero atomic) + dual-fixnum
-                // fast path — single expected branch for pure arithmetic.
-                const bool a_int = is_int(a);
-                const bool b_int = is_int(b);
-                if (a_int && b_int) {
-                    const auto ai = as_int(a);
-                    const auto bi = as_int(b);
-                    switch (instr.opcode) {
-                        case IROpcode::Add:
-                        case IROpcode::Sub:
-                        case IROpcode::Mul: {
-                            // Issue #4462: checked int64, then the fixnum domain.
-                            // A result in [2^62, 2^63) or at/below the float bias
-                            // promotes. Signed overflow is not a wrapped integer.
-                            std::int64_t next = 0;
-                            const bool ov = instr.opcode == IROpcode::Add
-                                                ? __builtin_add_overflow(ai, bi, &next)
-                                            : instr.opcode == IROpcode::Sub
-                                                ? __builtin_sub_overflow(ai, bi, &next)
-                                                : __builtin_mul_overflow(ai, bi, &next);
-                            if (ov || !fits_fixnum(next)) {
-                                // Issue #4482: fixnum overflow is an error, not a float.
-                                locals[ops[0]] = types::make_error(0);
-                            } else {
-                                locals[ops[0]] = make_int(next);
-                            }
-                            break;
-                        }
-                        case IROpcode::Div: {
-                            if (bi == 0) {
-                                if (int_div_zero())
-                                    break;
-                                return std::unexpected(
-                                    Diagnostic{ErrorKind::DivisionByZero, "division by zero"}
-                                        .with_suggestion("use a non-zero denominator"));
-                            }
-                            locals[ops[0]] = make_int(ai / bi);
-                            break;
-                        }
-                        default:
-                            break;
-                    }
-                    continue;
+                auto flow = ir_exec_arith(st, func, locals, instr, current, ii, fb);
+                if (flow.kind == IrFlow::Kind::Ret) {
+                    if (std::holds_alternative<PendingCall>(flow.result))
+                        return std::get<PendingCall>(flow.result);
+                    return std::get<EvalResult>(flow.result);
                 }
-                // Issue #4463: a bool, string, pair, or vector is not an operand.
-                if (!operand_is_number(a) || !operand_is_number(b)) {
-                    const auto& bad = operand_is_number(a) ? b : a;
-                    // Issue #4855: name the operation and the failing operand.
-                    const auto bad_index = ir_bad_operand_index(a, b);
-                    if (!store_num_mismatch(ops[0], bad, ir_num_op_name(instr.opcode), bad_index,
-                                            &instr)) {
-                        return std::unexpected(
-                            Diagnostic{ErrorKind::TypeError,
-                                       aura::compiler::pure::numeric_type_mismatch_detail(
-                                           bad, string_text_of(bad)) +
-                                           aura::compiler::pure::numeric_type_mismatch_op_suffix(
-                                               ir_num_op_name(instr.opcode), bad_index)});
-                    }
-                    continue;
-                }
-                const bool fl = is_float(a) || is_float(b);
-                switch (instr.opcode) {
-                    case IROpcode::Add:
-                    case IROpcode::Sub:
-                    case IROpcode::Mul: {
-                        if (fl) {
-                            const double da = coerce_f(a);
-                            const double db = coerce_f(b);
-                            const double dr = instr.opcode == IROpcode::Add   ? da + db
-                                              : instr.opcode == IROpcode::Sub ? da - db
-                                                                              : da * db;
-                            locals[ops[0]] = make_float(dr);
-                            break;
-                        }
-                        const auto x = coerce_i(a);
-                        const auto y = coerce_i(b);
-                        std::int64_t next = 0;
-                        const bool ov =
-                            instr.opcode == IROpcode::Add   ? __builtin_add_overflow(x, y, &next)
-                            : instr.opcode == IROpcode::Sub ? __builtin_sub_overflow(x, y, &next)
-                                                            : __builtin_mul_overflow(x, y, &next);
-                        if (ov || !fits_fixnum(next)) {
-                            // Issue #4482: fixnum overflow is an error, not a float.
-                            locals[ops[0]] = types::make_error(0);
-                        } else {
-                            locals[ops[0]] = make_int(next);
-                        }
-                        break;
-                    }
-                    case IROpcode::Div: {
-                        if (fl) {
-                            // Issue #4461: IEEE. 1.0/0.0 is +inf, 0.0/0.0 is nan.
-                            locals[ops[0]] = make_float(coerce_f(a) / coerce_f(b));
-                        } else {
-                            auto y = coerce_i(b);
-                            if (y == 0) {
-                                if (!int_div_zero())
-                                    return std::unexpected(
-                                        Diagnostic{ErrorKind::DivisionByZero, "division by zero"}
-                                            .with_suggestion("use a non-zero denominator"));
-                            } else {
-                                locals[ops[0]] = make_int(coerce_i(a) / y);
-                            }
-                        }
-                        break;
-                    }
-                    default:
-                        break;
-                }
-                // Issue #4568: operand lattice + overflow hint. Off after warmup.
-                if (fb.on) {
-                    const bool ov =
-                        operand_is_number(a) && operand_is_number(b) && is_error(locals[ops[0]]);
-                    feedback::note_arith(fb.row, fb.site(current, static_cast<std::uint32_t>(ii)),
-                                         fb_lat(a), fb_lat(b), ov);
-                }
-                continue; // next instruction
+                continue;
             }
-
+            IrFlow flow;
             switch (instr.opcode) {
                 case IROpcode::Nop:
                     break;
@@ -1684,1210 +3335,65 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 case IROpcode::Div:
                     break;
 
-                case IROpcode::ConstI64: {
-                    std::int64_t val = (static_cast<std::int64_t>(ops[2]) << 32) | ops[1];
-                    // Issue #4462: a literal outside the fixnum domain is a float.
-                    locals[ops[0]] = make_int_or_promote(val);
-                    break;
-                }
-                case IROpcode::ConstF64: {
-                    std::uint64_t bits = static_cast<std::uint64_t>(ops[1]) |
-                                         (static_cast<std::uint64_t>(ops[2]) << 32);
-                    double val = std::bit_cast<double>(bits);
-                    locals[ops[0]] = make_float(val);
-                    break;
-                }
-                case IROpcode::ConstString: {
-                    // Issue #2573: intern by module string_pool index.
-                    // Previously every execution pushed a new copy into
-                    // prim_heap + string_heap_ → O(iterations) growth for
-                    // (display "lit") in IR-path loops. Same pool index ⇒
-                    // same content for this module_; reuse first materialize.
-                    // Issue #4321: operands[2]==1 is a keyword literal.
-                    const std::uint32_t pool_idx = ops[1];
-                    // Issue #4727: operands[2]==2 is a symbol atom (the
-                    // tree-walker's datum shape); 1 is a keyword. Both intern
-                    // by NAME, which is what makes identity survive the pool
-                    // that produced the text.
-                    if (ops[2] == 2) {
-                        if (auto cit = const_symbol_cache_.find(pool_idx);
-                            cit != const_symbol_cache_.end()) {
-                            locals[ops[0]] = cit->second;
-                            break;
-                        }
-                        EvalValue val = make_void();
-                        if (context_.evaluator) {
-                            std::string_view content;
-                            if (pool_idx < module_.string_pool.size())
-                                content = module_.string_pool[pool_idx];
-                            val = context_.evaluator->intern_symbol(content);
-                        }
-                        const_symbol_cache_.emplace(pool_idx, val);
-                        locals[ops[0]] = val;
-                        break;
-                    }
-                    if (ops[2] != 0) {
-                        if (auto cit = const_keyword_cache_.find(pool_idx);
-                            cit != const_keyword_cache_.end()) {
-                            locals[ops[0]] = cit->second;
-                            break;
-                        }
-                        EvalValue val = make_void();
-                        if (context_.evaluator) {
-                            std::string_view content;
-                            if (pool_idx < module_.string_pool.size())
-                                content = module_.string_pool[pool_idx];
-                            val = context_.evaluator->intern_keyword(content);
-                        }
-                        const_keyword_cache_.emplace(pool_idx, val);
-                        locals[ops[0]] = val;
-                        break;
-                    }
-                    if (auto cit = const_string_cache_.find(pool_idx);
-                        cit != const_string_cache_.end()) {
-                        // Issue #4608: the reclaim may have released the
-                        // slot (and the next mint re-used it) — validate
-                        // the content before handing the cached value out
-                        // and re-materialize when it changed. (The IR's
-                        // own sweep keeps the cache in its roots; a
-                        // tree-walker sweep nested inside this IR run
-                        // does not see it.)
-                        auto& prim_heap = context_.primitives.string_heap();
-                        const std::string content = (pool_idx < module_.string_pool.size())
-                                                        ? module_.string_pool[pool_idx]
-                                                        : std::string{};
-                        const auto cached_idx = as_string_idx(cit->second);
-                        if (cached_idx < prim_heap.size() && prim_heap[cached_idx] == content) {
-                            locals[ops[0]] = cit->second;
-                            break;
-                        }
-                        const auto fresh = prim_heap.mint(content);
-                        cit->second = make_string(fresh);
-                        locals[ops[0]] = cit->second;
-                        break;
-                    }
-                    // First hit: materialize the literal in the evaluator's
-                    // string heap — the only string store (Issue #4608: the
-                    // IR keeps no index-parallel mirror, so a reclaimed and
-                    // re-used slot can never leave a stale copy behind).
-                    auto& prim_heap = context_.primitives.string_heap();
-                    const std::string content = (pool_idx < module_.string_pool.size())
-                                                    ? module_.string_pool[pool_idx]
-                                                    : std::string{};
-                    // Issue #4543: the evaluator heap only grows via mint()
-                    // (locked, returns the real index).
-                    const auto idx = prim_heap.mint(content);
-                    auto val = make_string(idx);
-                    const_string_cache_.emplace(pool_idx, val);
-                    locals[ops[0]] = val;
-                    break;
-                }
-
+                case IROpcode::ConstI64:
+                case IROpcode::ConstF64:
+                case IROpcode::ConstString:
                 case IROpcode::Local:
-                    // Issue #4588: operands[2]==1 unwraps an Error to the
-                    // cause the tree walker binds in catch. The flag is
-                    // outside Local's operand_count, so DCE does not
-                    // treat it as a slot. A plain copy leaves it 0.
-                    if (ops[2] == 1 && context_.evaluator)
-                        locals[ops[0]] = context_.evaluator->error_cause_value(locals[ops[1]]);
-                    else
-                        locals[ops[0]] = locals[ops[1]];
-                    break;
-
                 case IROpcode::Arg:
-                    // Issue #4568: user-arg lattice (captures sit below free_count).
-                    if (fb.on)
-                        feedback::note_arg(
-                            fb.row, fb.site(current, static_cast<std::uint32_t>(ii)), ops[1],
-                            fb.free_count,
-                            fb_lat(ops[1] < args.size() ? args[ops[1]] : make_void()));
-                    // Issue #4439: bind the caller value unchanged. A negative
-                    // fixnum is that integer. Define and let emit NewCell, and
-                    // next_cell_id_ starts at 1, so one cell makes
-                    // cell_heap_.size()==2. Treating make_int(-(slot+1)) as a
-                    // cell loaded locals[slot], still void, and bound logical
-                    // -1 and -2 as (). Cell captures arrive via Capture.
-                    if (ops[1] < args.size())
-                        locals[ops[0]] = args[ops[1]];
-                    else
-                        locals[ops[0]] = make_void();
+                    flow = ir_exec_const(st, func, locals, args, instr, current, ii, fb);
                     break;
 
                     // Add/Sub/Mul/Div: handled by IROpcodeClass::Arith table path (#910).
 
-                case IROpcode::Eq: {
-                    if (fb.on)
-                        feedback::note_cmp(fb.row, fb.site(current, static_cast<std::uint32_t>(ii)),
-                                           fb_lat(locals[ops[1]]), fb_lat(locals[ops[2]]));
-                    // Content-aware equality (not just raw pointer comparison).
-                    // ops[3] == 1 is numeric `=` (Issue #4463). eq?/eqv? keep
-                    // ops[3] == 0 and stay identity.
-                    auto& a = locals[ops[1]];
-                    auto& b = locals[ops[2]];
-                    auto to_val = [](const EvalValue& v) -> double {
-                        if (is_float(v))
-                            return as_float(v);
-                        if (is_int(v))
-                            return static_cast<double>(as_int(v));
-                        return 0.0;
-                    };
-                    if (ops[3] != 0) {
-                        if (!operand_is_number(a) || !operand_is_number(b)) {
-                            const auto& bad = operand_is_number(a) ? b : a;
-                            // Issue #4855: name the operation and the operand.
-                            const auto bad_index = ir_bad_operand_index(a, b);
-                            if (!store_num_mismatch(ops[0], bad, ir_num_op_name(instr.opcode),
-                                                    bad_index, &instr)) {
-                                return std::unexpected(Diagnostic{
-                                    ErrorKind::TypeError,
-                                    aura::compiler::pure::numeric_type_mismatch_detail(
-                                        bad, string_text_of(bad)) +
-                                        aura::compiler::pure::numeric_type_mismatch_op_suffix(
-                                            ir_num_op_name(instr.opcode), bad_index)});
-                            }
-                            break;
-                        }
-                        locals[ops[0]] = make_bool(to_val(a) == to_val(b));
-                        break;
-                    }
-                    // Float comparison
-                    if (is_float(a) || is_float(b)) {
-                        locals[ops[0]] = make_bool(to_val(a) == to_val(b));
-                        break;
-                    }
-                    // String comparison by content
-                    if (is_string(a) && is_string(b)) {
-                        locals[ops[0]] =
-                            make_bool(eq_str_content(a, b, context_.primitives.string_heap()));
-                        break;
-                    }
-                    // Pair/list: fall back to raw equality (no pairs_ access here)
-                    if (is_pair(a) && is_pair(b)) {
-                        locals[ops[0]] = make_bool(a == b);
-                        break;
-                    }
-                    // Default: raw EvalValue comparison
-                    locals[ops[0]] = make_bool(a == b);
-                    break;
-                }
+                case IROpcode::Eq:
                 case IROpcode::Lt:
                 case IROpcode::Gt:
                 case IROpcode::Le:
-                case IROpcode::Ge: {
-                    if (fb.on)
-                        feedback::note_cmp(fb.row, fb.site(current, static_cast<std::uint32_t>(ii)),
-                                           fb_lat(locals[ops[1]]), fb_lat(locals[ops[2]]));
-                    auto& a = locals[ops[1]];
-                    auto& b = locals[ops[2]];
-                    if (!operand_is_number(a) || !operand_is_number(b)) {
-                        const auto& bad = operand_is_number(a) ? b : a;
-                        // Issue #4855: name the operation and the operand.
-                        const auto bad_index = ir_bad_operand_index(a, b);
-                        if (!store_num_mismatch(ops[0], bad, ir_num_op_name(instr.opcode),
-                                                bad_index, &instr)) {
-                            return std::unexpected(Diagnostic{
-                                ErrorKind::TypeError,
-                                aura::compiler::pure::numeric_type_mismatch_detail(
-                                    bad, string_text_of(bad)) +
-                                    aura::compiler::pure::numeric_type_mismatch_op_suffix(
-                                        ir_num_op_name(instr.opcode), bad_index)});
-                        }
-                        break;
-                    }
-                    auto to_val = [](const EvalValue& v) -> double {
-                        return is_float(v) ? as_float(v) : static_cast<double>(as_int(v));
-                    };
-                    const double da = to_val(a);
-                    const double db = to_val(b);
-                    const bool cmp = instr.opcode == IROpcode::Lt   ? da < db
-                                     : instr.opcode == IROpcode::Gt ? da > db
-                                     : instr.opcode == IROpcode::Le ? da <= db
-                                                                    : da >= db;
-                    locals[ops[0]] = make_bool(cmp);
-                    break;
-                }
-
+                case IROpcode::Ge:
                 case IROpcode::And:
-                    // Issue #4491: Scheme and/or return an operand.
-                    locals[ops[0]] = is_truthy(locals[ops[1]]) ? locals[ops[2]] : locals[ops[1]];
-                    break;
                 case IROpcode::Or:
-                    locals[ops[0]] = is_truthy(locals[ops[1]]) ? locals[ops[1]] : locals[ops[2]];
-                    break;
                 case IROpcode::Not:
-                    locals[ops[0]] = make_bool(!is_truthy(locals[ops[1]]));
+                    flow = ir_exec_compare(st, func, locals, args, instr, current, ii, fb);
                     break;
 
-                case IROpcode::CastOp: {
-                    // Issue #4667: per-op readiness re-sample. The #3224
-                    // entry grant is entry-only: a mid-function
-                    // densify/steal invalidates it, so a CastOp that
-                    // runs after the flip is denied via the readiness
-                    // path instead of riding the entry-era grant. Same
-                    // face as the entry gate + the Move/Drop face; the
-                    // refusal bumps the existing
-                    // g_linear_fast_path_elide_blocked_production_total
-                    // (no new counter). Soft / Off: zero-cost.
-                    if (!ir_per_op_typed_entry_readiness_ok()) {
-                        if (context_.metrics)
-                            context_.metrics->linear_post_mutate_force_rollback_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                        return std::unexpected(
-                            Diagnostic{ErrorKind::TypeError, "commit-readiness-refused"});
-                    }
-                    // CastOp: result_slot=ops[0], value_slot=ops[1], type_tag=ops[2]
-                    // ops[3] = blame_loc packed (line<<16)|col (or 0)
-                    // instr.type_id = blame_node (AST NodeId for error reporting)
-                    // type_tag: 0=Int, 1=String, 2=Bool, 3=Dynamic, 4=Float
-                    // Issue #687: identity-cast fast-path. If the
-                    // narrowing pass already proved source type
-                    // matches target type, or if the source value
-                    // is already of the target type at runtime,
-                    // skip the cast entirely (Local copy). Pre-#687
-                    // the interpreter always went through the
-                    // 7-branch switch even for identity casts,
-                    // costing 4-6 cycles per no-op. Matches the JIT
-                    // fast-path at aura_jit.cpp:1435-1438.
-                    if (ops[2] == 3) {
-                        // Dynamic target (type_tag == 3 = passthrough).
-                        // The CastOp default case is just `locals[ops[0]] = val`,
-                        // so do that directly. Bumps zero-overhead_savings
-                        // counter (the runtime version of the eliminated_cast_count).
-                        locals[ops[0]] = locals[ops[1]];
-                        if (metrics_) {
-                            metrics_->dead_coercion_post_mutate_elim_hits_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                            metrics_->dead_coercion_elision_runtime_check_savings_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                        }
-                        break;
-                    }
-                    auto& val = locals[ops[1]];
-                    auto blame_loc = ops[3];
-                    auto blame_node = instr.type_id;
-                    // Issue #4608: the evaluator's string heap is the only
-                    // string store (the IR keeps no index-parallel mirror).
-                    auto& prim_heap = context_.primitives.string_heap();
-
-                    switch (ops[2]) {
-                        case 0: { // Coerce to Int
-                            if (is_int(val)) {
-                                locals[ops[0]] = val;
-                            } else if (is_string(val)) {
-                                auto idx = as_string_idx(val);
-                                if (idx < prim_heap.size()) {
-                                    try {
-                                        locals[ops[0]] = make_int_or_promote(
-                                            static_cast<std::int64_t>(std::stoll(prim_heap[idx])));
-                                    } catch (...) {
-                                        // [SILENCE-PRIM-#615] string→int
-                                        // coerce fail → 0 (#1669 class A).
-                                        locals[ops[0]] = make_int(0);
-                                    }
-                                } else {
-                                    locals[ops[0]] = make_int(0);
-                                }
-                            } else if (is_bool(val)) {
-                                locals[ops[0]] = make_int(as_bool(val) ? 1 : 0);
-                            } else if (is_float(val)) {
-                                locals[ops[0]] =
-                                    make_int_or_promote(static_cast<std::int64_t>(as_float(val)));
-                            } else {
-                                report_blame("Int", "unknown", blame_loc, blame_node);
-                                locals[ops[0]] = make_int(0);
-                            }
-                            break;
-                        }
-                        case 1: { // Coerce to String
-                            // Issue #4608: the coerced string goes into the
-                            // evaluator's string heap (the only string store),
-                            // so a dropped coercion is reclaimable and a
-                            // re-used slot never leaves a stale copy behind.
-                            if (is_string(val)) {
-                                locals[ops[0]] = val;
-                            } else if (is_int(val)) {
-                                auto s = std::to_string(as_int(val));
-                                locals[ops[0]] = make_string(prim_heap.mint(std::move(s)));
-                            } else if (is_bool(val)) {
-                                auto s = as_bool(val) ? "#t" : "#f";
-                                locals[ops[0]] = make_string(prim_heap.mint(std::move(s)));
-                            } else if (is_float(val)) {
-                                auto s = std::to_string(as_float(val));
-                                locals[ops[0]] = make_string(prim_heap.mint(std::move(s)));
-                            } else {
-                                locals[ops[0]] = val;
-                            }
-                            break;
-                        }
-                        case 2: { // Coerce to Bool
-                            locals[ops[0]] = make_bool(is_truthy(val));
-                            break;
-                        }
-                        case 4: { // Coerce to Float
-                            if (is_float(val)) {
-                                locals[ops[0]] = val;
-                            } else if (is_int(val)) {
-                                locals[ops[0]] = make_float(static_cast<double>(as_int(val)));
-                            } else if (is_string(val)) {
-                                auto idx = as_string_idx(val);
-                                if (idx < prim_heap.size()) {
-                                    try {
-                                        locals[ops[0]] = make_float(std::stod(prim_heap[idx]));
-                                    } catch (...) {
-                                        // [SILENCE-PRIM-#615] string→float
-                                        // coerce fail → 0.0 (#1669 class A).
-                                        locals[ops[0]] = make_float(0.0);
-                                    }
-                                } else {
-                                    locals[ops[0]] = make_float(0.0);
-                                }
-                            } else if (is_bool(val)) {
-                                locals[ops[0]] = make_float(as_bool(val) ? 1.0 : 0.0);
-                            } else {
-                                report_blame("Float", "unknown", 0, blame_node);
-                                locals[ops[0]] = make_float(0.0);
-                            }
-                            break;
-                        }
-                        default: // Dynamic / unknown: pass through
-                            locals[ops[0]] = val;
-                            break;
-                    }
+                case IROpcode::CastOp:
+                    flow = ir_exec_cast(st, func, locals, args, instr, current, ii, fb);
                     break;
-                }
 
                 case IROpcode::Branch:
-                    // Issue #4493: an error value in a test position (e.g.
-                    // (< i #f)) is not "true": the error propagates as the
-                    // function's result instead of running the consequent.
-                    if (is_error(locals[ops[0]]))
-                        return locals[ops[0]];
-                    {
-                        const bool taken = is_truthy(locals[ops[0]]);
-                        if (fb.on) {
-                            feedback::note_branch(
-                                fb.row, fb.site(current, static_cast<std::uint32_t>(ii)), taken);
-                            const auto dest = taken ? ops[1] : ops[2];
-                            if (dest <= current)
-                                feedback::note_back(fb);
-                        }
-                        current = taken ? ops[1] : ops[2];
-                    }
-                    goto next_block;
-
-                // Issue #61 Iter 3: lazy-deopt guard. Compares the
-                // runtime shape of ops[1] against the expected
-                // shape (ops[2]). Writes 1 to ops[0] on match, 0 on
-                // mismatch. The branch instruction that follows the
-                // guard in the IR takes the mismatch to ops[3] (the
-                // generic-trampoline block).
-                case IROpcode::GuardShape: {
-                    if (context_.evaluator)
-                        (void)context_.evaluator->current_bridge_epoch();
-                    if (instr.linear_ownership_state != 0)
-                        record_linear_jit_safety(metrics_, IROpcode::GuardShape);
-                    // Issue #684: deopt when SoA instruction_dirty_ says stale.
-                    if (context_.is_instruction_dirty_fn &&
-                        (instr.linear_ownership_state != 0 || instr.narrow_evidence != 0) &&
-                        context_.is_instruction_dirty_fn(current, ii)) {
-                        record_linear_runtime_safety(metrics_, true);
-                        if (metrics_) {
-                            metrics_->deopt_count.fetch_add(1, std::memory_order_relaxed);
-                            metrics_->irsoa_cache_miss_reduction.fetch_add(
-                                1, std::memory_order_relaxed);
-                        }
-                        locals[ops[0]] = types::make_bool(false);
-                        break;
-                    }
-                    auto& val = locals[ops[1]];
-                    auto expected = static_cast<std::uint32_t>(ops[2]);
-                    // Issue #149 Phase 4: when occurrence-narrowing
-                    // has produced the branch's type statically
-                    // (narrow_evidence != 0 on the GuardShape
-                    // instruction), trust the narrowed type over
-                    // the runtime shape check. This is the hit-
-                    // rate improvement the issue calls for: a
-                    // narrowed value like (number? x) → Int
-                    // skips the generic shape check (which would
-                    // say "Dynamic" and deopt) and accepts the
-                    // specialized path. The check is conservative
-                    // (only enabled when narrow_evidence is set,
-                    // which today is 0 at every instruction), so
-                    // no behavior change until lowering starts
-                    // populating narrow_evidence from real type
-                    // info (Phase 2 follow-up).
-                    if (instr.narrow_evidence != 0) {
-                        // Narrowed: trust the inferred type
-                        // implicitly. (The current interpreter
-                        // doesn't track the narrowed type per-
-                        // instruction; a follow-up adds a parallel
-                        // type-table. For now, we just skip the
-                        // shape check, accepting all narrowed
-                        // values — equivalent to saying "the JIT
-                        // can fast-path this".)
-                        if (metrics_) {
-                            metrics_->coercion_narrow_evidence_hits_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                        }
-                        locals[ops[0]] = types::make_bool(true);
-                        break;
-                    }
-                    auto actual = runtime_shape_of(val);
-                    // Issue #638: enforce linear_ownership_state on
-                    // GuardShape when post-mutate shape may be stale.
-                    if (instr.linear_ownership_state != 0) {
-                        record_linear_runtime_safety(metrics_, actual != expected);
-                    }
-                    if (actual != expected) {
-                        // Issue #62 Iter 1: increment the global
-                        // deopt counter so --evo-explain can report it.
-                        // Thread-safe via the atomic on the metrics
-                        // struct.
-                        if (metrics_) {
-                            metrics_->deopt_count.fetch_add(1, std::memory_order_relaxed);
-                        }
-                        // Issue #744: GuardShape mismatch → speculative win lost.
-                        aura::compiler::shape_jit_pass::record_speculative_win_lost();
-                        // Issue #62 Iter 2: structured JSON log.
-                        // Gated by AURA_OBS_LOG=1 (independent of the
-                        // human-readable kDeoptTrace form).
-                        const char* fn_name = "?";
-                        if (module_.functions.size() > 0 && func.id < module_.functions.size())
-                            fn_name = module_.functions[func.id].name.c_str();
-                        log_event_deopt(fn_name, expected, static_cast<std::uint32_t>(actual),
-                                        ops[3]);
-                        if (kDeoptTrace) {
-                            // Human-readable form (legacy)
-                            std::fprintf(stderr,
-                                         "[deopt] %s: shape mismatch (expected=%u actual=%u) "
-                                         "→ deopt to generic block %u\n",
-                                         fn_name, expected, actual, ops[3]);
-                        }
-                    }
-                    locals[ops[0]] =
-                        (actual == expected) ? types::make_bool(true) : types::make_bool(false);
-                    break;
-                }
-
+                case IROpcode::GuardShape:
                 case IROpcode::Jump:
-                    if (fb.on && ops[0] <= current)
-                        feedback::note_back(fb);
-                    current = ops[0];
-                    goto next_block;
-
-                case IROpcode::MakePair: {
-                    // Allocate pair via evaluator's cons (stores in pairs_ for
-                    // format_value/display to find), then also register in
-                    // g_pair_slots for arena/heap access by JIT runtime.
-                    auto pfn = context_.primitives.lookup("cons");
-                    if (pfn) {
-                        locals[ops[0]] = (*pfn)({locals[ops[1]], locals[ops[2]]});
-                        // Also push to shared g_pair_slots so JIT runtime + car/cdr
-                        // fallback find this pair. Use arena alloc when non-escaping.
-                        int64_t idx = static_cast<int64_t>(types::as_pair_idx(locals[ops[0]]));
-                        bool use_arena = false;
-                        if (g_use_arena && func.id < escape_maps_.size() &&
-                            ops[0] < escape_maps_[func.id].size()) {
-                            use_arena = (escape_maps_[func.id][ops[0]] == 0);
-                        }
-                        // Only push to g_pair_slots if this is a new pair ID
-                        // (cons already created it in pairs_). Ensure g_pair_slots
-                        // has enough space.
-                        while (idx >= static_cast<int64_t>(g_pair_slots.size()))
-                            g_pair_slots.push_back(nullptr);
-                        if (!g_pair_slots[idx]) {
-                            if (use_arena) {
-                                auto* slot = (PairSlot*)tl_arena_alloc(
-                                    &g_tl_arena, sizeof(PairSlot), alignof(PairSlot));
-                                slot->car = locals[ops[1]].val;
-                                slot->cdr = locals[ops[2]].val;
-                                g_pair_slots.store(static_cast<std::size_t>(idx), slot);
-                            } else {
-                                auto* slot =
-                                    static_cast<PairSlot*>(::aura::core::c_alloc(sizeof(PairSlot)));
-                                slot->car = locals[ops[1]].val;
-                                slot->cdr = locals[ops[2]].val;
-                                g_pair_slots.store(static_cast<std::size_t>(idx), slot);
-                                // Track heap allocation for process-exit
-                                // cleanup (see g_owned_pair_slots_ in
-                                // aura_jit_runtime.cpp). Without this,
-                                // ASAN reports the slots as direct leaks
-                                // at process exit since the static
-                                // g_pair_slots vector only stores raw
-                                // pointers, not ownership.
-                                // Issue #1998 / B-024: gate push under
-                                // workspace write lock. The static
-                                // PairSlotCleanup destructor at
-                                // aura_jit_runtime.cpp:425 iterates this
-                                // vector; concurrent push_back can
-                                // reallocate the backing storage and
-                                // invalidate the iterator (UAF), or the
-                                // push can land AFTER the destructor
-                                // copied its iteration state (lost slot
-                                // -> host accounting leak). Same lock
-                                // pattern as aura_make_pair at line 1330+.
-                                aura_lock_workspace_write();
-                                {
-                                    // Issue #4755: the workspace hook is
-                                    // NOT a process-wide exclusion (it
-                                    // binds one Evaluator, and a write
-                                    // acquisition adopts a shared hold), so
-                                    // two fiber bodies could realloc this
-                                    // process-global vector at once. The
-                                    // registry owns its own mutex.
-                                    std::scoped_lock<std::mutex> owned_pairs(
-                                        g_owned_pair_slots_mtx);
-                                    g_owned_pair_slots_.push_back(slot);
-                                }
-                                aura_unlock_workspace_write();
-                            }
-                        }
-                    } else {
-                        locals[ops[0]] = make_void();
-                    }
+                    flow = ir_exec_control(st, func, locals, args, instr, current, ii, fb);
                     break;
-                }
-                case IROpcode::Car: {
-                    if (fb.on)
-                        feedback::note_recv(
-                            fb.row, fb.site(current, static_cast<std::uint32_t>(ii)),
-                            feedback::kKindCar,
-                            is_pair(locals[ops[1]]) ? feedback::kRecvPair : feedback::kRecvOther);
-                    auto pfn = context_.primitives.lookup("car");
-                    if (pfn) {
-                        locals[ops[0]] = (*pfn)({locals[ops[1]]});
-                        ir_note_producer_4909(&instr, context_.evaluator, &module_, &func,
-                                              locals[ops[0]]);
-                    } else
-                        locals[ops[0]] = make_void();
+
+                case IROpcode::MakePair:
+                case IROpcode::Car:
+                case IROpcode::Cdr:
+                case IROpcode::Raise:
+                case IROpcode::TryBegin:
+                case IROpcode::TryEnd:
+                case IROpcode::HashRef:
+                case IROpcode::HashSet:
+                case IROpcode::HashRemove:
+                case IROpcode::IsError:
+                    flow = ir_exec_data(st, func, locals, args, instr, current, ii, fb);
                     break;
-                }
-                case IROpcode::Cdr: {
-                    if (fb.on)
-                        feedback::note_recv(
-                            fb.row, fb.site(current, static_cast<std::uint32_t>(ii)),
-                            feedback::kKindCdr,
-                            is_pair(locals[ops[1]]) ? feedback::kRecvPair : feedback::kRecvOther);
-                    auto pfn = context_.primitives.lookup("cdr");
-                    if (pfn) {
-                        locals[ops[0]] = (*pfn)({locals[ops[1]]});
-                        ir_note_producer_4909(&instr, context_.evaluator, &module_, &func,
-                                              locals[ops[0]]);
-                    } else
-                        locals[ops[0]] = make_void();
+
+                case IROpcode::PrimCall:
+                case IROpcode::Call:
+                    flow = ir_exec_call(st, func, locals, args, instr, current, ii, fb);
                     break;
-                }
 
-                case IROpcode::Raise: {
-                    // Issue #124: unwinds to the nearest TryBegin. If
-                    // none is active, propagates the error up to
-                    // the runtime (caller will see it as an EvalResult
-                    // error).
-                    // Issue #1516: interpreter EH path participates in
-                    // exception coverage observability (parity with JIT).
-                    if (metrics_)
-                        metrics_->interpreter_exception_ops_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                    if (ex_stack_.empty()) {
-                        return std::unexpected(
-                            Diagnostic{ErrorKind::UncaughtException, "uncaught exception"});
-                    }
-                    auto& top = ex_stack_.back();
-                    // Store the cause in the handler's payload slot,
-                    // then jump to the handler block.
-                    auto cause_slot = (ops.size() > 1) ? ops[1] : 0;
-                    locals[top.payload_slot] =
-                        (cause_slot < locals.size()) ? locals[cause_slot] : make_void();
-                    // The "result" slot will be filled in by the
-                    // handler's own IsError/Local ops. We just set
-                    // current (the local var in run_function's loop)
-                    // to the handler.
-                    current = top.handler_block;
-                    continue; // restart the dispatch loop in the new block
-                }
-
-                case IROpcode::TryBegin: {
-                    // ops[0] = handler_block
-                    // ops[1] = result_slot (where to store caught value)
-                    // ops[2] = payload_slot (temp slot for the cause)
-                    // Issue #1516: interpreter EH coverage metric.
-                    if (metrics_)
-                        metrics_->interpreter_exception_ops_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                    ExHandler h;
-                    h.handler_block = (ops.size() > 0) ? ops[0] : 0;
-                    h.result_slot = (ops.size() > 1) ? ops[1] : 0;
-                    h.payload_slot = (ops.size() > 2) ? ops[2] : 0;
-                    ex_stack_.push_back(h);
+                case IROpcode::Return:
+                case IROpcode::MakeClosure:
+                case IROpcode::Capture:
+                case IROpcode::CaptureRef:
+                    flow = ir_exec_closure(st, func, locals, args, instr, current, ii, fb);
                     break;
-                }
 
-                case IROpcode::TryEnd: {
-                    // Pop the matching TryBegin (if any). The TryEnd
-                    // marks the end of the try body; control flow after
-                    // TryEnd is the "normal" path (i.e., no exception).
-                    // Issue #1516: interpreter EH coverage metric.
-                    if (metrics_)
-                        metrics_->interpreter_exception_ops_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                    if (!ex_stack_.empty()) {
-                        ex_stack_.pop_back();
-                    }
-                    // ops[0] is the result slot (we copy through whatever
-                    // is in the matching slot if any, but for now this
-                    // is mostly a no-op since the try body's result was
-                    // already in a separate slot).
+                case IROpcode::Apply:
+                    flow = ir_exec_apply(st, func, locals, args, instr, current, ii, fb);
                     break;
-                }
-                    // Create an error value by calling the raise primitive
-                case IROpcode::HashRef: {
-                    if (fb.on)
-                        feedback::note_recv(fb.row,
-                                            fb.site(current, static_cast<std::uint32_t>(ii)),
-                                            feedback::kKindHash, feedback::kRecvHash);
-                    auto pfn = context_.primitives.lookup("hash-ref");
-                    if (pfn) {
-                        auto& hash_val = locals[ops[1]];
-                        auto& key_val = locals[ops[2]];
-                        // Read: telemetry when an owner is wired (req=0, no
-                        // Mutate). Soft/unwired keeps the raw pfn.
-                        if (context_.evaluator) {
-                            locals[ops[0]] = context_.evaluator->invoke_prim_with_telemetry(
-                                "hash-ref", [&]() { return (*pfn)({hash_val, key_val}); });
-                            ir_note_producer_4909(&instr, context_.evaluator, &module_, &func,
-                                                  locals[ops[0]]);
-                        } else {
-                            locals[ops[0]] = (*pfn)({hash_val, key_val});
-                        }
-                    } else {
-                        locals[ops[0]] = make_void();
-                    }
-                    break;
-                }
-                case IROpcode::HashSet: {
-                    // Issue #3720: HashSet was a raw (*pfn) dual-track that
-                    // skipped invoke_prim_with_telemetry / require_effect.
-                    // Writes go through the same choke as PrimCall. Production
-                    // + no owner: no silent heap write (fail-closed). Soft
-                    // unwired keeps the historical raw pfn.
-                    auto pfn = context_.primitives.lookup("hash-set!");
-                    EvalValue out = make_void();
-                    if (pfn) {
-                        auto& hash_val = locals[ops[1]];
-                        auto& pair_val = locals[ops[2]];
-                        auto cfn = context_.primitives.lookup("car");
-                        auto dfn = context_.primitives.lookup("cdr");
-                        if (cfn && dfn) {
-                            auto key = (*cfn)({pair_val});
-                            auto val = (*dfn)({pair_val});
-                            if (context_.evaluator) {
-                                out = context_.evaluator->invoke_prim_with_telemetry(
-                                    "hash-set!", [&]() { return (*pfn)({hash_val, key, val}); });
-                            } else if (!aura::compiler::typed_audit::production_defaults_active()) {
-                                (*pfn)({hash_val, key, val});
-                            }
-                        }
-                    }
-                    if (auto deny = effect_deny_diagnostic_4896_(out)) // #4896
-                    {
-                        if (!deny->location.valid()) // Issue #4909
-                            deny->location = ir_call_arity_loc(&instr, context_.evaluator);
-                        return std::unexpected(std::move(*deny));
-                    }
-                    locals[ops[0]] = out;
-                    break;
-                }
-                case IROpcode::HashRemove: {
-                    auto pfn = context_.primitives.lookup("hash-remove!");
-                    if (pfn) {
-                        auto& hash_val = locals[ops[1]];
-                        auto& key_val = locals[ops[2]];
-                        if (context_.evaluator) {
-                            locals[ops[0]] = context_.evaluator->invoke_prim_with_telemetry(
-                                "hash-remove!", [&]() { return (*pfn)({hash_val, key_val}); });
-                        } else if (aura::compiler::typed_audit::production_defaults_active()) {
-                            locals[ops[0]] = make_void();
-                        } else {
-                            locals[ops[0]] = (*pfn)({hash_val, key_val});
-                        }
-                    } else {
-                        locals[ops[0]] = make_void();
-                    }
-                    break;
-                }
-
-                case IROpcode::IsError: {
-                    // IsError: result_slot=ops[0], value_slot=ops[1]
-                    // Issue #1516: interpreter EH coverage (parity with JIT).
-                    if (metrics_)
-                        metrics_->interpreter_exception_ops_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                    locals[ops[0]] = make_bool(is_error(locals[ops[1]]));
-                    break;
-                }
-
-                case IROpcode::PrimCall: {
-                    // ops[0]=prim_id, ops[1]=arg_base, ops[2]=arg_count, ops[3]=result_slot
-                    // Issue #891: no std::string temp; stack args for small arity;
-                    // lookup_cstr avoids unordered_map key construction.
-                    // Issue #1676: route through invoke_prim_with_telemetry so
-                    // render-critical IR prims get the trusted fast path (and
-                    // metrics) — tree-walker and IR share the same dispatch tax.
-                    // Issue #3798: PrimCall was a raw (*pfn) dual-track that
-                    // skipped production fail-closed when ownerless — HashSet
-                    // / HashRemove (#3720) residual. Production + no owner:
-                    // no silent mutate-class / FFI side effects (fail-closed).
-                    // Soft/unwired keeps the historical raw pfn.
-                    auto prim_id = static_cast<PrimId>(ops[0]);
-                    auto arg_base = ops[1];
-                    auto arg_count = ops[2];
-                    auto result_slot = ops[3];
-                    EvalValue stack_args[16];
-                    std::vector<EvalValue> heap_args;
-                    std::span<const EvalValue> pargs;
-                    if (arg_count <= 16) {
-                        for (std::uint32_t pi = 0; pi < arg_count; ++pi)
-                            stack_args[pi] = locals[arg_base + pi];
-                        pargs = std::span<const EvalValue>(stack_args, arg_count);
-                    } else {
-                        heap_args.reserve(arg_count);
-                        for (std::uint32_t pi = 0; pi < arg_count; ++pi)
-                            heap_args.push_back(locals[arg_base + pi]);
-                        pargs = heap_args;
-                    }
-                    EvalResult presult = make_int(0);
-                    auto idx = static_cast<std::size_t>(prim_id);
-                    if (idx < std::size(kPrimNames)) {
-                        const auto pname = kPrimNames[idx];
-                        auto pfn = context_.primitives.lookup_cstr(pname);
-                        if (pfn) {
-                            if (context_.evaluator) {
-                                presult = context_.evaluator->invoke_prim_with_telemetry(
-                                    pname, [&]() { return (*pfn)(pargs); });
-                            } else if (aura::compiler::typed_audit::production_defaults_active()) {
-                                // #3798 / #3720: production + null owner — void,
-                                // zero side effects (mirror HashRemove arm).
-                                presult = make_void();
-                            } else {
-                                // Soft/Off ownerless: historical raw pfn.
-                                presult = (*pfn)(pargs);
-                            }
-                        }
-                    }
-                    if (presult) {
-                        // Issue #4896: a Restricted dispatch deny comes back as
-                        // an error value. In statement position (top-level
-                        // `(set-car! q 5)` on the force-soa face) the local was
-                        // discarded: the write was dropped, no diagnostic, rc=0.
-                        // The tree-walker raises it; do the same when no IR
-                        // handler is open in this frame.
-                        if (auto deny = effect_deny_diagnostic_4896_(*presult)) {
-                            if (!deny->location.valid()) // Issue #4909
-                                deny->location = ir_call_arity_loc(&instr, context_.evaluator);
-                            return std::unexpected(std::move(*deny));
-                        }
-                        ir_note_producer_4909(&instr, context_.evaluator, &module_, &func,
-                                              *presult); // #4909
-                        locals[result_slot] = *presult;
-                    }
-                    break;
-                }
-
-                case IROpcode::Call: {
-                    // Issue #252: IR path closure dispatch counter.
-                    // The IR has its own runtime_closures_ map
-                    // (not the tree-walker's closures_), so this
-                    // is a separate counter from apply_closure's.
-                    // Bump the IR-specific counter on the shared
-                    // CompilerMetrics (so snapshot() can sum them).
-                    if (context_.metrics) {
-                        context_.metrics->closure_ir_calls.fetch_add(1, std::memory_order_relaxed);
-                        context_.metrics->closure_calls_total.fetch_add(1,
-                                                                        std::memory_order_relaxed);
-                    }
-                    auto& callee_val = locals[ops[0]];
-                    auto arg_base = ops[1];
-                    auto arg_count = ops[2];
-
-                    std::vector<EvalValue> call_args;
-                    for (std::uint32_t i = 0; i < arg_count; ++i)
-                        call_args.push_back(locals[arg_base + i]);
-
-                    if (is_closure(callee_val)) {
-                        auto closure_id = as_closure_id(callee_val);
-                        auto it = runtime_closures_.find(closure_id);
-                        if (it == runtime_closures_.end()) {
-                            // Tree-walker closure passed into IR (e.g. lambda arg
-                            // to a cached define). Delegate to evaluator bridge.
-                            if (context_.evaluator) {
-                                if (auto tw =
-                                        context_.evaluator->apply_closure(closure_id, call_args)) {
-                                    // Issue #4624: a diagnostic the closure body
-                                    // RAISED comes back as an error value; the IR
-                                    // face fails loudly with the diagnostic
-                                    // instead of storing the error in a local.
-                                    if (types::is_error(*tw)) {
-                                        if (auto diag =
-                                                context_.evaluator->take_raised_diagnostic())
-                                            return std::unexpected(std::move(*diag));
-                                    }
-                                    locals[ops[3]] = *tw;
-                                } else
-                                    return std::unexpected(Diagnostic{ErrorKind::InvalidClosure,
-                                                                      "invalid closure reference"});
-                                break;
-                            }
-                            return std::unexpected(
-                                Diagnostic{ErrorKind::InvalidClosure, "invalid closure reference"}
-                                    .with_suggestion("the function was redefined (--hot-swap)"));
-                        }
-
-                        auto& closure = it->second;
-                        // Issue #681 / #1513: dual-check bridge_epoch + EnvFrame.
-                        if (context_.evaluator &&
-                            ir_closure_needs_safe_fallback(closure, context_.evaluator,
-                                                           context_.metrics)) {
-                            // Issue #4349: private callee stays a direct call.
-                            if (closure.func_id < module_.functions.size()) {
-                                restamp_ir_call_closure_4349(closure, context_.evaluator,
-                                                             context_.metrics);
-                            } else {
-                                if (auto tw =
-                                        context_.evaluator->apply_closure(closure_id, call_args)) {
-                                    // Issue #4624: a diagnostic the closure body
-                                    // RAISED comes back as an error value; the IR
-                                    // face fails loudly with the diagnostic
-                                    // instead of storing the error in a local.
-                                    if (types::is_error(*tw)) {
-                                        if (auto diag =
-                                                context_.evaluator->take_raised_diagnostic())
-                                            return std::unexpected(std::move(*diag));
-                                    }
-                                    locals[ops[3]] = *tw;
-                                } else
-                                    return std::unexpected(
-                                        Diagnostic{ErrorKind::InvalidClosure,
-                                                   "stale IR closure after mutation"});
-                                break;
-                            }
-                        }
-                        if (closure.func_id >= module_.functions.size())
-                            return std::unexpected(
-                                Diagnostic{ErrorKind::IRCorruption, "invalid closure function id"}
-                                    .with_suggestion("internal error: IR module corrupted"));
-
-                        auto& callee_func = module_.functions[closure.func_id];
-                        // Issue #4467: compare the call's user arguments to
-                        // arg_count. Do not subtract the capture prefix.
-                        if (auto arity = ir_user_arity_diag(&instr, callee_func, call_args.size(),
-                                                            context_.evaluator))
-                            return std::unexpected(std::move(*arity));
-
-                        std::vector<EvalValue> all_args;
-                        for (auto& ev : closure.env)
-                            all_args.push_back(ev);
-                        for (auto& a : call_args)
-                            all_args.push_back(a);
-
-                        // Issue #2292: stamp call-site block + next instr so
-                        // run_function resumes after the Call (not at entry).
-                        // Issue #4459: a tail call replaces the frame in drain
-                        // and never resumes here. Open try handlers block it.
-                        bool tail = false;
-                        if (!call_stack_.empty() &&
-                            ex_stack_.size() == call_stack_.back().ex_depth_at_entry)
-                            tail = ir_call_is_tail(func, current, ii, ops[3]);
-                        if (!call_stack_.empty()) {
-                            call_stack_.back().current_block = current;
-                            call_stack_.back().resume_instr =
-                                static_cast<std::size_t>(&instr - &block.instructions[0] + 1);
-                        }
-                        feedback::note_call(fb.row, fb.site(current, ii), closure.func_id);
-                        return PendingCall{&callee_func, std::move(all_args), ops[3], tail};
-                    } else if (is_primitive(callee_val)) {
-                        // Primitive function call — look up and invoke.
-                        // Issue #1676: share invoke_prim_with_telemetry with the
-                        // tree-walker so render-critical get trusted fast path.
-                        // Issue #3834: Call primitive arm was a raw (*pfn) dual-track
-                        // that skipped production fail-closed when ownerless —
-                        // PrimCall (#3798) / HashRemove (#3720) residual. Production
-                        // + no owner: no silent mutate-class / FFI side effects.
-                        // Soft/unwired keeps the historical raw pfn.
-                        auto slot = as_primitive_slot(callee_val);
-                        auto prim_name = context_.primitives.name_for_slot(slot);
-                        auto pfn = context_.primitives.lookup(prim_name);
-                        if (pfn) {
-                            if (context_.evaluator) {
-                                locals[ops[3]] = context_.evaluator->invoke_prim_with_telemetry(
-                                    prim_name, [&]() { return (*pfn)(call_args); });
-                                // Issue #4896: same deny raise as the PrimCall arm.
-                                if (auto deny = effect_deny_diagnostic_4896_(locals[ops[3]])) {
-                                    if (!deny->location.valid()) // Issue #4909
-                                        deny->location =
-                                            ir_call_arity_loc(&instr, context_.evaluator);
-                                    return std::unexpected(std::move(*deny));
-                                }
-                                ir_note_producer_4909(&instr, context_.evaluator, &module_, &func,
-                                                      locals[ops[3]]); // #4909
-                            } else if (aura::compiler::typed_audit::production_defaults_active()) {
-                                // #3834 / #3798: production + null owner — void,
-                                // zero side effects (mirror PrimCall arm).
-                                locals[ops[3]] = make_void();
-                            } else {
-                                // Soft/Off ownerless: historical raw pfn.
-                                locals[ops[3]] = (*pfn)(call_args);
-                            }
-                        } else {
-                            locals[ops[3]] = callee_val;
-                        }
-                    } else {
-                        // Issue #4478: raise instead of the silent self-result.
-                        return std::unexpected(
-                            ir_cannot_call_diag(&instr, callee_val, context_.evaluator));
-                    }
-                    break;
-                }
-
-                case IROpcode::Return: {
-                    // Issue #4899: a statement-position error value that
-                    // escapes the entry function is turned into a located
-                    // diagnostic by the service. Record the source node of
-                    // the statement the escape belongs to (lowering stamps
-                    // it on this Return) so the diagnostic points there.
-                    const auto& ret_val = locals[ops[0]];
-                    if (is_error(ret_val) && !types::is_string(ret_val) &&
-                        context_.evaluator != nullptr && instr.source_ast_node_id != 0) {
-                        if (auto* rflat = context_.evaluator->current_flat(); rflat != nullptr) {
-                            const auto nid =
-                                static_cast<aura::ast::NodeId>(instr.source_ast_node_id);
-                            if (nid < rflat->size()) {
-                                const auto nv = rflat->get(nid);
-                                context_.evaluator->note_error_location(
-                                    ret_val,
-                                    aura::diag::SourceLocation{
-                                        nv.line == 0 ? 1u : nv.line, nv.col == 0 ? 1u : nv.col,
-                                        aura::diag::source_file_for_flat(rflat)}); // #4916
-                                // Issue #4899 follow-up: which top-level
-                                // statement escaped the entry, so main
-                                // resumes after it (a location inside an
-                                // earlier define body must not re-run forms).
-                                if (func.name == "__top__")
-                                    context_.evaluator->note_ir_entry_escape_stmt(
-                                        rflat, instr.source_ast_node_id);
-                            }
-                        }
-                    }
-                    return ret_val;
-                }
-
-                case IROpcode::MakeClosure: {
-                    // Issue #4357: reuse an empty-env closure of this function.
-                    // Capturing MakeClosure (ops[2] > 0) still allocates.
-                    if (ops[2] == 0) {
-                        auto reused = empty_env_closure_by_func_.find(ops[1]);
-                        if (reused != empty_env_closure_by_func_.end()) {
-                            locals[ops[0]] = make_closure(reused->second);
-                            break;
-                        }
-                    }
-                    auto id = mint_closure_id_4764(); // #4764 shared cursor
-                    IRClosure ircl;
-                    ircl.func_id = ops[1];
-                    ircl.env = std::vector<EvalValue>(ops[2], make_void());
-                    // Copy bridge data from IRModule if available.
-                    // Issue #224 Cycle 2: shared_ptr-based bridge.
-                    // The copy bumps the refcount, so the closure
-                    // independently keeps the FlatAST alive.
-                    if (ops[1] < module_.closure_bridge.size()) {
-                        auto& bd = module_.closure_bridge[ops[1]];
-                        ircl.flat = bd.flat;
-                        ircl.pool = bd.pool;
-                        ircl.body_id = bd.body_id;
-                        // Issue #223: capture the bridge's epoch so the
-                        // IRClosure lifetime check can detect stale bridges.
-                        ircl.bridge_epoch = bd.bridge_epoch;
-                        // Issue #1616: SyntaxMarker + provenance from bridge.
-                        ircl.source_marker = bd.source_marker;
-                        ircl.provenance = bd.provenance;
-                        if (ops[1] < module_.functions.size())
-                            ircl.params = module_.functions[ops[1]].params;
-                    }
-                    // Prefer IRFunction.marker when bridge left marker unset.
-                    if (ops[1] < module_.functions.size()) {
-                        if (ircl.source_marker == 0)
-                            ircl.source_marker = module_.functions[ops[1]].marker;
-                        // Also stamp from MakeClosure instruction metadata.
-                        if (instr.source_marker != 0)
-                            ircl.source_marker = instr.source_marker;
-                        if (instr.provenance != 0)
-                            ircl.provenance = instr.provenance;
-                    }
-                    if (context_.metrics && ircl.source_marker == 1) {
-                        context_.metrics->ir_provenance_stamped_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                        context_.metrics->ir_closure_macro_stamped_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                    }
-                    // Issue #1513: stamp EnvFrame provenance for dual-check.
-                    // env_version captures current defuse_version_ so mutate
-                    // / compact that bumps defuse invalidates long-lived
-                    // IRClosures even when bridge_epoch was restamped.
-                    if (context_.evaluator) {
-                        ircl.env_version = context_.evaluator->defuse_version();
-                        // Prefer current bridge epoch when bridge table
-                        // did not stamp one (legacy empty bridge slot).
-                        if (ircl.bridge_epoch == 0)
-                            ircl.bridge_epoch = context_.evaluator->current_bridge_epoch();
-                        // Issue #2129: stamp linear_state from MakeClosure
-                        // instruction metadata, else host fingerprint.
-                        std::uint8_t lin =
-                            static_cast<std::uint8_t>(instr.linear_ownership_state & 0xFFu);
-                        if (lin == 0)
-                            lin = aura_get_aot_live_linear_state_fingerprint();
-                        ircl.linear_state = lin;
-                        if (lin != 0 && context_.metrics)
-                            context_.metrics->linear_closure_state_stamp_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                    }
-                    runtime_closures_[id] = std::move(ircl);
-                    // Issue #4450: register call-time mints for the service's
-                    // runtime-mint dispatch fallback (see owns_runtime_mint).
-                    if (in_runtime_call_)
-                        runtime_minted_ids_.insert(id);
-                    if (ops[2] == 0)
-                        empty_env_closure_by_func_[ops[1]] = id;
-                    else
-                        note_reclaim_alloc(); // #4459: capturing closure, not #4357 reuse
-                    locals[ops[0]] = make_closure(id);
-                    break;
-                }
-
-                case IROpcode::Capture: {
-                    if (instr.linear_ownership_state != 0)
-                        record_linear_jit_safety(metrics_, IROpcode::Capture);
-                    auto& closure_val = locals[ops[0]];
-                    if (is_closure(closure_val)) {
-                        auto closure_id = as_closure_id(closure_val);
-                        auto it = runtime_closures_.find(closure_id);
-                        if (it != runtime_closures_.end() && ops[1] < it->second.env.size())
-                            it->second.env[ops[1]] = locals[ops[2]];
-                    }
-                    break;
-                }
-
-                case IROpcode::CaptureRef: {
-                    if (instr.linear_ownership_state != 0)
-                        record_linear_jit_safety(metrics_, IROpcode::CaptureRef);
-                    auto& closure_val = locals[ops[0]];
-                    if (is_closure(closure_val)) {
-                        auto closure_id = as_closure_id(closure_val);
-                        auto it = runtime_closures_.find(closure_id);
-                        if (it != runtime_closures_.end() && ops[1] < it->second.env.size())
-                            // Store negative offset to indicate cell reference
-                            it->second.env[ops[1]] =
-                                make_int(-1 - static_cast<std::int64_t>(ops[2]));
-                    }
-                    break;
-                }
-
-                case IROpcode::Apply: {
-                    // Issue #4667: per-op readiness re-sample. The #3224
-                    // entry grant is entry-only: a mid-function
-                    // densify/steal invalidates it, so an Apply that
-                    // runs after the flip is denied via the readiness
-                    // path instead of riding the entry-era grant. Same
-                    // face as the entry gate + the Move/Drop face; the
-                    // refusal bumps the existing
-                    // g_linear_fast_path_elide_blocked_production_total
-                    // (no new counter). Soft / Off: zero-cost.
-                    if (!ir_per_op_typed_entry_readiness_ok()) {
-                        if (context_.metrics)
-                            context_.metrics->linear_post_mutate_force_rollback_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                        return std::unexpected(
-                            Diagnostic{ErrorKind::TypeError, "commit-readiness-refused"});
-                    }
-                    // Issue #252: IR path closure dispatch counter
-                    // (same as IROpcode::Call above)
-                    if (context_.metrics) {
-                        context_.metrics->closure_ir_calls.fetch_add(1, std::memory_order_relaxed);
-                        context_.metrics->closure_calls_total.fetch_add(1,
-                                                                        std::memory_order_relaxed);
-                    }
-                    auto& closure_val = locals[ops[0]];
-                    auto arg_count = ops[1];
-                    std::vector<EvalValue> apply_args;
-                    for (std::uint32_t i = 0; i < arg_count; ++i)
-                        apply_args.push_back(locals[ops[0] + i + 1]);
-
-                    if (is_closure(closure_val)) {
-                        auto closure_id = as_closure_id(closure_val);
-                        auto it = runtime_closures_.find(closure_id);
-                        if (it == runtime_closures_.end()) {
-                            if (context_.evaluator) {
-                                if (auto tw =
-                                        context_.evaluator->apply_closure(closure_id, apply_args)) {
-                                    // Issue #4624: a diagnostic the closure body
-                                    // RAISED comes back as an error value; the IR
-                                    // face fails loudly with the diagnostic
-                                    // instead of storing the error in a local.
-                                    if (types::is_error(*tw)) {
-                                        if (auto diag =
-                                                context_.evaluator->take_raised_diagnostic())
-                                            return std::unexpected(std::move(*diag));
-                                    }
-                                    locals[ops[2]] = *tw;
-                                } else if (auto arity =
-                                               take_ir_apply_arity(&instr, context_.evaluator))
-                                    return std::unexpected(std::move(*arity));
-                                else
-                                    return std::unexpected(Diagnostic{ErrorKind::InvalidClosure,
-                                                                      "invalid closure in apply"});
-                                break;
-                            }
-                            return std::unexpected(
-                                Diagnostic{ErrorKind::InvalidClosure, "invalid closure in apply"}
-                                    .with_suggestion("the function was redefined (--hot-swap)"));
-                        }
-
-                        auto& closure = it->second;
-                        if (closure.func_id >= module_.functions.size())
-                            return std::unexpected(
-                                Diagnostic{ErrorKind::IRCorruption, "invalid function id in apply"}
-                                    .with_suggestion("internal error: IR module corrupted"));
-
-                        auto& callee_func = module_.functions[closure.func_id];
-                        // Issue #4467: same user-arity gate as IROpcode::Call.
-                        if (auto arity = ir_user_arity_diag(&instr, callee_func, apply_args.size(),
-                                                            context_.evaluator))
-                            return std::unexpected(std::move(*arity));
-                        std::vector<EvalValue> all_args;
-                        for (auto& ev : closure.env)
-                            all_args.push_back(ev);
-                        for (auto& a : apply_args)
-                            all_args.push_back(a);
-
-                        // Issue #2292: stamp call-site block + next instr (Apply).
-                        // Issue #4459: same tail-frame reuse as Call.
-                        bool tail = false;
-                        if (!call_stack_.empty() &&
-                            ex_stack_.size() == call_stack_.back().ex_depth_at_entry)
-                            tail = ir_call_is_tail(func, current, ii, ops[2]);
-                        if (!call_stack_.empty()) {
-                            call_stack_.back().current_block = current;
-                            call_stack_.back().resume_instr =
-                                static_cast<std::size_t>(&instr - &block.instructions[0] + 1);
-                        }
-                        if (fb.on)
-                            feedback::note_call(fb.row,
-                                                fb.site(current, static_cast<std::uint32_t>(ii)),
-                                                closure.func_id);
-                        return PendingCall{&callee_func, std::move(all_args), ops[2], tail};
-                    } else {
-                        locals[ops[2]] = closure_val;
-                    }
-                    break;
-                }
 
                 case IROpcode::NewCell: {
                     const auto cell_id = alloc_cell();
@@ -2966,289 +3472,31 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 // (Owned/Borrowed/MutBorrowed/Moved), enforce the state
                 // machine at each op site + record linear_check_pass /
                 // violations once per path for production safety.
-                case IROpcode::LinearWrap: {
-                    // Wrap value in a linear container with refcount=1
-                    if (instr.linear_ownership_state != 0) {
-                        record_linear_runtime_safety(
-                            metrics_,
-                            !enforce_linear_ownership_state(instr.linear_ownership_state,
-                                                            LinearOpKind::Wrap, instr.provenance, 0,
-                                                            context_.metrics, context_.evaluator));
-                    }
-                    auto inner = locals[ops[1]];
-                    auto lin_id = next_linear_id_++;
-                    if (linear_heap_.size() <= lin_id)
-                        linear_heap_.resize(lin_id + 1);
-                    linear_heap_[lin_id] = LinearEntry{inner, 1, true};
-                    locals[ops[0]] = types::make_linear(lin_id);
+                case IROpcode::LinearWrap:
+                case IROpcode::MoveOp:
+                case IROpcode::BorrowOp:
+                case IROpcode::MutBorrowOp:
+                case IROpcode::DropOp:
+                case IROpcode::RefCountOp:
+                case IROpcode::ArenaPush:
+                case IROpcode::ArenaPop:
+                    flow = ir_exec_linear(st, func, locals, args, linear_heap_, instr, current, ii,
+                                          fb);
                     break;
-                }
-                case IROpcode::MoveOp: {
-                    // Issue #106: source invalidation after move (clear slot).
-                    // Issue #2407: Copy / non-linear source is a no-op move
-                    // (literal-as-Owned). Do not hard-fail Strict incomplete
-                    // provenance on non-linear payloads — matches interpreter
-                    // and AOT emit-binary elision of Move of literals.
-                    auto val = locals[ops[1]];
-                    if (!types::is_linear(val)) {
-                        if (instr.linear_ownership_state != 0)
-                            record_linear_runtime_safety(metrics_, false);
-                        locals[ops[0]] = val;
-                        locals[ops[1]] = types::make_int(0);
-                        break;
-                    }
-                    if (instr.linear_ownership_state != 0)
-                        record_linear_jit_safety(metrics_, IROpcode::MoveOp);
-                    // State-machine gate before heap check (Issue #1515 / #2103).
-                    const bool state_ok = enforce_linear_ownership_state(
-                        instr.linear_ownership_state, LinearOpKind::Move, instr.provenance, 0,
-                        context_.metrics, context_.evaluator);
-                    // Issue #2067: pre-capture violation (always-on, not gated
-                    // on linear_ownership_state != 0) so the post-mutate
-                    // revalidate can correlate the violation with the
-                    // MutationBoundary under Full strategy.
-                    // Move ownership: decrement source refcount, pass value through
-                    // Runtime check: double-move detection
-                    // Issue #106: source invalidation. After a move,
-                    // the source slot is zeroed so a subsequent
-                    // DropOp on the source becomes a no-op (the
-                    // runtime's drop pair/cell/closure helpers all
-                    // bounds-check or check the IS_PAIR low-bit tag,
-                    // and 0 fails both checks). For linear values
-                    // the linear_heap_ entry is already erased /
-                    // ref-count-decremented above; clearing the
-                    // local slot makes the no-double-drop invariant
-                    // explicit in the IR.
-                    if (!state_ok) {
-                        std::println(std::cerr, "error: move of non-Owned linear_ownership_state");
-                        capture_linear_runtime_violation(metrics_, 0, IROpcode::MoveOp, 0,
-                                                         instr.linear_ownership_state, 1);
-                        record_linear_runtime_safety(metrics_, true);
-                        locals[ops[0]] = types::make_int(0);
-                        locals[ops[1]] = types::make_int(0);
-                        break;
-                    }
-                    // Linear-typed value: consume heap entry.
-                    auto lin_id = types::as_linear_id(val);
-                    if (lin_id < linear_heap_.size() && linear_heap_[lin_id].live) {
-                        auto& entry = linear_heap_[lin_id];
-                        if (entry.ref_count <= 0) {
-                            std::println(std::cerr, "error: double move — value already moved");
-                            if (instr.linear_ownership_state != 0)
-                                capture_linear_runtime_violation(metrics_, 0, IROpcode::MoveOp, 0,
-                                                                 instr.linear_ownership_state, 1);
-                            record_linear_runtime_safety(metrics_, true);
-                            locals[ops[0]] = entry.value;
-                        } else {
-                            auto result = entry.value;
-                            if (--entry.ref_count == 0)
-                                entry.live = false;
-                            if (instr.linear_ownership_state != 0)
-                                record_linear_runtime_safety(metrics_, false);
-                            locals[ops[0]] = result;
-                        }
-                    } else {
-                        // Already moved/consumed — error
-                        std::println(std::cerr, "error: use after move — value already consumed");
-                        if (instr.linear_ownership_state != 0)
-                            capture_linear_runtime_violation(metrics_, 0, IROpcode::MoveOp, 0,
-                                                             instr.linear_ownership_state, 1);
-                        record_linear_runtime_safety(metrics_, true);
-                        locals[ops[0]] = types::make_int(0);
-                    }
-                    // Source slot is now invalid — clear it so a
-                    // later DropOp on this slot is a no-op.
-                    locals[ops[1]] = types::make_int(0);
-                    break;
-                }
-                case IROpcode::BorrowOp: {
-                    if (instr.linear_ownership_state != 0)
-                        record_linear_jit_safety(metrics_, IROpcode::MoveOp);
-                    const bool state_ok = enforce_linear_ownership_state(
-                        instr.linear_ownership_state, LinearOpKind::Borrow, instr.provenance, 0,
-                        context_.metrics, context_.evaluator);
-                    // Immutable borrow: increment refcount
-                    // Runtime check: use-after-move detection
-                    auto val = locals[ops[1]];
-                    if (!state_ok) {
-                        // Issue #4667: the refusal can come from the
-                        // linear state machine OR from the per-op
-                        // readiness re-sample (commit-readiness-refused).
-                        std::println(std::cerr,
-                                     "error: borrow denied (linear state / commit-readiness)");
-                        capture_linear_runtime_violation(metrics_, 0, IROpcode::BorrowOp, 0,
-                                                         instr.linear_ownership_state, 1);
-                        record_linear_runtime_safety(metrics_, true);
-                        locals[ops[0]] = types::make_int(0);
-                        break;
-                    }
-                    if (types::is_linear(val)) {
-                        auto lin_id = types::as_linear_id(val);
-                        if (lin_id < linear_heap_.size() && linear_heap_[lin_id].live) {
-                            auto& entry = linear_heap_[lin_id];
-                            if (entry.ref_count <= 0) {
-                                std::println(std::cerr, "error: double move — value already moved");
-                                if (instr.linear_ownership_state != 0)
-                                    capture_linear_runtime_violation(
-                                        metrics_, 0, IROpcode::BorrowOp, 0,
-                                        instr.linear_ownership_state, 1);
-                                record_linear_runtime_safety(metrics_, true);
-                                locals[ops[0]] = entry.value;
-                            } else {
-                                entry.ref_count++;
-                                if (instr.linear_ownership_state != 0)
-                                    record_linear_runtime_safety(metrics_, false);
-                                locals[ops[0]] = entry.value;
-                            }
-                        } else {
-                            std::println(std::cerr,
-                                         "error: use after move — borrow of consumed value");
-                            if (instr.linear_ownership_state != 0)
-                                capture_linear_runtime_violation(metrics_, 0, IROpcode::BorrowOp, 0,
-                                                                 instr.linear_ownership_state, 1);
-                            record_linear_runtime_safety(metrics_, true);
-                            locals[ops[0]] = types::make_int(0);
-                        }
-                    } else {
-                        if (instr.linear_ownership_state != 0)
-                            record_linear_runtime_safety(metrics_, false);
-                        locals[ops[0]] = val;
-                    }
-                    break;
-                }
-                case IROpcode::MutBorrowOp: {
-                    if (instr.linear_ownership_state != 0)
-                        record_linear_jit_safety(metrics_, IROpcode::MoveOp);
-                    const bool state_ok = enforce_linear_ownership_state(
-                        instr.linear_ownership_state, LinearOpKind::MutBorrow, instr.provenance, 0,
-                        context_.metrics, context_.evaluator);
-                    // Mutable borrow: treat as move (exclusive access)
-                    auto val = locals[ops[1]];
-                    if (!state_ok) {
-                        // Issue #4667: the refusal can come from the
-                        // linear state machine OR from the per-op
-                        // readiness re-sample (commit-readiness-refused).
-                        std::println(std::cerr,
-                                     "error: mut-borrow denied (linear state / commit-readiness)");
-                        capture_linear_runtime_violation(metrics_, 0, IROpcode::MutBorrowOp, 0,
-                                                         instr.linear_ownership_state, 1);
-                        record_linear_runtime_safety(metrics_, true);
-                        locals[ops[0]] = types::make_int(0);
-                        break;
-                    }
-                    if (types::is_linear(val)) {
-                        auto lin_id = types::as_linear_id(val);
-                        if (lin_id < linear_heap_.size() && linear_heap_[lin_id].live) {
-                            auto& entry = linear_heap_[lin_id];
-                            if (entry.ref_count <= 0) {
-                                std::println(std::cerr, "error: mut-borrow of moved value");
-                                if (instr.linear_ownership_state != 0)
-                                    capture_linear_runtime_violation(
-                                        metrics_, 0, IROpcode::MutBorrowOp, 0,
-                                        instr.linear_ownership_state, 1);
-                                record_linear_runtime_safety(metrics_, true);
-                            } else {
-                                if (instr.linear_ownership_state != 0)
-                                    record_linear_runtime_safety(metrics_, false);
-                            }
-                            locals[ops[0]] = entry.value;
-                        } else {
-                            std::println(std::cerr, "error: mut-borrow of consumed value");
-                            if (instr.linear_ownership_state != 0)
-                                capture_linear_runtime_violation(metrics_, 0, IROpcode::MutBorrowOp,
-                                                                 0, instr.linear_ownership_state,
-                                                                 1);
-                            record_linear_runtime_safety(metrics_, true);
-                            locals[ops[0]] = types::make_int(0);
-                        }
-                    } else {
-                        if (instr.linear_ownership_state != 0)
-                            record_linear_runtime_safety(metrics_, false);
-                        locals[ops[0]] = val;
-                    }
-                    break;
-                }
-                case IROpcode::DropOp: {
-                    if (instr.linear_ownership_state != 0)
-                        record_linear_jit_safety(metrics_, IROpcode::DropOp);
-                    const bool state_ok = enforce_linear_ownership_state(
-                        instr.linear_ownership_state, LinearOpKind::Drop, instr.provenance, 0,
-                        context_.metrics, context_.evaluator);
-                    // Explicit destruct: decrement refcount, erase if zero
-                    // Runtime check: double-drop detection
-                    auto val = locals[ops[0]];
-                    if (!state_ok) {
-                        std::println(std::cerr, "error: drop of Moved/Borrowed linear state");
-                        capture_linear_runtime_violation(metrics_, 0, IROpcode::DropOp, 0,
-                                                         instr.linear_ownership_state, 1);
-                        record_linear_runtime_safety(metrics_, true);
-                        break;
-                    }
-                    if (types::is_linear(val)) {
-                        auto lin_id = types::as_linear_id(val);
-                        if (lin_id < linear_heap_.size() && linear_heap_[lin_id].live) {
-                            auto& entry = linear_heap_[lin_id];
-                            if (entry.ref_count <= 0) {
-                                std::println(std::cerr,
-                                             "error: double drop — value already dropped");
-                                if (instr.linear_ownership_state != 0)
-                                    capture_linear_runtime_violation(
-                                        metrics_, 0, IROpcode::DropOp, 0,
-                                        instr.linear_ownership_state, 1);
-                                record_linear_runtime_safety(metrics_, true);
-                            } else {
-                                if (--entry.ref_count == 0)
-                                    entry.live = false;
-                                if (instr.linear_ownership_state != 0)
-                                    record_linear_runtime_safety(metrics_, false);
-                            }
-                        } else {
-                            std::println(std::cerr, "error: double drop — value not in heap");
-                            if (instr.linear_ownership_state != 0)
-                                capture_linear_runtime_violation(metrics_, 0, IROpcode::DropOp, 0,
-                                                                 instr.linear_ownership_state, 1);
-                            record_linear_runtime_safety(metrics_, true);
-                        }
-                    } else if (instr.linear_ownership_state != 0) {
-                        record_linear_runtime_safety(metrics_, false);
-                    }
-                    break;
-                }
-                case IROpcode::RefCountOp: {
-                    // Runtime refcount operation: ops[2] = 1 for inc, 0 for dec
-                    auto val = locals[ops[1]];
-                    if (types::is_linear(val)) {
-                        auto lin_id = types::as_linear_id(val);
-                        if (lin_id < linear_heap_.size() && linear_heap_[lin_id].live) {
-                            auto& entry = linear_heap_[lin_id];
-                            if (ops[2] == 1)
-                                entry.ref_count++;
-                            else if (entry.ref_count > 0)
-                                entry.ref_count--;
-                        }
-                    }
-                    locals[ops[0]] = val;
-                    break;
-                }
-
-                case IROpcode::ArenaPush: {
-                    // ArenaPush(result_slot, size) — push frame, save offset
-                    tl_arena_push(&g_tl_arena);
-                    locals[ops[0]] = types::make_int(0);
-                    break;
-                }
-                case IROpcode::ArenaPop: {
-                    if (instr.linear_ownership_state != 0)
-                        record_linear_jit_safety(metrics_, IROpcode::ArenaPop);
-                    // ArenaPop(saved_slot) — pop frame
-                    tl_arena_pop(&g_tl_arena);
-                    break;
-                }
 
                 default:
                     break;
             }
 
+            if (flow.kind == IrFlow::Kind::Cont)
+                continue;
+            if (flow.kind == IrFlow::Kind::Next)
+                goto next_block;
+            if (flow.kind == IrFlow::Kind::Ret) {
+                if (std::holds_alternative<PendingCall>(flow.result))
+                    return std::get<PendingCall>(flow.result);
+                return std::get<EvalResult>(flow.result);
+            }
             // ── Runtime type assertion (strict mode only) ─────────
             if (strict_mode_ && instr.type_id != 0) {
                 // Issue #217 Cycle 4: use lookup_opcode
