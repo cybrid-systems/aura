@@ -93,4 +93,35 @@ struct RegSplitParts {
                                            ::aura::compiler::LockedStringHeap& string_heap,
                                            std::vector<EvalValue>& error_values,
                                            std::atomic<std::uint64_t>* primitive_error_counter);
+    static EvalValue apply_callback(Evaluator& ev, std::uint64_t cid,
+                                    std::span<const EvalValue> args);
+    static EvalValue apply_unary(Evaluator& ev, const EvalValue& fn, const EvalValue& arg,
+                                 bool list_hotpath = false);
+    static EvalValue apply_pred(Evaluator& ev, const EvalValue& fn, const EvalValue& arg,
+                                bool list_hotpath = false);
+    static EvalValue apply_binary(Evaluator& ev, const EvalValue& fn, const EvalValue& acc,
+                                  const EvalValue& arg, bool list_hotpath = false);
+    static EvalValue apply_n(Evaluator& ev, const EvalValue& fn, std::span<const EvalValue> args,
+                             bool list_hotpath = false);
+    static EvalValue walk_lists(Evaluator& ev, std::pmr::vector<Pair>& pairs,
+                                ::aura::compiler::LockedStringHeap& string_heap,
+                                std::vector<EvalValue>& error_values, std::span<const EvalValue> a,
+                                const char* op, bool collect);
+    static void register_list_basics(PrimRegistrar add, Evaluator& ev,
+                                     std::pmr::vector<Pair>& pairs,
+                                     ::aura::compiler::LockedStringHeap& string_heap,
+                                     std::vector<EvalValue>& error_values);
+    static void register_list_higher_order(PrimRegistrar add, Evaluator& ev,
+                                           std::pmr::vector<Pair>& pairs,
+                                           ::aura::compiler::LockedStringHeap& string_heap,
+                                           std::vector<EvalValue>& error_values);
+    static void register_list_extra(PrimRegistrar add, Evaluator& ev, std::pmr::vector<Pair>& pairs,
+                                    ::aura::compiler::LockedStringHeap& string_heap,
+                                    std::vector<EvalValue>& error_values);
+    static void register_list_walk(PrimRegistrar add, Evaluator& ev, std::pmr::vector<Pair>& pairs,
+                                   ::aura::compiler::LockedStringHeap& string_heap,
+                                   std::vector<EvalValue>& error_values);
+    static void register_list_sort(PrimRegistrar add, Evaluator& ev, std::pmr::vector<Pair>& pairs,
+                                   ::aura::compiler::LockedStringHeap& string_heap,
+                                   std::vector<EvalValue>& error_values);
 };
