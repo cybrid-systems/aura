@@ -80,6 +80,15 @@ using types::make_vector;
 using types::make_void;
 // Issue #918: qualify security:: explicitly where needed
 // (was: using namespace security;)
+// Issue #5027: the registration split moved these helpers into templates that
+// name the core faces unqualified; declare them once at namespace scope.
+using aura::compiler::typed_audit::AuditOutcome;
+using aura::compiler::typed_audit::MutationKind;
+using aura::core::audit_wal::g_mutation_audit_wal;
+using aura::core::capability::CapabilityRegistry;
+using aura::core::capability::snapshot_capability_effect_stats;
+using aura::core::security_event::SecurityEventKind;
+using aura::core::security_event_wal::g_security_event_wal;
 
 
 // Issue #4018: audit-query tenant auth — requester==tenant || TenantAdmin.
