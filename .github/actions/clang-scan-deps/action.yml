@@ -1,34 +1,19 @@
-name: Install clang-scan-deps
+name: Locate clang-scan-deps
 description: >-
-  Use the clang-scan-deps that matches the clang++ selected for this job.
-  An already installed scanner with that version is kept and is not
-  replaced. The cache and the official LLVM release tarball are used only
-  when that scanner is missing or reports a different version, and both
-  are separated by the detected version and the runner architecture.
-  A compiler that is not a plain X.Y.Z release fails closed.
+  Use the clang-scan-deps shipped in the aura-ci image that matches the
+  clang++ selected for this job. The path is exported for CMake. A missing
+  or different scanner fails the job. Nothing is downloaded and the image
+  copy is not replaced.
+
+outputs:
+  path:
+    description: Absolute path of the matching clang-scan-deps.
+    value: ${{ steps.locate.outputs.path }}
 
 runs:
   using: composite
   steps:
-    - name: Read the selected clang++ version
-      id: clangver
+    - name: Locate clang-scan-deps next to clang++
+      id: locate
       shell: bash
-      run: |
-        if ver=$(bash scripts/ci/install_clang_scan_deps.sh --print-version); then
-          echo "version=${ver}" >> "$GITHUB_OUTPUT"
-          echo "ok=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "version=" >> "$GITHUB_OUTPUT"
-          echo "ok=false" >> "$GITHUB_OUTPUT"
-        fi
-    - name: Restore clang-scan-deps for this version
-      if: steps.clangver.outputs.ok == 'true'
-      uses: actions/cache@v6
-      with:
-        path: ${{ github.workspace }}/.cache/clang-scan-deps
-        key: clang-scan-deps-${{ steps.clangver.outputs.version }}-${{ runner.arch }}
-    - name: Install clang-scan-deps next to clang++
-      shell: bash
-      env:
-        SCAN_DEPS_CACHE: ${{ github.workspace }}/.cache/clang-scan-deps
       run: bash scripts/ci/install_clang_scan_deps.sh
