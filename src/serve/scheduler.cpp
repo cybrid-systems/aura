@@ -1481,7 +1481,7 @@ void Scheduler::run() {
                     // Drop the event. Drain the eventfd so it
                     // doesn't re-fire (EFD_NONBLOCK on fiber
                     // eventfds).
-                    uint64_t val;
+                    uint64_t val = 0;
                     ::read(fiber->eventfd(), &val, sizeof(val));
                     continue;
                 }
@@ -1501,7 +1501,7 @@ void Scheduler::run() {
                     continue;
 
                 // Drain the eventfd (read the 8-byte counter)
-                uint64_t val;
+                uint64_t val = 0;
                 ::read(fiber->eventfd(), &val, sizeof(val));
 
                 // Metrics

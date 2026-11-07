@@ -2559,9 +2559,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     }
                     // Pack double as uint64 for mutation log
                     double new_val = as_float(a[1]);
-                    std::uint64_t new_bits;
+                    std::uint64_t new_bits = 0;
                     new_bits = std::bit_cast<std::uint64_t>(new_val);
-                    std::uint64_t old_bits;
+                    std::uint64_t old_bits = 0;
                     old_bits = std::bit_cast<std::uint64_t>(nv.float_value);
                     auto mid = flat.add_mutation_with_rollback(
                         node, "replace-value", "Float", "Float", ev.string_at(sum_idx),

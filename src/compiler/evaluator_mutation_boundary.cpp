@@ -9170,7 +9170,8 @@ bool Evaluator::densify_apply_container_remap_(const std::unordered_set<void*>& 
         for (void*& op : opaque_heap_)
             rewrite_one(op);
         if (!check_value_slots && densify_live_containers_prerewritten_) {
-            for (const auto& [k, v] : remap) {
+            // #4936: map fill. Pointer-key order does not change the entries.
+            for (const auto& [k, v] : remap | std::views::all) {
                 if (k && v)
                     densify_moved_rewrite_.insert_or_assign(k, v);
             }

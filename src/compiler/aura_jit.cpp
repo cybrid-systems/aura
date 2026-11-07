@@ -3198,7 +3198,7 @@ struct LLVMBuilder {
                 // Store in float pool via aura_alloc_float for proper tagged encoding.
                 std::uint64_t bits = static_cast<std::uint64_t>(inst.ops[1]) |
                                      (static_cast<std::uint64_t>(inst.ops[2]) << 32);
-                double d;
+                double d = 0.0;
                 d = std::bit_cast<double>(bits);
                 auto fp = llvm::ConstantFP::get(llvm::Type::getDoubleTy(ctx), d);
                 if (is_flocal(inst.ops[0]) && inst.source_marker != 1) {

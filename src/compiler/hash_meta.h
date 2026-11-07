@@ -49,7 +49,7 @@ inline constexpr std::uint64_t kFingerprintMask = 0x7Fu;
 }
 
 // Issue #920: string_view path — O(1) length, no strlen.
-[[nodiscard]] inline std::uint64_t fnv1a_bytes(std::string_view view) noexcept {
+[[nodiscard]] constexpr std::uint64_t fnv1a_bytes(std::string_view view) noexcept {
     std::uint64_t hash = kFnvOffsetBasis;
     for (const unsigned char byte : view)
         hash = (hash ^ byte) * kFnvPrime;
@@ -58,7 +58,7 @@ inline constexpr std::uint64_t kFingerprintMask = 0x7Fu;
 
 // Null and empty inputs hash to the FNV offset basis. Delegates to the
 // string_view overload so this file has no raw pointer walk to lint.
-[[nodiscard]] inline std::uint64_t fnv1a_bytes(const char* text) noexcept {
+[[nodiscard]] constexpr std::uint64_t fnv1a_bytes(const char* text) noexcept {
     if (text == nullptr)
         return kFnvOffsetBasis;
     return fnv1a_bytes(std::string_view(text));
