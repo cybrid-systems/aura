@@ -17,4 +17,8 @@ struct RegSplitParts {
     static void register_git_inspect_primitives(Evaluator& ev);
     static void register_git_index_primitives(Evaluator& ev);
     static void register_git_rev_parse_primitive(Evaluator& ev);
+    static void register_network_host_env(PrimRegistrar add, Evaluator& ev);
+    static void register_network_http(PrimRegistrar add, Evaluator& ev);
+    static void register_network_tcp(PrimRegistrar add, Evaluator& ev);
+    static void register_network_sys(PrimRegistrar add, Evaluator& ev);
 };
