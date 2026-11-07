@@ -90,7 +90,11 @@ def main() -> int:
 
     # ── AC1: the lowering records the unresolved name ──────────────
     must("Issue #4607" in low, "AC1: lowering TU cites #4607")
-    at, body = window(low, "case NodeTag::Variable: {", 20000)
+    # a028a774e split lower_flat_expr by form: the Variable body moved into
+    # lower_flat_variable(), leaving only a call in the switch case.
+    at, body = window(low, "static std::uint32_t lower_flat_variable(", 20000)
+    if at < 0:
+        at, body = window(low, "case NodeTag::Variable: {", 20000)
     must(at >= 0, "AC1: the lowering Variable case present")
     if at >= 0:
         rec = body.find("unbound_globals->emplace_back")
