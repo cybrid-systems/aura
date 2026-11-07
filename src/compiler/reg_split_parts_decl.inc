@@ -1,3 +1,7 @@
+// Issue #5032: ast:restore phase state (defined in evaluator_primitives_ast.cpp).
+struct AstRestoreState;
+struct AstRestoreCapture;
+
 // Peeled register parts. The struct is a friend of Evaluator, same as
 // CompilePrims. Each function is one responsibility group.
 struct RegSplitParts {
@@ -153,4 +157,33 @@ struct RegSplitParts {
                                                 std::vector<std::vector<EvalValue>>& vector_heap,
                                                 std::atomic<std::uint64_t>* primitive_error_counter,
                                                 Evaluator& ev);
+
+    // Issue #5032: ast:* registration parts. The ast TU owns one file but the
+    // parts need Evaluator's private workspace/snapshot state, so they live
+    // here with the other #909 peeled register parts. Each part is one
+    // responsibility and stays under the 300-line ceiling.
+    static void register_ast_snapshot_primitive(PrimRegistrar add, Evaluator& ev);
+    static void register_ast_snapshot_fail_reason_primitive(PrimRegistrar add, Evaluator& ev);
+    static void register_ast_introspection_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_ast_restore_primitive(PrimRegistrar add, Evaluator& ev,
+                                               std::function<void()> destroy_defuse_index);
+    static void register_ast_diff_primitive(PrimRegistrar add, Evaluator& ev);
+    static void register_ast_summary_primitive(
+        PrimRegistrar add, Evaluator& ev,
+        std::function<std::optional<std::tuple<std::uint64_t, std::uint64_t, std::uint64_t>>()>
+            defuse_summary_stats);
+    static void register_ast_validate_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_ast_ref_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_ast_node_maintenance_primitives(PrimRegistrar add, Evaluator& ev);
+    // Issue #5032: ast:snapshot / ast:diff workspace-source + line-diff helpers.
+    static std::optional<std::string> workspace_source_string(Evaluator& ev);
+    static EvalValue line_diff(Evaluator& ev, const std::string& old_text,
+                               const std::string& new_text);
+    // Issue #5032: ast:restore phases. The phase state structs are defined in
+    // evaluator_primitives_ast.cpp (they only need to be incomplete here).
+    static void ast_restore_capture(Evaluator& ev, AstRestoreState& state, AstRestoreCapture& cap);
+    static void ast_restore_publish(Evaluator& ev, AstRestoreState& state, AstRestoreCapture& cap,
+                                    const std::function<void()>& destroy_defuse_index);
+    static void ast_restore_finalize(Evaluator& ev, AstRestoreState& state);
+    static EvalValue ast_restore_source_fallback(Evaluator& ev, std::size_t id);
 };
