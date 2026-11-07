@@ -153,11 +153,11 @@ namespace {
 
 } // namespace
 
-void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
-                                         std::pmr::vector<Pair>& pairs,
-                                         ::aura::compiler::LockedStringHeap& string_heap,
-                                         std::vector<EvalValue>& error_values,
-                                         std::atomic<std::uint64_t>* primitive_error_counter) {
+void RegSplitParts::register_string_basics(PrimRegistrar add, Evaluator& ev,
+                                           std::pmr::vector<Pair>& pairs,
+                                           ::aura::compiler::LockedStringHeap& string_heap,
+                                           std::vector<EvalValue>& error_values,
+                                           std::atomic<std::uint64_t>* primitive_error_counter) {
     using aura::compiler::mutate_general;
     using aura::compiler::pure_general;
     using aura::compiler::register_prim;
@@ -339,6 +339,16 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             return make_string(sidx);
         },
         pure_general(2, "(list string) -> string", "Join string list with a separator."));
+}
+
+void RegSplitParts::register_pair_constructor(PrimRegistrar add, Evaluator& ev,
+                                              std::pmr::vector<Pair>& pairs,
+                                              ::aura::compiler::LockedStringHeap& string_heap,
+                                              std::vector<EvalValue>& error_values,
+                                              std::atomic<std::uint64_t>* primitive_error_counter) {
+    using aura::compiler::mutate_general;
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
 
     // ── Pair / List / String primitives ─────────────────────────
     register_prim(
@@ -535,6 +545,15 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             return make_bool(is_pair(a[0]));
         },
         pure_general(1, "(any) -> bool", "True if value is a pair."));
+}
+
+void RegSplitParts::register_pair_shorthands_first(
+    PrimRegistrar add, Evaluator& ev, std::pmr::vector<Pair>& pairs,
+    ::aura::compiler::LockedStringHeap& string_heap, std::vector<EvalValue>& error_values,
+    std::atomic<std::uint64_t>* primitive_error_counter) {
+    using aura::compiler::mutate_general;
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
 
     // ── Cadr / Caddr shorthands ────────────────────────────────────
     register_prim(
@@ -765,6 +784,16 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             return pairs[di].car;
         },
         pure_general(1, "(pair) -> any", "car of cdar."));
+}
+
+void RegSplitParts::register_pair_shorthands_rest(
+    PrimRegistrar add, Evaluator& ev, std::pmr::vector<Pair>& pairs,
+    ::aura::compiler::LockedStringHeap& string_heap, std::vector<EvalValue>& error_values,
+    std::atomic<std::uint64_t>* primitive_error_counter) {
+    using aura::compiler::mutate_general;
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
+
     register_prim(
         add, ev, "caddr",
         [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
@@ -955,6 +984,16 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             return pairs[di].cdr;
         },
         pure_general(1, "(pair) -> any", "cdr of cddr."));
+}
+
+void RegSplitParts::register_mutable_pair_ops(PrimRegistrar add, Evaluator& ev,
+                                              std::pmr::vector<Pair>& pairs,
+                                              ::aura::compiler::LockedStringHeap& string_heap,
+                                              std::vector<EvalValue>& error_values,
+                                              std::atomic<std::uint64_t>* primitive_error_counter) {
+    using aura::compiler::mutate_general;
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
 
     // ── Mutable pair operations ───────────────────────────────────
     // Issue #1397 + #1399: set-car!/set-cdr! mutate an existing
@@ -1074,6 +1113,16 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             return make_void();
         },
         mutate_general(2, "(pair any) -> void", "Set the cdr of a pair."));
+}
+
+void RegSplitParts::register_string_ops(PrimRegistrar add, Evaluator& ev,
+                                        std::pmr::vector<Pair>& pairs,
+                                        ::aura::compiler::LockedStringHeap& string_heap,
+                                        std::vector<EvalValue>& error_values,
+                                        std::atomic<std::uint64_t>* primitive_error_counter) {
+    using aura::compiler::mutate_general;
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
 
     register_prim(
         add, ev, "string?",
@@ -1336,6 +1385,16 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             return make_bool(to_str(a[0]) < to_str(a[1]));
         },
         pure_general(2, "(string string) -> bool", "Lexicographic string less-than."));
+}
+
+void RegSplitParts::register_string_number_ops(
+    PrimRegistrar add, Evaluator& ev, std::pmr::vector<Pair>& pairs,
+    ::aura::compiler::LockedStringHeap& string_heap, std::vector<EvalValue>& error_values,
+    std::atomic<std::uint64_t>* primitive_error_counter) {
+    using aura::compiler::mutate_general;
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
+
     // Issue #4175: complete the R7RS string comparison suite — string>?,
     // string>=?, string<=? mirror the string<? registration shape (same
     // string domain, lexicographic compare, 2-arg minimum). Left unbound,
@@ -1517,6 +1576,27 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
         },
         pure_general(2, "(string int) -> any",
                      "Parse a string as a number. Optional radix 2..36."));
+}
+
+void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
+                                         std::pmr::vector<Pair>& pairs,
+                                         ::aura::compiler::LockedStringHeap& string_heap,
+                                         std::vector<EvalValue>& error_values,
+                                         std::atomic<std::uint64_t>* primitive_error_counter) {
+    RegSplitParts::register_string_basics(add, ev, pairs, string_heap, error_values,
+                                          primitive_error_counter);
+    RegSplitParts::register_pair_constructor(add, ev, pairs, string_heap, error_values,
+                                             primitive_error_counter);
+    RegSplitParts::register_pair_shorthands_first(add, ev, pairs, string_heap, error_values,
+                                                  primitive_error_counter);
+    RegSplitParts::register_pair_shorthands_rest(add, ev, pairs, string_heap, error_values,
+                                                 primitive_error_counter);
+    RegSplitParts::register_mutable_pair_ops(add, ev, pairs, string_heap, error_values,
+                                             primitive_error_counter);
+    RegSplitParts::register_string_ops(add, ev, pairs, string_heap, error_values,
+                                       primitive_error_counter);
+    RegSplitParts::register_string_number_ops(add, ev, pairs, string_heap, error_values,
+                                              primitive_error_counter);
 }
 
 } // namespace aura::compiler::primitives_detail
