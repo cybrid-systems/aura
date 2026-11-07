@@ -192,14 +192,13 @@ namespace {
 
 } // namespace
 
-void register_math_regex_and_arithmetic_primitives(
+void RegSplitParts::register_math_regex_primitives(
     PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     ::aura::compiler::LockedStringHeap& string_heap, std::vector<EvalValue>& error_values,
     std::atomic<std::uint64_t>* primitive_error_counter, Evaluator& ev) {
     using aura::compiler::mutate_general;
     using aura::compiler::pure_general;
     using aura::compiler::register_prim;
-
 
 #if AURA_ENABLE_M4
     // ── M4 linear-type primitives (Issue #108 part 3) ─────────────
@@ -397,6 +396,14 @@ void register_math_regex_and_arithmetic_primitives(
             return result;
         },
         pure_general(2, "(string string) -> list", "Split string on regex."));
+}
+void RegSplitParts::register_math_scalar_primitives(
+    PrimRegistrar add, ::aura::compiler::LockedStringHeap& string_heap,
+    std::vector<EvalValue>& error_values, std::atomic<std::uint64_t>* primitive_error_counter,
+    Evaluator& ev) {
+    using aura::compiler::mutate_general;
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
 
     // ── Math ────────────────────────────────────────────────────
     // Issue #4463: empty calls stay 0.0. A present non-number is a type error.
@@ -573,6 +580,14 @@ void register_math_regex_and_arithmetic_primitives(
     register_prim(add, ev, "inexact",
                   coerce_inexact("inexact: too few args", "inexact: expected number"),
                   pure_general(1, "(number) -> float", "Alias of exact->inexact."));
+}
+void RegSplitParts::register_math_integer_primitives(
+    PrimRegistrar add, ::aura::compiler::LockedStringHeap& string_heap,
+    std::vector<EvalValue>& error_values, std::atomic<std::uint64_t>* primitive_error_counter,
+    Evaluator& ev) {
+    using aura::compiler::mutate_general;
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
 
     // ── Arithmetic extensions (#1158/#1159/#1174: no signed int64 UB) ──
     constexpr auto kI64Min = std::numeric_limits<std::int64_t>::min();
@@ -759,6 +774,24 @@ void register_math_regex_and_arithmetic_primitives(
             return make_int(r);
         },
         pure_general(2, "(int int) -> int", "Greatest common divisor."));
+}
+void RegSplitParts::register_math_minmax_primitives(
+    PrimRegistrar add, ::aura::compiler::LockedStringHeap& string_heap,
+    std::vector<EvalValue>& error_values, std::atomic<std::uint64_t>* primitive_error_counter,
+    Evaluator& ev) {
+    using aura::compiler::mutate_general;
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
+
+    // Same saturating helpers the integer part uses; min/max need abs.
+    constexpr auto kI64Min = std::numeric_limits<std::int64_t>::min();
+    constexpr auto kI64Max = std::numeric_limits<std::int64_t>::max();
+    auto safe_abs_i64 = [](std::int64_t n) -> std::int64_t {
+        if (n == kI64Min)
+            return kI64Max;
+        return n < 0 ? -n : n;
+    };
+
     register_prim(
         add, ev, "lcm",
         [&string_heap, &error_values, primitive_error_counter,
@@ -871,6 +904,24 @@ void register_math_regex_and_arithmetic_primitives(
             return make_int(r);
         },
         pure_general(255, "(...numbers) -> number", "Maximum of numeric arguments."));
+}
+
+void register_math_regex_and_arithmetic_primitives(
+    PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+    ::aura::compiler::LockedStringHeap& string_heap, std::vector<EvalValue>& error_values,
+    std::atomic<std::uint64_t>* primitive_error_counter, Evaluator& ev) {
+    using aura::compiler::mutate_general;
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
+
+    RegSplitParts::register_math_regex_primitives(add, pairs, string_heap, error_values,
+                                                  primitive_error_counter, ev);
+    RegSplitParts::register_math_scalar_primitives(add, string_heap, error_values,
+                                                   primitive_error_counter, ev);
+    RegSplitParts::register_math_integer_primitives(add, string_heap, error_values,
+                                                    primitive_error_counter, ev);
+    RegSplitParts::register_math_minmax_primitives(add, string_heap, error_values,
+                                                   primitive_error_counter, ev);
 }
 
 } // namespace aura::compiler::primitives_detail
