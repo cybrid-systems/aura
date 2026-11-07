@@ -13,6 +13,12 @@ struct MessagingChannelCodec;
 // Issue #5033: synthesize:optimize phase state (defined in
 // evaluator_primitives_agent.cpp).
 struct SynthesizeOptimizeState;
+struct SpawnAgentArgs;
+struct ScopeSpawnArgs;
+struct ParallelIntendState;
+struct ScopeJoinAllState;
+struct SuperviseBatchState;
+struct SuperviseTally;
 
 // Peeled register parts. The struct is a friend of Evaluator, same as
 // CompilePrims. Each function is one responsibility group.
@@ -361,27 +367,30 @@ struct RegSplitParts {
     static void register_memory_coverage_gc_primitives(PrimRegistrar add, Evaluator& ev,
                                                        std::function<void()> destroy_defuse_index);
     static void register_memory_heap_reset_primitives(PrimRegistrar add, Evaluator& ev,
-                                                       std::function<void()> destroy_defuse_index);
+                                                      std::function<void()> destroy_defuse_index);
     static void register_memory_gc_lifecycle_primitives(PrimRegistrar add, Evaluator& ev,
-                                                       std::function<void()> destroy_defuse_index);
-    static void register_memory_type_registry_primitives(PrimRegistrar add, Evaluator& ev,
-                                                       std::function<void()> destroy_defuse_index);
-    static void register_memory_arena_compact_primitives(PrimRegistrar add, Evaluator& ev,
-                                                       std::function<void()> destroy_defuse_index);
+                                                        std::function<void()> destroy_defuse_index);
+    static void
+    register_memory_type_registry_primitives(PrimRegistrar add, Evaluator& ev,
+                                             std::function<void()> destroy_defuse_index);
+    static void
+    register_memory_arena_compact_primitives(PrimRegistrar add, Evaluator& ev,
+                                             std::function<void()> destroy_defuse_index);
     static void register_memory_densify_mutation_primitives(PrimRegistrar add, Evaluator& ev);
     static void register_memory_dispatch_stats_primitives(PrimRegistrar add, Evaluator& ev);
     static void register_memory_arena_policy_primitives(PrimRegistrar add, Evaluator& ev,
-                                                       std::function<void()> destroy_defuse_index);
+                                                        std::function<void()> destroy_defuse_index);
     static void register_memory_defrag_stats_primitives(PrimRegistrar add, Evaluator& ev,
-                                                       std::function<void()> destroy_defuse_index);
+                                                        std::function<void()> destroy_defuse_index);
     static void register_memory_string_pool_primitives(PrimRegistrar add, Evaluator& ev,
                                                        std::function<void()> destroy_defuse_index);
     static void register_memory_dirty_primitives(PrimRegistrar add, Evaluator& ev,
-                                                       std::function<void()> destroy_defuse_index);
-    static void register_memory_dirty_summary_primitives(PrimRegistrar add, Evaluator& ev,
-                                                       std::function<void()> destroy_defuse_index);
+                                                 std::function<void()> destroy_defuse_index);
+    static void
+    register_memory_dirty_summary_primitives(PrimRegistrar add, Evaluator& ev,
+                                             std::function<void()> destroy_defuse_index);
     static void register_memory_pressure_primitives(PrimRegistrar add, Evaluator& ev,
-                                                       std::function<void()> destroy_defuse_index);
+                                                    std::function<void()> destroy_defuse_index);
     static void register_memory_arena_threshold_primitives(PrimRegistrar add, Evaluator& ev);
     static void register_memory_closure_free_primitives(PrimRegistrar add, Evaluator& ev);
     // Issue #5033: stdlib production-review registration parts (defined in
@@ -412,8 +421,7 @@ struct RegSplitParts {
     // Issue #5033: agent / synthesize / strategy registration parts (defined in
     // evaluator_primitives_agent.cpp). Each part is one responsibility group;
     // the capability-gated add wrapper stays with the orchestrator.
-    template <typename AddFn>
-    static void register_agent_loop_primitives(Evaluator& ev, AddFn& add);
+    template <typename AddFn> static void register_agent_loop_primitives(Evaluator& ev, AddFn& add);
     template <typename AddFn>
     static void register_strategy_controller_primitives(Evaluator& ev, AddFn& add);
     template <typename AddFn>
@@ -431,4 +439,175 @@ struct RegSplitParts {
     static double synth_optimize_compute_fitness(Evaluator& ev, SynthesizeOptimizeState& st,
                                                  const std::string& src);
     static void synth_optimize_evolve(Evaluator& ev, SynthesizeOptimizeState& st);
+    // Issue #5033: strategy / orch registration parts (defined in
+    // evaluator_primitives_agent.cpp). Each part is one responsibility group;
+    // the kCapStrategy add wrapper stays with the orchestrator.
+    template <typename AddFn> static void register_intend_primitive(Evaluator& ev, AddFn& add);
+    template <typename AddFn>
+    static void register_intend_history_primitives(Evaluator& ev, AddFn& add);
+    template <typename AddFn>
+    static void register_intend_analytics_primitive(Evaluator& ev, AddFn& add);
+    template <typename AddFn>
+    static void register_strategy_definition_primitives(Evaluator& ev, AddFn& add);
+    template <typename AddFn>
+    static void register_evolve_strategy_primitive(Evaluator& ev, AddFn& add);
+    template <typename AddFn>
+    static void register_parallel_intend_primitive(Evaluator& ev, AddFn& add);
+    template <typename AddFn, typename AddRawFn>
+    static void register_orch_spawn_agent_primitive(Evaluator& ev, AddFn& add, AddRawFn& add_raw);
+    template <typename AddFn> static void register_agent_join_primitive(Evaluator& ev, AddFn& add);
+    template <typename Handle, typename Scope, typename Policy, typename BuildOrchHash,
+              typename AddDenyClass, typename AddIdentityPlane, typename AddReclaimed>
+    static EvalValue agent_join_result(Evaluator& ev, std::span<const EvalValue> a, Handle* hp,
+                                       Scope* join_scope, const Policy& policy, bool debug_report,
+                                       BuildOrchHash& build_orch_hash, AddDenyClass& add_deny_class,
+                                       AddIdentityPlane& add_identity_plane,
+                                       AddReclaimed& add_reclaimed_pending_lifecycle);
+    template <typename AddFn>
+    static void register_agent_wait_reclaimed_primitive(Evaluator& ev, AddFn& add);
+    template <typename AddFn> static void register_scope_spawn_primitive(Evaluator& ev, AddFn& add);
+    template <typename AddFn>
+    static void register_scope_child_primitives(Evaluator& ev, AddFn& add);
+    template <typename AddFn> static void register_scope_watch_primitive(Evaluator& ev, AddFn& add);
+    template <typename AddFn>
+    static void register_scope_join_all_primitives(Evaluator& ev, AddFn& add);
+    template <typename AddFn>
+    static void register_scope_lifecycle_primitives(Evaluator& ev, AddFn& add);
+    template <typename AddFn>
+    static void register_agent_directory_primitives(Evaluator& ev, AddFn& add);
+    template <typename AddFn> static void register_agent_reply_primitive(Evaluator& ev, AddFn& add);
+    template <typename AddFn> static void register_agent_send_primitive(Evaluator& ev, AddFn& add);
+    template <typename AddFn> static void register_agent_recv_primitives(Evaluator& ev, AddFn& add);
+    template <typename AddFn>
+    static void register_orch_workflow_primitives(Evaluator& ev, AddFn& add);
+    template <typename AddFn>
+    static void register_supervise_batch_primitive(Evaluator& ev, AddFn& add);
+    template <typename AddFn>
+    static void register_run_workflow_primitive(Evaluator& ev, AddFn& add);
+    template <typename Residual, typename BuildOrchHash, typename OrchKeywordKey>
+    static EvalValue run_workflow_stages(Evaluator& ev, std::vector<EvalValue>& stage_hashes,
+                                         Residual residual, BuildOrchHash& build_orch_hash,
+                                         OrchKeywordKey& orch_keyword_key);
+    template <typename AddFn> static void register_orch_stats_primitives(Evaluator& ev, AddFn& add);
+    template <typename AddFn>
+    static void register_agent_token_primitives(Evaluator& ev, AddFn& add);
+    template <typename AddFn>
+    static void register_join_via_token_primitive(Evaluator& ev, AddFn& add);
+    // Issue #5033: shared orch hash / keyword / handoff helpers.
+    static EvalValue build_orch_hash(Evaluator& ev,
+                                     std::span<const std::pair<std::string, EvalValue>> kv);
+    static std::string orch_keyword_key(Evaluator& ev, const EvalValue& v);
+    template <typename DenyClass>
+    static void add_deny_class(Evaluator& ev, std::vector<std::pair<std::string, EvalValue>>& kv,
+                               DenyClass cls, std::string_view detail, std::uint64_t retry_ms,
+                               bool emit_retry);
+    static void add_identity_plane(Evaluator& ev,
+                                   std::vector<std::pair<std::string, EvalValue>>& kv,
+                                   const char* plane);
+    static void add_reclaimed_pending_lifecycle(Evaluator& ev,
+                                                std::vector<std::pair<std::string, EvalValue>>& kv,
+                                                bool pending);
+    static bool parse_scope_addr_kw(Evaluator& ev, std::string_view k, const EvalValue& val,
+                                    std::string& path, std::optional<std::int64_t>& child_index);
+    template <typename Scope>
+    static Scope* resolve_scope_addr(Scope& root, const std::string& path,
+                                     std::optional<std::int64_t> child_index);
+    static EvalValue make_scope_addr_fail(Evaluator& ev, int schema, const char* status,
+                                          const char* error);
+    template <typename Policy>
+    static std::optional<std::string>
+    resolve_join_fail_policy(std::string_view name, std::optional<std::uint32_t> max_restarts,
+                             Policy& out);
+    // Issue #5033: orch:spawn-agent / orch:scope-spawn phase state (defined in
+    // evaluator_primitives_agent.cpp).
+    template <typename BuildOrchHash, typename OrchKeywordKey, typename AddDenyClass,
+              typename AddReclaimed>
+    static std::optional<EvalValue>
+    spawn_agent_guards(Evaluator& ev, std::span<const EvalValue> a, SpawnAgentArgs& st,
+                       BuildOrchHash& build_orch_hash, OrchKeywordKey& orch_keyword_key,
+                       AddDenyClass& add_deny_class, AddReclaimed& add_reclaimed_pending_lifecycle);
+    template <typename BuildOrchHash, typename AddDenyClass, typename AddReclaimed>
+    static EvalValue spawn_agent_body(Evaluator& ev, std::span<const EvalValue> a,
+                                      SpawnAgentArgs& st, BuildOrchHash& build_orch_hash,
+                                      AddDenyClass& add_deny_class,
+                                      AddReclaimed& add_reclaimed_pending_lifecycle);
+    template <typename Root, typename BuildOrchHash, typename OrchKeywordKey,
+              typename ParseScopeAddr, typename ResolveScopeAddr, typename MakeScopeAddrFail,
+              typename AddDenyClass, typename AddReclaimed>
+    static std::optional<EvalValue>
+    scope_spawn_target(Evaluator& ev, std::span<const EvalValue> a, Root& root, ScopeSpawnArgs& st,
+                       BuildOrchHash& build_orch_hash, OrchKeywordKey& orch_keyword_key,
+                       ParseScopeAddr& parse_scope_addr_kw, ResolveScopeAddr& resolve_scope_addr,
+                       MakeScopeAddrFail& make_scope_addr_fail, AddDenyClass& add_deny_class,
+                       AddReclaimed& add_reclaimed_pending_lifecycle);
+    template <typename Scope, typename BuildOrchHash, typename AddDenyClass, typename AddReclaimed>
+    static EvalValue scope_spawn_finish(Evaluator& ev, std::span<const EvalValue> a, Scope& scope,
+                                        ScopeSpawnArgs& st, BuildOrchHash& build_orch_hash,
+                                        AddDenyClass& add_deny_class,
+                                        AddReclaimed& add_reclaimed_pending_lifecycle);
+    // Issue #5033: parallel-intend phase state (defined in
+    // evaluator_primitives_agent.cpp).
+    static std::optional<EvalValue> parallel_intend_parse(Evaluator& ev, ParallelIntendState& st,
+                                                          std::span<const EvalValue> a);
+    static std::optional<EvalValue> parallel_intend_admit(Evaluator& ev, ParallelIntendState& st);
+    static void parallel_intend_tasks(Evaluator& ev, ParallelIntendState& st);
+    static std::optional<EvalValue> parallel_intend_join(Evaluator& ev, ParallelIntendState& st);
+    static EvalValue parallel_intend_result(Evaluator& ev, ParallelIntendState& st);
+    static EvalValue
+    parallel_intend_build_hash(Evaluator& ev,
+                               std::span<const std::pair<std::string, EvalValue>> kv);
+    // Issue #5033: orch:scope-join-all phase state (defined in
+    // evaluator_primitives_agent.cpp).
+    template <typename Root, typename BuildOrchHash, typename OrchKeywordKey,
+              typename ParseScopeAddr, typename ResolveScopeAddr, typename MakeScopeAddrFail,
+              typename AddDenyClass, typename ResolveJoinFailPolicy>
+    static std::optional<EvalValue>
+    scope_join_all_exec(Evaluator& ev, ScopeJoinAllState& st, Root* root,
+                        BuildOrchHash& build_orch_hash, OrchKeywordKey& orch_keyword_key,
+                        ParseScopeAddr& parse_scope_addr_kw, ResolveScopeAddr& resolve_scope_addr,
+                        MakeScopeAddrFail& make_scope_addr_fail, AddDenyClass& add_deny_class,
+                        ResolveJoinFailPolicy& resolve_join_fail_policy);
+    static EvalValue scope_join_all_result(Evaluator& ev, ScopeJoinAllState& st);
+    // Issue #5033: orch:supervise-batch phase state (defined in
+    // evaluator_primitives_agent.cpp).
+    template <typename Root, typename Child>
+    static void supervise_batch_arm(Evaluator& ev, std::span<const EvalValue> a, Root& root,
+                                    Child& child, SuperviseBatchState& st);
+    template <typename Root, typename Child, typename BuildOrchHash>
+    static EvalValue supervise_batch_apply(Evaluator& ev, Root& root, Child& child,
+                                           SuperviseBatchState& st, BuildOrchHash& build_orch_hash);
+    // Issue #5033: query:orch-module-stats insert phases (defined in
+    // evaluator_primitives_agent.cpp).
+    template <typename Os, typename Kv>
+    static void orch_module_stats_part1(Evaluator& ev, Os& os, Kv& insert_kv, std::uint64_t spawned,
+                                        std::uint64_t joined, std::uint64_t sends,
+                                        std::uint64_t recvs, std::uint64_t failures,
+                                        std::uint64_t batches, std::uint64_t stable_ref_refresh,
+                                        std::uint64_t steal_prov, std::uint64_t linear_prev,
+                                        std::uint64_t cm_stable, std::uint64_t cm_steal,
+                                        std::uint64_t cm_lin);
+    template <typename Os, typename Kv>
+    static void orch_module_stats_part2(Evaluator& ev, Os& os, Kv& insert_kv, std::uint64_t spawned,
+                                        std::uint64_t joined, std::uint64_t sends,
+                                        std::uint64_t recvs, std::uint64_t failures,
+                                        std::uint64_t batches, std::uint64_t stable_ref_refresh,
+                                        std::uint64_t steal_prov, std::uint64_t linear_prev,
+                                        std::uint64_t cm_stable, std::uint64_t cm_steal,
+                                        std::uint64_t cm_lin);
+    template <typename Os, typename Kv>
+    static void orch_module_stats_part3(Evaluator& ev, Os& os, Kv& insert_kv, std::uint64_t spawned,
+                                        std::uint64_t joined, std::uint64_t sends,
+                                        std::uint64_t recvs, std::uint64_t failures,
+                                        std::uint64_t batches, std::uint64_t stable_ref_refresh,
+                                        std::uint64_t steal_prov, std::uint64_t linear_prev,
+                                        std::uint64_t cm_stable, std::uint64_t cm_steal,
+                                        std::uint64_t cm_lin);
+    template <typename Os, typename Kv>
+    static void orch_module_stats_part4(Evaluator& ev, Os& os, Kv& insert_kv, std::uint64_t spawned,
+                                        std::uint64_t joined, std::uint64_t sends,
+                                        std::uint64_t recvs, std::uint64_t failures,
+                                        std::uint64_t batches, std::uint64_t stable_ref_refresh,
+                                        std::uint64_t steal_prov, std::uint64_t linear_prev,
+                                        std::uint64_t cm_stable, std::uint64_t cm_steal,
+                                        std::uint64_t cm_lin);
 };

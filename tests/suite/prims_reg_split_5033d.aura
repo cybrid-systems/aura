@@ -1,0 +1,63 @@
+;; Issue #5033: the agent / synthesize / strategy registrations moved into peeled
+;; RegSplitParts parts (agent: tick loop + strategy controller + pheromone
+;; dashboard; synthesize: templates / define / the GA optimize phases; strategy:
+;; intend, the orch scope/messaging surface and the per-batch phases). Primitive
+;; names, registration order and behavior must not move.
+(require "std/io" all:)
+
+(set-code "(define probe5033d 1)") (eval-current)
+
+(define fails 0)
+(define (check pred msg)
+  (if pred
+      #t
+      (begin (set! fails (+ fails 1)) (display (format "FAIL ~a\n" msg)))))
+
+;; ── auto-evolve parts: agent loop + strategy controller ──────────────
+(check (boolean? (agent:running?)) "agent:running?")
+(check (integer? (agent:tick)) "agent:tick")
+(check (or (void? (strategy:active)) (string? (strategy:active))) "strategy:active")
+(check (integer? (strategy:set-strategy "coverage-greedy")) "strategy:set-strategy")
+(check (eq? #t (strategy:report-success "coverage-greedy")) "strategy:report-success")
+(check (eq? #t (strategy:escalate "5033d probe")) "strategy:escalate")
+(define sstats (stats:get "query:strategy-evolution-stats"))
+(check (hash? sstats) "query:strategy-evolution-stats")
+(check (string? (hash-ref sstats "active-strategy")) "stats active-strategy")
+(check (integer? (hash-ref sstats "escalations")) "stats escalations")
+
+;; ── synthesize parts: templates (register / fill) ────────────────────
+(check (synthesize:register-template "double5033d"
+         "(define (double-{name} x) (* 2 x))" "name")
+       "synthesize:register-template")
+(check (synthesize:fill "double5033d" "val") "synthesize:fill")
+
+;; ── strategy parts: intend bookkeeping ───────────────────────────────
+(define ih (intend-history))
+(check (string? (format "~a" ih)) "intend-history")
+(check (string? (workspace-state)) "workspace-state")
+(check (string? (intend-analytics)) "intend-analytics")
+
+;; ── strategy parts: parallel-intend (empty batch) + orch surface ─────
+(define empty-batch (parallel-intend (vector)))
+(check (hash? empty-batch) "parallel-intend hash")
+(check (string? (hash-ref empty-batch "status")) "parallel-intend status")
+(check (= 0 (hash-ref empty-batch "ok-count")) "parallel-intend ok-count")
+
+(define ostats (stats:get "query:orch-module-stats"))
+(check (hash? ostats) "query:orch-module-stats")
+(check (= 1588 (hash-ref ostats "schema")) "orch stats schema")
+(check (= 1879 (hash-ref ostats "schema-1879")) "orch stats phase 1 key")
+(check (= 4139 (hash-ref ostats "issue-4139")) "orch stats phase 4 key")
+
+(check (hash? (orch:agent-directory)) "orch:agent-directory")
+
+(define sc (orch:scope-spawn "probe5033d"))
+(check (hash? sc) "orch:scope-spawn hash")
+(check (eq? #t (hash-ref sc "ok")) "orch:scope-spawn ok")
+(define sj (orch:scope-join-all))
+(check (hash? sj) "orch:scope-join-all hash")
+(check (string? (hash-ref sj "status")) "orch:scope-join-all status")
+
+(if (> fails 0)
+    (error "prims reg split 5033d regression")
+    (begin (display "prims reg split 5033d ok") (newline)))

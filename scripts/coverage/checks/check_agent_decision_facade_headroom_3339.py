@@ -94,6 +94,12 @@ def _block(src: str, query: str) -> str:
             if j > i:
                 ends.append(j)
         end = min(ends) + 40 if ends else min(len(src), i + 25000)
+        # Issue #5033: the handler may be peeled into ordered RegSplitParts
+        # insert phases; their insert_kv keys then live after the delegating
+        # registration. Widen the window to the TU tail so the key count and
+        # the tail sentinels stay in the block.
+        if "RegSplitParts::orch_module_stats_part1(" in src[i:end]:
+            end = len(src)
         candidates.append(src[i:end])
         # Backward window: shared named-lambda body registered after builder.
         for tok in ("return query_hash_finish", "return make_hash"):
