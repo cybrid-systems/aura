@@ -770,7 +770,8 @@ namespace {
 
 } // namespace
 
-void RegSplitParts::register_network_host_env(PrimRegistrar add, Evaluator& ev) {
+void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
+
     // Issue #4504: environ and self-path reads are host io-read channels.
     // Same deny_io shape as register_file_primitives (command-line, #2478):
     // allow when the sandbox is off or the principal holds the named cap /
@@ -828,9 +829,7 @@ void RegSplitParts::register_network_host_env(PrimRegistrar add, Evaluator& ev) 
         auto sidx = ev.string_heap_.mint(std::move(path));
         return types::make_string(sidx);
     });
-}
 
-void RegSplitParts::register_network_http(PrimRegistrar add, Evaluator& ev) {
     // Issue #1077: shell-safe quoting for popen fallback (single-quote +
     // escape embedded quotes). Prefer native libcurl when available.
     auto shell_single_quote = [](std::string_view s) -> std::string {
@@ -1080,9 +1079,7 @@ void RegSplitParts::register_network_http(PrimRegistrar add, Evaluator& ev) {
         auto sidx = ev.string_heap_.mint(std::move(result));
         return types::make_string(sidx);
     });
-}
 
-void RegSplitParts::register_network_tcp(PrimRegistrar add, Evaluator& ev) {
 #if AURA_ENABLE_TCP
     // ── TCP socket primitives ────────────────────────────────
     // Issue #1975: client path (connect/send/recv/close).
@@ -1305,9 +1302,7 @@ void RegSplitParts::register_network_tcp(PrimRegistrar add, Evaluator& ev) {
         return make_void();
     });
 #endif // AURA_ENABLE_TCP
-}
 
-void RegSplitParts::register_network_sys(PrimRegistrar add, Evaluator& ev) {
     // Issue #2626: terminal/TUI buffer + render present surface removed.
 
     // ── Issues #1329 Phase 1: minimal sys-* C++ bindings for stdlib migration ──
@@ -1481,13 +1476,6 @@ void RegSplitParts::register_network_sys(PrimRegistrar add, Evaluator& ev) {
         erase_minted_fd_tenant(ev, fd);
         return make_void();
     });
-}
-
-void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
-    RegSplitParts::register_network_host_env(add, ev);
-    RegSplitParts::register_network_http(add, ev);
-    RegSplitParts::register_network_tcp(add, ev);
-    RegSplitParts::register_network_sys(add, ev);
 }
 
 // Issue #4922: ~Evaluator hands back the fds it minted. No-op unless the fd
