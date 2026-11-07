@@ -15,6 +15,8 @@ Usage:
   ./build.py legacy-test-inventory  # #1957 inventory freshness (--fix to regen)
   ./build.py ci               # build + CI 测试矩阵
   ./build.py ci-issues        # issue 测试矩阵的一片 (AURA_ISSUE_SHARD=i/N, CI issue-farm #4819)
+  ./build.py ci-issues --build-only   # 只编译这一片（CI 在测试前装入 aura 可执行文件）
+  ./build.py ci-issues --test-only    # 只跑已编好的这一片
   ./build.py clean            # 清理构建产物
   ./build.py list             # 列出测试套件
   ./build.py demo             # 运行 Agent 管线演示
@@ -13209,6 +13211,29 @@ def _retry_issue_colder(targets: list[str] | None, first_jobs: int, r: int) -> i
 _ISSUE_SHARD_LIST_NAME = ".issue-shard-targets"
 
 
+def _skip_aura_executable() -> bool:
+    """Issue shards set AURA_SKIP_AURA_BUILD. aura-bin builds build/aura once."""
+    return os.environ.get("AURA_SKIP_AURA_BUILD", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _ci_issues_phase() -> str:
+    argv = sys.argv[2:]
+    build_only = "--build-only" in argv
+    test_only = "--test-only" in argv
+    if build_only and test_only:
+        raise SystemExit("ci-issues: pass only one of --build-only / --test-only")
+    if build_only:
+        return "build"
+    if test_only:
+        return "test"
+    return "all"
+
+
 def _issue_shard_spec() -> tuple[int, int] | None:
     raw = os.environ.get("AURA_ISSUE_SHARD", "").strip()
     if not raw:
@@ -13300,9 +13325,18 @@ def _begin_build() -> tuple[int, _BuildCtx | None]:
     remaining = list(main_targets)
     if "aura" in remaining:
         remaining = [t for t in remaining if t != "aura"]
-        r = _build_named_targets(["aura"], nproc, fatal=True)
-        if r != 0:
-            return r, None
+        # Issue tests spawn build/aura, but the executable is not a ninja
+        # dependency of the issue slice. CI compiles it once in aura-bin
+        # (parallel with the shards) and installs it before the test step.
+        # aura_test_objects stays in the shard: its BMIs are a different
+        # flag set from the aura executable, and a prerequisite job would
+        # hold every shard until that library finished.
+        if _skip_aura_executable():
+            info("skip aura executable (AURA_SKIP_AURA_BUILD)")
+        else:
+            r = _build_named_targets(["aura"], nproc, fatal=True)
+            if r != 0:
+                return r, None
 
     # Aura-only builds (deployment-health) skip the issue matrix unless
     # AURA_ISSUE_BUILD=all is forced.
@@ -26160,14 +26194,39 @@ def _report_ci_slice_failures(
     return 1
 
 
+def _ci_issues_run_tests(t0: float) -> int:
+    """Run this shard's binaries. build/aura must already be installed."""
+    shard_file = BUILD / _ISSUE_SHARD_LIST_NAME
+    if _issue_shard_spec() is not None:
+        if not shard_file.is_file():
+            fail("issue shard: target list was not written")
+            return 1
+        if not shard_file.read_text().split():
+            ok("issue shard: no targets in this slice")
+            return 0
+        os.environ["AURA_ISSUE_SHARD_LIST"] = str(shard_file)
+    if not AURA.is_file():
+        fail(f"issue tests need {AURA} (built here, or fetched from the aura-bin job)")
+        return 1
+    rc = cmd_test(["issues"])
+    _phase("ci-issues total", t0)
+    return rc
+
+
 def cmd_ci_issues():
-    """CI issue-farm shard (#4819): aura + this shard's issue binaries, then run them.
+    """CI issue-farm shard (#4819): this shard's issue binaries, then run them.
 
     AURA_ISSUE_SHARD=i/N picks a deterministic slice of all_test_issue_targets
-    (fast tier: of the fast target list). Builds aura (some issue tests spawn
-    it) and the slice (pulls in aura_test_objects), then runs only the
-    slice's binaries. Without AURA_ISSUE_SHARD this is the whole farm.
+    (fast tier: of the fast target list). The slice pulls in aura_test_objects.
+    Some issue tests spawn the aura executable (AURA_BIN). Locally that binary
+    is built in this same command. CI sets AURA_SKIP_AURA_BUILD and splits the
+    command: --build-only, then install build/aura from the aura-bin job, then
+    --test-only. Without AURA_ISSUE_SHARD this is the whole farm.
     """
+    phase = _ci_issues_phase()
+    if phase == "test":
+        return _ci_issues_run_tests(time.time())
+
     mode = os.environ.get("AURA_ISSUE_BUILD", "all").strip().lower()
     if mode in ("none", "skip", "off", "0"):
         info("issue tests: skipped (AURA_ISSUE_BUILD=none)")
@@ -26190,10 +26249,10 @@ def cmd_ci_issues():
         if not shard_file.read_text().split():
             ok("issue shard: no targets in this slice")
             return 0
-        os.environ["AURA_ISSUE_SHARD_LIST"] = str(shard_file)
-    rc = cmd_test(["issues"])
-    _phase("ci-issues total", ctx.t_all)
-    return rc
+    if phase == "build":
+        ok("issue shard binaries ready")
+        return 0
+    return _ci_issues_run_tests(ctx.t_all)
 
 
 def cmd_ci():
