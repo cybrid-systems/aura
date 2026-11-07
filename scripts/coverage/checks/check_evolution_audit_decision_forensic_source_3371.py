@@ -37,8 +37,12 @@ def _read(rel: str) -> str:
 def main() -> int:
     fails: list[str] = []
 
+    def _norm(text: str) -> str:
+        # Anchors must survive clang-format re-indentation of the source.
+        return " ".join(text.split())
+
     def must(n: str, label: str, hay: str) -> None:
-        if n not in hay:
+        if _norm(n) not in _norm(hay):
             fails.append(f"{label}: missing {n!r}")
 
     eps = _read("src/compiler/evaluator_primitives_security.cpp")

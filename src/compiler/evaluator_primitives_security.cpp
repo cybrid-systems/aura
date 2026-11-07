@@ -150,8 +150,6 @@ template <class Ev, class Args>
 static EvolutionAuditDecisionFace load_evolution_audit_memory_face(Ev& ev, const Args& args) {
     using aura::compiler::typed_audit::AuditOutcome;
     using aura::compiler::typed_audit::AuditStrategy;
-    using aura::compiler::typed_audit::LastProofFace;
-    using aura::compiler::typed_audit::last_proof_face_v_read;
     using aura::compiler::typed_audit::g_last_stamped_audit_mid;
     using aura::compiler::typed_audit::g_tls_boundary_audit_mid;
     using aura::compiler::typed_audit::g_tls_boundary_audit_noted;
@@ -161,14 +159,15 @@ static EvolutionAuditDecisionFace load_evolution_audit_memory_face(Ev& ev, const
     using aura::compiler::typed_audit::kTypedMutationAuditTrailSize;
     using aura::compiler::typed_audit::kTypedSummaryWalIssue;
     using aura::compiler::typed_audit::kTypedTrailWrapMissIssue;
+    using aura::compiler::typed_audit::last_proof_face_v_read;
+    using aura::compiler::typed_audit::LastProofFace;
     using aura::compiler::typed_audit::production_defaults_active;
     using aura::compiler::typed_audit::trail_find_by_mutation_id;
     using aura::compiler::typed_audit::trail_seq;
     using aura::compiler::typed_audit::TypedMutationAuditEvent;
     using aura::core::security_event::g_security_event_ring;
     using aura::core::security_event::kSecurityEventRingSize;
-    const std::uint64_t last_stamped =
-        g_last_stamped_audit_mid.load(std::memory_order_relaxed);
+    const std::uint64_t last_stamped = g_last_stamped_audit_mid.load(std::memory_order_relaxed);
     const std::uint64_t proof_mid =
         g_tls_boundary_audit_noted ? g_tls_boundary_audit_mid : last_stamped;
     // Issue #3738: explicit 0 is a legal join key (refuse class,
@@ -363,8 +362,8 @@ static EvolutionAuditDecisionFace load_evolution_audit_memory_face(Ev& ev, const
                                  (sb[1] == 'f' || sb[1] == 'F' || sb[1] == '\0');
         const auto d = evaluate_wal_append_fail_slo(make_wal_append_fail_slo_input(
             mut.append_fail, se.append_fail, mut.persisted, se.persisted,
-            g_mutation_audit_wal().is_enabled() || g_security_event_wal().is_enabled(),
-            prod, !prod || sandbox_off));
+            g_mutation_audit_wal().is_enabled() || g_security_event_wal().is_enabled(), prod,
+            !prod || sandbox_off));
         const auto tseq = trail_seq();
         const auto se_total = g_security_event_ring().total.load(std::memory_order_relaxed);
         wrap_risk = tseq > kTypedMutationAuditTrailSize && se_total > 0;
@@ -436,12 +435,9 @@ static EvolutionAuditDecisionFace load_evolution_audit_memory_face(Ev& ev, const
 // Mutates the same strings the memory face filled (no extra copy).
 template <class Ev, class Args, class Heap>
 static void load_evolution_audit_durable_face(Ev& ev, const Args& args,
-                                             EvolutionAuditDecisionFace& face,
-                                             Heap& string_heap) {
+                                              EvolutionAuditDecisionFace& face, Heap& string_heap) {
     using aura::compiler::typed_audit::AuditOutcome;
     using aura::compiler::typed_audit::AuditStrategy;
-    using aura::compiler::typed_audit::LastProofFace;
-    using aura::compiler::typed_audit::last_proof_face_v_read;
     using aura::compiler::typed_audit::g_last_stamped_audit_mid;
     using aura::compiler::typed_audit::g_tls_boundary_audit_mid;
     using aura::compiler::typed_audit::g_tls_boundary_audit_noted;
@@ -451,6 +447,8 @@ static void load_evolution_audit_durable_face(Ev& ev, const Args& args,
     using aura::compiler::typed_audit::kTypedMutationAuditTrailSize;
     using aura::compiler::typed_audit::kTypedSummaryWalIssue;
     using aura::compiler::typed_audit::kTypedTrailWrapMissIssue;
+    using aura::compiler::typed_audit::last_proof_face_v_read;
+    using aura::compiler::typed_audit::LastProofFace;
     using aura::compiler::typed_audit::production_defaults_active;
     using aura::compiler::typed_audit::trail_find_by_mutation_id;
     using aura::compiler::typed_audit::trail_seq;
@@ -507,8 +505,8 @@ static void load_evolution_audit_durable_face(Ev& ev, const Args& args,
     // rewritten into a typed hit (#3498 rule — WAL is not the
     // typed trail; sidecar fill stays additive).
     const bool auto_durable =
-        (production_defaults_active() || get_strategy() == AuditStrategy::Full) &&
-        join_mid != 0 && !typed_hit && !se_ring_has_mid && wal_enabled;
+        (production_defaults_active() || get_strategy() == AuditStrategy::Full) && join_mid != 0 &&
+        !typed_hit && !se_ring_has_mid && wal_enabled;
     if ((want_durable || auto_durable) && join_mid != 0 &&
         (production_defaults_active() || get_strategy() == AuditStrategy::Full)) {
         using ::aura::core::audit_wal::g_mutation_audit_wal;
@@ -522,8 +520,7 @@ static void load_evolution_audit_durable_face(Ev& ev, const Args& args,
                 wal_segments_scanned = static_cast<std::int64_t>(win);
             } else if (se_wal.is_enabled()) {
                 rec = se_wal.find_by_mutation_id_scan_all_segments(join_mid);
-                wal_segments_scanned =
-                    static_cast<std::int64_t>(se_wal.retained_segment_count());
+                wal_segments_scanned = static_cast<std::int64_t>(se_wal.retained_segment_count());
                 if (rec)
                     wal_full_scan_hit = 1;
                 else
@@ -546,8 +543,8 @@ static void load_evolution_audit_durable_face(Ev& ev, const Args& args,
                     const auto n = strnlen(rec->op, sizeof(rec->op) - 1);
                     last_se_op_str.assign(rec->op, n);
                 }
-                        if (forensic_source < 3)
-                            forensic_source = 3;
+                if (forensic_source < 3)
+                    forensic_source = 3;
                 durable_hit = 1;
             } else {
                 auto mrec = mut_wal.find_recent_by_provenance_mutation_id(join_mid, win);
@@ -555,8 +552,7 @@ static void load_evolution_audit_durable_face(Ev& ev, const Args& args,
                     if (wal_segments_scanned == 0)
                         wal_segments_scanned = static_cast<std::int64_t>(win);
                 } else if (mut_wal.is_enabled()) {
-                    mrec =
-                        mut_wal.find_by_provenance_mutation_id_scan_all_segments(join_mid);
+                    mrec = mut_wal.find_by_provenance_mutation_id_scan_all_segments(join_mid);
                     if (wal_segments_scanned == 0)
                         wal_segments_scanned =
                             static_cast<std::int64_t>(mut_wal.retained_segment_count());
@@ -622,8 +618,7 @@ static void load_evolution_audit_durable_face(Ev& ev, const Args& args,
             // lookup window → additive face (the row may still exist
             // on disk beyond it). Soft / observe-only / no durable
             // scan keeps 0 — no extra I/O either way.
-            wal_lookup_window_miss =
-                (durable_hit == 0 && typed_summary_from_wal == 0) ? 1 : 0;
+            wal_lookup_window_miss = (durable_hit == 0 && typed_summary_from_wal == 0) ? 1 : 0;
             // Issue #3734 / #3780: emit_mutation_audit production
             // WAL miss never hit disk; overflow ring is the join
             // key for the deny/observe face. Under #3780 the
@@ -634,8 +629,7 @@ static void load_evolution_audit_durable_face(Ev& ev, const Args& args,
             // In-memory scan only; this block is production/Full.
             if (durable_hit == 0 && last_se_reason_str.empty()) {
                 if (const auto* ovr =
-                        ::aura::core::security_event_wal::wal_overflow_find_by_mid(
-                            join_mid)) {
+                        ::aura::core::security_event_wal::wal_overflow_find_by_mid(join_mid)) {
                     if (!ovr->reason.empty())
                         last_se_reason_str = ovr->reason;
                     // Issue #4508: overflow fallback keeps the
@@ -643,12 +637,10 @@ static void load_evolution_audit_durable_face(Ev& ev, const Args& args,
                     if (!ovr->op.empty())
                         last_se_op_str = ovr->op;
                 } else if (::aura::core::audit_wal::g_audit_wal_metrics()
-                                   .audit_wal_segment_prune_total.load(
-                                       std::memory_order_relaxed) +
-                               ::aura::core::security_event_wal::
-                                   g_security_event_wal_metrics()
-                                       .security_event_wal_segment_prune_total.load(
-                                           std::memory_order_relaxed) >
+                                   .audit_wal_segment_prune_total.load(std::memory_order_relaxed) +
+                               ::aura::core::security_event_wal::g_security_event_wal_metrics()
+                                   .security_event_wal_segment_prune_total.load(
+                                       std::memory_order_relaxed) >
                            0) {
                     // Issue #4240: AURA_WAL_MAX_SEGMENTS retention
                     // unlinked segments after the ring wrap — the
@@ -657,8 +649,8 @@ static void load_evolution_audit_durable_face(Ev& ev, const Args& args,
                     // Counters are read lazily inside this
                     // production/Full block (Soft: zero-cost).
                     last_se_reason_str = "wal-segment-pruned";
-                } else if (::aura::core::security_event_wal::wal_overflow_ring_wrap_total()
-                               .load(std::memory_order_relaxed) > 0) {
+                } else if (::aura::core::security_event_wal::wal_overflow_ring_wrap_total().load(
+                               std::memory_order_relaxed) > 0) {
                     // Issue #3838: wrap storm — Agent face distinguishes
                     // wrap-evicted mid joins from never-emitted (empty).
                     last_se_reason_str = "overflow_wrap_evicted";
@@ -667,30 +659,6 @@ static void load_evolution_audit_durable_face(Ev& ev, const Args& args,
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 void register_security_set_sandbox_mode(PrimRegistrar add, Evaluator& ev) {
