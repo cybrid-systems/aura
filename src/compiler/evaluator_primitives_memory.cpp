@@ -1217,7 +1217,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 return make_int(0);
             const auto& name = ev.string_at(nidx);
             const auto& policy = ev.string_at(pidx);
-            aura::ast::ArenaGroup::CompactPolicy p;
+            aura::ast::ArenaGroup::CompactPolicy p = aura::ast::ArenaGroup::CompactPolicy::Skip;
             if (policy == "force")
                 p = aura::ast::ArenaGroup::CompactPolicy::Force;
             else if (policy == "auto")

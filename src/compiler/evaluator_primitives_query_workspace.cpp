@@ -2794,7 +2794,7 @@ void register_workspace_query_primitives(
             if (idx >= ws.string_heap.size())
                 return mev("bad-arg", "marker name string index out of range");
             const auto& marker_name = ws.string_heap[idx];
-            aura::ast::SyntaxMarker target;
+            aura::ast::SyntaxMarker target = aura::ast::SyntaxMarker::User;
             if (marker_name == "User") {
                 target = aura::ast::SyntaxMarker::User;
             } else if (marker_name == "MacroIntroduced") {
@@ -2845,7 +2845,7 @@ void register_workspace_query_primitives(
             if (idx >= ws.string_heap.size())
                 return mev("bad-arg", "marker name string index out of range");
             const auto& marker_name = ws.string_heap[idx];
-            aura::ast::SyntaxMarker target;
+            aura::ast::SyntaxMarker target = aura::ast::SyntaxMarker::User;
             if (marker_name == "User") {
                 target = aura::ast::SyntaxMarker::User;
             } else if (marker_name == "MacroIntroduced") {
@@ -2922,7 +2922,7 @@ void register_workspace_query_primitives(
             auto marker_name = ws.string_heap[idx];
 
             // Map name → SyntaxMarker enum
-            aura::ast::SyntaxMarker target;
+            aura::ast::SyntaxMarker target = aura::ast::SyntaxMarker::User;
             if (marker_name == "User") {
                 target = aura::ast::SyntaxMarker::User;
             } else if (marker_name == "MacroIntroduced") {
@@ -3453,7 +3453,7 @@ void register_workspace_query_primitives(
         auto marker_name = ws.string_heap[idx];
 
         // Map name → SyntaxMarker enum
-        aura::ast::SyntaxMarker target;
+        aura::ast::SyntaxMarker target = aura::ast::SyntaxMarker::User;
         if (marker_name == "User") {
             target = aura::ast::SyntaxMarker::User;
         } else if (marker_name == "MacroIntroduced") {

@@ -6533,7 +6533,8 @@ public:
     // the full shard array for the walk (same shape as
     // lookup_by_symid_chain_ref) so compact's deque move waits for the
     // walk, and use the assume-locks face per hop.
-    template <typename F> void walk_env_frames(EnvId start, F&& f) const pre(start != NULL_ENV_ID) {
+    template <std::predicate<EnvId, const EnvFrame&> F>
+    void walk_env_frames(EnvId start, F&& f) const pre(start != NULL_ENV_ID) {
         // Issue #1753: explicit invocable+bool-return check.
         static_assert(std::is_invocable_v<F, EnvId, const EnvFrame&>,
                       "walk_env_frames: F must be invocable with (EnvId, const EnvFrame&)");
@@ -6563,7 +6564,7 @@ public:
     // shard locks (Env::lookup_cell_ptr / Env::lookup_cell_index /
     // lookup_by_symid_chain_ref hold the full array). Re-entering a
     // shared_mutex per hop would deadlock under a waiting writer.
-    template <typename F>
+    template <std::predicate<EnvId, const EnvFrame&> F>
     void walk_env_frames_locked_caller(EnvId start, F&& f) const pre(start != NULL_ENV_ID) {
         static_assert(
             std::is_invocable_v<F, EnvId, const EnvFrame&>,

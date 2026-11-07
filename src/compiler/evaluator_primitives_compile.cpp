@@ -245,7 +245,7 @@ static bool subtree_has_macro_introduced(const aura::ast::FlatAST& flat, aura::a
 // Seqlock-style pin at enter; revalidate after body. On rebind mid-flight
 // bump raw_pointer_uaf_prevented_total + compiler_service_pin_reject_total
 // and return on_miss (no false-clean partial hash).
-template <typename F>
+template <std::invocable<CompilerService&> F>
 EvalValue with_compiler_service_pin(Evaluator& ev, F&& body, EvalValue on_miss = make_void()) {
     auto pin = ev.pin_compiler_service();
     if (!pin)
