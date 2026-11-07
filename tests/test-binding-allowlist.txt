@@ -135,3 +135,8 @@ src/compiler/evaluator_primitives_char.cpp
 # #4715 regression rows in tests/python/test_regression.py. Function-like edits
 # still require a test pairing by review, same as the entries above.
 src/compiler/evaluator_primitives_fiber_cow.cpp
+
+# 2026-11-07: clang-format-only fix for a file the #5019 merge landed
+# unformatted (CI gate Static checks). Whitespace/layout only — no
+# behavior or primitive-surface change, so no test pairing applies.
+src/compiler/evaluator_primitives_security.cpp
