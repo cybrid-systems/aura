@@ -162,14 +162,16 @@ extern std::atomic<std::uint64_t> g_occurrence_goals_live_total;
 extern std::atomic<std::uint64_t> g_occurrence_goals_live_truncated_total;
 extern std::atomic<std::uint32_t> g_occurrence_goals_live_wired;
 
-void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
-                                    ::aura::compiler::LockedStringHeap& string_heap,
-                                    void*& type_registry, ModulePathResolver resolve_module_path,
-                                    Evaluator& ev) {
-    (void)pairs;
-    (void)type_registry;
-    (void)resolve_module_path;
-    (void)ev;
+// --- Issue #5031: register_query_tail_primitives phases ----------------------
+// The single registration body outgrew the 300-line ceiling. Each phase below
+// is one responsibility family; register_query_tail_primitives keeps the ordered
+// delegation so registration order, primitive names and lambda capture
+// lifetimes are unchanged.
+
+void register_query_tail_feedback_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                        ::aura::compiler::LockedStringHeap& string_heap,
+                                        void*& type_registry,
+                                        ModulePathResolver resolve_module_path, Evaluator& ev) {
     // Issue #4568: per-arg lattice, call targets, and the warmup budgets.
     // A missing row still prints entries=0, arg0=none, and the budgets.
     add("query:type-feedback", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
@@ -251,6 +253,13 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
             // (so the cdr is a fresh make_string of sidx).
             return make_pair(ev->push_pair(make_string(oidx), make_string(sidx)));
         });
+}
+
+
+void register_query_tail_adt_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                   ::aura::compiler::LockedStringHeap& string_heap,
+                                   void*& type_registry, ModulePathResolver resolve_module_path,
+                                   Evaluator& ev) {
 
     // Issue #577: query:adt-exhaustiveness-stats. Returns the sum
     // of 4 Task2 ADT/match exhaustiveness + narrowing counters:
@@ -353,6 +362,13 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
             }
             return list;
         });
+}
+
+
+void register_query_tail_typed_budget_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                            ::aura::compiler::LockedStringHeap& string_heap,
+                                            void*& type_registry,
+                                            ModulePathResolver resolve_module_path, Evaluator& ev) {
 
     // Issue #555: query:typed-mutation-stats-task1. Returns
     // the sum of 4 Task1 typed self-mod observability
@@ -583,6 +599,13 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
             const std::uint64_t cyc = ws->verify_loop_cycles_total();
             return make_int(static_cast<std::int64_t>(cov + ass + cyc));
         });
+}
+
+
+void register_query_tail_propagation_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                           ::aura::compiler::LockedStringHeap& string_heap,
+                                           void*& type_registry,
+                                           ModulePathResolver resolve_module_path, Evaluator& ev) {
 
     // Issue #510: query:eda-verification-stats. Hash view of commercial
     // EDA verification interop + coverage/assert feedback closed-loop
@@ -859,6 +882,13 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
                 return make_int(-1); // regression sentinel
             return make_int(static_cast<std::int64_t>((wrapped * 10000) / total));
         });
+}
+
+
+void register_query_tail_hot_update_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                          ::aura::compiler::LockedStringHeap& string_heap,
+                                          void*& type_registry,
+                                          ModulePathResolver resolve_module_path, Evaluator& ev) {
 
     // Issue #1905: query:aot-hot-update-stats.
     // Returns observability for the AOT incremental hot-update /
@@ -1043,6 +1073,13 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
                                                       macro_reject + validate_reflected +
                                                       dirty_macro));
         });
+}
+
+
+void register_query_tail_schema_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                      ::aura::compiler::LockedStringHeap& string_heap,
+                                      void*& type_registry, ModulePathResolver resolve_module_path,
+                                      Evaluator& ev) {
 
     // Issue #1907: mutate:validate-reflected.
     // Calls aura_validate_reflected_post_mutation bridge hook from the
@@ -1213,6 +1250,13 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
             return make_bool(false);
         return make_bool(ws->is_occurrence_stale(node_id) != 0);
     });
+}
+
+
+void register_query_tail_occurrence_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                          ::aura::compiler::LockedStringHeap& string_heap,
+                                          void*& type_registry,
+                                          ModulePathResolver resolve_module_path, Evaluator& ev) {
 
     // Issue #639: query:narrow-blame-stats. Returns the sum of
     // narrow stale-caught, blame-attached, invalidation-post-
@@ -1397,6 +1441,14 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
         ws->mark_occurrence_stale(node_id);
         return make_bool(true);
     });
+}
+
+
+void register_query_tail_pass_pipeline_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                             ::aura::compiler::LockedStringHeap& string_heap,
+                                             void*& type_registry,
+                                             ModulePathResolver resolve_module_path,
+                                             Evaluator& ev) {
 
     // Issue #625: query:pass-pipeline-incremental-stats-hash —
     // Agent-discoverable structured companion to the existing
@@ -1514,6 +1566,32 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
             }
             return make_hash(hidx);
         });
+}
+
+void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                    ::aura::compiler::LockedStringHeap& string_heap,
+                                    void*& type_registry, ModulePathResolver resolve_module_path,
+                                    Evaluator& ev) {
+    (void)pairs;
+    (void)type_registry;
+    (void)resolve_module_path;
+    (void)ev;
+    // Issue #5031: ordered delegation over the peeled responsibility phases.
+    register_query_tail_feedback_parts(add, pairs, string_heap, type_registry, resolve_module_path,
+                                       ev);
+    register_query_tail_adt_parts(add, pairs, string_heap, type_registry, resolve_module_path, ev);
+    register_query_tail_typed_budget_parts(add, pairs, string_heap, type_registry,
+                                           resolve_module_path, ev);
+    register_query_tail_propagation_parts(add, pairs, string_heap, type_registry,
+                                          resolve_module_path, ev);
+    register_query_tail_hot_update_parts(add, pairs, string_heap, type_registry,
+                                         resolve_module_path, ev);
+    register_query_tail_schema_parts(add, pairs, string_heap, type_registry, resolve_module_path,
+                                     ev);
+    register_query_tail_occurrence_parts(add, pairs, string_heap, type_registry,
+                                         resolve_module_path, ev);
+    register_query_tail_pass_pipeline_parts(add, pairs, string_heap, type_registry,
+                                            resolve_module_path, ev);
 }
 
 } // namespace aura::compiler::primitives_detail
