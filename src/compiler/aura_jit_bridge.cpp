@@ -4968,8 +4968,7 @@ static bool default_llvm_incremental_emit(const char* name, std::uint64_t region
 }
 
 static std::int64_t reemit_sentinel_fn_ptr() {
-    return static_cast<std::int64_t>(
-        aura::compiler::bits_from_fn(&aura_aot_reemit_sentinel_fn));
+    return static_cast<std::int64_t>(aura::compiler::bits_from_fn(&aura_aot_reemit_sentinel_fn));
 }
 
 static std::int64_t lookup_installed_jit_fn(const char* name) {

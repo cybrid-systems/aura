@@ -2397,9 +2397,46 @@ static void ac3693_eval_flat_hold_budget_edge_cite() {
     CHECK(read_file("tests/serve/test_issue_3693.cpp").empty(), "3693: no invent test_issue_3693");
 }
 
+static void ac_oneshot_eval_does_not_grow_arena() {
+    std::println("\n--- pure eval reclaims the previous AST ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "oneshot: (+ 1 1) evaluates");
+    const auto mid = cs.arena().used();
+    for (int i = 0; i < 200; ++i)
+        CHECK(cs.eval("(+ 1 1)").has_value(), "oneshot: repeated (+ 1 1)");
+    CHECK(cs.arena().used() == mid, "oneshot: pure eval does not grow the service arena");
+    CHECK(cs.eval("(define id (lambda (x) x))").has_value(), "oneshot: define is retained");
+    CHECK(cs.eval("(id 3)").has_value(), "oneshot: retained lambda is still callable");
+    const auto after_def = cs.arena().used();
+    for (int i = 0; i < 100; ++i)
+        CHECK(cs.eval("(+ 2 2)").has_value(), "oneshot: pure eval after define");
+    CHECK(cs.arena().used() == after_def,
+          "oneshot: pure eval stays bounded after an escaped define");
+}
+
+static void ac3002_window_rejects_fresh_slow_sample() {
+    std::println("\n--- #3002 pass-local p99 ---");
+    using aura::serve::mf_mailbox::note_mailbox_under_boundary_wait_sample;
+    using aura::serve::mf_mailbox::snapshot_under_boundary_wait;
+    using aura::serve::mf_mailbox::under_boundary_wait_p99_since;
+    (void)snapshot_under_boundary_wait();
+    note_mailbox_under_boundary_wait_sample(601020, false);
+    const auto window = snapshot_under_boundary_wait();
+    CHECK(under_boundary_wait_p99_since(window) == 0,
+          "3002: a later window does not inherit the 601020us sample");
+    note_mailbox_under_boundary_wait_sample(150000, false);
+    CHECK(under_boundary_wait_p99_since(window) >= 100000,
+          "3002: a 150ms sample in this window is at or over the 100ms SLO");
+    const auto next = snapshot_under_boundary_wait();
+    CHECK(under_boundary_wait_p99_since(next) == 0,
+          "3002: that 150ms sample does not leak into the next window");
+}
+
 int run_test_chaos_mutate_steal_gc_mailbox() {
     std::println("=== Issue #2352/#2380/#2513/#2554/#2902: chaos mutate×steal×GC×mailbox "
                  "production gate ===");
+    ac_oneshot_eval_does_not_grow_arena();
+    ac3002_window_rejects_fresh_slow_sample();
     ac3693_eval_flat_hold_budget_edge_cite();
 
     // Issue #2902: build.py release blocker runs only the clean multi-fiber
